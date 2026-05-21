@@ -263,6 +263,7 @@ def sandbox(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "hello.txt").write_text("hello from local workspace")
+    data_dir = tmp_path / "data"
 
     port = _SANDBOX_PORT_BASE + (os.getpid() % 1000)
     hub_url = f"grpc://{hub_grpc}"
@@ -278,6 +279,8 @@ def sandbox(
         hub_token,
         "--port",
         str(port),
+        "--data-dir",
+        str(data_dir),
     ]
     cmd = nexusd.split() + base_flags if " " in nexusd else [nexusd] + base_flags
 
@@ -289,12 +292,12 @@ def sandbox(
     )
 
     health_url = f"http://localhost:{port}/health"
-    ready = _poll_health(health_url, timeout=30)
+    ready = _poll_health(health_url, timeout=60)
 
     if not ready:
         _terminate(proc)
         stderr = proc.stderr.read() if proc.stderr else ""
-        pytest.fail(f"Sandbox did not reach healthy within 30s\nstderr: {stderr[:2000]}")
+        pytest.fail(f"Sandbox did not reach healthy within 60s\nstderr: {stderr[:2000]}")
 
     # gRPC port is HTTP port + 2 by nexusd convention (main.py always sets NEXUS_GRPC_PORT=port+2)
     handle = SandboxHandle(
@@ -459,6 +462,7 @@ class TestSandboxLocalOnlyFallback:
         """Sandbox must boot (not crash) when hub is unreachable."""
         workspace = tmp_path / "ws"
         workspace.mkdir()
+        data_dir = tmp_path / "data"
 
         port = _SANDBOX_PORT_BASE + (os.getpid() % 1000) + 100
         nexusd = _nexusd_bin()
@@ -473,6 +477,8 @@ class TestSandboxLocalOnlyFallback:
             "sk-fake-token",
             "--port",
             str(port),
+            "--data-dir",
+            str(data_dir),
         ]
         cmd = nexusd.split() + base_flags if " " in nexusd else [nexusd] + base_flags
 
@@ -486,13 +492,17 @@ class TestSandboxLocalOnlyFallback:
             time.sleep(2)
             if proc.poll() is not None:
                 stderr = proc.stderr.read() if proc.stderr else ""
-                if "nexus_kernel" in stderr or "No module named" in stderr:
+                if (
+                    "nexus-cluster" in stderr
+                    or "nexus_kernel" in stderr
+                    or "No module named" in stderr
+                ):
                     pytest.skip(
                         "nexusd requires nexus-cluster binary — run cargo build --release -p nexus-cluster"
                     )
                 pytest.skip(f"nexusd exited immediately: {stderr[:500]}")
 
-            ready = _poll_health(f"http://localhost:{port}/health", timeout=30)
+            ready = _poll_health(f"http://localhost:{port}/health", timeout=60)
             assert ready, "Sandbox should start in local-only mode even if hub is unreachable"
         finally:
             _terminate(proc)

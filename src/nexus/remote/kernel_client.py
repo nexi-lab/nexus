@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import time
+from pathlib import Path
 from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -29,6 +31,51 @@ logger = logging.getLogger(__name__)
 
 # Default port for local kernel subprocess.
 _DEFAULT_LOCAL_PORT = 2126
+_KERNEL_BINARY_ENV = "NEXUS_KERNEL_BINARY"
+_KERNEL_BINARY_CANDIDATES = ("nexus-cluster", "nexusd-cluster")
+_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX = ".kernel"
+
+
+def _resolve_kernel_binary() -> str:
+    """Return the Rust kernel binary to spawn.
+
+    CI and packaged installs often provide the compatibility name
+    ``nexus-cluster``. Local Cargo builds produce the actual bin target
+    ``nexusd-cluster``. Accept both so real local E2E runs do not require a
+    manual symlink.
+    """
+    configured = os.environ.get(_KERNEL_BINARY_ENV)
+    if configured:
+        return configured
+
+    for binary_name in _KERNEL_BINARY_CANDIDATES:
+        resolved = shutil.which(binary_name)
+        if resolved:
+            return resolved
+
+    return _KERNEL_BINARY_CANDIDATES[0]
+
+
+def _resolve_kernel_data_dir(metadata_path: str | None) -> str | None:
+    """Return a directory path suitable for the Rust kernel data dir.
+
+    Older Python-only runs used ``metadata_path`` as a database file. The Rust
+    kernel reads ``NEXUS_DATA_DIR`` as a directory, so passing that legacy file
+    path makes the subprocess panic before it can report a useful startup
+    error. Keep normal directory/nonexistent paths unchanged, but route an
+    existing file to a deterministic sidecar directory.
+    """
+    if not metadata_path:
+        return None
+
+    path = Path(metadata_path).expanduser()
+    try:
+        if path.exists() and path.is_file():
+            return str(path.with_name(f"{path.name}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"))
+    except OSError:
+        return metadata_path
+
+    return metadata_path
 
 
 class KernelClient:
@@ -113,11 +160,19 @@ class KernelClient:
 
     def _spawn_kernel(self) -> None:
         """Spawn nexus-cluster as a subprocess."""
-        cmd = ["nexus-cluster"]
+        kernel_binary = _resolve_kernel_binary()
+        cmd = [kernel_binary]
         env = os.environ.copy()
         # Pass data directory if provided (Rust binary reads NEXUS_DATA_DIR).
-        if self._metadata_path:
-            env["NEXUS_DATA_DIR"] = self._metadata_path
+        kernel_data_dir = _resolve_kernel_data_dir(self._metadata_path)
+        if kernel_data_dir:
+            env["NEXUS_DATA_DIR"] = kernel_data_dir
+            if self._metadata_path and kernel_data_dir != self._metadata_path:
+                logger.warning(
+                    "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
+                    self._metadata_path,
+                    kernel_data_dir,
+                )
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
         env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")
@@ -137,7 +192,8 @@ class KernelClient:
             stderr=self._stderr_file,
         )
         logger.info(
-            "Spawned nexus-cluster (pid=%d) at %s, log=%s",
+            "Spawned %s (pid=%d) at %s, log=%s",
+            kernel_binary,
             self._process.pid,
             self._server_address,
             self._stderr_path,

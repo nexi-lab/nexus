@@ -153,7 +153,7 @@
     <a href="#m-catalog">catalog<span class="count">23</span></a>
     <a href="#m-context_manifest">context_manifest<span class="count">1</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Agent runtime</h2>
-    <a href="#m-mcp">mcp<span class="count">11</span></a>
+    <a href="#m-mcp">mcp<span class="count">12</span></a>
     <a href="#m-sandbox">sandbox<span class="count">5</span></a>
     <a href="#m-agent_log">agent_log<span class="count">35</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Process &amp; policy</h2>
@@ -184,7 +184,7 @@
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
-      <div class="stat"><div class="stat-value">691</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">692</div><div class="stat-label">operations</div></div>
       <div class="stat"><div class="stat-value">14</div><div class="stat-label">missing</div></div>
     </div>
 
@@ -5223,7 +5223,7 @@ graph TB
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <code>CLI: nexus write /workspace/a.txt &#34;hello&#34;; sandbox kernel/RPC: Call(write, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;,&#34;buf&#34;:&#34;hello&#34;})</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_readonly_company_zone_rejected; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_readonly_company_zone_rejected; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
     <span>perf: hot</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
@@ -9046,10 +9046,10 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="discovery.get_tool_details" data-op-text="discovery.get_tool_details  nexus_discovery_get_tool_details ">
+<div class="op" data-op-id="discovery.get_tool_details" data-op-text="discovery.get_tool_details MCP discovery tool details are filtered through the caller&#39;s ReBAC-derived tool namespace; invisible tools return not found. nexus_discovery_get_tool_details ">
   <div class="op-header">
     <span class="op-id">discovery.get_tool_details</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; MCP discovery tool details are filtered through the caller&#39;s ReBAC-derived tool namespace; invisible tools return not found.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_discovery_get_tool_details</span></span>
@@ -9060,17 +9060,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>MCP: nexus_discovery_get_tool_details(&#34;nexus_write_file&#34;) returns details only when /tools/nexus_write_file is visible to the subject.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="discovery.list_servers" data-op-text="discovery.list_servers  nexus_discovery_list_servers ">
+<div class="op" data-op-id="discovery.list_servers" data-op-text="discovery.list_servers MCP discovery server listing reports tool counts after the caller&#39;s ReBAC-derived tool namespace filter. nexus_discovery_list_servers ">
   <div class="op-header">
     <span class="op-id">discovery.list_servers</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; MCP discovery server listing reports tool counts after the caller&#39;s ReBAC-derived tool namespace filter.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_discovery_list_servers</span></span>
@@ -9081,17 +9081,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>MCP: nexus_discovery_list_servers() reports only tools visible through the caller&#39;s assigned tool profile.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="discovery.load_tools" data-op-text="discovery.load_tools  nexus_discovery_load_tools ">
+<div class="op" data-op-id="discovery.load_tools" data-op-text="discovery.load_tools MCP discovery load treats tools outside the caller&#39;s ReBAC-derived namespace as not found before loading. nexus_discovery_load_tools ">
   <div class="op-header">
     <span class="op-id">discovery.load_tools</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; MCP discovery load treats tools outside the caller&#39;s ReBAC-derived namespace as not found before loading.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_discovery_load_tools</span></span>
@@ -9102,17 +9102,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>MCP: nexus_discovery_load_tools([&#34;nexus_write_file&#34;]) loads only if the assigned profile grants /tools/nexus_write_file.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="discovery.search_tools" data-op-text="discovery.search_tools  nexus_discovery_search_tools ">
+<div class="op" data-op-id="discovery.search_tools" data-op-text="discovery.search_tools MCP discovery search over-fetches then filters results through the caller&#39;s ReBAC-derived tool namespace. nexus_discovery_search_tools ">
   <div class="op-header">
     <span class="op-id">discovery.search_tools</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; MCP discovery search over-fetches then filters results through the caller&#39;s ReBAC-derived tool namespace.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_discovery_search_tools</span></span>
@@ -9123,10 +9123,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>MCP: nexus_discovery_search_tools(&#34;write file&#34;) returns nexus_write_file only after the subject has a profile grant for /tools/nexus_write_file.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9664,7 +9664,7 @@ graph TB
           <span class="mod-name">mcp</span>
           <span class="mod-desc">&mdash; Model Context Protocol tools and provider registry.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-dependent">dependent</span>            <span>11 ops</span>
+<span class="tier-badge tier-dependent">dependent</span>            <span>12 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -9731,10 +9731,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.list_tools" data-op-text="mcp.list_tools  mcp_list_tools ">
+<div class="op" data-op-id="mcp.list_tools" data-op-text="mcp.list_tools List mounted MCP tools; the sandbox tool namespace middleware filters the visible set by ReBAC /tools/... grants. mcp_list_tools ">
   <div class="op-header">
     <span class="op-id">mcp.list_tools</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List mounted MCP tools; the sandbox tool namespace middleware filters the visible set by ReBAC /tools/... grants.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_list_tools</span></span>
@@ -9745,10 +9745,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC/MCP: mcp_list_tools(&#34;github&#34;) or MCP tools/list returns only tools visible to the current subject after profile grants are materialized.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9875,6 +9875,27 @@ graph TB
     <span>test: <span class="todo">TODO</span></span>
     <span>perf: <span class="todo">TODO</span></span>
     <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="mcp.tool_profile_assign" data-op-text="mcp.tool_profile_assign `nexus mcp profile assign SUBJECT_TYPE SUBJECT_ID PROFILE --zone-id ZONE`: assign a configured MCP tool profile to an agent or user; `nexus mcp profile inspect SUBJECT_TYPE SUBJECT_ID --zone-id ZONE` shows the resulting effective /tools/... ReBAC grants. nexus mcp profile assign ">
+  <div class="op-header">
+    <span class="op-id">mcp.tool_profile_assign</span>
+    <span class="op-summary">&mdash; `nexus mcp profile assign SUBJECT_TYPE SUBJECT_ID PROFILE --zone-id ZONE`: assign a configured MCP tool profile to an agent or user; `nexus mcp profile inspect SUBJECT_TYPE SUBJECT_ID --zone-id ZONE` shows the resulting effective /tools/... ReBAC grants.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus mcp profile assign</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>CLI: nexus mcp profile assign agent alice coding --zone-id sandbox-agent-1; nexus mcp profile inspect agent alice --zone-id sandbox-agent-1 --format json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_mcp_profile_cli.py; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/cli/test_mcp_profile_cli.py; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -12531,10 +12552,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="federation.client_whoami" data-op-text="federation.client_whoami  federation_client_whoami ">
+<div class="op" data-op-id="federation.client_whoami" data-op-text="federation.client_whoami Sandbox hub-token grant discovery; returns the remote zones and r/rw permissions used to mount read-only and read-write hub zones. federation_client_whoami ">
   <div class="op-header">
     <span class="op-id">federation.client_whoami</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox hub-token grant discovery; returns the remote zones and r/rw permissions used to mount read-only and read-write hub zones.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_client_whoami</span></span>
@@ -12545,10 +12566,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: federation_client_whoami({}) with the sandbox hub token returns zones like [{&#34;zone_id&#34;:&#34;company&#34;,&#34;permission&#34;:&#34;r&#34;},{&#34;zone_id&#34;:&#34;shared&#34;,&#34;permission&#34;:&#34;rw&#34;}].</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones">tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

@@ -712,21 +712,25 @@ def _ensure_mcl_sequence(conn: Any) -> None:
 
 
 def ensure_postgres_schema_invariants(engine: Engine) -> None:
-    """Repair PostgreSQL invariants that ``Base.metadata.create_all`` cannot express.
+    """Repair storage invariants that ``Base.metadata.create_all`` cannot express.
 
     Alembic is the schema source of truth, but some legacy/fresh-init paths
     created tables from ORM metadata and then stamped migrations as applied.
     Validate those invariants explicitly before the server accepts writes.
     """
-    if engine.dialect.name != "postgresql":
-        return
-
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
     columns_by_table = _column_names_by_table(inspector, table_names)
 
     with engine.begin() as conn:
+        # ReBACManager still supports a SQL-backed namespace store when the
+        # kernel is a subprocess. This table must exist for SQLite dev/test
+        # stores as well as PostgreSQL installs.
         _ensure_rebac_namespaces_table(conn, columns_by_table, table_names)
+
+        if engine.dialect.name != "postgresql":
+            return
+
         _ensure_zones_table_shape(conn, columns_by_table)
         _ensure_zone_column(conn, columns_by_table, "file_paths", "VARCHAR(255)")
         _ensure_zone_column(conn, columns_by_table, "rebac_changelog", "VARCHAR(255)")

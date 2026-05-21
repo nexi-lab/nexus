@@ -11,12 +11,14 @@ Tests cover:
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
+from nexus.bricks.mcp.profiles import grant_tools_for_profile, load_profiles_from_dict
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -87,6 +89,45 @@ def make_middleware(
         zone_id=zone_id,
         enabled=enabled,
     )
+
+
+class MemoryToolGrantReBAC:
+    """Small ReBAC test double for profile grant -> namespace filter integration."""
+
+    def __init__(self) -> None:
+        self._objects_by_subject: dict[
+            tuple[tuple[str, str], str | None], set[tuple[str, str]]
+        ] = {}
+        self._revision = 0
+
+    def rebac_write(
+        self,
+        *,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> Any:
+        assert relation == "direct_viewer"
+        self._objects_by_subject.setdefault((subject, zone_id), set()).add(object)
+        self._revision += 1
+        return SimpleNamespace(tuple_id=f"tuple-{self._revision}", revision=self._revision)
+
+    def rebac_list_objects(
+        self,
+        *,
+        subject: tuple[str, str],
+        permission: str,
+        object_type: str,
+        zone_id: str | None = None,
+        limit: int,
+    ) -> list[tuple[str, str]]:
+        assert permission == "read"
+        objects = self._objects_by_subject.get((subject, zone_id), set())
+        return [obj for obj in sorted(objects) if obj[0] == object_type][:limit]
+
+    def get_zone_revision(self, zone_id: str | None) -> int:  # noqa: ARG002
+        return self._revision
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +297,69 @@ class TestOnCallTool:
 
         result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert result is expected_result
+
+
+class TestProfileGrantIntegration:
+    @pytest.mark.asyncio
+    async def test_profile_grants_drive_list_filtering_and_call_denial(self):
+        config = load_profiles_from_dict(
+            {
+                "profiles": {
+                    "minimal": {"tools": ["nexus_read_file"]},
+                    "coding": {
+                        "extends": "minimal",
+                        "tools": ["nexus_write_file"],
+                    },
+                }
+            }
+        )
+        profile = config.get_profile("coding")
+        assert profile is not None
+
+        rebac = MemoryToolGrantReBAC()
+        rebac_manager = cast(Any, rebac)
+        grant_tools_for_profile(
+            rebac_manager=rebac_manager,
+            subject=("agent", "alice"),
+            profile=profile,
+            zone_id="sandbox-agent-1",
+        )
+
+        mw = ToolNamespaceMiddleware(rebac_manager=rebac_manager, zone_id="sandbox-agent-1")
+        ctx = FakeMiddlewareContext(
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "alice"}),
+        )
+        all_tools = [
+            FakeTool(name="nexus_read_file"),
+            FakeTool(name="nexus_write_file"),
+            FakeTool(name="nexus_python"),
+        ]
+
+        async def list_next(context: Any) -> Sequence[Any]:
+            return all_tools
+
+        listed = await mw.on_list_tools(cast(Any, ctx), cast(Any, list_next))
+        assert [tool.name for tool in listed] == ["nexus_read_file", "nexus_write_file"]
+
+        allowed_result = MagicMock()
+
+        async def call_next(context: Any) -> Any:
+            return allowed_result
+
+        allowed_ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name="nexus_write_file"),
+            fastmcp_context=ctx.fastmcp_context,
+        )
+        assert await mw.on_call_tool(cast(Any, allowed_ctx), cast(Any, call_next)) is allowed_result
+
+        denied_ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name="nexus_python"),
+            fastmcp_context=ctx.fastmcp_context,
+        )
+        denied = await mw.on_call_tool(cast(Any, denied_ctx), cast(Any, call_next))
+        denied_text = denied.content[0].text
+        assert "not found" in denied_text.lower()
+        assert "permission" not in denied_text.lower()
 
 
 # ---------------------------------------------------------------------------

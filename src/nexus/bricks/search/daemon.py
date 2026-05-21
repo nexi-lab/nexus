@@ -667,12 +667,18 @@ class SearchDaemon:
             )
 
         from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
-        from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
 
         sqlite_path = self._sqlite_path_from_url(database_url)
+        vec_backend: Any = None
+        try:
+            from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
+
+            vec_backend = SqliteVecBackend(db_path=sqlite_path)
+        except Exception:
+            logger.info("sqlite_vec unavailable; vector search disabled (FTS still works)")
         return (
             SqliteFtsBackend(db_path=sqlite_path, chunk_store=self._chunk_store),
-            SqliteVecBackend(db_path=sqlite_path),
+            vec_backend,
         )
 
     @staticmethod
@@ -730,7 +736,8 @@ class SearchDaemon:
             url = self.config.database_url or ""
             self._fts_backend, self._vector_backend = self._build_backends(url)
             await self._fts_backend.startup()
-            await self._vector_backend.startup()
+            if self._vector_backend is not None:
+                await self._vector_backend.startup()
             logger.info(
                 "search backends ready: fts=%s vector=%s",
                 type(self._fts_backend).__name__,

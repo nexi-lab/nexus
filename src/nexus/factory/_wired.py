@@ -127,7 +127,7 @@ def _boot_post_kernel_services(
     # so this late binding is safe.
     rebac_manager = services.get("rebac_manager")
     if rebac_manager is not None:
-        if type(getattr(nx, "_kernel", None)).__name__ == "KernelClient":
+        if getattr(getattr(nx, "_kernel", None), "requires_python_hooks", False):
             logger.debug(
                 "[BOOT:WIRED] ReBAC namespace + version stores left SQL-backed "
                 "(subprocess kernel VFS misses are too expensive)"

@@ -98,11 +98,17 @@ class TestInitAppState:
         assert app.state.eviction_manager == "em"
 
     def test_disabled_permissions_do_not_expose_enforcer(self) -> None:
-        """Disabled filesystem permissions should disable route-level ReBAC filtering too."""
+        """Disabled filesystem permissions should disable route-level ReBAC filtering too.
+
+        When permissions are disabled the permission_enforcer service is
+        never registered — ``service("permission_enforcer")`` returns None.
+        The server tier relies on this contract (no private ``_perm_config``
+        access needed).
+        """
         app = _make_app()
         mock_fs = MagicMock()
-        mock_fs._perm_config = SimpleNamespace(enforce=False)
-        mock_fs.service = lambda name: "pe" if name == "permission_enforcer" else None
+        # Permissions disabled → permission_enforcer not registered
+        mock_fs.service = lambda name: None if name == "permission_enforcer" else None
 
         init_app_state(app, nexus_fs=mock_fs)
 

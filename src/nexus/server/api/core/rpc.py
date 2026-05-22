@@ -20,6 +20,7 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.contracts.process_types import AgentError, InvalidTransitionError
 from nexus.core.hash_fast import hash_content
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
@@ -382,6 +383,10 @@ async def rpc_endpoint(
                 "current_content_id": e.current_content_id,
             },
         )
+    except InvalidTransitionError as e:
+        return _error_response(None, RPCErrorCode.CONFLICT, str(e))
+    except AgentError as e:
+        return _error_response(None, RPCErrorCode.VALIDATION_ERROR, str(e))
     except DatabaseError as e:
         logger.warning("Database error in method %s: %s", method, e)
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")

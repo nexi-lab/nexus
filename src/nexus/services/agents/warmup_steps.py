@@ -63,13 +63,17 @@ async def mount_namespace(ctx: "WarmupContext") -> bool:
     if ns_mgr is None:
         logger.debug("[WARMUP:namespace] No namespace_manager, skipping mount resolution")
         return True  # Not a failure — just not configured
+    get_mount_entries = getattr(ns_mgr, "get_mount_entries", None)
+    if get_mount_entries is None:
+        logger.debug("[WARMUP:namespace] namespace_manager has no get_mount_entries, skipping")
+        return True
 
     try:
         # Attempt to resolve mounts for the agent's zone
         zone_id = ctx.agent_record.zone_id
         if zone_id is not None:
             subject = ("agent", ctx.agent_id)
-            mounts = ns_mgr.get_mount_entries(subject, zone_id=zone_id)
+            mounts = get_mount_entries(subject, zone_id=zone_id)
             logger.debug(
                 "[WARMUP:namespace] Resolved %d mounts for agent %s in zone %s",
                 len(mounts),
@@ -96,7 +100,7 @@ async def verify_bricks(ctx: "WarmupContext") -> bool:
         return True  # Not a failure — might be embedded deployment
 
     # Check agent capabilities against enabled bricks
-    capabilities = ctx.agent_record.capabilities
+    capabilities = getattr(ctx.agent_record, "capabilities", ()) or ()
     if capabilities:
         missing = [cap for cap in capabilities if cap not in ctx.enabled_bricks]
         if missing:

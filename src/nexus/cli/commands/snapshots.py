@@ -154,6 +154,160 @@ def snapshot_list(
         raise SystemExit(1) from None
 
 
+@snapshot.command("info")
+@click.argument("txn_id")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+def snapshot_info(
+    txn_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Show snapshot transaction details.
+
+    \b
+    Examples:
+        nexus snapshot info abc123
+        nexus snapshot info abc123 --json
+    """
+    try:
+        timing = CommandTiming()
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "snapshot_get",
+                transaction_id=txn_id,
+            )
+
+        def _render(d: dict) -> None:
+            if d.get("found") is False:
+                console.print(f"[nexus.error]Snapshot not found:[/nexus.error] {txn_id}")
+                return
+            console.print(f"[bold nexus.value]Snapshot: {txn_id}[/bold nexus.value]")
+            console.print(f"  Status:      {d.get('status', 'N/A')}")
+            if d.get("description"):
+                console.print(f"  Description: {d['description']}")
+            if d.get("created_at"):
+                console.print(f"  Created:     {str(d['created_at'])[:19]}")
+            if d.get("expires_at"):
+                console.print(f"  Expires:     {str(d['expires_at'])[:19]}")
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from None
+
+
+@snapshot.command("commit")
+@click.argument("txn_id")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+def snapshot_commit(
+    txn_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Commit a snapshot transaction.
+
+    \b
+    Examples:
+        nexus snapshot commit abc123
+        nexus snapshot commit abc123 --json
+    """
+    try:
+        timing = CommandTiming()
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "snapshot_commit",
+                transaction_id=txn_id,
+            )
+
+        def _render(d: dict) -> None:
+            console.print(f"[nexus.success]Snapshot committed:[/nexus.success] {txn_id}")
+            console.print(f"  Status: {d.get('status', 'committed')}")
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from None
+
+
+@snapshot.command("entries")
+@click.argument("txn_id")
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+def snapshot_entries(
+    txn_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """List entries captured by a snapshot transaction.
+
+    \b
+    Examples:
+        nexus snapshot entries abc123
+        nexus snapshot entries abc123 --json
+    """
+    try:
+        timing = CommandTiming()
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "snapshot_list_entries",
+                transaction_id=txn_id,
+            )
+
+        def _render(d: dict) -> None:
+            from rich.table import Table
+
+            entries = d.get("entries", [])
+            if not entries:
+                console.print("[nexus.warning]No snapshot entries found[/nexus.warning]")
+                return
+
+            table = Table(title=f"Snapshot Entries ({len(entries)})")
+            table.add_column("Path", style="nexus.path")
+            table.add_column("Operation")
+            table.add_column("Content", style="nexus.muted")
+            for entry in entries:
+                table.add_row(
+                    str(entry.get("path", "")),
+                    str(entry.get("operation", entry.get("op", ""))),
+                    str(entry.get("content_id", ""))[:16],
+                )
+            console.print(table)
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from None
+
+
 @snapshot.command("restore")
 @click.argument("txn_id")
 @add_output_options

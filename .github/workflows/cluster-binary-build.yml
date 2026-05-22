@@ -45,7 +45,9 @@ jobs:
           - os: windows-latest
             artifact_name: nexusd-cluster-windows-x86_64
             binary: nexusd-cluster.exe
-            max_size_bytes: 11534336  # 11 MiB (PE+import-table overhead)
+            # Real measured size after lifecycle RPC dispatch support:
+            # 11.07 MiB. Keep ~183 KiB headroom without masking regressions.
+            max_size_bytes: 11796480  # 11.25 MiB (PE+import-table overhead)
 
     steps:
       - name: Checkout code

@@ -1397,8 +1397,12 @@ This is the part of Nexus that turns a filesystem into an agent platform.
 ```bash
 nexus agent register alice_bot "Alice Research Bot"
 nexus agent register bob_bot "Bob Worker"
+nexus agent update alice_bot --description "Plans workspace changes" --metadata tier=gold
 nexus agent list
 nexus agent info alice_bot
+nexus agent transition alice_bot CONNECTED
+nexus agent heartbeat alice_bot
+nexus agent status alice_bot
 ```
 
 By default, registered agents do not get their own API keys. They use the
@@ -1409,6 +1413,50 @@ If you really need an agent-specific key:
 ```bash
 nexus agent register legacy_bot "Legacy Bot" --with-api-key
 ```
+
+Equivalent RPC / SDK shape:
+
+```python
+agent_rpc = nx.service("agent_rpc")
+
+created = await agent_rpc.register_agent(
+    agent_id="alice_bot",
+    name="Alice Research Bot",
+    description="Plans workspace changes",
+    context={"user_id": "alice", "zone_id": "root"},
+)
+await agent_rpc.update_agent(
+    "alice_bot",
+    metadata={"tier": "gold"},
+    context={"user_id": "alice", "zone_id": "root"},
+)
+state = await agent_rpc.agent_transition("alice_bot", "CONNECTED")
+agent_rpc.agent_heartbeat("alice_bot")
+assert state["agent_id"] == created["agent_id"]
+```
+
+Expected behavior:
+
+- **Success:** register creates the agent config and registry entry; update
+  rewrites the config; transition advances lifecycle state; heartbeat records
+  liveness.
+- **Denied:** deleting an owned `user,agent` id as a different non-admin user
+  raises a permission error.
+- **Unavailable:** lifecycle calls fail with a clear "AgentRegistry not
+  available" error if the registry service is not wired.
+- **Stale agent:** `nexus agent transition alice_bot CONNECTED
+  --expected-generation 7` rejects the call if the current generation is not 7.
+
+**Correctness assertion:** after the transition and heartbeat, `nexus agent
+status alice_bot --json` shows the lifecycle phase and last heartbeat for the
+same agent id. CLI wrapper coverage lives in
+`tests/unit/cli/test_lifecycle_surface_cli.py`; registration and conflict
+behavior lives in `tests/unit/services/test_agent_registration.py`.
+
+**Performance classification:** agent heartbeat and list are hot-path control
+plane calls. They should stay O(1) or registry-scan bounded and are classified
+in the surface map with the issue #4137 benchmark expectation; registration,
+update, transition, and delete are control-plane paths.
 
 ### Step 2: Send messages between agents
 
@@ -1451,9 +1499,80 @@ of a normal filesystem.
 ```bash
 nexus mkdir /workspace/project
 nexus workspace register /workspace/project --name project --description "Main project workspace"
+nexus workspace update /workspace/project --metadata owner=alice
 nexus workspace snapshot /workspace/project --description "Before refactor"
 nexus workspace log /workspace/project
+nexus workspace restore /workspace/project --snapshot 1 --yes
+nexus workspace diff /workspace/project --snapshot1 1 --snapshot2 2
 ```
+
+Load the same registration from config when bootstrapping a repeatable
+environment:
+
+```json
+{
+  "workspaces": [
+    {
+      "path": "/workspace/project",
+      "name": "project",
+      "description": "Main project workspace"
+    }
+  ]
+}
+```
+
+```bash
+nexus workspace config load ./workspaces.json
+```
+
+Equivalent RPC / SDK shape:
+
+```python
+workspace_rpc = nx.service("workspace_rpc")
+
+await workspace_rpc.register_workspace(
+    path="/workspace/project",
+    name="project",
+    description="Main project workspace",
+    context={"user_id": "alice", "zone_id": "root"},
+)
+workspace_rpc.update_workspace("/workspace/project", metadata={"owner": "alice"})
+snap = workspace_rpc.workspace_snapshot(
+    workspace_path="/workspace/project",
+    description="Before refactor",
+    context={"user_id": "alice", "zone_id": "root"},
+)
+log = workspace_rpc.workspace_log(
+    workspace_path="/workspace/project",
+    context={"user_id": "alice", "zone_id": "root"},
+)
+assert log[0]["snapshot_id"] == snap["snapshot_id"]
+```
+
+Expected behavior:
+
+- **Success:** registered workspaces are visible to the creating user, and
+  snapshots/log/diff/restore operate only after the workspace exists.
+- **Denied:** `list_workspaces` requires authenticated context with `user_id`
+  and `zone_id`; missing context is rejected.
+- **Unavailable:** `workspace_snapshot`, `workspace_restore`, `workspace_log`,
+  and `workspace_diff` raise `Workspace not registered: ...` until the path is
+  registered.
+- **Restore conflict:** restoring a workspace overwrites current workspace
+  state; the CLI asks for confirmation unless `--yes` is supplied.
+
+**Correctness assertion:** after snapshot and restore, `nexus workspace log
+/workspace/project` contains the restored snapshot number, and
+`nexus workspace diff` reports added/removed/modified paths. CLI wrapper
+coverage lives in `tests/unit/cli/test_lifecycle_surface_cli.py`; workspace
+filtering and auth failure coverage lives in
+`tests/unit/core/test_nexus_fs_list_workspaces.py`; HTTP registry behavior is
+covered by `tests/e2e/server/test_workspace_registry_api_e2e.py`.
+
+**Performance classification:** workspace register/update/config load are setup
+or control-plane paths. Workspace list is a control-plane listing path with the
+issue #4137 benchmark expectation in the surface map; snapshot/diff/restore are
+size-dependent and treated as hot where they touch file content.
 
 ### 8.2 Create context branches
 
@@ -1575,16 +1694,59 @@ These commands are about durability, rollback, and operator visibility.
 ```bash
 nexus versions history /workspace/hello.txt
 nexus versions get /workspace/hello.txt --version 1
+nexus versions diff /workspace/hello.txt --v1 1 --v2 2 --mode metadata
 nexus versions rollback /workspace/hello.txt --version 1
 ```
+
+Equivalent RPC / SDK shape:
+
+```python
+version_service = nx.service("version_service")
+versions = await version_service.list_versions("/workspace/hello.txt")
+content = await version_service.get_version("/workspace/hello.txt", versions[-1]["version"])
+diff = await version_service.diff_versions(
+    "/workspace/hello.txt",
+    v1=versions[-1]["version"],
+    v2=versions[0]["version"],
+    mode="metadata",
+)
+assert content
+assert "content_changed" in diff
+```
+
+Expected behavior: missing versions raise a not-found error, invalid diff modes
+raise `ValueError`, and rollback requires the DLC/session wiring used by the
+full profile. `list_versions` and `diff_versions` are hot-path/history paths;
+`get_version` and `rollback` are content reads/writes and should be benchmarked
+when used on large files.
 
 ### Transactional snapshots
 
 ```bash
 nexus snapshot create --description "Before migration"
 nexus snapshot list
+nexus snapshot info <txn_id>
+nexus snapshot entries <txn_id>
+nexus snapshot commit <txn_id>
 nexus snapshot restore <txn_id>
 ```
+
+Equivalent RPC / SDK shape:
+
+```python
+snapshots = nx.service("snapshots_rpc")
+txn = await snapshots.snapshot_create(description="Before migration")
+entries = await snapshots.snapshot_list_entries(txn["transaction_id"])
+committed = await snapshots.snapshot_commit(txn["transaction_id"])
+assert committed["status"] == "committed"
+```
+
+Expected behavior: `snapshot list/info/entries` expose transaction state;
+`snapshot commit` makes a transaction permanent; `snapshot restore` rolls back
+the transaction. If the transactional snapshot service is not wired, the server
+returns a stable unavailable error. Snapshot create/restore and list/entries are
+performance-sensitive because they can run over many paths; the surface map
+links the #4137 benchmark expectation.
 
 ### Event replay and live subscriptions
 

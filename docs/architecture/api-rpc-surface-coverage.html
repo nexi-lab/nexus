@@ -140,7 +140,7 @@
     <a href="#m-delegation">delegation<span class="count">12</span></a>
     <a href="#m-access_manifest">access_manifest<span class="count">10</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Storage &amp; layout</h2>
-    <a href="#m-filesystem">filesystem<span class="count">129</span></a>
+    <a href="#m-filesystem">filesystem<span class="count">133</span></a>
     <a href="#m-mount">mount<span class="count">38</span></a>
     <a href="#m-share_link">share_link<span class="count">6</span></a>
     <a href="#m-workspace">workspace<span class="count">16</span></a>
@@ -173,7 +173,7 @@
     <a href="#m-zone">zone<span class="count">14</span></a>
     <a href="#m-daemon">daemon<span class="count">4</span></a>
     <h2>NexusFS wrapper</h2>
-    <a href="#m-nexus_fs">nexus_fs<span class="count">32</span></a>
+    <a href="#m-nexus_fs">nexus_fs<span class="count">33</span></a>
   </aside>
 
   <main>
@@ -184,7 +184,7 @@
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
-      <div class="stat"><div class="stat-value">693</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">700</div><div class="stat-label">operations</div></div>
       <div class="stat"><div class="stat-value">13</div><div class="stat-label">missing</div></div>
     </div>
 
@@ -3810,7 +3810,7 @@ graph TB
           <span class="mod-name">filesystem</span>
           <span class="mod-desc">&mdash; Path-scoping wrappers for NexusFS.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>129 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>133 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -5397,13 +5397,34 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="fs.get" data-op-text="fs.get  ShareLinksClient.get ">
+<div class="op" data-op-id="fs.get" data-op-text="fs.get  _AgentRegistryProxy.get ">
   <div class="op-header">
     <span class="op-id">fs.get</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
-    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>ShareLinksClient.get</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.get</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="fs.heartbeat" data-op-text="fs.heartbeat  _AgentRegistryProxy.heartbeat ">
+  <div class="op-header">
+    <span class="op-id">fs.heartbeat</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.heartbeat</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5551,6 +5572,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>SandboxClient.run</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="fs.signal" data-op-text="fs.signal  _AgentRegistryProxy.signal ">
+  <div class="op-header">
+    <span class="op-id">fs.signal</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.signal</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5804,6 +5846,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>AsyncAdminClient.list_keys</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="list.processes" data-op-text="list.processes  _AgentRegistryProxy.list_processes ">
+  <div class="op-header">
+    <span class="op-id">list.processes</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.list_processes</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -6456,6 +6519,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/stream/{path:path}</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="update.state" data-op-text="update.state  _AgentRegistryProxy.update_state ">
+  <div class="op-header">
+    <span class="op-id">update.state</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.update_state</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -7493,339 +7577,339 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="get.workspace_info" data-op-text="get.workspace_info  get_workspace_info ">
+<div class="op" data-op-id="get.workspace_info" data-op-text="get.workspace_info Return one registered workspace configuration or null. get_workspace_info ">
   <div class="op-header">
     <span class="op-id">get.workspace_info</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Return one registered workspace configuration or null.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_workspace_info</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace info /workspace/project; RPC: get_workspace_info(&#34;/workspace/project&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:183">tests/e2e/server/test_workspace_registry_api_e2e.py:183</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.workspaces" data-op-text="list.workspaces  list_workspaces ">
+<div class="op" data-op-id="list.workspaces" data-op-text="list.workspaces List workspaces visible to the authenticated user and zone. list_workspaces ">
   <div class="op-header">
     <span class="op-id">list.workspaces</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List workspaces visible to the authenticated user and zone.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_workspaces</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace list; RPC: list_workspaces(context=OperationContext(user_id=&#34;alice&#34;, zone_id=&#34;root&#34;))</code></span>
+    <span>test: <a href="../../tests/unit/core/test_nexus_fs_list_workspaces.py:65">tests/unit/core/test_nexus_fs_list_workspaces.py:65</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="load.workspace_config" data-op-text="load.workspace_config  load_workspace_config ">
+<div class="op" data-op-id="load.workspace_config" data-op-text="load.workspace_config Bulk-load workspace registrations from configuration. load_workspace_config ">
   <div class="op-header">
     <span class="op-id">load.workspace_config</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Bulk-load workspace registrations from configuration.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>load_workspace_config</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace config load ./workspaces.json; RPC: load_workspace_config(workspaces=[{&#34;path&#34;:&#34;/workspace/project&#34;}])</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:157">tests/unit/cli/test_lifecycle_surface_cli.py:157</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="register.workspace" data-op-text="register.workspace  register_workspace ">
+<div class="op" data-op-id="register.workspace" data-op-text="register.workspace Register a path as a workspace and create the path if needed. register_workspace ">
   <div class="op-header">
     <span class="op-id">register.workspace</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Register a path as a workspace and create the path if needed.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>register_workspace</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace register /workspace/project --name project; RPC: await register_workspace(path=&#34;/workspace/project&#34;, name=&#34;project&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:165">tests/e2e/server/test_workspace_registry_api_e2e.py:165</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="registry.workspaces" data-op-text="registry.workspaces  POST /api/v2/registry/workspaces ">
+<div class="op" data-op-id="registry.workspaces" data-op-text="registry.workspaces HTTP workspace registry create/list endpoint. POST /api/v2/registry/workspaces ">
   <div class="op-header">
     <span class="op-id">registry.workspaces</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP workspace registry create/list endpoint.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/registry/workspaces</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /api/v2/registry/workspaces {&#34;path&#34;:&#34;/workspace/project&#34;}; GET /api/v2/registry/workspaces</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:165">tests/e2e/server/test_workspace_registry_api_e2e.py:165</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="registry.workspaces_{path:path}" data-op-text="registry.workspaces_{path:path}  PATCH /api/v2/registry/workspaces/{path:path} ">
+<div class="op" data-op-id="registry.workspaces_{path:path}" data-op-text="registry.workspaces_{path:path} HTTP workspace registry update endpoint for one path. PATCH /api/v2/registry/workspaces/{path:path} ">
   <div class="op-header">
     <span class="op-id">registry.workspaces_{path:path}</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP workspace registry update endpoint for one path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>PATCH /api/v2/registry/workspaces/{path:path}</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: PATCH /api/v2/registry/workspaces/workspace/project {&#34;name&#34;:&#34;Project&#34;}</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:205">tests/e2e/server/test_workspace_registry_api_e2e.py:205</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="unregister.workspace" data-op-text="unregister.workspace  unregister_workspace ">
+<div class="op" data-op-id="unregister.workspace" data-op-text="unregister.workspace Remove workspace registry entry without deleting files. unregister_workspace ">
   <div class="op-header">
     <span class="op-id">unregister.workspace</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Remove workspace registry entry without deleting files.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>unregister_workspace</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace unregister /workspace/project --yes; RPC: unregister_workspace(&#34;/workspace/project&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:238">tests/e2e/server/test_workspace_registry_api_e2e.py:238</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="update.workspace" data-op-text="update.workspace  update_workspace ">
+<div class="op" data-op-id="update.workspace" data-op-text="update.workspace Update workspace name, description, or metadata. update_workspace ">
   <div class="op-header">
     <span class="op-id">update.workspace</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Update workspace name, description, or metadata.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>update_workspace</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace update /workspace/project --metadata owner=alice; RPC: update_workspace(&#34;/workspace/project&#34;, metadata={&#34;owner&#34;:&#34;alice&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:117">tests/unit/cli/test_lifecycle_surface_cli.py:117</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.cli" data-op-text="workspace.cli  nexus workspace ">
+<div class="op" data-op-id="workspace.cli" data-op-text="workspace.cli CLI group for workspace registry, config loading, snapshots, restore, diff, and log. nexus workspace ">
   <div class="op-header">
     <span class="op-id">workspace.cli</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI group for workspace registry, config loading, snapshots, restore, diff, and log.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus workspace</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace register /workspace/project --name project; nexus workspace update /workspace/project --metadata owner=alice; nexus workspace config load ./workspaces.json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:117">tests/unit/cli/test_lifecycle_surface_cli.py:117</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.diff" data-op-text="workspace.diff  workspace_diff ">
+<div class="op" data-op-id="workspace.diff" data-op-text="workspace.diff Compare two workspace snapshots. workspace_diff ">
   <div class="op-header">
     <span class="op-id">workspace.diff</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Compare two workspace snapshots.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>workspace_diff</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace diff /workspace/project --snapshot1 1 --snapshot2 2; RPC: workspace_diff(workspace_path=&#34;/workspace/project&#34;, snapshot_1=1, snapshot_2=2)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:310">tests/unit/services/snapshot/test_service.py:310</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.get" data-op-text="workspace.get  GET  ">
+<div class="op" data-op-id="workspace.get" data-op-text="workspace.get HTTP workspace registry get endpoint for one path. GET  ">
   <div class="op-header">
     <span class="op-id">workspace.get</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP workspace registry get endpoint for one path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET </span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: GET /api/v2/registry/workspaces/workspace/project</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:183">tests/e2e/server/test_workspace_registry_api_e2e.py:183</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.log" data-op-text="workspace.log  workspace_log ">
+<div class="op" data-op-id="workspace.log" data-op-text="workspace.log List snapshot history for a registered workspace. workspace_log ">
   <div class="op-header">
     <span class="op-id">workspace.log</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List snapshot history for a registered workspace.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>workspace_log</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace log /workspace/project; RPC: workspace_log(workspace_path=&#34;/workspace/project&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:523">tests/unit/services/snapshot/test_service.py:523</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.path:path" data-op-text="workspace.path:path  PATCH /{path:path} ">
+<div class="op" data-op-id="workspace.path:path" data-op-text="workspace.path:path HTTP workspace registry update endpoint discovered from router-local path. PATCH /{path:path} ">
   <div class="op-header">
     <span class="op-id">workspace.path:path</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP workspace registry update endpoint discovered from router-local path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>PATCH /{path:path}</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: PATCH /api/v2/registry/workspaces/{path:path}</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:205">tests/e2e/server/test_workspace_registry_api_e2e.py:205</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.post" data-op-text="workspace.post  POST  ">
+<div class="op" data-op-id="workspace.post" data-op-text="workspace.post HTTP workspace registry create endpoint discovered from router-local path. POST  ">
   <div class="op-header">
     <span class="op-id">workspace.post</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP workspace registry create endpoint discovered from router-local path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST </span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /api/v2/registry/workspaces</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_workspace_registry_api_e2e.py:165">tests/e2e/server/test_workspace_registry_api_e2e.py:165</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.restore" data-op-text="workspace.restore  workspace_restore ">
+<div class="op" data-op-id="workspace.restore" data-op-text="workspace.restore Restore a registered workspace to a numbered snapshot. workspace_restore ">
   <div class="op-header">
     <span class="op-id">workspace.restore</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Restore a registered workspace to a numbered snapshot.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>workspace_restore</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace restore /workspace/project --snapshot 1 --yes; RPC: workspace_restore(workspace_path=&#34;/workspace/project&#34;, snapshot_number=1)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:367">tests/unit/services/snapshot/test_service.py:367</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="workspace.snapshot" data-op-text="workspace.snapshot  workspace_snapshot ">
+<div class="op" data-op-id="workspace.snapshot" data-op-text="workspace.snapshot Create a numbered snapshot for a registered workspace. workspace_snapshot ">
   <div class="op-header">
     <span class="op-id">workspace.snapshot</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Create a numbered snapshot for a registered workspace.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>workspace_snapshot</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workspace snapshot /workspace/project --description &#34;Before refactor&#34;; RPC: workspace_snapshot(workspace_path=&#34;/workspace/project&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:86">tests/unit/services/snapshot/test_service.py:86</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -7840,213 +7924,213 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="snapshot.begin" data-op-text="snapshot.begin  snapshot_begin ">
+<div class="op" data-op-id="snapshot.begin" data-op-text="snapshot.begin Begin a transactional snapshot through the workspace RPC service facade. snapshot_begin ">
   <div class="op-header">
     <span class="op-id">snapshot.begin</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Begin a transactional snapshot through the workspace RPC service facade.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_begin</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: snapshot_begin(agent_id=&#34;alice&#34;, zone_id=&#34;root&#34;, description=&#34;Before migration&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:86">tests/unit/services/snapshot/test_service.py:86</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.cli" data-op-text="snapshot.cli  nexus snapshot ">
+<div class="op" data-op-id="snapshot.cli" data-op-text="snapshot.cli CLI group for transactional snapshot create/list/info/entries/commit/restore. nexus snapshot ">
   <div class="op-header">
     <span class="op-id">snapshot.cli</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI group for transactional snapshot create/list/info/entries/commit/restore.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus snapshot</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot create --description &#34;Before migration&#34;; nexus snapshot info TXN; nexus snapshot entries TXN; nexus snapshot commit TXN; nexus snapshot restore TXN</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:184">tests/unit/cli/test_lifecycle_surface_cli.py:184</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.commit" data-op-text="snapshot.commit  snapshot_commit ">
+<div class="op" data-op-id="snapshot.commit" data-op-text="snapshot.commit Commit a transactional snapshot. snapshot_commit ">
   <div class="op-header">
     <span class="op-id">snapshot.commit</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Commit a transactional snapshot.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_commit</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot commit TXN; RPC: await snapshot_commit(transaction_id=&#34;TXN&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/server/rpc/services/test_snapshots_rpc.py:61">tests/unit/server/rpc/services/test_snapshots_rpc.py:61</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.create" data-op-text="snapshot.create  snapshot_create ">
+<div class="op" data-op-id="snapshot.create" data-op-text="snapshot.create Create a transactional snapshot. snapshot_create ">
   <div class="op-header">
     <span class="op-id">snapshot.create</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Create a transactional snapshot.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_create</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot create --description &#34;Before migration&#34;; RPC: await snapshot_create(description=&#34;Before migration&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:86">tests/unit/services/snapshot/test_service.py:86</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.get" data-op-text="snapshot.get  snapshot_get ">
+<div class="op" data-op-id="snapshot.get" data-op-text="snapshot.get Get one snapshot transaction by id. snapshot_get ">
   <div class="op-header">
     <span class="op-id">snapshot.get</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Get one snapshot transaction by id.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_get</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot info TXN; RPC: await snapshot_get(transaction_id=&#34;TXN&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/server/rpc/services/test_snapshots_rpc.py:46">tests/unit/server/rpc/services/test_snapshots_rpc.py:46</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.list" data-op-text="snapshot.list  snapshot_list ">
+<div class="op" data-op-id="snapshot.list" data-op-text="snapshot.list List transactional snapshot records. snapshot_list ">
   <div class="op-header">
     <span class="op-id">snapshot.list</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List transactional snapshot records.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_list</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot list; RPC: await snapshot_list()</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:523">tests/unit/services/snapshot/test_service.py:523</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.list_entries" data-op-text="snapshot.list_entries  snapshot_list_entries ">
+<div class="op" data-op-id="snapshot.list_entries" data-op-text="snapshot.list_entries List paths captured in a snapshot transaction. snapshot_list_entries ">
   <div class="op-header">
     <span class="op-id">snapshot.list_entries</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List paths captured in a snapshot transaction.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_list_entries</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot entries TXN; RPC: await snapshot_list_entries(transaction_id=&#34;TXN&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/server/rpc/services/test_snapshots_rpc.py:69">tests/unit/server/rpc/services/test_snapshots_rpc.py:69</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.restore" data-op-text="snapshot.restore  snapshot_restore ">
+<div class="op" data-op-id="snapshot.restore" data-op-text="snapshot.restore Rollback a transactional snapshot transaction. snapshot_restore ">
   <div class="op-header">
     <span class="op-id">snapshot.restore</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Rollback a transactional snapshot transaction.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_restore</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus snapshot restore TXN; RPC: await snapshot_restore(txn_id=&#34;TXN&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:367">tests/unit/services/snapshot/test_service.py:367</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshot.rollback" data-op-text="snapshot.rollback  snapshot_rollback ">
+<div class="op" data-op-id="snapshot.rollback" data-op-text="snapshot.rollback Rollback a transactional snapshot through the workspace RPC service facade. snapshot_rollback ">
   <div class="op-header">
     <span class="op-id">snapshot.rollback</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Rollback a transactional snapshot through the workspace RPC service facade.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>snapshot_rollback</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: snapshot_rollback(snapshot_id=&#34;TXN&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/snapshot/test_service.py:367">tests/unit/services/snapshot/test_service.py:367</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.api_v2" data-op-text="snapshots.api_v2  POST /api/v2/snapshots ">
+<div class="op" data-op-id="snapshots.api_v2" data-op-text="snapshots.api_v2 HTTP transactional snapshot create/list endpoint. POST /api/v2/snapshots ">
   <div class="op-header">
     <span class="op-id">snapshots.api_v2</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot create/list endpoint.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/snapshots</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /api/v2/snapshots; GET /api/v2/snapshots</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8092,171 +8176,171 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.txn_id" data-op-text="snapshots.txn_id  GET /{txn_id} ">
+<div class="op" data-op-id="snapshots.txn_id" data-op-text="snapshots.txn_id HTTP transactional snapshot get endpoint discovered from router-local path. GET /{txn_id} ">
   <div class="op-header">
     <span class="op-id">snapshots.txn_id</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot get endpoint discovered from router-local path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /{txn_id}</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: GET /{txn_id}</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.txn_id_commit" data-op-text="snapshots.txn_id_commit  POST /{txn_id}/commit ">
+<div class="op" data-op-id="snapshots.txn_id_commit" data-op-text="snapshots.txn_id_commit HTTP transactional snapshot commit endpoint discovered from router-local path. POST /{txn_id}/commit ">
   <div class="op-header">
     <span class="op-id">snapshots.txn_id_commit</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot commit endpoint discovered from router-local path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /{txn_id}/commit</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /{txn_id}/commit</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.txn_id_entries" data-op-text="snapshots.txn_id_entries  GET /{txn_id}/entries ">
+<div class="op" data-op-id="snapshots.txn_id_entries" data-op-text="snapshots.txn_id_entries HTTP transactional snapshot entries endpoint discovered from router-local path. GET /{txn_id}/entries ">
   <div class="op-header">
     <span class="op-id">snapshots.txn_id_entries</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot entries endpoint discovered from router-local path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /{txn_id}/entries</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: GET /{txn_id}/entries</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.txn_id_rollback" data-op-text="snapshots.txn_id_rollback  POST /{txn_id}/rollback ">
+<div class="op" data-op-id="snapshots.txn_id_rollback" data-op-text="snapshots.txn_id_rollback HTTP transactional snapshot rollback endpoint discovered from router-local path. POST /{txn_id}/rollback ">
   <div class="op-header">
     <span class="op-id">snapshots.txn_id_rollback</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot rollback endpoint discovered from router-local path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /{txn_id}/rollback</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /{txn_id}/rollback</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:292">tests/e2e/server/test_cli_commands_e2e.py:292</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.{txn_id}" data-op-text="snapshots.{txn_id}  GET /api/v2/snapshots/{txn_id} ">
+<div class="op" data-op-id="snapshots.{txn_id}" data-op-text="snapshots.{txn_id} HTTP transactional snapshot get endpoint. GET /api/v2/snapshots/{txn_id} ">
   <div class="op-header">
     <span class="op-id">snapshots.{txn_id}</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot get endpoint.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/snapshots/{txn_id}</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: GET /api/v2/snapshots/{txn_id}</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.{txn_id}_commit" data-op-text="snapshots.{txn_id}_commit  POST /api/v2/snapshots/{txn_id}/commit ">
+<div class="op" data-op-id="snapshots.{txn_id}_commit" data-op-text="snapshots.{txn_id}_commit HTTP transactional snapshot commit endpoint. POST /api/v2/snapshots/{txn_id}/commit ">
   <div class="op-header">
     <span class="op-id">snapshots.{txn_id}_commit</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot commit endpoint.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/snapshots/{txn_id}/commit</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /api/v2/snapshots/{txn_id}/commit</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.{txn_id}_entries" data-op-text="snapshots.{txn_id}_entries  GET /api/v2/snapshots/{txn_id}/entries ">
+<div class="op" data-op-id="snapshots.{txn_id}_entries" data-op-text="snapshots.{txn_id}_entries HTTP transactional snapshot entries endpoint. GET /api/v2/snapshots/{txn_id}/entries ">
   <div class="op-header">
     <span class="op-id">snapshots.{txn_id}_entries</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot entries endpoint.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/snapshots/{txn_id}/entries</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: GET /api/v2/snapshots/{txn_id}/entries</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:268">tests/e2e/server/test_cli_commands_e2e.py:268</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="snapshots.{txn_id}_rollback" data-op-text="snapshots.{txn_id}_rollback  POST /api/v2/snapshots/{txn_id}/rollback ">
+<div class="op" data-op-id="snapshots.{txn_id}_rollback" data-op-text="snapshots.{txn_id}_rollback HTTP transactional snapshot rollback endpoint. POST /api/v2/snapshots/{txn_id}/rollback ">
   <div class="op-header">
     <span class="op-id">snapshots.{txn_id}_rollback</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP transactional snapshot rollback endpoint.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/snapshots/{txn_id}/rollback</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>HTTP: POST /api/v2/snapshots/{txn_id}/rollback</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_cli_commands_e2e.py:292">tests/e2e/server/test_cli_commands_e2e.py:292</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8271,87 +8355,87 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="diff.versions" data-op-text="diff.versions  diff_versions ">
+<div class="op" data-op-id="diff.versions" data-op-text="diff.versions Compare two file versions by metadata or content. diff_versions ">
   <div class="op-header">
     <span class="op-id">diff.versions</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Compare two file versions by metadata or content.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>diff_versions</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus versions diff /workspace/hello.txt --v1 1 --v2 2 --mode metadata; RPC: diff_versions(path=&#34;/workspace/hello.txt&#34;, v1=1, v2=2)</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_extracted_services_e2e.py:93">tests/e2e/server/test_extracted_services_e2e.py:93</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.version" data-op-text="get.version  get_version ">
+<div class="op" data-op-id="get.version" data-op-text="get.version Fetch content for a specific file version. get_version ">
   <div class="op-header">
     <span class="op-id">get.version</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Fetch content for a specific file version.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_version</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus versions get /workspace/hello.txt --version 1; RPC: get_version(path=&#34;/workspace/hello.txt&#34;, version=1)</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_extracted_services_e2e.py:85">tests/e2e/server/test_extracted_services_e2e.py:85</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.versions" data-op-text="list.versions  list_versions ">
+<div class="op" data-op-id="list.versions" data-op-text="list.versions List file version history. list_versions ">
   <div class="op-header">
     <span class="op-id">list.versions</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List file version history.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_versions</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus versions history /workspace/hello.txt; RPC: list_versions({&#34;path&#34;:&#34;/workspace/hello.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_extracted_services_e2e.py:66">tests/e2e/server/test_extracted_services_e2e.py:66</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="versioning.rollback" data-op-text="versioning.rollback  rollback ">
+<div class="op" data-op-id="versioning.rollback" data-op-text="versioning.rollback Rollback a file to a previous version and create a new version entry. rollback ">
   <div class="op-header">
     <span class="op-id">versioning.rollback</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Rollback a file to a previous version and create a new version entry.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rollback</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus versions rollback /workspace/hello.txt --version 1 --yes; RPC: rollback(path=&#34;/workspace/hello.txt&#34;, version=1)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_version_service.py:247">tests/unit/services/test_version_service.py:247</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8376,45 +8460,45 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="versioning.version" data-op-text="versioning.version  nexus version ">
+<div class="op" data-op-id="versioning.version" data-op-text="versioning.version Legacy singular version command alias row; users should prefer nexus versions. nexus version ">
   <div class="op-header">
     <span class="op-id">versioning.version</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Legacy singular version command alias row; users should prefer nexus versions.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus version</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus versions history /workspace/hello.txt</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_extracted_services_e2e.py:66">tests/e2e/server/test_extracted_services_e2e.py:66</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="versioning.versions" data-op-text="versioning.versions  nexus versions ">
+<div class="op" data-op-id="versioning.versions" data-op-text="versioning.versions CLI group for file version history, get, diff, and rollback. nexus versions ">
   <div class="op-header">
     <span class="op-id">versioning.versions</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI group for file version history, get, diff, and rollback.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus versions</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus versions history /workspace/hello.txt; nexus versions get /workspace/hello.txt --version 1; nexus versions diff /workspace/hello.txt --v1 1 --v2 2</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_extracted_services_e2e.py:66">tests/e2e/server/test_extracted_services_e2e.py:66</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10049,10 +10133,10 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="agent.heartbeat" data-op-text="agent.heartbeat  agent_heartbeat ">
+<div class="op" data-op-id="agent.heartbeat" data-op-text="agent.heartbeat Record agent liveness heartbeat in the runtime agent registry. agent_heartbeat ">
   <div class="op-header">
     <span class="op-id">agent.heartbeat</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Record agent liveness heartbeat in the runtime agent registry.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>agent_heartbeat</span></span>
@@ -10063,17 +10147,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent heartbeat alice_bot; RPC: agent_heartbeat(&#34;alice_bot&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_agent_rpc_service_lifecycle.py:96">tests/unit/services/test_agent_rpc_service_lifecycle.py:96</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="agent.list_by_zone" data-op-text="agent.list_by_zone  agent_list_by_zone ">
+<div class="op" data-op-id="agent.list_by_zone" data-op-text="agent.list_by_zone List runtime agents in a zone, optionally filtered by lifecycle state. agent_list_by_zone ">
   <div class="op-header">
     <span class="op-id">agent.list_by_zone</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List runtime agents in a zone, optionally filtered by lifecycle state.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>agent_list_by_zone</span></span>
@@ -10084,10 +10168,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: agent_list_by_zone(&#34;root&#34;, state=&#34;READY&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_agent_rpc_service_lifecycle.py:114">tests/unit/services/test_agent_rpc_service_lifecycle.py:114</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10112,10 +10196,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="agent.transition" data-op-text="agent.transition  agent_transition ">
+<div class="op" data-op-id="agent.transition" data-op-text="agent.transition Transition agent lifecycle state with optional generation-based stale-agent rejection. agent_transition ">
   <div class="op-header">
     <span class="op-id">agent.transition</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Transition agent lifecycle state with optional generation-based stale-agent rejection.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>agent_transition</span></span>
@@ -10126,17 +10210,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent transition alice_bot CONNECTED --expected-generation 7; RPC: await agent_transition(&#34;alice_bot&#34;, &#34;CONNECTED&#34;, expected_generation=7)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_agent_rpc_service_lifecycle.py:106">tests/unit/services/test_agent_rpc_service_lifecycle.py:106</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="agent_log.agent" data-op-text="agent_log.agent  nexus agent ">
+<div class="op" data-op-id="agent_log.agent" data-op-text="agent_log.agent CLI group for registering, updating, listing, inspecting, deleting, transitioning, and heartbeating agents. nexus agent ">
   <div class="op-header">
     <span class="op-id">agent_log.agent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI group for registering, updating, listing, inspecting, deleting, transitioning, and heartbeating agents.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus agent</span></span>
@@ -10147,10 +10231,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent register alice_bot &#34;Alice Bot&#34;; nexus agent update alice_bot --metadata tier=gold; nexus agent transition alice_bot CONNECTED; nexus agent heartbeat alice_bot</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:33">tests/unit/cli/test_lifecycle_surface_cli.py:33</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10511,10 +10595,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="delete.agent" data-op-text="delete.agent  delete_agent ">
+<div class="op" data-op-id="delete.agent" data-op-text="delete.agent Delete an agent registration, revoke keys, and clean related permissions when available. delete_agent ">
   <div class="op-header">
     <span class="op-id">delete.agent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Delete an agent registration, revoke keys, and clean related permissions when available.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>delete_agent</span></span>
@@ -10525,10 +10609,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent delete alice_bot --yes; RPC: await nx.service(&#34;agent_rpc&#34;).delete_agent(&#34;alice_bot&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_agent_registration.py:260">tests/unit/services/test_agent_registration.py:260</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10680,10 +10764,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.agent" data-op-text="get.agent  get_agent ">
+<div class="op" data-op-id="get.agent" data-op-text="get.agent Fetch one registered agent and enrich it from its config when available. get_agent ">
   <div class="op-header">
     <span class="op-id">get.agent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Fetch one registered agent and enrich it from its config when available.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_agent</span></span>
@@ -10694,17 +10778,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent info alice_bot; RPC: await nx.service(&#34;agent_rpc&#34;).get_agent(&#34;alice_bot&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:33">tests/unit/cli/test_lifecycle_surface_cli.py:33</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.agents" data-op-text="list.agents  list_agents _AgentRegistryProxy.list_agents ">
+<div class="op" data-op-id="list.agents" data-op-text="list.agents List registered agent entities with API-key inheritance state. list_agents _AgentRegistryProxy.list_agents ">
   <div class="op-header">
     <span class="op-id">list.agents</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List registered agent entities with API-key inheritance state.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_agents</span></span>
@@ -10716,17 +10800,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent list; RPC: nx.service(&#34;agent_rpc&#34;).list_agents()</code></span>
+    <span>test: <a href="../../tests/unit/services/test_agent_rpc_service_lifecycle.py:60">tests/unit/services/test_agent_rpc_service_lifecycle.py:60</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="register.agent" data-op-text="register.agent  register_agent ">
+<div class="op" data-op-id="register.agent" data-op-text="register.agent Register an agent, create its config path, and optionally provision identity/API-key material. register_agent ">
   <div class="op-header">
     <span class="op-id">register.agent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Register an agent, create its config path, and optionally provision identity/API-key material.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>register_agent</span></span>
@@ -10737,10 +10821,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: await nx.service(&#34;agent_rpc&#34;).register_agent(&#34;alice_bot&#34;, &#34;Alice Bot&#34;, context={&#34;user_id&#34;:&#34;alice&#34;,&#34;zone_id&#34;:&#34;root&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/services/test_agent_registration.py:93">tests/unit/services/test_agent_registration.py:93</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10765,10 +10849,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="update.agent" data-op-text="update.agent  update_agent ">
+<div class="op" data-op-id="update.agent" data-op-text="update.agent Update stored agent configuration fields and metadata. update_agent ">
   <div class="op-header">
     <span class="op-id">update.agent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Update stored agent configuration fields and metadata.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>update_agent</span></span>
@@ -10779,10 +10863,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus agent update alice_bot --description &#34;Planner&#34; --metadata tier=gold; RPC: update_agent(&#34;alice_bot&#34;, metadata={&#34;tier&#34;:&#34;gold&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_lifecycle_surface_cli.py:33">tests/unit/cli/test_lifecycle_surface_cli.py:33</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4137">#4137</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13236,7 +13320,7 @@ graph TB
           <span class="mod-name">nexus_fs</span>
           <span class="mod-desc">&mdash; Python mixin stack: Content/Dispatch/Metadata/Watch. Calls Rust kernel.</span>
           <span class="mod-meta">
-            <span>32 ops</span>
+            <span>33 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -13744,6 +13828,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="sys.read_raw" data-op-text="sys.read_raw  KernelClient.sys_read_raw ">
+  <div class="op-header">
+    <span class="op-id">sys.read_raw</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_read_raw</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="sys.readdir" data-op-text="sys.readdir  KernelClient.sys_readdir ">
   <div class="op-header">
     <span class="op-id">sys.readdir</span>
@@ -13925,7 +14030,7 @@ graph TB
           <span class="mod-name">uncategorized</span>
           <span class="mod-desc">&mdash; Operations the classifier couldn&#39;t place. Add a rule in taxonomy.py.</span>
           <span class="mod-meta">
-            <span>65 ops</span>
+            <span>67 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -14643,6 +14748,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="register.external" data-op-text="register.external  _AgentRegistryProxy.register_external ">
+  <div class="op-header">
+    <span class="op-id">register.external</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.register_external</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="register.hook" data-op-text="register.hook  KernelClient.register_hook ">
   <div class="op-header">
     <span class="op-id">register.hook</span>
@@ -15259,6 +15385,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus upgrade</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="unregister.external" data-op-text="unregister.external  _AgentRegistryProxy.unregister_external ">
+  <div class="op-header">
+    <span class="op-id">unregister.external</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.unregister_external</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">

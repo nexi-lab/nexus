@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from nexus.remote.kernel_client import (
     KernelClient,
+    _find_free_port,
     _resolve_kernel_binary,
     _resolve_kernel_data_dir,
 )
@@ -63,6 +64,147 @@ def test_kernel_client_keeps_directory_metadata_path(tmp_path) -> None:
     metadata_dir.mkdir()
 
     assert _resolve_kernel_data_dir(str(metadata_dir)) == str(metadata_dir)
+
+
+def test_kernel_client_port_selection_avoids_reserved_vfs_grpc_port(monkeypatch) -> None:
+    ports = iter([2028, 2126])
+
+    class FakeSocket:
+        def __enter__(self) -> "FakeSocket":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def bind(self, _addr: tuple[str, int]) -> None:
+            return None
+
+        def getsockname(self) -> tuple[str, int]:
+            return ("127.0.0.1", next(ports))
+
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "2028")
+    monkeypatch.setattr("socket.socket", lambda *_args, **_kwargs: FakeSocket())
+
+    assert _find_free_port() == 2126
+
+
+def test_kernel_client_sys_read_raw_returns_bytes() -> None:
+    class FakeTransport:
+        def read_file(self, *_args: object, **_kwargs: object) -> bytes:
+            return b"raw-content"
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    assert client.sys_read_raw("/workspace/file.txt", "root") == b"raw-content"
+
+
+def test_kernel_client_agent_registry_is_property_proxy() -> None:
+    client = KernelClient(server_address="127.0.0.1:1")
+
+    assert hasattr(client.agent_registry, "register_external")
+
+
+def test_kernel_client_agent_registry_proxy_wraps_external_lifecycle_calls() -> None:
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            self.calls.append((method, params))
+            if method == "agent_register_external":
+                return {
+                    "pid": params["connection_id"],
+                    "name": params["name"],
+                    "kind": "UNMANAGED",
+                    "owner_id": params["owner_id"],
+                    "zone_id": params["zone_id"],
+                    "state": "REGISTERED",
+                    "generation": 1,
+                    "created_at_ms": 1_700_000_000_000,
+                    "updated_at_ms": 1_700_000_000_000,
+                    "external_info": {"connection_id": params["connection_id"]},
+                    "labels": {"capabilities": "search,cache"},
+                }
+            if method == "agent_signal":
+                return {
+                    "pid": params["pid"],
+                    "name": "agent",
+                    "kind": "UNMANAGED",
+                    "owner_id": "admin",
+                    "zone_id": "root",
+                    "state": "SUSPENDED",
+                    "generation": 1,
+                    "created_at_ms": 1_700_000_000_000,
+                    "updated_at_ms": 1_700_000_000_001,
+                    "external_info": {"connection_id": params["pid"]},
+                }
+            if method == "agent_update_state":
+                return {
+                    "pid": params["pid"],
+                    "name": "agent",
+                    "kind": "UNMANAGED",
+                    "owner_id": "admin",
+                    "zone_id": "root",
+                    "state": "WARMING_UP",
+                    "generation": 1,
+                    "created_at_ms": 1_700_000_000_000,
+                    "updated_at_ms": 1_700_000_000_001,
+                    "external_info": {"connection_id": params["pid"]},
+                }
+            if method == "agent_list":
+                return []
+            return None
+
+    from nexus.contracts.process_types import AgentSignal, AgentState
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    transport = FakeTransport()
+    client._transport = transport
+
+    desc = client.agent_registry.register_external(
+        name="agent",
+        owner_id="admin",
+        zone_id="root",
+        connection_id="admin,agent",
+    )
+    transitioned = client.agent_registry.signal("admin,agent", AgentSignal.SIGSTOP)
+    warming = client.agent_registry.update_state("admin,agent", AgentState.WARMING_UP.value)
+    listed = client.agent_registry.list_processes(zone_id="root", state=AgentState.SUSPENDED)
+
+    assert desc.pid == "admin,agent"
+    assert desc.state == AgentState.REGISTERED
+    assert desc.capabilities == ["search", "cache"]
+    assert transitioned.state == AgentState.SUSPENDED
+    assert warming.state == AgentState.WARMING_UP
+    assert listed == []
+    assert transport.calls == [
+        (
+            "agent_register_external",
+            {
+                "name": "agent",
+                "owner_id": "admin",
+                "zone_id": "root",
+                "connection_id": "admin,agent",
+                "host_pid": None,
+                "remote_addr": None,
+                "protocol": "grpc",
+                "parent_pid": None,
+                "labels": {},
+            },
+        ),
+        ("agent_signal", {"pid": "admin,agent", "sig": "SIGSTOP", "payload": {}}),
+        ("agent_update_state", {"pid": "admin,agent", "state": "warming_up"}),
+        (
+            "agent_list",
+            {"zone_id": "root", "owner_id": None, "kind": None, "state": "suspended"},
+        ),
+    ]
 
 
 def test_kernel_client_sys_read_honors_nonblocking_timeout() -> None:

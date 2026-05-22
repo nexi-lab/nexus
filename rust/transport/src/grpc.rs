@@ -404,6 +404,8 @@ pub(crate) enum RpcErrorCode {
     PermissionError = -32003,
     AccessDenied = -32018,
     FileNotFound = -32007,
+    ValidationError = -32005,
+    Conflict = -32006,
     InternalError = -32603,
 }
 

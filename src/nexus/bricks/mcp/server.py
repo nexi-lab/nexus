@@ -12,7 +12,12 @@ import contextvars
 import inspect
 import json
 import logging
+from collections.abc import Coroutine
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
@@ -84,6 +89,18 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
         token: The token returned by set_request_api_key()
     """
     _request_api_key.reset(token)
+
+
+def _json_default(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    return str(value)
 
 
 def register_policy_gate_dependency(app: Any, gate: PolicyGate) -> None:
@@ -255,6 +272,76 @@ async def create_mcp_server(
 
         _connection_cache[request_api_key] = new_nx
         return new_nx
+
+    def _service(nx_instance: Any, name: str) -> Any | None:
+        service_fn = getattr(nx_instance, "service", None)
+        if not callable(service_fn):
+            return None
+        try:
+            return service_fn(name)
+        except Exception:
+            return None
+
+    def _workflow_api(nx_instance: Any) -> Any | None:
+        workflows = getattr(nx_instance, "workflows", None)
+        if workflows is not None:
+            return workflows
+        return _service(nx_instance, "workflow_engine")
+
+    def _declared_callable(obj: Any, name: str) -> Any | None:
+        try:
+            inspect.getattr_static(obj, name)
+        except AttributeError:
+            return None
+        value = getattr(obj, name, None)
+        return value if callable(value) else None
+
+    def _run_maybe_async(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            from nexus.lib.sync_bridge import run_sync
+
+            return run_sync(cast(Coroutine[Any, Any, Any], value), timeout=30.0)
+        return value
+
+    def _sandbox_rpc_service(nx_instance: Any) -> Any | None:
+        return _service(nx_instance, "sandbox_rpc")
+
+    def _sandbox_rpc_available(nx_instance: Any) -> bool:
+        service = _sandbox_rpc_service(nx_instance)
+
+        explicit_available = getattr(nx_instance, "sandbox_available", None)
+        if explicit_available is False:
+            return False
+        if explicit_available is True:
+            return True
+
+        if service is None:
+            ensure = getattr(nx_instance, "_ensure_sandbox_manager", None)
+            if callable(ensure):
+                try:
+                    ensure()
+                    service = _sandbox_rpc_service(nx_instance)
+                except Exception:
+                    service = None
+
+        if service is None:
+            return False
+
+        providers_fn = getattr(service, "available_providers", None)
+        if callable(providers_fn):
+            providers = providers_fn()
+            if isinstance(providers, list | tuple | set | frozenset):
+                return bool(providers)
+            return False
+
+        is_available = getattr(service, "is_available", None)
+        if callable(is_available):
+            available = is_available()
+            if isinstance(available, bool):
+                return available
+            return False
+
+        return False
 
     # Create FastMCP server
     mcp = FastMCP(name)
@@ -1456,14 +1543,24 @@ async def create_mcp_server(
             JSON string with list of workflows
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "workflows"):
+        workflows_api = _workflow_api(nx_instance)
+        if workflows_api is None:
             return tool_error(
                 "unavailable",
                 "Workflow system not available (requires NexusFS with workflows enabled).",
             )
 
-        workflows = nx_instance.workflows.list_workflows()
-        return json.dumps(workflows, indent=2)
+        list_fn = _declared_callable(workflows_api, "list_workflows") or _declared_callable(
+            workflows_api, "list"
+        )
+        if not callable(list_fn):
+            return tool_error(
+                "unavailable",
+                "Workflow system not available (workflow API cannot list workflows).",
+            )
+
+        workflows = _run_maybe_async(list_fn())
+        return json.dumps(workflows, indent=2, default=_json_default)
 
     @mcp.tool(
         annotations={
@@ -1487,7 +1584,8 @@ async def create_mcp_server(
             Workflow execution result
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "workflows"):
+        workflows_api = _workflow_api(nx_instance)
+        if workflows_api is None:
             return tool_error(
                 "unavailable",
                 "Workflow system not available (requires NexusFS with workflows enabled).",
@@ -1500,8 +1598,22 @@ async def create_mcp_server(
                 "invalid_input", "Invalid JSON in inputs parameter. Provide valid JSON string."
             )
 
-        result = nx_instance.workflows.execute(name, **input_dict)
-        return json.dumps(result, indent=2)
+        execute_fn = _declared_callable(workflows_api, "execute")
+        trigger_fn = _declared_callable(workflows_api, "trigger_workflow")
+        if execute_fn is not None:
+            result = execute_fn(name, **input_dict)
+        elif trigger_fn is not None:
+            result = trigger_fn(name, input_dict)
+        else:
+            return tool_error(
+                "unavailable",
+                "Workflow system not available (workflow API cannot execute workflows).",
+            )
+
+        result = _run_maybe_async(result)
+        if result is None:
+            return tool_error("not_found", f"Workflow not found or disabled: {name}")
+        return json.dumps(result, indent=2, default=_json_default)
 
     # =========================================================================
     # SANDBOX EXECUTION TOOLS (Conditional Registration)
@@ -1530,19 +1642,7 @@ async def create_mcp_server(
 
     # Check if sandbox support is available
     # First check the explicit sandbox_available property, then probe internals
-    sandbox_available = False
-    try:
-        sa = getattr(_default_nx, "sandbox_available", None)
-        if sa is False:
-            sandbox_available = False
-        elif sa is True:
-            sandbox_available = True
-        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
-            _default_nx._ensure_sandbox_manager()
-            if getattr(_default_nx, "sandbox_available", False):
-                sandbox_available = True
-    except Exception:
-        sandbox_available = False
+    sandbox_available = _sandbox_rpc_available(_default_nx)
 
     # Only register sandbox tools if available
     if sandbox_available:
@@ -1560,7 +1660,10 @@ async def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_run(
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            result = sandbox_rpc.sandbox_run(
                 sandbox_id=sandbox_id, language="python", code=code, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1578,7 +1681,10 @@ async def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_run(
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            result = sandbox_rpc.sandbox_run(
                 sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1586,21 +1692,33 @@ async def create_mcp_server(
         @mcp.tool()
         @handle_tool_errors("creating sandbox")
         def nexus_sandbox_create(
-            name: str, ttl_minutes: int = 10, ctx: Context | None = None
+            name: str,
+            ttl_minutes: int = 10,
+            provider: str | None = None,
+            template_id: str | None = None,
+            ctx: Context | None = None,
         ) -> str:
             """Create a new sandbox for code execution.
 
             Args:
                 name: User-friendly sandbox name
                 ttl_minutes: Idle timeout in minutes (default: 10)
+                provider: Optional sandbox provider (for example, "docker" or "monty")
+                template_id: Optional provider template or image identifier
 
             Returns:
                 JSON string with sandbox_id and metadata
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_create(
-                name=name, ttl_minutes=ttl_minutes
-            )
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            create_kwargs: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes}
+            if provider is not None:
+                create_kwargs["provider"] = provider
+            if template_id is not None:
+                create_kwargs["template_id"] = template_id
+            result = sandbox_rpc.sandbox_create(**create_kwargs)
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1612,7 +1730,10 @@ async def create_mcp_server(
                 JSON string with list of sandboxes
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_list()
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            result = sandbox_rpc.sandbox_list()
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1627,7 +1748,10 @@ async def create_mcp_server(
                 Success message or error
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            nx_instance.service("sandbox_rpc").sandbox_stop(sandbox_id)
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            sandbox_rpc.sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================

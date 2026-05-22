@@ -61,7 +61,18 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "acp_history",
     ),
     "user_provisioning": ("provision_user", "deprovision_user"),
-    "sandbox_rpc": ("sandbox_create", "sandbox_run", "sandbox_list", "sandbox_status"),
+    "sandbox_rpc": (
+        "sandbox_create",
+        "sandbox_get_or_create",
+        "sandbox_run",
+        "sandbox_pause",
+        "sandbox_resume",
+        "sandbox_stop",
+        "sandbox_list",
+        "sandbox_status",
+        "sandbox_connect",
+        "sandbox_disconnect",
+    ),
     "metadata_export": ("export_metadata", "import_metadata"),
 }
 

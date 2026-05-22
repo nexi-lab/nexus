@@ -25,6 +25,7 @@ References:
     - Kong: tool filtering at gateway level
 """
 
+import inspect
 import logging
 import threading
 from collections.abc import Sequence
@@ -103,7 +104,7 @@ class ToolNamespaceMiddleware(Middleware):
         if not self._enabled:
             return all_tools
 
-        subject = self._extract_subject(context)
+        subject = await self._extract_subject_async(context)
         if subject is None:
             # No subject identity → return all tools (backward compat / admin)
             return all_tools
@@ -134,7 +135,7 @@ class ToolNamespaceMiddleware(Middleware):
         if not self._enabled:
             return await call_next(context)
 
-        subject = self._extract_subject(context)
+        subject = await self._extract_subject_async(context)
         if subject is None:
             # No subject identity → allow (backward compat / admin)
             return await call_next(context)
@@ -261,7 +262,7 @@ class ToolNamespaceMiddleware(Middleware):
     # Subject extraction
     # ------------------------------------------------------------------
 
-    def _extract_subject(
+    async def _extract_subject_async(
         self,
         context: MiddlewareContext[Any],
     ) -> tuple[str, str] | None:
@@ -275,6 +276,19 @@ class ToolNamespaceMiddleware(Middleware):
 
         Returns:
             (subject_type, subject_id) tuple, or None if not available.
+        """
+        if context.fastmcp_context is None:
+            return None
+        return await self._extract_subject_from_ctx_async(context.fastmcp_context)
+
+    def _extract_subject(
+        self,
+        context: MiddlewareContext[Any],
+    ) -> tuple[str, str] | None:
+        """Extract subject identity from middleware context synchronously.
+
+        Kept for older sync tests and callers. Runtime middleware hooks use
+        ``_extract_subject_async`` so FastMCP 3.x async context state is awaited.
         """
         if context.fastmcp_context is None:
             return None
@@ -307,6 +321,28 @@ class ToolNamespaceMiddleware(Middleware):
 
         return self._get_visible_tools(subject)
 
+    async def _extract_subject_from_ctx_async(self, ctx: Any) -> tuple[str, str] | None:
+        """Extract subject identity from sync or async FastMCP context state."""
+        if not hasattr(ctx, "get_state"):
+            return None
+
+        try:
+            subject_type = await _maybe_await(ctx.get_state("subject_type"))
+            subject_id = await _maybe_await(ctx.get_state("subject_id"))
+            if subject_type and subject_id:
+                return (str(subject_type), str(subject_id))
+        except Exception as e:
+            logger.warning("Failed to extract subject identity from context: %s", e)
+
+        try:
+            api_key = await _maybe_await(ctx.get_state("api_key"))
+            if api_key:
+                return ("api_key", str(api_key))
+        except Exception as e:
+            logger.warning("Failed to extract API key from context: %s", e)
+
+        return None
+
     def _extract_subject_from_ctx(self, ctx: Any) -> tuple[str, str] | None:
         """Extract subject identity from a FastMCP Context.
 
@@ -323,17 +359,17 @@ class ToolNamespaceMiddleware(Middleware):
             return None
 
         try:
-            subject_type = ctx.get_state("subject_type")
-            subject_id = ctx.get_state("subject_id")
+            subject_type = _sync_state_or_none(ctx, "subject_type")
+            subject_id = _sync_state_or_none(ctx, "subject_id")
             if subject_type and subject_id:
-                return (subject_type, subject_id)
+                return (str(subject_type), str(subject_id))
         except Exception as e:
             logger.warning("Failed to extract subject identity from context: %s", e)
 
         try:
-            api_key = ctx.get_state("api_key")
+            api_key = _sync_state_or_none(ctx, "api_key")
             if api_key:
-                return ("api_key", api_key)
+                return ("api_key", str(api_key))
         except Exception as e:
             logger.warning("Failed to extract API key from context: %s", e)
 
@@ -388,3 +424,18 @@ def _text_content(text: str) -> Any:
     import mcp.types as mt
 
     return mt.TextContent(type="text", text=text)
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _sync_state_or_none(ctx: Any, key: str) -> Any:
+    value = ctx.get_state(key)
+    if inspect.isawaitable(value):
+        if inspect.iscoroutine(value):
+            value.close()
+        return None
+    return value

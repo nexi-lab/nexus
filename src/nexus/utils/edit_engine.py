@@ -27,16 +27,22 @@ References:
 import difflib
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from importlib.util import find_spec
+from typing import Any, Literal
 
-# Try to use rapidfuzz for 10-100x faster fuzzy matching (Rust-backed)
-# Falls back to difflib if not available
-try:
-    from rapidfuzz import fuzz as rapidfuzz_fuzz
+# Try to use rapidfuzz for 10-100x faster fuzzy matching (Rust-backed).
+# Keep the import lazy so exact-match edits do not pay fuzzy startup cost.
+RAPIDFUZZ_AVAILABLE = find_spec("rapidfuzz") is not None
+_rapidfuzz_fuzz: Any | None = None
 
-    RAPIDFUZZ_AVAILABLE = True
-except ImportError:
-    RAPIDFUZZ_AVAILABLE = False
+
+def _rapidfuzz_ratio(s1: str, s2: str) -> float:
+    global _rapidfuzz_fuzz
+    if _rapidfuzz_fuzz is None:
+        from rapidfuzz import fuzz
+
+        _rapidfuzz_fuzz = fuzz
+    return float(_rapidfuzz_fuzz.ratio(s1, s2)) / 100.0
 
 
 @dataclass(slots=True)
@@ -530,8 +536,7 @@ class EditEngine:
             Similarity ratio between 0.0 and 1.0.
         """
         if RAPIDFUZZ_AVAILABLE:
-            # rapidfuzz returns 0-100, convert to 0-1
-            return float(rapidfuzz_fuzz.ratio(s1, s2)) / 100.0
+            return _rapidfuzz_ratio(s1, s2)
         else:
             # difflib fallback
             return difflib.SequenceMatcher(None, s1, s2).ratio()

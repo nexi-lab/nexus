@@ -35,6 +35,8 @@ _SDK_DEFAULT_MODULE = "fs"
 _BARE_MCP_TOOL_OVERRIDES = {
     "glob": "search.glob",
     "grep": "search.grep",
+    "mkdir": "filesystem.mkdir",
+    "rmdir": "filesystem.rmdir",
 }
 
 

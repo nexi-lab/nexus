@@ -138,6 +138,80 @@ class MCPService:
             self._mcp_mount_manager.set_zone(zone_id)
 
     # =========================================================================
+    # Public API: Hub Administration
+    # =========================================================================
+
+    def admin_hub_status(self) -> dict[str, Any]:
+        """Read local hub status for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.get_hub_status(self._hub_session_factory())
+
+    def admin_hub_token_list(self, *, show_revoked: bool = False) -> dict[str, Any]:
+        """List local hub tokens for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.list_hub_tokens(
+            self._hub_session_factory(),
+            show_revoked=show_revoked,
+        )
+
+    def admin_hub_token_create(
+        self,
+        *,
+        name: str,
+        zones: str | None = None,
+        zones_glob: str | None = None,
+        admin: bool = False,
+        expires: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a local hub token for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.create_hub_token(
+            self._hub_session_factory(),
+            name=name,
+            zones_csv=zones,
+            zones_glob=zones_glob,
+            is_admin=admin,
+            expires=expires,
+            user_id=user_id,
+        )
+
+    def admin_hub_token_revoke(self, *, identifier: str) -> dict[str, Any]:
+        """Revoke a local hub token for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.revoke_hub_token(
+            self._hub_session_factory(),
+            identifier=identifier,
+        )
+
+    def _hub_session_factory(self) -> Any:
+        record_store = getattr(self._filesystem, "_record_store", None)
+        session_factory = getattr(record_store, "session_factory", None)
+        if callable(session_factory):
+            return session_factory
+
+        from nexus.hub import admin_ops
+
+        return admin_ops.get_env_session_factory()
+
+    def _require_admin(self) -> None:
+        context = getattr(self._filesystem, "_init_cred", None)
+        if getattr(context, "is_admin", False):
+            return
+
+        from nexus.contracts.exceptions import NexusPermissionError
+
+        raise NexusPermissionError("hub_admin", "Admin privileges required")
+
+    # =========================================================================
     # Public API: MCP Mount Management
     # =========================================================================
 

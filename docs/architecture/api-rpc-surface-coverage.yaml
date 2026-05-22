@@ -496,7 +496,7 @@ operations:
   transports:
     grpc_expose:
       name: agent_heartbeat
-      source: src/nexus/services/agents/agent_rpc_service.py:818
+      source: src/nexus/services/agents/agent_rpc_service.py:870
   profiles:
     lite: supported
     sandbox: supported
@@ -513,7 +513,7 @@ operations:
   transports:
     grpc_expose:
       name: agent_list_by_zone
-      source: src/nexus/services/agents/agent_rpc_service.py:826
+      source: src/nexus/services/agents/agent_rpc_service.py:878
   profiles:
     lite: supported
     sandbox: supported
@@ -547,7 +547,7 @@ operations:
   transports:
     grpc_expose:
       name: agent_transition
-      source: src/nexus/services/agents/agent_rpc_service.py:752
+      source: src/nexus/services/agents/agent_rpc_service.py:804
   profiles:
     lite: supported
     sandbox: supported
@@ -3042,7 +3042,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:641
+      source: src/nexus/services/agents/agent_rpc_service.py:687
   profiles:
     lite: supported
     sandbox: supported
@@ -3093,7 +3093,7 @@ operations:
   owning_issue: null
 - id: delete.file
   module: filesystem
-  summary: ''
+  summary: Delete a file through MCP; visible from the coding profile and broader profiles.
   transports:
     mcp:
       name: nexus_delete_file
@@ -3102,12 +3102,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus rm /workspace/old.txt; MCP: tools/call nexus_delete_file {"path":"/workspace/old.txt"}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: delete.saved_mount
   module: mount
   summary: Delete persisted mount configuration without necessarily deactivating an active runtime mount.
@@ -3320,7 +3322,7 @@ operations:
   owning_issue: null
 - id: edit.file
   module: filesystem
-  summary: ''
+  summary: Apply structured file edits through MCP; visible from the coding profile and broader profiles.
   transports:
     mcp:
       name: nexus_edit_file
@@ -3329,12 +3331,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: use nexus write/cat for simple edits; MCP: tools/call nexus_edit_file {"path":"/workspace/app.py","edits":[...]}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: events.replay
   module: agent_log
   summary: ''
@@ -3748,7 +3752,7 @@ operations:
   owning_issue: null
 - id: execute.workflow
   module: workflows
-  summary: ''
+  summary: Execute a named workflow through MCP; visible from the full profile.
   transports:
     mcp:
       name: nexus_execute_workflow
@@ -3757,12 +3761,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workflows execute tag-incoming; MCP: tools/call nexus_execute_workflow {"name":"tag-incoming","inputs":"{}"}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: control
+  perf_link: control-plane/workflow execution path; workflow body dominates latency, not MCP namespace filtering
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: exists.batch
   module: filesystem
   summary: ''
@@ -4129,7 +4135,7 @@ operations:
   owning_issue: null
 - id: file.info
   module: filesystem
-  summary: ''
+  summary: Inspect file metadata through MCP; visible from the minimal profile.
   transports:
     mcp:
       name: nexus_file_info
@@ -4138,12 +4144,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus info /workspace/hello.txt; MCP: tools/call nexus_file_info {"path":"/workspace/hello.txt"}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: filesystem.append
   module: filesystem
   summary: ''
@@ -4427,6 +4435,9 @@ operations:
     grpc_call:
       name: mkdir
       source: src/nexus/server/_kernel_syscall_dispatch.py:54
+    mcp:
+      name: nexus_mkdir
+      source: src/nexus/config/tool_profiles.yaml:1
   profiles:
     lite: supported
     sandbox: supported
@@ -4643,6 +4654,9 @@ operations:
     grpc_call:
       name: rmdir
       source: src/nexus/server/_kernel_syscall_dispatch.py:57
+    mcp:
+      name: nexus_rmdir
+      source: src/nexus/config/tool_profiles.yaml:1
   profiles:
     lite: supported
     sandbox: supported
@@ -4932,7 +4946,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.get
-      source: src/nexus/remote/kernel_client.py:1054
+      source: src/nexus/remote/kernel_client.py:1055
   profiles:
     lite: supported
     sandbox: supported
@@ -4949,7 +4963,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.heartbeat
-      source: src/nexus/remote/kernel_client.py:1080
+      source: src/nexus/remote/kernel_client.py:1081
   profiles:
     lite: supported
     sandbox: supported
@@ -5034,7 +5048,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:1015
+      source: src/nexus/remote/kernel_client.py:1016
   profiles:
     lite: supported
     sandbox: supported
@@ -5102,7 +5116,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.signal
-      source: src/nexus/remote/kernel_client.py:1057
+      source: src/nexus/remote/kernel_client.py:1058
   profiles:
     lite: supported
     sandbox: supported
@@ -5187,7 +5201,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:1048
+      source: src/nexus/remote/kernel_client.py:1049
   profiles:
     lite: supported
     sandbox: supported
@@ -5266,7 +5280,7 @@ operations:
   transports:
     grpc_expose:
       name: get_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:587
+      source: src/nexus/services/agents/agent_rpc_service.py:633
   profiles:
     lite: supported
     sandbox: supported
@@ -5837,7 +5851,7 @@ operations:
   transports:
     http:
       name: GET /health/detailed
-      source: src/nexus/server/api/core/health.py:67
+      source: src/nexus/server/api/core/health.py:71
   profiles:
     lite: supported
     sandbox: supported
@@ -5854,7 +5868,7 @@ operations:
   transports:
     http:
       name: GET /metrics/pool
-      source: src/nexus/server/api/core/health.py:205
+      source: src/nexus/server/api/core/health.py:209
   profiles:
     lite: supported
     sandbox: supported
@@ -5884,7 +5898,8 @@ operations:
   owning_issue: null
 - id: hub.admin
   module: hub
-  summary: ''
+  summary: Administer hub tokens through the generic MCP hub admin tool; visible from the full profile but still requires
+    an admin bearer token.
   transports:
     mcp:
       name: nexus_hub_admin
@@ -5893,12 +5908,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus hub status --remote https://hub.example.com/mcp --admin-token "$NEXUS_HUB_ADMIN_TOKEN"; MCP:
+    tools/call nexus_hub_admin {"action":"status","arguments":{}}.'
+  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: control
+  perf_link: admin/control-plane surface; not performance-sensitive compared with remote hub RPC latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: hub.cli
   module: hub
   summary: ''
@@ -5945,8 +5963,8 @@ operations:
     lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus hub status --detail --json; remote hub: nexus hub status --remote https://hub.example.com/mcp --admin-token
-    "$NEXUS_HUB_ADMIN_TOKEN" --json'
+  usage_example: 'CLI: nexus hub status --detail --json; remote hub: nexus hub status --remote https://hub.example.com/mcp
+    --admin-token "$NEXUS_HUB_ADMIN_TOKEN" --json'
   correctness_test: tests/unit/cli/test_hub.py::test_hub_status_detail_json_includes_token_last_seen_and_zones; tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json;
     tests/e2e/self_contained/cli/test_hub_flow.py::test_hub_end_to_end_token_lifecycle
   perf_class: control
@@ -6215,10 +6233,10 @@ operations:
   transports:
     grpc_expose:
       name: list_agents
-      source: src/nexus/services/agents/agent_rpc_service.py:531
+      source: src/nexus/services/agents/agent_rpc_service.py:577
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:1083
+      source: src/nexus/remote/kernel_client.py:1084
   profiles:
     lite: supported
     sandbox: supported
@@ -6268,7 +6286,7 @@ operations:
   owning_issue: null
 - id: list.files
   module: filesystem
-  summary: ''
+  summary: List directory contents through MCP; visible from the minimal profile for read-only workspace inspection.
   transports:
     mcp:
       name: nexus_list_files
@@ -6277,12 +6295,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus ls /workspace -l; MCP: tools/call nexus_list_files {"path":"/workspace","recursive":false}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: list.incoming_shares
   module: rebac
   summary: List resources shared with a user from shared-* tuples with immediate revoke visibility.
@@ -6361,7 +6381,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_processes
-      source: src/nexus/remote/kernel_client.py:1086
+      source: src/nexus/remote/kernel_client.py:1087
   profiles:
     lite: supported
     sandbox: supported
@@ -6459,7 +6479,7 @@ operations:
   owning_issue: 4137
 - id: list.workflows
   module: workflows
-  summary: ''
+  summary: List available workflows through MCP; visible from the full profile.
   transports:
     mcp:
       name: nexus_list_workflows
@@ -6468,12 +6488,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workflows list; MCP: tools/call nexus_list_workflows {}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: control
+  perf_link: control-plane inspection; workflow listing is not on the per-tool-call data hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: list.workspaces
   module: workspace
   summary: List workspaces visible to the authenticated user and zone.
@@ -6686,7 +6708,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_connect
-      source: src/nexus/bricks/mcp/mcp_service.py:528
+      source: src/nexus/bricks/mcp/mcp_service.py:602
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6705,7 +6727,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_list_mounts
-      source: src/nexus/bricks/mcp/mcp_service.py:144
+      source: src/nexus/bricks/mcp/mcp_service.py:218
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6725,7 +6747,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_list_tools
-      source: src/nexus/bricks/mcp/mcp_service.py:210
+      source: src/nexus/bricks/mcp/mcp_service.py:284
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6761,7 +6783,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_mount
-      source: src/nexus/bricks/mcp/mcp_service.py:300
+      source: src/nexus/bricks/mcp/mcp_service.py:374
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6834,7 +6856,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_sync
-      source: src/nexus/bricks/mcp/mcp_service.py:472
+      source: src/nexus/bricks/mcp/mcp_service.py:546
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6874,7 +6896,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_unmount
-      source: src/nexus/bricks/mcp/mcp_service.py:423
+      source: src/nexus/bricks/mcp/mcp_service.py:497
   profiles:
     lite: unavailable
     sandbox: supported
@@ -8634,7 +8656,7 @@ operations:
   owning_issue: 4133
 - id: read.file
   module: filesystem
-  summary: ''
+  summary: Read file content through MCP; visible from the minimal profile and inherited by every broader profile.
   transports:
     mcp:
       name: nexus_read_file
@@ -8643,12 +8665,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus cat /workspace/hello.txt; MCP: tools/call nexus_read_file {"path":"/workspace/hello.txt"}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: read.range
   module: filesystem
   summary: ''
@@ -8913,7 +8937,7 @@ operations:
   transports:
     grpc_expose:
       name: register_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:326
+      source: src/nexus/services/agents/agent_rpc_service.py:358
   profiles:
     lite: supported
     sandbox: supported
@@ -8931,7 +8955,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register_external
-      source: src/nexus/remote/kernel_client.py:1018
+      source: src/nexus/remote/kernel_client.py:1019
   profiles:
     lite: supported
     sandbox: supported
@@ -9086,7 +9110,7 @@ operations:
   owning_issue: 4133
 - id: rename.file
   module: filesystem
-  summary: ''
+  summary: Rename or move a file through MCP; visible from the coding profile and broader profiles.
   transports:
     mcp:
       name: nexus_rename_file
@@ -9095,12 +9119,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mv /workspace/old.txt /workspace/new.txt; MCP: tools/call nexus_rename_file {"old_path":"/workspace/old.txt","new_path":"/workspace/new.txt"}.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: revoke.consent
   module: rebac
   summary: Revoke discovery consent by deleting the matching consent_granted tuple.
@@ -9239,7 +9265,8 @@ operations:
   owning_issue: null
 - id: sandbox.create
   module: sandbox
-  summary: ''
+  summary: Create a sandbox runtime through MCP when the sandbox provider is available; visible from the execution profile
+    and full profile.
   transports:
     mcp:
       name: nexus_sandbox_create
@@ -9248,15 +9275,18 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus sandbox create demo-box --provider docker; MCP: tools/call nexus_sandbox_create {"name":"demo-box","ttl_minutes":15}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: setup
+  perf_link: setup path; sandbox provider startup dominates latency and this is not a per-request namespace hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: sandbox.list
   module: sandbox
-  summary: ''
+  summary: List sandbox runtimes through MCP when sandbox support is available; visible from the execution profile and full
+    profile.
   transports:
     mcp:
       name: nexus_sandbox_list
@@ -9265,12 +9295,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus sandbox list; MCP: tools/call nexus_sandbox_list {}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: control
+  perf_link: control-plane inspection; not performance-sensitive compared with sandbox provider API latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: sandbox.run
   module: sandbox
   summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py
@@ -9292,7 +9324,8 @@ operations:
   owning_issue: null
 - id: sandbox.stop
   module: sandbox
-  summary: ''
+  summary: Stop a sandbox runtime through MCP when sandbox support is available; visible from the execution profile and full
+    profile.
   transports:
     mcp:
       name: nexus_sandbox_stop
@@ -9301,12 +9334,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus sandbox stop sb_123; MCP: tools/call nexus_sandbox_stop {"sandbox_id":"sb_123"}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: control
+  perf_link: control-plane teardown; provider latency dominates and this is not a namespace filtering hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: save.mount
   module: mount
   summary: Persist a mount configuration so it can be loaded on demand or restored after restart.
@@ -11616,7 +11651,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister_external
-      source: src/nexus/remote/kernel_client.py:1051
+      source: src/nexus/remote/kernel_client.py:1052
   profiles:
     lite: supported
     sandbox: supported
@@ -11667,7 +11702,7 @@ operations:
   transports:
     grpc_expose:
       name: update_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:442
+      source: src/nexus/services/agents/agent_rpc_service.py:488
   profiles:
     lite: supported
     sandbox: supported
@@ -11722,7 +11757,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.update_state
-      source: src/nexus/remote/kernel_client.py:1069
+      source: src/nexus/remote/kernel_client.py:1070
   profiles:
     lite: supported
     sandbox: supported
@@ -12255,7 +12290,7 @@ operations:
   owning_issue: null
 - id: write.file
   module: filesystem
-  summary: ''
+  summary: Write file content through MCP; visible from the coding profile and broader profiles.
   transports:
     mcp:
       name: nexus_write_file
@@ -12264,12 +12299,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus write /workspace/hello.txt "hello"; MCP: tools/call nexus_write_file {"path":"/workspace/hello.txt","content":"hello"}.'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4131
 - id: write.stream
   module: filesystem
   summary: ''
@@ -13952,10 +13989,10 @@ parity_warnings:
 - operation_id: filesystem.mkdir
   has:
   - cli
+  - mcp
   missing:
   - grpc_typed
   - http
-  - mcp
   - sdk
 - operation_id: filesystem.move
   has:
@@ -14024,10 +14061,10 @@ parity_warnings:
 - operation_id: filesystem.rmdir
   has:
   - cli
+  - mcp
   missing:
   - grpc_typed
   - http
-  - mcp
   - sdk
 - operation_id: filesystem.size
   has:
@@ -16403,6 +16440,8 @@ stale_rows:
   reason: present in committed YAML but not detected by extractor
 - operation_id: graph.entity_entity_id
   reason: present in committed YAML but not detected by extractor
+- operation_id: hub.status
+  reason: present in committed YAML but not detected by extractor
 - operation_id: identity.agent_id_identity
   reason: present in committed YAML but not detected by extractor
 - operation_id: identity.agent_id_verify
@@ -16416,6 +16455,8 @@ stale_rows:
 - operation_id: locks.resource:path_acquire
   reason: present in committed YAML but not detected by extractor
 - operation_id: mcp.mounts_name
+  reason: present in committed YAML but not detected by extractor
+- operation_id: mcp.tool_profile_assign
   reason: present in committed YAML but not detected by extractor
 - operation_id: mobile_search.detect
   reason: present in committed YAML but not detected by extractor
@@ -16504,6 +16545,4 @@ stale_rows:
 - operation_id: zone_routes.post
   reason: present in committed YAML but not detected by extractor
 - operation_id: zone_routes.zone_id
-  reason: present in committed YAML but not detected by extractor
-- operation_id: mcp.tool_profile_assign
   reason: present in committed YAML but not detected by extractor

@@ -1026,6 +1026,24 @@ class TestSearchTools:
 class TestWorkflowTools:
     """Test suite for workflow tools."""
 
+    async def test_list_workflows_uses_service_registry_workflow_engine(self):
+        """Test listing workflows through the factory-wired workflow_engine service."""
+        workflow_engine = Mock()
+        workflow_engine.list_workflows = Mock(
+            return_value=[{"name": "service_workflow", "version": "1.0", "enabled": True}]
+        )
+        nx = Mock()
+        del nx.workflows
+        nx.service.side_effect = lambda name: workflow_engine if name == "workflow_engine" else None
+        server = await create_mcp_server(nx=nx)
+
+        list_tool = get_tool(server, "nexus_list_workflows")
+        result = list_tool.fn()
+
+        workflows = json.loads(result)
+        assert workflows[0]["name"] == "service_workflow"
+        workflow_engine.list_workflows.assert_called_once()
+
     async def test_list_workflows_success(self, mock_nx_with_workflows):
         """Test listing workflows successfully."""
         server = await create_mcp_server(nx=mock_nx_with_workflows)
@@ -1075,6 +1093,26 @@ class TestWorkflowTools:
             "test_workflow", param="value"
         )
 
+    async def test_execute_workflow_uses_service_registry_workflow_engine(self):
+        """Test executing workflows through the factory-wired workflow_engine service."""
+        workflow_engine = Mock()
+        workflow_engine.trigger_workflow = AsyncMock(
+            return_value={"status": "success", "workflow_name": "service_workflow"}
+        )
+        nx = Mock()
+        del nx.workflows
+        nx.service.side_effect = lambda name: workflow_engine if name == "workflow_engine" else None
+        server = await create_mcp_server(nx=nx)
+
+        exec_tool = get_tool(server, "nexus_execute_workflow")
+        result = exec_tool.fn(name="service_workflow", inputs='{"param": "value"}')
+
+        output = json.loads(result)
+        assert output["status"] == "success"
+        workflow_engine.trigger_workflow.assert_awaited_once_with(
+            "service_workflow", {"param": "value"}
+        )
+
     async def test_execute_workflow_no_inputs(self, mock_nx_with_workflows):
         """Test executing workflow without inputs."""
         server = await create_mcp_server(nx=mock_nx_with_workflows)
@@ -1116,6 +1154,22 @@ class TestWorkflowTools:
 
 class TestSandboxAvailability:
     """Test suite for sandbox availability detection."""
+
+    async def test_sandbox_available_from_service_registry(self):
+        """Test sandbox tools register when sandbox_rpc service is available."""
+        sandbox_rpc = Mock()
+        sandbox_rpc.available_providers.return_value = ["test"]
+        nx = Mock()
+        del nx.sandbox_available
+        nx.service.side_effect = lambda name: sandbox_rpc if name == "sandbox_rpc" else None
+
+        server = await create_mcp_server(nx=nx)
+
+        assert tool_exists(server, "nexus_python")
+        assert tool_exists(server, "nexus_bash")
+        assert tool_exists(server, "nexus_sandbox_create")
+        assert tool_exists(server, "nexus_sandbox_list")
+        assert tool_exists(server, "nexus_sandbox_stop")
 
     async def test_sandbox_available_with_docker(self, mock_nx_with_sandbox):
         """Test sandbox tools registered when Docker provider available."""

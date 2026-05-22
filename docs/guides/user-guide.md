@@ -1677,6 +1677,90 @@ export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="..."
 ```
 
+### 9.5 Shape An Agent's MCP Tool Profile
+
+MCP tool profiles are the normal way to give an agent the smallest useful
+toolbox. They are ReBAC grants over `/tools/<tool-name>`: `tools/list` only
+shows granted tools, and `tools/call` returns `not found` for a hidden tool
+rather than exposing that it exists.
+
+Use the profile CLI to inspect and assign the matrix:
+
+```bash
+nexus mcp profile list
+nexus mcp profile show coding
+nexus mcp profile assign agent demo-agent coding --zone-id sandbox-agent-1
+nexus mcp profile inspect agent demo-agent --zone-id sandbox-agent-1
+```
+
+Default task matrix:
+
+| Profile | Use it when the agent needs to... | Direct tools added by this profile |
+| --- | --- | --- |
+| `minimal` | read and inspect workspace files | `nexus_read_file`, `nexus_list_files`, `nexus_file_info`, `nexus_glob` |
+| `coding` | edit code and search text | `nexus_write_file`, `nexus_edit_file`, `nexus_delete_file`, `nexus_mkdir`, `nexus_rmdir`, `nexus_rename_file`, `nexus_grep` |
+| `search` | search without mutation rights | `nexus_grep`, `nexus_semantic_search` |
+| `execution` | create and use a sandbox runtime | `nexus_python`, `nexus_bash`, `nexus_sandbox_create`, `nexus_sandbox_list`, `nexus_sandbox_stop` |
+| `full` | inspect tools, workflows, and hub admin surfaces | `nexus_discovery_search_tools`, `nexus_discovery_list_servers`, `nexus_discovery_get_tool_details`, `nexus_discovery_load_tools`, `nexus_list_workflows`, `nexus_execute_workflow`, `nexus_hub_admin` |
+
+Inheritance matters: `coding` includes `minimal`, `execution` includes
+`coding`, and `full` includes `execution`. `search` includes only `minimal`, so
+it can grep and semantic-search without write access.
+
+Equivalent MCP JSON-RPC examples:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "nexus_read_file",
+    "arguments": {
+      "path": "/workspace/hello.txt"
+    }
+  }
+}
+```
+
+Expected behavior:
+
+- A `minimal` agent can call `nexus_read_file` and `nexus_glob`; a call to
+  `nexus_write_file` returns `not found`.
+- A `coding` agent can call write/edit/delete/grep tools; sandbox execution and
+  discovery tools are hidden.
+- A `search` agent can call grep and semantic search but still cannot mutate
+  files.
+- An `execution` agent can use `nexus_python`, `nexus_bash`, and sandbox
+  lifecycle tools when the sandbox provider is available. If no provider is
+  wired, those execution tools are unavailable at server startup.
+- A `full` agent can use discovery tools and workflow tools. `nexus_hub_admin`
+  still requires an admin bearer token, so a visible tool can still return an
+  admin/auth denial.
+
+Correctness assertion: after assigning a profile, `tools/list` must contain only
+the profile's inherited tools, and `tools/call` for the next-tier hidden tool
+must return `not found`, not a permission-denied message.
+
+Performance classification: `tools/list` filtering and `tools/call` namespace
+checks are hot-path operations covered by the MCP namespace filtering benchmark.
+Profile assignment is setup/control-plane work and is not on the per-tool-call
+latency path.
+
+MCP profile docs link back to the file/search/ReBAC stories in the shared
+surface map: file tools use the filesystem rows, grep/semantic search use the
+search rows, and profile grants/enforcement use the ReBAC-backed tool namespace
+rows.
+
 Packages behind this:
 
 - Workflow engine: `nexus.bricks.workflows`

@@ -725,7 +725,7 @@ def _list_audit_transactions(
             "next_cursor": next_cursor,
         }
     except Exception as e:
-        logger.debug("Audit transaction query failed: %s", e)
+        logger.warning("Audit transaction query failed: %s", e, exc_info=True)
         return {
             "transactions": [],
             "limit": limit,
@@ -739,7 +739,7 @@ def _get_audit_transaction(record_store: Any, record_id: str) -> Any | None:
     try:
         return _audit_logger(record_store).get_transaction(record_id)
     except Exception as e:
-        logger.debug("Audit transaction lookup failed: %s", e)
+        logger.warning("Audit transaction lookup failed: %s", e, exc_info=True)
         return None
 
 
@@ -750,7 +750,7 @@ def _audit_transaction_aggregations(record_store: Any) -> dict[str, Any]:
             _audit_logger(record_store).get_aggregations(zone_id=ROOT_ZONE_ID),
         )
     except Exception as e:
-        logger.debug("Audit transaction aggregation failed: %s", e)
+        logger.warning("Audit transaction aggregation failed: %s", e, exc_info=True)
         return {"tx_count": 0, "total_volume": "0.00", "top_buyers": [], "top_sellers": []}
 
 

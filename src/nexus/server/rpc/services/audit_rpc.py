@@ -17,7 +17,7 @@ class AuditRPCService:
     def __init__(self, audit_logger: Any) -> None:
         self._audit_logger = audit_logger
 
-    @rpc_expose(description="List audit trail entries")
+    @rpc_expose(description="List audit trail entries", admin_only=True)
     def audit_list(
         self,
         since: str | None = None,
@@ -41,7 +41,7 @@ class AuditRPCService:
         )
         return result
 
-    @rpc_expose(description="Export audit data")
+    @rpc_expose(description="Export audit data", admin_only=True)
     def audit_export(
         self,
         fmt: str = "json",
@@ -58,7 +58,7 @@ class AuditRPCService:
         if until:
             filters["until"] = until
 
-        rows = list(self._audit_logger.iter_transactions(filters))
+        rows = list(self._audit_logger.iter_transactions(filters=filters))
         # Convert ORM objects to plain dicts
         records = []
         for row in rows:

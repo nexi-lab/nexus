@@ -71,10 +71,53 @@ logger = logging.getLogger(__name__)
 # Module-level limiter instance; initialized in create_app().
 limiter: Limiter
 
+DISCOVERABLE_RPC_SERVICE_NAMES: tuple[str, ...] = (
+    "mcp",
+    "oauth",
+    "mount",
+    "search",
+    "share_link",
+    "rebac",
+    "user_provisioning",
+)
+
 
 def _rate_limit_enabled_from_env() -> bool:
     """Return whether HTTP rate limiting was explicitly enabled."""
     return os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def _pay_rpc_credits_config() -> tuple[bool, str, int]:
+    """Resolve Pay RPC CreditsService settings using the REST pay autodetection policy."""
+    import importlib.util
+    import socket
+
+    tb_address = os.environ.get("TIGERBEETLE_ADDRESS", "127.0.0.1:3000")
+    tb_cluster = int(os.environ.get("TIGERBEETLE_CLUSTER_ID", "0"))
+    tigerbeetle_available = importlib.util.find_spec("tigerbeetle") is not None
+
+    if not tigerbeetle_available:
+        return False, tb_address, tb_cluster
+
+    if os.environ.get("NEXUS_PAY_ENABLED", "").lower() in {"1", "true", "yes"}:
+        return True, tb_address, tb_cluster
+
+    for hostname in ("nexus-tigerbeetle", "tigerbeetle", "127.0.0.1"):
+        try:
+            ip = socket.gethostbyname(hostname) if hostname != "127.0.0.1" else hostname
+            conn = socket.create_connection((ip, 3000), timeout=1)
+            conn.close()
+            return True, f"{ip}:3000", tb_cluster
+        except Exception:
+            continue
+
+    return False, tb_address, tb_cluster
+
+
+def _pay_rpc_credits_enabled() -> bool:
+    """Return whether Pay RPC should use a real TigerBeetle-backed CreditsService."""
+    enabled, _address, _cluster = _pay_rpc_credits_config()
+    return enabled
 
 
 # ============================================================================
@@ -400,14 +443,7 @@ def create_app(
     # Services with @rpc_expose override kernel stubs (later sources win).
     if nexus_fs is not None:
         _rpc_sources: list[Any] = []
-        for _svc_name in (
-            "mcp",
-            "oauth",
-            "mount",
-            "search",
-            "share_link",
-            "rebac",
-        ):
+        for _svc_name in DISCOVERABLE_RPC_SERVICE_NAMES:
             _brick_svc = nexus_fs.service(_svc_name)
             if _brick_svc is not None:
                 _rpc_sources.append(_brick_svc)
@@ -455,7 +491,16 @@ def create_app(
             from nexus.bricks.pay import CreditsService
             from nexus.server.rpc.services.pay_rpc import PayRPCService
 
-            _rpc_sources.append(PayRPCService(CreditsService()))
+            pay_enabled, tb_address, tb_cluster = _pay_rpc_credits_config()
+            _rpc_sources.append(
+                PayRPCService(
+                    CreditsService(
+                        tigerbeetle_address=tb_address,
+                        cluster_id=tb_cluster,
+                        enabled=pay_enabled,
+                    )
+                )
+            )
         except Exception as _exc:
             logger.debug("PayRPCService unavailable: %s", _exc)
         # --- Audit (Issue #1133) ---

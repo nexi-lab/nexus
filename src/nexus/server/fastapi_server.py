@@ -102,10 +102,13 @@ def _pay_rpc_credits_config() -> tuple[bool, str, int]:
     if os.environ.get("NEXUS_PAY_ENABLED", "").lower() in {"1", "true", "yes"}:
         return True, tb_address, tb_cluster
 
+    # Probe well-known TigerBeetle hostnames with a short timeout.
+    # Total worst-case: len(hostnames) * 0.3s = ~0.9s (not 3s+).
+    _PROBE_TIMEOUT = 0.3
     for hostname in ("nexus-tigerbeetle", "tigerbeetle", "127.0.0.1"):
         try:
             ip = socket.gethostbyname(hostname) if hostname != "127.0.0.1" else hostname
-            conn = socket.create_connection((ip, 3000), timeout=1)
+            conn = socket.create_connection((ip, 3000), timeout=_PROBE_TIMEOUT)
             conn.close()
             return True, f"{ip}:3000", tb_cluster
         except Exception:

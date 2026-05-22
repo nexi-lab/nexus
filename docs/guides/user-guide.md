@@ -1836,8 +1836,10 @@ links the #4137 benchmark expectation.
 
 ```bash
 nexus events replay --since 1h
-nexus events subscribe "file_write"
 ```
+
+The `nexus events` CLI currently exposes replay over the generic gRPC `Call`
+path. Live event subscription is not a CLI/RPC command in this surface.
 
 ### Scheduler visibility
 
@@ -2284,7 +2286,109 @@ guide above:
 - `secrets-audit`: secret access auditing
 - `rlm`: recursive language-model inference
 
-## 13. Package Map By Use Case
+## 13. Full-Profile Control Plane For Operators
+
+Use this path when you are operating a shared `full` or `cloud` server and need
+database-backed auth, auditable admin changes, and control-plane visibility
+without mixing those powers into normal user flows. Normal users should stay on
+file, search, pay, and agent workflows with their own API key. Admins hold keys
+that can provision users, rotate credentials, inspect audit/event data, and run
+governance or federation operations. Operators own the daemon, database,
+profile, and runtime configuration.
+
+Start from a database-auth daemon:
+
+```bash
+export NEXUS_URL=http://localhost:2026
+export NEXUS_GRPC_PORT=2028
+export NEXUS_API_KEY="<admin-api-key>"
+
+nexusd --profile full --auth-type database --database-url "$NEXUS_DATABASE_URL"
+```
+
+Admin account lifecycle:
+
+```bash
+nexus admin provision-user alice alice@example.com --display-name "Alice"
+nexus admin create-user bot1 --name "Bot Agent" --subject-type agent --expires-days 7
+nexus admin list-users --is-admin
+nexus admin deprovision-user alice --zone-id alice --delete-user-record
+```
+
+Equivalent generic gRPC calls use the same method names that the CLI calls:
+
+```python
+from nexus.remote.rpc_transport import RPCTransport
+
+rpc = RPCTransport("localhost:2028", auth_token="<admin-api-key>")
+created = rpc.call_rpc(
+    "provision_user",
+    {"user_id": "alice", "email": "alice@example.com", "display_name": "Alice"},
+)
+audit = rpc.call_rpc("audit_list", {"since": "1h", "limit": 50})
+
+print(created["user_id"], created["zone_id"])
+print(len(audit.get("transactions", [])))
+```
+
+Expected behavior:
+
+- Success: admin-only methods return resource metadata, counts, or exported
+  content. Initial API keys are shown once.
+- Denial: a non-admin token receives an admin-privilege error for admin,
+  provisioning, audit, event replay, governance, and federation mutation RPCs.
+- Unavailable: surfaces that need database auth, record stores, pay services,
+  governance services, or federation runtime fail as unavailable rather than
+  being presented as normal user features.
+
+Correctness assertion:
+
+```bash
+nexus admin get-user --user-id alice --json
+nexus audit list --since 1h --json
+nexus events replay --since 1h --json
+nexus governance status --json
+```
+
+The JSON output should show the provisioned user or key, audit rows when they
+exist, replayed events when they exist, and governance counts. A regular user
+key should be able to use normal user surfaces such as `nexus pay balance`, but
+should be denied by admin-only methods.
+
+### Control-plane surface matrix
+
+This is the shared model for issue #4138. The source-of-truth test matrix lives
+in `nexus.contracts.control_plane_coverage`; it maps each row to CLI/RPC
+surfaces, auth expectations, tests, and benchmark classification.
+
+| Group | RPC methods | CLI | Admin-only | Correctness coverage | Performance status |
+| --- | --- | --- | --- | --- | --- |
+| Admin keys | `admin_create_key`, `admin_list_keys`, `admin_get_key`, `admin_revoke_key`, `admin_update_key`, `admin_write_permission` | `nexus admin create-user`, `create-key`, `create-agent-key`, `list-users`, `get-user`, `revoke-key`, `update-key` | Yes | `tests/unit/server/test_admin_handlers.py`, `tests/unit/server/test_rpc_admin_only.py` | Benchmark gap tracked in #4201 |
+| User provisioning | `provision_user`, `deprovision_user` | `nexus admin provision-user`, `deprovision-user` | Yes | `tests/unit/core/test_nexus_fs_provision_user.py` and the #4138 surface test | Setup path, not performance-sensitive |
+| Audit | `audit_list`, `audit_export` | `nexus audit list`, `export` | Yes | OpenAPI conformance plus the #4138 surface test | Benchmark gap tracked in #4201 |
+| Events | `events_replay` | `nexus events replay` | Yes | event replay/E2E coverage plus the #4138 surface test | Benchmark gap tracked in #4201 |
+| Governance | `governance_status`, `governance_alerts`, `governance_rings` | `nexus governance status`, `alerts`, `rings` | Yes | security hardening plus the #4138 surface test | Benchmark gap tracked in #4201 |
+| Federation read-only | `federation_client_whoami`, `federation_list_zones`, `federation_cluster_info` | `nexus federation status`, `zones`, `info` | No | federation whoami and docker federation coverage | Benchmark gap tracked in #4201 |
+| Federation mutations | `federation_create_zone`, `federation_remove_zone`, `federation_join`, `federation_mount`, `federation_unmount`, `federation_share`, `federation_export_zone`, `federation_import_zone` | `nexus federation mount`, `unmount`; create/remove/share/join CLI parity is #4200 | Yes | docker federation and zone import/export E2E coverage | CLI parity gap #4200, benchmark gap #4201 |
+| Pay | `pay_balance`, `pay_transfer`, `pay_history` | `nexus pay balance`, `transfer`, `history` | No | exchange OpenAPI and pay integration coverage | Marketplace user path, not an admin hot path |
+
+Sensitive operation requirements:
+
+- Use an admin API key for every row marked admin-only.
+- Use database auth for user provisioning and admin key management.
+- Use record-store-backed services for audit and event replay.
+- Use a federation-enabled runtime for federation rows. `full` alone does not
+  create a federation mesh; use `cluster` or a full/cloud server with federation
+  kernel support.
+- Use a pay-enabled full/cloud deployment for pay commands. Pay commands are
+  normal authenticated marketplace flows, not admin-only flows.
+
+Benchmark note: #4138 names admin key operations, audit list/export, events
+replay, governance summaries, and federation zone list/create as benchmark
+expectations. This guide does not claim benchmark completion yet; the required
+benchmark suite is tracked in #4201.
+
+## 14. Package Map By Use Case
 
 If you want to read the code after using the product, this is the shortest
 useful map.
@@ -2340,7 +2444,7 @@ useful map.
 | `nexus.validation` | validation pipelines before execution or sandbox use |
 | `nexus.plugins` | extension points and plugin discovery |
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### The first commands to run
 

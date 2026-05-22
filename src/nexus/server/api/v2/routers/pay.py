@@ -8,13 +8,16 @@ in disabled mode when TigerBeetle is not available.
 Issue #3250: TUI Payments panel (Screen 8).
 """
 
+import csv
+import io
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nexus.bricks.pay.constants import credits_to_micro, micro_to_credits
@@ -653,6 +656,104 @@ def _list_transactions(
         }
 
 
+def _audit_logger(record_store: Any) -> Any:
+    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+
+    return ExchangeAuditLogger(record_store=record_store)
+
+
+def _serialize_audit_transaction(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "record_hash": row.record_hash,
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+        "protocol": row.protocol,
+        "buyer_agent_id": row.buyer_agent_id,
+        "seller_agent_id": row.seller_agent_id,
+        "amount": str(row.amount),
+        "currency": row.currency,
+        "status": row.status,
+        "application": row.application,
+        "zone_id": row.zone_id,
+        "trace_id": row.trace_id,
+        "metadata_hash": row.metadata_hash,
+        "transfer_id": row.transfer_id,
+    }
+
+
+def _audit_filters(
+    *,
+    protocol: str | None = None,
+    status: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> dict[str, Any]:
+    filters: dict[str, Any] = {}
+    if protocol:
+        filters["protocol"] = protocol
+    if status:
+        filters["status"] = status
+    if since:
+        filters["since"] = datetime.fromisoformat(since)
+    if until:
+        filters["until"] = datetime.fromisoformat(until)
+    return filters
+
+
+def _list_audit_transactions(
+    record_store: Any,
+    limit: int,
+    cursor: str | None,
+    *,
+    protocol: str | None = None,
+    status: str | None = None,
+    include_total: bool = False,
+) -> dict[str, Any]:
+    try:
+        audit_log = _audit_logger(record_store)
+        filters = _audit_filters(protocol=protocol, status=status)
+        rows, next_cursor = audit_log.list_transactions_cursor(
+            filters=filters,
+            limit=limit,
+            cursor=cursor,
+        )
+        return {
+            "transactions": [_serialize_audit_transaction(row) for row in rows],
+            "limit": limit,
+            "has_more": next_cursor is not None,
+            "total": audit_log.count_transactions(**filters) if include_total else None,
+            "next_cursor": next_cursor,
+        }
+    except Exception as e:
+        logger.debug("Audit transaction query failed: %s", e)
+        return {
+            "transactions": [],
+            "limit": limit,
+            "has_more": False,
+            "total": 0 if include_total else None,
+            "next_cursor": None,
+        }
+
+
+def _get_audit_transaction(record_store: Any, record_id: str) -> Any | None:
+    try:
+        return _audit_logger(record_store).get_transaction(record_id)
+    except Exception as e:
+        logger.debug("Audit transaction lookup failed: %s", e)
+        return None
+
+
+def _audit_transaction_aggregations(record_store: Any) -> dict[str, Any]:
+    try:
+        return cast(
+            dict[str, Any],
+            _audit_logger(record_store).get_aggregations(zone_id=ROOT_ZONE_ID),
+        )
+    except Exception as e:
+        logger.debug("Audit transaction aggregation failed: %s", e)
+        return {"tx_count": 0, "total_volume": "0.00", "top_buyers": [], "top_sellers": []}
+
+
 @router.get("/transactions")
 async def list_pay_transactions(
     limit: int = 20,
@@ -667,10 +768,97 @@ async def list_pay_transactions(
 async def list_audit_transactions(
     limit: int = 20,
     cursor: str | None = None,
-    context: Any = Depends(_get_pay_context),
+    protocol: str | None = None,
+    status: str | None = None,
+    include_total: bool = False,
     record_store: Any = Depends(_get_record_store),
 ) -> dict[str, Any]:
-    return _list_transactions(record_store, limit, cursor, _context_zone_id(context))
+    return _list_audit_transactions(
+        record_store,
+        limit,
+        cursor,
+        protocol=protocol,
+        status=status,
+        include_total=include_total,
+    )
+
+
+@audit_router.get("/transactions/aggregations")
+async def get_audit_transaction_aggregations(
+    record_store: Any = Depends(_get_record_store),
+) -> dict[str, Any]:
+    return _audit_transaction_aggregations(record_store)
+
+
+@audit_router.get("/transactions/export", response_model=None)
+async def export_audit_transactions(
+    format: str = "json",
+    limit: int = 1000,
+    cursor: str | None = None,
+    protocol: str | None = None,
+    status: str | None = None,
+    record_store: Any = Depends(_get_record_store),
+) -> Any:
+    result = _list_audit_transactions(
+        record_store,
+        limit,
+        cursor,
+        protocol=protocol,
+        status=status,
+        include_total=True,
+    )
+    if format == "json":
+        return result
+    if format != "csv":
+        raise HTTPException(status_code=400, detail="format must be 'json' or 'csv'")
+
+    output = io.StringIO()
+    fieldnames = [
+        "id",
+        "record_hash",
+        "created_at",
+        "protocol",
+        "buyer_agent_id",
+        "seller_agent_id",
+        "amount",
+        "currency",
+        "status",
+        "application",
+        "zone_id",
+        "transfer_id",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for tx in result["transactions"]:
+        writer.writerow({name: tx.get(name) for name in fieldnames})
+    return Response(content=output.getvalue(), media_type="text/csv")
+
+
+@audit_router.get("/transactions/{record_id}")
+async def get_audit_transaction(
+    record_id: str,
+    record_store: Any = Depends(_get_record_store),
+) -> dict[str, Any]:
+    row = _get_audit_transaction(record_store, record_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return _serialize_audit_transaction(row)
+
+
+@audit_router.get("/integrity/{record_id}")
+async def verify_audit_integrity(
+    record_id: str,
+    record_store: Any = Depends(_get_record_store),
+) -> dict[str, Any]:
+    audit = _audit_logger(record_store)
+    row = audit.get_transaction(record_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {
+        "record_id": record_id,
+        "is_valid": audit.verify_integrity_from_row(row),
+        "record_hash": row.record_hash,
+    }
 
 
 @router.get("/transactions/integrity")

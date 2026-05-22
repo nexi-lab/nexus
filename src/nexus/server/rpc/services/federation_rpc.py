@@ -525,6 +525,33 @@ class FederationRPCService(FederationRPCMixin):
         except Exception:
             return {}
 
+    @staticmethod
+    def _standalone_cluster_info(zone_id: str) -> dict[str, Any]:
+        return {
+            "zone_id": zone_id,
+            "node_id": 0,
+            "has_store": False,
+            "is_leader": False,
+            "leader_id": 0,
+            "term": 0,
+            "commit_index": 0,
+            "applied_index": 0,
+            "voter_count": 0,
+            "witness_count": 0,
+            "links_count": 0,
+            "available": False,
+            "mode": "standalone",
+            "reason": "federation_cluster_info unavailable in standalone kernel",
+        }
+
+    @staticmethod
+    def _is_standalone_cluster_info_unavailable(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "unknown call method: federation_cluster_info" in message
+            or "federation not active" in message
+        )
+
     @rpc_expose(admin_only=False)
     def federation_list_zones(self) -> dict[str, Any]:
         # /__sys__/zones/ procfs view — read-only, kernel-internal
@@ -546,4 +573,9 @@ class FederationRPCService(FederationRPCMixin):
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
         # Bundled cluster status (term, commit_index, voters, links_count …)
         # — single round-trip through the federation control-plane helper.
-        return dict(self._kernel._call("federation_cluster_info", {"zone_id": zone_id}))
+        try:
+            return dict(self._kernel._call("federation_cluster_info", {"zone_id": zone_id}))
+        except Exception as exc:
+            if self._is_standalone_cluster_info_unavailable(exc):
+                return self._standalone_cluster_info(zone_id)
+            raise

@@ -4297,10 +4297,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="delete.file" data-op-text="delete.file  nexus_delete_file ">
+<div class="op" data-op-id="delete.file" data-op-text="delete.file Delete a file through MCP; visible from the coding profile and broader profiles. nexus_delete_file ">
   <div class="op-header">
     <span class="op-id">delete.file</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Delete a file through MCP; visible from the coding profile and broader profiles.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_delete_file</span></span>
@@ -4311,10 +4311,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus rm /workspace/old.txt; MCP: tools/call nexus_delete_file {&#34;path&#34;:&#34;/workspace/old.txt&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4360,10 +4360,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="edit.file" data-op-text="edit.file  nexus_edit_file ">
+<div class="op" data-op-id="edit.file" data-op-text="edit.file Apply structured file edits through MCP; visible from the coding profile and broader profiles. nexus_edit_file ">
   <div class="op-header">
     <span class="op-id">edit.file</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Apply structured file edits through MCP; visible from the coding profile and broader profiles.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_edit_file</span></span>
@@ -4374,10 +4374,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: use nexus write/cat for simple edits; MCP: tools/call nexus_edit_file {&#34;path&#34;:&#34;/workspace/app.py&#34;,&#34;edits&#34;:[...]}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4466,10 +4466,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="file.info" data-op-text="file.info  nexus_file_info ">
+<div class="op" data-op-id="file.info" data-op-text="file.info Inspect file metadata through MCP; visible from the minimal profile. nexus_file_info ">
   <div class="op-header">
     <span class="op-id">file.info</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Inspect file metadata through MCP; visible from the minimal profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_file_info</span></span>
@@ -4480,10 +4480,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus info /workspace/hello.txt; MCP: tools/call nexus_file_info {&#34;path&#34;:&#34;/workspace/hello.txt&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4805,7 +4805,7 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.mkdir" data-op-text="filesystem.mkdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus mkdir mkdir ">
+<div class="op" data-op-id="filesystem.mkdir" data-op-text="filesystem.mkdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus mkdir mkdir nexus_mkdir ">
   <div class="op-header">
     <span class="op-id">filesystem.mkdir</span>
     <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
@@ -4813,6 +4813,7 @@ graph TB
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus mkdir</span></span>
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>mkdir</span></span>
+    <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_mkdir</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5058,7 +5059,7 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.rmdir" data-op-text="filesystem.rmdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus rmdir rmdir ">
+<div class="op" data-op-id="filesystem.rmdir" data-op-text="filesystem.rmdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus rmdir rmdir nexus_rmdir ">
   <div class="op-header">
     <span class="op-id">filesystem.rmdir</span>
     <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
@@ -5066,6 +5067,7 @@ graph TB
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rmdir</span></span>
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>rmdir</span></span>
+    <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_rmdir</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5818,10 +5820,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.files" data-op-text="list.files  nexus_list_files ">
+<div class="op" data-op-id="list.files" data-op-text="list.files List directory contents through MCP; visible from the minimal profile for read-only workspace inspection. nexus_list_files ">
   <div class="op-header">
     <span class="op-id">list.files</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List directory contents through MCP; visible from the minimal profile for read-only workspace inspection.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_list_files</span></span>
@@ -5832,10 +5834,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus ls /workspace -l; MCP: tools/call nexus_list_files {&#34;path&#34;:&#34;/workspace&#34;,&#34;recursive&#34;:false}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6218,10 +6220,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="read.file" data-op-text="read.file  nexus_read_file ">
+<div class="op" data-op-id="read.file" data-op-text="read.file Read file content through MCP; visible from the minimal profile and inherited by every broader profile. nexus_read_file ">
   <div class="op-header">
     <span class="op-id">read.file</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Read file content through MCP; visible from the minimal profile and inherited by every broader profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_read_file</span></span>
@@ -6232,10 +6234,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus cat /workspace/hello.txt; MCP: tools/call nexus_read_file {&#34;path&#34;:&#34;/workspace/hello.txt&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6281,10 +6283,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rename.file" data-op-text="rename.file  nexus_rename_file ">
+<div class="op" data-op-id="rename.file" data-op-text="rename.file Rename or move a file through MCP; visible from the coding profile and broader profiles. nexus_rename_file ">
   <div class="op-header">
     <span class="op-id">rename.file</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Rename or move a file through MCP; visible from the coding profile and broader profiles.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_rename_file</span></span>
@@ -6295,10 +6297,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mv /workspace/old.txt /workspace/new.txt; MCP: tools/call nexus_rename_file {&#34;old_path&#34;:&#34;/workspace/old.txt&#34;,&#34;new_path&#34;:&#34;/workspace/new.txt&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6576,10 +6578,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="write.file" data-op-text="write.file  nexus_write_file ">
+<div class="op" data-op-id="write.file" data-op-text="write.file Write file content through MCP; visible from the coding profile and broader profiles. nexus_write_file ">
   <div class="op-header">
     <span class="op-id">write.file</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Write file content through MCP; visible from the coding profile and broader profiles.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_write_file</span></span>
@@ -6590,10 +6592,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus write /workspace/hello.txt &#34;hello&#34;; MCP: tools/call nexus_write_file {&#34;path&#34;:&#34;/workspace/hello.txt&#34;,&#34;content&#34;:&#34;hello&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10038,10 +10040,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="sandbox.create" data-op-text="sandbox.create  nexus_sandbox_create ">
+<div class="op" data-op-id="sandbox.create" data-op-text="sandbox.create Create a sandbox runtime through MCP when the sandbox provider is available; visible from the execution profile and full profile. nexus_sandbox_create ">
   <div class="op-header">
     <span class="op-id">sandbox.create</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Create a sandbox runtime through MCP when the sandbox provider is available; visible from the execution profile and full profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_sandbox_create</span></span>
@@ -10052,17 +10054,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus sandbox create demo-box --provider docker; MCP: tools/call nexus_sandbox_create {&#34;name&#34;:&#34;demo-box&#34;,&#34;ttl_minutes&#34;:15}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="sandbox.list" data-op-text="sandbox.list  nexus_sandbox_list ">
+<div class="op" data-op-id="sandbox.list" data-op-text="sandbox.list List sandbox runtimes through MCP when sandbox support is available; visible from the execution profile and full profile. nexus_sandbox_list ">
   <div class="op-header">
     <span class="op-id">sandbox.list</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List sandbox runtimes through MCP when sandbox support is available; visible from the execution profile and full profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_sandbox_list</span></span>
@@ -10073,10 +10075,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus sandbox list; MCP: tools/call nexus_sandbox_list {}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10101,10 +10103,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="sandbox.stop" data-op-text="sandbox.stop  nexus_sandbox_stop ">
+<div class="op" data-op-id="sandbox.stop" data-op-text="sandbox.stop Stop a sandbox runtime through MCP when sandbox support is available; visible from the execution profile and full profile. nexus_sandbox_stop ">
   <div class="op-header">
     <span class="op-id">sandbox.stop</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Stop a sandbox runtime through MCP when sandbox support is available; visible from the execution profile and full profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_sandbox_stop</span></span>
@@ -10115,10 +10117,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus sandbox stop sb_123; MCP: tools/call nexus_sandbox_stop {&#34;sandbox_id&#34;:&#34;sb_123&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -10882,10 +10884,10 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="execute.workflow" data-op-text="execute.workflow  nexus_execute_workflow ">
+<div class="op" data-op-id="execute.workflow" data-op-text="execute.workflow Execute a named workflow through MCP; visible from the full profile. nexus_execute_workflow ">
   <div class="op-header">
     <span class="op-id">execute.workflow</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Execute a named workflow through MCP; visible from the full profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_execute_workflow</span></span>
@@ -10896,17 +10898,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workflows execute tag-incoming; MCP: tools/call nexus_execute_workflow {&#34;name&#34;:&#34;tag-incoming&#34;,&#34;inputs&#34;:&#34;{}&#34;}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.workflows" data-op-text="list.workflows  nexus_list_workflows ">
+<div class="op" data-op-id="list.workflows" data-op-text="list.workflows List available workflows through MCP; visible from the full profile. nexus_list_workflows ">
   <div class="op-header">
     <span class="op-id">list.workflows</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List available workflows through MCP; visible from the full profile.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_list_workflows</span></span>
@@ -10917,10 +10919,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus workflows list; MCP: tools/call nexus_list_workflows {}.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -12564,10 +12566,10 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="hub.admin" data-op-text="hub.admin  nexus_hub_admin ">
+<div class="op" data-op-id="hub.admin" data-op-text="hub.admin Administer hub tokens through the generic MCP hub admin tool; visible from the full profile but still requires an admin bearer token. nexus_hub_admin ">
   <div class="op-header">
     <span class="op-id">hub.admin</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Administer hub tokens through the generic MCP hub admin tool; visible from the full profile but still requires an admin bearer token.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_hub_admin</span></span>
@@ -12578,10 +12580,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus hub status --remote https://hub.example.com/mcp --admin-token &#34;$NEXUS_HUB_ADMIN_TOKEN&#34;; MCP: tools/call nexus_hub_admin {&#34;action&#34;:&#34;status&#34;,&#34;arguments&#34;:{}}.</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf">tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call; tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4131">#4131</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

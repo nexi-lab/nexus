@@ -588,7 +588,7 @@ def _boot_post_kernel_services(
     sandbox_rpc_service: Any = None
     if _on("sandbox"):
         try:
-            from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
+            from nexus.bricks.sandbox.sandbox_rpc_service import SandboxRPCService
 
             sandbox_rpc_service = SandboxRPCService(
                 session_factory=_nx_session_factory,

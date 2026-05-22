@@ -400,7 +400,95 @@ class TestGrantToolsFailure:
 class TestDefaultConfigValidity:
     """Validate that default tool_profiles.yaml tool names match registered MCP tools."""
 
-    def test_default_yaml_tool_names_exist_in_server(self):
+    def test_default_profiles_match_expected_tool_matrix(self):
+        """Default profiles must encode the documented inherited tool matrix."""
+        config_path = Path(__file__).parents[4] / "src" / "nexus" / "config" / "tool_profiles.yaml"
+        config = load_profiles(config_path)
+
+        expected = {
+            "minimal": {
+                "nexus_file_info",
+                "nexus_glob",
+                "nexus_list_files",
+                "nexus_read_file",
+            },
+            "coding": {
+                "nexus_delete_file",
+                "nexus_edit_file",
+                "nexus_file_info",
+                "nexus_glob",
+                "nexus_grep",
+                "nexus_list_files",
+                "nexus_mkdir",
+                "nexus_read_file",
+                "nexus_rename_file",
+                "nexus_rmdir",
+                "nexus_write_file",
+            },
+            "search": {
+                "nexus_file_info",
+                "nexus_glob",
+                "nexus_grep",
+                "nexus_list_files",
+                "nexus_read_file",
+                "nexus_semantic_search",
+            },
+            "execution": {
+                "nexus_bash",
+                "nexus_delete_file",
+                "nexus_edit_file",
+                "nexus_file_info",
+                "nexus_glob",
+                "nexus_grep",
+                "nexus_list_files",
+                "nexus_mkdir",
+                "nexus_python",
+                "nexus_read_file",
+                "nexus_rename_file",
+                "nexus_rmdir",
+                "nexus_sandbox_create",
+                "nexus_sandbox_list",
+                "nexus_sandbox_stop",
+                "nexus_write_file",
+            },
+            "full": {
+                "nexus_bash",
+                "nexus_delete_file",
+                "nexus_discovery_get_tool_details",
+                "nexus_discovery_list_servers",
+                "nexus_discovery_load_tools",
+                "nexus_discovery_search_tools",
+                "nexus_edit_file",
+                "nexus_execute_workflow",
+                "nexus_file_info",
+                "nexus_glob",
+                "nexus_grep",
+                "nexus_hub_admin",
+                "nexus_list_files",
+                "nexus_list_workflows",
+                "nexus_mkdir",
+                "nexus_python",
+                "nexus_read_file",
+                "nexus_rename_file",
+                "nexus_rmdir",
+                "nexus_sandbox_create",
+                "nexus_sandbox_list",
+                "nexus_sandbox_stop",
+                "nexus_semantic_search",
+                "nexus_write_file",
+            },
+        }
+
+        assert set(config.profile_names) == set(expected)
+        for profile_name, tools in expected.items():
+            profile = config.get_profile(profile_name)
+            assert profile is not None
+            assert profile.tools == tools
+
+        assert config.get_default() == config.get_profile("minimal")
+
+    @pytest.mark.asyncio
+    async def test_default_yaml_tool_names_exist_in_server(self):
         """All tool names in default YAML should match registered MCP tools.
 
         Sandbox tools (nexus_python, nexus_bash, nexus_sandbox_*) are
@@ -415,7 +503,7 @@ class TestDefaultConfigValidity:
         OPTIONAL_TOOL_PREFIXES = ("nexus_python", "nexus_bash", "nexus_sandbox_")
 
         # Load the default config
-        config_path = Path(__file__).parents[3] / "src" / "nexus" / "config" / "tool_profiles.yaml"
+        config_path = Path(__file__).parents[4] / "src" / "nexus" / "config" / "tool_profiles.yaml"
         if not config_path.exists():
             pytest.skip("Default tool_profiles.yaml not found")
 
@@ -442,7 +530,7 @@ class TestDefaultConfigValidity:
                 "errors": [],
             }
         )
-        server = create_mcp_server(nx=mock_nx)
+        server = await create_mcp_server(nx=mock_nx)
         # FastMCP 2.x used per-type managers (``_tool_manager._tools``) but
         # 3.x replaced them with a single ``_local_provider._components``
         # registry keyed by ``"tool:<name>@..."``. Support both.

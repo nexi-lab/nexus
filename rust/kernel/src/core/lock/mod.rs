@@ -104,15 +104,27 @@ struct IOLockState {
 
 // ── Path helpers ────────────────────────────────────────────────────
 
-/// Normalize a path: collapse repeated slashes, remove trailing slash (except root).
-pub(crate) fn normalize_path(path: &str) -> String {
+/// Normalize a path: collapse repeated slashes, remove trailing slash
+/// (except root).
+///
+/// Returns `Cow::Borrowed` when the input is already canonical (or
+/// requires only a trailing-slash trim — still expressible as a slice).
+/// Only paths containing consecutive slashes (`"/a//b"`) fall into the
+/// owning-`String` slow path. The I/O lock hot path
+/// (`blocking_acquire`, `is_locked`, `io_holders`) is normalized on
+/// every call, so the fast path is worth the inline scan.
+pub(crate) fn normalize_path(path: &str) -> std::borrow::Cow<'_, str> {
     if path.is_empty() {
-        return "/".to_string();
+        return std::borrow::Cow::Borrowed("/");
     }
-
+    if !path.as_bytes().windows(2).any(|w| w == b"//") {
+        if path.len() > 1 && path.ends_with('/') {
+            return std::borrow::Cow::Borrowed(&path[..path.len() - 1]);
+        }
+        return std::borrow::Cow::Borrowed(path);
+    }
     let mut result = String::with_capacity(path.len());
     let mut prev_slash = false;
-
     for ch in path.chars() {
         if ch == '/' {
             if !prev_slash {
@@ -124,12 +136,10 @@ pub(crate) fn normalize_path(path: &str) -> String {
             prev_slash = false;
         }
     }
-
     if result.len() > 1 && result.ends_with('/') {
         result.pop();
     }
-
-    result
+    std::borrow::Cow::Owned(result)
 }
 
 /// Lazy iterator over the *strict* ancestors of `path`, deepest-first.
@@ -356,7 +366,7 @@ impl LockManager {
         {
             let mut state = self.io_state.lock();
             if let Some(handle) =
-                Self::try_acquire_io_locked(&mut state, &self.next_handle, &norm_path, mode)
+                Self::try_acquire_io_locked(&mut state, &self.next_handle, norm_path.as_ref(), mode)
             {
                 let elapsed = start.elapsed().as_nanos() as u64;
                 self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
@@ -388,7 +398,7 @@ impl LockManager {
             let wait_result = self.notify.wait_for(&mut state, remaining);
 
             if let Some(handle) =
-                Self::try_acquire_io_locked(&mut state, &self.next_handle, &norm_path, mode)
+                Self::try_acquire_io_locked(&mut state, &self.next_handle, norm_path.as_ref(), mode)
             {
                 let elapsed = start.elapsed().as_nanos() as u64;
                 self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
@@ -564,7 +574,10 @@ impl LockManager {
     pub fn is_locked(&self, path: &str) -> bool {
         let norm = normalize_path(path);
         let state = self.io_state.lock();
-        state.locks.get(&norm).is_some_and(|entry| !entry.is_idle())
+        state
+            .locks
+            .get(norm.as_ref())
+            .is_some_and(|entry| !entry.is_idle())
     }
 
     /// Return I/O lock-holder information for `path`: (readers, writer_handle).
@@ -572,7 +585,7 @@ impl LockManager {
     pub fn io_holders(&self, path: &str) -> Option<(u32, u64)> {
         let norm = normalize_path(path);
         let state = self.io_state.lock();
-        match state.locks.get(&norm) {
+        match state.locks.get(norm.as_ref()) {
             Some(entry) if !entry.is_idle() => {
                 Some((entry.io_readers, entry.io_writer.unwrap_or(0)))
             }

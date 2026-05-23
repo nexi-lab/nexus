@@ -54,6 +54,13 @@ service NexusVFSService {
   // Typed rename / server-side copy.
   rpc Rename(RenameRequest) returns (RenameResponse);
   rpc Copy(CopyRequest) returns (CopyResponse);
+
+  // Typed advisory-lock acquire / release.
+  rpc Lock(LockRequest) returns (LockResponse);
+  rpc Unlock(UnlockRequest) returns (UnlockResponse);
+
+  // Typed file-event watch (blocking, inotify-shaped).
+  rpc Watch(WatchRequest) returns (WatchResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -340,4 +347,52 @@ message CopyResponse {
   uint64 gen = 6;
   bool is_error = 7;
   bytes error_payload = 8;
+}
+
+// --- Typed advisory locks (replace the `sys_lock` / `sys_unlock` Calls) ---
+
+// Matches the Call wire surface: the kernel `sys_lock` hardcodes
+// Exclusive + max_holders=1 + ttl_secs=timeout_ms/1000+1 on this path,
+// so we don't expose mode / max_holders / ttl_secs on the RPC yet.
+message LockRequest {
+  string path = 1;
+  string auth_token = 2;
+  string lock_id = 3;      // empty → server generates
+  uint64 timeout_ms = 4;
+}
+
+message LockResponse {
+  bool acquired = 1;       // false → lock contention, no other error
+  string lock_id = 2;      // set when acquired
+  bool is_error = 3;
+  bytes error_payload = 4;
+}
+
+message UnlockRequest {
+  string path = 1;
+  string auth_token = 2;
+  string lock_id = 3;
+  bool force = 4;
+}
+
+message UnlockResponse {
+  bool released = 1;
+  bool is_error = 2;
+  bytes error_payload = 3;
+}
+
+// --- Typed file-event watch (replaces the `sys_watch` Call) ---
+
+message WatchRequest {
+  string path = 1;
+  string auth_token = 2;
+  uint64 timeout_ms = 3;
+}
+
+message WatchResponse {
+  bool matched = 1;        // false → timed out, no event
+  string path = 2;         // event path when matched
+  string event_type = 3;   // FileEventType Debug string (e.g. "FileWrite")
+  bool is_error = 4;
+  bytes error_payload = 5;
 }

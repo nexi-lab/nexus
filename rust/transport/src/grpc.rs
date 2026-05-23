@@ -27,9 +27,10 @@ use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
-    CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, PingRequest,
-    PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse,
-    RenameRequest, RenameResponse, SetattrRequest, SetattrResponse, StatRequest, StatResponse,
+    CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, LockRequest,
+    LockResponse, PingRequest, PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse,
+    ReadRequest, ReadResponse, RenameRequest, RenameResponse, SetattrRequest, SetattrResponse,
+    StatRequest, StatResponse, UnlockRequest, UnlockResponse, WatchRequest, WatchResponse,
     WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
@@ -455,6 +456,98 @@ impl NexusVfsService for VfsServiceImpl {
         }
     }
 
+    async fn lock(&self, req: Request<LockRequest>) -> Result<Response<LockResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_lock(s))),
+        };
+        // Match the Call wire surface (mode / max_holders / ttl_secs are
+        // hardcoded on the JSON path; expose only when there's a caller
+        // that needs to vary them).
+        let ttl_secs = req.timeout_ms / 1000 + 1;
+        match self.kernel.sys_lock(
+            &req.path,
+            &req.lock_id,
+            kernel::lock_manager::KernelLockMode::Exclusive,
+            1,
+            ttl_secs,
+            "",
+        ) {
+            Ok(Some(id)) => Ok(Response::new(LockResponse {
+                acquired: true,
+                lock_id: id,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Ok(None) => Ok(Response::new(LockResponse {
+                acquired: false,
+                lock_id: String::new(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(LockResponse {
+                    acquired: false,
+                    lock_id: String::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn unlock(
+        &self,
+        req: Request<UnlockRequest>,
+    ) -> Result<Response<UnlockResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_unlock(s))),
+        };
+        match self.kernel.sys_unlock(&req.path, &req.lock_id, req.force) {
+            Ok(released) => Ok(Response::new(UnlockResponse {
+                released,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(UnlockResponse {
+                    released: false,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn watch(&self, req: Request<WatchRequest>) -> Result<Response<WatchResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_watch(s))),
+        };
+        match self.kernel.sys_watch(&req.path, req.timeout_ms) {
+            Some(evt) => Ok(Response::new(WatchResponse {
+                matched: true,
+                path: evt.path().to_string(),
+                event_type: format!("{:?}", evt.event_type),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            None => Ok(Response::new(WatchResponse {
+                matched: false,
+                path: String::new(),
+                event_type: String::new(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+        }
+    }
+
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
         let ctx = self.resolve_context(&req.into_inner().auth_token)?;
         let uptime = self.server_started_at.elapsed().as_secs() as i64;
@@ -788,6 +881,33 @@ fn error_delete(status: Status) -> DeleteResponse {
 fn error_readdir(status: Status) -> ReaddirResponse {
     ReaddirResponse {
         entries: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_lock(status: Status) -> LockResponse {
+    LockResponse {
+        acquired: false,
+        lock_id: String::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_unlock(status: Status) -> UnlockResponse {
+    UnlockResponse {
+        released: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_watch(status: Status) -> WatchResponse {
+    WatchResponse {
+        matched: false,
+        path: String::new(),
+        event_type: String::new(),
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

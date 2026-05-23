@@ -84,6 +84,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.FromString,
                 _registered_method=True)
+        self.Setattr = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Setattr',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -161,6 +166,16 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Setattr(self, request, context):
+        """Typed attribute set / inode create. Exposes the subset of the
+        21-param inherent sys_setattr that crosses the JSON wire today —
+        Arc<ObjectStore>, metastore, raft_backend, read_fd/write_fd, source,
+        and remote_metastore stay off this RPC (they need in-process refs).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -213,6 +228,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.BatchStat,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.SerializeToString,
+            ),
+            'Setattr': grpc.unary_unary_rpc_method_handler(
+                    servicer.Setattr,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -485,6 +505,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/BatchStat',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Setattr(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Setattr',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.FromString,
             options,
             channel_credentials,
             insecure,

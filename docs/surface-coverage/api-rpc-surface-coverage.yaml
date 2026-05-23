@@ -1518,9 +1518,9 @@ operations:
     full: supported
   usage_example: 'RPC: audit_export({"fmt":"json"}) returns serialized audit records; CLI equivalent: nexus audit export --format
     json'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_audit_export_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_export_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_audit_export_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_export_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: audit.integrity_{record_id}
@@ -1553,9 +1553,9 @@ operations:
     full: supported
   usage_example: 'RPC: audit_list({"limit":25}) returns transactions plus cursor state; CLI equivalent: nexus audit list --limit
     25'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_audit_list_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_list_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_audit_list_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_list_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: audit.transactions
@@ -2744,9 +2744,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'SDK: await client.admin.create_key(name="bench-key", zone_id="root"); RPC: admin_create_key({...})'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_create_key_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_create_key_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_create_key_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_create_key_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: create.pipe
@@ -3424,9 +3424,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: events_replay({"event_type":"operation","limit":25}); HTTP: GET /api/v2/events/replay?limit=25'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_events_replay_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_events_replay_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_events_replay_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_events_replay_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: events.stream
@@ -4063,9 +4063,9 @@ operations:
     full: supported
   usage_example: 'RPC: federation_create_zone({"zone_id":"team-a"}); skips benchmark clearly when the local federation runtime
     is unavailable.'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_federation_create_zone_runtime_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_create_zone_runtime_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_federation_create_zone_runtime_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_create_zone_runtime_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: federation.export_zone
@@ -4131,10 +4131,10 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: federation_list_zones({}); CLI equivalent: nexus federation zones'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_federation_list_zones_runtime_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_list_zones_runtime_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_federation_list_zones_runtime_benchmark; federation status/inspection
-    path, no per-file or search hot-path budget
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_list_zones_runtime_benchmark; federation
+    status/inspection path, no per-file or search hot-path budget
   gap_issue: null
   owning_issue: 4130
 - id: federation.mount
@@ -5430,9 +5430,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'SDK: await client.admin.get_key(key_id); RPC: admin_get_key({"key_id": key_id, "zone_id":"root"})'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_get_key_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_get_key_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_get_key_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_get_key_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: get.mount
@@ -5691,9 +5691,9 @@ operations:
     full: supported
   usage_example: 'RPC: governance_alerts({"severity":"high","limit":5}); CLI equivalent: nexus governance alerts --severity
     high --limit 5'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_governance_alerts_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_alerts_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_governance_alerts_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_alerts_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: governance.cli
@@ -5725,9 +5725,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: governance_rings({}); CLI equivalent: nexus governance rings'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_governance_rings_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_rings_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_governance_rings_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_rings_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: governance.status
@@ -5742,9 +5742,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: governance_status({}); CLI equivalent: nexus governance status'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_governance_status_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_status_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_governance_status_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_status_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: grant.consent
@@ -6405,9 +6405,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'SDK: await client.admin.list_keys(zone_id="root", limit=25); RPC: admin_list_keys({"zone_id":"root","limit":25})'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_list_keys_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_list_keys_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_list_keys_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_list_keys_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: list.mounts
@@ -9246,9 +9246,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'SDK: await client.admin.revoke_key(key_id); RPC: admin_revoke_key({"key_id": key_id, "zone_id":"root"})'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_revoke_key_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_revoke_key_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_revoke_key_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_revoke_key_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: revoke.share
@@ -11800,9 +11800,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'SDK: await client.admin.update_key(key_id, name="rotated"); RPC: admin_update_key({"key_id": key_id, "name":"rotated"})'
-  correctness_test: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_update_key_rpc_benchmark
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_update_key_rpc_benchmark
   perf_class: control
-  perf_link: tests/benchmarks/bench_full_control_plane_rpc.py::test_admin_update_key_rpc_benchmark
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_update_key_rpc_benchmark
   gap_issue: null
   owning_issue: 4201
 - id: update.mount

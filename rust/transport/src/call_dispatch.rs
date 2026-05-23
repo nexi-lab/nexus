@@ -1,9 +1,11 @@
-//! Generic `Call` RPC dispatcher.
+//! Generic `Call` RPC dispatcher — control-plane only.
 //!
-//! Parses JSON payload → dispatches to `Kernel::sys_*` → serializes
-//! result back to JSON. The Python `rpc_codec` uses plain JSON with
-//! a `{"result": <value>}` envelope for success and
-//! `{"code": N, "message": "..."}` for errors.
+//! Every syscall is now a typed RPC. This file retains the remaining
+//! non-syscall Call methods: the service-lifecycle no-ops the Python
+//! factory emits during boot, and explicit error stubs for the
+//! lookup-shaped ops the subprocess kernel does not expose over the
+//! wire (service / trie / agent registries). Anything else hits the
+//! unknown-method error path.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,16 +24,14 @@ use tonic::{Response, Status};
 
 use crate::grpc::{encode_rpc_error, RpcErrorCode};
 
-/// Dispatch a generic Call RPC to the appropriate kernel method.
+/// Dispatch a generic Call RPC. After the typed-RPC migration only the
+/// non-syscall control plane stays here.
 pub fn dispatch(
-    kernel: &Arc<Kernel>,
-    ctx: &OperationContext,
+    _kernel: &Arc<Kernel>,
+    _ctx: &OperationContext,
     method: &str,
-    payload: &[u8],
+    _payload: &[u8],
 ) -> Result<Response<CallResponse>, Status> {
-    let params: serde_json::Value =
-        serde_json::from_slice(payload).unwrap_or(serde_json::Value::Object(Default::default()));
-
     let result = match method {
         "sys_read" => do_sys_read(kernel, &params, ctx),
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
@@ -46,8 +46,15 @@ pub fn dispatch(
         | "service_stop_all"
         | "service_close_all" => ok_json(serde_json::json!(null)),
 
-        // Service lookup/swap — not available via gRPC.
-        "service_lookup" | "service_swap" => Err(call_err(
+        // Lookup-shaped ops the subprocess kernel doesn't expose.
+        "service_lookup"
+        | "service_swap"
+        | "trie_register"
+        | "trie_lookup"
+        | "trie_unregister"
+        | "agent_register"
+        | "agent_unregister"
+        | "agent_list" => Err(encode_rpc_error(
             RpcErrorCode::InternalError,
             &format!("{method} is not available in subprocess mode"),
         )),

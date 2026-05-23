@@ -510,3 +510,162 @@ class TestPostFlushHookSync:
         syncer.register_post_flush_hook(lambda events: calls.append("hook2"))
 
         assert len(syncer._post_flush_hooks) == 2
+
+
+# =========================================================================
+# Snapshot-on-write — publishes pre-write bytes to /__sys__/versioning/
+# =========================================================================
+
+
+class TestSnapshotOnWrite:
+    """The OBSERVE-stage write hook publishes a metadata-only snapshot entry
+    pointing at the pre-write content_id, so TimeTravelService /
+    OperationUndoService can read historical bytes by path.
+    """
+
+    def test_overwrite_publishes_snapshot_at_versioning_path(
+        self,
+        syncer: RecordStoreWriteObserver,
+        record_store: SQLAlchemyRecordStore,
+    ) -> None:
+        from nexus.contracts.versioning_path import versioning_snapshot_path
+
+        fake_fs = MagicMock()
+        syncer.attach_filesystem(fake_fs)
+
+        old_metadata = {
+            "content_id": "old-hash-v1",
+            "size": 11,
+            "mime_type": "text/plain",
+            "version": 1,
+        }
+        new_meta = _make_metadata("/doc.txt", content_id="new-hash-v2", version=2)
+        syncer.on_write(
+            new_meta,
+            is_new=False,
+            path="/doc.txt",
+            old_metadata=old_metadata,
+            zone_id=ROOT_ZONE_ID,
+        )
+
+        # Snapshot path uses the operation_id from the freshly logged op row.
+        with record_store.session_factory() as session:
+            op = session.query(OperationLogModel).filter(OperationLogModel.path == "/doc.txt").one()
+            expected_path = versioning_snapshot_path("/doc.txt", op.operation_id)
+
+        fake_fs.sys_setattr.assert_called_once()
+        call_args = fake_fs.sys_setattr.call_args
+        assert call_args.args[0] == expected_path
+        # Snapshot entry points at the OLD CAS content, not the new one.
+        assert call_args.kwargs["content_id"] == "old-hash-v1"
+        assert call_args.kwargs["size"] == 11
+        assert call_args.kwargs["version"] == 1
+
+    def test_new_file_does_not_publish_snapshot(
+        self,
+        syncer: RecordStoreWriteObserver,
+    ) -> None:
+        fake_fs = MagicMock()
+        syncer.attach_filesystem(fake_fs)
+
+        new_meta = _make_metadata("/fresh.txt", content_id="h1")
+        syncer.on_write(
+            new_meta,
+            is_new=True,
+            path="/fresh.txt",
+            old_metadata=None,
+            zone_id=ROOT_ZONE_ID,
+        )
+
+        fake_fs.sys_setattr.assert_not_called()
+
+    def test_write_under_versioning_prefix_is_not_self_snapshotted(
+        self,
+        syncer: RecordStoreWriteObserver,
+    ) -> None:
+        """Observer must skip writes under /__sys__/versioning/ to avoid recursion."""
+        fake_fs = MagicMock()
+        syncer.attach_filesystem(fake_fs)
+
+        old_metadata = {"content_id": "old-snap-hash", "size": 5, "version": 1}
+        snap_meta = _make_metadata(
+            "/__sys__/versioning/deadbeef/op123.bin", content_id="new-snap-hash"
+        )
+        syncer.on_write(
+            snap_meta,
+            is_new=False,
+            path="/__sys__/versioning/deadbeef/op123.bin",
+            old_metadata=old_metadata,
+            zone_id=ROOT_ZONE_ID,
+        )
+
+        fake_fs.sys_setattr.assert_not_called()
+
+    def test_delete_publishes_snapshot_of_doomed_content(
+        self,
+        syncer: RecordStoreWriteObserver,
+        record_store: SQLAlchemyRecordStore,
+    ) -> None:
+        from nexus.contracts.versioning_path import versioning_snapshot_path
+
+        # First create a file so on_delete sees it.
+        m = _make_metadata("/doomed.txt", content_id="doomed-hash")
+        syncer.on_write(m, is_new=True, path="/doomed.txt", zone_id=ROOT_ZONE_ID)
+
+        fake_fs = MagicMock()
+        syncer.attach_filesystem(fake_fs)
+
+        # Kernel passes the pre-delete metadata so the snapshot captures the
+        # doomed CAS content_id; without it, on_delete cannot publish anything.
+        pre_delete = {
+            "content_id": "doomed-hash",
+            "size": 7,
+            "mime_type": "text/plain",
+            "version": 1,
+        }
+        syncer.on_delete(path="/doomed.txt", metadata=pre_delete, zone_id=ROOT_ZONE_ID)
+
+        with record_store.session_factory() as session:
+            del_op = (
+                session.query(OperationLogModel)
+                .filter(
+                    OperationLogModel.path == "/doomed.txt",
+                    OperationLogModel.operation_type == "delete",
+                )
+                .one()
+            )
+            expected_path = versioning_snapshot_path("/doomed.txt", del_op.operation_id)
+
+        fake_fs.sys_setattr.assert_called_once()
+        call_args = fake_fs.sys_setattr.call_args
+        assert call_args.args[0] == expected_path
+        assert call_args.kwargs["content_id"] == "doomed-hash"
+
+    def test_snapshot_publish_failure_does_not_break_write(
+        self,
+        syncer: RecordStoreWriteObserver,
+        record_store: SQLAlchemyRecordStore,
+    ) -> None:
+        """sys_setattr failure is best-effort — the audit row still commits."""
+        fake_fs = MagicMock()
+        fake_fs.sys_setattr.side_effect = RuntimeError("kernel down")
+        syncer.attach_filesystem(fake_fs)
+
+        old_metadata = {"content_id": "old-hash", "size": 3, "version": 1}
+        new_meta = _make_metadata("/best-effort.txt", content_id="new-hash", version=2)
+        # Should not raise.
+        syncer.on_write(
+            new_meta,
+            is_new=False,
+            path="/best-effort.txt",
+            old_metadata=old_metadata,
+            zone_id=ROOT_ZONE_ID,
+        )
+
+        with record_store.session_factory() as session:
+            ops = (
+                session.query(OperationLogModel)
+                .filter(OperationLogModel.path == "/best-effort.txt")
+                .all()
+            )
+            assert len(ops) == 1

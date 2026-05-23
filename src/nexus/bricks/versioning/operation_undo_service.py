@@ -96,7 +96,7 @@ class OperationUndoService:
     def _undo_write(self, operation: Any) -> UndoResult:
         """Undo a write: restore previous content or delete new file."""
         if operation.snapshot_hash:
-            old_content = self._read_content_from_cas(operation.path, operation.snapshot_hash)
+            old_content = self._read_snapshot(operation)
             self._write(operation.path, old_content)
             return UndoResult(
                 success=True,
@@ -124,7 +124,7 @@ class OperationUndoService:
                 path=operation.path,
             )
 
-        content = self._read_content_from_cas(operation.path, operation.snapshot_hash)
+        content = self._read_snapshot(operation)
         self._write(operation.path, content)
 
         # NOTE: metadata restoration (chown/chgrp/chmod) is intentionally
@@ -169,25 +169,29 @@ class OperationUndoService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _read_content_from_cas(self, path: str, content_id: str) -> bytes:  # noqa: ARG002
-        """Read content via the kernel syscall path (§2.5 mediation).
+    def _read_snapshot(self, operation: Any) -> bytes:
+        """Read the pre-write snapshot bytes for ``operation`` via the syscall.
 
-        Architectural gap (FOLLOW-UP — same as TimeTravelService._read_snapshot):
-            ``content_id`` is the hash of the OLD bytes recorded by the write
-            observer at log time. The bytes are in CAS keyed by that hash,
-            but service tier cannot reach them by hash (§2.5). This method
-            currently returns ``sys_read_raw(path)`` which is the CURRENT
-            bytes at the path — wrong for any undo-after-write where the
-            current content already differs. The systematic fix is a
-            kernel-side snapshot-on-write that publishes pre-write bytes to
-            a path-addressed namespace; that change belongs in rust/kernel,
-            not here.
+        Snapshots live at ``/__sys__/versioning/{sha256(path)}/{op_id}.bin`` —
+        published by the write observer's OBSERVE-stage hook when the write
+        that produced ``operation`` was committed. Both sides derive the path
+        from ``nexus.contracts.versioning_path`` so the convention is SSOT.
 
-            ``content_id`` is kept in the signature for the future migration
-            but is unused today.
+        Reads through ``sys_read_raw`` (§2.5 — service tier never touches CAS
+        by hash). The snapshot entry is metadata-only and points back at the
+        original ``content_id``, so this round-trip costs one path resolve plus
+        one CAS fetch — no byte copy at write time.
+
+        Raises ``RuntimeError`` if no kernel is wired; propagates the kernel's
+        ``NexusFileNotFoundError`` if the snapshot was never published (legacy
+        operation log entries from before the observer was wired, or paths the
+        observer skips).
         """
+        from nexus.contracts.versioning_path import versioning_snapshot_path
+
         _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
         if _kernel is None:
-            raise RuntimeError(f"No kernel available for CAS read: {path}")
-        result: bytes = _kernel.sys_read_raw(path, "root")
+            raise RuntimeError(f"No kernel available for snapshot read: {operation.path}")
+        snap_path = versioning_snapshot_path(operation.path, operation.operation_id)
+        result: bytes = _kernel.sys_read_raw(snap_path, "root")
         return result

@@ -45,8 +45,13 @@ def _make_service(
 
 
 def _op(op_type: str, **kwargs: object) -> SimpleNamespace:
-    """Build a fake OperationLogModel-like object."""
+    """Build a fake OperationLogModel-like object.
+
+    ``operation_id`` is required for snapshot lookups — _read_snapshot
+    derives the /__sys__/versioning/{sha256(path)}/{op_id}.bin path from it.
+    """
     defaults = {
+        "operation_id": "op-test-id",
         "operation_type": op_type,
         "path": "/workspace/test.txt",
         "new_path": None,

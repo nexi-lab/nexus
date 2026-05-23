@@ -95,8 +95,8 @@ def _build_app(
     app.state.search_daemon = mock_daemon
     if permission_enforcer is not None and isinstance(permission_enforcer, MagicMock):
         permission_enforcer.check.return_value = False
-        permission_enforcer.filter_list.side_effect = (
-            lambda paths, _context: permission_enforcer.filter_search_results(
+        permission_enforcer.filter_list.side_effect = lambda paths, _context: (
+            permission_enforcer.filter_search_results(
                 paths,
                 user_id="user:alice",
                 zone_id="root",

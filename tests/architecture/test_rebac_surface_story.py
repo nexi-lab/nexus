@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import pytest
 
+from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import load_yaml
 from scripts.surface_coverage.taxonomy import classify_op_id
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
-_REBAC_SERVICE = _REPO_ROOT / "src/nexus/bricks/rebac/rebac_service.py"
+_REBAC_SERVICE = REPO_ROOT / "src/nexus/bricks/rebac/rebac_service.py"
 
 OWNING_ISSUE = 4134
 
@@ -79,7 +77,7 @@ def test_rebac_story_tracks_every_exposed_rebac_rpc() -> None:
 
 
 def test_rebac_story_rows_have_owner_tests_perf_and_gaps() -> None:
-    coverage = load_yaml(_COVERAGE_YAML)
+    coverage = load_yaml(COVERAGE_YAML)
     by_id = {op.id: op for op in coverage.operations}
 
     for op_id in sorted(REBAC_RPC_METHOD_TO_OP.values()):

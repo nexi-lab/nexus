@@ -543,6 +543,7 @@ class GrepParams:
     invert_match: bool = False
     files: list[str] | None = None
     block_type: str | None = None
+    section: str | None = None
 
 
 @dataclass

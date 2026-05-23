@@ -310,6 +310,52 @@ class TestGrepBlockType:
         assert data["count"] == 5
 
 
+class TestGrepSection:
+    """#4186: section filtering via HTTP grep endpoints."""
+
+    def test_get_section_forwarded(self) -> None:
+        """GET ?section=API forwards to SearchService."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=needle&section=API")
+        assert resp.status_code == 200
+        kwargs = svc.grep.await_args.kwargs
+        assert kwargs["section"] == "API"
+        assert resp.json()["section_filter"] == "API"
+
+    def test_get_in_section_alias_forwarded(self) -> None:
+        """GET ?in_section=## API is accepted as the CLI-friendly alias."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.get("/api/v2/search/grep?pattern=needle&in_section=%23%23%20API")
+        kwargs = svc.grep.await_args.kwargs
+        assert kwargs["section"] == "## API"
+
+    def test_post_in_section_alias_forwarded(self) -> None:
+        """POST in_section in JSON body forwards as SearchService.section."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "needle", "in_section": "## API"},
+        )
+        assert resp.status_code == 200
+        kwargs = svc.grep.await_args.kwargs
+        assert kwargs["section"] == "## API"
+        assert resp.json()["section_status"] == "no_matches"
+
+    def test_post_section_non_string_returns_400(self) -> None:
+        """POST section aliases must be strings or null."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "needle", "section": 123},
+        )
+        assert resp.status_code == 400
+        assert "section" in resp.json()["detail"]
+
+
 class TestGlobHappyPath:
     def test_basic_match_returns_paths(self) -> None:
         svc = _make_search_service(glob_return=["/a.py", "/b.py", "/c.py"])

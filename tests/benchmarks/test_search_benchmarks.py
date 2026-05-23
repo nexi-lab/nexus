@@ -6,7 +6,9 @@ These benchmarks compare Python regex vs Rust grep implementation.
 See issue #570 for context.
 """
 
+import json
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -113,6 +115,60 @@ class TestPythonRegexBenchmarks:
 
         result = benchmark(search)
         assert len(result) == 500
+
+
+@pytest.mark.benchmark_hash
+class TestSectionAwareGrepBenchmarks:
+    """Benchmarks for section-aware grep post-filtering (#4186)."""
+
+    def test_section_filter_uses_cached_structure_ranges(self, benchmark):
+        """Section filtering should reuse md_structure ranges, not reparse content."""
+        from nexus.bricks.search.search_service import SearchService
+
+        metadata_store = MagicMock()
+        section_index = {
+            "version": 2,
+            "content_id": "bench-doc",
+            "sections": [
+                {
+                    "heading": "Intro",
+                    "depth": 1,
+                    "line_start": 0,
+                    "line_end": 500,
+                    "blocks": [],
+                },
+                {
+                    "heading": "API",
+                    "depth": 2,
+                    "line_start": 500,
+                    "line_end": 1500,
+                    "blocks": [],
+                },
+            ],
+        }
+        metadata_store.metastore_get_file_metadata.return_value = json.dumps(section_index)
+        service = SearchService(
+            metadata_store=metadata_store,
+            nexus_fs=None,
+            enforce_permissions=False,
+        )
+        grep_results = [
+            {"file": "/bench.md", "line": line, "content": f"needle {line}", "match": "needle"}
+            for line in range(1, 2001)
+        ]
+
+        def filter_once():
+            metadata_store.metastore_get_file_metadata.reset_mock()
+            filtered = service._filter_results_by_section(grep_results, "## API")
+            metadata_store.metastore_get_file_metadata.assert_called_once_with(
+                "/bench.md", "md_structure"
+            )
+            return filtered
+
+        result = benchmark(filter_once)
+        assert len(result) == 1000
+        assert result[0]["line"] == 501
+        assert result[-1]["line"] == 1500
 
 
 # =============================================================================

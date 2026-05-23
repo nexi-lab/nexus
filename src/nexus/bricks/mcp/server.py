@@ -1171,6 +1171,7 @@ async def create_mcp_server(
         after_context: int = 0,
         invert_match: bool = False,
         block_type: str | None = None,
+        section: str | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -1199,6 +1200,10 @@ async def create_mcp_server(
                 ``"frontmatter"``, ``"paragraph"``, ``"blockquote"``,
                 ``"list"``, ``"heading"``. Non-markdown files pass
                 through unfiltered. Omit for default full-file search.
+            section: Restrict matches to a markdown or parsed-content
+                section heading (#4186), e.g. ``"API"`` or ``"## API"``.
+                Missing sections return an empty result envelope rather
+                than falling back to whole-file search.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -1267,6 +1272,8 @@ async def create_mcp_server(
             grep_kwargs["invert_match"] = True
         if block_type is not None:
             grep_kwargs["block_type"] = block_type
+        if section is not None:
+            grep_kwargs["section"] = section
 
         # SearchService.grep() is async in local mode but the
         # RemoteServiceProxy returns a sync result. Handle both.
@@ -1328,6 +1335,9 @@ async def create_mcp_server(
         }
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
+        if section is not None:
+            extras["section_filter"] = section
+            extras["section_status"] = "matched" if post_filter_count else "no_matches"
 
         result = build_paginated_list_response(
             items=paginated_results,

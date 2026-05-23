@@ -455,6 +455,23 @@ class TestGrepCommand:
         assert "after_context" not in kwargs
         assert "invert_match" not in kwargs
 
+    def test_grep_in_section_forwarded(self) -> None:
+        """--in-section forwards the requested section to grep."""
+        nx = _make_mock_nx()
+        nx.service("search").grep.return_value = {"results": []}
+
+        runner = CliRunner()
+        with _patch_search_open_filesystem(nx):
+            result = runner.invoke(
+                grep,
+                ["needle", "--in-section", "## API", "--json"],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        kwargs = nx.service("search").grep.call_args.kwargs
+        assert kwargs["section"] == "## API"
+
     def test_grep_l_mode_prints_plain_filenames_for_piping(self) -> None:
         """-l output must be one filename per line, unadorned, pipe-safe."""
         nx = _make_mock_nx()

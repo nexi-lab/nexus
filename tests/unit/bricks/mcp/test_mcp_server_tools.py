@@ -917,6 +917,30 @@ class TestSearchTools:
         kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
         assert "block_type" not in kwargs
 
+    async def test_grep_section_forwarded(self, mock_nx_basic):
+        """#4186: section flows through MCP to SearchService."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        result = await grep_tool.fn(pattern="needle", section="## API")
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert kwargs["section"] == "## API"
+        response = json.loads(result)
+        assert response["section_filter"] == "## API"
+
+    async def test_grep_section_none_omitted_from_kwargs(self, mock_nx_basic):
+        """#4186: default section=None must not be sent to older servers."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="needle")
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert "section" not in kwargs
+
     async def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
         mock_nx_basic._mock_search.grep.side_effect = ValueError("Invalid regex")

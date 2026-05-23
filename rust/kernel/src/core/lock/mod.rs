@@ -132,7 +132,7 @@ pub(crate) fn normalize_path(path: &str) -> String {
     result
 }
 
-/// Collect the *strict* ancestors of `path`.
+/// Lazy iterator over the *strict* ancestors of `path`, deepest-first.
 ///
 /// **Precondition:** `path` is the output of [`normalize_path`] (no
 /// double slashes, no trailing slash except for root). The walk
@@ -144,26 +144,55 @@ pub(crate) fn normalize_path(path: &str) -> String {
 /// invariant holds by construction; the `debug_assert!` documents
 /// it and catches future misuse.
 ///
-/// Example: `"/a/b/c"` → `["/a/b", "/a", "/"]`
-fn ancestors(path: &str) -> Vec<&str> {
+/// Lazy: the I/O conflict checks short-circuit on the first matching
+/// ancestor, so the iterator avoids the per-acquire `Vec` allocation
+/// that the previous eager `Vec<&str>` form paid for every call.
+///
+/// Example: `"/a/b/c"` → yields `"/a/b"`, `"/a"`, `"/"` then `None`.
+struct Ancestors<'a> {
+    path: &'a str,
+    end: usize,
+    done: bool,
+}
+
+impl<'a> Iterator for Ancestors<'a> {
+    type Item = &'a str;
+    fn next(&mut self) -> Option<&'a str> {
+        if self.done || self.end == 0 {
+            return None;
+        }
+        match self.path[..self.end].rfind('/') {
+            Some(0) => {
+                self.done = true;
+                Some("/")
+            }
+            Some(pos) => {
+                let result = &self.path[..pos];
+                self.end = pos;
+                Some(result)
+            }
+            None => {
+                self.done = true;
+                None
+            }
+        }
+    }
+}
+
+fn ancestors(path: &str) -> Ancestors<'_> {
     debug_assert!(
         path == normalize_path(path),
         "ancestors() requires a normalized path; got {path:?}",
     );
-    if path == "/" || path.is_empty() {
-        return Vec::new();
+    Ancestors {
+        path,
+        end: if path == "/" || path.is_empty() {
+            0
+        } else {
+            path.len()
+        },
+        done: false,
     }
-    let mut result = Vec::new();
-    let mut end = path.len();
-    while let Some(pos) = path[..end].rfind('/') {
-        if pos == 0 {
-            result.push("/");
-            break;
-        }
-        result.push(&path[..pos]);
-        end = pos;
-    }
-    result
 }
 
 pub fn lock_now_secs() -> u64 {
@@ -699,17 +728,20 @@ mod tests {
 
     #[test]
     fn test_ancestors_root() {
-        assert_eq!(ancestors("/"), Vec::<&str>::new());
+        assert_eq!(ancestors("/").collect::<Vec<_>>(), Vec::<&str>::new());
     }
 
     #[test]
     fn test_ancestors_one_level() {
-        assert_eq!(ancestors("/a"), vec!["/"]);
+        assert_eq!(ancestors("/a").collect::<Vec<_>>(), vec!["/"]);
     }
 
     #[test]
     fn test_ancestors_deep() {
-        assert_eq!(ancestors("/a/b/c"), vec!["/a/b", "/a", "/"]);
+        assert_eq!(
+            ancestors("/a/b/c").collect::<Vec<_>>(),
+            vec!["/a/b", "/a", "/"]
+        );
     }
 
     // -- basic I/O acquire / release -------------------------------------------

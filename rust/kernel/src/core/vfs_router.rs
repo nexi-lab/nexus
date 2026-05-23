@@ -18,10 +18,34 @@
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 use crate::abc::object_store::ObjectStore;
 use crate::meta_store::MetaStore;
+
+// Stack-resident canonical-key buffer for the routing hot path.
+// 192 bytes covers `/{zone_id}/{path}` for typical workloads (zone_id
+// is a short slug, paths are usually <180 chars). Longer keys spill
+// to heap automatically — still correct, just no longer zero-alloc.
+//
+// Used by [`VFSRouter::route_in_zone`] to skip the `format!`-into-String
+// that `canonicalize_mount_path` performs on every syscall.
+type CanonKey = SmallVec<[u8; 192]>;
+
+// Core canonicalize logic shared by the String-returning public helper
+// and the stack-buffer hot-path form. Writes `/{zone_id}` or
+// `/{zone_id}/{stripped_path}` into `buf`, clearing any previous content.
+fn canonicalize_into(buf: &mut CanonKey, path: &str, zone_id: &str) {
+    buf.clear();
+    buf.push(b'/');
+    buf.extend_from_slice(zone_id.as_bytes());
+    let stripped = path.trim_start_matches('/');
+    if !stripped.is_empty() {
+        buf.push(b'/');
+        buf.extend_from_slice(stripped.as_bytes());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MountEntry — runtime record for a single mount
@@ -487,13 +511,24 @@ impl VFSRouter {
     }
 
     fn route_in_zone(&self, path: &str, zone_id: &str) -> Option<RouteResult> {
-        let canonical = canonicalize_mount_path(path, zone_id);
-        let mut current = canonical.as_str();
+        // Stack-buffered canonical key — zero-alloc for typical paths
+        // (<192 chars after `/{zone_id}/{path}` expansion). The buffer
+        // lives for the function body so `canonical` borrows can outlast
+        // the LPM walk's iterative reslices.
+        let mut buf: CanonKey = SmallVec::new();
+        canonicalize_into(&mut buf, path, zone_id);
+        // Inputs are `&str` (validated UTF-8) and we only inject ASCII
+        // `'/'`; the byte buffer is necessarily valid UTF-8. Validation
+        // is cheap (memchr) but unnecessary work on the hot path —
+        // `unwrap` documents the invariant without a release-build
+        // branch surviving optimization.
+        let canonical: &str = std::str::from_utf8(&buf).expect("UTF-8 by construction");
+        let mut current = canonical;
 
         loop {
             if let Some(entry) = self.entries.get(current) {
                 let mount_point = current.to_string();
-                let backend_path = strip_mount_prefix(&canonical, current);
+                let backend_path = strip_mount_prefix(canonical, current);
                 let is_external = entry.is_external;
                 // CAS-ness is cached at backend-set time (`MountEntry::new` /
                 // `rebind_missing_backends`); the hot path just reads.

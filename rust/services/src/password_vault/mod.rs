@@ -30,6 +30,7 @@ mod storage;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use tonic::{Request, Response, Status};
@@ -46,17 +47,68 @@ use self::types::{
     now_unix_ms, EntryIndex, PasswordVaultError, StoredEntry, VaultEntryPlaintext,
 };
 
+/// RFC 6238 default: 30-second window.
+const TOTP_PERIOD_SECONDS: u64 = 30;
+
 /// Cache key for TOTP oracle de-duplication. `(title, window_index)`
 /// — single-subject vault, so no subject_id dimension yet. Same code
 /// returned for repeated calls within the same 30s window.
 type TotpCacheKey = (String, u64);
+
+/// Compute a 6-digit TOTP code per RFC 6238 (HMAC-SHA1, 30s window).
+/// `secret_b32` is the user-supplied seed, base32-encoded (RFC 4648,
+/// no padding — pyotp convention; case-insensitive). `time_seconds`
+/// is the wall-clock at code time.
+///
+/// Extracted as a free function (not a method) so tests can pass
+/// fixed timestamps and verify against RFC 6238 vectors.
+fn compute_totp(secret_b32: &str, time_seconds: u64) -> Result<String, PasswordVaultError> {
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+
+    // RFC 4648 base32 alphabet is uppercase; pyotp accepts mixed-case
+    // by normalising first. We match that for user-friendly inputs.
+    // Strip whitespace too — TOTP QR-code outputs sometimes group
+    // digits with spaces.
+    let normalised: String = secret_b32
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_uppercase)
+        .collect();
+    let key = base32::decode(
+        base32::Alphabet::Rfc4648 { padding: false },
+        &normalised,
+    )
+    .ok_or_else(|| PasswordVaultError::Invalid("totp_secret is not valid base32".into()))?;
+    if key.is_empty() {
+        return Err(PasswordVaultError::Invalid("totp_secret decoded to empty bytes".into()));
+    }
+
+    let window = time_seconds / TOTP_PERIOD_SECONDS;
+    let counter_bytes = window.to_be_bytes();
+
+    type HmacSha1 = Hmac<Sha1>;
+    let mut mac = HmacSha1::new_from_slice(&key).map_err(|_| PasswordVaultError::Crypto)?;
+    mac.update(&counter_bytes);
+    let hmac_result = mac.finalize().into_bytes();
+
+    // RFC 4226 dynamic truncation: low 4 bits of last byte point to
+    // a 4-byte slice; mask top bit; mod 10^6 for 6 digits.
+    let offset = (hmac_result[19] & 0x0f) as usize;
+    let truncated = u32::from_be_bytes([
+        hmac_result[offset] & 0x7f,
+        hmac_result[offset + 1],
+        hmac_result[offset + 2],
+        hmac_result[offset + 3],
+    ]);
+    Ok(format!("{:06}", truncated % 1_000_000))
+}
 
 /// Service state. Wrapped in `Arc` so the tonic-required `Clone`
 /// impl on `PasswordVaultServiceImpl` is cheap.
 struct Inner {
     storage: storage::Storage,
     master_key: crypto::MasterKey,
-    #[allow(dead_code)] // wired in T34.7 (GenerateTotp)
     totp_cache: Mutex<HashMap<TotpCacheKey, String>>,
 }
 
@@ -396,9 +448,65 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
 
     async fn generate_totp(
         &self,
-        _req: Request<GenerateTotpRequest>,
+        req: Request<GenerateTotpRequest>,
     ) -> Result<Response<GenerateTotpResponse>, Status> {
-        Err(Status::unimplemented("GenerateTotp — lands in T34.7"))
+        let req = req.into_inner();
+        if req.title.is_empty() {
+            return Err(Status::invalid_argument("title is required"));
+        }
+
+        // Resolve to current version. Soft-deleted entries can't TOTP.
+        let idx = self
+            .inner
+            .storage
+            .get_index(&req.title)?
+            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
+        if idx.deleted_at_ms.is_some() {
+            return Err(PasswordVaultError::NotFound(req.title).into());
+        }
+        let stored = self
+            .inner
+            .storage
+            .get_version(&req.title, idx.current_version)?
+            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
+
+        let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
+        let plain: VaultEntryPlaintext = bincode::deserialize(&plain_bytes)
+            .map_err(|_| PasswordVaultError::Crypto)?;
+
+        if plain.totp_secret.is_empty() {
+            return Err(PasswordVaultError::TotpNotConfigured(req.title).into());
+        }
+
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let window = now_secs / TOTP_PERIOD_SECONDS;
+        let cache_key = (req.title.clone(), window);
+
+        // Hold the cache lock for both check + insert + prune. Locks
+        // are uncontended in single-user workloads; for high QPS we'd
+        // split into per-shard locks later.
+        let code = {
+            let mut cache = self.inner.totp_cache.lock();
+            if let Some(cached) = cache.get(&cache_key) {
+                cached.clone()
+            } else {
+                let computed = compute_totp(&plain.totp_secret, now_secs)?;
+                cache.insert(cache_key.clone(), computed.clone());
+                // Drop entries from past windows so the map doesn't
+                // grow unbounded over long server lifetimes.
+                cache.retain(|(_, w), _| *w >= window);
+                computed
+            }
+        };
+
+        Ok(Response::new(GenerateTotpResponse {
+            code,
+            expires_in_seconds: (TOTP_PERIOD_SECONDS - (now_secs % TOTP_PERIOD_SECONDS)) as i32,
+            period_seconds: TOTP_PERIOD_SECONDS as i32,
+        }))
     }
 }
 
@@ -873,6 +981,159 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    // -----------------------------------------------------------------
+    // GenerateTotp + compute_totp tests
+    // -----------------------------------------------------------------
+
+    /// RFC 6238 Appendix B test vectors, HMAC-SHA1 variant.
+    /// Seed is ASCII "12345678901234567890" → base32 (no padding) =
+    /// "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".
+    const RFC_SEED_B32: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+    #[test]
+    fn compute_totp_matches_rfc6238_vectors() {
+        // T = 59         → 94287082, low 6 digits = 287082
+        assert_eq!(compute_totp(RFC_SEED_B32, 59).unwrap(), "287082");
+        // T = 1111111109 → 07081804, low 6 digits = 081804
+        assert_eq!(compute_totp(RFC_SEED_B32, 1_111_111_109).unwrap(), "081804");
+        // T = 1234567890 → 89005924, low 6 digits = 005924
+        assert_eq!(compute_totp(RFC_SEED_B32, 1_234_567_890).unwrap(), "005924");
+    }
+
+    #[test]
+    fn compute_totp_lowercase_base32_works() {
+        // pyotp accepts lowercase seeds; we should too (RFC 4648 is
+        // case-insensitive).
+        assert_eq!(
+            compute_totp(&RFC_SEED_B32.to_lowercase(), 59).unwrap(),
+            "287082"
+        );
+    }
+
+    #[test]
+    fn compute_totp_rejects_invalid_base32() {
+        assert!(compute_totp("not-base32!@#", 0).is_err());
+    }
+
+    #[tokio::test]
+    async fn generate_totp_returns_6_digits() {
+        let (_d, svc) = fresh_service();
+        let mut e = entry("aws", "pw");
+        e.totp_secret = Some(RFC_SEED_B32.into());
+        svc.put_entry(Request::new(PutEntryRequest {
+            entry: Some(e),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let r = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "aws".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.code.len(), 6);
+        assert!(r.code.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(r.period_seconds, 30);
+        assert!(r.expires_in_seconds > 0 && r.expires_in_seconds <= 30);
+    }
+
+    #[tokio::test]
+    async fn generate_totp_not_configured_when_no_seed() {
+        let (_d, svc) = fresh_service();
+        svc.put_entry(Request::new(PutEntryRequest {
+            entry: Some(entry("aws", "pw")), // entry() leaves totp_secret=None
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let err = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "aws".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    async fn generate_totp_unknown_returns_not_found() {
+        let (_d, svc) = fresh_service();
+        let err = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "nope".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn generate_totp_soft_deleted_returns_not_found() {
+        let (_d, svc) = fresh_service();
+        let mut e = entry("aws", "pw");
+        e.totp_secret = Some(RFC_SEED_B32.into());
+        svc.put_entry(Request::new(PutEntryRequest {
+            entry: Some(e),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "aws".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let err = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "aws".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn generate_totp_returns_same_code_within_window() {
+        // Within one 30s window, repeated calls return the cached code.
+        // We can't easily force a window boundary in a sync test, but
+        // back-to-back calls reliably stay in the same window unless
+        // the test is run exactly at a boundary — accept that 1-in-30s
+        // flakiness floor for now (real fix would be a clock trait).
+        let (_d, svc) = fresh_service();
+        let mut e = entry("aws", "pw");
+        e.totp_secret = Some(RFC_SEED_B32.into());
+        svc.put_entry(Request::new(PutEntryRequest {
+            entry: Some(e),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let a = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "aws".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let b = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "aws".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(a.code, b.code);
     }
 
     #[tokio::test]

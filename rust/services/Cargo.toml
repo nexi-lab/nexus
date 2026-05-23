@@ -28,7 +28,7 @@ service-matrix-adapter = ["dep:axum", "dep:base32", "dep:tower"]
 # Hosted by the `vault` profile (rust/profiles/vault/), not bundled into
 # the cluster binary. aes-gcm for the Fernet-equivalent envelope on
 # encrypted blob columns (server-side master key).
-service-password-vault = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost"]
+service-password-vault = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost", "dep:hmac", "dep:sha1", "dep:base32"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -77,8 +77,14 @@ futures = "0.3"
 # binary, raft-witness, slim WASM) do not pay the axum compile time.
 axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
-# base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`).
+# base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`)
+# and password_vault's TOTP seed decoding (RFC 4648 base32).
 base32 = { version = "0.5", optional = true }
+# HMAC-SHA1 for RFC 6238 TOTP (`service-password-vault`). Same primitive
+# pyotp uses on the Python side; produces identical codes for the same
+# (seed, window).
+hmac = { version = "0.12", optional = true }
+sha1 = { version = "0.10", optional = true }
 # `async_trait` lets the `AuthBackend` trait expose async methods —
 # axum handlers are async, and the production AuthService backend will
 # do an async lookup. Used by every adapter feature gate, so we pull

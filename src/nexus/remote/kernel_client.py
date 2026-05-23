@@ -324,11 +324,23 @@ class KernelClient:
         return _stat_response_to_dict(resp)
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:
-        """Set attributes on a path."""
-        result = self._call("sys_setattr", {"path": path, **kwargs})
-        if isinstance(result, dict):
-            return _SysSetAttrResult(result)
-        return result
+        """Set attributes via the typed Setattr RPC.
+
+        Accepts the same kwargs the Call path did (entry_type, zone_id,
+        mime_type, content_id, modified_at_ms, created_at_ms, size,
+        version, backend_name, io_profile, is_external, capacity).
+        Unknown kwargs are silently dropped — parity with the Call
+        handler's pick-known-keys behaviour.
+        """
+        assert self._transport is not None
+        response = self._transport.setattr(path, **kwargs)
+        return _SysSetAttrResult(
+            {
+                "path": response.path,
+                "created": response.created,
+                "entry_type": response.entry_type,
+            }
+        )
 
     def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
         """Delete a file/directory via Call RPC."""

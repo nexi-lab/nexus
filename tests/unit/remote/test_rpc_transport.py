@@ -400,6 +400,44 @@ class TestRPCTransportTypedMethods:
         assert list(request.paths) == ["/a", "/missing"]
         assert request.auth_token == "test-token"
 
+    def test_setattr_known_kwargs_map_to_request_fields(self, transport) -> None:
+        """setattr maps known kwargs to typed proto fields; optionals are HasField-tracked."""
+        mock_response = MagicMock(is_error=False, path="/x", created=True, entry_type=0)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        result = transport.setattr(
+            "/x",
+            entry_type=0,
+            zone_id="root",
+            mime_type="text/plain",
+            size=42,
+            unknown_kwarg="dropped",
+        )
+
+        assert result is mock_response
+        request = transport._mock_stub.Setattr.call_args[0][0]
+        assert request.path == "/x"
+        assert request.entry_type == 0
+        assert request.zone_id == "root"
+        assert request.HasField("mime_type")
+        assert request.mime_type == "text/plain"
+        assert request.HasField("size")
+        assert request.size == 42
+        # Unset optionals stay unset.
+        assert not request.HasField("content_id")
+        assert not request.HasField("version")
+
+    def test_setattr_error_raises(self, transport) -> None:
+        """setattr raises on is_error."""
+        mock_response = MagicMock(
+            is_error=True,
+            error_payload=encode_rpc_message({"code": -32007, "message": "nope"}),
+        )
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.setattr("/x", entry_type=0)
+
     def test_stat_found(self, transport) -> None:
         """stat returns the StatResponse message for an existing path."""
         mock_response = MagicMock(is_error=False, found=True, path="/x.txt", size=10)

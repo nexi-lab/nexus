@@ -539,6 +539,56 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def setattr(self, path: str, read_timeout: float | None = None, **kwargs: Any) -> Any:
+        """Set attributes via the typed Setattr RPC.
+
+        Accepts the JSON-Call kwargs (``entry_type``, ``zone_id``,
+        ``mime_type``, ``content_id``, ``modified_at_ms``,
+        ``created_at_ms``, ``size``, ``version``, ``backend_name``,
+        ``io_profile``, ``is_external``, ``capacity``); unknown kwargs
+        are silently dropped, matching the Call path's pick-known-keys
+        behaviour. Returns the ``SetattrResponse`` message; raises on
+        auth or transport failure.
+        """
+        request = vfs_pb2.SetattrRequest(
+            path=path,
+            auth_token=self._auth_token,
+            entry_type=int(kwargs.get("entry_type", 0) or 0),
+            zone_id=kwargs.get("zone_id", "") or "",
+            backend_name=kwargs.get("backend_name", "") or "",
+            io_profile=kwargs.get("io_profile", "") or "",
+            is_external=bool(kwargs.get("is_external", False)),
+            capacity=int(kwargs.get("capacity", 0) or 0),
+        )
+        # Optional fields — only set when the caller actually supplied a
+        # non-None value so `HasField` round-trips correctly.
+        for opt_field in (
+            "mime_type",
+            "content_id",
+            "modified_at_ms",
+            "created_at_ms",
+            "size",
+            "version",
+        ):
+            val = kwargs.get(opt_field)
+            if val is not None:
+                setattr(request, opt_field, val)
+
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Setattr(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Setattr")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

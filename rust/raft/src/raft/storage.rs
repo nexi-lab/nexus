@@ -5,6 +5,11 @@
 
 use raft::eraftpb::{ConfState, Entry, HardState, Snapshot};
 use raft::{Error as RaftCoreError, RaftState, Storage, StorageError as RaftStorageError};
+// `ReadableTable` brings `Table::get` into scope so the snapshot-apply
+// transaction can read the current HardState before writing the
+// advanced one (needed to preserve `vote` and to compute the
+// `max(current, snapshot)` advancement of `term` / `commit`).
+use redb::ReadableTable;
 
 use crate::storage::{RedbStore, RedbTree};
 
@@ -168,9 +173,30 @@ impl RaftStorage {
 
     /// Apply a snapshot (receiver side — clears log and updates state).
     ///
-    /// All four operations (update first_index, clear entries, save snapshot,
-    /// update conf state) are performed in a **single redb WriteTransaction**
-    /// so a crash cannot leave storage internally inconsistent.
+    /// All five operations are performed in a **single redb WriteTransaction**
+    /// so an abrupt termination (Ctrl+C, OOM kill, power loss, SIGKILL)
+    /// cannot leave storage internally inconsistent:
+    ///
+    ///   1. Update `first_index` to `snapshot.metadata.index + 1`.
+    ///   2. Save the snapshot bytes.
+    ///   3. Save the snapshot's `ConfState`.
+    ///   4. Clear the entries table.
+    ///   5. Advance `HardState.commit` to at least `snapshot.metadata.index`
+    ///      and `HardState.term` to at least `snapshot.metadata.term`.
+    ///
+    /// Step 5 is critical for the raft-rs protocol invariant that
+    /// `hs.commit >= snapshot.metadata.index` after a snapshot install:
+    /// a snapshot captures committed state by definition, so `commit`
+    /// must not lag the snapshot index across a restart.  Without this
+    /// atomic write, raft-rs panics on the next boot at
+    /// `RaftLog::commit_to` with `hs.commit X is out of range [first, last]`.
+    /// The driver's subsequent `set_hard_state` from the same Ready
+    /// would normally fix this, but a crash *between* the two writes
+    /// strands storage in the panic state.  Pulling the invariant into
+    /// the same txn closes the window entirely.
+    ///
+    /// `HardState.vote` is preserved verbatim — a snapshot carries no
+    /// vote information.
     pub fn apply_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
         let meta = snapshot.get_metadata();
 
@@ -202,6 +228,30 @@ impl RaftStorage {
                 .map_err(|e| RaftError::Storage(e.to_string()))?;
             state_table
                 .insert(KEY_CONF_STATE, conf_state_bytes.as_slice())
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+            // Read current HardState (within this same txn so we see the
+            // most recently committed value, not a stale snapshot from
+            // before the txn opened), advance term + commit to at least
+            // the snapshot's, and write back atomically.
+            let mut hs: HardState = match state_table
+                .get(KEY_HARD_STATE)
+                .map_err(|e| RaftError::Storage(e.to_string()))?
+            {
+                Some(bytes) => protobuf::Message::parse_from_bytes(bytes.value())
+                    .map_err(|e| RaftError::Serialization(e.to_string()))?,
+                None => HardState::default(),
+            };
+            if hs.commit < meta.index {
+                hs.commit = meta.index;
+            }
+            if hs.term < meta.term {
+                hs.term = meta.term;
+            }
+            let hs_bytes = protobuf::Message::write_to_bytes(&hs)
+                .map_err(|e| RaftError::Serialization(e.to_string()))?;
+            state_table
+                .insert(KEY_HARD_STATE, hs_bytes.as_slice())
                 .map_err(|e| RaftError::Storage(e.to_string()))?;
 
             // Clear old entries: delete and recreate the entries table
@@ -646,14 +696,25 @@ mod tests {
     fn test_apply_snapshot_persists_across_reopen() {
         let dir = TempDir::new().unwrap();
 
-        // Apply snapshot and drop storage
+        // Apply snapshot and drop storage.  Note: the `RaftStorage`
+        // drop *does not* call `flush()` — that mirrors the production
+        // abrupt-termination path (Ctrl+C / OOM kill / power loss /
+        // SIGKILL).  Any invariant we rely on must therefore survive
+        // a redb commit alone, without depending on a clean shutdown.
         {
             let storage = RaftStorage::open(dir.path()).unwrap();
             let snap = make_snapshot(20, 5, &[1, 2, 3]);
             storage.apply_snapshot(&snap).unwrap();
         }
 
-        // Reopen and verify all fields persisted atomically
+        // Reopen and verify all fields persisted atomically — including
+        // the raft-rs protocol invariant `hs.commit >= snapshot.index`,
+        // which `apply_snapshot` now enforces inside the same redb
+        // WriteTransaction.  Pre-fix, the driver's `set_hard_state`
+        // ran in a *separate* txn, so an abrupt kill between the two
+        // commits stranded storage with an advanced snapshot index
+        // but a stale HardState, panicking raft-rs at next boot
+        // with `hs.commit X is out of range [first, last]`.
         {
             let storage = RaftStorage::open(dir.path()).unwrap();
             assert_eq!(storage.first_index().unwrap(), 21);
@@ -664,6 +725,22 @@ mod tests {
 
             let state = storage.initial_state().unwrap();
             assert_eq!(state.conf_state.voters, vec![1, 2, 3]);
+
+            // The crash-safety invariant: HardState must already
+            // reflect the snapshot's `commit` / `term` at this point,
+            // before the driver gets a chance to run its own
+            // `set_hard_state`.  raft-rs's `RaftLog::commit_to` fatals
+            // when this invariant is violated.
+            assert!(
+                state.hard_state.commit >= 20,
+                "hs.commit ({}) must be >= snapshot.index (20) after apply_snapshot",
+                state.hard_state.commit,
+            );
+            assert!(
+                state.hard_state.term >= 5,
+                "hs.term ({}) must be >= snapshot.term (5) after apply_snapshot",
+                state.hard_state.term,
+            );
         }
     }
 }

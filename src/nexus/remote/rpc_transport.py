@@ -362,16 +362,18 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
-    def delete_file(
+    def delete(
         self,
         path: str,
         recursive: bool = False,
         read_timeout: float | None = None,
-    ) -> bool:
-        """Delete file or directory via typed Delete RPC.
+    ) -> Any:
+        """Delete a file or directory via the typed Delete RPC.
 
-        Returns:
-            True on success.
+        Returns the full ``DeleteResponse`` — ``success`` plus the
+        ``entry_type`` / ``path`` / ``content_id`` / ``size`` fields the
+        former ``sys_unlink`` Call carried for audit / metrics callers.
+        Raises on auth or transport failure.
         """
         request = vfs_pb2.DeleteRequest(path=path, auth_token=self._auth_token, recursive=recursive)
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -381,7 +383,43 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Delete")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return bool(response.success)
+        return response
+
+    def delete_file(
+        self,
+        path: str,
+        recursive: bool = False,
+        read_timeout: float | None = None,
+    ) -> bool:
+        """Back-compat thin wrapper over ``delete()`` — returns the
+        ``success`` bool that the legacy callers expect."""
+        return bool(self.delete(path, recursive, read_timeout).success)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = True,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Mkdir via the typed Mkdir RPC. Returns the MkdirResponse."""
+        request = vfs_pb2.MkdirRequest(
+            path=path, auth_token=self._auth_token, parents=parents, exist_ok=exist_ok
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Mkdir(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Mkdir")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
 
     @retry(
         stop=stop_after_attempt(3),

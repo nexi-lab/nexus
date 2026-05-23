@@ -343,20 +343,26 @@ class KernelClient:
         )
 
     def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
-        """Delete a file/directory via Call RPC."""
-        result = self._call("sys_unlink", {"path": path, "recursive": recursive})
-        if isinstance(result, dict):
-            return _SysUnlinkResult(result)
-        return _SysUnlinkResult({})
+        """Delete a file or directory via the typed Delete RPC."""
+        assert self._transport is not None
+        r = self._transport.delete(path, recursive)
+        return _SysUnlinkResult(
+            {
+                "hit": r.success,
+                "entry_type": r.entry_type,
+                "path": r.path,
+                "content_id": r.content_id or None,
+                "size": r.size,
+            }
+        )
 
     def sys_mkdir(
         self, path: str, context: Any = None, parents: bool = False, exist_ok: bool = True
     ) -> Any:
-        """Create a directory."""
-        result = self._call("sys_mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok})
-        if isinstance(result, dict):
-            return _SysMkdirResult(result)
-        return _SysMkdirResult({})
+        """Create a directory via the typed Mkdir RPC."""
+        assert self._transport is not None
+        r = self._transport.mkdir(path, parents=parents, exist_ok=exist_ok)
+        return _SysMkdirResult({"hit": r.hit})
 
     def sys_rename(
         self,

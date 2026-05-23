@@ -39,7 +39,6 @@ pub fn dispatch(
         "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
         "sys_rename" => do_sys_rename(kernel, &params, ctx),
         "sys_copy" => do_sys_copy(kernel, &params, ctx),
-        "sys_readdir" => do_sys_readdir(kernel, &params, ctx),
         "sys_lock" => do_sys_lock(kernel, &params),
         "sys_unlock" => do_sys_unlock(kernel, &params),
         "sys_watch" => do_sys_watch(kernel, &params),
@@ -772,20 +771,6 @@ fn do_sys_copy(
         })),
         Err(e) => Err(kernel_err_to_payload(e)),
     }
-}
-
-fn do_sys_readdir(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let entries = KernelAbi::sys_readdir(kernel, &path, &ctx.zone_id, ctx.is_admin);
-    let arr: Vec<serde_json::Value> = entries
-        .into_iter()
-        .map(|(name, dtype)| serde_json::json!({"name": name, "entry_type": dtype}))
-        .collect();
-    ok_json(serde_json::json!(arr))
 }
 
 fn do_sys_lock(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {

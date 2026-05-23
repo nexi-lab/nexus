@@ -132,10 +132,24 @@ pub(crate) fn normalize_path(path: &str) -> String {
     result
 }
 
-/// Collect the *strict* ancestors of `path` (must be normalized).
+/// Collect the *strict* ancestors of `path`.
+///
+/// **Precondition:** `path` is the output of [`normalize_path`] (no
+/// double slashes, no trailing slash except for root). The walk
+/// uses `rfind('/')` to split on `/` boundaries; an un-normalized
+/// input like `"/a//b"` would emit a bogus `"/a/"` ancestor that
+/// never matches any real `IOLockState` key. Every caller
+/// (`ancestor_io_conflict`, `descendant_io_conflict` via its own
+/// prefix construction) feeds normalized paths in, so the
+/// invariant holds by construction; the `debug_assert!` documents
+/// it and catches future misuse.
 ///
 /// Example: `"/a/b/c"` → `["/a/b", "/a", "/"]`
 fn ancestors(path: &str) -> Vec<&str> {
+    debug_assert!(
+        path == normalize_path(path),
+        "ancestors() requires a normalized path; got {path:?}",
+    );
     if path == "/" || path.is_empty() {
         return Vec::new();
     }

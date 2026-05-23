@@ -1,4 +1,4 @@
-//! Kernel mount table — SSOT for **runtime routing state**.
+//! VFSRouter — kernel mount table SSOT for **runtime routing state**.
 //!
 //! Each `MountEntry` is the in-memory record for one mount: storage backend
 //! and optional per-mount metastore. Together they form `VFSRouter`, an

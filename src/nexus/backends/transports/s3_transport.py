@@ -457,17 +457,6 @@ class S3Transport:
 
     # === S3-Specific Extras (not part of Transport protocol) ===
 
-    def generate_presigned_url(
-        self, key: str, expires_in: int = 3600, method: str = "get_object"
-    ) -> str:
-        """Generate a presigned URL for direct download/upload."""
-        url: str = self.s3_client.generate_presigned_url(
-            method,
-            Params={"Bucket": self.bucket_name, "Key": key},
-            ExpiresIn=expires_in,
-        )
-        return url
-
     def init_multipart(
         self,
         key: str,

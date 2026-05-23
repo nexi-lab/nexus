@@ -35,7 +35,6 @@ from nexus.core.protocols.connector import (
     OAuthCapableProtocol,
     PathDeleteProtocol,
     SearchableConnector,
-    SignedUrlProtocol,
     StreamingProtocol,
 )
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
@@ -54,7 +53,6 @@ __all__ = [
     "OAuthCapableProtocol",
     "PathDeleteProtocol",
     "SearchableConnector",
-    "SignedUrlProtocol",
     "StreamingProtocol",
     "VFSCoreProtocol",
 ]

@@ -21,7 +21,7 @@ from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -36,7 +36,6 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
 
     _BACKEND_FEATURES = BLOB_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.SIGNED_URL,
             BackendFeature.MULTIPART_UPLOAD,
             BackendFeature.NATIVE_VERSIONING,
             BackendFeature.RESUMABLE_UPLOAD,
@@ -191,23 +190,6 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             context.backend_path if context and context.backend_path else path.lstrip("/")
         )
         return self._s3_transport.fingerprint(self._get_key_path(backend_path))
-
-    # === Presigned URLs ===
-
-    def generate_presigned_url(
-        self, path: str, expires_in: int = 3600, context: "OperationContext | None" = None
-    ) -> dict[str, str | int]:
-        backend_path = (
-            context.backend_path if context and context.backend_path else path.lstrip("/")
-        )
-        blob_path = self._get_key_path(backend_path)
-        if not self._s3_transport.exists(blob_path):
-            raise NexusFileNotFoundError(path)
-        return {
-            "url": self._s3_transport.generate_presigned_url(blob_path, expires_in),
-            "expires_in": expires_in,
-            "method": "GET",
-        }
 
     # === Multipart Upload (MultipartUpload) ===
 

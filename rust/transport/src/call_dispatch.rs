@@ -42,7 +42,6 @@ pub fn dispatch(
         "sys_lock" => do_sys_lock(kernel, &params),
         "sys_unlock" => do_sys_unlock(kernel, &params),
         "sys_watch" => do_sys_watch(kernel, &params),
-        "stat_batch" => do_stat_batch(kernel, &params, ctx),
         "get_mount_points" => ok_json(serde_json::json!(kernel.get_mount_points())),
 
         // Service lifecycle — no-ops for subprocess mode (the Rust
@@ -232,26 +231,6 @@ fn agent_descriptor_to_json(desc: &AgentDescriptor) -> serde_json::Value {
         "external_info": external_info,
         "labels": &desc.labels,
         "repos": repos,
-    })
-}
-
-fn stat_to_json(s: &kernel::kernel::StatResult) -> serde_json::Value {
-    serde_json::json!({
-        "path": s.path,
-        "size": s.size,
-        "content_id": s.content_id,
-        "mime_type": s.mime_type,
-        "is_directory": s.is_directory,
-        "entry_type": s.entry_type,
-        "mode": s.mode,
-        "version": s.version,
-        "gen": s.gen,
-        "zone_id": s.zone_id,
-        "created_at_ms": s.created_at_ms,
-        "modified_at_ms": s.modified_at_ms,
-        "last_writer_address": s.last_writer_address,
-        "link_target": s.link_target,
-        "owner_id": s.owner_id,
     })
 }
 
@@ -819,35 +798,6 @@ fn do_sys_watch(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, 
         })),
         None => ok_json(serde_json::json!(null)),
     }
-}
-
-fn do_stat_batch(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let paths: Vec<String> = params
-        .get("paths")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let zone_id = if let Some(zid) = params.get("zone_id").and_then(|v| v.as_str()) {
-        zid.to_string()
-    } else {
-        ctx.zone_id.clone()
-    };
-    let results: Vec<serde_json::Value> = paths
-        .iter()
-        .map(|p| match kernel.sys_stat(p, &zone_id) {
-            Some(st) => stat_to_json(&st),
-            None => serde_json::json!(null),
-        })
-        .collect();
-    ok_json(serde_json::json!(results))
 }
 
 // ── IPC: Pipes ──────────────────────────────────────────────────────

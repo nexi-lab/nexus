@@ -79,6 +79,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.FromString,
                 _registered_method=True)
+        self.BatchStat = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/BatchStat',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -148,6 +153,14 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def BatchStat(self, request, context):
+        """Vectored stat — single redb txn on the optimized KernelConvenience
+        override. Per-path not-found is in-band (`found = false`).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -195,6 +208,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Readdir,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.SerializeToString,
+            ),
+            'BatchStat': grpc.unary_unary_rpc_method_handler(
+                    servicer.BatchStat,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -440,6 +458,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Readdir',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def BatchStat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/BatchStat',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -27,9 +27,10 @@ use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
-    CallResponse, DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReaddirEntry,
-    ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, SetattrRequest, SetattrResponse,
-    StatRequest, StatResponse, WriteRequest, WriteResponse,
+    CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, PingRequest,
+    PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse,
+    RenameRequest, RenameResponse, SetattrRequest, SetattrResponse, StatRequest, StatResponse,
+    WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -383,6 +384,77 @@ impl NexusVfsService for VfsServiceImpl {
         }
     }
 
+    async fn rename(
+        &self,
+        req: Request<RenameRequest>,
+    ) -> Result<Response<RenameResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_rename(s))),
+        };
+        match KernelAbi::sys_rename(&*self.kernel, &req.path, &req.new_path, &ctx) {
+            Ok(r) => Ok(Response::new(RenameResponse {
+                hit: r.hit,
+                success: r.success,
+                is_directory: r.is_directory,
+                old_content_id: r.old_content_id,
+                old_size: r.old_size,
+                old_version: r.old_version,
+                old_modified_at_ms: r.old_modified_at_ms,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(RenameResponse {
+                    hit: false,
+                    success: false,
+                    is_directory: false,
+                    old_content_id: None,
+                    old_size: None,
+                    old_version: None,
+                    old_modified_at_ms: None,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn copy(&self, req: Request<CopyRequest>) -> Result<Response<CopyResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_copy(s))),
+        };
+        match KernelAbi::sys_copy(&*self.kernel, &req.src, &req.dst, &ctx) {
+            Ok(r) => Ok(Response::new(CopyResponse {
+                hit: r.hit,
+                dst_path: r.dst_path,
+                content_id: r.content_id,
+                size: r.size,
+                version: r.version,
+                gen: r.gen,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(CopyResponse {
+                    hit: false,
+                    dst_path: String::new(),
+                    content_id: None,
+                    size: 0,
+                    version: 0,
+                    gen: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
         let ctx = self.resolve_context(&req.into_inner().auth_token)?;
         let uptime = self.server_started_at.elapsed().as_secs() as i64;
@@ -716,6 +788,33 @@ fn error_delete(status: Status) -> DeleteResponse {
 fn error_readdir(status: Status) -> ReaddirResponse {
     ReaddirResponse {
         entries: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_rename(status: Status) -> RenameResponse {
+    RenameResponse {
+        hit: false,
+        success: false,
+        is_directory: false,
+        old_content_id: None,
+        old_size: None,
+        old_version: None,
+        old_modified_at_ms: None,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_copy(status: Status) -> CopyResponse {
+    CopyResponse {
+        hit: false,
+        dst_path: String::new(),
+        content_id: None,
+        size: 0,
+        version: 0,
+        gen: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

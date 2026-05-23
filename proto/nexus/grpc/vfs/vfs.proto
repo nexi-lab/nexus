@@ -50,6 +50,10 @@ service NexusVFSService {
   // Arc<ObjectStore>, metastore, raft_backend, read_fd/write_fd, source,
   // and remote_metastore stay off this RPC (they need in-process refs).
   rpc Setattr(SetattrRequest) returns (SetattrResponse);
+
+  // Typed rename / server-side copy.
+  rpc Rename(RenameRequest) returns (RenameResponse);
+  rpc Copy(CopyRequest) returns (CopyResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -294,4 +298,46 @@ message SetattrResponse {
   int32 entry_type = 3;
   bool is_error = 4;
   bytes error_payload = 5;
+}
+
+// --- Typed rename (replaces the `sys_rename` Call) ---
+
+message RenameRequest {
+  string path = 1;          // old path
+  string new_path = 2;
+  string auth_token = 3;
+}
+
+message RenameResponse {
+  bool hit = 1;
+  bool success = 2;
+  bool is_directory = 3;
+  // Old metadata — surfaced for audit / post-hook context.
+  optional string old_content_id = 4;
+  optional uint64 old_size = 5;
+  optional uint32 old_version = 6;
+  optional int64 old_modified_at_ms = 7;
+  bool is_error = 8;
+  bytes error_payload = 9;
+  // post_hook_needed is omitted — always false on the gRPC architecture
+  // (no Python post-hook dispatch); _SysRenameResult defaults it.
+}
+
+// --- Typed server-side copy (replaces the `sys_copy` Call) ---
+
+message CopyRequest {
+  string src = 1;
+  string dst = 2;
+  string auth_token = 3;
+}
+
+message CopyResponse {
+  bool hit = 1;
+  string dst_path = 2;
+  optional string content_id = 3;
+  uint64 size = 4;
+  uint32 version = 5;
+  uint64 gen = 6;
+  bool is_error = 7;
+  bytes error_payload = 8;
 }

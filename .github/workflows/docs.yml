@@ -53,6 +53,16 @@ jobs:
         run: |
           uv run python scripts/build_docs_site.py
 
+      - name: Render surface-coverage dashboard
+        run: |
+          uv run python scripts/render_api_surface_coverage.py
+
+      - name: Stage surface-coverage under site/
+        run: |
+          mkdir -p site/surface-coverage
+          cp docs/surface-coverage/api-rpc-surface-coverage.html site/surface-coverage/
+          cp -r docs/surface-coverage/_vendor site/surface-coverage/_vendor
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

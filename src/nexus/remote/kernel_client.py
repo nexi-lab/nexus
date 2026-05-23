@@ -364,11 +364,22 @@ class KernelClient:
         new_path: str,
         context: Any = None,
     ) -> Any:
-        """Rename/move a file or directory."""
-        result = self._call("sys_rename", {"path": path, "new_path": new_path})
-        if isinstance(result, dict):
-            return _SysRenameResult(result)
-        return _SysRenameResult({})
+        """Rename/move a file or directory via the typed Rename RPC."""
+        assert self._transport is not None
+        r = self._transport.rename(path, new_path)
+        return _SysRenameResult(
+            {
+                "hit": r.hit,
+                "success": r.success,
+                "is_directory": r.is_directory,
+                "old_content_id": r.old_content_id if r.HasField("old_content_id") else None,
+                "old_size": r.old_size if r.HasField("old_size") else None,
+                "old_version": r.old_version if r.HasField("old_version") else None,
+                "old_modified_at_ms": r.old_modified_at_ms
+                if r.HasField("old_modified_at_ms")
+                else None,
+            }
+        )
 
     def sys_copy(
         self,
@@ -376,11 +387,19 @@ class KernelClient:
         dst: str,
         context: Any = None,
     ) -> Any:
-        """Copy a file."""
-        result = self._call("sys_copy", {"src": src, "dst": dst})
-        if isinstance(result, dict):
-            return _SysCopyResult(result)
-        return _SysCopyResult({})
+        """Copy a file via the typed Copy RPC."""
+        assert self._transport is not None
+        r = self._transport.copy(src, dst)
+        return _SysCopyResult(
+            {
+                "hit": r.hit,
+                "dst_path": r.dst_path,
+                "content_id": r.content_id if r.HasField("content_id") else None,
+                "size": r.size,
+                "version": r.version,
+                "gen": r.gen,
+            }
+        )
 
     def sys_readdir(
         self,

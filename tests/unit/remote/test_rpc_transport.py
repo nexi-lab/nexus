@@ -438,6 +438,44 @@ class TestRPCTransportTypedMethods:
         with pytest.raises(NexusFileNotFoundError):
             transport.setattr("/x", entry_type=0)
 
+    def test_rename_success(self, transport) -> None:
+        """rename returns the RenameResponse."""
+        mock_response = MagicMock(is_error=False, hit=True, success=True)
+        transport._mock_stub.Rename.return_value = mock_response
+
+        result = transport.rename("/a", "/b")
+
+        assert result is mock_response
+        request = transport._mock_stub.Rename.call_args[0][0]
+        assert request.path == "/a"
+        assert request.new_path == "/b"
+        assert request.auth_token == "test-token"
+
+    def test_rename_error_raises(self, transport) -> None:
+        """rename raises on is_error."""
+        mock_response = MagicMock(
+            is_error=True,
+            error_payload=encode_rpc_message({"code": -32007, "message": "nope"}),
+        )
+        transport._mock_stub.Rename.return_value = mock_response
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.rename("/a", "/b")
+
+    def test_copy_success(self, transport) -> None:
+        """copy returns the CopyResponse."""
+        mock_response = MagicMock(is_error=False, hit=True, size=42)
+        mock_response.dst_path = "/dst"
+        transport._mock_stub.Copy.return_value = mock_response
+
+        result = transport.copy("/src", "/dst")
+
+        assert result is mock_response
+        request = transport._mock_stub.Copy.call_args[0][0]
+        assert request.src == "/src"
+        assert request.dst == "/dst"
+        assert request.auth_token == "test-token"
+
     def test_stat_found(self, transport) -> None:
         """stat returns the StatResponse message for an existing path."""
         mock_response = MagicMock(is_error=False, found=True, path="/x.txt", size=10)

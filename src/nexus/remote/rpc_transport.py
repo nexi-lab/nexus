@@ -589,6 +589,42 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def rename(self, path: str, new_path: str, read_timeout: float | None = None) -> Any:
+        """Rename via the typed Rename RPC. Returns the RenameResponse."""
+        request = vfs_pb2.RenameRequest(path=path, new_path=new_path, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Rename(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Rename")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def copy(self, src: str, dst: str, read_timeout: float | None = None) -> Any:
+        """Server-side copy via the typed Copy RPC. Returns the CopyResponse."""
+        request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Copy(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Copy")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

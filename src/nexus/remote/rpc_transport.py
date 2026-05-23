@@ -487,6 +487,35 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def batch_stat(
+        self,
+        paths: list[str],
+        zone_id: str = "",
+        read_timeout: float | None = None,
+    ) -> list[Any]:
+        """Vectored stat via the typed BatchStat RPC.
+
+        Returns the ``BatchStatItem`` list in input order (same length as
+        ``paths``). Each item exposes the stat fields plus a ``found``
+        flag — per-path not-found is in-band, not an error. Raises on
+        auth or transport failure.
+        """
+        request = vfs_pb2.BatchStatRequest(
+            auth_token=self._auth_token, zone_id=zone_id, paths=list(paths)
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.BatchStat(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "BatchStat")
+        return list(response.results)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
         """Stat a path via the typed Stat RPC.
 

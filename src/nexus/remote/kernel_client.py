@@ -448,11 +448,19 @@ class KernelClient:
         return results
 
     def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
-        """Batch stat multiple paths — returns list of stat dicts or None."""
-        result = self._call("stat_batch", {"paths": paths, "zone_id": zone_id})
-        if isinstance(result, list):
-            return result
-        return [None] * len(paths)
+        """Batch stat via the typed BatchStat RPC.
+
+        Returns ``list[dict | None]`` in input order — a stat dict (the
+        same shape ``sys_stat`` returns) per existing path, ``None``
+        per missing path.
+        """
+        assert self._transport is not None
+        if not paths:
+            return []
+        return [
+            _stat_response_to_dict(item) if item.found else None
+            for item in self._transport.batch_stat(paths, zone_id)
+        ]
 
     def sys_watch(self, path: str, timeout_ms: int = 30000) -> Any:
         """Watch for file changes (blocking)."""

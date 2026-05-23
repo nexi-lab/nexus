@@ -384,6 +384,22 @@ class TestRPCTransportTypedMethods:
         with pytest.raises(NexusFileNotFoundError):
             transport.readdir("/")
 
+    def test_batch_stat_returns_per_item_found_flag(self, transport) -> None:
+        """batch_stat returns the BatchStatItem list in input order."""
+        i1 = MagicMock(found=True, size=10)
+        i1.path = "/a"
+        i2 = MagicMock(found=False)
+        i2.path = ""
+        mock_response = MagicMock(results=[i1, i2])
+        transport._mock_stub.BatchStat.return_value = mock_response
+
+        result = transport.batch_stat(["/a", "/missing"])
+
+        assert result == [i1, i2]
+        request = transport._mock_stub.BatchStat.call_args[0][0]
+        assert list(request.paths) == ["/a", "/missing"]
+        assert request.auth_token == "test-token"
+
     def test_stat_found(self, transport) -> None:
         """stat returns the StatResponse message for an existing path."""
         mock_response = MagicMock(is_error=False, found=True, path="/x.txt", size=10)

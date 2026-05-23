@@ -173,11 +173,17 @@ def create_tus_uploads_router(
         ctx = get_operation_context(auth_result)
         zone_id = ctx.zone_id or ROOT_ZONE_ID
         user_id = ctx.user_id or "anonymous"
+        target_path = metadata.get("path")
+        if not target_path:
+            filename = metadata.get("filename", "unknown").lstrip("/")
+            target_path = f"/uploads/{filename or 'unknown'}"
+        elif not target_path.startswith("/"):
+            target_path = f"/{target_path}"
 
         async def _create() -> Any:
             try:
                 return await service.create_upload(
-                    target_path=metadata.get("filename", metadata.get("path", "/uploads/unknown")),
+                    target_path=target_path,
                     upload_length=upload_length,
                     metadata=metadata,
                     zone_id=zone_id,

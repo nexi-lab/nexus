@@ -70,13 +70,14 @@ def mock_dlc():
 def mock_gateway():
     """Create a mock NexusFSGateway."""
     gw = MagicMock()
-    gw.read_file = AsyncMock(return_value=b"test content")
+    gw.read = AsyncMock(return_value=b"test content")
     gw.read_bulk.return_value = {}
-    gw.get_routing_params.return_value = (None, None, False)
-    gw.has_descendant_access.return_value = True
+    gw._get_context_identity.return_value = (None, None, False)
+    gw._descendant_checker.has_access.return_value = True
     gw.record_read_if_tracking.return_value = None
-    gw.session_factory = MagicMock()
+    gw.SessionLocal = MagicMock()
     gw.backend = MagicMock()
+    gw.sys_readdir.return_value = []
     return gw
 
 
@@ -390,16 +391,16 @@ class TestGatewayDelegation:
     """Tests for gateway delegation methods."""
 
     async def test_read_delegates_to_gateway(self, service, mock_gateway):
-        """_read delegates to gateway.read_file."""
-        mock_gateway.read_file.return_value = b"file content"
+        """_read delegates to nexus_fs.read."""
+        mock_gateway.read.return_value = b"file content"
         result = await service._read("/test.txt")
         assert result == b"file content"
-        mock_gateway.read_file.assert_called_once()
+        mock_gateway.read.assert_called_once()
 
     async def test_read_raises_without_gateway(self, mock_metadata_store):
         """_read raises NotImplementedError without gateway."""
         svc = SearchService(metadata_store=mock_metadata_store)
-        with pytest.raises(NotImplementedError, match="gateway not provided"):
+        with pytest.raises(NotImplementedError, match="nexus_fs not provided"):
             await svc._read("/test.txt")
 
     def test_sys_readdir_entries_delegates_recursive_listing(self, service, mock_gateway):
@@ -413,16 +414,14 @@ class TestGatewayDelegation:
         entries = service._sys_readdir_entries("/workspace")
 
         assert entries == expected_entries
-        mock_gateway.sys_readdir.assert_called_once_with(
-            "/workspace",
-            recursive=True,
-            details=True,
-            context=ANY,
-        )
+        assert mock_gateway.sys_readdir.call_args_list == [
+            (("/workspace",), {"recursive": False, "details": True, "context": ANY}),
+            (("/workspace/src",), {"recursive": False, "details": True, "context": ANY}),
+        ]
 
     async def test_read_converts_str_to_bytes(self, service, mock_gateway):
         """_read converts string response to bytes."""
-        mock_gateway.read_file.return_value = "string content"
+        mock_gateway.read.return_value = "string content"
         result = await service._read("/test.txt")
         assert result == b"string content"
 
@@ -435,12 +434,12 @@ class TestGatewayDelegation:
     def test_read_bulk_raises_without_gateway(self, mock_metadata_store):
         """_read_bulk raises NotImplementedError without gateway."""
         svc = SearchService(metadata_store=mock_metadata_store)
-        with pytest.raises(NotImplementedError, match="gateway not provided"):
+        with pytest.raises(NotImplementedError, match="nexus_fs not provided"):
             svc._read_bulk(["/test.txt"])
 
     def test_get_routing_params_with_gateway(self, service, mock_gateway, context):
         """_get_routing_params delegates to gateway."""
-        mock_gateway.get_routing_params.return_value = ("zone1", "agent1", True)
+        mock_gateway._get_context_identity.return_value = ("zone1", "agent1", True)
         result = service._get_routing_params(context)
         assert result == ("zone1", "agent1", True)
 
@@ -454,7 +453,7 @@ class TestGatewayDelegation:
         """_has_descendant_access delegates to gateway."""
         from nexus.contracts.types import Permission
 
-        mock_gateway.has_descendant_access.return_value = True
+        mock_gateway._descendant_checker.has_access.return_value = True
         result = service._has_descendant_access("/test", Permission.READ, context)
         assert result is True
 
@@ -476,8 +475,8 @@ class TestGatewayProperties:
     """Tests for gateway-exposed properties."""
 
     def test_gw_session_factory_with_gateway(self, service, mock_gateway):
-        """_gw_session_factory returns gateway's session_factory."""
-        assert service._gw_session_factory is mock_gateway.session_factory
+        """_gw_session_factory returns nexus_fs.SessionLocal."""
+        assert service._gw_session_factory is mock_gateway.SessionLocal
 
     def test_gw_session_factory_without_gateway(self, mock_metadata_store):
         """_gw_session_factory returns None without gateway."""
@@ -967,7 +966,7 @@ class TestValidateAndNormalizeFiles:
 
     def test_cross_zone_rejected_when_prefix_differs(self, service, mock_gateway, context):
         """(c) /zones/OTHER/... is rejected if the caller is in /zones/MY/."""
-        mock_gateway.get_routing_params.return_value = ("my-zone", None, False)
+        mock_gateway._get_context_identity.return_value = ("my-zone", None, False)
         with pytest.raises(ValueError, match="cross-zone"):
             service._validate_and_normalize_files(
                 files=["/zones/other-zone/a.py"],
@@ -976,7 +975,7 @@ class TestValidateAndNormalizeFiles:
             )
 
     def test_same_zone_prefix_accepted(self, service, mock_gateway, context):
-        mock_gateway.get_routing_params.return_value = ("my-zone", None, False)
+        mock_gateway._get_context_identity.return_value = ("my-zone", None, False)
         with patch.object(service, "list", return_value=["/zones/my-zone/a.py"]):
             files, stale = service._validate_and_normalize_files(
                 files=["/zones/my-zone/a.py"],
@@ -1413,13 +1412,9 @@ class TestGrepContextAndInvertRouting:
         mmap accelerator even when it is available."""
         import re as _re
 
-        from nexus.bricks.search import search_service as ss_mod
-
         with (
-            patch.object(ss_mod.grep_fast, "is_mmap_available", return_value=True),
-            patch.object(ss_mod.grep_fast, "grep_files_mmap") as mmap_mock,
-            patch.object(ss_mod.grep_fast, "is_available", return_value=True),
-            patch.object(ss_mod.grep_fast, "grep_bulk") as rust_mock,
+            patch("nexus._rust_compat.grep_files_mmap") as mmap_mock,
+            patch("nexus._rust_compat.grep_bulk") as rust_mock,
             patch.object(
                 service,
                 "_read",

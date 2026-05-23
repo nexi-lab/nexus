@@ -38,10 +38,27 @@ BOOT_TIMEOUT_S = 90.0  # cold interpreter + Rust kernel init; generous for CI
 
 
 def _free_port() -> int:
-    """Return an OS-assigned free TCP port (best-effort; race-tolerant)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    """Return a free HTTP port whose derived gRPC port is also free.
+
+    The sandbox daemon derives typed VFS gRPC as ``http_port + 2``. Reserving
+    only the HTTP port lets parallel daemon tests pick overlapping pairs, e.g.
+    one daemon's HTTP port can equal another daemon's gRPC port.
+    """
+    for _ in range(100):
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM) as http_sock,
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM) as grpc_sock,
+        ):
+            http_sock.bind(("127.0.0.1", 0))
+            port = http_sock.getsockname()[1]
+            if port > 65533:
+                continue
+            try:
+                grpc_sock.bind(("127.0.0.1", port + 2))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("could not find a free HTTP/gRPC port pair")
 
 
 def _spawn_sandbox_daemon(tmp_path: Path, port: int) -> tuple[subprocess.Popen[bytes], Path, Path]:
@@ -292,52 +309,54 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
             )
 
 
-def test_sandbox_does_not_bind_typed_vfs_grpc(sandbox_daemon) -> None:
-    """Sandbox does NOT bind the typed VFS gRPC server (root-caused #4126).
+def test_sandbox_binds_typed_vfs_grpc(sandbox_daemon) -> None:
+    """Sandbox daemon exposes the public typed VFS gRPC surface.
 
-    ROOT CAUSE (verified, definitive — encoded here as a contract):
-    The typed VFS gRPC service ``NexusVfsService`` (serving Ping/Read/Write,
-    defined in ``rust/transport/src/grpc.rs``) has exactly ONE server spawn
-    call site in the whole repo — ``rust/profiles/cluster/src/main.rs:422``,
-    the *cluster* profile binary. No call site exists in the sandbox path
-    (``rust/``, ``src/nexus/``). The only Python gRPC server is the
-    env-gated approvals brick (``src/nexus/server/lifespan/approvals.py``),
-    which is not in the sandbox profile and has no ``Ping``. What the
-    sandbox profile *does* start is the Raft/federation gRPC on the fixed
-    port :2126 (``rust/raft/src/transport/server.rs``) — a different
-    surface, not VFS ``Ping``, and not at ``http_port + 2``.
-
-    Therefore the typed VFS gRPC ``Ping`` is **unavailable in sandbox by
-    architecture (cluster-profile-only)** — empirically reproduced as
-    connection-refused on ``http_port + 2`` for the daemon's lifetime while
-    the daemon is otherwise healthy. #4148's "no-auth VFS Ping returns
-    UNAUTHENTICATED" does NOT reproduce in sandbox because no VFS gRPC
-    server exists there to return anything.
-
-    This test PASSES while the contract holds and would FAIL if a future
-    change made sandbox bind the typed VFS gRPC server — exactly the
-    regression signal we want.
+    The daemon sets ``NEXUS_GRPC_PORT`` from the selected HTTP port and the
+    FastAPI lifespan starts ``src/nexus/server/lifespan/vfs_grpc.py`` on that
+    port. This pins the externally visible sandbox contract used by the API
+    surface matrix: Ping plus typed content read/write/delete/batch-read are
+    reachable over the real socket.
     """
     target = f"{sandbox_daemon['host']}:{sandbox_daemon['grpc_port']}"
     channel = grpc.insecure_channel(target)
     try:
-        # The VFS gRPC server is cluster-profile-only, so the channel must
-        # never become ready within a generous-but-bounded window.
-        with pytest.raises(grpc.FutureTimeoutError):
-            grpc.channel_ready_future(channel).result(timeout=8)
-
-        # And an actual Ping attempt must fail with an unavailable/
-        # connection error (no server bound to answer it in sandbox).
+        grpc.channel_ready_future(channel).result(timeout=8)
         stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-        with pytest.raises(grpc.RpcError) as excinfo:
-            stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=5)
-        assert excinfo.value.code() in (
-            grpc.StatusCode.UNAVAILABLE,
-            grpc.StatusCode.DEADLINE_EXCEEDED,
-        ), (
-            f"expected UNAVAILABLE/DEADLINE_EXCEEDED (no VFS gRPC server in "
-            f"sandbox), got {excinfo.value.code()}: {excinfo.value}"
+
+        ping = stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=5)
+        assert ping.version == "nexus"
+        assert ping.zone_id
+
+        path = "/grpc-smoke.txt"
+        write = stub.Write(
+            vfs_pb2.WriteRequest(path=path, content=b"hello grpc", auth_token=""),
+            timeout=5,
         )
+        assert not write.is_error, write.error_payload
+        assert write.size == len(b"hello grpc")
+
+        read = stub.Read(vfs_pb2.ReadRequest(path=path, auth_token=""), timeout=5)
+        assert not read.is_error, read.error_payload
+        assert read.content == b"hello grpc"
+
+        batch = stub.BatchRead(
+            vfs_pb2.BatchReadRequest(
+                auth_token="",
+                items=[vfs_pb2.BatchReadItemRequest(path=path)],
+            ),
+            timeout=5,
+        )
+        assert len(batch.results) == 1
+        assert not batch.results[0].is_error, batch.results[0].error_payload
+        assert batch.results[0].content == b"hello grpc"
+
+        delete = stub.Delete(
+            vfs_pb2.DeleteRequest(path=path, auth_token="", recursive=False),
+            timeout=5,
+        )
+        assert not delete.is_error, delete.error_payload
+        assert delete.success is True
     finally:
         channel.close()
 
@@ -864,7 +883,8 @@ def test_two_sandboxes_same_home_readiness_no_cross_clobber(tmp_path: Path) -> N
     OR scoped) — so ``nexus ready`` keeps resolving the survivor."""
     shared_home = tmp_path / "shared-home"
     port_a, port_b = _free_port(), _free_port()
-    while port_b == port_a:
+    reserved_a = {port_a, port_a + 2}
+    while port_b in reserved_a or port_b + 2 in reserved_a:
         port_b = _free_port()
 
     proc_a, legacy_a, scoped_a, log_a = _spawn_under_shared_home(shared_home, tmp_path, "a", port_a)

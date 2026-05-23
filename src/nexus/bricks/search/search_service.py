@@ -12,6 +12,7 @@ Extracted from: nexus_fs_search.py (2,817 lines)
 import asyncio
 import builtins
 import fnmatch
+import inspect
 import logging
 import os
 import re
@@ -402,6 +403,8 @@ class SearchService:
         if self._nexus_fs is None:
             raise NotImplementedError("nexus_fs not provided to SearchService")
         result = self._nexus_fs.read(path, context=context, return_metadata=return_metadata)
+        if inspect.isawaitable(result):
+            result = await result
         if isinstance(result, str):
             return result.encode("utf-8")
         return result
@@ -1110,6 +1113,19 @@ class SearchService:
             return []
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
         root = list_prefix or "/"
+        try:
+            recursive_entries = self._nexus_fs.sys_readdir(
+                root,
+                recursive=True,
+                details=True,
+                context=ctx,
+            )
+        except Exception:
+            recursive_entries = []
+        recursive_dicts = [entry for entry in recursive_entries if isinstance(entry, dict)]
+        if recursive_dicts:
+            return recursive_dicts
+
         seen: set[str] = set()
         out: list[dict[str, Any]] = []
         pending: list[tuple[str, int]] = [(root, 0)]
@@ -1847,6 +1863,23 @@ class SearchService:
         if not accessible_files:
             return []
 
+        pattern_path = path
+        if _engine_zone_id is None and isinstance(path, str) and path.startswith("/zone/"):
+            from nexus.core.path_utils import split_zone_from_internal_path
+
+            _explicit_zone, _explicit_path = split_zone_from_internal_path(path)
+            _scoped_prefix = path.rstrip("/") + "/"
+            _unscoped_prefix = (_explicit_path or "/").rstrip("/") + "/"
+            if (
+                _explicit_zone is not None
+                and not any(p == path or p.startswith(_scoped_prefix) for p in accessible_files)
+                and any(
+                    p == (_explicit_path or "/") or p.startswith(_unscoped_prefix)
+                    for p in accessible_files
+                )
+            ):
+                pattern_path = _explicit_path or "/"
+
         # Phase 2.5: Gitignore filtering (Issue #538)
         pre_filter_count = len(accessible_files)
         accessible_files = _filter_ignored_paths(accessible_files)
@@ -1859,14 +1892,14 @@ class SearchService:
         strategy = self._select_glob_strategy(pattern, len(accessible_files))
 
         # Build full pattern
-        if not path.endswith("/"):
-            path = path + "/"
-        if path == "/":
+        if not pattern_path.endswith("/"):
+            pattern_path = pattern_path + "/"
+        if pattern_path == "/":
             full_pattern = pattern
             if self._should_prepend_recursive_wildcard(full_pattern):
                 full_pattern = "**/" + full_pattern
         else:
-            base_path = path[1:] if path.startswith("/") else path
+            base_path = pattern_path[1:] if pattern_path.startswith("/") else pattern_path
             # Strip leading "/" from pattern to avoid double-slash when
             # base_path already ends with "/" (e.g., zone-scoped paths).
             pattern_part = pattern.lstrip("/") if pattern.startswith("/") else pattern
@@ -1903,6 +1936,57 @@ class SearchService:
                 path_for_match = file_path[1:] if file_path.startswith("/") else file_path
                 if fnmatch.fnmatch(path_for_match, pattern_for_match):
                     matches.append(file_path)
+
+        if (
+            not matches
+            and _engine_zone_id is None
+            and isinstance(path, str)
+            and path.startswith("/zone/")
+        ):
+            from nexus.core.path_utils import split_zone_from_internal_path
+
+            explicit_zone, explicit_path = split_zone_from_internal_path(path)
+            if explicit_zone is not None:
+                candidate_bases = [path, explicit_path or "/"]
+                candidate_patterns: list[str] = []
+                for base in candidate_bases:
+                    base_for_pattern = base if base.endswith("/") else f"{base}/"
+                    if base_for_pattern == "/":
+                        candidate_patterns.append(pattern)
+                    else:
+                        base_part = (
+                            base_for_pattern[1:]
+                            if base_for_pattern.startswith("/")
+                            else base_for_pattern
+                        )
+                        candidate_patterns.append(base_part + pattern.lstrip("/"))
+
+                seen_fallback: set[str] = set()
+                for file_path in accessible_files:
+                    file_candidates = [file_path]
+                    file_zone, file_unscoped = split_zone_from_internal_path(file_path)
+                    if file_zone is not None:
+                        file_candidates.append(file_unscoped)
+                    else:
+                        file_candidates.append(f"/zone/{explicit_zone}{file_path}")
+
+                    for file_candidate in file_candidates:
+                        candidate = (
+                            file_candidate[1:] if file_candidate.startswith("/") else file_candidate
+                        )
+                        if any(
+                            fnmatch.fnmatch(
+                                candidate,
+                                fallback_pattern[1:]
+                                if fallback_pattern.startswith("/")
+                                else fallback_pattern,
+                            )
+                            for fallback_pattern in candidate_patterns
+                        ):
+                            if file_path not in seen_fallback:
+                                seen_fallback.add(file_path)
+                                matches.append(file_path)
+                            break
 
         logger.debug(
             f"[GLOB] {strategy.value}: matched {len(matches)}/{len(accessible_files)} files "
@@ -2188,6 +2272,16 @@ class SearchService:
 
         # Phase 2: Bulk fetch searchable text
         searchable_texts = metastore_get_searchable_text_bulk(self._kernel, candidate_files)
+        if not searchable_texts:
+            legacy_bulk = getattr(self.metadata, "get_searchable_text_bulk", None)
+            if callable(legacy_bulk):
+                legacy_result = legacy_bulk(candidate_files)
+                if isinstance(legacy_result, dict):
+                    searchable_texts = {
+                        str(path): str(text)
+                        for path, text in legacy_result.items()
+                        if text is not None
+                    }
         cached_text_ratio = len(searchable_texts) / len(candidate_files) if candidate_files else 0.0
         files_needing_raw = [f for f in candidate_files if f not in searchable_texts]
 
@@ -2499,6 +2593,12 @@ class SearchService:
 
             # Fetch md_structure metadata for this file.
             raw = self._kernel.get_xattr(file_path, MD_STRUCTURE_KEY)
+            if not isinstance(raw, (dict, str)):
+                raw = None
+            if raw is None:
+                legacy_get = getattr(self.metadata, "get_file_metadata", None)
+                if callable(legacy_get):
+                    raw = legacy_get(file_path, MD_STRUCTURE_KEY)
             if raw is None:
                 # Issue #3720 (Codex R6): recognized markdown without
                 # metadata → fail closed.

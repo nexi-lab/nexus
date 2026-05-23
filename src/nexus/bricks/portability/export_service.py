@@ -411,6 +411,16 @@ class ZoneExportService:
                 entry_path = entry.get("path") or ""
                 content_id = entry.get("content_id")
                 size_bytes = int(entry.get("size") or 0)
+                if options.include_content and entry_path and (not content_id or size_bytes == 0):
+                    try:
+                        data = self.nexus_fs.sys_read(entry_path)
+                    except Exception as exc:
+                        logger.debug("sys_read fallback skipped for %s: %s", entry_path, exc)
+                    else:
+                        if data is not None:
+                            raw = data if isinstance(data, bytes) else bytes(data)
+                            size_bytes = len(raw)
+                            content_id = content_id or entry_path.lstrip("/") or entry_path
                 record = FileRecord(
                     path_id=str(idx),
                     zone_id=zone_id,
@@ -484,12 +494,17 @@ class ZoneExportService:
                     )
                     continue
 
-                # Write to CAS structure (2-char prefix directories)
-                if len(content_id) >= 2:
-                    prefix = content_id[:2]
+                # Write to CAS structure (2-char prefix directories). The
+                # kernel content_id is opaque and may contain path separators,
+                # so encode it before using it as a bundle member name.
+                from urllib.parse import quote
+
+                blob_name = quote(content_id, safe="")
+                if len(blob_name) >= 2:
+                    prefix = blob_name[:2]
                     blob_dir = output_dir / prefix
                     blob_dir.mkdir(parents=True, exist_ok=True)
-                    blob_path = blob_dir / content_id
+                    blob_path = blob_dir / blob_name
                     blob_path.write_bytes(data if isinstance(data, bytes) else bytes(data))
                     blob_count += 1
 

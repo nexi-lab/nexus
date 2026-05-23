@@ -165,14 +165,14 @@ class TestReadPlusStat:
 
 @pytest.mark.benchmark_file_ops
 class TestRouteOverhead:
-    """Benchmark Python router vs Rust sys_read for the same path."""
+    """Benchmark path metadata lookup vs Rust sys_read for the same path."""
 
     def test_python_route_time(self, benchmark, populated_nexus):
-        """Benchmark the Python router.route() call directly."""
+        """Benchmark the current metadata routing/stat lookup."""
         nx = populated_nexus
 
         def route_only():
-            return nx.router.route("/test_small.bin")
+            return nx.sys_stat("/test_small.bin")
 
         result = benchmark(route_only)
         assert result is not None

@@ -300,10 +300,9 @@ def test_list(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     )
     assert resp.status_code == 200
     items = resp.json()["items"]
+    names = {item["name"] for item in items}
     assert len(items) == 3
-    assert "alpha.txt" in items
-    assert "beta.txt" in items
-    assert "gamma.txt" in items
+    assert names == {"alpha.txt", "beta.txt", "gamma.txt"}
 
 
 def test_mkdir(base_url: str, client: httpx.Client, user_headers: dict) -> None:

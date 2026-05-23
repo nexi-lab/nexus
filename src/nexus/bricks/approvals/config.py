@@ -27,3 +27,14 @@ class ApprovalConfig:
         if requested <= 0:
             raise ValueError(f"timeout must be > 0, got {requested}")
         return min(requested, self.auto_deny_max_seconds)
+
+    def durable_request_timeout(self, requested: float | None) -> float:
+        """Return the shared row lifetime for a possibly coalesced request.
+
+        A caller-level timeout override may be shorter than the operator queue
+        window. That caller should be allowed to give up locally without
+        shortening the durable row for other waiters on the same coalesced
+        approval. Longer overrides still extend the row, bounded by the same
+        maximum as caller waits.
+        """
+        return max(self.auto_deny_after_seconds, self.clamp_request_timeout(requested))

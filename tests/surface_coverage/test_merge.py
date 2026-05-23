@@ -130,3 +130,47 @@ def test_merge_preserves_non_default_profile_statuses():
 
     op = next(o for o in merged.operations if o.id == "fs.read")
     assert op.profiles["sandbox"] == ProfileStatus.UNAVAILABLE
+
+
+def test_merge_promotes_missing_needed_gap_when_surface_is_extracted():
+    existing = _op(
+        "parsers.list",
+        "parsers",
+        profiles={
+            "lite": ProfileStatus.MISSING_NEEDED,
+            "sandbox": ProfileStatus.MISSING_NEEDED,
+            "full": ProfileStatus.MISSING_NEEDED,
+        },
+        gap_issue=4187,
+        owning_issue=4135,
+    )
+    fresh = _op(
+        "parsers.list",
+        "parsers",
+        transports={"cli": TransportCell("nexus parsers list", "src/nexus/cli/parsers.py:1")},
+    )
+
+    merged = merge_coverage(
+        existing=SurfaceCoverage(1, [], [existing]),
+        fresh=SurfaceCoverage(1, [], [fresh]),
+    )
+
+    op = next(o for o in merged.operations if o.id == "parsers.list")
+    assert op.transports["cli"].name == "nexus parsers list"
+    assert all(status == ProfileStatus.SUPPORTED for status in op.profiles.values())
+    assert op.gap_issue == 4187
+    assert op.owning_issue == 4135
+
+
+def test_merge_fills_missing_issue_links_from_fresh_rows():
+    existing = _op("raft.cluster_status", "raft")
+    fresh = _op("raft.cluster_status", "raft", gap_issue=4204, owning_issue=4138)
+
+    merged = merge_coverage(
+        existing=SurfaceCoverage(1, [], [existing]),
+        fresh=SurfaceCoverage(1, [], [fresh]),
+    )
+
+    op = next(o for o in merged.operations if o.id == "raft.cluster_status")
+    assert op.gap_issue == 4204
+    assert op.owning_issue == 4138

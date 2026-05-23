@@ -152,7 +152,7 @@ services:
   # ============================================================================
   # Init service: formats data file on first run (idempotent — exits if already formatted)
   tigerbeetle-init:
-    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.78
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.3
     profiles:
       - core
     security_opt:
@@ -166,7 +166,7 @@ services:
       - nexus-network
 
   tigerbeetle:
-    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.78
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.3
     restart: unless-stopped
     profiles:
       - core

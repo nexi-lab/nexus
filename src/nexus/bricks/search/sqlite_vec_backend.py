@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import logging
 import os
 import re
@@ -122,6 +123,12 @@ class SqliteVecEmbedderMismatchError(RuntimeError):
 _DIM_REGEX = re.compile(r"embedding\s+float\[(\d+)\]", re.IGNORECASE)
 
 
+def _require_package(module: str, message: str) -> None:
+    """Check optional package availability without importing heavy modules."""
+    if importlib.util.find_spec(module) is None:
+        raise ImportError(message)
+
+
 def _detect_embedder_kind(api_key: str | None) -> str:
     """Return ``"litellm"`` or ``"fastembed"`` based on env + arg.
 
@@ -165,14 +172,15 @@ class SqliteVecBackend:
         api_key: str | None = None,
         embedder: str | None = None,
     ) -> None:
-        # sqlite-vec is required for both embedder kinds.
-        try:
-            import sqlite_vec  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "SqliteVecBackend requires the 'sqlite-vec' package. "
-                "Install with: pip install 'nexus-ai-fs[sandbox]'"
-            ) from exc
+        # sqlite-vec is required for both embedder kinds. Use find_spec()
+        # instead of importing: sqlite-vec, litellm, and fastembed are
+        # optional but heavy enough that importing them during SANDBOX boot
+        # turns backend construction into visible startup latency.
+        _require_package(
+            "sqlite_vec",
+            "SqliteVecBackend requires the 'sqlite-vec' package. "
+            "Install with: pip install 'nexus-ai-fs[sandbox]'",
+        )
 
         # Pick the embedder. Explicit arg > env override > auto-detect.
         kind = (embedder or os.environ.get("NEXUS_EMBEDDER") or "auto").lower()
@@ -184,26 +192,22 @@ class SqliteVecBackend:
             )
 
         if kind == "litellm":
-            try:
-                import litellm  # noqa: F401
-            except ImportError as exc:
-                raise ImportError(
-                    "SqliteVecBackend(embedder='litellm') requires the 'litellm' package. "
-                    "Install with: pip install 'nexus-ai-fs[sandbox]'"
-                ) from exc
+            _require_package(
+                "litellm",
+                "SqliteVecBackend(embedder='litellm') requires the 'litellm' package. "
+                "Install with: pip install 'nexus-ai-fs[sandbox]'",
+            )
             self._embedding_model = embedding_model or os.environ.get(
                 "NEXUS_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
             )
             self._embedding_dim = int(embedding_dim or DEFAULT_EMBEDDING_DIM)
         else:  # fastembed
-            try:
-                import fastembed  # noqa: F401
-            except ImportError as exc:
-                raise ImportError(
-                    "SqliteVecBackend(embedder='fastembed') requires the 'fastembed' package. "
-                    "Install with: pip install 'nexus-ai-fs[sandbox]' (includes fastembed) "
-                    "or set an embedding API key (e.g. OPENAI_API_KEY) to use litellm."
-                ) from exc
+            _require_package(
+                "fastembed",
+                "SqliteVecBackend(embedder='fastembed') requires the 'fastembed' package. "
+                "Install with: pip install 'nexus-ai-fs[sandbox]' (includes fastembed) "
+                "or set an embedding API key (e.g. OPENAI_API_KEY) to use litellm.",
+            )
             self._embedding_model = embedding_model or os.environ.get(
                 "NEXUS_OFFLINE_EMBED_MODEL", DEFAULT_FASTEMBED_MODEL
             )

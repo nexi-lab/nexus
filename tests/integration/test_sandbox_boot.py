@@ -27,6 +27,7 @@ shared tmp SQLite file across concurrent workers.
 
 from __future__ import annotations
 
+import inspect
 import time
 from pathlib import Path
 
@@ -53,6 +54,18 @@ def _sandbox_config(tmp_path: Path) -> dict[str, object]:
     }
 
 
+async def _connect_sandbox(
+    tmp_path: Path,
+    *,
+    config: dict[str, object] | None = None,
+) -> object:
+    """Connect to sandbox across sync/async SDK entrypoint variants."""
+    nx = nexus.connect(config=config or _sandbox_config(tmp_path))
+    if inspect.isawaitable(nx):
+        nx = await nx
+    return nx
+
+
 @pytest.mark.asyncio
 async def test_sandbox_boots_without_external_services(tmp_path: Path) -> None:
     """Boot nexus with profile=sandbox; expect fast boot + basic FS ops.
@@ -67,7 +80,7 @@ async def test_sandbox_boots_without_external_services(tmp_path: Path) -> None:
     message, and the <5 s spec target is tracked as a Task-14 follow-up.
     """
     t0 = time.monotonic()
-    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    nx = await _connect_sandbox(tmp_path)
     boot_time = time.monotonic() - t0
     try:
         assert boot_time < 60.0, (
@@ -98,7 +111,7 @@ async def test_sandbox_boot_never_starts_federation(
     # Smoke test — sandbox connect must succeed without any federation
     # side-effects or Python-raised errors.
     monkeypatch.delenv("NEXUS_HOSTNAME", raising=False)
-    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    nx = await _connect_sandbox(tmp_path)
     nx.close()
 
 
@@ -127,7 +140,7 @@ async def test_sandbox_http_surface_is_restricted(
     """
     monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
 
-    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    nx = await _connect_sandbox(tmp_path)
     try:
         from nexus.server.fastapi_server import create_app
 
@@ -173,17 +186,34 @@ def _resolve_search_service(nx: object) -> object | None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_default_does_not_instantiate_sqlite_vec_backend(
+async def test_sandbox_default_wires_sqlite_vec_backend_when_extra_installed(
     tmp_path: Path,
 ) -> None:
-    """SANDBOX default config has enable_vector_search=False, so the
-    optional local sqlite-vec backend must NOT be wired into SearchService.
-    """
-    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    """SANDBOX default config wires local vector search when deps exist."""
+    pytest.importorskip("sqlite_vec")
+    pytest.importorskip("fastembed")
+
+    nx = await _connect_sandbox(tmp_path)
     try:
         svc = _resolve_search_service(nx)
         assert svc is not None
-        # Default SANDBOX: enable_vector_search=False -> no backend wired.
+        assert getattr(svc, "_sqlite_vec_backend", None) is not None
+    finally:
+        nx.close()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_with_vector_search_disabled_does_not_wire_backend(
+    tmp_path: Path,
+) -> None:
+    """Explicit opt-out keeps SANDBOX keyword-only even with deps installed."""
+    cfg = _sandbox_config(tmp_path)
+    cfg["enable_vector_search"] = False
+
+    nx = await _connect_sandbox(tmp_path, config=cfg)
+    try:
+        svc = _resolve_search_service(nx)
+        assert svc is not None
         assert getattr(svc, "_sqlite_vec_backend", None) is None
     finally:
         nx.close()
@@ -199,6 +229,7 @@ async def test_sandbox_with_vector_search_enabled_wires_backend(
     """
     pytest.importorskip("sqlite_vec")
     pytest.importorskip("litellm")
+    pytest.importorskip("fastembed")
 
     cfg = _sandbox_config(tmp_path)
     cfg["enable_vector_search"] = True
@@ -213,7 +244,7 @@ async def test_sandbox_with_vector_search_enabled_wires_backend(
 
     monkeypatch.setattr("litellm.aembedding", _fake_aembedding, raising=False)
 
-    nx = await nexus.connect(config=cfg)
+    nx = await _connect_sandbox(tmp_path, config=cfg)
     try:
         svc = _resolve_search_service(nx)
         assert svc is not None
@@ -234,7 +265,7 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(
     """/api/v2/features reports profile=sandbox and the expected brick set."""
     monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
 
-    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    nx = await _connect_sandbox(tmp_path)
     try:
         from nexus.server.fastapi_server import create_app
 

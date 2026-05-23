@@ -87,6 +87,7 @@ def _mock_file_reader(
     reader.get_session = _get_session
     reader.read_text = AsyncMock(return_value=content)
     reader.get_searchable_text.return_value = searchable_text
+    reader.has_successful_parse = MagicMock(return_value=False)
     reader.list_files = AsyncMock(return_value=file_list or [])
 
     return reader
@@ -632,14 +633,16 @@ class TestVirtualReadmeIndexing:
         assert session.add.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_index_directory_still_skips_rowless_non_readme_paths(self) -> None:
-        """A real (non-``.readme/``) file with no FilePathModel row is
-        still skipped — the virtual fallback must not catch random
-        row-less paths."""
+    async def test_index_directory_indexes_readable_rowless_paths(self) -> None:
+        """Readable syscall-backed files without FilePathModel rows still
+        get indexed through stable synthetic file_paths rows."""
         session = _mock_session(file_model=None)  # all queries miss
 
         pipeline = _mock_pipeline()
-        pipeline.index_documents.return_value = []
+        pipeline.index_documents.return_value = [
+            IndexResult(path="/work/notes.txt", chunks_indexed=1),
+            IndexResult(path="/work/code.py", chunks_indexed=1),
+        ]
 
         service, _, _, _ = _build_service(
             pipeline=pipeline,
@@ -650,12 +653,11 @@ class TestVirtualReadmeIndexing:
 
         await service.index_directory("/work/")
 
-        # No documents appended — both rows are missing AND they're not
-        # under ``.readme/``, so the indexer drops them like before.
-        assert pipeline.index_documents.await_count in (0, 1)
-        if pipeline.index_documents.await_count == 1:
-            docs = pipeline.index_documents.call_args[0][0]
-            assert docs == []
+        pipeline.index_documents.assert_awaited_once()
+        docs = pipeline.index_documents.call_args[0][0]
+        assert [doc[0] for doc in docs] == ["/work/notes.txt", "/work/code.py"]
+        assert all(len(path_id) == 36 for _path, _content, path_id in docs)
+        assert session.add.call_count == 2
 
 
 class TestDeleteDocumentIndex:

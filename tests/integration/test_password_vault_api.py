@@ -7,6 +7,7 @@ full HTTP + DI + SecretsService + PasswordVaultService stack end-to-end.
 
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -17,37 +18,25 @@ from nexus.server.fastapi_server import create_app
 from tests.testkit import make_test_nexus
 from tests.testkit.records import InMemoryRecordStore
 
-# Session-scoped shared server (matches test_secrets_api_automated.py)
-_server_app = None
-_server_client = None
-
 
 def setup_server() -> TestClient:
-    """Build a server once per session."""
-    global _server_app, _server_client
+    """Build an isolated server for one test."""
+    import tempfile
 
-    if _server_app is None:
-        import asyncio
-        import tempfile
+    tmp_path = Path(tempfile.mkdtemp(prefix="nexus_pv_test_"))
+    in_memory_rs = InMemoryRecordStore()
+    nexus_fs = make_test_nexus(tmp_path, record_store=in_memory_rs)
 
-        tmp_path = tempfile.mkdtemp(prefix="nexus_pv_test_")
-        in_memory_rs = InMemoryRecordStore()
-
-        loop = asyncio.new_event_loop()
-        nexus_fs = loop.run_until_complete(make_test_nexus(tmp_path, record_store=in_memory_rs))
-        loop.close()
-
-        api_key = "test-api-key"
-        _server_app = create_app(nexus_fs, api_key=api_key)
-        _server_client = TestClient(_server_app, raise_server_exceptions=True)
-        _server_client.headers["Authorization"] = f"Bearer {api_key}"
-        _server_client.headers["X-Actor-ID"] = "test-actor"
-        _server_client.headers["X-Zone-ID"] = ROOT_ZONE_ID
-
-    return _server_client
+    api_key = "test-api-key"
+    app = create_app(nexus_fs, api_key=api_key)
+    client = TestClient(app, raise_server_exceptions=True)
+    client.headers["Authorization"] = f"Bearer {api_key}"
+    client.headers["X-Actor-ID"] = "test-actor"
+    client.headers["X-Zone-ID"] = ROOT_ZONE_ID
+    return client
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def client() -> TestClient:
     return setup_server()
 

@@ -17,31 +17,43 @@ missing_operations:
     module: raft
     summary: "Inspect raft cluster: leader, members, term, replication lag."
     wanted_why: "Cluster profile is new; operators need visibility for HA debugging."
+    gap_issue: 4204
+    owning_issue: 4138
 
   - id: raft.node_join
     module: raft
     summary: "Add a node to the raft cluster."
     wanted_why: "HA cluster expansion has no external surface yet."
+    gap_issue: 4204
+    owning_issue: 4138
 
   - id: hub.deploy
     module: hub
     summary: "Bootstrap a hub deployment from CLI (currently helm/manual)."
     wanted_why: "Lowers adoption barrier for hub-mode users."
+    gap_issue: 4205
+    owning_issue: 4138
 
   - id: approvals.grant
     module: approvals
     summary: "Grant a pending approval (CLI + RPC). approvals brick currently exposes 0 external surfaces."
     wanted_why: "Brick exists but is invisible to users / tests."
+    gap_issue: 4206
+    owning_issue: 4138
 
   - id: approvals.list_pending
     module: approvals
     summary: "List approvals awaiting decision."
     wanted_why: "No way to enumerate the approval queue externally."
+    gap_issue: 4206
+    owning_issue: 4138
 
   - id: archive.restore
     module: archive
     summary: "Restore a signed archive into a zone."
     wanted_why: "We can create archives (1 op) but no documented restore path."
+    gap_issue: 4207
+    owning_issue: 4138
 
   - id: parsers.list
     module: parsers
@@ -61,18 +73,26 @@ missing_operations:
     module: upload
     summary: "Cancel an in-flight TUS upload."
     wanted_why: "Pause/resume covered, cancellation isn't."
+    gap_issue: 4208
+    owning_issue: 4138
 
   - id: portability.profile_export
     module: portability
     summary: "Export a profile bundle (config + bricks + sample data) for sharing."
     wanted_why: "Aids reproducible demos, support cases."
+    gap_issue: 4209
+    owning_issue: 4138
 
   - id: fuse.mount
     module: fuse
     summary: "`nexus fuse mount /local/path /nexus/zone` from the main CLI (currently a separate binary)."
     wanted_why: "Unifies UX; FUSE is its own crate today with no nexus-cli integration."
+    gap_issue: 4210
+    owning_issue: 4133
 
   - id: fuse.status
     module: fuse
     summary: "Show active FUSE mounts + health."
     wanted_why: "No way to introspect running mounts without ps/mount commands."
+    gap_issue: 4210
+    owning_issue: 4133

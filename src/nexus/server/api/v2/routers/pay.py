@@ -14,7 +14,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response
@@ -766,7 +766,7 @@ async def list_pay_transactions(
 
 @audit_router.get("/transactions")
 async def list_audit_transactions(
-    limit: int = 20,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 20,
     cursor: str | None = None,
     protocol: str | None = None,
     status: str | None = None,

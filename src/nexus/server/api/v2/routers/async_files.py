@@ -778,12 +778,20 @@ def create_async_files_router(
                     except Exception as _track_err:
                         logger.warning("txn track write failed: %s", _track_err)
 
+                try:
+                    response_version = int(result.get("version") or 1)
+                except (TypeError, ValueError):
+                    response_version = 1
+                response_gen = result.get("gen")
+                if isinstance(response_gen, int) and response_gen > response_version:
+                    response_version = response_gen
+
                 modified = result["modified_at"]
                 if hasattr(modified, "isoformat"):
                     modified = modified.isoformat()
                 response_data = WriteResponse(
                     content_id=result["content_id"],
-                    version=result["version"],
+                    version=response_version,
                     size=result["size"],
                     modified_at=str(modified),
                 )
@@ -1912,9 +1920,10 @@ def create_async_files_router(
                     request_headers=request.headers,
                     content_generator=_range_generator,
                     full_generator=_full_generator,
-                    total_size=meta.size,
-                    etag=meta.content_id,
-                    content_type=meta.mime_type or "application/octet-stream",
+                    total_size=int(_metadata_field(meta, "size", 0) or 0),
+                    etag=_metadata_field(meta, "content_id"),
+                    content_type=_metadata_field(meta, "mime_type", "application/octet-stream")
+                    or "application/octet-stream",
                     filename=path.split("/")[-1],
                 )
 
@@ -1947,7 +1956,9 @@ def create_async_files_router(
 
             async def _work() -> RenameResponse:
                 fs = await _get_fs()
-                fs.sys_rename(request.source, request.destination, context=context)
+                await _maybe_await(
+                    fs.sys_rename(request.source, request.destination, context=context)
+                )
                 return RenameResponse(
                     success=True,
                     source=request.source,
@@ -1985,7 +1996,7 @@ def create_async_files_router(
                 fs = await _get_fs()
 
                 # Check source exists and get size
-                meta = fs.sys_stat(request.source, context=context)
+                meta = await _maybe_await(fs.sys_stat(request.source, context=context))
                 if meta is None:
                     raise NexusFileNotFoundError(path=request.source)
 
@@ -1993,8 +2004,8 @@ def create_async_files_router(
 
                 if file_size < STREAMING_COPY_THRESHOLD:
                     # Small file: read all then write all
-                    content = fs.sys_read(request.source, context=context)
-                    fs.write(request.destination, buf=content, context=context)
+                    content = await _maybe_await(fs.sys_read(request.source, context=context))
+                    await _maybe_await(fs.write(request.destination, buf=content, context=context))
                     bytes_copied = len(content)
                 else:
                     # Large file: streaming copy
@@ -2041,7 +2052,7 @@ def create_async_files_router(
             async def _work() -> RenameBatchResponse:
                 fs = await _get_fs()
                 renames = [(op.source, op.destination) for op in request.operations]
-                raw_results = fs.rename_batch(renames, context=context)
+                raw_results = await _maybe_await(fs.rename_batch(renames, context=context))
 
                 results: list[BulkRenameResult] = []
                 for op in request.operations:
@@ -2087,7 +2098,7 @@ def create_async_files_router(
 
                 for op in request.operations:
                     try:
-                        meta = fs.sys_stat(op.source, context=context)
+                        meta = await _maybe_await(fs.sys_stat(op.source, context=context))
                         if meta is None:
                             results.append(
                                 BulkCopyResult(
@@ -2102,8 +2113,10 @@ def create_async_files_router(
                         file_size = _metadata_field(meta, "size", 0) or 0
 
                         if file_size < STREAMING_COPY_THRESHOLD:
-                            content = fs.sys_read(op.source, context=context)
-                            fs.write(op.destination, buf=content, context=context)
+                            content = await _maybe_await(fs.sys_read(op.source, context=context))
+                            await _maybe_await(
+                                fs.write(op.destination, buf=content, context=context)
+                            )
                             bytes_copied = len(content)
                         else:
                             chunks = await asyncio.to_thread(fs.stream, op.source, context=context)

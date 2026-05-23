@@ -801,7 +801,7 @@ def persist_sandbox_runtime_artifacts(
         # just-written state before propagating so we never leave a
         # ``.state.json`` pointing at a project that has no config / no
         # daemon (a stale discovery artifact — the exact hazard this closes).
-        yaml_created_path = Path(CONFIG_SEARCH_PATHS[0])
+        yaml_created_path = Path(CONFIG_SEARCH_PATHS[0]).resolve()
         try:
             _save_project_config(
                 {

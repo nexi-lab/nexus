@@ -471,7 +471,7 @@ def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
 
     monkeypatch.setattr(nx, "stream", _spy_stream)
 
-    res = CliRunner(mix_stderr=False).invoke(_cat, ["/big/auto.bin"])
+    res = CliRunner().invoke(_cat, ["/big/auto.bin"])
     assert res.exit_code == 0, (res.output[:500], res.stderr[:500] if res.stderr else "")
     assert stream_calls, (
         "cat did not invoke nx.stream — the >10 MiB auto-stream branch "

@@ -28,11 +28,13 @@ use kernel::kernel::vfs_proto::{
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
     CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, GetXattrBulkItem,
-    GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, LockRequest,
-    LockResponse, PingRequest, PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse,
-    ReadRequest, ReadResponse, RenameRequest, RenameResponse, SetXattrRequest, SetXattrResponse,
-    SetattrRequest, SetattrResponse, StatRequest, StatResponse, UnlockRequest, UnlockResponse,
-    WatchRequest, WatchResponse, WriteRequest, WriteResponse,
+    GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, IpcAck,
+    IpcEmpty, IpcHasResponse, IpcPathRequest, LockRequest, LockResponse, PingRequest, PingResponse,
+    ReaddirEntry, ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, RenameRequest,
+    RenameResponse, SetXattrRequest, SetXattrResponse, SetattrRequest, SetattrResponse,
+    StatRequest, StatResponse, StreamCollectAllResponse, StreamReadAtRequest, StreamReadAtResponse,
+    StreamWriteRequest, StreamWriteResponse, UnlockRequest, UnlockResponse, WatchRequest,
+    WatchResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -652,6 +654,217 @@ impl NexusVfsService for VfsServiceImpl {
         }
     }
 
+    async fn close_pipe(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcAck>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_ack(s))),
+        };
+        match self.kernel.close_pipe(&req.path) {
+            Ok(()) => Ok(Response::new(IpcAck {
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(IpcAck {
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn has_pipe(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcHasResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_has(s))),
+        };
+        Ok(Response::new(IpcHasResponse {
+            present: self.kernel.has_pipe(&req.path),
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn close_all_pipes(
+        &self,
+        req: Request<IpcEmpty>,
+    ) -> Result<Response<IpcAck>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_ack(s))),
+        };
+        self.kernel.close_all_pipes();
+        Ok(Response::new(IpcAck {
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn close_stream(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcAck>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_ack(s))),
+        };
+        match self.kernel.close_stream(&req.path) {
+            Ok(()) => Ok(Response::new(IpcAck {
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(IpcAck {
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn has_stream(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcHasResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_has(s))),
+        };
+        Ok(Response::new(IpcHasResponse {
+            present: self.kernel.has_stream(&req.path),
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn stream_write_nowait(
+        &self,
+        req: Request<StreamWriteRequest>,
+    ) -> Result<Response<StreamWriteResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stream_write(s))),
+        };
+        match self.kernel.stream_write_nowait(&req.path, &req.data) {
+            Ok(offset) => Ok(Response::new(StreamWriteResponse {
+                offset: offset as u64,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(StreamWriteResponse {
+                    offset: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn stream_read_at(
+        &self,
+        req: Request<StreamReadAtRequest>,
+    ) -> Result<Response<StreamReadAtResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stream_read(s))),
+        };
+        if req.blocking {
+            match self.kernel.stream_read_at_blocking(
+                &req.path,
+                req.offset as usize,
+                req.timeout_ms,
+            ) {
+                Ok((data, next)) => Ok(Response::new(StreamReadAtResponse {
+                    data,
+                    next_offset: next as u64,
+                    eof: false,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                })),
+                Err(err) => {
+                    let (code, msg) = self.map_kernel_err(err);
+                    Ok(Response::new(StreamReadAtResponse {
+                        data: Vec::new(),
+                        next_offset: 0,
+                        eof: false,
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                    }))
+                }
+            }
+        } else {
+            match self.kernel.stream_read_at(&req.path, req.offset as usize) {
+                Ok(Some((data, next))) => Ok(Response::new(StreamReadAtResponse {
+                    data,
+                    next_offset: next as u64,
+                    eof: false,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                })),
+                Ok(None) => Ok(Response::new(StreamReadAtResponse {
+                    data: Vec::new(),
+                    next_offset: req.offset,
+                    eof: true,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                })),
+                Err(err) => {
+                    let (code, msg) = self.map_kernel_err(err);
+                    Ok(Response::new(StreamReadAtResponse {
+                        data: Vec::new(),
+                        next_offset: 0,
+                        eof: false,
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                    }))
+                }
+            }
+        }
+    }
+
+    async fn stream_collect_all(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<StreamCollectAllResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stream_collect(s))),
+        };
+        match self.kernel.stream_collect_all(&req.path) {
+            Ok(data) => Ok(Response::new(StreamCollectAllResponse {
+                data,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(StreamCollectAllResponse {
+                    data: Vec::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
         let ctx = self.resolve_context(&req.into_inner().auth_token)?;
         let uptime = self.server_started_at.elapsed().as_secs() as i64;
@@ -985,6 +1198,47 @@ fn error_delete(status: Status) -> DeleteResponse {
 fn error_readdir(status: Status) -> ReaddirResponse {
     ReaddirResponse {
         entries: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_ipc_ack(status: Status) -> IpcAck {
+    IpcAck {
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_ipc_has(status: Status) -> IpcHasResponse {
+    IpcHasResponse {
+        present: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stream_write(status: Status) -> StreamWriteResponse {
+    StreamWriteResponse {
+        offset: 0,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stream_read(status: Status) -> StreamReadAtResponse {
+    StreamReadAtResponse {
+        data: Vec::new(),
+        next_offset: 0,
+        eof: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stream_collect(status: Status) -> StreamCollectAllResponse {
+    StreamCollectAllResponse {
+        data: Vec::new(),
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

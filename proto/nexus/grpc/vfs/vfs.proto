@@ -67,6 +67,18 @@ service NexusVFSService {
   rpc GetXattr(GetXattrRequest) returns (GetXattrResponse);
   rpc SetXattr(SetXattrRequest) returns (SetXattrResponse);
   rpc GetXattrBulk(GetXattrBulkRequest) returns (GetXattrBulkResponse);
+
+  // Typed IPC pipe / stream ops. Creation goes through `Setattr` with
+  // entry_type=DT_PIPE / DT_STREAM (no separate Create*Ipc RPC needed).
+  rpc ClosePipe(IpcPathRequest) returns (IpcAck);
+  rpc HasPipe(IpcPathRequest) returns (IpcHasResponse);
+  rpc CloseAllPipes(IpcEmpty) returns (IpcAck);
+
+  rpc CloseStream(IpcPathRequest) returns (IpcAck);
+  rpc HasStream(IpcPathRequest) returns (IpcHasResponse);
+  rpc StreamWriteNowait(StreamWriteRequest) returns (StreamWriteResponse);
+  rpc StreamReadAt(StreamReadAtRequest) returns (StreamReadAtResponse);
+  rpc StreamCollectAll(IpcPathRequest) returns (StreamCollectAllResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -444,6 +456,62 @@ message GetXattrBulkItem {
 
 message GetXattrBulkResponse {
   repeated GetXattrBulkItem items = 1;
+  bool is_error = 2;
+  bytes error_payload = 3;
+}
+
+// --- IPC pipe / stream ops (replace the IPC Call arms) ---
+
+message IpcPathRequest {
+  string path = 1;
+  string auth_token = 2;
+}
+
+message IpcAck {
+  bool is_error = 1;
+  bytes error_payload = 2;
+}
+
+message IpcHasResponse {
+  bool present = 1;
+  bool is_error = 2;
+  bytes error_payload = 3;
+}
+
+message IpcEmpty {
+  string auth_token = 1;
+}
+
+message StreamWriteRequest {
+  string path = 1;
+  bytes data = 2;             // native bytes — no base64 tax
+  string auth_token = 3;
+}
+
+message StreamWriteResponse {
+  uint64 offset = 1;          // offset where the data landed
+  bool is_error = 2;
+  bytes error_payload = 3;
+}
+
+message StreamReadAtRequest {
+  string path = 1;
+  uint64 offset = 2;
+  bool blocking = 3;          // true → server blocks up to timeout_ms
+  uint64 timeout_ms = 4;      // only honoured when blocking == true
+  string auth_token = 5;
+}
+
+message StreamReadAtResponse {
+  bytes data = 1;
+  uint64 next_offset = 2;
+  bool eof = 3;               // non-blocking: true → no data available
+  bool is_error = 4;
+  bytes error_payload = 5;
+}
+
+message StreamCollectAllResponse {
+  bytes data = 1;
   bool is_error = 2;
   bytes error_payload = 3;
 }

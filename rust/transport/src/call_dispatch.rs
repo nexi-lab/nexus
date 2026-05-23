@@ -37,8 +37,6 @@ pub fn dispatch(
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
         "sys_mkdir" => do_sys_mkdir(kernel, &params, ctx),
         "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
-        "sys_rename" => do_sys_rename(kernel, &params, ctx),
-        "sys_copy" => do_sys_copy(kernel, &params, ctx),
         "sys_lock" => do_sys_lock(kernel, &params),
         "sys_unlock" => do_sys_unlock(kernel, &params),
         "sys_watch" => do_sys_watch(kernel, &params),
@@ -704,49 +702,6 @@ fn do_sys_unlink(
             "path": r.path,
             "content_id": r.content_id,
             "size": r.size,
-        })),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_rename(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let new_path = s(params, "new_path");
-    match KernelAbi::sys_rename(kernel, &path, &new_path, ctx) {
-        Ok(r) => ok_json(serde_json::json!({
-            "hit": r.hit,
-            "success": r.success,
-            "post_hook_needed": r.post_hook_needed,
-            "is_directory": r.is_directory,
-            "old_content_id": r.old_content_id,
-            "old_size": r.old_size,
-            "old_version": r.old_version,
-            "old_modified_at_ms": r.old_modified_at_ms,
-        })),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_copy(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let src = s(params, "src");
-    let dst = s(params, "dst");
-    match KernelAbi::sys_copy(kernel, &src, &dst, ctx) {
-        Ok(r) => ok_json(serde_json::json!({
-            "hit": r.hit,
-            "post_hook_needed": r.post_hook_needed,
-            "dst_path": r.dst_path,
-            "content_id": r.content_id,
-            "size": r.size,
-            "version": r.version,
-            "gen": r.gen,
         })),
         Err(e) => Err(kernel_err_to_payload(e)),
     }

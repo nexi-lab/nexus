@@ -7,8 +7,21 @@ from __future__ import annotations
 
 import re
 
+from scripts.surface_coverage.paths import (
+    CONTRACT_MD,
+    COVERAGE_HTML,
+    COVERAGE_YAML,
+    REPO_ROOT,
+)
+
 APPENDIX_BEGIN = "<!-- BEGIN surface-contract-appendix:4161 -->"
 APPENDIX_END = "<!-- END surface-contract-appendix:4161 -->"
+
+# Repo-relative POSIX paths, rendered into the appendix body so subissues
+# always link to whatever the SSOT currently points at.
+_MAP_PATH = COVERAGE_HTML.relative_to(REPO_ROOT).as_posix()
+_DATA_PATH = COVERAGE_YAML.relative_to(REPO_ROOT).as_posix()
+_CONTRACT_PATH = CONTRACT_MD.relative_to(REPO_ROOT).as_posix()
 
 _APPENDIX_RE = re.compile(
     re.escape(APPENDIX_BEGIN) + r".*?" + re.escape(APPENDIX_END) + r"\n?",
@@ -31,9 +44,9 @@ def build_appendix(*, issue_number: int, owned_op_ids: list[str]) -> str:
 
 This story slice contributes rows to the shared surface map:
 
-- Map: `docs/surface-coverage/api-rpc-surface-coverage.html`
-- Data: `docs/surface-coverage/api-rpc-surface-coverage.yaml`
-- Contract: `docs/surface-coverage/api-rpc-surface-contract.md`
+- Map: `{_MAP_PATH}`
+- Data: `{_DATA_PATH}`
+- Contract: `{_CONTRACT_PATH}`
 
 ### Owned surfaces (filter map by `owner: #{issue_number}`)
 

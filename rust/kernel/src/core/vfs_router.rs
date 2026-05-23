@@ -64,9 +64,9 @@ pub struct MountEntry {
 }
 
 impl MountEntry {
-    /// Construct a new entry. `metastore` is typically `None` at mount time
-    /// and installed later via `VFSRouter::install_metastore` (federation),
-    /// or set up-front via `with_metastore` (standalone redb).
+    /// Construct a new entry. `metastore` always starts `None`; the metastore
+    /// slot is owned by `VFSRouter::install_metastore` and never set through
+    /// `add` / `add_mount` / `add_federation_mount` (orthogonal-slot contract).
     pub fn new(backend: Option<Arc<dyn ObjectStore>>) -> Self {
         Self {
             backend,
@@ -85,13 +85,6 @@ impl MountEntry {
     /// Builder-style external-flag setter.
     pub fn with_is_external(mut self, is_external: bool) -> Self {
         self.is_external = is_external;
-        self
-    }
-
-    /// Builder-style metastore setter. Used when the metastore is known at
-    /// mount-creation time (standalone redb path).
-    pub fn with_metastore(mut self, ms: Arc<dyn MetaStore>) -> Self {
-        self.metastore = Some(ms);
         self
     }
 }
@@ -206,29 +199,36 @@ impl VFSRouter {
 
     // ── Write ops (called by DLC.mount/unmount) ────────────────────────
 
-    /// Insert a mount entry under its zone-canonical key.
+    /// Upsert the backend-side fields of a mount entry under its
+    /// zone-canonical key. The metastore slot is **never** written here —
+    /// it is owned by `install_metastore`.
     ///
-    /// If an entry already exists under the same canonical key and the
-    /// *new* entry has no metastore wired, the previous entry's metastore
-    /// is preserved. This makes the `install_metastore` → `add_mount`
-    /// ordering (used by federation when `attach_raft_zone_to_kernel`
-    /// runs before the root DLC mount) insensitive so the ZoneMetaStore
-    /// isn't wiped when the backend mount registers afterwards.
+    /// Orthogonal-slot contract: each mount entry has two independent
+    /// slots — backend-side (backend, is_external, target_zone_id) and
+    /// metastore. `add` (and its wrappers `add_mount` /
+    /// `add_federation_mount`) own the first; `install_metastore` owns
+    /// the second. Neither operation clobbers the other's slot, so the
+    /// federation bootstrap order — `attach_raft_zone_to_kernel` installs
+    /// the metastore at `/` first, the root DLC mount adds the backend
+    /// later (or vice versa) — converges to the same final state without
+    /// any preserve-on-conflict heuristic.
     ///
-    /// Atomic via `DashMap::entry()` — holds the shard write lock across
-    /// both the preserve-check read and the insert, so a concurrent
-    /// `install_metastore` cannot slip a metastore in between the read
-    /// and the write and have it clobbered.
-    pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
+    /// Atomic via `DashMap::entry()` — the read-decide-write sequence
+    /// runs under one shard write lock, so a concurrent `install_metastore`
+    /// for the same key cannot interleave.
+    pub fn add(&self, mount_point: &str, zone_id: &str, entry: MountEntry) {
+        debug_assert!(
+            entry.metastore.is_none(),
+            "VFSRouter::add ignores the metastore slot; callers must use \
+             install_metastore (orthogonal-slot contract)",
+        );
         let canonical = canonicalize_mount_path(mount_point, zone_id);
         match self.entries.entry(canonical) {
             Entry::Occupied(mut occ) => {
-                if entry.metastore.is_none() {
-                    if let Some(ms) = occ.get().metastore.as_ref() {
-                        entry.metastore = Some(Arc::clone(ms));
-                    }
-                }
-                *occ.get_mut() = entry;
+                let preserved_metastore = occ.get().metastore.clone();
+                let mut new_entry = entry;
+                new_entry.metastore = preserved_metastore;
+                *occ.get_mut() = new_entry;
             }
             Entry::Vacant(vac) => {
                 vac.insert(entry);
@@ -844,21 +844,14 @@ mod tests {
         });
 
         let table = VFSRouter::new();
-        table.add(
-            "/corp",
-            "root",
-            MountEntry::new(None).with_metastore(corp_a),
-        );
-        table.add(
-            "/family/work",
-            "root",
-            MountEntry::new(None).with_metastore(corp_b),
-        );
-        table.add(
-            "/family",
-            "root",
-            MountEntry::new(None).with_metastore(family),
-        );
+        // Orthogonal-slot contract: add_mount fills backend-side, install_metastore
+        // fills metastore. Order is irrelevant by construction.
+        table.add_mount("/corp", "root", None, false);
+        table.install_metastore(&canonicalize_mount_path("/corp", "root"), corp_a);
+        table.add_mount("/family/work", "root", None, false);
+        table.install_metastore(&canonicalize_mount_path("/family/work", "root"), corp_b);
+        table.add_mount("/family", "root", None, false);
+        table.install_metastore(&canonicalize_mount_path("/family", "root"), family);
 
         let mut corp_points = table.mount_points_for_coherence_key(CORP_KEY);
         corp_points.sort();

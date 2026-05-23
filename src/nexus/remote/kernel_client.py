@@ -374,24 +374,17 @@ class KernelClient:
         self,
         path: str,
         zone_id: str = ROOT_ZONE_ID,
-        is_admin: bool = False,
+        is_admin: bool = False,  # noqa: ARG002 — kept for API compat; ctx-derived server-side
     ) -> list[tuple[str, int]]:
-        """List directory contents — returns list of (path, entry_type) tuples."""
-        result = self._call(
-            "sys_readdir",
-            {"path": path, "zone_id": zone_id},
-        )
-        if result is None:
-            return []
-        if isinstance(result, list):
-            entries: list[tuple[str, int]] = []
-            for e in result:
-                if isinstance(e, dict):
-                    entries.append((e.get("name", ""), e.get("entry_type", 0)))
-                elif isinstance(e, (list, tuple)) and len(e) >= 2:
-                    entries.append((e[0], e[1]))
-            return entries
-        return []
+        """List directory contents via the typed Readdir RPC.
+
+        Returns ``list[(path, entry_type)]``. ``is_admin`` is accepted for
+        API compatibility but ignored — the server reads it from the
+        auth-resolved OperationContext (the generic Call path did the
+        same, so this is parity).
+        """
+        assert self._transport is not None
+        return [(e.name, e.entry_type) for e in self._transport.readdir(path, zone_id)]
 
     def sys_lock(
         self,

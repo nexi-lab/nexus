@@ -457,6 +457,36 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def readdir(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> list[Any]:
+        """List directory entries via the typed Readdir RPC.
+
+        Returns the ``ReaddirEntry`` list from the response (raw protobuf
+        objects with ``.name`` / ``.entry_type``). Raises on auth or
+        transport failure; the handler treats ``is_admin`` as a
+        ctx-derived field, so it's not part of the request.
+        """
+        request = vfs_pb2.ReaddirRequest(path=path, auth_token=self._auth_token, zone_id=zone_id)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Readdir(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Readdir")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return list(response.entries)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
         """Stat a path via the typed Stat RPC.
 

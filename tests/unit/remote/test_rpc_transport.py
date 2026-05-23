@@ -355,6 +355,35 @@ class TestRPCTransportTypedMethods:
         with pytest.raises(NexusFileNotFoundError):
             transport.batch_write([("/ok", b"x"), ("/bad", b"y")])
 
+    def test_readdir_success(self, transport) -> None:
+        """readdir returns the ReaddirEntry list from the response."""
+        e1 = MagicMock(entry_type=1)
+        e1.name = "/a"
+        e2 = MagicMock(entry_type=2)
+        e2.name = "/b"
+        mock_response = MagicMock(is_error=False, entries=[e1, e2])
+        transport._mock_stub.Readdir.return_value = mock_response
+
+        result = transport.readdir("/")
+
+        assert result == [e1, e2]
+        request = transport._mock_stub.Readdir.call_args[0][0]
+        assert request.path == "/"
+        assert request.auth_token == "test-token"
+        assert request.zone_id == ""
+
+    def test_readdir_error_raises(self, transport) -> None:
+        """readdir raises on is_error rather than returning an empty list."""
+        mock_response = MagicMock(
+            is_error=True,
+            entries=[],
+            error_payload=encode_rpc_message({"code": -32007, "message": "nope"}),
+        )
+        transport._mock_stub.Readdir.return_value = mock_response
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.readdir("/")
+
     def test_stat_found(self, transport) -> None:
         """stat returns the StatResponse message for an existing path."""
         mock_response = MagicMock(is_error=False, found=True, path="/x.txt", size=10)

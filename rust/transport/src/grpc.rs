@@ -29,7 +29,8 @@ use kernel::kernel::vfs_proto::{
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
     CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, GetXattrBulkItem,
     GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, IpcAck,
-    IpcEmpty, IpcHasResponse, IpcPathRequest, LockRequest, LockResponse, PingRequest, PingResponse,
+    IpcEmpty, IpcHasResponse, IpcPathRequest, LockRequest, LockResponse, MkdirRequest,
+    MkdirResponse, PingRequest, PingResponse,
     ReaddirEntry, ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, RenameRequest,
     RenameResponse, SetXattrRequest, SetXattrResponse, SetattrRequest, SetattrResponse,
     StatRequest, StatResponse, StreamCollectAllResponse, StreamReadAtRequest, StreamReadAtResponse,
@@ -227,11 +228,45 @@ impl NexusVfsService for VfsServiceImpl {
                 success: result.hit,
                 is_error: false,
                 error_payload: Vec::new(),
+                entry_type: result.entry_type as u32,
+                path: result.path,
+                content_id: result.content_id.unwrap_or_default(),
+                size: result.size,
             })),
             Err(err) => {
                 let (code, msg) = self.map_kernel_err(err);
                 Ok(Response::new(DeleteResponse {
                     success: false,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                    entry_type: 0,
+                    path: String::new(),
+                    content_id: String::new(),
+                    size: 0,
+                }))
+            }
+        }
+    }
+
+    async fn mkdir(
+        &self,
+        req: Request<MkdirRequest>,
+    ) -> Result<Response<MkdirResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_mkdir(s))),
+        };
+        match KernelConvenience::mkdir(&*self.kernel, &req.path, &ctx, req.parents, req.exist_ok) {
+            Ok(r) => Ok(Response::new(MkdirResponse {
+                hit: r.hit,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(MkdirResponse {
+                    hit: false,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
                 }))
@@ -1190,6 +1225,18 @@ fn error_write(status: Status) -> WriteResponse {
 fn error_delete(status: Status) -> DeleteResponse {
     DeleteResponse {
         success: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+        entry_type: 0,
+        path: String::new(),
+        content_id: String::new(),
+        size: 0,
+    }
+}
+
+fn error_mkdir(status: Status) -> MkdirResponse {
+    MkdirResponse {
+        hit: false,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

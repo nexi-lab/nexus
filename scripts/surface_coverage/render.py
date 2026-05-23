@@ -13,6 +13,7 @@ from pathlib import Path
 
 import jinja2
 
+from scripts.surface_coverage.paths import VENDOR_MERMAID
 from scripts.surface_coverage.schema import SurfaceCoverage
 from scripts.surface_coverage.taxonomy import (
     BRICK_CATEGORIES,
@@ -80,9 +81,8 @@ def _build_mermaid(modules) -> str:
 
 
 def _load_mermaid_js() -> str:
-    vendored = Path(__file__).parent.parent.parent / "docs/surface-coverage/_vendor/mermaid.min.js"
-    if vendored.exists():
-        return f"<script>\n{vendored.read_text(encoding='utf-8')}\n</script>\n"
+    if VENDOR_MERMAID.exists():
+        return f"<script>\n{VENDOR_MERMAID.read_text(encoding='utf-8')}\n</script>\n"
     return '<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>\n'
 
 

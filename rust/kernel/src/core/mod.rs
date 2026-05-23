@@ -48,5 +48,6 @@ pub mod meta_store;
 pub mod pipe;
 pub mod stream;
 
-// §4.8 — FileDescriptorTable (pre-opened fds for PAS fast-path reads).
+// File-descriptor table — pre-opened fds for PAS fast-path reads
+// (§4 PermissionGate row's FileDescriptorTable peer).
 pub mod fdt;

@@ -99,6 +99,21 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.FromString,
                 _registered_method=True)
+        self.Lock = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Lock',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockResponse.FromString,
+                _registered_method=True)
+        self.Unlock = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Unlock',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockResponse.FromString,
+                _registered_method=True)
+        self.Watch = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Watch',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -199,6 +214,26 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Lock(self, request, context):
+        """Typed advisory-lock acquire / release.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Unlock(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Watch(self, request, context):
+        """Typed file-event watch (blocking, inotify-shaped).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -266,6 +301,21 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Copy,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.SerializeToString,
+            ),
+            'Lock': grpc.unary_unary_rpc_method_handler(
+                    servicer.Lock,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockResponse.SerializeToString,
+            ),
+            'Unlock': grpc.unary_unary_rpc_method_handler(
+                    servicer.Unlock,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockResponse.SerializeToString,
+            ),
+            'Watch': grpc.unary_unary_rpc_method_handler(
+                    servicer.Watch,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -619,6 +669,87 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Copy',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Lock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Lock',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Unlock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Unlock',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Watch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Watch',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.FromString,
             options,
             channel_credentials,
             insecure,

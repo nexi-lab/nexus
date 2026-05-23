@@ -16,7 +16,6 @@ References:
     - services/protocols/time_travel.py          (TimeTravelProtocol)
 """
 
-import hashlib
 import json
 from collections.abc import Callable
 from contextlib import suppress
@@ -27,24 +26,11 @@ from sqlalchemy.orm import Session
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
+from nexus.contracts.versioning_path import versioning_snapshot_path
 from nexus.storage.models import FilePathModel, OperationLogModel
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
-
-# §2.5 syscall surface for versioning snapshots. Pattern C migration: each
-# snapshot of a file's pre-write bytes lives at
-#   /__sys__/versioning/{path_hash}/{operation_id}.bin
-# path_hash is sha256 of the original virtual path (hex) to keep the
-# directory shape flat. New writes populate this namespace; legacy
-# hash-addressed snapshots (recorded before this migration) are
-# unreachable from the service tier — KERNEL-ARCHITECTURE.md §2.5.
-_VERSIONING_PATH_PREFIX = "/__sys__/versioning"
-
-
-def _versioning_path(virtual_path: str, operation_id: str) -> str:
-    path_hash = hashlib.sha256(virtual_path.encode("utf-8")).hexdigest()
-    return f"{_VERSIONING_PATH_PREFIX}/{path_hash}/{operation_id}.bin"
 
 
 class TimeTravelService:
@@ -98,7 +84,7 @@ class TimeTravelService:
                 f"Snapshot for {virtual_path} at operation {operation_id} unavailable: "
                 "no NexusFS handle"
             )
-        path = _versioning_path(virtual_path, operation_id)
+        path = versioning_snapshot_path(virtual_path, operation_id)
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         try:
             # sys_read returns bytes when return_metadata is not set.

@@ -155,7 +155,11 @@ def _wire_services(
     # Services that need cleanup at close() register callbacks here.
     # Callbacks run BEFORE pillar
     # close (metadata_store, record_store) to ensure DB connections are still open.
+    # Write observer publishes /__sys__/versioning/ snapshot entries via
+    # sys_setattr, so it needs the kernel-tier NexusFS handle.
     _wo = _svc.get("write_observer")
+    if _wo is not None and hasattr(_wo, "attach_filesystem"):
+        _wo.attach_filesystem(nx)
     if _wo is not None and hasattr(_wo, "flush_sync"):
 
         def _close_write_observer() -> None:

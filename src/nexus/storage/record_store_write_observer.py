@@ -28,10 +28,13 @@ Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.record_store import RecordStoreABC
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +58,25 @@ class RecordStoreWriteObserver:
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
+        # NexusFS handle for publishing versioning-history snapshot entries
+        # (`/__sys__/versioning/{path_hash}/{op_id}.bin` pointing at the OLD
+        # content_id). Attached post-kernel-boot — the observer is created
+        # in Tier 1 (pre-NexusFS) so the kernel can be wired with it.
+        self._nexus_fs: Any = None
 
         # Post-flush hooks: called after successful commit (Issue #2978)
         # Same interface as the OBSERVE-phase RecordStoreWriteObserver so the factory
         # can wire extraction hooks regardless of which observer is active.
         self._post_flush_hooks: list = []
+
+    def attach_filesystem(self, nexus_fs: "NexusFS") -> None:
+        """Attach the NexusFS handle once the kernel tier exists.
+
+        Enables versioning snapshot-on-write — see ``_snapshot_old_content``.
+        Without it, audit logging still works; only the snapshot publishing
+        is skipped (TimeTravelService historical reads degrade to NotFound).
+        """
+        self._nexus_fs = nexus_fs
 
     def register_post_flush_hook(self, hook: object) -> None:
         """Register a callback invoked after each successful write commit.

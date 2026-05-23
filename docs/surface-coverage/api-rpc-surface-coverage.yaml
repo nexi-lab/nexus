@@ -1195,7 +1195,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1214,7 +1214,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1233,7 +1233,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1252,7 +1252,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1271,7 +1271,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1290,7 +1290,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1309,7 +1309,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1328,7 +1328,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1347,7 +1347,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1366,7 +1366,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1385,7 +1385,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1404,7 +1404,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1423,7 +1423,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1442,7 +1442,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1461,7 +1461,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1480,7 +1480,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -1499,7 +1499,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
     CLI/kernel surfaces.'
@@ -3069,7 +3069,7 @@ operations:
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent; tests/unit/cli/test_fs_parity.py;
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -3105,7 +3105,7 @@ operations:
   usage_example: 'CLI: nexus rm /workspace/old.txt; MCP: tools/call nexus_delete_file {"path":"/workspace/old.txt"}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -3334,7 +3334,7 @@ operations:
   usage_example: 'CLI: use nexus write/cat for simple edits; MCP: tools/call nexus_edit_file {"path":"/workspace/app.py","edits":[...]}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -3764,7 +3764,7 @@ operations:
   usage_example: 'CLI: nexus workflows execute tag-incoming; MCP: tools/call nexus_execute_workflow {"name":"tag-incoming","inputs":"{}"}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane/workflow execution path; workflow body dominates latency, not MCP namespace filtering
   gap_issue: null
@@ -4147,7 +4147,7 @@ operations:
   usage_example: 'CLI: nexus info /workspace/hello.txt; MCP: tools/call nexus_file_info {"path":"/workspace/hello.txt"}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -4203,7 +4203,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead; tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationReadLatency
   gap_issue: null
@@ -4273,7 +4273,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -4310,7 +4310,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus exists /workspace/a.txt --json; sandbox kernel/RPC: Call(exists, {"path":"/zone/local/a.txt"})'
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Existence probes are control-style local checks; read/write/list/stat are the named #4127 hot benchmarks.'
   gap_issue: null
@@ -4349,7 +4349,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {"path":"/zone/local"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestListLocalDirectory
   gap_issue: null
@@ -4402,7 +4402,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {"path":"/zone/local"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestListLocalDirectory
   gap_issue: null
@@ -4444,7 +4444,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -4531,7 +4531,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead; tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationReadLatency
   gap_issue: null
@@ -4585,7 +4585,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -4621,7 +4621,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -4663,7 +4663,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -4702,7 +4702,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestStatBulkVsSequential and ::TestReadWithMetadata
   gap_issue: null
@@ -4795,7 +4795,7 @@ operations:
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call;
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_readonly_company_zone_rejected;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput; tests/benchmarks/bench_permission_hotpath.py::TestRemoteZoneDeniedWriteFastFail::test_readonly_remote_zone_write_fast_fails_before_transport_call
   gap_issue: null
@@ -4814,7 +4814,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
@@ -4833,7 +4833,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
@@ -5912,7 +5912,7 @@ operations:
     tools/call nexus_hub_admin {"action":"status","arguments":{}}.'
   correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: admin/control-plane surface; not performance-sensitive compared with remote hub RPC latency
   gap_issue: null
@@ -6298,7 +6298,7 @@ operations:
   usage_example: 'CLI: nexus ls /workspace -l; MCP: tools/call nexus_list_files {"path":"/workspace","recursive":false}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -6491,7 +6491,7 @@ operations:
   usage_example: 'CLI: nexus workflows list; MCP: tools/call nexus_list_workflows {}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane inspection; workflow listing is not on the per-tool-call data hot path
   gap_issue: null
@@ -6924,7 +6924,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestStatBulkVsSequential and ::TestReadWithMetadata
   gap_issue: null
@@ -7222,7 +7222,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -7241,7 +7241,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead; tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationReadLatency
   gap_issue: null
@@ -7260,7 +7260,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {"path":"/zone/local"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestListLocalDirectory
   gap_issue: null
@@ -7279,7 +7279,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -7298,7 +7298,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -7334,7 +7334,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestStatBulkVsSequential and ::TestReadWithMetadata
   gap_issue: null
@@ -7353,7 +7353,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -7389,7 +7389,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
@@ -7408,7 +7408,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
     instead.'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
@@ -7427,7 +7427,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
     instead.'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
@@ -7446,7 +7446,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
     instead.'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
@@ -7465,7 +7465,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
     instead.'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: 4148
@@ -7484,7 +7484,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
     instead.'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
@@ -7503,7 +7503,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
     instead.'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
@@ -8630,7 +8630,7 @@ operations:
   usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing; tests/unit/cli/test_fs_parity.py;
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
@@ -8649,7 +8649,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
   correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
@@ -8668,7 +8668,7 @@ operations:
   usage_example: 'CLI: nexus cat /workspace/hello.txt; MCP: tools/call nexus_read_file {"path":"/workspace/hello.txt"}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -9103,7 +9103,7 @@ operations:
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
   correctness_test: tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent; tests/unit/cli/test_fs_parity.py;
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
-    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+    tests/surface_coverage/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
@@ -9122,7 +9122,7 @@ operations:
   usage_example: 'CLI: nexus mv /workspace/old.txt /workspace/new.txt; MCP: tools/call nexus_rename_file {"old_path":"/workspace/old.txt","new_path":"/workspace/new.txt"}.'
   correctness_test: tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -9278,7 +9278,7 @@ operations:
   usage_example: 'CLI: nexus sandbox create demo-box --provider docker; MCP: tools/call nexus_sandbox_create {"name":"demo-box","ttl_minutes":15}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: setup
   perf_link: setup path; sandbox provider startup dominates latency and this is not a per-request namespace hot path
   gap_issue: null
@@ -9298,7 +9298,7 @@ operations:
   usage_example: 'CLI: nexus sandbox list; MCP: tools/call nexus_sandbox_list {}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane inspection; not performance-sensitive compared with sandbox provider API latency
   gap_issue: null
@@ -9337,7 +9337,7 @@ operations:
   usage_example: 'CLI: nexus sandbox stop sb_123; MCP: tools/call nexus_sandbox_stop {"sandbox_id":"sb_123"}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane teardown; provider latency dominates and this is not a namespace filtering hot path
   gap_issue: null
@@ -12302,7 +12302,7 @@ operations:
   usage_example: 'CLI: nexus write /workspace/hello.txt "hello"; MCP: tools/call nexus_write_file {"path":"/workspace/hello.txt","content":"hello"}.'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
     tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/architecture/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+    tests/surface_coverage/test_issue_4131_mcp_tool_profile_story.py::test_issue_4131_owned_mcp_rows_have_story_contract; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null

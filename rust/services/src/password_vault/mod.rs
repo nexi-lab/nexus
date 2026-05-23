@@ -360,9 +360,38 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
 
     async fn list_versions(
         &self,
-        _req: Request<ListVersionsRequest>,
+        req: Request<ListVersionsRequest>,
     ) -> Result<Response<ListVersionsResponse>, Status> {
-        Err(Status::unimplemented("ListVersions — lands in T34.6"))
+        let req = req.into_inner();
+        if req.title.is_empty() {
+            return Err(Status::invalid_argument("title is required"));
+        }
+        let idx = self
+            .inner
+            .storage
+            .get_index(&req.title)?
+            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
+        let stored = self.inner.storage.list_versions(&req.title)?;
+        let active = idx.current_version;
+        let is_deleted = idx.deleted_at_ms.is_some();
+        // Per proto: tombstoned=true marks "the version that was active
+        // when the entry was soft-deleted". For a live entry, no version
+        // is tombstoned. For a soft-deleted entry, only the latest
+        // (active) version carries the marker.
+        let versions: Vec<proto::Version> = stored
+            .into_iter()
+            .map(|s| proto::Version {
+                version: s.version as i32,
+                created_at: Some(unix_ms_to_proto_ts(s.created_at_ms)),
+                tombstoned: is_deleted && s.version == active,
+            })
+            .collect();
+        let count = versions.len() as i32;
+        Ok(Response::new(ListVersionsResponse {
+            title: req.title,
+            count,
+            versions,
+        }))
     }
 
     async fn generate_totp(
@@ -763,6 +792,81 @@ mod tests {
         let (_d, svc) = fresh_service();
         let err = svc
             .restore_entry(Request::new(RestoreEntryRequest {
+                title: "nope".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    // -----------------------------------------------------------------
+    // ListVersions tests
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn list_versions_returns_history_in_order() {
+        let (_d, svc) = fresh_service();
+        for pw in ["v1", "v2", "v3"] {
+            svc.put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry("gmail", pw)),
+                audit: None,
+            }))
+            .await
+            .unwrap();
+        }
+        let r = svc
+            .list_versions(Request::new(ListVersionsRequest {
+                title: "gmail".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.title, "gmail");
+        assert_eq!(r.count, 3);
+        let vers: Vec<i32> = r.versions.iter().map(|v| v.version).collect();
+        assert_eq!(vers, vec![1, 2, 3]);
+        // Live entry — no tombstoned versions.
+        assert!(r.versions.iter().all(|v| !v.tombstoned));
+    }
+
+    #[tokio::test]
+    async fn list_versions_marks_tombstone_on_soft_deleted() {
+        let (_d, svc) = fresh_service();
+        for pw in ["v1", "v2"] {
+            svc.put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry("a", pw)),
+                audit: None,
+            }))
+            .await
+            .unwrap();
+        }
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "a".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let r = svc
+            .list_versions(Request::new(ListVersionsRequest {
+                title: "a".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.count, 2);
+        // Only the currently-active version (v=2) is marked tombstoned.
+        assert!(!r.versions[0].tombstoned);
+        assert!(r.versions[1].tombstoned);
+    }
+
+    #[tokio::test]
+    async fn list_versions_unknown_returns_not_found() {
+        let (_d, svc) = fresh_service();
+        let err = svc
+            .list_versions(Request::new(ListVersionsRequest {
                 title: "nope".into(),
                 audit: None,
             }))

@@ -68,7 +68,7 @@ impl DriverLifecycleCoordinator {
         // longest-prefix walk to find the enclosing mount, then write
         // through that mount's metastore with the full path as the key.
         let route = kernel.vfs_router_arc().route(mount_point, "root");
-        if let Ok(parent_route) = route {
+        if let Some(parent_route) = route {
             // RouteResult.mount_point is already a canonical key (e.g. "/root").
             kernel.with_metastore(&parent_route.mount_point, |ms| {
                 let meta = crate::meta_store::FileMetadata {
@@ -134,7 +134,7 @@ impl DriverLifecycleCoordinator {
             .map(|i| mount_point[..i].to_string())
             .unwrap_or_else(|| "/".to_string());
         let route = kernel.vfs_router_arc().route(&parent_path, "root");
-        if let Ok(parent_route) = route {
+        if let Some(parent_route) = route {
             kernel.with_metastore(&parent_route.mount_point, |ms| {
                 let _ = ms.delete(mount_point);
             });

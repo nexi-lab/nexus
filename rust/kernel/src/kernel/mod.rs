@@ -24,7 +24,7 @@ use crate::meta_store::LocalMetaStore;
 #[cfg(test)]
 use crate::meta_store::DT_REG;
 use crate::meta_store::{DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
-use crate::vfs_router::{RouteError, RouteResult, VFSRouter};
+use crate::vfs_router::VFSRouter;
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -104,9 +104,6 @@ pub enum KernelError {
     InvalidPath(String),
     FileNotFound(String),
     FileExists(String),
-    /// Routing failure — stores the formatted `RouteError` message so
-    /// KernelError can derive Clone (RouteError itself is !Clone).
-    Route(String),
     IOError(String),
     TrieError(String),
     // IPC error variants
@@ -130,12 +127,6 @@ pub enum KernelError {
     /// Federation bootstrap (env parsing, ZoneManager construction,
     /// create_zone/join_zone, reconcile) failed.
     Federation(String),
-}
-
-impl From<RouteError> for KernelError {
-    fn from(e: RouteError) -> Self {
-        KernelError::Route(format!("{e:?}"))
-    }
 }
 
 impl From<std::io::Error> for KernelError {
@@ -1633,7 +1624,6 @@ impl Kernel {
                 let parent_zone = self
                     .vfs_router
                     .route(parent_dir, contracts::ROOT_ZONE_ID)
-                    .ok()
                     .map(|r| r.zone_id)
                     .filter(|z| !z.is_empty())
                     .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
@@ -2128,7 +2118,7 @@ impl Kernel {
         // Route-scoped metastore resolution — same path sys_write/sys_read
         // use, ensuring SSOT. Falls back to global metastore_get/metastore_put
         // when no VFS route covers the path (e.g. boot-time, tests).
-        let route = self.vfs_router.route(path, zone_id).ok();
+        let route = self.vfs_router.route(path, zone_id);
 
         let existing: Option<crate::meta_store::FileMetadata> = if let Some(ref r) = route {
             self.with_metastore_route(r, |ms| ms.get(path).ok().flatten())
@@ -2363,7 +2353,7 @@ impl Kernel {
     /// through the same boundary the syscall API uses — no
     /// ``Arc<dyn MetaStore>`` leak across crates.
     pub fn lookup_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
-        let route = self.vfs_router.route(path, zone_id).ok()?;
+        let route = self.vfs_router.route(path, zone_id)?;
         self.with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten()
             .and_then(|m| m.content_id)

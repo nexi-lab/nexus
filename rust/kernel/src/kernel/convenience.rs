@@ -442,7 +442,7 @@ impl KernelConvenience for Kernel {
             let route = self
                 .vfs_router
                 .route(path, &ctx.zone_id)
-                .map_err(|_| KernelError::FileNotFound(path.to_string()))?;
+                .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)

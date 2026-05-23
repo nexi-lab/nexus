@@ -123,16 +123,6 @@ impl MountEntry {
 }
 
 // ---------------------------------------------------------------------------
-// RouteError — failures during LPM routing
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum RouteError {
-    /// No mount entry covers this path.
-    NotMounted(String),
-}
-
-// ---------------------------------------------------------------------------
 // RouteResult — returned by VFSRouter::route
 // ---------------------------------------------------------------------------
 
@@ -496,18 +486,20 @@ impl VFSRouter {
     /// zone — root mounts are the global default visible to every zone
     /// (federation or standalone). Pure routing — access control
     /// (read-only, admin-only, RBAC) lives in rebac, not here.
-    pub fn route(&self, path: &str, zone_id: &str) -> Result<RouteResult, RouteError> {
-        if let Some(result) = self.route_in_zone(path, zone_id) {
-            return Ok(result);
-        }
-        if zone_id != contracts::ROOT_ZONE_ID {
-            if let Some(result) = self.route_in_zone(path, contracts::ROOT_ZONE_ID) {
-                return Ok(result);
-            }
-        }
-        Err(RouteError::NotMounted(format!(
-            "No mount found for path: {path} (zone={zone_id})"
-        )))
+    ///
+    /// Returns `None` when no mount covers the path. The miss reason is
+    /// always the same ("no mount"), so callers construct their own
+    /// caller-shaped error (`KernelError::FileNotFound`,
+    /// `KernelError::PermissionDenied`, …) at the call site — eliminates
+    /// the eager `format!` that the previous `RouteError::NotMounted`
+    /// wrapper paid for every miss, including `.ok()` callers that
+    /// discarded it.
+    pub fn route(&self, path: &str, zone_id: &str) -> Option<RouteResult> {
+        self.route_in_zone(path, zone_id).or_else(|| {
+            (zone_id != contracts::ROOT_ZONE_ID)
+                .then(|| self.route_in_zone(path, contracts::ROOT_ZONE_ID))
+                .flatten()
+        })
     }
 
     fn route_in_zone(&self, path: &str, zone_id: &str) -> Option<RouteResult> {

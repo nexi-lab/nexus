@@ -86,7 +86,7 @@ impl BlobFetcher for KernelBlobFetcher {
         let ctx = OperationContext::new("system", contracts::ROOT_ZONE_ID, true, None, true);
 
         // Step 1: try path-style routing → local mount read.
-        if let Ok(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
+        if let Some(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
             let local_content_id = (self.lookup_local_content_id)(content_id)
                 .unwrap_or_else(|| route.backend_path.clone());
             if let Some(bytes) = route

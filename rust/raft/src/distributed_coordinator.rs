@@ -1617,7 +1617,7 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         let route = kernel
             .vfs_router_arc()
             .route(local_path, contracts::ROOT_ZONE_ID)
-            .map_err(|e| format!("share_zone route '{local_path}': {e:?}"))?;
+            .ok_or_else(|| format!("share_zone route '{local_path}': no mount covers path"))?;
         let parent_zone = route.zone_id.clone();
         let prefix = if route.backend_path.is_empty() {
             "/".to_string()

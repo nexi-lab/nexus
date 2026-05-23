@@ -37,9 +37,6 @@ pub fn dispatch(
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
         "sys_mkdir" => do_sys_mkdir(kernel, &params, ctx),
         "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
-        "sys_lock" => do_sys_lock(kernel, &params),
-        "sys_unlock" => do_sys_unlock(kernel, &params),
-        "sys_watch" => do_sys_watch(kernel, &params),
         "get_mount_points" => ok_json(serde_json::json!(kernel.get_mount_points())),
 
         // Service lifecycle — no-ops for subprocess mode (the Rust
@@ -704,54 +701,6 @@ fn do_sys_unlink(
             "size": r.size,
         })),
         Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_lock(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let timeout_ms = u64_or(params, "timeout_ms", 5000);
-    let lock_id_param = s(params, "lock_id");
-    let lock_id = if lock_id_param.is_empty() {
-        ""
-    } else {
-        &lock_id_param
-    };
-    match kernel.sys_lock(
-        &path,
-        lock_id,
-        kernel::lock_manager::KernelLockMode::Exclusive,
-        1,
-        timeout_ms / 1000 + 1,
-        "",
-    ) {
-        Ok(Some(id)) => ok_json(serde_json::json!({"lock_id": id})),
-        Ok(None) => Err(call_err(
-            RpcErrorCode::InternalError,
-            "lock acquisition failed (contention)",
-        )),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_unlock(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let lock_id = s(params, "lock_id");
-    let force = bool_or(params, "force", false);
-    match kernel.sys_unlock(&path, &lock_id, force) {
-        Ok(released) => ok_json(serde_json::json!({"released": released})),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_watch(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let timeout_ms = u64_or(params, "timeout_ms", 30000);
-    match kernel.sys_watch(&path, timeout_ms) {
-        Some(evt) => ok_json(serde_json::json!({
-            "path": evt.path,
-            "event_type": format!("{:?}", evt.event_type),
-        })),
-        None => ok_json(serde_json::json!(null)),
     }
 }
 

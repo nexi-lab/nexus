@@ -129,6 +129,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
                 _registered_method=True)
+        self.Mkdir = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Mkdir',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirResponse.FromString,
+                _registered_method=True)
         self.ClosePipe = channel.unary_unary(
                 '/nexus.grpc.vfs.NexusVFSService/ClosePipe',
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
@@ -309,6 +314,13 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Mkdir(self, request, context):
+        """Typed mkdir — the prior generic `sys_mkdir` Call retired.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ClosePipe(self, request, context):
         """Typed IPC pipe / stream ops. Creation goes through `Setattr` with
         entry_type=DT_PIPE / DT_STREAM (no separate Create*Ipc RPC needed).
@@ -456,6 +468,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.GetXattrBulk,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.SerializeToString,
+            ),
+            'Mkdir': grpc.unary_unary_rpc_method_handler(
+                    servicer.Mkdir,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirResponse.SerializeToString,
             ),
             'ClosePipe': grpc.unary_unary_rpc_method_handler(
                     servicer.ClosePipe,
@@ -1011,6 +1028,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/GetXattrBulk',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Mkdir(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Mkdir',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirResponse.FromString,
             options,
             channel_credentials,
             insecure,

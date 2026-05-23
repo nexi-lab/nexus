@@ -76,6 +76,15 @@ def _virtual_path_id(path: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexus:virtual-readme:{path}"))
 
 
+def _rowless_file_path_id(path: str) -> str:
+    """Deterministic path_id for readable files without SQL file_paths rows."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexus:rowless-file:{path}"))
+
+
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 # Binary extensions excluded from directory indexing.
 #
 # Parseable binaries (.pdf, .docx, .xlsx, …) intentionally stay indexable: the
@@ -395,7 +404,9 @@ class IndexingService:
 
         with self._get_session() as session:
             for entry in files:
-                file_path = entry if isinstance(entry, str) else entry.get("name", "")
+                file_path = (
+                    entry if isinstance(entry, str) else entry.get("path") or entry.get("name", "")
+                )
                 if not file_path or file_path.endswith("/"):
                     continue
                 if file_path.endswith(_BINARY_EXTENSIONS):
@@ -426,6 +437,13 @@ class IndexingService:
                             content,
                         )
                         documents.append((file_path, content, virtual_model.path_id))
+                    else:
+                        rowless_model = self._ensure_rowless_file_model(
+                            session,
+                            file_path,
+                            content,
+                        )
+                        documents.append((file_path, content, rowless_model.path_id))
                 except Exception:
                     logger.warning(
                         "[INDEXING-SVC] Skipping %s: failed to read or resolve",
@@ -541,7 +559,7 @@ class IndexingService:
     ) -> Any:
         """Create or refresh the synthetic file_paths row for a virtual readme."""
         path_id = _virtual_path_id(path)
-        content_id = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        content_id = _content_hash(content)
         now = datetime.now(UTC)
 
         file_model = session.get(FilePathModel, path_id)
@@ -570,6 +588,70 @@ class IndexingService:
             file_model.content_id = content_id
             file_model.size_bytes = len(content.encode("utf-8"))
             file_model.file_type = file_model.file_type or "text/markdown"
+            file_model.updated_at = now
+            file_model.deleted_at = None
+
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            file_model = session.get(FilePathModel, path_id)
+            if file_model is None:
+                file_model = session.execute(
+                    select(FilePathModel).where(
+                        FilePathModel.zone_id == ROOT_ZONE_ID,
+                        FilePathModel.virtual_path == path,
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+            if file_model is None:
+                raise
+
+        return file_model
+
+    @staticmethod
+    def _ensure_rowless_file_model(
+        session: Any,
+        path: str,
+        content: str,
+    ) -> Any:
+        """Create or refresh a file_paths row for syscall-backed rowless files.
+
+        Some sandbox deployments expose files through the kernel syscall
+        surface without mirroring rows into the SQL file_paths table. The
+        search chunk table still has a file_paths FK, so readable files need
+        a stable synthetic row before they can be indexed.
+        """
+        path_id = _rowless_file_path_id(path)
+        content_id = _content_hash(content)
+        now = datetime.now(UTC)
+
+        file_model = session.get(FilePathModel, path_id)
+        if file_model is None:
+            file_model = session.execute(
+                select(FilePathModel).where(
+                    FilePathModel.zone_id == ROOT_ZONE_ID,
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+
+        if file_model is None:
+            file_model = FilePathModel(
+                path_id=path_id,
+                zone_id=ROOT_ZONE_ID,
+                virtual_path=path,
+                file_type="text/plain",
+                size_bytes=len(content.encode("utf-8")),
+                content_id=content_id,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(file_model)
+        else:
+            file_model.content_id = content_id
+            file_model.size_bytes = len(content.encode("utf-8"))
+            file_model.file_type = file_model.file_type or "text/plain"
             file_model.updated_at = now
             file_model.deleted_at = None
 

@@ -608,21 +608,66 @@ class KernelClient:
         Items are FileMetadata objects (callers access .path, .zone_id etc.).
         Uses stat_batch to populate metadata when available.
         """
-        from nexus.contracts.metadata import FileMetadata
+        from datetime import UTC, datetime
 
-        entries = self.sys_readdir(prefix)
+        from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+
+        def _normalize_dir(path: str) -> str:
+            if not path:
+                return "/"
+            if not path.startswith("/"):
+                path = f"/{path}"
+            if path != "/":
+                path = path.rstrip("/")
+            return path
+
+        def _dt_from_ms(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                return datetime.fromtimestamp(int(value) / 1000.0, UTC)
+            except (TypeError, ValueError, OSError):
+                return None
+
+        root = _normalize_dir(prefix)
+        dir_entry_types = {DT_DIR, DT_MOUNT}
+        entries: list[tuple[str, int]] = []
+        seen_entries: set[str] = set()
+        seen_dirs: set[str] = set()
+        pending_dirs: list[str] = [root]
+
+        def _looks_like_directory(path: str, etype: int) -> bool:
+            if etype in dir_entry_types:
+                return True
+            try:
+                return bool(self.sys_readdir(_normalize_dir(path)))
+            except Exception:
+                return False
+
+        while pending_dirs:
+            current = pending_dirs.pop()
+            if current in seen_dirs:
+                continue
+            seen_dirs.add(current)
+            for name, etype in self.sys_readdir(current):
+                if not name or name == current:
+                    continue
+                if name in seen_entries:
+                    continue
+                seen_entries.add(name)
+                entries.append((name, etype))
+                if _looks_like_directory(name, etype):
+                    if recursive:
+                        pending_dirs.append(_normalize_dir(name))
+                    continue
+            if not recursive:
+                break
+
+        entries.sort(key=lambda item: item[0])
 
         # Apply cursor-based pagination: skip entries until we pass the cursor path
         if cursor:
-            skip = True
-            filtered = []
-            for name, etype in entries:
-                if skip:
-                    if name == cursor:
-                        skip = False
-                    continue
-                filtered.append((name, etype))
-            entries = filtered
+            entries = [(name, etype) for name, etype in entries if name > cursor]
 
         total = len(entries)
         page = entries[:limit]
@@ -649,10 +694,16 @@ class KernelClient:
                         path=st.get("path", name),
                         size=st.get("size", 0),
                         content_id=st.get("content_id"),
+                        mime_type=st.get("mime_type"),
+                        created_at=_dt_from_ms(st.get("created_at_ms")),
+                        modified_at=_dt_from_ms(st.get("modified_at_ms")),
                         entry_type=st.get("entry_type", etype),
                         version=st.get("version", 1),
                         gen=st.get("gen", 0),
                         zone_id=st.get("zone_id"),
+                        owner_id=st.get("owner_id"),
+                        last_writer_address=st.get("last_writer_address"),
+                        link_target=st.get("link_target"),
                     )
                 )
             else:

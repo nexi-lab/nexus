@@ -8,6 +8,7 @@ Issue #2033 — Phase 2.1 of LEGO microkernel decomposition.
 """
 
 import contextlib
+import inspect
 import json
 import logging
 from datetime import datetime
@@ -198,15 +199,21 @@ class AgentRPCService:
 
         return provision_agent_identity(agent_id, agent, self._key_service, _logger)
 
-    def _provision_agent_wallet(
+    async def _provision_agent_wallet(
         self,
         agent_id: str,
         zone_id: str,
         _logger: logging.Logger,
     ) -> None:
-        from nexus.contracts.agent_utils import provision_agent_wallet
-
-        provision_agent_wallet(agent_id, zone_id, self._wallet_provisioner, _logger)
+        if self._wallet_provisioner is None:
+            return
+        try:
+            result = self._wallet_provisioner(agent_id, zone_id)
+            if inspect.isawaitable(result):
+                await result
+            _logger.info("[WALLET] Provisioned wallet for agent %s", agent_id)
+        except Exception as e:
+            _logger.warning("[WALLET] Failed to provision wallet for agent %s: %s", agent_id, e)
 
     def _determine_agent_key_expiration(self, user_id: str, session: Any) -> datetime:
         from nexus.services.agents.agent_key_utils import determine_agent_key_expiration
@@ -433,7 +440,7 @@ class AgentRPCService:
             }
 
             agent_did = self._provision_agent_identity(agent_id, agent, logger)
-            self._provision_agent_wallet(agent_id, zone_id, logger)
+            await self._provision_agent_wallet(agent_id, zone_id, logger)
 
             config_path = f"{agent_dir}/config.yaml"
             config_data = self._create_agent_config_data(

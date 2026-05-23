@@ -204,8 +204,7 @@ class TestGrepEndpoint:
         # Verify ignore_case was passed as True
         mock_grep.assert_called_once()
         call_args = mock_grep.call_args
-        # grep_files_mmap(pattern, file_paths, ignore_case, max_results)
-        assert call_args[0][2] is True  # ignore_case
+        assert call_args.kwargs["ignore_case"] is True
 
     @patch("nexus.server.api.v2.routers.async_files.grep_files_mmap")
     def test_grep_truncation(self, mock_grep: MagicMock, client: TestClient) -> None:

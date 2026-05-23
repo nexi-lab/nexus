@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from nexus.contracts.metadata import DT_DIR, DT_REG
 from nexus.remote.kernel_client import (
     KernelClient,
     _find_free_port,
@@ -244,4 +245,57 @@ def test_kernel_client_sys_read_honors_nonblocking_timeout() -> None:
     assert transport.read_file_calls == 0
     assert transport.call_rpc_calls == [
         ("sys_read", {"path": "/nexus/pipes/task-dispatch", "timeout_ms": 0, "offset": 0})
+    ]
+
+
+def test_metastore_list_paginated_preserves_directory_entries() -> None:
+    class FakeClient(KernelClient):
+        entry_types = {
+            "/alpha": DT_DIR,
+            "/alpha/child.txt": DT_REG,
+            "/empty": DT_DIR,
+            "/file.txt": DT_REG,
+        }
+
+        def __init__(self) -> None:
+            pass
+
+        def sys_readdir(
+            self,
+            path: str,
+            zone_id: str = "root",  # noqa: ARG002
+            is_admin: bool = False,  # noqa: ARG002
+        ) -> list[tuple[str, int]]:
+            return {
+                "/": [("/alpha", DT_DIR), ("/empty", DT_DIR), ("/file.txt", DT_REG)],
+                "/alpha": [("/alpha/child.txt", DT_REG)],
+                "/empty": [],
+            }.get(path, [])
+
+        def stat_batch(self, paths: list[str]) -> list[dict[str, object]]:
+            return [
+                {
+                    "path": path,
+                    "size": 0,
+                    "entry_type": self.entry_types[path],
+                    "zone_id": "root",
+                }
+                for path in paths
+            ]
+
+    client = FakeClient()
+
+    direct = client.metastore_list_paginated("/", recursive=False, limit=100, cursor=None)
+    recursive = client.metastore_list_paginated("/", recursive=True, limit=100, cursor=None)
+
+    assert [(item.path, item.entry_type) for item in direct["items"]] == [
+        ("/alpha", DT_DIR),
+        ("/empty", DT_DIR),
+        ("/file.txt", DT_REG),
+    ]
+    assert [(item.path, item.entry_type) for item in recursive["items"]] == [
+        ("/alpha", DT_DIR),
+        ("/alpha/child.txt", DT_REG),
+        ("/empty", DT_DIR),
+        ("/file.txt", DT_REG),
     ]

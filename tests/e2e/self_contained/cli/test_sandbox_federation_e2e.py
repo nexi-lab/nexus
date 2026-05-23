@@ -572,6 +572,8 @@ class TestSandboxLocalOnlyFallback:
                 timeout=60,
             )
             if not poll.ready:
+                if not poll.exited:
+                    _terminate(proc)
                 stderr = poll.stderr or (proc.stderr.read() if proc.stderr else "")
                 skip_reason = _kernel_missing_skip_reason(stderr)
                 if skip_reason:

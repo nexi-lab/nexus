@@ -421,6 +421,9 @@ def build_v2_registry(
     # ---- Workspace/memory registry router (Issue #2987) ----
     try:
         from nexus.server.api.v2.routers.workspace import (
+            memory_router as registry_memory_router,
+        )
+        from nexus.server.api.v2.routers.workspace import (
             workspace_router as registry_workspace_router,
         )
 
@@ -428,6 +431,9 @@ def build_v2_registry(
             RouterEntry(
                 router=registry_workspace_router, name="registry_workspaces", endpoint_count=5
             )
+        )
+        registry.add(
+            RouterEntry(router=registry_memory_router, name="registry_memories", endpoint_count=5)
         )
     except ImportError as e:
         logger.warning("Failed to import Workspace registry routes: %s", e)

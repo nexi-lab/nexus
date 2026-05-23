@@ -23,12 +23,16 @@ def make_test_nexus(
     context=None,
 ):
     """Create a NexusFS instance for testing via factory (Issue #1801)."""
+    from pathlib import Path
+
     from nexus.core.config import (
         DistributedConfig,
         ParseConfig,
         PermissionConfig,
     )
     from nexus.factory import create_nexus_fs
+
+    tmp_path = Path(tmp_path)
 
     if permissions is None:
         permissions = PermissionConfig(enforce=False)
@@ -42,15 +46,9 @@ def make_test_nexus(
 
     if metadata_store is None:
         del use_raft
-        from nexus.remote.kernel_client import KernelClient as _Kernel
-
-        _kernel = _Kernel()
-        _kernel.set_metastore_path(str(tmp_path / "metastore.redb"))
-        metadata_store = _kernel
+        metadata_store = tmp_path / "metastore.redb"
 
     if backend is None:
-        from pathlib import Path
-
         from nexus.backends.storage.path_local import PathLocalBackend
 
         data_dir = Path(tmp_path) / "data"

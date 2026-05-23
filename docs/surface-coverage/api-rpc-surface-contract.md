@@ -76,8 +76,44 @@ Every row carries a `perf_class`:
 2. For each row, fill `summary`, `usage_example`, `correctness_test`, `perf_class`, `perf_link`, `profiles` in `api-rpc-surface-coverage.yaml`.
 3. If the surface is missing-needed (no implementation yet), open a build issue and set `gap_issue`.
 4. Re-run `uv run python scripts/gen_api_surface_coverage.py` (merge with your edits) then `uv run python scripts/render_api_surface_coverage.py`.
-5. Commit the updated **YAML** (`api-rpc-surface-coverage.yaml`). The HTML is
+5. Run `uv run python scripts/validate_api_surface_coverage.py` and the focused matrix tests listed below.
+6. Commit the updated **YAML** (`api-rpc-surface-coverage.yaml`). The HTML is
    regenerated from it on demand and is `.gitignore`d — do not commit it.
+
+## CI enforcement
+
+#4139 promotes the matrix from a warn-only artifact to an enforceable contract.
+Contributors changing external surfaces must run:
+
+```bash
+uv run python scripts/gen_api_surface_coverage.py
+uv run python scripts/render_api_surface_coverage.py
+uv run python scripts/validate_api_surface_coverage.py --coverage docs/surface-coverage/api-rpc-surface-coverage.yaml
+uv run pytest \
+  tests/surface_coverage/test_inventory.py \
+  tests/surface_coverage/test_validate.py \
+  tests/surface_coverage/test_runtime_discovery.py \
+  tests/surface_coverage/test_gap_backlog.py \
+  tests/surface_coverage/test_merge.py \
+  -v
+```
+
+The API Surface Check workflow runs the same validator and focused matrix tests
+for surface-relevant pull requests. The gate fails when:
+
+- a new external surface appears in code but not in the committed matrix,
+- a supported row lacks `owning_issue`, `correctness_test`, `perf_class`, or `perf_link`,
+- a missing-needed, unavailable, or deprecated row lacks `gap_issue`,
+- runtime-discovered sandbox RPC methods diverge from the matrix after `nexusd-cluster` is built.
+
+Runtime discovery requires a cluster kernel binary. Build it in the worktree, or
+put `nexusd-cluster` / `nexus-cluster` on `PATH`; `NEXUS_KERNEL_BINARY` can point
+at an explicit binary:
+
+```bash
+cargo build --release -p nexus-cluster --bin nexusd-cluster
+uv run pytest tests/surface_coverage/test_runtime_discovery.py tests/surface_coverage/test_inventory.py::test_runtime_discovery_matches_matrix -v
+```
 
 ## Gap-issue rules
 

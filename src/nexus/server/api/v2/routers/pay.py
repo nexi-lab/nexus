@@ -766,7 +766,7 @@ async def list_pay_transactions(
 
 @audit_router.get("/transactions")
 async def list_audit_transactions(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=1000),
     cursor: str | None = None,
     protocol: str | None = None,
     status: str | None = None,

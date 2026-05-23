@@ -25,17 +25,29 @@ from scripts.surface_coverage.schema import (
 _DEFAULT_PROFILES = dict.fromkeys(("lite", "sandbox", "full"), ProfileStatus.SUPPORTED)
 
 
+def _all_missing_needed_profiles(op: Operation) -> bool:
+    return bool(op.profiles) and all(
+        status == ProfileStatus.MISSING_NEEDED for status in op.profiles.values()
+    )
+
+
 def _merge_op(existing: Operation, fresh: Operation) -> Operation:
+    should_preserve_profiles = existing.profiles != _DEFAULT_PROFILES
+    if _all_missing_needed_profiles(existing) and fresh.transports:
+        should_preserve_profiles = False
+
     return replace(
         fresh,
-        profiles=(existing.profiles if existing.profiles != _DEFAULT_PROFILES else fresh.profiles),
+        profiles=(existing.profiles if should_preserve_profiles else fresh.profiles),
         summary=existing.summary if existing.summary.strip() else fresh.summary,
         usage_example=existing.usage_example,
         correctness_test=existing.correctness_test,
         perf_class=existing.perf_class,
         perf_link=existing.perf_link,
-        gap_issue=existing.gap_issue,
-        owning_issue=existing.owning_issue,
+        gap_issue=existing.gap_issue if existing.gap_issue is not None else fresh.gap_issue,
+        owning_issue=existing.owning_issue
+        if existing.owning_issue is not None
+        else fresh.owning_issue,
     )
 
 
@@ -64,13 +76,9 @@ def merge_coverage(
     for op_id, existing_op in existing_by_id.items():
         if op_id not in fresh_by_id:
             merged_ops.append(existing_op)
-            # Skip stale-flag for ops that are explicitly missing_needed wishlists
-            from scripts.surface_coverage.schema import ProfileStatus
-
-            all_missing = all(
-                p == ProfileStatus.MISSING_NEEDED for p in existing_op.profiles.values()
-            )
-            if all_missing and not existing_op.transports:
+            # Missing-needed wishlist rows are source-controlled by
+            # api-rpc-surface-gaps.yaml and validated separately.
+            if _all_missing_needed_profiles(existing_op) and not existing_op.transports:
                 continue
             if not any(s.operation_id == op_id for s in stale_rows):
                 stale_rows.append(

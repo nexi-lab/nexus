@@ -17,7 +17,7 @@ FastAPI auto-runs sync endpoints in a threadpool.
 import json
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 
 from anyio import from_thread
@@ -97,6 +97,7 @@ class WorkspaceListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 workspace_router = APIRouter(prefix="/api/v2/registry/workspaces", tags=["registry"])
+memory_router = APIRouter(prefix="/api/v2/registry/memories", tags=["registry"])
 T = TypeVar("T")
 
 
@@ -142,14 +143,20 @@ def _build_workspace_response(db_model: Any) -> WorkspaceResponse:
     )
 
 
-def _get_workspace_db_model(registry: Any, path: str, *, user_id: str | None = None) -> Any:
+def _get_path_registration_db_model(
+    registry: Any,
+    path: str,
+    *,
+    registration_type: str,
+    user_id: str | None = None,
+) -> Any:
     """Fetch PathRegistrationModel from DB by path, optionally filtered by user_id."""
     from sqlalchemy import select
 
     from nexus.storage.models import PathRegistrationModel
 
     with registry.metadata_session_factory() as session:
-        stmt = select(PathRegistrationModel).filter_by(path=path, type="workspace")
+        stmt = select(PathRegistrationModel).filter_by(path=path, type=registration_type)
         if user_id is not None:
             stmt = stmt.filter(
                 (PathRegistrationModel.user_id == user_id)
@@ -158,20 +165,47 @@ def _get_workspace_db_model(registry: Any, path: str, *, user_id: str | None = N
         return session.execute(stmt).scalars().first()
 
 
-def _list_workspace_db_models(registry: Any, *, user_id: str | None = None) -> list[Any]:
+def _list_path_registration_db_models(
+    registry: Any,
+    *,
+    registration_type: str,
+    user_id: str | None = None,
+) -> list[Any]:
     """Fetch PathRegistrationModel rows from DB, filtered by user_id."""
     from sqlalchemy import select
 
     from nexus.storage.models import PathRegistrationModel
 
     with registry.metadata_session_factory() as session:
-        stmt = select(PathRegistrationModel).filter_by(type="workspace")
+        stmt = select(PathRegistrationModel).filter_by(type=registration_type)
         if user_id is not None:
             stmt = stmt.filter(
                 (PathRegistrationModel.user_id == user_id)
                 | (PathRegistrationModel.user_id.is_(None))
             )
         return list(session.execute(stmt).scalars().all())
+
+
+def _get_workspace_db_model(registry: Any, path: str, *, user_id: str | None = None) -> Any:
+    return _get_path_registration_db_model(
+        registry, path, registration_type="workspace", user_id=user_id
+    )
+
+
+def _list_workspace_db_models(registry: Any, *, user_id: str | None = None) -> list[Any]:
+    return _list_path_registration_db_models(
+        registry, registration_type="workspace", user_id=user_id
+    )
+
+
+def _get_memory_db_model(registry: Any, path: str, *, user_id: str | None = None) -> Any:
+    return _get_path_registration_db_model(
+        registry, path, registration_type="memory", user_id=user_id
+    )
+
+
+def _list_memory_db_models(registry: Any, *, user_id: str | None = None) -> list[Any]:
+    return _list_path_registration_db_models(registry, registration_type="memory", user_id=user_id)
 
 
 def _get_zone_registry(request: Request) -> Any | None:
@@ -357,3 +391,178 @@ def unregister_workspace(
     except Exception as e:
         logger.error("Failed to unregister workspace %s: %s", path, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to unregister workspace") from e
+
+
+@memory_router.get("", response_model=WorkspaceListResponse)
+def list_memories(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    registry: Any = Depends(get_workspace_registry),
+) -> WorkspaceListResponse:
+    """List memory path registrations visible to the authenticated caller."""
+    context = _get_operation_context(auth_result)
+
+    def _list() -> WorkspaceListResponse:
+        user_id = _get_caller_user_id(auth_result)
+        db_models = _list_memory_db_models(registry, user_id=user_id)
+        items = [_build_workspace_response(m) for m in db_models]
+        return WorkspaceListResponse(items=items, count=len(items))
+
+    try:
+        return _run_zone_scoped_sync(request, context.zone_id, _list)
+    except Exception as e:
+        logger.error("Failed to list memories: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list memories") from e
+
+
+@memory_router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
+def register_memory(
+    request: WorkspaceRegisterRequest,
+    http_request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    registry: Any = Depends(get_workspace_registry),
+) -> WorkspaceResponse:
+    """Register a path as an agent memory directory."""
+    context = _get_operation_context(auth_result)
+
+    def _register() -> WorkspaceResponse:
+        from nexus.storage.models import PathRegistrationModel
+
+        user_id = getattr(context, "user_id", None)
+        agent_id = getattr(context, "agent_id", None)
+        expires_at = (
+            datetime.now(UTC) + timedelta(seconds=request.ttl_seconds)
+            if request.ttl_seconds
+            else None
+        )
+        scope = "session" if request.session_id else "persistent"
+
+        with registry.metadata_session_factory() as session:
+            model = PathRegistrationModel(
+                path=request.path,
+                type="memory",
+                name=request.name,
+                description=request.description,
+                created_by=user_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                scope=scope,
+                session_id=request.session_id,
+                expires_at=expires_at,
+                extra_metadata=json.dumps(request.metadata) if request.metadata else None,
+            )
+            session.add(model)
+            session.commit()
+            session.refresh(model)
+            return _build_workspace_response(model)
+
+    try:
+        return _run_zone_scoped_sync(http_request, context.zone_id, _register)
+    except IntegrityError as e:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Memory already registered: {request.path}",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to register memory: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to register memory") from e
+
+
+@memory_router.get("/{path:path}", response_model=WorkspaceResponse)
+def get_memory(
+    path: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    registry: Any = Depends(get_workspace_registry),
+) -> WorkspaceResponse:
+    """Get memory registration by path."""
+    path = _normalize_path(path)
+    context = _get_operation_context(auth_result)
+
+    def _get() -> WorkspaceResponse:
+        user_id = _get_caller_user_id(auth_result)
+        db_model = _get_memory_db_model(registry, path, user_id=user_id)
+        if db_model is None:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {path}")
+        return _build_workspace_response(db_model)
+
+    try:
+        return _run_zone_scoped_sync(request, context.zone_id, _get)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get memory %s: %s", path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get memory") from e
+
+
+@memory_router.patch("/{path:path}", response_model=WorkspaceResponse)
+def update_memory(
+    path: str,
+    request: ResourceUpdateRequest,
+    http_request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    registry: Any = Depends(get_workspace_registry),
+) -> WorkspaceResponse:
+    """Update memory registration metadata."""
+    path = _normalize_path(path)
+    context = _get_operation_context(auth_result)
+
+    def _update() -> WorkspaceResponse:
+        user_id = _get_caller_user_id(auth_result)
+        db_model = _get_memory_db_model(registry, path, user_id=user_id)
+        if db_model is None:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {path}")
+        if request.name is not None:
+            db_model.name = request.name
+        if request.description is not None:
+            db_model.description = request.description
+        if request.metadata is not None:
+            db_model.extra_metadata = json.dumps(request.metadata)
+        with registry.metadata_session_factory() as session:
+            session.merge(db_model)
+            session.commit()
+        refreshed = _get_memory_db_model(registry, path)
+        if refreshed is None:
+            raise HTTPException(status_code=500, detail="Memory updated but not found in DB")
+        return _build_workspace_response(refreshed)
+
+    try:
+        return _run_zone_scoped_sync(http_request, context.zone_id, _update)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update memory %s: %s", path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update memory") from e
+
+
+@memory_router.delete("/{path:path}")
+def unregister_memory(
+    path: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    registry: Any = Depends(get_workspace_registry),
+) -> dict[str, Any]:
+    """Unregister a memory path without deleting files."""
+    path = _normalize_path(path)
+    context = _get_operation_context(auth_result)
+
+    def _delete() -> dict[str, Any]:
+        user_id = _get_caller_user_id(auth_result)
+        db_model = _get_memory_db_model(registry, path, user_id=user_id)
+        if db_model is None:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {path}")
+        with registry.metadata_session_factory() as session:
+            merged = session.merge(db_model)
+            session.delete(merged)
+            session.commit()
+        return {"unregistered": True, "path": path}
+
+    try:
+        return _run_zone_scoped_sync(request, context.zone_id, _delete)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to unregister memory %s: %s", path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unregister memory") from e

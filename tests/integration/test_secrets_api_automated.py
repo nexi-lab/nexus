@@ -23,11 +23,7 @@ def setup_server():
         nexus_fs = None
 
         # 同步创建 nexus_fs（因为 TestClient 不支持异步）
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        nexus_fs = loop.run_until_complete(make_test_nexus(tmp_path, record_store=in_memory_rs))
-        loop.close()
+        nexus_fs = make_test_nexus(tmp_path, record_store=in_memory_rs)
 
         api_key = "test-api-key"
         _server_app = create_app(nexus_fs, api_key=api_key)

@@ -159,3 +159,83 @@ jobs:
 
             If this change is intentional, update the API surface baseline.`
             });
+
+  surface-matrix-check:
+    name: Enforce API/RPC Surface Matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect surface-matrix changes
+        id: surface-filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            surface:
+              - '.cargo/**'
+              - '.github/workflows/api-surface.yml'
+              - 'Cargo.*'
+              - 'docs/surface-coverage/**'
+              - 'docs/benchmarks/**'
+              - 'proto/nexus/**'
+              - 'pyproject.toml'
+              - 'rust/**'
+              - 'scripts/gen_api_surface_coverage.py'
+              - 'scripts/render_api_surface_coverage.py'
+              - 'scripts/surface_coverage/**'
+              - 'scripts/validate_api_surface_coverage.py'
+              - 'src/nexus/**'
+              - 'tests/**'
+              - 'uv.lock'
+
+      - name: Skip when no surface-matrix changes
+        if: steps.surface-filter.outputs.surface != 'true'
+        run: |
+          echo "No API/RPC surface-matrix changes detected — skipping matrix enforcement."
+
+      - name: Set up Python
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: uv venv --python 3.14
+
+      - name: Install dependencies
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Set up Rust toolchain
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache nexus-cluster build
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: api-rpc-surface-matrix
+
+      - name: Build nexusd-cluster for runtime discovery
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+
+      - name: Validate API/RPC surface matrix
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: |
+          uv run --no-sync python scripts/validate_api_surface_coverage.py --coverage docs/surface-coverage/api-rpc-surface-coverage.yaml
+          uv run --no-sync python -m pytest \
+            tests/surface_coverage/test_inventory.py \
+            tests/surface_coverage/test_validate.py \
+            tests/surface_coverage/test_runtime_discovery.py \
+            tests/surface_coverage/test_gap_backlog.py \
+            tests/surface_coverage/test_merge.py \
+            -v

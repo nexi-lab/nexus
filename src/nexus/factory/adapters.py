@@ -356,6 +356,34 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
+        if recursive:
+            try:
+                result = self._nx.sys_readdir(
+                    path,
+                    recursive=True,
+                    details=True,
+                    context=admin_ctx,
+                )
+                recursive_items: list[Any] = result.items if hasattr(result, "items") else result
+            except Exception:
+                recursive_items = []
+
+            recursive_files: list[str] = []
+            for entry in recursive_items:
+                entry_path = (
+                    entry if isinstance(entry, str) else entry.get("path") or entry.get("name")
+                )
+                if not entry_path:
+                    continue
+                if isinstance(entry, dict) and (
+                    entry.get("entry_type") == 1 or entry.get("is_directory") is True
+                ):
+                    continue
+                if not str(entry_path).endswith("/"):
+                    recursive_files.append(str(entry_path))
+            if recursive_files:
+                return list(dict.fromkeys(recursive_files))
+
         pending: list[tuple[str, int]] = [(path, 0)]
         seen_dirs: set[str] = set()
         files: list[str] = []

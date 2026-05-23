@@ -48,15 +48,16 @@ def boot_lightweight_nexus(db_path: Path) -> Any:
     from nexus.remote.kernel_client import KernelClient as PyKernel
 
     kernel = PyKernel()
-    # Federation wiring managed internally by kernel process
-
-    metadata_store = kernel.set_metastore_path(str(db_path)) or kernel
+    kernel.set_metastore_path(str(db_path))
+    # create_nexus_fs() immediately writes the root mount through the kernel
+    # client, so the subprocess transport must be open before construction.
+    kernel.open()
 
     from tests.helpers.test_context import TEST_ADMIN_CONTEXT
 
-    return create_nexus_fs(
+    fs = create_nexus_fs(
         backend=backend,
-        metadata_store=metadata_store,
+        metadata_store=kernel,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
         distributed=DistributedConfig(
@@ -67,6 +68,8 @@ def boot_lightweight_nexus(db_path: Path) -> Any:
         enabled_bricks=frozenset(),
         init_cred=TEST_ADMIN_CONTEXT,
     )
+    fs._register_runtime_closeable(kernel)
+    return fs
 
 
 def plant_secret_doc(fs: Any, zone_id: str) -> None:

@@ -105,6 +105,19 @@ def _paths(items: list[dict[str, Any]]) -> set[str]:
     return {item["path"] for item in items}
 
 
+def _assert_semantic_surface(hits: list[dict[str, Any]]) -> bool:
+    assert hits, "semantic search should return local vector hits or degraded keyword hits"
+    has_vector_lane = any(hit.get("vector_score") is not None for hit in hits)
+    if has_vector_lane:
+        assert any("keyword_score" in hit for hit in hits)
+        assert all(hit.get("semantic_degraded") is not True for hit in hits)
+        return False
+
+    assert all(hit.get("semantic_degraded") is True for hit in hits)
+    assert all("keyword_score" in hit for hit in hits)
+    return True
+
+
 @pytest.mark.asyncio
 async def test_issue_4129_sandbox_search_surfaces_correctness_and_latency(
     tmp_path: Path,
@@ -188,10 +201,8 @@ async def test_issue_4129_sandbox_search_surfaces_correctness_and_latency(
                 search_mode="semantic",
             ),
         )
-        assert semantic_hits, "semantic search should degrade to local keyword hits"
         assert semantic_hits[0]["path"].startswith("/workspace/")
-        assert all(hit.get("semantic_degraded") is True for hit in semantic_hits)
-        assert all("keyword_score" in hit for hit in semantic_hits)
+        _assert_semantic_surface(semantic_hits)
 
         proxy = _NoCloseProxy(nx)
 
@@ -265,7 +276,7 @@ async def test_issue_4129_sandbox_search_surfaces_correctness_and_latency(
             )
         )
         assert cli_query
-        assert all(hit.get("semantic_degraded") is True for hit in cli_query)
+        _assert_semantic_surface(cli_query)
 
         mcp = await create_mcp_server(nx=nx)
         glob_tool = await mcp.get_tool("nexus_glob")
@@ -309,8 +320,8 @@ async def test_issue_4129_sandbox_search_surfaces_correctness_and_latency(
             )
         )
         assert mcp_semantic["items"]
-        assert mcp_semantic["semantic_degraded"] is True
-        assert all(item.get("semantic_degraded") is True for item in mcp_semantic["items"])
+        mcp_degraded = _assert_semantic_surface(mcp_semantic["items"])
+        assert bool(mcp_semantic.get("semantic_degraded")) is mcp_degraded
     finally:
         adispose = getattr(nx, "adispose_async_engines", None)
         if adispose is not None:

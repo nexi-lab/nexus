@@ -42,6 +42,21 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for glob"
     matches = search.glob(params.pattern, **kwargs)
+    if (
+        not matches
+        and getattr(params, "path", None)
+        and isinstance(params.path, str)
+        and not params.pattern.startswith("/")
+    ):
+        # Some full-profile RPC requests list scoped paths successfully but
+        # match relative globs against the root namespace. Retry with the
+        # caller's base path folded into the pattern, which is equivalent to
+        # POSIX glob(path / pattern) and keeps the response unscoped below.
+        retry_kwargs: dict[str, Any] = {"path": "/", "context": context}
+        if hasattr(params, "files") and params.files is not None:
+            retry_kwargs["files"] = params.files
+        scoped_pattern = f"{params.path.rstrip('/')}/{params.pattern.lstrip('/')}"
+        matches = search.glob(scoped_pattern, **retry_kwargs)
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 

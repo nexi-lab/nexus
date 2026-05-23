@@ -214,6 +214,9 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             )
             # Inject into NexusFS for register_agent integration
             svc.nexus_fs._key_service = app.state.key_service
+            agent_rpc = svc.nexus_fs.service("agent_rpc")
+            if agent_rpc is not None:
+                agent_rpc._key_service = app.state.key_service
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
@@ -324,6 +327,11 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
 
 def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
+    if "sandbox" not in (svc.enabled_bricks or frozenset()):
+        app.state.sandbox_auth_service = None
+        logger.debug("[SANDBOX-AUTH] Skipped — sandbox brick is disabled")
+        return
+
     if svc.nexus_fs and not app.state.agent_registry:
         logger.info(
             "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"

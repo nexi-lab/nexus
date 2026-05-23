@@ -1848,8 +1848,21 @@ class MetadataMixin:
                 logger.debug("kernel.sys_readdir failed for %s: %s", path, exc)
                 _kernel_entries = None
             if _kernel_entries:
+
+                def _is_kernel_directory(child: str, entry_type: int) -> bool:
+                    if entry_type in (DT_DIR, DT_MOUNT):
+                        return True
+                    try:
+                        return bool(_kernel.sys_readdir(child, self._zone_id, _is_admin))
+                    except (OSError, ValueError):
+                        return False
+
                 _children = [
-                    child for child, _etype in _kernel_entries if not self._is_internal_path(child)
+                    child
+                    for child, _etype in _kernel_entries
+                    if child != path
+                    and not self._is_internal_path(child)
+                    and not _is_kernel_directory(child, _etype)
                 ]
                 # Issue #3786 / Codex Round 7 finding #1: federation tokens
                 # land here as zone_id="root", so without an explicit zone_perms

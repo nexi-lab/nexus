@@ -635,7 +635,12 @@ class TestCrossZoneInvalidationLatency:
             "object_id": "/doc.txt",
         }
 
-        result = benchmark(stream.publish, "zone-target", payload)
+        result = benchmark.pedantic(
+            stream.publish,
+            args=("zone-target", payload),
+            rounds=1000,
+            iterations=1,
+        )
         assert result is True
 
     def test_invalidation_pipeline_with_durable_stream(self, benchmark, seeded_manager):

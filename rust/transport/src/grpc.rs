@@ -27,8 +27,8 @@ use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchWriteItemResponse,
     BatchWriteRequest, BatchWriteResponse, CallRequest, CallResponse, DeleteRequest,
-    DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse, StatRequest,
-    StatResponse, WriteRequest, WriteResponse,
+    DeleteResponse, PingRequest, PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse,
+    ReadRequest, ReadResponse, StatRequest, StatResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -272,6 +272,37 @@ impl NexusVfsService for VfsServiceImpl {
                 ..Default::default()
             })),
         }
+    }
+
+    async fn readdir(
+        &self,
+        req: Request<ReaddirRequest>,
+    ) -> Result<Response<ReaddirResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_readdir(s))),
+        };
+        let zone_id = if req.zone_id.is_empty() {
+            ctx.zone_id.as_str()
+        } else {
+            req.zone_id.as_str()
+        };
+        // `is_admin` comes from the auth-resolved context, never the
+        // request — clients can't spoof admin reads of `/__sys__/zones/`.
+        let entries = self.kernel.sys_readdir(&req.path, zone_id, ctx.is_admin);
+        let mapped: Vec<ReaddirEntry> = entries
+            .into_iter()
+            .map(|(name, dt)| ReaddirEntry {
+                name,
+                entry_type: dt as u32,
+            })
+            .collect();
+        Ok(Response::new(ReaddirResponse {
+            entries: mapped,
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
     }
 
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
@@ -545,6 +576,14 @@ fn error_write(status: Status) -> WriteResponse {
 fn error_delete(status: Status) -> DeleteResponse {
     DeleteResponse {
         success: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_readdir(status: Status) -> ReaddirResponse {
+    ReaddirResponse {
+        entries: Vec::new(),
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

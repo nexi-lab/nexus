@@ -37,6 +37,9 @@ service NexusVFSService {
 
   // Typed metadata stat — the hottest metadata op.
   rpc Stat(StatRequest) returns (StatResponse);
+
+  // Typed directory listing — metastore + backend merge, procfs intercepts.
+  rpc Readdir(ReaddirRequest) returns (ReaddirResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -194,4 +197,25 @@ message StatResponse {
   string owner_id = 16;             // "" when unset
   bool is_error = 17;
   bytes error_payload = 18;         // JSON error dict — auth failures only
+}
+
+// --- Typed directory listing (replaces the `sys_readdir` Call) ---
+
+message ReaddirRequest {
+  string path = 1;
+  string auth_token = 2;
+  string zone_id = 3;        // empty → caller's context zone
+  // `is_admin` is intentionally NOT a request field — the handler reads
+  // it from the auth-resolved OperationContext so a client can't spoof.
+}
+
+message ReaddirEntry {
+  string name = 1;           // child path (matches the inherent Vec<(String, u8)>)
+  uint32 entry_type = 2;     // DT_* code (u8 widened)
+}
+
+message ReaddirResponse {
+  repeated ReaddirEntry entries = 1;
+  bool is_error = 2;
+  bytes error_payload = 3;   // JSON error dict — auth failures only
 }

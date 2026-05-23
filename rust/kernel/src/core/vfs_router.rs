@@ -61,6 +61,13 @@ pub struct MountEntry {
     /// `federation_share` can derive `(parent_zone, zone-relative prefix)`
     /// from a global path via the existing routing table.
     pub target_zone_id: Option<String>,
+
+    /// Cached `backend.as_cas().is_some()` — CAS-vs-PAS classification
+    /// is fixed at backend-set time, not per syscall. Set by
+    /// [`MountEntry::new`] and refreshed by [`VFSRouter::rebind_missing_backends`]
+    /// (the only two places `backend` is written), so the cache cannot
+    /// drift relative to the backend it describes.
+    pub is_cas: bool,
 }
 
 impl MountEntry {
@@ -68,11 +75,13 @@ impl MountEntry {
     /// slot is owned by `VFSRouter::install_metastore` and never set through
     /// `add` / `add_mount` / `add_federation_mount` (orthogonal-slot contract).
     pub fn new(backend: Option<Arc<dyn ObjectStore>>) -> Self {
+        let is_cas = backend.as_ref().is_some_and(|b| b.as_cas().is_some());
         Self {
             backend,
             metastore: None,
             is_external: false,
             target_zone_id: None,
+            is_cas,
         }
     }
 
@@ -383,10 +392,12 @@ impl VFSRouter {
     /// federation-mount marker. Plain local mounts (backend-only, no
     /// metastore) are left untouched.
     pub fn rebind_missing_backends(&self, new_backend: &Arc<dyn ObjectStore>) -> usize {
+        let new_is_cas = new_backend.as_cas().is_some();
         let mut rebound = 0;
         for mut entry in self.entries.iter_mut() {
             if entry.backend.is_none() && entry.metastore.is_some() {
                 entry.backend = Some(Arc::clone(new_backend));
+                entry.is_cas = new_is_cas;
                 rebound += 1;
             }
         }
@@ -477,14 +488,9 @@ impl VFSRouter {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let is_external = entry.is_external;
-                // CAS detection via trait downcast — no string sniffing.
-                // Mounts with no Rust backend (Python-side connector) are
-                // not CAS.
-                let is_cas = entry
-                    .backend
-                    .as_ref()
-                    .map(|b| b.as_cas().is_some())
-                    .unwrap_or(false);
+                // CAS-ness is cached at backend-set time (`MountEntry::new` /
+                // `rebind_missing_backends`); the hot path just reads.
+                let is_cas = entry.is_cas;
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()

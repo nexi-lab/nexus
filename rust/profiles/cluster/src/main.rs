@@ -462,6 +462,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
                 &peer_addrs_for_bootstrap,
                 bootstrap_new,
                 /* max_attempts */ None, // daemon boot — retry forever
+                /* as_learner   */ false, // root cluster votes; learners are for share/join
             )
         })
         .await
@@ -679,10 +680,21 @@ async fn run_join(
     // ``bootstrap_or_join_zone`` with ``bootstrap_new=false``.  That
     // (a) registers the zone locally with ``skip_bootstrap=true`` so
     // the local gRPC server can serve append-entries from the leader
-    // once AddNode commits, then (b) sends ``JoinZone`` RPC to
-    // ``peer_addr``, then (c) returns once the leader's response
-    // confirms AddNode + the snapshot has installed authoritative
+    // once the membership change commits, then (b) sends ``JoinZone``
+    // RPC to ``peer_addr``, then (c) returns once the leader's response
+    // confirms the change + the snapshot has installed authoritative
     // ConfState locally.
+    //
+    // ``as_learner=true`` — `share` / `join` is the owner-pattern
+    // subtree-mount flow.  The creator of the shared zone (`share`)
+    // is the authoritative single voter; every joiner enters as a
+    // Learner so it receives full replication but never participates
+    // in quorum.  This makes wipe-rejoin safe by construction —
+    // losing or replacing a learner has zero impact on the owner's
+    // ability to commit, so SSD swap / OS reinstall / device
+    // migration cannot strand the zone in `not leader` deadlock the
+    // way the historical 2-voter pattern could (the failure that
+    // motivated this change).
     //
     // ``max_attempts=Some(15)`` × ``JOIN_ZONE_RETRY_INTERVAL`` (2 s)
     // ≈ 30 s upper bound on the operator command — long enough to
@@ -705,7 +717,8 @@ async fn run_join(
             &self_addr_for_join,
             &peer_addrs,
             /* bootstrap_new */ false,
-            /* max_attempts */ Some(15),
+            /* max_attempts  */ Some(15),
+            /* as_learner    */ true,
         )
     })
     .await

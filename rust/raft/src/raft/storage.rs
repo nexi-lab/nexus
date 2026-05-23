@@ -696,14 +696,25 @@ mod tests {
     fn test_apply_snapshot_persists_across_reopen() {
         let dir = TempDir::new().unwrap();
 
-        // Apply snapshot and drop storage
+        // Apply snapshot and drop storage.  Note: the `RaftStorage`
+        // drop *does not* call `flush()` — that mirrors the production
+        // abrupt-termination path (Ctrl+C / OOM kill / power loss /
+        // SIGKILL).  Any invariant we rely on must therefore survive
+        // a redb commit alone, without depending on a clean shutdown.
         {
             let storage = RaftStorage::open(dir.path()).unwrap();
             let snap = make_snapshot(20, 5, &[1, 2, 3]);
             storage.apply_snapshot(&snap).unwrap();
         }
 
-        // Reopen and verify all fields persisted atomically
+        // Reopen and verify all fields persisted atomically — including
+        // the raft-rs protocol invariant `hs.commit >= snapshot.index`,
+        // which `apply_snapshot` now enforces inside the same redb
+        // WriteTransaction.  Pre-fix, the driver's `set_hard_state`
+        // ran in a *separate* txn, so an abrupt kill between the two
+        // commits stranded storage with an advanced snapshot index
+        // but a stale HardState, panicking raft-rs at next boot
+        // with `hs.commit X is out of range [first, last]`.
         {
             let storage = RaftStorage::open(dir.path()).unwrap();
             assert_eq!(storage.first_index().unwrap(), 21);
@@ -714,6 +725,22 @@ mod tests {
 
             let state = storage.initial_state().unwrap();
             assert_eq!(state.conf_state.voters, vec![1, 2, 3]);
+
+            // The crash-safety invariant: HardState must already
+            // reflect the snapshot's `commit` / `term` at this point,
+            // before the driver gets a chance to run its own
+            // `set_hard_state`.  raft-rs's `RaftLog::commit_to` fatals
+            // when this invariant is violated.
+            assert!(
+                state.hard_state.commit >= 20,
+                "hs.commit ({}) must be >= snapshot.index (20) after apply_snapshot",
+                state.hard_state.commit,
+            );
+            assert!(
+                state.hard_state.term >= 5,
+                "hs.term ({}) must be >= snapshot.term (5) after apply_snapshot",
+                state.hard_state.term,
+            );
         }
     }
 }

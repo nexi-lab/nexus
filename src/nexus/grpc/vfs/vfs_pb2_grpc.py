@@ -114,6 +114,21 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.FromString,
                 _registered_method=True)
+        self.GetXattr = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/GetXattr',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrResponse.FromString,
+                _registered_method=True)
+        self.SetXattr = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/SetXattr',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrResponse.FromString,
+                _registered_method=True)
+        self.GetXattrBulk = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/GetXattrBulk',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -234,6 +249,26 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetXattr(self, request, context):
+        """Typed xattr (extended-attribute) ops — Tier 2 KernelConvenience.
+        Direct-metastore path, no hooks / no permission gate.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetXattr(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetXattrBulk(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -316,6 +351,21 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Watch,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.SerializeToString,
+            ),
+            'GetXattr': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetXattr,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrResponse.SerializeToString,
+            ),
+            'SetXattr': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetXattr,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrResponse.SerializeToString,
+            ),
+            'GetXattrBulk': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetXattrBulk,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -750,6 +800,87 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Watch',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetXattr(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/GetXattr',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetXattr(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/SetXattr',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetXattrBulk(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/GetXattrBulk',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -13,19 +13,16 @@ from pathlib import Path
 import pytest
 
 from scripts.gen_api_surface_coverage import generate_coverage
+from scripts.surface_coverage.paths import COVERAGE_HTML, COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.render import render_html
 from scripts.surface_coverage.schema import dump_yaml, load_yaml
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_COVERAGE_HTML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.html"
 
 
 @pytest.fixture(scope="module")
 def existing_coverage():
-    if not _COVERAGE_YAML.exists():
+    if not COVERAGE_YAML.exists():
         pytest.skip("no coverage YAML committed yet")
-    return load_yaml(_COVERAGE_YAML)
+    return load_yaml(COVERAGE_YAML)
 
 
 def test_schema_validity(existing_coverage):
@@ -37,7 +34,7 @@ def test_freshness(tmp_path: Path, existing_coverage):
     """Re-extract; warn if new surfaces appeared in code but not in committed YAML."""
     out = tmp_path / "fresh.yaml"
     dump_yaml(existing_coverage, out)
-    fresh = generate_coverage(repo_root=_REPO_ROOT, output=out, overrides=None)
+    fresh = generate_coverage(repo_root=REPO_ROOT, output=out, overrides=None)
 
     committed_ids = {op.id for op in existing_coverage.operations}
     fresh_ids = {op.id for op in fresh.operations}
@@ -56,10 +53,10 @@ def test_freshness(tmp_path: Path, existing_coverage):
 
 def test_render_determinism(existing_coverage):
     """Re-render committed YAML; warn if output differs from committed HTML."""
-    if not _COVERAGE_HTML.exists():
+    if not COVERAGE_HTML.exists():
         pytest.skip("no coverage HTML committed yet")
     rendered = render_html(existing_coverage)
-    committed = _COVERAGE_HTML.read_text()
+    committed = COVERAGE_HTML.read_text()
     if rendered != committed:
         warnings.warn(
             "api-rpc-surface-coverage drift: committed HTML differs from re-render.\n"

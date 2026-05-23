@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import tomllib
-from pathlib import Path
 
+from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import PerfClass, ProfileStatus, load_yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_PYPROJECT = _REPO_ROOT / "pyproject.toml"
+_PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 _REBAC_SANDBOX_ROWS = {
     "rebac.create",
@@ -28,7 +26,7 @@ _MCP_SECURITY_ROWS = {
 
 
 def _operations_by_id():
-    return {op.id: op for op in load_yaml(_COVERAGE_YAML).operations}
+    return {op.id: op for op in load_yaml(COVERAGE_YAML).operations}
 
 
 def _assert_supported_sandbox_story_row(op_id: str) -> None:

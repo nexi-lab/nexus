@@ -7,13 +7,10 @@ and performance classification for the externally visible surfaces.
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import load_yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
+_USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
 _REAL_E2E_TEST = "tests/e2e/server/test_issue_4136_api_surface_e2e.py"
 
 _ISSUE_4136_ROWS = {
@@ -53,7 +50,7 @@ _ISSUE_4136_ROWS = {
 
 
 def _coverage_ops():
-    coverage = load_yaml(_COVERAGE_YAML)
+    coverage = load_yaml(COVERAGE_YAML)
     return {op.id: op for op in coverage.operations}
 
 
@@ -63,7 +60,7 @@ def _assert_test_links_exist(link_field: str) -> None:
         if not target or target.startswith("N/A") or target.startswith("setup/"):
             continue
         path_part = target.split("::", 1)[0].strip()
-        assert (_REPO_ROOT / path_part).exists(), f"missing linked test path: {path_part}"
+        assert (REPO_ROOT / path_part).exists(), f"missing linked test path: {path_part}"
 
 
 def test_issue_4136_rows_have_full_story_contract() -> None:

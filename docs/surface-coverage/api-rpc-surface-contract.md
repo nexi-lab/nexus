@@ -1,8 +1,18 @@
 # Nexus API/RPC Surface Coverage Contract
 
 This document is the source of truth for how surfaces are inventoried, classified,
-tested, and benchmarked. The interactive map at
-`api-rpc-surface-coverage.html` is the published view of the data this contract governs.
+tested, and benchmarked. The interactive map `api-rpc-surface-coverage.html` is the
+rendered view of the data this contract governs — it is generated from
+`api-rpc-surface-coverage.yaml` by `scripts/render_api_surface_coverage.py`.
+
+Two ways to read it:
+
+- **Online (published)** — the `Documentation` workflow re-renders on every push
+  to `develop` and publishes to GitHub Pages at
+  <https://nexi-lab.github.io/nexus/surface-coverage/api-rpc-surface-coverage.html>.
+- **Offline (local)** — run `uv run python scripts/render_api_surface_coverage.py`
+  to regenerate `api-rpc-surface-coverage.html` in this directory and open it
+  in a browser. The local HTML is **not committed** (`.gitignore`d).
 
 ## Mental model
 
@@ -57,11 +67,17 @@ Every row carries a `perf_class`:
 
 ## Workflow for subissue owners
 
-1. Open `api-rpc-surface-coverage.html`. Filter / search for rows where `owner: #<your-issue>`.
+1. Open the map — either the published view at
+   <https://nexi-lab.github.io/nexus/surface-coverage/api-rpc-surface-coverage.html>,
+   or render locally with `uv run python scripts/render_api_surface_coverage.py`
+   then open `api-rpc-surface-coverage.html`. (The local HTML is a generated
+   artifact and is not committed; see the note above.)
+   Filter / search for rows where `owner: #<your-issue>`.
 2. For each row, fill `summary`, `usage_example`, `correctness_test`, `perf_class`, `perf_link`, `profiles` in `api-rpc-surface-coverage.yaml`.
 3. If the surface is missing-needed (no implementation yet), open a build issue and set `gap_issue`.
 4. Re-run `uv run python scripts/gen_api_surface_coverage.py` (merge with your edits) then `uv run python scripts/render_api_surface_coverage.py`.
-5. Commit both YAML and HTML in the same change.
+5. Commit the updated **YAML** (`api-rpc-surface-coverage.yaml`). The HTML is
+   regenerated from it on demand and is `.gitignore`d — do not commit it.
 
 ## Gap-issue rules
 

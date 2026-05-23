@@ -6,16 +6,13 @@ default profile matrix, enforcement tests, and user guide agree.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import yaml
 
+from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import ProfileStatus, load_yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_TOOL_PROFILES = _REPO_ROOT / "src/nexus/config/tool_profiles.yaml"
-_USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
+_TOOL_PROFILES = REPO_ROOT / "src/nexus/config/tool_profiles.yaml"
+_USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
 
 _ISSUE_4131_OWNED_ROWS = {
     "delete.file",
@@ -66,7 +63,7 @@ _EXPECTED_PROFILE_TABLE_ROWS = {
 
 
 def _operations_by_id():
-    return {op.id: op for op in load_yaml(_COVERAGE_YAML).operations}
+    return {op.id: op for op in load_yaml(COVERAGE_YAML).operations}
 
 
 def _assert_linked_paths_exist(link_field: str) -> None:
@@ -75,7 +72,7 @@ def _assert_linked_paths_exist(link_field: str) -> None:
         if not target or target.startswith("N/A") or target.startswith("setup/"):
             continue
         path_part = target.split("::", 1)[0].strip()
-        assert (_REPO_ROOT / path_part).exists(), f"missing linked path: {path_part}"
+        assert (REPO_ROOT / path_part).exists(), f"missing linked path: {path_part}"
 
 
 def test_issue_4131_owned_mcp_rows_have_story_contract() -> None:

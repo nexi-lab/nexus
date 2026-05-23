@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import ProfileStatus, load_yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
+_USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
 
 OWNING_ISSUE = 4135
 PREEXISTING_SANDBOX_SEARCH_ISSUE = 4129
@@ -58,7 +55,7 @@ OWNED_ROWS = (SUPPORTED_ROWS | MISSING_ROWS) - PREEXISTING_SANDBOX_SEARCH_ROWS
 
 
 def test_search_story_rows_have_owner_tests_perf_and_gap_state() -> None:
-    coverage = load_yaml(_COVERAGE_YAML)
+    coverage = load_yaml(COVERAGE_YAML)
     by_id = {op.id: op for op in coverage.operations}
 
     for op_id in sorted(SUPPORTED_ROWS | MISSING_ROWS):
@@ -86,7 +83,7 @@ def test_search_story_rows_have_owner_tests_perf_and_gap_state() -> None:
 
 
 def test_search_story_mcp_tools_link_to_story_rows() -> None:
-    coverage = load_yaml(_COVERAGE_YAML)
+    coverage = load_yaml(COVERAGE_YAML)
     by_id = {op.id: op for op in coverage.operations}
 
     assert by_id["search.glob"].transports["mcp"].name == "nexus_glob"

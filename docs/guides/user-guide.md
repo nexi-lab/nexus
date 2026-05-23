@@ -727,7 +727,7 @@ Expected behavior:
 
 **Correctness assertions:** the ReBAC tuple/check/list/explain RPC and CLI
 rows are covered by `tests/unit/services/test_rebac_service.py` and the
-ReBAC story gate in `tests/architecture/test_rebac_surface_story.py`.
+ReBAC story gate in `tests/surface_coverage/test_rebac_surface_story.py`.
 Read-only hub-zone fast-fail is covered by
 `tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call`
 and the sandbox federation E2E. Tool-profile assignment and grants affecting
@@ -1074,7 +1074,7 @@ Expected outcomes are deliberately boring:
 - permission denial filters paths or candidates and reports truncation/denial metadata where the endpoint supports it
 - unavailable providers return a clear unavailable/configuration error instead of pretending semantic or parsed search ran
 
-Correctness is covered by the search router, grep/glob, semantic-search, parser, path-context, and RRF tests. Performance-sensitive rows are classified in `docs/architecture/api-rpc-surface-coverage.yaml`; grep/glob and query paths are hot, indexing is setup work, and health/stats/control endpoints are not performance sensitive. Retrieval-quality benchmark notes live in `docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`.
+Correctness is covered by the search router, grep/glob, semantic-search, parser, path-context, and RRF tests. Performance-sensitive rows are classified in `docs/surface-coverage/api-rpc-surface-coverage.yaml`; grep/glob and query paths are hot, indexing is setup work, and health/stats/control endpoints are not performance sensitive. Retrieval-quality benchmark notes live in `docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`.
 
 ### 5.1 Find files and text first
 

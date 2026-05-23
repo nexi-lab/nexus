@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import argparse  # noqa: E402
 
+from scripts.surface_coverage.paths import COVERAGE_HTML, COVERAGE_YAML  # noqa: E402
 from scripts.surface_coverage.render import render_html  # noqa: E402
 from scripts.surface_coverage.schema import load_yaml  # noqa: E402
 
@@ -21,12 +22,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--input",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-coverage.yaml"),
+        default=COVERAGE_YAML,
     )
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-coverage.html"),
+        default=COVERAGE_HTML,
     )
     args = p.parse_args(argv)
     coverage = load_yaml(args.input)

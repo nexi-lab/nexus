@@ -30,6 +30,10 @@ pub mod proto {
 #[allow(dead_code)] // wired into RPCs in follow-up commits
 mod types;
 
+// AES-256-GCM seal/open + master key load/generate.
+#[allow(dead_code)] // wired into RPCs in follow-up commits
+mod crypto;
+
 use tonic::{Request, Response, Status};
 
 use proto::password_vault_service_server::PasswordVaultService;

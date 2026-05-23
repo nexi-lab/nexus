@@ -28,8 +28,8 @@ use kernel::kernel::vfs_proto::{
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
     CallResponse, DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReaddirEntry,
-    ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, StatRequest, StatResponse,
-    WriteRequest, WriteResponse,
+    ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, SetattrRequest, SetattrResponse,
+    StatRequest, StatResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -304,6 +304,83 @@ impl NexusVfsService for VfsServiceImpl {
             is_error: false,
             error_payload: Vec::new(),
         }))
+    }
+
+    async fn setattr(
+        &self,
+        req: Request<SetattrRequest>,
+    ) -> Result<Response<SetattrResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_setattr(s))),
+        };
+        let _ = ctx; // resolve auth for permissions / future use
+
+        let zone_id_str = req.zone_id;
+        let zone_id = if zone_id_str.is_empty() {
+            kernel::ROOT_ZONE_ID
+        } else {
+            &zone_id_str
+        };
+
+        // DT_MOUNT special case — the subprocess kernel already owns its
+        // mount table (auto-created from NEXUS_DATA_DIR at startup) and
+        // Python can't pass a Rust ObjectStore Arc through the wire. The
+        // Python factory still emits sys_setattr(DT_MOUNT) during boot,
+        // so we ack synthetically rather than overwrite the live mount
+        // with backend=None (which would break all I/O).
+        if req.entry_type == 2 {
+            return Ok(Response::new(SetattrResponse {
+                path: req.path,
+                created: false,
+                entry_type: req.entry_type,
+                is_error: false,
+                error_payload: Vec::new(),
+            }));
+        }
+
+        match self.kernel.sys_setattr(
+            &req.path,
+            req.entry_type,
+            &req.backend_name,
+            None, // backend (non-mount entry types don't need one)
+            None, // metastore
+            None, // raft_backend
+            &req.io_profile,
+            zone_id,
+            req.is_external,
+            req.capacity as usize,
+            None, // read_fd  — DT_PIPE stdio uses the in-process AcpSubprocess path
+            None, // write_fd
+            req.mime_type.as_deref(),
+            req.modified_at_ms,
+            req.content_id.as_deref(),
+            req.size,
+            req.version,
+            req.created_at_ms,
+            None, // link_target — DT_LINK creation isn't on the JSON-wire today
+            None, // source
+            None, // remote_metastore
+        ) {
+            Ok(r) => Ok(Response::new(SetattrResponse {
+                path: r.path,
+                created: r.created,
+                entry_type: r.entry_type,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(SetattrResponse {
+                    path: String::new(),
+                    created: false,
+                    entry_type: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
     }
 
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
@@ -639,6 +716,16 @@ fn error_delete(status: Status) -> DeleteResponse {
 fn error_readdir(status: Status) -> ReaddirResponse {
     ReaddirResponse {
         entries: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_setattr(status: Status) -> SetattrResponse {
+    SetattrResponse {
+        path: String::new(),
+        created: false,
+        entry_type: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

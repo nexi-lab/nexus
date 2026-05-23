@@ -44,6 +44,12 @@ service NexusVFSService {
   // Vectored stat — single redb txn on the optimized KernelConvenience
   // override. Per-path not-found is in-band (`found = false`).
   rpc BatchStat(BatchStatRequest) returns (BatchStatResponse);
+
+  // Typed attribute set / inode create. Exposes the subset of the
+  // 21-param inherent sys_setattr that crosses the JSON wire today —
+  // Arc<ObjectStore>, metastore, raft_backend, read_fd/write_fd, source,
+  // and remote_metastore stay off this RPC (they need in-process refs).
+  rpc Setattr(SetattrRequest) returns (SetattrResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -256,4 +262,36 @@ message BatchStatItem {
 
 message BatchStatResponse {
   repeated BatchStatItem results = 1;  // positional — same length/order as request.paths
+}
+
+// --- Typed setattr (replaces the `sys_setattr` Call) ---
+
+message SetattrRequest {
+  string path = 1;
+  string auth_token = 2;
+  int32 entry_type = 3;             // DT_* code
+  string zone_id = 4;                // empty → ROOT_ZONE_ID
+
+  // Optional metadata fields (presence-tracked — None survives the wire).
+  optional string mime_type = 5;
+  optional string content_id = 6;
+  optional int64 modified_at_ms = 7;
+  optional int64 created_at_ms = 8;
+  optional uint64 size = 9;
+  optional uint32 version = 10;
+
+  // DT_PIPE / DT_STREAM container fields. Default-zero / empty when unused.
+  string backend_name = 11;
+  string io_profile = 12;
+  bool is_external = 13;
+  uint64 capacity = 14;
+}
+
+message SetattrResponse {
+  // Mirrors the Call response shape consumed by _SysSetAttrResult.
+  string path = 1;
+  bool created = 2;
+  int32 entry_type = 3;
+  bool is_error = 4;
+  bytes error_payload = 5;
 }

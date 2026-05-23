@@ -28,6 +28,11 @@ from scripts.surface_coverage import (  # noqa: E402
     normalize,
 )
 from scripts.surface_coverage.merge import merge_coverage  # noqa: E402
+from scripts.surface_coverage.paths import (  # noqa: E402
+    COVERAGE_YAML,
+    GAPS_YAML,
+    OVERRIDES_YAML,
+)
 from scripts.surface_coverage.schema import (  # noqa: E402
     Module,
     Operation,
@@ -198,7 +203,7 @@ def generate_coverage(
         _ = extract_profiles.extract_profile_names(dp, enum_class="DeploymentProfile")
 
     # --- Manual missing_needed gaps from api-rpc-surface-gaps.yaml ---
-    gaps_path = repo_root / "docs/surface-coverage/api-rpc-surface-gaps.yaml"
+    gaps_path = GAPS_YAML
     if gaps_path.exists():
         import yaml as _yaml
 
@@ -328,12 +333,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("docs/surface-coverage/api-rpc-surface-coverage.yaml"),
+        default=COVERAGE_YAML,
     )
     p.add_argument(
         "--overrides",
         type=Path,
-        default=Path("docs/surface-coverage/api-rpc-surface-overrides.yaml"),
+        default=OVERRIDES_YAML,
         help="reserved for v2; ignored in v1",
     )
     args = p.parse_args(argv)

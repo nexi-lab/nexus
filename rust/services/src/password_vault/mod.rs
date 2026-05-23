@@ -34,6 +34,10 @@ mod types;
 #[allow(dead_code)] // wired into RPCs in follow-up commits
 mod crypto;
 
+// redb-backed storage: entries + versions tables.
+#[allow(dead_code)] // wired into RPCs in follow-up commits
+mod storage;
+
 use tonic::{Request, Response, Status};
 
 use proto::password_vault_service_server::PasswordVaultService;

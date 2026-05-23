@@ -373,7 +373,18 @@ impl LockManager {
             if let Some(entry) = state.locks.get_mut(&info.path) {
                 match info.mode {
                     LockMode::Read => {
-                        entry.io_readers = entry.io_readers.saturating_sub(1);
+                        // Every live Read handle was produced by
+                        // `try_acquire_io_locked`, which increments
+                        // `io_readers` atomically with the handle insert.
+                        // `saturating_sub` here would silently mask a
+                        // handle/state desync — assert and crash debug
+                        // builds instead.
+                        debug_assert!(
+                            entry.io_readers > 0,
+                            "do_release(Read) on {:?} but io_readers==0 (handle/state desync)",
+                            info.path,
+                        );
+                        entry.io_readers -= 1;
                     }
                     LockMode::Write => {
                         if entry.io_writer == Some(handle) {

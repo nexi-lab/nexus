@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from scripts.surface_coverage.paths import COVERAGE_YAML
 from scripts.surface_coverage.schema import ProfileStatus, load_yaml
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
 
 _SUPPORTED_SANDBOX_ROWS = {
     "delete.batch",
@@ -67,7 +63,7 @@ _SANDBOX_UNAVAILABLE_ROWS = {
 
 
 def _operations_by_id():
-    return {op.id: op for op in load_yaml(_COVERAGE_YAML).operations}
+    return {op.id: op for op in load_yaml(COVERAGE_YAML).operations}
 
 
 def test_issue_4127_supported_sandbox_rows_have_docs_tests_and_perf_class():

@@ -193,22 +193,6 @@ fn shared_lock_to_kernel(lock: contracts::LockInfo) -> KernelLockInfo {
     }
 }
 
-// ── LockError ───────────────────────────────────────────────────────
-
-/// Error type for lock operations.
-#[derive(Debug)]
-pub enum LockError {
-    IOError(String),
-}
-
-impl std::fmt::Display for LockError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LockError::IOError(msg) => write!(f, "{}", msg),
-        }
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // LockManager — unified I/O + advisory lock primitive
 // ═══════════════════════════════════════════════════════════════════
@@ -590,38 +574,31 @@ impl LockManager {
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
-    ) -> Result<bool, LockError> {
-        self.locks_backend()
-            .acquire(
-                path,
-                lock_id,
-                kernel_to_shared_mode(mode),
-                max_holders,
-                ttl_secs.min(u32::MAX as u64) as u32,
-                holder_info,
-            )
-            .map_err(|e| LockError::IOError(format!("LockManager.acquire_lock({path}): {e}")))
+    ) -> Result<bool, String> {
+        self.locks_backend().acquire(
+            path,
+            lock_id,
+            kernel_to_shared_mode(mode),
+            max_holders,
+            ttl_secs.min(u32::MAX as u64) as u32,
+            holder_info,
+        )
     }
 
     /// Release a specific advisory lock holder. Returns ``Ok(true)`` if found.
-    pub fn release_lock(&self, path: &str, lock_id: &str) -> Result<bool, LockError> {
-        self.locks_backend()
-            .release(path, lock_id)
-            .map_err(|e| LockError::IOError(format!("LockManager.release_lock({path}): {e}")))
+    pub fn release_lock(&self, path: &str, lock_id: &str) -> Result<bool, String> {
+        self.locks_backend().release(path, lock_id)
     }
 
     /// Force-release ALL advisory holders on ``path`` (admin override).
-    pub fn force_release_lock(&self, path: &str) -> Result<bool, LockError> {
-        self.locks_backend()
-            .force_release(path)
-            .map_err(|e| LockError::IOError(format!("LockManager.force_release_lock({path}): {e}")))
+    pub fn force_release_lock(&self, path: &str) -> Result<bool, String> {
+        self.locks_backend().force_release(path)
     }
 
     /// Extend a holder's TTL. Returns ``Ok(true)`` if extended.
-    pub fn extend_lock(&self, path: &str, lock_id: &str, ttl_secs: u64) -> Result<bool, LockError> {
+    pub fn extend_lock(&self, path: &str, lock_id: &str, ttl_secs: u64) -> Result<bool, String> {
         self.locks_backend()
             .extend(path, lock_id, ttl_secs.min(u32::MAX as u64) as u32)
-            .map_err(|e| LockError::IOError(format!("LockManager.extend_lock({path}): {e}")))
     }
 
     /// Read the full advisory lock record for a path (or ``None`` if
@@ -632,7 +609,7 @@ impl LockManager {
     /// from the same shared ``Arc<Mutex<LockState>>`` — a committed
     /// replicated write is visible here as soon as apply returns, so
     /// no read-quorum round-trip is needed.
-    pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, LockError> {
+    pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, String> {
         Ok(self
             .locks_backend()
             .get_lock(path)
@@ -640,7 +617,7 @@ impl LockManager {
     }
 
     /// Enumerate advisory locks with a given path prefix, capped at ``limit``.
-    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<KernelLockInfo>, LockError> {
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<KernelLockInfo>, String> {
         Ok(self
             .locks_backend()
             .list_locks(prefix, limit)

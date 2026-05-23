@@ -764,29 +764,37 @@ class KernelClient:
     # ── Xattr (file metadata side-car) ──────────────────────────────────
 
     def get_xattr(self, path: str, key: str) -> str | None:
-        """Get extended attribute via Rust kernel metastore."""
+        """Get an extended attribute via the typed GetXattr RPC.
+
+        Returns the value string, or ``None`` when the key is not set or
+        any error occurs (matches the prior Call path's broad-catch).
+        """
+        assert self._transport is not None
         try:
-            result = self._call("get_xattr", {"path": path, "key": key})
-            return str(result) if result is not None else None
+            resp = self._transport.get_xattr(path, key)
         except Exception:
             return None
+        return resp.value if resp.found else None
 
     def set_xattr(self, path: str, key: str, value: str) -> None:
-        """Set extended attribute via Rust kernel metastore."""
+        """Set an extended attribute via the typed SetXattr RPC."""
         import contextlib
 
+        assert self._transport is not None
         with contextlib.suppress(Exception):
-            self._call("set_xattr", {"path": path, "key": key, "value": value})
+            self._transport.set_xattr(path, key, value)
 
     def get_xattr_bulk(self, paths: list[str], key: str) -> dict[str, str | None]:
-        """Bulk get extended attribute via Rust kernel metastore."""
+        """Bulk get an xattr across paths via the typed GetXattrBulk RPC.
+
+        Returns ``{path: value | None}`` — matches the prior Call shape.
+        """
+        assert self._transport is not None
         try:
-            result = self._call("get_xattr_bulk", {"paths": paths, "key": key})
-            if isinstance(result, dict):
-                return result
+            items = self._transport.get_xattr_bulk(paths, key)
         except Exception:
-            pass
-        return dict.fromkeys(paths)
+            return dict.fromkeys(paths)
+        return {item.path: (item.value if item.found else None) for item in items}
 
     # ── IPC: Pipes ─────────────────────────────────────────────────────
 

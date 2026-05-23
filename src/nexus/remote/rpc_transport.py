@@ -716,6 +716,73 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def get_xattr(self, path: str, key: str, read_timeout: float | None = None) -> Any:
+        """Get a single xattr via the typed GetXattr RPC.
+
+        Returns the ``GetXattrResponse`` — ``found=false`` means the key
+        is not set, not an error.
+        """
+        request = vfs_pb2.GetXattrRequest(path=path, key=key, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.GetXattr(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "GetXattr")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def set_xattr(self, path: str, key: str, value: str, read_timeout: float | None = None) -> None:
+        """Set an xattr via the typed SetXattr RPC."""
+        request = vfs_pb2.SetXattrRequest(
+            path=path, key=key, value=value, auth_token=self._auth_token
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.SetXattr(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "SetXattr")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def get_xattr_bulk(
+        self, paths: list[str], key: str, read_timeout: float | None = None
+    ) -> list[Any]:
+        """Bulk get a single xattr via the typed GetXattrBulk RPC.
+
+        Returns the ``GetXattrBulkItem`` list (positional, same length as
+        ``paths``).
+        """
+        request = vfs_pb2.GetXattrBulkRequest(
+            paths=list(paths), key=key, auth_token=self._auth_token
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.GetXattrBulk(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "GetXattrBulk")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return list(response.items)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

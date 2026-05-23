@@ -588,7 +588,26 @@ pub fn zone_to_global(mount_point: &str, zone_path: &str) -> String {
 
 /// Strip a mount-point prefix from a canonical path to get the
 /// backend-relative path (without leading slash).
+///
+/// **Precondition:** `mount_point` is an LPM prefix of `path` aligned on
+/// a `/` boundary (or `mount_point == path`, or `mount_point == "/"`).
+/// `VFSRouter::route_in_zone` is the only caller and enforces this by
+/// construction (its walk only inspects ancestors at `/` boundaries via
+/// `rfind('/')`), but the precondition is implicit; spelling it out as
+/// a `debug_assert!` documents the invariant and catches any future
+/// misuse (e.g. a caller passing `path="/root/data2/x"` with
+/// `mount_point="/root/data"` would otherwise silently produce
+/// `"2/x"` instead of a routing miss).
 fn strip_mount_prefix(path: &str, mount_point: &str) -> String {
+    debug_assert!(
+        path == mount_point
+            || mount_point == "/"
+            || path
+                .strip_prefix(mount_point)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
+        "strip_mount_prefix called with non-LPM mount_point: path={path:?} \
+         mount_point={mount_point:?}",
+    );
     if path == mount_point {
         String::new()
     } else if mount_point == "/" {

@@ -24,6 +24,12 @@ pub mod proto {
     tonic::include_proto!("nexus.password_vault.v1");
 }
 
+// Internal types: storage rows, error enum, plaintext entry shape.
+// `pub(crate)` — not part of the service's public surface (which is
+// the gRPC trait alone).
+#[allow(dead_code)] // wired into RPCs in follow-up commits
+mod types;
+
 use tonic::{Request, Response, Status};
 
 use proto::password_vault_service_server::PasswordVaultService;

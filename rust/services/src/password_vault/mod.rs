@@ -27,6 +27,9 @@ mod types;
 mod crypto;
 mod storage;
 
+// Re-export the public error type for binaries that host the service.
+pub use types::PasswordVaultError;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -43,9 +46,7 @@ use proto::{
     RestoreEntryRequest, RestoreEntryResponse, VaultEntry as ProtoVaultEntry,
 };
 
-use self::types::{
-    now_unix_ms, EntryIndex, PasswordVaultError, StoredEntry, VaultEntryPlaintext,
-};
+use self::types::{now_unix_ms, EntryIndex, StoredEntry, VaultEntryPlaintext};
 
 /// RFC 6238 default: 30-second window.
 const TOTP_PERIOD_SECONDS: u64 = 30;

@@ -53,8 +53,10 @@ pub(crate) struct VaultEntryPlaintext {
 
 /// Errors local to the password_vault service. Converted to
 /// `tonic::Status` at the RPC boundary via the `From` impl below.
+/// Public so binaries hosting the service (rust/profiles/vault/) can
+/// propagate them via anyhow without depending on internal types.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum PasswordVaultError {
+pub enum PasswordVaultError {
     #[error("vault entry not found: {0}")]
     NotFound(String),
     #[error("vault entry has no TOTP secret: {0}")]

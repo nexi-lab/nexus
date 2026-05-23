@@ -27,11 +27,12 @@ use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
-    CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, LockRequest,
+    CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, GetXattrBulkItem,
+    GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, LockRequest,
     LockResponse, PingRequest, PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse,
-    ReadRequest, ReadResponse, RenameRequest, RenameResponse, SetattrRequest, SetattrResponse,
-    StatRequest, StatResponse, UnlockRequest, UnlockResponse, WatchRequest, WatchResponse,
-    WriteRequest, WriteResponse,
+    ReadRequest, ReadResponse, RenameRequest, RenameResponse, SetXattrRequest, SetXattrResponse,
+    SetattrRequest, SetattrResponse, StatRequest, StatResponse, UnlockRequest, UnlockResponse,
+    WatchRequest, WatchResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -548,6 +549,109 @@ impl NexusVfsService for VfsServiceImpl {
         }
     }
 
+    async fn get_xattr(
+        &self,
+        req: Request<GetXattrRequest>,
+    ) -> Result<Response<GetXattrResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_get_xattr(s))),
+        };
+        match KernelConvenience::get_xattr(&*self.kernel, &req.path, &req.key, kernel::ROOT_ZONE_ID)
+        {
+            Ok(Some(value)) => Ok(Response::new(GetXattrResponse {
+                found: true,
+                value,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Ok(None) => Ok(Response::new(GetXattrResponse {
+                found: false,
+                value: String::new(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(GetXattrResponse {
+                    found: false,
+                    value: String::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn set_xattr(
+        &self,
+        req: Request<SetXattrRequest>,
+    ) -> Result<Response<SetXattrResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_set_xattr(s))),
+        };
+        match KernelConvenience::set_xattr(
+            &*self.kernel,
+            &req.path,
+            &req.key,
+            req.value,
+            kernel::ROOT_ZONE_ID,
+        ) {
+            Ok(()) => Ok(Response::new(SetXattrResponse {
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(SetXattrResponse {
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn get_xattr_bulk(
+        &self,
+        req: Request<GetXattrBulkRequest>,
+    ) -> Result<Response<GetXattrBulkResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_get_xattr_bulk(s))),
+        };
+        match KernelConvenience::get_xattr_bulk(
+            &*self.kernel,
+            &req.paths,
+            &req.key,
+            kernel::ROOT_ZONE_ID,
+        ) {
+            Ok(rows) => Ok(Response::new(GetXattrBulkResponse {
+                items: rows
+                    .into_iter()
+                    .map(|(p, v)| GetXattrBulkItem {
+                        path: p,
+                        found: v.is_some(),
+                        value: v.unwrap_or_default(),
+                    })
+                    .collect(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(GetXattrBulkResponse {
+                    items: Vec::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
         let ctx = self.resolve_context(&req.into_inner().auth_token)?;
         let uptime = self.server_started_at.elapsed().as_secs() as i64;
@@ -881,6 +985,30 @@ fn error_delete(status: Status) -> DeleteResponse {
 fn error_readdir(status: Status) -> ReaddirResponse {
     ReaddirResponse {
         entries: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_get_xattr(status: Status) -> GetXattrResponse {
+    GetXattrResponse {
+        found: false,
+        value: String::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_set_xattr(status: Status) -> SetXattrResponse {
+    SetXattrResponse {
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_get_xattr_bulk(status: Status) -> GetXattrBulkResponse {
+    GetXattrBulkResponse {
+        items: Vec::new(),
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

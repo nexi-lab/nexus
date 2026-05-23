@@ -61,6 +61,12 @@ service NexusVFSService {
 
   // Typed file-event watch (blocking, inotify-shaped).
   rpc Watch(WatchRequest) returns (WatchResponse);
+
+  // Typed xattr (extended-attribute) ops — Tier 2 KernelConvenience.
+  // Direct-metastore path, no hooks / no permission gate.
+  rpc GetXattr(GetXattrRequest) returns (GetXattrResponse);
+  rpc SetXattr(SetXattrRequest) returns (SetXattrResponse);
+  rpc GetXattrBulk(GetXattrBulkRequest) returns (GetXattrBulkResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -395,4 +401,49 @@ message WatchResponse {
   string event_type = 3;   // FileEventType Debug string (e.g. "FileWrite")
   bool is_error = 4;
   bytes error_payload = 5;
+}
+
+// --- Typed xattr ops (replace get_xattr / set_xattr / get_xattr_bulk Calls) ---
+
+message GetXattrRequest {
+  string path = 1;
+  string key = 2;
+  string auth_token = 3;
+}
+
+message GetXattrResponse {
+  bool found = 1;        // false → key not set; not an error
+  string value = 2;
+  bool is_error = 3;
+  bytes error_payload = 4;
+}
+
+message SetXattrRequest {
+  string path = 1;
+  string key = 2;
+  string value = 3;
+  string auth_token = 4;
+}
+
+message SetXattrResponse {
+  bool is_error = 1;
+  bytes error_payload = 2;
+}
+
+message GetXattrBulkRequest {
+  repeated string paths = 1;
+  string key = 2;
+  string auth_token = 3;
+}
+
+message GetXattrBulkItem {
+  string path = 1;
+  bool found = 2;        // false → key not set on this path
+  string value = 3;
+}
+
+message GetXattrBulkResponse {
+  repeated GetXattrBulkItem items = 1;
+  bool is_error = 2;
+  bytes error_payload = 3;
 }

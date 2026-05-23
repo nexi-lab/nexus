@@ -1,0 +1,39 @@
+name: Vault Binary
+
+# Per-PR + develop-push gate for nexusd-vault. Builds across all three
+# platforms, enforces per-platform size budgets, and runs the
+# password_vault module unit tests (41 tests covering crypto / storage
+# / all 7 RPCs / RFC 6238 TOTP vectors).
+#
+# Mirrors cluster-binary.yml so vault gets the same regression coverage
+# cluster does. password-agent doesn't have its own owners on the
+# nexus side — these tests are how vault catches regressions it wouldn't
+# otherwise see.
+#
+# paths-filtered: only fires for changes that can actually move the
+# binary or its build inputs.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "proto/nexus/password_vault/**"
+      - ".github/workflows/vault-binary.yml"
+      - ".github/workflows/vault-binary-build.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "proto/nexus/password_vault/**"
+      - ".github/workflows/vault-binary.yml"
+      - ".github/workflows/vault-binary-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/vault-binary-build.yml
+    with:
+      upload_retention_days: 14

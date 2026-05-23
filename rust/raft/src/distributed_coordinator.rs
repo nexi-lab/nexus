@@ -579,6 +579,10 @@ fn remove_local_probe_zone(zm: &ZoneManager, zone_id: &str) {
     }
 }
 
+// Same rationale as `bootstrap_or_join_zone` above — every arg is a
+// primitive descriptor the caller already names, bundling them adds
+// boilerplate without expressive gain.
+#[allow(clippy::too_many_arguments)]
 fn attempt_join_zone_round(
     zm: &ZoneManager,
     zone_id: &str,
@@ -587,6 +591,7 @@ fn attempt_join_zone_round(
     peer_addrs: &[NodeAddress],
     join_runtime: &tokio::runtime::Runtime,
     rpc_timeout_secs: u64,
+    as_learner: bool,
 ) -> Result<(), String> {
     let mut last_err = String::new();
     for peer in peer_addrs {
@@ -604,7 +609,7 @@ fn attempt_join_zone_round(
                     seed_peers = ?zone_peers,
                     "local join_zone seed peers",
                 );
-                if let Err(e) = zm.join_zone(zone_id, zone_peers, /* learner */ false) {
+                if let Err(e) = zm.join_zone(zone_id, zone_peers, /* learner */ as_learner) {
                     last_err = format!("local join_zone setup failed: {e}");
                     tracing::warn!(
                         endpoint = %endpoint,
@@ -620,7 +625,7 @@ fn attempt_join_zone_round(
                 zone_id,
                 node_id,
                 self_address,
-                /* as_learner */ false,
+                as_learner,
                 rpc_timeout_secs,
             ));
             match attempt {
@@ -735,6 +740,38 @@ fn record_join_attempt(
 /// Returns `Err` with a descriptive string if `max_attempts` was
 /// exhausted without a successful JoinZone — caller surfaces this to
 /// the operator.
+///
+/// `as_learner` selects the membership role on the **joiner** branch
+/// (branch 3) — the leader proposes `AddLearnerNode` instead of
+/// `AddNode`, so the new node receives full replication but does not
+/// count toward quorum.  Picking the right value is a contract
+/// distinction, not an operator knob:
+///
+///   * **`as_learner=false`** — root zone bootstrap.  Every node in a
+///     root cluster votes; quorum is essential for any write.  Use
+///     ≥3 voters (+optional witness) in production so single-node
+///     loss does not lose quorum.
+///   * **`as_learner=true`**  — subtree share / mount.  The zone has
+///     one authoritative owner (the `share` creator); joiners are
+///     readers / replicas that should never affect the owner's
+///     ability to commit.  This makes wipe-rejoin safe by
+///     construction — losing a learner has zero quorum impact, so
+///     SSD swap / OS reinstall / device migration cannot strand the
+///     zone in `not leader` deadlock the way a 2-voter pattern can.
+///
+/// The branch-1 (restart) and branch-2 (founder) paths ignore
+/// `as_learner` — restart resumes from persisted ConfState (which
+/// already reflects historical role assignments), and a founder
+/// always seeds itself as the 1-voter author of the cluster.
+// `clippy::too_many_arguments`: every argument here is a primitive
+// boot-time descriptor (zone id, node id, address, peer list, three
+// flags).  Bundling them into a struct would force every caller —
+// `init_from_env`, `run_daemon`, `run_join`, future Python RPC
+// handlers — to import that struct just to populate the fields one
+// by one with the same names.  Net readability loss for zero
+// expressive gain, so we keep the explicit signature and silence
+// the lint locally.
+#[allow(clippy::too_many_arguments)]
 pub fn bootstrap_or_join_zone(
     zm: &ZoneManager,
     zone_id: &str,
@@ -743,6 +780,7 @@ pub fn bootstrap_or_join_zone(
     peer_addrs: &[NodeAddress],
     bootstrap_new: bool,
     max_attempts: Option<u32>,
+    as_learner: bool,
 ) -> Result<(), String> {
     // Branch 1: zone already loaded from disk.
     if zm.get_zone(zone_id).is_some() {
@@ -823,6 +861,7 @@ pub fn bootstrap_or_join_zone(
                 peer_addrs,
                 &join_runtime,
                 JOIN_ZONE_RPC_TIMEOUT_SECS,
+                as_learner,
             ) {
                 Ok(()) => return Ok(()),
                 Err(e) => last_err = e,
@@ -858,6 +897,7 @@ pub fn bootstrap_or_join_zone(
                 peer_addrs,
                 &join_runtime,
                 JOIN_ZONE_RPC_TIMEOUT_SECS,
+                as_learner,
             ),
             &mut attempts,
             max_attempts,
@@ -1109,6 +1149,7 @@ impl RaftDistributedCoordinator {
                     &peer_addrs,
                     bootstrap_new,
                     /* max_attempts */ None,
+                    /* as_learner   */ false,
                 )?;
             }
             Some(BootstrapMode::Dynamic) => {

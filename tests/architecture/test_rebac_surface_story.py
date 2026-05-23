@@ -11,7 +11,7 @@ from scripts.surface_coverage.schema import load_yaml
 from scripts.surface_coverage.taxonomy import classify_op_id
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
 _REBAC_SERVICE = _REPO_ROOT / "src/nexus/bricks/rebac/rebac_service.py"
 
 OWNING_ISSUE = 4134

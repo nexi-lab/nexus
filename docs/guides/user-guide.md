@@ -727,7 +727,7 @@ Expected behavior:
 
 **Correctness assertions:** the ReBAC tuple/check/list/explain RPC and CLI
 rows are covered by `tests/unit/services/test_rebac_service.py` and the
-ReBAC story gate in `tests/architecture/test_rebac_surface_story.py`.
+ReBAC story gate in `tests/surface_coverage/test_rebac_surface_story.py`.
 Read-only hub-zone fast-fail is covered by
 `tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call`
 and the sandbox federation E2E. Tool-profile assignment and grants affecting

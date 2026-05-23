@@ -40,6 +40,10 @@ service NexusVFSService {
 
   // Typed directory listing — metastore + backend merge, procfs intercepts.
   rpc Readdir(ReaddirRequest) returns (ReaddirResponse);
+
+  // Vectored stat — single redb txn on the optimized KernelConvenience
+  // override. Per-path not-found is in-band (`found = false`).
+  rpc BatchStat(BatchStatRequest) returns (BatchStatResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -218,4 +222,38 @@ message ReaddirResponse {
   repeated ReaddirEntry entries = 1;
   bool is_error = 2;
   bytes error_payload = 3;   // JSON error dict — auth failures only
+}
+
+// --- Vectored stat (replaces the `stat_batch` Call) ---
+
+message BatchStatRequest {
+  string auth_token = 1;
+  string zone_id = 2;        // empty → caller's context zone
+  repeated string paths = 3;
+}
+
+// Mirrors `StatResponse`'s stat fields but without `is_error` — auth
+// failures surface as an outer tonic Status (matching BatchRead /
+// BatchWrite), and per-path not-found is in-band via `found = false`.
+message BatchStatItem {
+  bool found = 1;
+  string path = 2;
+  int64 size = 3;
+  string content_id = 4;
+  string mime_type = 5;
+  bool is_directory = 6;
+  int32 entry_type = 7;
+  uint32 mode = 8;
+  uint32 version = 9;
+  uint64 gen = 10;
+  string zone_id = 11;
+  optional int64 created_at_ms = 12;
+  optional int64 modified_at_ms = 13;
+  string last_writer_address = 14;
+  string link_target = 15;
+  string owner_id = 16;
+}
+
+message BatchStatResponse {
+  repeated BatchStatItem results = 1;  // positional — same length/order as request.paths
 }

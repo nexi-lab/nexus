@@ -25,10 +25,11 @@ use kernel::abi::KernelAbi;
 use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
-    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchWriteItemResponse,
-    BatchWriteRequest, BatchWriteResponse, CallRequest, CallResponse, DeleteRequest,
-    DeleteResponse, PingRequest, PingResponse, ReaddirEntry, ReaddirRequest, ReaddirResponse,
-    ReadRequest, ReadResponse, StatRequest, StatResponse, WriteRequest, WriteResponse,
+    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
+    BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
+    CallResponse, DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReaddirEntry,
+    ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, StatRequest, StatResponse,
+    WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -381,6 +382,60 @@ impl NexusVfsService for VfsServiceImpl {
             .collect();
 
         Ok(Response::new(BatchReadResponse { results: mapped }))
+    }
+
+    async fn batch_stat(
+        &self,
+        req: Request<BatchStatRequest>,
+    ) -> Result<Response<BatchStatResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Err(s),
+        };
+        if !ctx.zone_perms.is_empty() {
+            return Err(Status::permission_denied(
+                "federation token: use Call dispatch — typed BatchStat bypasses zone authorization",
+            ));
+        }
+        let zone_id = if req.zone_id.is_empty() {
+            ctx.zone_id.as_str()
+        } else {
+            req.zone_id.as_str()
+        };
+
+        // KernelConvenience::stat_batch picks the optimized path on
+        // Kernel — single redb read txn via `with_metastore::get_batch`,
+        // falling back to per-path sys_stat for implicit dirs / procfs.
+        let results = KernelConvenience::stat_batch(&*self.kernel, &req.paths, zone_id);
+        let mapped: Vec<BatchStatItem> = results
+            .into_iter()
+            .map(|opt| match opt {
+                Some(s) => BatchStatItem {
+                    found: true,
+                    path: s.path,
+                    size: s.size as i64,
+                    content_id: s.content_id.unwrap_or_default(),
+                    mime_type: s.mime_type,
+                    is_directory: s.is_directory,
+                    entry_type: s.entry_type as i32,
+                    mode: s.mode,
+                    version: s.version,
+                    gen: s.gen,
+                    zone_id: s.zone_id.unwrap_or_default(),
+                    created_at_ms: s.created_at_ms,
+                    modified_at_ms: s.modified_at_ms,
+                    last_writer_address: s.last_writer_address.unwrap_or_default(),
+                    link_target: s.link_target.unwrap_or_default(),
+                    owner_id: s.owner_id.unwrap_or_default(),
+                },
+                None => BatchStatItem {
+                    found: false,
+                    ..Default::default()
+                },
+            })
+            .collect();
+        Ok(Response::new(BatchStatResponse { results: mapped }))
     }
 
     async fn batch_write(

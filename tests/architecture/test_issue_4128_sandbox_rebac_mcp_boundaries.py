@@ -8,7 +8,7 @@ from pathlib import Path
 from scripts.surface_coverage.schema import PerfClass, ProfileStatus, load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 _REBAC_SANDBOX_ROWS = {

@@ -13,7 +13,7 @@ import yaml
 from scripts.surface_coverage.schema import ProfileStatus, load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
 _TOOL_PROFILES = _REPO_ROOT / "src/nexus/config/tool_profiles.yaml"
 _USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
 

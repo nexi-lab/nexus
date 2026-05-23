@@ -7,8 +7,8 @@ from pathlib import Path
 from scripts.surface_coverage.schema import PerfClass, ProfileStatus, load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_GAPS_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-gaps.yaml"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
+_GAPS_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-gaps.yaml"
 _USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
 _BENCHMARK = _REPO_ROOT / "tests/benchmarks/bench_sandbox_federation_latency.py"
 

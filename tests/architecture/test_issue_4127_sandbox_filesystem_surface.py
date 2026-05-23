@@ -7,7 +7,7 @@ from pathlib import Path
 from scripts.surface_coverage.schema import ProfileStatus, load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
 
 _SUPPORTED_SANDBOX_ROWS = {
     "delete.batch",

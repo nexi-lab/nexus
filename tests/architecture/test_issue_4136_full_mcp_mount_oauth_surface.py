@@ -12,7 +12,7 @@ from pathlib import Path
 from scripts.surface_coverage.schema import load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
 _USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
 _REAL_E2E_TEST = "tests/e2e/server/test_issue_4136_api_surface_e2e.py"
 

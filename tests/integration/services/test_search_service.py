@@ -8,7 +8,7 @@ PermissionEnforcer, DriverLifecycleCoordinator (DLC), and NexusFSGateway.
 """
 
 import re
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -30,9 +30,24 @@ def mock_metadata_store():
     """Create a mock MetastoreABC."""
     store = MagicMock()
     store.list_paths.return_value = []
+    store.list.return_value = []
+    store.metastore_list.side_effect = lambda prefix="": store.list(prefix)
     store.get_file_metadata.return_value = None
     store.get_file_metadata_bulk.return_value = {}
     store.get_searchable_text_bulk.return_value = {}
+
+    def _get_file_metadata(path, key):
+        return store.get_file_metadata(path, key)
+
+    def _get_file_metadata_bulk(paths, key):
+        if key == "parsed_text":
+            return store.get_searchable_text_bulk(paths)
+        return store.get_file_metadata_bulk(paths, key)
+
+    store.get_xattr.side_effect = _get_file_metadata
+    store.get_xattr_bulk.side_effect = _get_file_metadata_bulk
+    store.metastore_get_file_metadata.side_effect = _get_file_metadata
+    store.metastore_get_file_metadata_bulk.side_effect = _get_file_metadata_bulk
     return store
 
 
@@ -71,11 +86,15 @@ def mock_gateway():
     """Create a mock NexusFSGateway."""
     gw = MagicMock()
     gw.read = AsyncMock(return_value=b"test content")
+    gw.read_file = gw.read
     gw.read_bulk.return_value = {}
     gw._get_context_identity.return_value = (None, None, False)
+    gw.get_routing_params = gw._get_context_identity
     gw._descendant_checker.has_access.return_value = True
+    gw.has_descendant_access = gw._descendant_checker.has_access
     gw.record_read_if_tracking.return_value = None
     gw.SessionLocal = MagicMock()
+    gw.session_factory = gw.SessionLocal
     gw.backend = MagicMock()
     gw.sys_readdir.return_value = []
     return gw
@@ -415,8 +434,7 @@ class TestGatewayDelegation:
 
         assert entries == expected_entries
         assert mock_gateway.sys_readdir.call_args_list == [
-            (("/workspace",), {"recursive": False, "details": True, "context": ANY}),
-            (("/workspace/src",), {"recursive": False, "details": True, "context": ANY}),
+            call("/workspace", recursive=True, details=True, context=ANY),
         ]
 
     async def test_read_converts_str_to_bytes(self, service, mock_gateway):
@@ -1871,3 +1889,281 @@ class TestGrepBlockTypeOverfetch:
         assert "table" in msg
         assert "frontmatter" in msg
         assert "paragraph" in msg
+
+
+# =============================================================================
+# Issue #4186: section-aware grep
+# =============================================================================
+
+_MD_WITH_SECTIONS = """\
+# Intro
+needle outside target
+
+## API
+needle inside api
+api details
+
+## Guide
+needle inside guide
+"""
+
+
+def _make_section_md_structure_json(path: str = "/doc.md"):
+    """Build md_structure JSON for section-aware grep tests."""
+    import json
+
+    return json.dumps(
+        {
+            "version": 2,
+            "content_id": f"{path}:abc123",
+            "tokens_est_method": "bytes/4",
+            "sections": [
+                {
+                    "heading": "Intro",
+                    "depth": 1,
+                    "byte_start": 0,
+                    "byte_end": len(_MD_WITH_SECTIONS.encode()),
+                    "line_start": 0,
+                    "line_end": 9,
+                    "tokens_est": 20,
+                    "blocks": [],
+                },
+                {
+                    "heading": "API",
+                    "depth": 2,
+                    "byte_start": 32,
+                    "byte_end": 68,
+                    "line_start": 3,
+                    "line_end": 7,
+                    "tokens_est": 10,
+                    "blocks": [
+                        {
+                            "type": "heading",
+                            "byte_start": 32,
+                            "byte_end": 39,
+                            "line_start": 3,
+                            "line_end": 4,
+                        },
+                        {
+                            "type": "paragraph",
+                            "byte_start": 39,
+                            "byte_end": 68,
+                            "line_start": 4,
+                            "line_end": 6,
+                        },
+                    ],
+                },
+                {
+                    "heading": "Guide",
+                    "depth": 2,
+                    "byte_start": 69,
+                    "byte_end": len(_MD_WITH_SECTIONS.encode()),
+                    "line_start": 7,
+                    "line_end": 9,
+                    "tokens_est": 8,
+                    "blocks": [],
+                },
+            ],
+        }
+    )
+
+
+def _make_section_md_structure_json_for_ranges(
+    *, path: str, text: str, api_start: int, api_end: int
+):
+    """Build md_structure JSON with API range supplied by the test."""
+    import json
+
+    return json.dumps(
+        {
+            "version": 2,
+            "content_id": f"{path}:abc123",
+            "tokens_est_method": "bytes/4",
+            "sections": [
+                {
+                    "heading": "Intro",
+                    "depth": 1,
+                    "byte_start": 0,
+                    "byte_end": len(text.encode()),
+                    "line_start": 0,
+                    "line_end": api_start,
+                    "tokens_est": 20,
+                    "blocks": [],
+                },
+                {
+                    "heading": "API",
+                    "depth": 2,
+                    "byte_start": 0,
+                    "byte_end": len(text.encode()),
+                    "line_start": api_start,
+                    "line_end": api_end,
+                    "tokens_est": 10,
+                    "blocks": [],
+                },
+            ],
+        }
+    )
+
+
+class TestGrepSectionFilter:
+    """Issue #4186: section filtering for grep."""
+
+    @pytest.fixture
+    def service_with_sections(self, mock_metadata_store, mock_gateway):
+        mock_gateway._get_context_identity.return_value = (None, None, False)
+        mock_metadata_store.list_paths.return_value = ["/doc.md", "/report.pdf"]
+        mock_metadata_store.get_searchable_text_bulk.side_effect = lambda paths: {
+            path: _MD_WITH_SECTIONS for path in paths if path in {"/doc.md", "/report.pdf"}
+        }
+        mock_metadata_store.get_xattr_bulk.side_effect = lambda paths, key: {
+            path: _MD_WITH_SECTIONS
+            for path in paths
+            if key == "parsed_text" and path in {"/doc.md", "/report.pdf"}
+        }
+        mock_metadata_store.metastore_get_file_metadata_bulk.side_effect = (
+            mock_metadata_store.get_xattr_bulk.side_effect
+        )
+
+        def _get_file_metadata(path, key):
+            if key == "md_structure" and path in {"/doc.md", "/report.pdf"}:
+                return _make_section_md_structure_json(path)
+            return None
+
+        mock_metadata_store.get_file_metadata.side_effect = _get_file_metadata
+        mock_metadata_store.metastore_get_file_metadata.side_effect = _get_file_metadata
+        return SearchService(
+            metadata_store=mock_metadata_store,
+            nexus_fs=mock_gateway,
+            enforce_permissions=False,
+        )
+
+    async def test_section_filter_returns_only_matches_inside_heading(
+        self, service_with_sections, context
+    ):
+        """section='## API' keeps only matches inside that heading range."""
+        with patch.object(service_with_sections, "list", return_value=["/doc.md"]):
+            results = await service_with_sections.grep(
+                pattern="needle",
+                section="## API",
+                context=context,
+            )
+
+        assert [r["content"] for r in results] == ["needle inside api"]
+        assert results[0]["section"] == {
+            "heading": "API",
+            "depth": 2,
+            "line_start": 4,
+            "line_end": 7,
+        }
+
+    async def test_missing_section_returns_empty_not_whole_file(
+        self, service_with_sections, context
+    ):
+        """A missing section must not fall back to whole-file grep results."""
+        with patch.object(service_with_sections, "list", return_value=["/doc.md"]):
+            results = await service_with_sections.grep(
+                pattern="needle",
+                section="## Missing",
+                context=context,
+            )
+
+        assert results == []
+
+    async def test_section_filter_scans_past_pre_section_matches(
+        self, service_with_sections, context
+    ):
+        """Matches before the target heading must not exhaust the result window."""
+        outside_lines = "\n".join(f"needle outside {i}" for i in range(20))
+        text = f"# Intro\n{outside_lines}\n## API\nneedle inside api\n"
+        lines = text.splitlines()
+        api_start = lines.index("## API")
+        api_end = len(lines)
+
+        def _get_xattr(path, key):
+            if path == "/large.md" and key == "md_structure":
+                return _make_section_md_structure_json_for_ranges(
+                    path=path,
+                    text=text,
+                    api_start=api_start,
+                    api_end=api_end,
+                )
+            return None
+
+        metadata = service_with_sections.metadata
+        metadata.get_xattr.side_effect = _get_xattr
+        metadata.metastore_get_file_metadata.side_effect = _get_xattr
+        metadata.get_file_metadata.side_effect = _get_xattr
+        metadata.get_xattr_bulk.side_effect = lambda paths, key: {
+            path: text for path in paths if key == "parsed_text" and path == "/large.md"
+        }
+        metadata.metastore_get_file_metadata_bulk.side_effect = metadata.get_xattr_bulk.side_effect
+        metadata.get_searchable_text_bulk.side_effect = lambda paths: {
+            path: text for path in paths if path == "/large.md"
+        }
+
+        with patch.object(service_with_sections, "list", return_value=["/large.md"]):
+            results = await service_with_sections.grep(
+                pattern="needle",
+                section="## API",
+                max_results=1,
+                context=context,
+            )
+
+        assert [r["content"] for r in results] == ["needle inside api"]
+
+    async def test_section_filter_scans_raw_content_past_pre_section_matches(
+        self, service_with_sections, context
+    ):
+        """Uncached file scans must apply max_results after section selection."""
+        outside_lines = "\n".join(f"needle outside {i}" for i in range(20))
+        text = f"# Intro\n{outside_lines}\n## API\nneedle inside raw api\n"
+        lines = text.splitlines()
+        api_start = lines.index("## API")
+        api_end = len(lines)
+
+        def _get_xattr(path, key):
+            if path == "/raw.md" and key == "md_structure":
+                return _make_section_md_structure_json_for_ranges(
+                    path=path,
+                    text=text,
+                    api_start=api_start,
+                    api_end=api_end,
+                )
+            return None
+
+        metadata = service_with_sections.metadata
+        metadata.get_xattr.side_effect = _get_xattr
+        metadata.metastore_get_file_metadata.side_effect = _get_xattr
+        metadata.get_file_metadata.side_effect = _get_xattr
+        metadata.get_searchable_text_bulk.side_effect = lambda paths: {}
+        metadata.get_xattr_bulk.side_effect = lambda paths, key: {}
+        metadata.metastore_get_file_metadata_bulk.side_effect = metadata.get_xattr_bulk.side_effect
+
+        with (
+            patch.object(service_with_sections, "list", return_value=["/raw.md"]),
+            patch.object(service_with_sections, "_read", new=AsyncMock(return_value=text.encode())),
+        ):
+            results = await service_with_sections.grep(
+                pattern="needle",
+                section="## API",
+                max_results=1,
+                context=context,
+            )
+
+        assert [r["content"] for r in results] == ["needle inside raw api"]
+
+    async def test_section_filter_uses_md_structure_for_parsed_non_markdown_text(
+        self, service_with_sections, context
+    ):
+        """Parsed text with md_structure metadata is section-filtered even for non-md paths."""
+        with patch.object(service_with_sections, "list", return_value=["/report.pdf"]):
+            results = await service_with_sections.grep(
+                pattern="needle",
+                section="API",
+                search_mode="parsed",
+                context=context,
+            )
+
+        assert [r["file"] for r in results] == ["/report.pdf"]
+        assert [r["content"] for r in results] == ["needle inside api"]
+        assert results[0]["section"]["heading"] == "API"

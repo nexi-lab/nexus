@@ -735,6 +735,7 @@ async def _do_grep_operation(
     invert_match: bool,
     files: list[str] | None,
     block_type: str | None = None,
+    section: str | None = None,
 ) -> dict[str, Any]:
     """Execute a grep request and assemble the paginated response.
 
@@ -791,6 +792,8 @@ async def _do_grep_operation(
             # Issue #3720: only forward block_type when set (backward compat).
             if block_type is not None:
                 grep_kwargs["block_type"] = block_type
+            if section is not None:
+                grep_kwargs["section"] = section
             raw_results = await search_service.grep(**grep_kwargs)
         except (ValueError, InvalidPathError) as exc:
             # Client errors from SearchService:
@@ -874,6 +877,9 @@ async def _do_grep_operation(
         }
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
+        if section is not None:
+            extras["section_filter"] = section
+            extras["section_status"] = "matched" if post_filter_count else "no_matches"
         return build_paginated_list_response(
             items=paginated,
             total=total,
@@ -1035,6 +1041,26 @@ def _body_get_files(body: dict[str, Any]) -> list[str] | None:
     return raw
 
 
+def _resolve_section_filter(section: str | None, in_section: str | None) -> str | None:
+    """Resolve the canonical section filter from supported aliases."""
+    if section is not None and not isinstance(section, str):
+        raise HTTPException(status_code=400, detail="Field 'section' must be a string")
+    if in_section is not None and not isinstance(in_section, str):
+        raise HTTPException(status_code=400, detail="Field 'in_section' must be a string")
+    values = [value for value in (section, in_section) if value is not None]
+    if not values:
+        return None
+    if len(values) == 2 and values[0] != values[1]:
+        raise HTTPException(
+            status_code=400,
+            detail="Fields 'section' and 'in_section' must match when both are provided",
+        )
+    resolved = values[0]
+    if not resolved.strip():
+        raise HTTPException(status_code=400, detail="section must be a non-empty string")
+    return resolved
+
+
 @router.get("/grep")
 async def search_grep(
     request: Request,
@@ -1061,6 +1087,17 @@ async def search_grep(
             "blockquote, list, heading. Non-markdown files pass through "
             "unfiltered."
         ),
+    ),
+    section: str | None = Query(
+        None,
+        description=(
+            "Restrict matches to a markdown/parsed-content section heading "
+            "(#4186), e.g. 'API' or '## API'."
+        ),
+    ),
+    in_section: str | None = Query(
+        None,
+        description="Alias for section, matching the CLI --in-section flag (#4186).",
     ),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
@@ -1094,6 +1131,7 @@ async def search_grep(
         invert_match=invert_match,
         files=files,
         block_type=block_type,
+        section=_resolve_section_filter(section, in_section),
     )
 
 
@@ -1165,6 +1203,7 @@ async def search_grep_post(
     block_type = body.get("block_type")
     if block_type is not None and not isinstance(block_type, str):
         raise HTTPException(status_code=400, detail="Field 'block_type' must be a string")
+    section = _resolve_section_filter(body.get("section"), body.get("in_section"))
 
     return await _do_grep_operation(
         request,
@@ -1179,6 +1218,7 @@ async def search_grep_post(
         invert_match=invert_match,
         files=files,
         block_type=block_type,
+        section=section,
     )
 
 

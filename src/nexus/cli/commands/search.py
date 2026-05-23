@@ -330,6 +330,16 @@ def glob(
         "Non-markdown files pass through unfiltered."
     ),
 )
+@click.option(
+    "--in-section",
+    "section",
+    type=str,
+    default=None,
+    help=(
+        "Restrict matches to a markdown/parsed-content section heading "
+        "(#4186), e.g. 'API' or '## API'."
+    ),
+)
 @add_output_options
 @add_backend_options
 def grep(
@@ -349,6 +359,7 @@ def grep(
     files: tuple[str, ...],
     files_from: str | None,
     block_type: str | None,
+    section: str | None,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -368,6 +379,7 @@ def grep(
 
     \b
         nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
+        nexus grep "status" /workspace/spec.md --in-section "## API"
     """
 
     async def _impl() -> None:
@@ -407,6 +419,8 @@ def grep(
                         grep_kwargs["files"] = files_list
                     if block_type is not None:
                         grep_kwargs["block_type"] = block_type
+                    if section is not None:
+                        grep_kwargs["section"] = section
 
                     result = await _await_service_result(
                         nx.service("search").grep(pattern, **grep_kwargs)

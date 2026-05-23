@@ -2104,6 +2104,7 @@ class SearchService:
         invert_match: bool = False,
         files: builtins.list[str] | None = None,
         block_type: str | None = None,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Public grep entry point with activity-event instrumentation (#3791).
 
@@ -2133,6 +2134,7 @@ class SearchService:
                 invert_match=invert_match,
                 files=files,
                 block_type=block_type,
+                section=section,
             )
         except Exception:
             emit(
@@ -2167,6 +2169,7 @@ class SearchService:
         invert_match: bool = False,
         files: builtins.list[str] | None = None,
         block_type: str | None = None,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""Search file contents using regex patterns.
 
@@ -2197,6 +2200,11 @@ class SearchService:
                 ``"table"``, ``"frontmatter"``.  Non-markdown files
                 (or markdown files without ``md_structure`` metadata)
                 pass through unfiltered.
+            section: #4186: optional markdown/parsed-content section
+                filter. Matches may be specified as heading text
+                (``"API"``) or a markdown heading (``"## API"``).
+                Files without ``md_structure`` metadata fail closed so
+                grep never falls back to whole-file results.
         """
         if path and path != "/":
             path = self._validate_path(path)
@@ -2207,6 +2215,8 @@ class SearchService:
                 f"Invalid block_type {block_type!r}. "
                 f"Valid values: {', '.join(sorted(VALID_BLOCK_TYPES))}"
             )
+        if section is not None and not section.strip():
+            raise ValueError("section must be a non-empty string")
 
         flags = re.IGNORECASE if ignore_case else 0
         try:
@@ -2214,11 +2224,13 @@ class SearchService:
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
-        # Issue #3720: over-fetch when block_type filtering will discard
-        # some matches.  The original max_results is restored after
-        # post-filtering so callers see the expected result count.
+        structural_filter = block_type is not None or section is not None
+
+        # Issue #3720/#4186: over-fetch when structural filtering will
+        # discard some matches.  The original max_results is restored
+        # after post-filtering so callers see the expected result count.
         original_max_results = max_results
-        if block_type is not None:
+        if structural_filter:
             max_results = min(
                 max_results * _BLOCK_TYPE_OVERFETCH_FACTOR,
                 max(max_results, _BLOCK_TYPE_OVERFETCH_CAP),
@@ -2292,11 +2304,11 @@ class SearchService:
         # threshold lives in ``FILES_FILTER_TRIGRAM_THRESHOLD`` and is
         # benchmark-backed.
         zone_id, _, _ = self._get_routing_params(context)
-        if block_type is not None:
-            # Issue #3720 (Codex R2+R5): block_type MUST use SEQUENTIAL
+        if structural_filter:
+            # Issue #3720/#4186: structural filters MUST use SEQUENTIAL
             # to ensure ALL files (cached + uncached) are searched.
             # CACHED_TEXT skips files_needing_raw; TRIGRAM/ZOEKT return
-            # a fixed page that may miss qualifying block matches.
+            # a fixed page that may miss qualifying structural matches.
             strategy = SearchStrategy.SEQUENTIAL
         elif needs_python_path:
             # Force a Python-loop strategy so context/invert flags take
@@ -2378,11 +2390,14 @@ class SearchService:
                     trigram_results = [
                         r for r in trigram_results if r.get("file") in _files_filter_set
                     ][:max_results]
-                # Issue #3720: apply block_type post-filter before returning.
+                # Issue #3720/#4186: apply structural post-filters before returning.
+                if section is not None:
+                    trigram_results = self._filter_results_by_section(trigram_results, section)
                 if block_type is not None:
                     trigram_results = self._filter_results_by_block_type(
                         trigram_results, block_type
                     )
+                if structural_filter:
                     return trigram_results[:original_max_results]
                 return trigram_results
             strategy = SearchStrategy.RUST_BULK  # Fallback
@@ -2398,9 +2413,12 @@ class SearchService:
                 context=context,
             )
             if zoekt_results is not None:
-                # Issue #3720: apply block_type post-filter before returning.
+                # Issue #3720/#4186: apply structural post-filters before returning.
+                if section is not None:
+                    zoekt_results = self._filter_results_by_section(zoekt_results, section)
                 if block_type is not None:
                     zoekt_results = self._filter_results_by_block_type(zoekt_results, block_type)
+                if structural_filter:
                     return zoekt_results[:original_max_results]
                 return zoekt_results
             strategy = SearchStrategy.RUST_BULK
@@ -2411,25 +2429,45 @@ class SearchService:
                 if len(results) >= max_results:
                     break
                 lines = text.splitlines()
-                results.extend(
-                    self._grep_lines(
-                        regex=regex,
-                        lines=lines,
-                        file_path=file_path,
-                        before_context=before_context,
-                        after_context=after_context,
-                        invert_match=invert_match,
-                        max_results=max_results - len(results),
+                if section is not None:
+                    section_info = self._section_range_and_meta(file_path, section)
+                    if section_info is None:
+                        continue
+                    range_start, range_end, section_meta = section_info
+                    results.extend(
+                        self._grep_lines_in_section(
+                            regex=regex,
+                            lines=lines,
+                            file_path=file_path,
+                            range_start=range_start,
+                            range_end=range_end,
+                            section_meta=section_meta,
+                            before_context=before_context,
+                            after_context=after_context,
+                            invert_match=invert_match,
+                            max_results=max_results - len(results),
+                        )
                     )
-                )
+                else:
+                    results.extend(
+                        self._grep_lines(
+                            regex=regex,
+                            lines=lines,
+                            file_path=file_path,
+                            before_context=before_context,
+                            after_context=after_context,
+                            invert_match=invert_match,
+                            max_results=max_results - len(results),
+                        )
+                    )
             if (
                 strategy == SearchStrategy.CACHED_TEXT
-                and block_type is None
+                and not structural_filter
                 and len(results) >= max_results
             ):
                 return results[:max_results]
 
-        if block_type is None and len(results) >= max_results:
+        if not structural_filter and len(results) >= max_results:
             return results[:max_results]
 
         # Process remaining files needing raw content
@@ -2458,13 +2496,17 @@ class SearchService:
                         before_context=before_context,
                         after_context=after_context,
                         invert_match=invert_match,
-                        force_python_path=needs_python_path,
+                        force_python_path=needs_python_path or structural_filter,
+                        section=section,
                     )
                 )
 
-        # Issue #3720: post-filter by block_type when requested.
+        # Issue #4186/#3720: post-filter by section/block_type when requested.
+        if section is not None:
+            results = self._filter_results_by_section(results, section)
         if block_type is not None:
             results = self._filter_results_by_block_type(results, block_type)
+        if structural_filter:
             max_results = original_max_results
 
         return results[:max_results]
@@ -2556,6 +2598,68 @@ class SearchService:
 
         return results
 
+    @staticmethod
+    def _grep_lines_in_section(
+        regex: re.Pattern[str],
+        lines: builtins.list[str],
+        file_path: str,
+        range_start: int,
+        range_end: int,
+        section_meta: dict[str, Any],
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+        max_results: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search only match lines inside a stored section line range."""
+        results: builtins.list[dict[str, Any]] = []
+        if max_results <= 0:
+            return results
+
+        start = max(0, min(range_start, len(lines)))
+        end = max(start, min(range_end, len(lines)))
+        for idx in range(start, end):
+            if len(results) >= max_results:
+                break
+
+            line = lines[idx]
+            match_obj = regex.search(line)
+            if invert_match:
+                if match_obj:
+                    continue
+                entry: dict[str, Any] = {
+                    "file": file_path,
+                    "line": idx + 1,
+                    "content": line,
+                    "section": section_meta,
+                }
+            else:
+                if match_obj is None:
+                    continue
+                entry = {
+                    "file": file_path,
+                    "line": idx + 1,
+                    "content": line,
+                    "match": match_obj.group(0),
+                    "section": section_meta,
+                }
+
+            if before_context > 0 or after_context > 0:
+                b_start = max(0, idx - before_context)
+                a_end = min(len(lines), idx + after_context + 1)
+                if before_context > 0:
+                    entry["before_context"] = [
+                        {"line": i + 1, "content": lines[i]} for i in range(b_start, idx)
+                    ]
+                if after_context > 0:
+                    entry["after_context"] = [
+                        {"line": i + 1, "content": lines[i]} for i in range(idx + 1, a_end)
+                    ]
+
+            results.append(entry)
+
+        return results
+
     def _filter_results_by_block_type(
         self,
         results: builtins.list[dict[str, Any]],
@@ -2572,9 +2676,6 @@ class SearchService:
         Works directly with the raw JSON dict to avoid cross-brick
         imports (``nexus.bricks.parsers`` is a separate brick).
         """
-        import json as _json
-
-        MD_STRUCTURE_KEY = "md_structure"  # noqa: N806
         _V2_BLOCK_TYPES = frozenset({"paragraph", "blockquote", "list", "heading"})
 
         # Group results by file so we fetch metadata once per file.
@@ -2591,28 +2692,14 @@ class SearchService:
                 filtered.extend(file_results)
                 continue
 
-            # Fetch md_structure metadata for this file.
-            raw = self._kernel.get_xattr(file_path, MD_STRUCTURE_KEY)
-            if not isinstance(raw, (dict, str)):
-                raw = None
-            if raw is None:
-                legacy_get = getattr(self.metadata, "get_file_metadata", None)
-                if callable(legacy_get):
-                    raw = legacy_get(file_path, MD_STRUCTURE_KEY)
-            if raw is None:
+            data = self._load_md_structure_data(file_path)
+            if data is None:
                 # Issue #3720 (Codex R6): recognized markdown without
                 # metadata → fail closed.
                 logger.debug(
                     "No md_structure for %s — excluding results (fail closed)",
                     file_path,
                 )
-                continue
-
-            try:
-                data: dict[str, Any] = raw if isinstance(raw, dict) else _json.loads(raw)
-            except Exception:
-                # Issue #3720 (Codex R7): fail closed on corrupt metadata.
-                logger.debug("Corrupt md_structure for %s — excluding results", file_path)
                 continue
 
             # Issue #3720 (Codex R1+R2): v1 indices don't contain the
@@ -2663,6 +2750,152 @@ class SearchService:
 
         return filtered
 
+    def _load_md_structure_data(self, file_path: str) -> dict[str, Any] | None:
+        """Load stored md_structure metadata across old and new metastore APIs."""
+        import json as _json
+
+        getters = (
+            getattr(self._kernel, "get_xattr", None),
+            getattr(self._kernel, "metastore_get_file_metadata", None),
+            getattr(self.metadata, "get_file_metadata", None),
+        )
+        seen: set[int] = set()
+        for getter in getters:
+            if not callable(getter) or id(getter) in seen:
+                continue
+            seen.add(id(getter))
+            try:
+                raw = getter(file_path, "md_structure")
+            except Exception:
+                continue
+            if raw is None:
+                continue
+            if isinstance(raw, dict):
+                return raw
+            try:
+                loaded = _json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(loaded, dict):
+                return loaded
+        return None
+
+    @staticmethod
+    def _normalize_section_query(section: str) -> tuple[str, int | None]:
+        stripped = section.strip()
+        match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if match:
+            return match.group(2).strip(), len(match.group(1))
+        return stripped, None
+
+    @classmethod
+    def _find_section_metadata(
+        cls,
+        data: dict[str, Any],
+        section: str,
+    ) -> dict[str, Any] | None:
+        heading_query, requested_depth = cls._normalize_section_query(section)
+        lower = heading_query.lower()
+
+        def _eligible(sec: dict[str, Any]) -> bool:
+            if requested_depth is not None and sec.get("depth") != requested_depth:
+                return False
+            return bool(sec.get("heading"))
+
+        sections = [sec for sec in data.get("sections", []) if _eligible(sec)]
+        for sec in sections:
+            if str(sec.get("heading", "")).lower() == lower:
+                return sec
+        for sec in sections:
+            if lower in str(sec.get("heading", "")).lower():
+                return sec
+        return None
+
+    def _section_range_and_meta(
+        self,
+        file_path: str,
+        section: str,
+    ) -> tuple[int, int, dict[str, Any]] | None:
+        data = self._load_md_structure_data(file_path)
+        if data is None:
+            logger.debug(
+                "No md_structure for %s - excluding section-filtered results",
+                file_path,
+            )
+            return None
+
+        matched_section = self._find_section_metadata(data, section)
+        if matched_section is None:
+            return None
+
+        try:
+            range_start = int(matched_section["line_start"])
+            range_end = int(matched_section["line_end"])
+        except (KeyError, TypeError, ValueError):
+            logger.debug(
+                "Malformed md_structure section for %s - excluding results",
+                file_path,
+            )
+            return None
+        if range_start < 0 or range_end < range_start:
+            logger.debug(
+                "Invalid md_structure section range for %s - excluding results",
+                file_path,
+            )
+            return None
+
+        section_meta = {
+            "heading": matched_section.get("heading", ""),
+            "depth": matched_section.get("depth"),
+            "line_start": range_start + 1,
+            "line_end": range_end,
+        }
+        return range_start, range_end, section_meta
+
+    def _filter_results_by_section(
+        self,
+        results: builtins.list[dict[str, Any]],
+        section: str,
+    ) -> builtins.list[dict[str, Any]]:
+        """Post-filter grep results to lines inside a heading-delimited section.
+
+        Issue #4186. Uses stored ``md_structure`` metadata and does not
+        parse file content during grep. Files with missing/corrupt
+        structure metadata fail closed to avoid whole-file fallback.
+        """
+        by_file: dict[str, builtins.list[dict[str, Any]]] = {}
+        for r in results:
+            by_file.setdefault(r.get("file", ""), []).append(r)
+
+        filtered: builtins.list[dict[str, Any]] = []
+        start = time.monotonic()
+
+        for file_path, file_results in by_file.items():
+            section_info = self._section_range_and_meta(file_path, section)
+            if section_info is None:
+                continue
+            range_start, range_end, section_meta = section_info
+
+            for r in file_results:
+                line_0 = r.get("line", 0) - 1
+                if range_start <= line_0 < range_end:
+                    out = dict(r)
+                    out["section"] = section_meta
+                    filtered.append(out)
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+        if elapsed_ms > 5:
+            logger.debug(
+                "[GREP] Issue #4186: section=%r filter took %.1f ms (%d→%d results, %d files)",
+                section,
+                elapsed_ms,
+                len(results),
+                len(filtered),
+                len(by_file),
+            )
+
+        return filtered
+
     async def _grep_raw_content(
         self,
         regex: re.Pattern[str],
@@ -2676,6 +2909,7 @@ class SearchService:
         after_context: int = 0,
         invert_match: bool = False,
         force_python_path: bool = False,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Process files needing raw content read (mmap, Rust bulk, sequential).
 
@@ -2751,17 +2985,37 @@ class SearchService:
                     except UnicodeDecodeError:
                         continue
                     lines = text.splitlines()
-                    results.extend(
-                        self._grep_lines(
-                            regex=regex,
-                            lines=lines,
-                            file_path=file_path,
-                            before_context=before_context,
-                            after_context=after_context,
-                            invert_match=invert_match,
-                            max_results=remaining_results - len(results),
+                    if section is not None:
+                        section_info = self._section_range_and_meta(file_path, section)
+                        if section_info is None:
+                            continue
+                        range_start, range_end, section_meta = section_info
+                        results.extend(
+                            self._grep_lines_in_section(
+                                regex=regex,
+                                lines=lines,
+                                file_path=file_path,
+                                range_start=range_start,
+                                range_end=range_end,
+                                section_meta=section_meta,
+                                before_context=before_context,
+                                after_context=after_context,
+                                invert_match=invert_match,
+                                max_results=remaining_results - len(results),
+                            )
                         )
-                    )
+                    else:
+                        results.extend(
+                            self._grep_lines(
+                                regex=regex,
+                                lines=lines,
+                                file_path=file_path,
+                                before_context=before_context,
+                                after_context=after_context,
+                                invert_match=invert_match,
+                                max_results=remaining_results - len(results),
+                            )
+                        )
                 except Exception as e:
                     logger.debug("Failed to grep file %s: %s", file_path, e)
                     continue

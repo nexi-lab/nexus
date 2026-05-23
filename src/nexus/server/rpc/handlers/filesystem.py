@@ -89,12 +89,20 @@ async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     # way through to SearchService.
     if hasattr(params, "files") and params.files is not None:
         kwargs["files"] = params.files
+    if hasattr(params, "block_type") and params.block_type is not None:
+        kwargs["block_type"] = params.block_type
+    if hasattr(params, "section") and params.section is not None:
+        kwargs["section"] = params.section
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for grep"
     results = await search.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
-    return {"results": results}
+    response: dict[str, Any] = {"results": results}
+    if hasattr(params, "section") and params.section is not None:
+        response["section_filter"] = params.section
+        response["section_status"] = "matched" if results else "no_matches"
+    return response
 
 
 def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:

@@ -609,21 +609,19 @@ impl LockManager {
     /// from the same shared ``Arc<Mutex<LockState>>`` — a committed
     /// replicated write is visible here as soon as apply returns, so
     /// no read-quorum round-trip is needed.
-    pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, String> {
-        Ok(self
-            .locks_backend()
+    pub fn get_lock_info(&self, path: &str) -> Option<KernelLockInfo> {
+        self.locks_backend()
             .get_lock(path)
-            .map(shared_lock_to_kernel))
+            .map(shared_lock_to_kernel)
     }
 
     /// Enumerate advisory locks with a given path prefix, capped at ``limit``.
-    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<KernelLockInfo>, String> {
-        Ok(self
-            .locks_backend()
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> Vec<KernelLockInfo> {
+        self.locks_backend()
             .list_locks(prefix, limit)
             .into_iter()
             .map(shared_lock_to_kernel)
-            .collect())
+            .collect()
     }
 }
 
@@ -1063,11 +1061,11 @@ mod tests {
         assert!(lm
             .acquire_lock("/lk/e", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
             .unwrap());
-        let info = lm.get_lock_info("/lk/e").unwrap().unwrap();
+        let info = lm.get_lock_info("/lk/e").unwrap();
         assert_eq!(info.holders.len(), 1);
 
         assert!(lm.release_lock("/lk/e", "h1").unwrap());
-        assert!(lm.get_lock_info("/lk/e").unwrap().is_none());
+        assert!(lm.get_lock_info("/lk/e").is_none());
     }
 
     #[test]
@@ -1080,10 +1078,10 @@ mod tests {
         lm.acquire_lock("/lk/other", "h3", KernelLockMode::Exclusive, 1, 60, "agent")
             .unwrap();
 
-        let under_ns = lm.list_locks("/lk/ns/", 10).unwrap();
+        let under_ns = lm.list_locks("/lk/ns/", 10);
         assert_eq!(under_ns.len(), 2);
 
-        let all_lk = lm.list_locks("/lk/", 10).unwrap();
+        let all_lk = lm.list_locks("/lk/", 10);
         assert_eq!(all_lk.len(), 3);
     }
 
@@ -1092,9 +1090,9 @@ mod tests {
         let lm = LockManager::new();
         lm.acquire_lock("/lk/x", "h1", KernelLockMode::Exclusive, 1, 1, "agent")
             .unwrap();
-        let before = lm.get_lock_info("/lk/x").unwrap().unwrap().holders[0].expires_at_secs;
+        let before = lm.get_lock_info("/lk/x").unwrap().holders[0].expires_at_secs;
         assert!(lm.extend_lock("/lk/x", "h1", 3600).unwrap());
-        let after = lm.get_lock_info("/lk/x").unwrap().unwrap().holders[0].expires_at_secs;
+        let after = lm.get_lock_info("/lk/x").unwrap().holders[0].expires_at_secs;
         assert!(after >= before);
     }
 
@@ -1114,7 +1112,7 @@ mod tests {
         lm.acquire_lock("/lk/f", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
             .unwrap();
         assert!(lm.force_release_lock("/lk/f").unwrap());
-        assert!(lm.get_lock_info("/lk/f").unwrap().is_none());
+        assert!(lm.get_lock_info("/lk/f").is_none());
     }
 
     // ── Advisory hierarchy tests (NEW — not in old LocalLockManager) ─
@@ -1211,7 +1209,7 @@ mod tests {
         // Release I/O lock
         lm.do_release(h);
         // Advisory still held
-        assert!(lm.get_lock_info("/data/file").unwrap().is_some());
+        assert!(lm.get_lock_info("/data/file").is_some());
         // Release advisory
         assert!(lm.release_lock("/data/file", "adv1").unwrap());
     }

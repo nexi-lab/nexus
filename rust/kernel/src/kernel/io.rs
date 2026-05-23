@@ -1039,7 +1039,7 @@ impl Kernel {
             })
             .to_string();
 
-        let lock = self.lock_manager.get_lock_info(path).ok().flatten();
+        let lock = self.lock_manager.get_lock_info(path);
 
         Some(StatResult {
             path: path.to_string(),
@@ -3080,33 +3080,23 @@ impl Kernel {
                     .unwrap_or("")
             };
             let effective_limit = if limit == 0 { 10000 } else { limit };
-            match self.lock_manager.list_locks(prefix, effective_limit + 1) {
-                Ok(locks) => {
-                    let has_more = locks.len() > effective_limit;
-                    let items: Vec<(String, u8)> = locks
-                        .into_iter()
-                        .take(effective_limit)
-                        .map(|l| (l.path.clone(), DT_REG))
-                        .collect();
-                    let next_cursor = if has_more {
-                        items.last().map(|(p, _)| p.clone())
-                    } else {
-                        None
-                    };
-                    return super::ReadDirResult {
-                        items,
-                        next_cursor,
-                        has_more,
-                    };
-                }
-                Err(_) => {
-                    return super::ReadDirResult {
-                        items: Vec::new(),
-                        next_cursor: None,
-                        has_more: false,
-                    };
-                }
-            }
+            let locks = self.lock_manager.list_locks(prefix, effective_limit + 1);
+            let has_more = locks.len() > effective_limit;
+            let items: Vec<(String, u8)> = locks
+                .into_iter()
+                .take(effective_limit)
+                .map(|l| (l.path.clone(), DT_REG))
+                .collect();
+            let next_cursor = if has_more {
+                items.last().map(|(p, _)| p.clone())
+            } else {
+                None
+            };
+            return super::ReadDirResult {
+                items,
+                next_cursor,
+                has_more,
+            };
         }
 
         // Normal readdir with optional pagination.

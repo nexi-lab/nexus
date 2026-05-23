@@ -73,9 +73,7 @@ impl Kernel {
         &self,
         prefix: &str,
         limit: usize,
-    ) -> Result<Vec<crate::lock_manager::KernelLockInfo>, KernelError> {
-        self.lock_manager
-            .list_locks(prefix, limit)
-            .map_err(|e| KernelError::IOError(format!("metastore_list_locks({prefix}): {e}")))
+    ) -> Vec<crate::lock_manager::KernelLockInfo> {
+        self.lock_manager.list_locks(prefix, limit)
     }
 }

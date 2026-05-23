@@ -89,6 +89,16 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.FromString,
                 _registered_method=True)
+        self.Rename = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Rename',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameResponse.FromString,
+                _registered_method=True)
+        self.Copy = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Copy',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -176,6 +186,19 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Rename(self, request, context):
+        """Typed rename / server-side copy.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Copy(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -233,6 +256,16 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Setattr,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.SerializeToString,
+            ),
+            'Rename': grpc.unary_unary_rpc_method_handler(
+                    servicer.Rename,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameResponse.SerializeToString,
+            ),
+            'Copy': grpc.unary_unary_rpc_method_handler(
+                    servicer.Copy,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -532,6 +565,60 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Setattr',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Rename(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Rename',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Copy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Copy',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.FromString,
             options,
             channel_credentials,
             insecure,

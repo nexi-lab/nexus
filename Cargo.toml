@@ -16,6 +16,9 @@ members = [
     "rust/raft",
     # Deployment binaries.
     "rust/profiles/cluster",
+    # nexusd-vault — single-purpose binary hosting PasswordVaultService
+    # over gRPC. Runs alongside (not bundled into) cluster.
+    "rust/profiles/vault",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]

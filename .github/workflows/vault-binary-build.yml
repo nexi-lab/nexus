@@ -1,0 +1,172 @@
+name: Vault Binary Build (reusable)
+
+# Reusable workflow for building nexusd-vault across all three platforms.
+# Mirrors cluster-binary-build.yml so vault stays under the same gate as
+# cluster. Per-platform size budgets keep regressions visible — vault is
+# much slimmer than cluster (no raft, no VFS, no federation), so the
+# budgets are tighter.
+#
+# Also runs the password_vault module unit tests on linux — 41 tests
+# covering crypto / storage / all 7 RPCs / RFC 6238 TOTP vectors. The
+# tests are gated behind the same feature flag as the binary, so they
+# only fire when the relevant code changes (via paths in vault-binary.yml).
+
+on:
+  workflow_call:
+    inputs:
+      upload_retention_days:
+        description: Artifact retention in days
+        required: false
+        type: number
+        default: 14
+
+jobs:
+  unit-tests:
+    name: vault unit tests (services::password_vault)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: vault-unit-tests
+
+      - name: Run password_vault unit tests
+        # Quoted because `password_vault::` contains a colon-pair that
+        # check-yaml mis-reads as a mapping continuation if unquoted.
+        run: "cargo test -p services --features service-password-vault password_vault::"
+
+  build:
+    name: vault-binary / ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: nexusd-vault-linux-x86_64
+            binary: nexusd-vault
+            # CI-measured release size: 5.07 MB on first build (cluster
+            # ships at ~12.75 MiB Linux so vault is comfortably slimmer).
+            # Budget keeps ~1 MiB headroom — tight enough that 2× regressions
+            # trip, loose enough that dep updates don't. Same release-profile
+            # work cluster has TODO'd (workspace LTO + strip + panic=abort)
+            # will tighten this further; vault binary follows cluster's
+            # cadence on that.
+            max_size_bytes: 6291456  # 6 MiB
+          - os: macos-14
+            artifact_name: nexusd-vault-macos-arm64
+            binary: nexusd-vault
+            # arm64 mach-O is typically ~1.3-1.5× Linux x86_64 for the
+            # same Rust workspace. ~7.5 MiB budget mirrors cluster's
+            # macOS-vs-Linux ratio (cluster: 9 vs 12.75 = 0.71;
+            # vault: 7.5 vs 6 = 1.25 — slack because mach-O metadata
+            # is meaningful at small binary sizes).
+            max_size_bytes: 7864320  # 7.5 MiB
+          - os: windows-latest
+            artifact_name: nexusd-vault-windows-x86_64
+            binary: nexusd-vault.exe
+            # Locally-measured Windows release size: 5.1 MB (PE+import
+            # table overhead). Keep ~900 KB headroom.
+            max_size_bytes: 6291456  # 6 MiB
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install protoc (macOS)
+        # raft-proto's build script uses `protobuf-build v0.14.1`, which
+        # rejects protoc's new calendar-versioned releases. Same pin as
+        # cluster-binary-build for consistency.
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install protoc (Windows)
+        # Same shebang issue as cluster-binary-build — install a real
+        # protoc.exe and override the PROTOC env so cargo sees it.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '3.20.2'
+          $protocDir = Join-Path $env:USERPROFILE 'protoc'
+          New-Item -ItemType Directory -Force -Path $protocDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protocVersion}/protoc-${protocVersion}-win64.zip" `
+            -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $protocDir
+          $protocBinDir = Join-Path $protocDir 'bin'
+          $protocExe = Join-Path $protocBinDir 'protoc.exe'
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBinDir
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
+          & $protocExe --version
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: vault-binary-${{ matrix.os }}
+
+      - name: Build release binary
+        run: cargo build --release -p nexus-vault --bin nexusd-vault
+
+      - name: Check binary size
+        shell: bash
+        env:
+          MAX_SIZE_BYTES: ${{ matrix.max_size_bytes }}
+          BINARY_PATH: target/release/${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            actual=$(stat -f '%z' "$BINARY_PATH")
+          else
+            actual=$(stat -c '%s' "$BINARY_PATH")
+          fi
+          echo "Binary size: $actual bytes (max: $MAX_SIZE_BYTES)"
+          if [ "$actual" -gt "$MAX_SIZE_BYTES" ]; then
+            echo "::error::nexusd-vault ${{ matrix.artifact_name }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
+            exit 1
+          fi
+
+      - name: Sanity-check --help
+        shell: bash
+        run: target/release/${{ matrix.binary }} --help
+
+      - name: Sanity-check --version
+        shell: bash
+        run: target/release/${{ matrix.binary }} --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: target/release/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.upload_retention_days }}

@@ -64,7 +64,10 @@ RUN for d in services backends; do \
     printf '\n[features]\ndefault = []\ndriver-path-local = []\ndriver-remote = []\n' >> rust/backends/Cargo.toml && \
     mkdir -p rust/profiles/cluster/src && \
     printf '[package]\nname = "nexus-cluster"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-cluster"\npath = "src/main.rs"\n' > rust/profiles/cluster/Cargo.toml && \
-    echo 'fn main() {}' > rust/profiles/cluster/src/main.rs
+    echo 'fn main() {}' > rust/profiles/cluster/src/main.rs && \
+    mkdir -p rust/profiles/vault/src && \
+    printf '[package]\nname = "nexus-vault"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-vault"\npath = "src/main.rs"\n' > rust/profiles/vault/Cargo.toml && \
+    echo 'fn main() {}' > rust/profiles/vault/src/main.rs
 
 # Build the witness binary
 WORKDIR /build/rust/raft

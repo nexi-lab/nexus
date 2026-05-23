@@ -23,6 +23,12 @@ service-tasks = []
 # FluffyChat / Cinny) can join conversations without a bespoke
 # nexus client. End-state spec: sudowork-2/docs/tech/nexus-integration-architecture.md §4.2.
 service-matrix-adapter = ["dep:axum", "dep:base32", "dep:tower"]
+# PasswordVaultService — gRPC interface to the password vault
+# (namespace="passwords"). Phase 1 Rust impl per #3923 integration doc.
+# Hosted by the `vault` profile (rust/profiles/vault/), not bundled into
+# the cluster binary. aes-gcm for the Fernet-equivalent envelope on
+# encrypted blob columns (server-side master key).
+service-password-vault = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost", "dep:hmac", "dep:sha1", "dep:base32"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -71,14 +77,42 @@ futures = "0.3"
 # binary, raft-witness, slim WASM) do not pay the axum compile time.
 axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
-# base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`).
+# base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`)
+# and password_vault's TOTP seed decoding (RFC 4648 base32).
 base32 = { version = "0.5", optional = true }
+# HMAC-SHA1 for RFC 6238 TOTP (`service-password-vault`). Same primitive
+# pyotp uses on the Python side; produces identical codes for the same
+# (seed, window).
+hmac = { version = "0.12", optional = true }
+sha1 = { version = "0.10", optional = true }
 # `async_trait` lets the `AuthBackend` trait expose async methods —
 # axum handlers are async, and the production AuthService backend will
 # do an async lookup. Used by every adapter feature gate, so we pull
 # it unconditionally rather than wrapping each impl in a
 # cfg(feature) hop.
 async-trait = "0.1"
+# Crypto primitives for `service-password-vault`. AES-256-GCM matches the
+# integration doc's "Fernet-equivalent" envelope spec and is what the
+# Rust SecretsService port (when it lands) will share. Optional so slim
+# builds without the vault service don't pay the dep cost.
+aes-gcm = { version = "0.10", optional = true }
+# Re-exported by tonic for proto-generated types; needed explicitly when
+# `tonic::include_proto!` macro expansion references `prost::Message`.
+# Optional to keep slim builds (no proto-using services) lean.
+prost = { workspace = true, optional = true }
+# Runtime codec for tonic-generated services — generated code references
+# `tonic_prost::ProstCodec` directly. Pinned to the same 0.14 family as
+# the tonic / tonic-prost-build deps to avoid ABI skew.
+tonic-prost = { version = "0.14", optional = true }
+# Well-known proto types (Timestamp etc.) used by PutEntryResponse and
+# ListVersions.Version messages in password_vault.proto.
+prost-types = { version = "0.14", optional = true }
+
+[build-dependencies]
+# Proto codegen for service-password-vault. Mirrors raft + kernel build
+# scripts. Vendored protoc binary keeps builds reproducible.
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tempfile = "3"

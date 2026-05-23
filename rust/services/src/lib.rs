@@ -69,3 +69,10 @@ pub mod tasks;
 // here lands skeleton + auth (`login` / `logout` / `whoami`).
 #[cfg(feature = "service-matrix-adapter")]
 pub mod matrix_adapter;
+// PasswordVaultService — domain-wrapper gRPC service over the password
+// vault (namespace="passwords"). Phase 1 Rust impl per #3923 integration
+// doc. Hosted by the `vault` profile (`rust/profiles/vault/`), NOT by
+// `cluster` — federation hygiene. Clients: password-agent (Python),
+// sudowork-2 (TypeScript).
+#[cfg(feature = "service-password-vault")]
+pub mod password_vault;

@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from scripts.surface_coverage.paths import COVERAGE_YAML, GAPS_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import PerfClass, ProfileStatus, load_yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
-_GAPS_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-gaps.yaml"
-_USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
-_BENCHMARK = _REPO_ROOT / "tests/benchmarks/bench_sandbox_federation_latency.py"
+_USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
+_BENCHMARK = REPO_ROOT / "tests/benchmarks/bench_sandbox_federation_latency.py"
 
 OWNING_ISSUE = 4130
 
@@ -23,7 +19,7 @@ FEDERATION_CONTROL_ROWS = {
 
 
 def _operations_by_id():
-    return {op.id: op for op in load_yaml(_COVERAGE_YAML).operations}
+    return {op.id: op for op in load_yaml(COVERAGE_YAML).operations}
 
 
 def test_issue_4130_control_rows_have_docs_tests_and_perf_classification() -> None:
@@ -101,6 +97,6 @@ def test_issue_4130_user_guide_contains_federation_workflow_and_gap_verdict() ->
 
 
 def test_issue_4130_hub_status_is_not_listed_as_missing_surface() -> None:
-    text = _GAPS_YAML.read_text(encoding="utf-8")
+    text = GAPS_YAML.read_text(encoding="utf-8")
 
     assert "id: hub.status" not in text

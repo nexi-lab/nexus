@@ -375,27 +375,34 @@ impl VFSRouter {
             .collect()
     }
 
-    /// Rebind every federation mount (entries with a metastore but no
-    /// backend) to `new_backend`.
+    /// Rebind `new_backend` into every entry matching `should_rebind`.
+    /// Returns the number of entries touched.
     ///
-    /// Fixes a boot-order bug: on node restart,
+    /// The router stays federation-agnostic — it only provides the
+    /// "iterate + atomically update backend + refresh `is_cas`"
+    /// mechanism. The caller (currently `Kernel::add_mount` on the
+    /// root mount, which has the federation context) supplies the
+    /// policy (predicate) that decides which entries should receive
+    /// the new backend.
+    ///
+    /// Typical caller use: fix a boot-order bug where
     /// `RaftDistributedCoordinator::replay_existing_mounts` replays
-    /// DT_MOUNT entries BEFORE Python installs the root mount
-    /// (which carries this node's CAS backend). Each federation mount
-    /// gets cloned with `backend=None` at replay time, so subsequent
-    /// writes return `Ok(None)` (miss) — they look like they succeeded
-    /// at the Python layer but never persisted. Calling this from
-    /// `Kernel::add_mount` when the root mount arrives wires the
-    /// correct backend into every previously-stranded federation mount.
-    ///
-    /// Only touches entries with `metastore = Some(..)` — that's the
-    /// federation-mount marker. Plain local mounts (backend-only, no
-    /// metastore) are left untouched.
-    pub fn rebind_missing_backends(&self, new_backend: &Arc<dyn ObjectStore>) -> usize {
+    /// federation DT_MOUNT entries before Python installs the root
+    /// mount that carries this node's CAS backend, leaving those
+    /// entries with `backend=None`. The caller predicate
+    /// `|e| e.backend.is_none() && e.metastore.is_some()` selects
+    /// exactly the stranded-federation mounts; plain backend-only
+    /// local mounts (`metastore=None`) and Python-connector mounts
+    /// (`metastore=None`) are left alone.
+    pub fn rebind_missing_backends(
+        &self,
+        new_backend: &Arc<dyn ObjectStore>,
+        should_rebind: impl Fn(&MountEntry) -> bool,
+    ) -> usize {
         let new_is_cas = new_backend.as_cas().is_some();
         let mut rebound = 0;
         for mut entry in self.entries.iter_mut() {
-            if entry.backend.is_none() && entry.metastore.is_some() {
+            if should_rebind(entry.value()) {
                 entry.backend = Some(Arc::clone(new_backend));
                 entry.is_cas = new_is_cas;
                 rebound += 1;

@@ -60,7 +60,13 @@ impl Kernel {
         // mounts so sys_write stops silently missing.
         if mount_point == "/" && zone_id == contracts::ROOT_ZONE_ID {
             if let Some(ref root_backend) = backend {
-                let rebound = self.vfs_router.rebind_missing_backends(root_backend);
+                // Federation marker: a stranded mount has a metastore (the
+                // replayed federation zone state) but no backend (root
+                // hadn't been mounted yet at replay time). Predicate kept
+                // here in the kernel — VFSRouter stays federation-agnostic.
+                let rebound = self.vfs_router.rebind_missing_backends(root_backend, |e| {
+                    e.backend.is_none() && e.metastore.is_some()
+                });
                 if rebound > 0 {
                     tracing::info!(
                         rebound_count = rebound,

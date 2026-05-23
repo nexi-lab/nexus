@@ -129,6 +129,46 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
                 _registered_method=True)
+        self.ClosePipe = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/ClosePipe',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+                _registered_method=True)
+        self.HasPipe = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/HasPipe',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+                _registered_method=True)
+        self.CloseAllPipes = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/CloseAllPipes',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcEmpty.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+                _registered_method=True)
+        self.CloseStream = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/CloseStream',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+                _registered_method=True)
+        self.HasStream = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/HasStream',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+                _registered_method=True)
+        self.StreamWriteNowait = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/StreamWriteNowait',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteResponse.FromString,
+                _registered_method=True)
+        self.StreamReadAt = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/StreamReadAt',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtResponse.FromString,
+                _registered_method=True)
+        self.StreamCollectAll = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/StreamCollectAll',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamCollectAllResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -269,6 +309,56 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ClosePipe(self, request, context):
+        """Typed IPC pipe / stream ops. Creation goes through `Setattr` with
+        entry_type=DT_PIPE / DT_STREAM (no separate Create*Ipc RPC needed).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def HasPipe(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseAllPipes(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def HasStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamWriteNowait(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamReadAt(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamCollectAll(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -366,6 +456,46 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.GetXattrBulk,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.SerializeToString,
+            ),
+            'ClosePipe': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClosePipe,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.SerializeToString,
+            ),
+            'HasPipe': grpc.unary_unary_rpc_method_handler(
+                    servicer.HasPipe,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.SerializeToString,
+            ),
+            'CloseAllPipes': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseAllPipes,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcEmpty.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.SerializeToString,
+            ),
+            'CloseStream': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseStream,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.SerializeToString,
+            ),
+            'HasStream': grpc.unary_unary_rpc_method_handler(
+                    servicer.HasStream,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.SerializeToString,
+            ),
+            'StreamWriteNowait': grpc.unary_unary_rpc_method_handler(
+                    servicer.StreamWriteNowait,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteResponse.SerializeToString,
+            ),
+            'StreamReadAt': grpc.unary_unary_rpc_method_handler(
+                    servicer.StreamReadAt,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtResponse.SerializeToString,
+            ),
+            'StreamCollectAll': grpc.unary_unary_rpc_method_handler(
+                    servicer.StreamCollectAll,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamCollectAllResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -881,6 +1011,222 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/GetXattrBulk',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ClosePipe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/ClosePipe',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HasPipe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/HasPipe',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseAllPipes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/CloseAllPipes',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcEmpty.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/CloseStream',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HasStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/HasStream',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamWriteNowait(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamWriteNowait',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamReadAt(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamReadAt',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamCollectAll(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamCollectAll',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamCollectAllResponse.FromString,
             options,
             channel_credentials,
             insecure,

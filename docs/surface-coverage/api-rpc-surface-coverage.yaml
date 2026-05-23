@@ -1507,11 +1507,29 @@ operations:
   owning_issue: 4127
 - id: audit.export
   module: agent_log
-  summary: ''
+  summary: Export exchange audit records through the control-plane RPC surface.
   transports:
     grpc_expose:
       name: audit_export
       source: src/nexus/server/rpc/services/audit_rpc.py:44
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'RPC: audit_export({"fmt":"json"}) returns serialized audit records; CLI equivalent: nexus audit export --format
+    json'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_export_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_export_rpc_benchmark
+  gap_issue: null
+  owning_issue: 4201
+- id: audit.integrity_{record_id}
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/audit/integrity/{record_id}
+      source: src/nexus/server/api/v2/routers/pay.py:848
   profiles:
     lite: supported
     sandbox: supported
@@ -1524,11 +1542,29 @@ operations:
   owning_issue: null
 - id: audit.list
   module: agent_log
-  summary: ''
+  summary: List exchange audit records with cursor metadata through the control-plane RPC surface.
   transports:
     grpc_expose:
       name: audit_list
       source: src/nexus/server/rpc/services/audit_rpc.py:20
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'RPC: audit_list({"limit":25}) returns transactions plus cursor state; CLI equivalent: nexus audit list --limit
+    25'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_list_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_audit_list_rpc_benchmark
+  gap_issue: null
+  owning_issue: 4201
+- id: audit.transactions
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/audit/transactions
+      source: src/nexus/server/api/v2/routers/pay.py:767
   profiles:
     lite: supported
     sandbox: supported
@@ -1539,13 +1575,47 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: audit.transactions
+- id: audit.transactions_aggregations
   module: agent_log
   summary: ''
   transports:
     http:
-      name: GET /api/v2/audit/transactions
-      source: src/nexus/server/api/v2/routers/pay.py:666
+      name: GET /api/v2/audit/transactions/aggregations
+      source: src/nexus/server/api/v2/routers/pay.py:786
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: audit.transactions_export
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/audit/transactions/export
+      source: src/nexus/server/api/v2/routers/pay.py:793
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: audit.transactions_{record_id}
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/audit/transactions/{record_id}
+      source: src/nexus/server/api/v2/routers/pay.py:837
   profiles:
     lite: supported
     sandbox: supported
@@ -2664,7 +2734,7 @@ operations:
   owning_issue: null
 - id: create.key
   module: auth
-  summary: ''
+  summary: Create an admin-managed API key through the SDK/RPC admin-key surface.
   transports:
     sdk:
       name: AsyncAdminClient.create_key
@@ -2673,12 +2743,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'SDK: await client.admin.create_key(name="bench-key", zone_id="root"); RPC: admin_create_key({...})'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_create_key_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_create_key_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: create.pipe
   module: uncategorized
   summary: ''
@@ -3341,11 +3411,11 @@ operations:
   owning_issue: 4131
 - id: events.replay
   module: agent_log
-  summary: ''
+  summary: Replay historical control-plane events with a bounded event result set.
   transports:
     grpc_expose:
       name: events_replay
-      source: src/nexus/server/rpc/services/events_rpc.py:20
+      source: src/nexus/server/rpc/services/events_rpc.py:21
     http:
       name: GET /api/v2/events/replay
       source: src/nexus/server/api/v2/routers/events_replay.py:115
@@ -3353,12 +3423,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: events_replay({"event_type":"operation","limit":25}); HTTP: GET /api/v2/events/replay?limit=25'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_events_replay_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_events_replay_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: events.stream
   module: agent_log
   summary: ''
@@ -3969,7 +4039,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_cluster_info
-      source: src/nexus/server/rpc/services/federation_rpc.py:545
+      source: src/nexus/server/rpc/services/federation_rpc.py:564
   profiles:
     lite: supported
     sandbox: supported
@@ -3982,7 +4052,7 @@ operations:
   owning_issue: 4130
 - id: federation.create_zone
   module: federation
-  summary: ''
+  summary: Create a federation zone through the control-plane RPC when the federation runtime is available.
   transports:
     grpc_expose:
       name: federation_create_zone
@@ -3991,12 +4061,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: federation_create_zone({"zone_id":"team-a"}); skips benchmark clearly when the local federation runtime
+    is unavailable.'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_create_zone_runtime_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_create_zone_runtime_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: federation.export_zone
   module: federation
   summary: ''
@@ -4054,15 +4125,16 @@ operations:
   transports:
     grpc_expose:
       name: federation_list_zones
-      source: src/nexus/server/rpc/services/federation_rpc.py:528
+      source: src/nexus/server/rpc/services/federation_rpc.py:547
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: 'RPC: federation_list_zones({}); CLI equivalent: nexus federation zones'
-  correctness_test: tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_list_zones_runtime_benchmark
   perf_class: control
-  perf_link: federation status/inspection path; no per-file or search hot-path budget
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_federation_list_zones_runtime_benchmark; federation
+    status/inspection path, no per-file or search hot-path budget
   gap_issue: null
   owning_issue: 4130
 - id: federation.mount
@@ -5348,7 +5420,7 @@ operations:
   owning_issue: 4134
 - id: get.key
   module: auth
-  summary: ''
+  summary: Fetch admin-managed API key metadata through the SDK/RPC admin-key surface.
   transports:
     sdk:
       name: AsyncAdminClient.get_key
@@ -5357,12 +5429,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'SDK: await client.admin.get_key(key_id); RPC: admin_get_key({"key_id": key_id, "zone_id":"root"})'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_get_key_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_get_key_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: get.mount
   module: mount
   summary: ''
@@ -5608,21 +5680,22 @@ operations:
   owning_issue: 4129
 - id: governance.alerts
   module: governance
-  summary: ''
+  summary: List governance anomaly alerts through the control-plane RPC surface.
   transports:
     grpc_expose:
       name: governance_alerts
-      source: src/nexus/server/rpc/services/governance_rpc.py:25
+      source: src/nexus/server/rpc/services/governance_rpc.py:26
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: governance_alerts({"severity":"high","limit":5}); CLI equivalent: nexus governance alerts --severity
+    high --limit 5'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_alerts_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_alerts_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: governance.cli
   module: governance
   summary: ''
@@ -5642,38 +5715,38 @@ operations:
   owning_issue: null
 - id: governance.rings
   module: governance
-  summary: ''
+  summary: List detected governance rings through the control-plane RPC surface.
   transports:
     grpc_expose:
       name: governance_rings
-      source: src/nexus/server/rpc/services/governance_rpc.py:46
+      source: src/nexus/server/rpc/services/governance_rpc.py:61
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: governance_rings({}); CLI equivalent: nexus governance rings'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_rings_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_rings_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: governance.status
   module: governance
-  summary: ''
+  summary: Return governance overview data by combining recent alerts and ring summaries.
   transports:
     grpc_expose:
       name: governance_status
-      source: src/nexus/server/rpc/services/governance_rpc.py:62
+      source: src/nexus/server/rpc/services/governance_rpc.py:82
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: governance_status({}); CLI equivalent: nexus governance status'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_status_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_governance_status_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: grant.consent
   module: rebac
   summary: Grant discovery consent by writing a consent_granted tuple from the grantee to the consenting subject.
@@ -6322,7 +6395,7 @@ operations:
   owning_issue: 4134
 - id: list.keys
   module: filesystem
-  summary: ''
+  summary: List admin-managed API keys through the SDK/RPC admin-key surface.
   transports:
     sdk:
       name: AsyncAdminClient.list_keys
@@ -6331,12 +6404,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'SDK: await client.admin.list_keys(zone_id="root", limit=25); RPC: admin_list_keys({"zone_id":"root","limit":25})'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_list_keys_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_list_keys_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: list.mounts
   module: mount
   summary: List active backend mounts visible to the caller after permission filtering.
@@ -8094,7 +8167,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/pay/approvals
-      source: src/nexus/server/api/v2/routers/pay.py:1049
+      source: src/nexus/server/api/v2/routers/pay.py:1237
   profiles:
     lite: supported
     sandbox: supported
@@ -8128,7 +8201,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/approvals/request
-      source: src/nexus/server/api/v2/routers/pay.py:1055
+      source: src/nexus/server/api/v2/routers/pay.py:1243
   profiles:
     lite: supported
     sandbox: supported
@@ -8145,7 +8218,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/approvals/{approval_id}/approve
-      source: src/nexus/server/api/v2/routers/pay.py:1072
+      source: src/nexus/server/api/v2/routers/pay.py:1260
   profiles:
     lite: supported
     sandbox: supported
@@ -8162,7 +8235,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/approvals/{approval_id}/reject
-      source: src/nexus/server/api/v2/routers/pay.py:1084
+      source: src/nexus/server/api/v2/routers/pay.py:1272
   profiles:
     lite: supported
     sandbox: supported
@@ -8182,7 +8255,7 @@ operations:
       source: src/nexus/server/rpc/services/pay_rpc.py:21
     http:
       name: GET /api/v2/pay/balance
-      source: src/nexus/server/api/v2/routers/pay.py:268
+      source: src/nexus/server/api/v2/routers/pay.py:271
   profiles:
     lite: supported
     sandbox: supported
@@ -8199,7 +8272,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/pay/budget
-      source: src/nexus/server/api/v2/routers/pay.py:375
+      source: src/nexus/server/api/v2/routers/pay.py:378
   profiles:
     lite: supported
     sandbox: supported
@@ -8216,7 +8289,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/pay/can-afford
-      source: src/nexus/server/api/v2/routers/pay.py:351
+      source: src/nexus/server/api/v2/routers/pay.py:354
   profiles:
     lite: supported
     sandbox: supported
@@ -8267,7 +8340,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/meter
-      source: src/nexus/server/api/v2/routers/pay.py:881
+      source: src/nexus/server/api/v2/routers/pay.py:1069
   profiles:
     lite: supported
     sandbox: supported
@@ -8284,7 +8357,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/policies
-      source: src/nexus/server/api/v2/routers/pay.py:959
+      source: src/nexus/server/api/v2/routers/pay.py:1147
   profiles:
     lite: supported
     sandbox: supported
@@ -8318,7 +8391,7 @@ operations:
   transports:
     http:
       name: DELETE /api/v2/pay/policies/{policy_id}
-      source: src/nexus/server/api/v2/routers/pay.py:985
+      source: src/nexus/server/api/v2/routers/pay.py:1173
   profiles:
     lite: supported
     sandbox: supported
@@ -8335,7 +8408,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/pay/reservations
-      source: src/nexus/server/api/v2/routers/pay.py:694
+      source: src/nexus/server/api/v2/routers/pay.py:882
   profiles:
     lite: supported
     sandbox: supported
@@ -8352,7 +8425,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/reserve
-      source: src/nexus/server/api/v2/routers/pay.py:731
+      source: src/nexus/server/api/v2/routers/pay.py:919
   profiles:
     lite: supported
     sandbox: supported
@@ -8386,7 +8459,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/reserve/{reservation_id}/commit
-      source: src/nexus/server/api/v2/routers/pay.py:790
+      source: src/nexus/server/api/v2/routers/pay.py:978
   profiles:
     lite: supported
     sandbox: supported
@@ -8403,7 +8476,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/reserve/{reservation_id}/release
-      source: src/nexus/server/api/v2/routers/pay.py:837
+      source: src/nexus/server/api/v2/routers/pay.py:1025
   profiles:
     lite: supported
     sandbox: supported
@@ -8420,7 +8493,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/pay/transactions
-      source: src/nexus/server/api/v2/routers/pay.py:656
+      source: src/nexus/server/api/v2/routers/pay.py:757
   profiles:
     lite: supported
     sandbox: supported
@@ -8437,7 +8510,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/pay/transactions/integrity
-      source: src/nexus/server/api/v2/routers/pay.py:676
+      source: src/nexus/server/api/v2/routers/pay.py:864
   profiles:
     lite: supported
     sandbox: supported
@@ -8457,7 +8530,7 @@ operations:
       source: src/nexus/server/rpc/services/pay_rpc.py:31
     http:
       name: POST /api/v2/pay/transfer
-      source: src/nexus/server/api/v2/routers/pay.py:439
+      source: src/nexus/server/api/v2/routers/pay.py:442
   profiles:
     lite: supported
     sandbox: supported
@@ -8474,7 +8547,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/pay/transfer/batch
-      source: src/nexus/server/api/v2/routers/pay.py:504
+      source: src/nexus/server/api/v2/routers/pay.py:507
   profiles:
     lite: supported
     sandbox: supported
@@ -9163,7 +9236,7 @@ operations:
   owning_issue: null
 - id: revoke.key
   module: auth
-  summary: ''
+  summary: Revoke an admin-managed API key through the SDK/RPC admin-key surface.
   transports:
     sdk:
       name: AsyncAdminClient.revoke_key
@@ -9172,12 +9245,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'SDK: await client.admin.revoke_key(key_id); RPC: admin_revoke_key({"key_id": key_id, "zone_id":"root"})'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_revoke_key_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_revoke_key_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: revoke.share
   module: rebac
   summary: Revoke a resource share by deleting the matching shared-* tuple.
@@ -11717,7 +11790,7 @@ operations:
   owning_issue: 4137
 - id: update.key
   module: auth
-  summary: ''
+  summary: Update admin-managed API key metadata through the SDK/RPC admin-key surface.
   transports:
     sdk:
       name: AsyncAdminClient.update_key
@@ -11726,12 +11799,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'SDK: await client.admin.update_key(key_id, name="rotated"); RPC: admin_update_key({"key_id": key_id, "name":"rotated"})'
+  correctness_test: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_update_key_rpc_benchmark
+  perf_class: control
+  perf_link: tests/benchmarks/test_full_control_plane_rpc_benchmark.py::test_admin_update_key_rpc_benchmark
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4201
 - id: update.mount
   module: mount
   summary: Attempt to update runtime mount backend configuration while preserving mount metadata and permissions.
@@ -13122,7 +13195,39 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: audit.integrity_{record_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: audit.transactions
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: audit.transactions_aggregations
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: audit.transactions_export
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: audit.transactions_{record_id}
   has:
   - http
   missing:

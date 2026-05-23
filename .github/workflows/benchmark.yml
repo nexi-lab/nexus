@@ -64,19 +64,25 @@ jobs:
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          PUBLISH_REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
         run: |
-          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+          if git ls-remote --exit-code --heads "$PUBLISH_REMOTE" gh-pages >/dev/null 2>&1; then
+            echo "gh-pages branch already exists."
+          else
             echo "Creating gh-pages branch..."
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git checkout --orphan gh-pages
             git reset --hard
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"
-            git push origin gh-pages
+            git push "$PUBLISH_REMOTE" gh-pages
             git checkout "${{ github.sha }}"
           fi
 
       - name: Clean working tree for branch switch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: git checkout -- .
 
       - name: Store benchmark results
@@ -131,15 +137,19 @@ jobs:
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists
+        env:
+          PUBLISH_REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
         run: |
-          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+          if git ls-remote --exit-code --heads "$PUBLISH_REMOTE" gh-pages >/dev/null 2>&1; then
+            echo "gh-pages branch already exists."
+          else
             echo "Creating gh-pages branch..."
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git checkout --orphan gh-pages
             git reset --hard
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"
-            git push origin gh-pages
+            git push "$PUBLISH_REMOTE" gh-pages
             git checkout "${{ github.sha }}"
           fi
 

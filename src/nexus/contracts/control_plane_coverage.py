@@ -53,9 +53,9 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
             "tests/unit/server/test_admin_handlers.py",
             "tests/unit/server/test_rpc_admin_only.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
+            "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
-        performance_classification="control plane hot path; benchmark gate tracked in #4201",
-        gap_issue="#4201",
+        performance_classification="control plane hot path; key RPCs benchmarked in tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
     ),
     ControlPlaneSurface(
         profile="full",
@@ -86,9 +86,9 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
         correctness_tests=(
             "tests/conformance/test_exchange_openapi.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
+            "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
-        performance_classification="control plane hot path; benchmark gate tracked in #4201",
-        gap_issue="#4201",
+        performance_classification="control plane hot path; benchmarked in tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
     ),
     ControlPlaneSurface(
         profile="full",
@@ -103,9 +103,9 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
         correctness_tests=(
             "tests/e2e/server/test_event_stream_e2e.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
+            "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
-        performance_classification="control plane hot path; benchmark gate tracked in #4201",
-        gap_issue="#4201",
+        performance_classification="control plane hot path; benchmarked in tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
     ),
     ControlPlaneSurface(
         profile="full",
@@ -124,9 +124,9 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
         correctness_tests=(
             "tests/unit/server/test_security_hardening.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
+            "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
-        performance_classification="control plane hot path; benchmark gate tracked in #4201",
-        gap_issue="#4201",
+        performance_classification="control plane hot path; benchmarked in tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
     ),
     ControlPlaneSurface(
         profile="full",
@@ -150,9 +150,9 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
             "tests/unit/grpc/test_federation_whoami_rpc.py",
             "tests/e2e/docker/test_federation_e2e.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
+            "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
-        performance_classification="control plane hot path; benchmark gate tracked in #4201",
-        gap_issue="#4201",
+        performance_classification="control plane hot path; federation_list_zones benchmarked in tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
     ),
     ControlPlaneSurface(
         profile="full",
@@ -182,8 +182,9 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
             "tests/e2e/server/test_zone_export_e2e.py",
             "tests/e2e/server/test_zone_import_e2e.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
+            "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
-        performance_classification="control plane hot path; CLI parity gap #4200 and benchmark gate #4201",
+        performance_classification="control plane hot path; federation_create_zone benchmarked in tests/benchmarks/test_full_control_plane_rpc_benchmark.py; CLI parity gap #4200",
         gap_issue="#4200",
     ),
     ControlPlaneSurface(

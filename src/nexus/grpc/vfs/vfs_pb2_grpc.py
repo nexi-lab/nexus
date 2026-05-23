@@ -74,6 +74,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.FromString,
                 _registered_method=True)
+        self.Readdir = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Readdir',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -136,6 +141,13 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Readdir(self, request, context):
+        """Typed directory listing — metastore + backend merge, procfs intercepts.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -178,6 +190,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Stat,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.SerializeToString,
+            ),
+            'Readdir': grpc.unary_unary_rpc_method_handler(
+                    servicer.Readdir,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -396,6 +413,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Stat',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Readdir(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Readdir',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.FromString,
             options,
             channel_credentials,
             insecure,

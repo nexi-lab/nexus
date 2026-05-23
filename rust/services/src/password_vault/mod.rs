@@ -245,23 +245,117 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
 
     async fn list_entries(
         &self,
-        _req: Request<ListEntriesRequest>,
+        req: Request<ListEntriesRequest>,
     ) -> Result<Response<ListEntriesResponse>, Status> {
-        Err(Status::unimplemented("ListEntries — lands in T34.5"))
+        let req = req.into_inner();
+        // Snapshot all live indexes. Soft-deleted titles are excluded
+        // (Python's include_deleted=False default — surface them via
+        // the dedicated 'show tombstones' tool when that lands).
+        let all = self.inner.storage.list_indexes()?;
+        let live: Vec<(String, EntryIndex)> = all
+            .into_iter()
+            .filter(|(_, idx)| idx.deleted_at_ms.is_none())
+            .collect();
+        let total_live = live.len() as i32;
+
+        let query_lower = req.query.to_lowercase();
+        let want_filter = !query_lower.is_empty();
+        let mut matched = Vec::new();
+        for (title, idx) in live {
+            let stored = match self
+                .inner
+                .storage
+                .get_version(&title, idx.current_version)?
+            {
+                Some(s) => s,
+                None => continue, // index points at a missing version — skip silently (corruption tracker should pick this up)
+            };
+            let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
+            let plain: VaultEntryPlaintext = match bincode::deserialize(&plain_bytes) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if want_filter {
+                // Case-insensitive substring filter over the four
+                // searchable fields. Matches Python's behaviour at
+                // password_agent/vault.py:71-81.
+                let haystack = format!(
+                    "{} {} {} {}",
+                    plain.title.to_lowercase(),
+                    plain.username.to_lowercase(),
+                    plain.url.to_lowercase(),
+                    plain.tags.to_lowercase()
+                );
+                if !haystack.contains(&query_lower) {
+                    continue;
+                }
+            }
+            matched.push(plaintext_to_proto(plain));
+        }
+        let matched_count = matched.len() as i32;
+
+        // limit=0 → no limit.
+        if req.limit > 0 && matched.len() > req.limit as usize {
+            matched.truncate(req.limit as usize);
+        }
+
+        Ok(Response::new(ListEntriesResponse {
+            entries: matched,
+            total_in_vault: total_live,
+            matched: matched_count,
+        }))
     }
 
     async fn delete_entry(
         &self,
-        _req: Request<DeleteEntryRequest>,
+        req: Request<DeleteEntryRequest>,
     ) -> Result<Response<DeleteEntryResponse>, Status> {
-        Err(Status::unimplemented("DeleteEntry — lands in T34.5"))
+        let req = req.into_inner();
+        if req.title.is_empty() {
+            return Err(Status::invalid_argument("title is required"));
+        }
+        let idx = self
+            .inner
+            .storage
+            .get_index(&req.title)?
+            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
+        // Idempotent: deleting an already-deleted entry is a no-op
+        // success, not an error. Matches REST DELETE semantics.
+        let new_idx = EntryIndex {
+            current_version: idx.current_version,
+            deleted_at_ms: Some(idx.deleted_at_ms.unwrap_or_else(now_unix_ms)),
+        };
+        self.inner.storage.set_index(&req.title, &new_idx)?;
+        Ok(Response::new(DeleteEntryResponse {
+            title: req.title,
+            deleted: true,
+        }))
     }
 
     async fn restore_entry(
         &self,
-        _req: Request<RestoreEntryRequest>,
+        req: Request<RestoreEntryRequest>,
     ) -> Result<Response<RestoreEntryResponse>, Status> {
-        Err(Status::unimplemented("RestoreEntry — lands in T34.5"))
+        let req = req.into_inner();
+        if req.title.is_empty() {
+            return Err(Status::invalid_argument("title is required"));
+        }
+        let idx = self
+            .inner
+            .storage
+            .get_index(&req.title)?
+            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
+        // Idempotent: restoring a live entry is a no-op success.
+        let new_idx = EntryIndex {
+            current_version: idx.current_version,
+            deleted_at_ms: None,
+        };
+        self.inner.storage.set_index(&req.title, &new_idx)?;
+        Ok(Response::new(RestoreEntryResponse {
+            title: req.title,
+            restored: true,
+            current_version: idx.current_version as i32,
+        }))
     }
 
     async fn list_versions(
@@ -452,5 +546,250 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    // -----------------------------------------------------------------
+    // ListEntries / DeleteEntry / RestoreEntry tests
+    // -----------------------------------------------------------------
+
+    async fn seed(svc: &PasswordVaultServiceImpl, titles: &[(&str, &str)]) {
+        for (t, p) in titles {
+            svc.put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry(t, p)),
+                audit: None,
+            }))
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn list_returns_all_entries() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("gmail", "pw1"), ("github", "pw2"), ("aws", "pw3")]).await;
+        let r = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.total_in_vault, 3);
+        assert_eq!(r.matched, 3);
+        assert_eq!(r.entries.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_query_case_insensitive() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("Gmail", "x"), ("GitHub", "y"), ("AWS", "z")]).await;
+        let r = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: "git".into(), // matches "GitHub"
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.total_in_vault, 3);
+        assert_eq!(r.matched, 1);
+        assert_eq!(r.entries.len(), 1);
+        assert_eq!(r.entries[0].title, "GitHub");
+    }
+
+    #[tokio::test]
+    async fn list_respects_limit() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("a", "x"), ("b", "y"), ("c", "z")]).await;
+        let r = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 2,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        // matched counts BEFORE limit truncation (per proto comment:
+        // 'matched' is post-filter, pre-limit).
+        assert_eq!(r.matched, 3);
+        assert_eq!(r.entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_excludes_soft_deleted() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("a", "x"), ("b", "y")]).await;
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "a".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let r = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.total_in_vault, 1); // only "b"
+        assert_eq!(r.matched, 1);
+        assert_eq!(r.entries[0].title, "b");
+    }
+
+    #[tokio::test]
+    async fn delete_then_get_latest_is_not_found() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("a", "pw")]).await;
+        let d = svc
+            .delete_entry(Request::new(DeleteEntryRequest {
+                title: "a".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(d.deleted);
+        // Latest read after soft-delete: NotFound.
+        let err = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "a".into(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        // But explicit historical version still works (rotation auditors).
+        let got = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "a".into(),
+                version: Some(1),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.entry.unwrap().password.as_deref(), Some("pw"));
+    }
+
+    #[tokio::test]
+    async fn restore_revives_entry() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("a", "pw")]).await;
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "a".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let r = svc
+            .restore_entry(Request::new(RestoreEntryRequest {
+                title: "a".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(r.restored);
+        assert_eq!(r.current_version, 1);
+        // GetEntry latest now works again.
+        let got = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "a".into(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.entry.unwrap().password.as_deref(), Some("pw"));
+    }
+
+    #[tokio::test]
+    async fn put_revives_soft_deleted() {
+        // Documented PutEntry behaviour: writing a new version implicitly
+        // clears any tombstone. Sanity-check it works end-to-end.
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("a", "v1")]).await;
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "a".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        let put = svc
+            .put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry("a", "v2")),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(put.version, 2);
+        let got = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "a".into(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.entry.unwrap().password.as_deref(), Some("v2"));
+    }
+
+    #[tokio::test]
+    async fn delete_unknown_returns_not_found() {
+        let (_d, svc) = fresh_service();
+        let err = svc
+            .delete_entry(Request::new(DeleteEntryRequest {
+                title: "nope".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn restore_unknown_returns_not_found() {
+        let (_d, svc) = fresh_service();
+        let err = svc
+            .restore_entry(Request::new(RestoreEntryRequest {
+                title: "nope".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn delete_is_idempotent() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("a", "pw")]).await;
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "a".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+        // Second delete: still success, no error.
+        let r2 = svc
+            .delete_entry(Request::new(DeleteEntryRequest {
+                title: "a".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(r2.deleted);
     }
 }

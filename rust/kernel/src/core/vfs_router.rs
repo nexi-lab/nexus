@@ -16,6 +16,7 @@
 //! remove are rare (mount-lifecycle events) so the per-shard write lock is
 //! invisible in practice.
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -226,16 +227,26 @@ impl VFSRouter {
     /// ordering (used by federation when `attach_raft_zone_to_kernel`
     /// runs before the root DLC mount) insensitive so the ZoneMetaStore
     /// isn't wiped when the backend mount registers afterwards.
+    ///
+    /// Atomic via `DashMap::entry()` — holds the shard write lock across
+    /// both the preserve-check read and the insert, so a concurrent
+    /// `install_metastore` cannot slip a metastore in between the read
+    /// and the write and have it clobbered.
     pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
-        if entry.metastore.is_none() {
-            if let Some(existing) = self.entries.get(&canonical) {
-                if let Some(ms) = existing.metastore.as_ref() {
-                    entry.metastore = Some(Arc::clone(ms));
+        match self.entries.entry(canonical) {
+            Entry::Occupied(mut occ) => {
+                if entry.metastore.is_none() {
+                    if let Some(ms) = occ.get().metastore.as_ref() {
+                        entry.metastore = Some(Arc::clone(ms));
+                    }
                 }
+                *occ.get_mut() = entry;
+            }
+            Entry::Vacant(vac) => {
+                vac.insert(entry);
             }
         }
-        self.entries.insert(canonical, entry);
     }
 
     /// Convenience: build a `MountEntry` from flat args and insert it.
@@ -291,14 +302,22 @@ impl VFSRouter {
     /// ``ZoneMetaStore`` at ``/`` before the root DLC mount registers its
     /// backend — when the backend mount arrives later, ``add`` preserves
     /// the already-installed metastore.
+    ///
+    /// Atomic via `DashMap::entry()` — the get-or-insert sequence runs
+    /// under one shard write lock, so a concurrent `add` cannot create
+    /// an entry between the lookup-miss and the insert and have its
+    /// content clobbered.
     pub fn install_metastore(&self, canonical_key: &str, metastore: Arc<dyn MetaStore>) {
-        if let Some(mut entry) = self.entries.get_mut(canonical_key) {
-            entry.metastore = Some(metastore);
-            return;
+        match self.entries.entry(canonical_key.to_string()) {
+            Entry::Occupied(mut occ) => {
+                occ.get_mut().metastore = Some(metastore);
+            }
+            Entry::Vacant(vac) => {
+                let mut entry = MountEntry::new(None);
+                entry.metastore = Some(metastore);
+                vac.insert(entry);
+            }
         }
-        let mut entry = MountEntry::new(None);
-        entry.metastore = Some(metastore);
-        self.entries.insert(canonical_key.to_string(), entry);
     }
 
     // ── Read ops ───────────────────────────────────────────────────────

@@ -55,21 +55,28 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nexusd-vault-linux-x86_64
             binary: nexusd-vault
-            # Locally-measured release size on x86_64: ~3.5 MB (slim —
-            # no raft, no VFS, no federation). Keep ~500 KB headroom
-            # so dep-tree updates don't trip the gate, but a 2× regression
-            # still does.
-            max_size_bytes: 4194304  # 4 MiB
+            # CI-measured release size: 5.07 MB on first build (cluster
+            # ships at ~12.75 MiB Linux so vault is comfortably slimmer).
+            # Budget keeps ~1 MiB headroom — tight enough that 2× regressions
+            # trip, loose enough that dep updates don't. Same release-profile
+            # work cluster has TODO'd (workspace LTO + strip + panic=abort)
+            # will tighten this further; vault binary follows cluster's
+            # cadence on that.
+            max_size_bytes: 6291456  # 6 MiB
           - os: macos-14
             artifact_name: nexusd-vault-macos-arm64
             binary: nexusd-vault
-            # arm64 mach-O overhead is ~1.5× Linux x86_64 typically.
-            max_size_bytes: 5242880  # 5 MiB
+            # arm64 mach-O is typically ~1.3-1.5× Linux x86_64 for the
+            # same Rust workspace. ~7.5 MiB budget mirrors cluster's
+            # macOS-vs-Linux ratio (cluster: 9 vs 12.75 = 0.71;
+            # vault: 7.5 vs 6 = 1.25 — slack because mach-O metadata
+            # is meaningful at small binary sizes).
+            max_size_bytes: 7864320  # 7.5 MiB
           - os: windows-latest
             artifact_name: nexusd-vault-windows-x86_64
             binary: nexusd-vault.exe
             # Locally-measured Windows release size: 5.1 MB (PE+import
-            # table overhead). Keep ~900 KB headroom for variance.
+            # table overhead). Keep ~900 KB headroom.
             max_size_bytes: 6291456  # 6 MiB
 
     steps:

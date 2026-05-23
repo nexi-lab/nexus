@@ -79,8 +79,13 @@ fn monotonic_ns() -> u64 {
 /// All mutations are serialized through a `parking_lot::Mutex`.
 /// A `Condvar` wakes blocked threads on release.
 ///
-/// Python access goes through the PyO3 wrapper in
-/// `generated_kernel_abi_pyo3` (cfg-gated behind `python` feature).
+/// **Reachability:** the PyO3 wrapper that previously exposed this
+/// to Python was deleted with the cdylib in PR #4161, and no Rust
+/// caller in the workspace currently constructs a `VFSSemaphore`.
+/// The primitive is kept here intentionally as a ready-to-wire
+/// kernel pillar (cluster-wide rate-limiting / fair scheduling
+/// surfaces are the planned consumers); should the audit confirm
+/// no upcoming consumer, this module is a candidate for deletion.
 pub struct VFSSemaphore {
     state: Mutex<SemaphoreState>,
     notify: Condvar,

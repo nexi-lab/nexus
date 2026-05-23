@@ -625,6 +625,97 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def lock(
+        self,
+        path: str,
+        lock_id: str = "",
+        timeout_ms: int = 5000,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Acquire an advisory lock via the typed Lock RPC.
+
+        Returns the ``LockResponse`` — ``acquired=false`` means contention,
+        not a transport error. Raises on auth or transport failure.
+        """
+        request = vfs_pb2.LockRequest(
+            path=path,
+            auth_token=self._auth_token,
+            lock_id=lock_id,
+            timeout_ms=timeout_ms,
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Lock(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Lock")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def unlock(
+        self,
+        path: str,
+        lock_id: str = "",
+        force: bool = False,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Release an advisory lock via the typed Unlock RPC."""
+        request = vfs_pb2.UnlockRequest(
+            path=path, auth_token=self._auth_token, lock_id=lock_id, force=force
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Unlock(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Unlock")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def watch(
+        self,
+        path: str,
+        timeout_ms: int = 30000,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Block on a file-event match via the typed Watch RPC.
+
+        Returns the ``WatchResponse`` — ``matched=false`` means the
+        kernel timed out (no event), not a transport error. The RPC
+        deadline is sized to the kernel timeout plus a small slack so
+        callers with ``timeout_ms`` larger than the transport's default
+        90 s aren't cut short.
+        """
+        request = vfs_pb2.WatchRequest(
+            path=path, auth_token=self._auth_token, timeout_ms=timeout_ms
+        )
+        timeout = read_timeout if read_timeout is not None else max(timeout_ms / 1000.0 + 5.0, 5.0)
+        try:
+            response = self._stub.Watch(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Watch")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

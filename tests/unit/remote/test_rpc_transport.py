@@ -476,6 +476,49 @@ class TestRPCTransportTypedMethods:
         assert request.dst == "/dst"
         assert request.auth_token == "test-token"
 
+    def test_lock_acquired(self, transport) -> None:
+        """lock returns the LockResponse with acquired=true on success."""
+        mock_response = MagicMock(is_error=False, acquired=True, lock_id="L1")
+        transport._mock_stub.Lock.return_value = mock_response
+
+        result = transport.lock("/p", "", 5000)
+
+        assert result is mock_response
+        request = transport._mock_stub.Lock.call_args[0][0]
+        assert request.path == "/p"
+        assert request.timeout_ms == 5000
+
+    def test_lock_contention_returns_response(self, transport) -> None:
+        """Lock contention (acquired=false) is in-band, not a raise."""
+        mock_response = MagicMock(is_error=False, acquired=False, lock_id="")
+        transport._mock_stub.Lock.return_value = mock_response
+
+        result = transport.lock("/p", "", 5000)
+
+        assert result.acquired is False
+
+    def test_unlock_returns_released_flag(self, transport) -> None:
+        mock_response = MagicMock(is_error=False, released=True)
+        transport._mock_stub.Unlock.return_value = mock_response
+
+        result = transport.unlock("/p", "L1")
+
+        assert result is mock_response
+        request = transport._mock_stub.Unlock.call_args[0][0]
+        assert request.path == "/p"
+        assert request.lock_id == "L1"
+
+    def test_watch_matched_and_timeout(self, transport) -> None:
+        """watch returns matched=true with event; timeout yields matched=false."""
+        hit = MagicMock(is_error=False, matched=True, event_type="FileWrite")
+        hit.path = "/x"
+        miss = MagicMock(is_error=False, matched=False, event_type="")
+        miss.path = ""
+        transport._mock_stub.Watch.side_effect = [hit, miss]
+
+        assert transport.watch("/x", 1000) is hit
+        assert transport.watch("/x", 1000).matched is False
+
     def test_stat_found(self, transport) -> None:
         """stat returns the StatResponse message for an existing path."""
         mock_response = MagicMock(is_error=False, found=True, path="/x.txt", size=10)

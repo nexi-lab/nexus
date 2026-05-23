@@ -421,28 +421,31 @@ class KernelClient:
         self,
         path: str,
         lock_id: str = "",
-        mode: int = 1,
-        max_holders: int = 1,
-        ttl_secs: int = 60,
+        mode: int = 1,  # noqa: ARG002 — kept for API compat; kernel hardcodes Exclusive
+        max_holders: int = 1,  # noqa: ARG002 — kept for API compat
+        ttl_secs: int = 60,  # noqa: ARG002 — kept for API compat
         timeout_ms: int = 5000,
         **_kwargs: Any,
     ) -> Any:
-        """Acquire advisory lock."""
-        result = self._call(
-            "sys_lock",
-            {
-                "path": path,
-                "lock_id": lock_id,
-                "timeout_ms": timeout_ms,
-            },
-        )
-        if isinstance(result, dict):
-            return result.get("lock_id", "")
-        return result
+        """Acquire an advisory lock via the typed Lock RPC.
+
+        Returns the lock_id string on success; raises on contention to
+        match the prior Call path (which surfaced contention as an RPC
+        error).
+        """
+        from nexus.contracts.exceptions import NexusError
+
+        assert self._transport is not None
+        resp = self._transport.lock(path, lock_id, timeout_ms)
+        if not resp.acquired:
+            raise NexusError(f"lock acquisition failed (contention): {path}")
+        return resp.lock_id
 
     def sys_unlock(self, path: str, lock_id: str = "", force: bool = False) -> Any:
-        """Release advisory lock."""
-        return self._call("sys_unlock", {"path": path, "lock_id": lock_id, "force": force})
+        """Release advisory lock via the typed Unlock RPC."""
+        assert self._transport is not None
+        resp = self._transport.unlock(path, lock_id, force)
+        return {"released": resp.released}
 
     def read_batch(
         self,
@@ -494,8 +497,16 @@ class KernelClient:
         ]
 
     def sys_watch(self, path: str, timeout_ms: int = 30000) -> Any:
-        """Watch for file changes (blocking)."""
-        return self._call("sys_watch", {"path": path, "timeout_ms": timeout_ms})
+        """Block for a file-event match via the typed Watch RPC.
+
+        Returns ``{"path", "event_type"}`` on a match; ``None`` on
+        kernel timeout (no event).
+        """
+        assert self._transport is not None
+        resp = self._transport.watch(path, timeout_ms)
+        if not resp.matched:
+            return None
+        return {"path": resp.path, "event_type": resp.event_type}
 
     # ── Service registry ───────────────────────────────────────────────
 

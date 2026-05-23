@@ -3,8 +3,16 @@
 This document is the source of truth for how surfaces are inventoried, classified,
 tested, and benchmarked. The interactive map `api-rpc-surface-coverage.html` is the
 rendered view of the data this contract governs — it is generated from
-`api-rpc-surface-coverage.yaml` by `scripts/render_api_surface_coverage.py` and is
-**not committed** (`.gitignore`d); regenerate it locally when you need it.
+`api-rpc-surface-coverage.yaml` by `scripts/render_api_surface_coverage.py`.
+
+Two ways to read it:
+
+- **Online (published)** — the `Documentation` workflow re-renders on every push
+  to `develop` and publishes to GitHub Pages at
+  <https://nexi-lab.github.io/nexus/surface-coverage/api-rpc-surface-coverage.html>.
+- **Offline (local)** — run `uv run python scripts/render_api_surface_coverage.py`
+  to regenerate `api-rpc-surface-coverage.html` in this directory and open it
+  in a browser. The local HTML is **not committed** (`.gitignore`d).
 
 ## Mental model
 
@@ -59,9 +67,11 @@ Every row carries a `perf_class`:
 
 ## Workflow for subissue owners
 
-1. Render the map locally — `uv run python scripts/render_api_surface_coverage.py` —
-   then open `api-rpc-surface-coverage.html`. (The HTML is a generated
-   artifact and is not committed; see the note under "Mental model".)
+1. Open the map — either the published view at
+   <https://nexi-lab.github.io/nexus/surface-coverage/api-rpc-surface-coverage.html>,
+   or render locally with `uv run python scripts/render_api_surface_coverage.py`
+   then open `api-rpc-surface-coverage.html`. (The local HTML is a generated
+   artifact and is not committed; see the note above.)
    Filter / search for rows where `owner: #<your-issue>`.
 2. For each row, fill `summary`, `usage_example`, `correctness_test`, `perf_class`, `perf_link`, `profiles` in `api-rpc-surface-coverage.yaml`.
 3. If the surface is missing-needed (no implementation yet), open a build issue and set `gap_issue`.

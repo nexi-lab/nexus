@@ -799,52 +799,75 @@ class KernelClient:
     # ── IPC: Pipes ─────────────────────────────────────────────────────
 
     def create_pipe(self, path: str, capacity: int = 64) -> None:
-        self._call("create_pipe", {"path": path, "capacity": capacity})
+        """Create a DT_PIPE via the typed Setattr RPC (entry_type=DT_PIPE)."""
+        self.sys_setattr(path, entry_type=3, capacity=capacity)
 
     def destroy_pipe(self, path: str) -> None:
-        self._call("destroy_pipe", {"path": path})
+        """Alias for close_pipe (the prior Call surface had both)."""
+        self.close_pipe(path)
 
     def close_pipe(self, path: str) -> None:
-        self._call("close_pipe", {"path": path})
+        """Close a pipe via the typed ClosePipe RPC."""
+        assert self._transport is not None
+        self._transport.close_pipe(path)
 
     def has_pipe(self, path: str) -> Any:
-        return self._call("has_pipe", {"path": path})
+        """Has-pipe query via the typed HasPipe RPC."""
+        assert self._transport is not None
+        return self._transport.has_pipe(path)
 
     def close_all_pipes(self) -> None:
-        self._call("close_all_pipes", {})
+        """Close every pipe via the typed CloseAllPipes RPC."""
+        assert self._transport is not None
+        self._transport.close_all_pipes()
 
     # ── IPC: Streams ───────────────────────────────────────────────────
 
     def create_stream(self, path: str, capacity: int = 1024) -> None:
-        self._call("create_stream", {"path": path, "capacity": capacity})
+        """Create a DT_STREAM via the typed Setattr RPC (entry_type=DT_STREAM)."""
+        self.sys_setattr(path, entry_type=4, capacity=capacity)
 
     def has_stream(self, path: str) -> Any:
-        return self._call("has_stream", {"path": path})
+        assert self._transport is not None
+        return self._transport.has_stream(path)
 
     def stream_read_at_blocking(
         self, path: str, offset: int, timeout_ms: int = 30000
     ) -> tuple[bytes, int]:
-        result = self._call(
-            "stream_read_at_blocking",
-            {"path": path, "offset": offset, "timeout_ms": timeout_ms},
-        )
-        return result["data"], result["next_offset"]
+        """Blocking stream read via the typed StreamReadAt RPC."""
+        assert self._transport is not None
+        resp = self._transport.stream_read_at(path, offset, blocking=True, timeout_ms=timeout_ms)
+        return bytes(resp.data), int(resp.next_offset)
 
     def stream_write_nowait(self, path: str, data: bytes) -> Any:
-        return self._call("stream_write_nowait", {"path": path, "data": data})
+        """Non-blocking stream write via the typed StreamWriteNowait RPC."""
+        assert self._transport is not None
+        return self._transport.stream_write_nowait(path, data)
 
     def stream_read_at(self, path: str, offset: int) -> Any:
-        return self._call("stream_read_at", {"path": path, "offset": offset})
+        """Non-blocking stream read via the typed StreamReadAt RPC.
+
+        Returns ``{"data": bytes, "next_offset": int}`` on data, ``None``
+        on eof (matches the prior Call-path shape).
+        """
+        assert self._transport is not None
+        resp = self._transport.stream_read_at(path, offset, blocking=False)
+        if resp.eof:
+            return None
+        return {"data": bytes(resp.data), "next_offset": int(resp.next_offset)}
 
     def stream_collect_all(self, path: str) -> bytes:
-        result = self._call("stream_collect_all", {"path": path})
-        return result if isinstance(result, bytes) else b""
+        assert self._transport is not None
+        return self._transport.stream_collect_all(path)
 
     def close_stream(self, path: str) -> None:
-        self._call("close_stream", {"path": path})
+        """Close a stream via the typed CloseStream RPC."""
+        assert self._transport is not None
+        self._transport.close_stream(path)
 
     def destroy_stream(self, path: str) -> None:
-        self._call("destroy_stream", {"path": path})
+        """Alias for close_stream (the prior Call surface had both)."""
+        self.close_stream(path)
 
     def close_all_streams(self) -> None:
         """Close all streams (shutdown)."""

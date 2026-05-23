@@ -777,6 +777,175 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return list(response.items)
 
+    # ── Typed IPC pipe / stream ops ────────────────────────────────────
+
+    def _ipc_path_request(self, path: str) -> Any:
+        return vfs_pb2.IpcPathRequest(path=path, auth_token=self._auth_token)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def close_pipe(self, path: str, read_timeout: float | None = None) -> None:
+        """Close a pipe via the typed ClosePipe RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.ClosePipe(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "ClosePipe")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def has_pipe(self, path: str, read_timeout: float | None = None) -> bool:
+        """Has-pipe query via the typed HasPipe RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.HasPipe(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "HasPipe")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return bool(resp.present)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def close_all_pipes(self, read_timeout: float | None = None) -> None:
+        """Close every pipe via the typed CloseAllPipes RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.CloseAllPipes(
+                vfs_pb2.IpcEmpty(auth_token=self._auth_token), timeout=timeout
+            )
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "CloseAllPipes")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def close_stream(self, path: str, read_timeout: float | None = None) -> None:
+        """Close a stream via the typed CloseStream RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.CloseStream(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "CloseStream")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def has_stream(self, path: str, read_timeout: float | None = None) -> bool:
+        """Has-stream query via the typed HasStream RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.HasStream(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "HasStream")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return bool(resp.present)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stream_write_nowait(self, path: str, data: bytes, read_timeout: float | None = None) -> int:
+        """Non-blocking stream write via the typed StreamWriteNowait RPC.
+
+        Returns the offset where the data landed (native bytes — no base64).
+        """
+        request = vfs_pb2.StreamWriteRequest(path=path, data=data, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.StreamWriteNowait(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamWriteNowait")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return int(resp.offset)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stream_read_at(
+        self,
+        path: str,
+        offset: int,
+        blocking: bool = False,
+        timeout_ms: int = 30000,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Stream read via the typed StreamReadAt RPC.
+
+        Returns the ``StreamReadAtResponse``. On non-blocking ``eof=true``
+        means no data was available. Long blocking reads size the RPC
+        deadline to ``timeout_ms + slack`` so the transport's default
+        90 s cap doesn't cut them short.
+        """
+        request = vfs_pb2.StreamReadAtRequest(
+            path=path,
+            offset=offset,
+            blocking=blocking,
+            timeout_ms=timeout_ms,
+            auth_token=self._auth_token,
+        )
+        if read_timeout is not None:
+            timeout = read_timeout
+        elif blocking:
+            timeout = max(timeout_ms / 1000.0 + 5.0, 5.0)
+        else:
+            timeout = self._timeout
+        try:
+            resp = self._stub.StreamReadAt(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamReadAt")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return resp
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stream_collect_all(self, path: str, read_timeout: float | None = None) -> bytes:
+        """Collect all bytes from a stream via the typed StreamCollectAll RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.StreamCollectAll(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamCollectAll")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return bytes(resp.data)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),

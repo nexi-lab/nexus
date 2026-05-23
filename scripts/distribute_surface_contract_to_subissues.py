@@ -22,6 +22,7 @@ import subprocess  # noqa: E402
 from collections import defaultdict  # noqa: E402
 
 from scripts.surface_coverage.distribute import apply_appendix, build_appendix  # noqa: E402
+from scripts.surface_coverage.paths import COVERAGE_YAML  # noqa: E402
 from scripts.surface_coverage.schema import load_yaml  # noqa: E402
 
 # All subissues to amend (epics + children)
@@ -87,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--yaml",
         type=Path,
-        default=Path("docs/surface-coverage/api-rpc-surface-coverage.yaml"),
+        default=COVERAGE_YAML,
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(

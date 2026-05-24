@@ -41,8 +41,8 @@ struct WatchEntry {
     pattern: String,
     matcher: GlobMatcher,
     /// Notification channel populated by [`FileWatchRegistry::wait_for_event`]
-    /// at temp-watch registration time. Always `Some` for the only
-    /// in-tree registration path.
+    /// at temp-watch registration time. The `dispatch_observers` push
+    /// path uses this to wake the parked waiter.
     notify: Arc<WatchNotify>,
 }
 

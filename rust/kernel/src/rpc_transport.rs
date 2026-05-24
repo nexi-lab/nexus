@@ -267,6 +267,49 @@ impl RpcTransport {
         Ok(resp.success)
     }
 
+    /// Typed StreamReadAt RPC — bytes + next_offset + eof flag.
+    /// `blocking=true` lets the server wait up to `timeout_ms` for data.
+    pub fn stream_read_at(
+        &self,
+        path: &str,
+        offset: u64,
+        blocking: bool,
+        timeout_ms: u64,
+    ) -> Result<StreamReadResult, String> {
+        self.block_on(self.stream_read_at_async(path, offset, blocking, timeout_ms))
+    }
+
+    async fn stream_read_at_async(
+        &self,
+        path: &str,
+        offset: u64,
+        blocking: bool,
+        timeout_ms: u64,
+    ) -> Result<StreamReadResult, String> {
+        let mut client = self.client();
+        let req = tonic::Request::new(vfs_proto::StreamReadAtRequest {
+            path: path.to_string(),
+            offset,
+            blocking,
+            timeout_ms,
+            auth_token: self.auth_token.clone(),
+        });
+        let resp = client
+            .stream_read_at(req)
+            .await
+            .map_err(|e| format!("StreamReadAt({path}): {e}"))?
+            .into_inner();
+        if resp.is_error {
+            let err = String::from_utf8_lossy(&resp.error_payload);
+            return Err(format!("StreamReadAt({path}): server error: {err}"));
+        }
+        Ok(StreamReadResult {
+            data: resp.data,
+            next_offset: resp.next_offset,
+            eof: resp.eof,
+        })
+    }
+
     /// Health check — returns (version, zone_id, uptime_seconds).
     #[allow(dead_code)]
     pub fn ping(&self) -> Result<(String, String, i64), String> {
@@ -302,6 +345,13 @@ pub struct WriteRpcResult {
     pub content_id: String,
     pub size: u64,
     pub gen: u64,
+}
+
+/// Result of a typed StreamReadAt RPC.
+pub struct StreamReadResult {
+    pub data: Vec<u8>,
+    pub next_offset: u64,
+    pub eof: bool,
 }
 
 /// Retry only on transient gRPC failures (UNAVAILABLE, DEADLINE_EXCEEDED).

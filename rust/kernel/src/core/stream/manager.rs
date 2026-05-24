@@ -361,7 +361,6 @@ impl StreamManager {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum StreamManagerError {
     Exists(String),
     NotFound(String),

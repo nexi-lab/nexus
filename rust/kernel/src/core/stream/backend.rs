@@ -5,7 +5,6 @@
 //! sibling files.
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum StreamError {
     Closed(&'static str),
     Full(usize, usize),

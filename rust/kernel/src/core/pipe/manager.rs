@@ -341,7 +341,6 @@ impl PipeManager {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum PipeManagerError {
     Exists(String),
     NotFound(String),

@@ -67,6 +67,21 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 /// `sys_setattr` when `io_profile=shared_memory` is requested for a
 /// DT_STREAM inode. Callers reach it via `sys_read` / `sys_write`
 /// only — the type has no direct syscall surface of its own.
+///
+/// **Concurrency contract** (cross-process single-writer
+/// multi-reader): at most one producer thread, in at most one
+/// process, calls `push`; any number of reader threads in any
+/// process Acquire-load `tail` and read already-committed bytes.
+///
+/// **Warning** — in-process multi-thread use is currently UB:
+/// `push_inner` builds a `&mut [u8]` borrow into `data_slice()`
+/// and updates `tail` without any in-process lock, so two threads
+/// in this process both calling `sys_write` on the same SHM-backed
+/// DT_STREAM would alias that borrow. No in-tree caller passes
+/// `io_profile="shared_memory"` today, so the race has no current
+/// trigger. The first caller that needs in-process multi-thread
+/// writes on this backend must add a writer mutex (mirroring
+/// `MemoryStreamBackend`'s pattern) before it ships.
 pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,

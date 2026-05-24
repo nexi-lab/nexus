@@ -76,9 +76,26 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 ///
 /// Kernel-internal primitive: the kernel constructs one via
 /// [`SharedMemoryPipeBackend::create_native`] inside `sys_setattr` when
-/// `io_profile=shared_memory` is requested for a DT_PIPE inode.  Only
-/// the kernel ever holds the struct; Python reaches it via the
+/// `io_profile=shared_memory` is requested for a DT_PIPE inode. Only
+/// the kernel ever holds the struct; callers reach it via the
 /// DT_PIPE syscalls (`sys_read` / `sys_write`).
+///
+/// **Concurrency contract** (cross-process SPSC):
+/// at most one producer thread, in at most one process, calls
+/// `push`; at most one consumer thread, in at most one process,
+/// calls `pop`. Under that contract producer/consumer touch
+/// disjoint regions of the mmap'd ring, guarded by atomic
+/// head/tail.
+///
+/// **Warning** — in-process multi-thread use is currently UB:
+/// `push` builds a `&mut [u8]` borrow into `ring_slice()` and
+/// updates `tail` without any in-process lock, so two threads in
+/// this process both calling `sys_write` on the same SHM-backed
+/// DT_PIPE would alias that borrow. No in-tree caller passes
+/// `io_profile="shared_memory"` today, so the race has no current
+/// trigger. The first caller that needs in-process multi-thread
+/// access on this backend must add a writer / reader mutex
+/// (mirroring `MemoryPipeBackend`'s pattern) before it ships.
 pub struct SharedMemoryPipeBackend {
     mmap: memmap2::MmapMut,
     ring_cap: usize,

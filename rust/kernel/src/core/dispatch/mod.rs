@@ -667,7 +667,7 @@ impl Trie {
 
 // ── ObserverRegistry — pure Rust observer dispatch ─────────────────────
 
-/// Observer entry — pure Rust, no PyO3 dependency.
+/// Observer entry.
 ///
 /// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
 /// can clone the trait object across threads. `event_mask` bitmask
@@ -741,8 +741,9 @@ impl ObserverRegistry {
 
 // ── NativeHookRegistry ────────────────────────────────────────────────
 //
-// Pure Rust hook dispatch — no GIL crossing for Rust-native hooks.
-// Parallel to the PyO3-dependent HookRegistry in hook_registry.rs.
+// Pure Rust hook dispatch for in-process Rust services. Stores
+// `Box<dyn NativeInterceptHook>` in a Vec so the dispatch loop fans
+// out without any allocation in the steady state.
 
 struct NativeHookEntry {
     hook: Box<dyn NativeInterceptHook>,
@@ -813,7 +814,7 @@ impl NativeHookRegistry {
     }
 }
 
-// ── Tests (TrieNode only — pure Rust, no PyO3) ────────────────────────
+// ── Tests (TrieNode only) ────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1037,8 +1038,9 @@ mod tests {
     #[test]
     fn test_file_event_type_str_matches_python_strenum() {
         // String values must match Python `FileEventType(StrEnum)` `.value`
-        // — these strings cross the PyO3 boundary verbatim and feed into
-        // the reconstructed Python `FileEvent`.
+        // (`src/nexus/core/file_events.py`) — these strings cross the
+        // gRPC boundary verbatim and feed into the reconstructed
+        // Python `FileEvent`.
         assert_eq!(FileEventType::FileWrite.as_str(), "file_write");
         assert_eq!(FileEventType::FileDelete.as_str(), "file_delete");
         assert_eq!(FileEventType::FileRename.as_str(), "file_rename");

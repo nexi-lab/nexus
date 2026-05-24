@@ -249,7 +249,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob`/`grep` are search-tier convenience (PR #3921), composing `sys_readdir` + filter/regex |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob` / `grep` are search-tier convenience built atop `sys_readdir` + filter/regex |
 | **Xattr** (extended attributes) | `get_xattr(path, key)`, `set_xattr(path, key, value)`, `get_xattr_bulk(paths, key)` | Direct metastore `get_file_metadata`/`set_file_metadata` — no hooks, no routing, no permission gate. Rust `KernelConvenience` trait |
 | **HDFS half** (driver-level, kernel-internal) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
@@ -424,11 +424,9 @@ not by domain or implementation.
 
 **Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
 matches `ObjectStore` / `CacheStore` for visual symmetry across the
-three ABC pillars.  Phase 0.5 of
-`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
-`Metastore` (one word) to `MetaStore` (two words); the Python ABC
-stays `MetastoreABC` because the Python tier is on a sunset path and
-not worth ripple-renaming.
+three ABC pillars. The Python ABC stays `MetastoreABC` (one word) —
+the Python tier is on a sunset path, so the Rust trait carries the
+forward-looking name.
 
 **Rust-side strict layout:** `kernel/src/abc/` contains exactly the
 3 §3.A ABC pillar trait files. `kernel/src/hal/` contains the §3.B
@@ -476,11 +474,9 @@ VersionRecorder, not a kernel inode field.
 
 **Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
 matches `ObjectStore` / `CacheStore` for visual symmetry across the
-three ABC pillars.  Phase 0.5 of
-`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
-`Metastore` (one word) to `MetaStore` (two words); the Python ABC
-stays `MetastoreABC` because the Python tier is on a sunset path and
-not worth ripple-renaming.
+three ABC pillars. The Python ABC stays `MetastoreABC` (one word) —
+the Python tier is on a sunset path, so the Rust trait carries the
+forward-looking name.
 
 #### 3.A.2 ObjectStoreABC (= Backend) — Blob I/O
 

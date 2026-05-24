@@ -6545,11 +6545,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_batch_stat_returns_per_item_found_flag
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_batch_stat_returns_per_item_found_flag
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.batch_write
   module: nexus_fs
   summary: ''
@@ -6562,11 +6562,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_batch_write_success; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_batch_write_per_item_error_raises
+  perf_class: hot_path
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.call
   module: nexus_fs
   summary: Generic NexusVFSService Call method exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -6597,11 +6597,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_close_all_pipes_no_op_on_success
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_close_all_pipes_no_op_on_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.close_pipe
   module: nexus_fs
   summary: ''
@@ -6614,11 +6614,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_close_pipe_no_op_on_success
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_close_pipe_no_op_on_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.close_stream
   module: nexus_fs
   summary: ''
@@ -6631,11 +6631,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_close_stream_no_op_on_success
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_close_stream_no_op_on_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.copy
   module: nexus_fs
   summary: ''
@@ -6648,11 +6648,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_copy_success
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_copy_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.delete
   module: nexus_fs
   summary: Typed NexusVFSService method exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -6682,11 +6682,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_get_xattr_found; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_get_xattr_not_found
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_get_xattr_found
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.get_xattr_bulk
   module: nexus_fs
   summary: ''
@@ -6699,11 +6699,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_get_xattr_bulk_returns_items
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_get_xattr_bulk_returns_items
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.has_pipe
   module: nexus_fs
   summary: ''
@@ -6716,11 +6716,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_has_pipe_returns_bool
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_has_pipe_returns_bool
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.has_stream
   module: nexus_fs
   summary: ''
@@ -6733,11 +6733,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_has_stream_returns_bool
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_has_stream_returns_bool
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.lock
   module: nexus_fs
   summary: ''
@@ -6750,11 +6750,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_lock_acquired; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_lock_contention_returns_response
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_lock_acquired
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.mkdir
   module: nexus_fs
   summary: ''
@@ -6767,11 +6767,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_mkdir_success; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_mkdir_error_raises
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_mkdir_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
   summary: Typed NexusVFSService health probe exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -6818,11 +6818,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_readdir_success; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_readdir_error_raises
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_readdir_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.rename
   module: nexus_fs
   summary: ''
@@ -6835,11 +6835,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_rename_success; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_rename_error_raises
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_rename_success
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.set_xattr
   module: nexus_fs
   summary: ''
@@ -6852,11 +6852,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_set_xattr_sends_request
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_set_xattr_sends_request
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.setattr
   module: nexus_fs
   summary: ''
@@ -6869,11 +6869,12 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_setattr_known_kwargs_map_to_request_fields;
+    tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_setattr_error_raises
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_setattr_known_kwargs_map_to_request_fields
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.stat
   module: nexus_fs
   summary: ''
@@ -6886,11 +6887,12 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stat_found; tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stat_not_found_returns_none;
+    tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stat_error_raises
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stat_found
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.stream_collect_all
   module: nexus_fs
   summary: ''
@@ -6903,11 +6905,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_collect_all_returns_bytes
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_collect_all_returns_bytes
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.stream_read_at
   module: nexus_fs
   summary: ''
@@ -6920,11 +6922,12 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_read_at_non_blocking_eof;
+    tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_read_at_blocking_uses_timeout_for_deadline
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_read_at_non_blocking_eof
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.stream_write_nowait
   module: nexus_fs
   summary: ''
@@ -6937,11 +6940,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_write_nowait_returns_offset
+  perf_class: hot_path
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_stream_write_nowait_returns_offset
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.unlock
   module: nexus_fs
   summary: ''
@@ -6954,11 +6957,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_unlock_returns_released_flag
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_unlock_returns_released_flag
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.watch
   module: nexus_fs
   summary: ''
@@ -6971,11 +6974,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_watch_matched_and_timeout
+  perf_class: control
+  perf_link: tests/unit/remote/test_rpc_transport.py::TestRPCTransportTypedMethods::test_watch_matched_and_timeout
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1133
 - id: nexus_v_f_s_service.write
   module: nexus_fs
   summary: Typed NexusVFSService method exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.

@@ -371,18 +371,6 @@ impl AgentRegistry {
         }
     }
 
-    /// Allocate a unique pid (uuid4 hex prefix). Bounded retry loop.
-    fn alloc_pid(&self) -> Result<String, AgentError> {
-        for _ in 0..100 {
-            let pid = Uuid::new_v4().simple().to_string();
-            let pid = pid[..12].to_string();
-            if !self.agents.contains_key(&pid) {
-                return Ok(pid);
-            }
-        }
-        Err(AgentError::PidExhausted)
-    }
-
     fn wake(&self, pid: &str) {
         if let Some(notify) = self.notify.get(pid) {
             let _guard = notify.mutex.lock();
@@ -429,26 +417,19 @@ impl AgentRegistry {
         external_info: Option<ExternalProcessInfo>,
         labels: HashMap<String, String>,
     ) -> Result<AgentDescriptor, AgentError> {
+        use dashmap::mapref::entry::Entry;
+
         if let Some(ppid) = parent_pid.as_ref() {
             if !self.agents.contains_key(ppid) {
                 return Err(AgentError::NotFound(format!("parent not found: {ppid}")));
             }
         }
 
-        let pid = match pid {
-            Some(p) => {
-                if self.agents.contains_key(&p) {
-                    return Err(AgentError::AlreadyExists(p));
-                }
-                p
-            }
-            None => self.alloc_pid()?,
-        };
-
         let now = now_ms();
         let connection_id = external_info.as_ref().map(|e| e.connection_id.clone());
-        let desc = AgentDescriptor {
-            pid: pid.clone(),
+        // pid filled in by the atomic alloc + insert step below.
+        let mut desc = AgentDescriptor {
+            pid: String::new(),
             name,
             kind,
             owner_id,
@@ -469,14 +450,41 @@ impl AgentRegistry {
             repos: Vec::new(),
         };
 
-        self.agents.insert(pid.clone(), desc.clone());
+        // Atomic pid allocation + insert. Entry::Vacant guarantees no two
+        // concurrent spawns can settle on the same pid; the prior code
+        // split contains_key from insert and let the explicit-pid and
+        // uuid-derived paths race.
+        let final_pid = match pid {
+            Some(p) => match self.agents.entry(p.clone()) {
+                Entry::Occupied(_) => return Err(AgentError::AlreadyExists(p)),
+                Entry::Vacant(v) => {
+                    desc.pid = p.clone();
+                    v.insert(desc.clone());
+                    p
+                }
+            },
+            None => {
+                let mut out = None;
+                for _ in 0..100 {
+                    let candidate = Uuid::new_v4().simple().to_string()[..12].to_string();
+                    if let Entry::Vacant(v) = self.agents.entry(candidate.clone()) {
+                        desc.pid = candidate.clone();
+                        v.insert(desc.clone());
+                        out = Some(candidate);
+                        break;
+                    }
+                }
+                out.ok_or(AgentError::PidExhausted)?
+            }
+        };
+
         self.notify
-            .entry(pid.clone())
+            .entry(final_pid.clone())
             .or_insert_with(|| Arc::new(AgentNotify::new()));
 
         if let Some(ppid) = parent_pid.as_ref() {
             if let Some(mut parent) = self.agents.get_mut(ppid) {
-                parent.children.push(pid.clone());
+                parent.children.push(final_pid.clone());
                 parent.updated_at_ms = now;
             }
         }

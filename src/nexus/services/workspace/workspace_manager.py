@@ -48,6 +48,7 @@ class WorkspaceManager:
         zone_id: str | None = None,
         agent_id: str | None = None,
         record_store: "RecordStoreABC | None" = None,
+        nexus_fs: "Any" = None,
     ):
         """Initialize workspace manager.
 
@@ -61,6 +62,7 @@ class WorkspaceManager:
             zone_id: Default zone ID for operations (optional)
             agent_id: Default agent ID for operations (optional)
             record_store: RecordStoreABC instance providing session_factory
+            nexus_fs: NexusFS handle for namespace walks (via sys_readdir)
         """
         self._nexus_fs = nexus_fs
         self.rebac_manager = rebac_manager

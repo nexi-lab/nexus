@@ -768,11 +768,11 @@ conformance at registration, and resolves kernel dependencies via
 
 | Property | Value |
 |----------|-------|
-| Kernel role | Kernel **defines** the ABC; kernel does NOT consume it |
-| Consumers | Services only (ReBAC, Auth, Agents, Scheduler, etc.) |
+| Kernel role | Kernel **defines** the ABC — services consume |
+| Consumers | Services (ReBAC, Auth, Agents, Scheduler, etc.) |
 | Interface | `session_factory` + `read_session_factory` (SQLAlchemy ORM) |
 | Drivers | PostgreSQL, SQLite (interchangeable without code changes) |
-| Rule | Direct SQL or raw driver access is an abstraction break |
+| Access path | Through the ABC's session factories — pooling, error translation, replica routing flow from there |
 
 The kernel is the standards body — it defines the interface shape that forces
 driver implementors to provide pooling, error translation, read replica routing,

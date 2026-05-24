@@ -1,8 +1,9 @@
 // VFS gRPC transport for REMOTE profile and federation peers.
 //
 // Every syscall is a typed RPC. The generic `Call` RPC is retained only
-// for the non-syscall in-process control plane (service_*, trie_*,
-// agent_*) — every other method on it now errors with "unknown Call
+// for the non-syscall in-process control plane — service_* lifecycle
+// no-ops, trie_* / agent_* registry ops, and the `get_mount_points`
+// operational query. Every other method now errors with "unknown Call
 // method". Native bytes on the content / stream ops kill the prior
 // base64-in-JSON tax.
 //

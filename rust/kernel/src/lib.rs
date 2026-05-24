@@ -41,12 +41,9 @@ pub(crate) use core::file_watch;
 pub use core::lock as lock_manager;
 pub use core::lock::locks;
 pub use core::meta_store;
-pub use core::vfs_router;
-// `VFSSemaphore` lives at `core::lock::semaphore::VFSSemaphore` —
-// the counting-semaphore third of the LockManager primitive
-// (KERNEL-ARCHITECTURE.md §4.1).
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
+pub use core::vfs_router;
 
 // `acp` and `managed_agent` modules used to live here; both moved to
 // the `services` crate (`rust/services/src/{acp,managed_agent}/`) so

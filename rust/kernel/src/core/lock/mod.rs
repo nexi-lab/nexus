@@ -14,7 +14,6 @@
 //!     a quorum round-trip.
 
 pub mod locks;
-pub mod semaphore;
 
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{BTreeMap, HashMap};

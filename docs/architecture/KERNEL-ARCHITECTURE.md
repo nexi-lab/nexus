@@ -602,7 +602,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
 | **VFSRouter** | `rust/kernel/src/core/vfs_router.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
-| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`, `semaphore.rs`) | `i_rwsem` + `flock(2)` + `sem_t` | Three lock concerns in one primitive (§4.1). I/O lock: per-path condvar-based RW lock. Advisory lock: `sys_lock`/`sys_unlock` with TTL via the `Locks` HAL trait (`LocalLocks` default, replicated backend via `install_locks(Arc<dyn Locks>)`). Counting semaphore (`VFSSemaphore`): name-addressed, UUID4 holder IDs, lazy TTL eviction, SSOT `max_holders` enforcement |
+| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`) | `i_rwsem` + `flock(2)` + `sem_t` | I/O lock + advisory lock in one primitive (§4.1). I/O lock: per-path condvar-based RW lock. Advisory lock: `sys_lock`/`sys_unlock` with TTL via the `Locks` HAL trait (`LocalLocks` default, replicated backend via `install_locks(Arc<dyn Locks>)`); `max_holders == 1` ⇒ mutex, `max_holders > 1` ⇒ counting semaphore — same code path |
 | **Dispatch (Rust Kernel + DispatchMixin)** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/dispatch/` + `core.nexus_fs_dispatch` (Python event broadcaster) | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
 | **PipeManager + StreamManager** | `rust/kernel/src/core/pipe/` + `rust/kernel/src/core/stream/` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileDescriptorTable** | `rust/kernel/src/core/fdt.rs` | fd table (`task_struct.files`) | Pre-opened fd registry for PAS backends. `sys_write` registers via `ObjectStore::resolve_physical_path()`; `sys_read` fast-path via `libc::pread`; `sys_unlink` removes; `sys_rename` re-keys. CAS/remote backends opt out (trait default `None`) |
@@ -612,28 +612,28 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
 | **AgentRegistry** | `rust/kernel/src/core/agents/registry.rs` | Linux `task_struct` table + signal queue | Kernel SSOT for agent lifecycle: PID allocation, parent/child tree, signal semantics (SIGTERM/SIGSTOP/SIGCONT/SIGKILL/SIGUSR1), `AgentState::can_transition_to` validation, per-PID condvar wake-ups. Shared `Arc` exposed to procfs view (`AgentStatusResolver`) — no dual-write. Details in §1 Service Lifecycle |
 
-### 4.1 Unified LockManager — I/O Lock + Advisory Lock + Counting Semaphore
+### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 
 Rust `LockManager` (`rust/kernel/src/core/lock/`) unifies the kernel's
-three locking concerns in one primitive — sharing the path-normalisation
+two locking concerns in one primitive — sharing the path-normalisation
 helper, the hierarchy-aware conflict logic, and the `core/lock/` module
 home. Constructed in `Kernel::new()` with a default `LocalLocks`
 advisory backend; a replicated backend swaps in via
 `install_locks(Arc<dyn Locks>)` at federation mount time (first-wins,
 idempotent).
 
-| Property | I/O Lock | Advisory Lock | Counting Semaphore (`VFSSemaphore`) |
-|----------|----------|---------------|--------------------------------------|
-| Linux analogue | `i_rwsem` | `flock(2)` / `fcntl(F_SETLK)` | `sem_t` (POSIX named semaphore) |
-| Modes | `read` (shared) / `write` (exclusive) | exclusive (mutex), shared (`max_holders ≥ 2`), TTL-based | counting (any `max_holders ≥ 1`), TTL-based |
-| Latency target | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft | ~200ns (Rust mutex + condvar) |
-| Scope | Process-scoped, crash → released | TTL-based, expire → released | Process-scoped, TTL-based lazy eviction |
-| Visibility | Kernel-internal (`sys_read`/`sys_write`) | User-facing (`sys_lock`/`sys_unlock`) | Kernel primitive — reached via the `VFSSemaphore` full path |
-| Holder ID | Implicit handle (u64 from `next_handle`) | Caller-supplied `lock_id` string | UUID4 generated at acquire |
-| Storage | In-memory only | Shared `Arc<Mutex<LockState>>` — `contracts::lock_state` is SSOT; the replicated backend's apply-path writes into the same Arc | In-memory only, per-name `HashMap` under one mutex |
-| Local impl | per-path condvar RW | `LocalLocks` (`core/lock/locks.rs`) — mutates the shared `LockState` Arc directly | `VFSSemaphore` (`core/lock/semaphore.rs`) |
-| Distributed impl | n/a (process-local) | replicated `Locks` HAL backend installed via `install_locks(Arc<dyn Locks>)`; apply-path mutates the same `LockState` Arc so reads observe committed state without a quorum round-trip | n/a (process-local; cluster-wide fairness uses a shared-mode advisory lock with `max_holders > 1`) |
-| Syscalls | implicit (taken inside `sys_read` / `sys_write`) | `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2) | direct API on `VFSSemaphore` (`acquire`/`release`/`extend`/`force_release`/`info`) |
+| Property | I/O Lock | Advisory Lock |
+|----------|----------|---------------|
+| Linux analogue | `i_rwsem` | `flock(2)` / `fcntl(F_SETLK)` / `sem_t` |
+| Modes | `read` (shared) / `write` (exclusive) | counting via `max_holders` — `max_holders == 1` is the mutex form, `max_holders > 1` is the counting-semaphore form; same code path |
+| Latency target | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
+| Scope | Process-scoped, crash → released | TTL-based, expire → released |
+| Visibility | Kernel-internal (`sys_read`/`sys_write`) | User-facing (`sys_lock`/`sys_unlock`) |
+| Holder ID | Implicit handle (u64 from `next_handle`) | Caller-supplied `lock_id` string |
+| Storage | In-memory only | Shared `Arc<Mutex<LockState>>` — `contracts::lock_state` is SSOT; the replicated backend's apply-path writes into the same Arc |
+| Local impl | per-path condvar RW | `LocalLocks` (`core/lock/locks.rs`) — mutates the shared `LockState` Arc directly |
+| Distributed impl | n/a (process-local) | replicated `Locks` HAL backend installed via `install_locks(Arc<dyn Locks>)`; apply-path mutates the same `LockState` Arc so reads observe committed state without a quorum round-trip |
+| Syscalls | implicit (taken inside `sys_read` / `sys_write`) | `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2) |
 
 See `lock-architecture.md` for full design. See `federation-memo.md` for
 the replicated-backend install path.

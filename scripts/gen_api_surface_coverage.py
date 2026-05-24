@@ -104,7 +104,10 @@ def generate_coverage(
             except ValueError:
                 # Relative path (no /api/v<N>/ prefix) — infer module from the
                 # router file stem (e.g. "rebac.py" -> "rebac").
-                source_file = Path(raw.source.split(":")[0])
+                # rsplit so a Windows drive-letter colon (e.g.
+                # "C:\…\file.py:123") doesn't get treated as the line-number
+                # separator — without this the stem collapses to "C".
+                source_file = Path(raw.source.rsplit(":", 1)[0])
                 stem = source_file.stem.replace("-", "_")
                 # Collapse path segments into a verb string.
                 path_parts = [p for p in raw.path.strip("/").split("/") if p]
@@ -240,12 +243,15 @@ def generate_coverage(
             op.profiles = dict(default_profiles)
 
     # Rewrite transport sources to repo-relative paths so committed YAML
-    # doesn't leak the local workspace path.
-    repo_root_str = str(repo_root.resolve()) + "/"
+    # doesn't leak the local workspace path. Normalize both sides to
+    # forward-slashes so the comparison + output are platform-neutral
+    # (without this Windows kept the absolute "C:\…" prefix because the
+    # separators didn't match).
+    repo_root_str = repo_root.resolve().as_posix() + "/"
     for op in operations.values():
         rewritten: dict[str, TransportCell] = {}
         for tkey, cell in op.transports.items():
-            src = cell.source
+            src = cell.source.replace("\\", "/")
             if src.startswith(repo_root_str):
                 src = src[len(repo_root_str) :]
             rewritten[tkey] = TransportCell(name=cell.name, source=src)
@@ -289,12 +295,13 @@ def generate_coverage(
         merged = fresh
 
     # Rewrite any stale absolute paths preserved from prior YAML so committed
-    # output is repo-relative regardless of where it was generated.
-    repo_root_str = str(repo_root.resolve()) + "/"
+    # output is repo-relative regardless of where it was generated. Same
+    # forward-slash normalization as above for Windows compatibility.
+    repo_root_str = repo_root.resolve().as_posix() + "/"
     for op in merged.operations:
         rewritten: dict[str, TransportCell] = {}
         for tkey, cell in op.transports.items():
-            src = cell.source
+            src = cell.source.replace("\\", "/")
             if src.startswith(repo_root_str):
                 src = src[len(repo_root_str) :]
             rewritten[tkey] = TransportCell(name=cell.name, source=src)

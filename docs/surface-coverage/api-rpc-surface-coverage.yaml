@@ -445,7 +445,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.agent_registry
-      source: src/nexus/remote/kernel_client.py:846
+      source: src/nexus/remote/kernel_client.py:926
   profiles:
     lite: supported
     sandbox: supported
@@ -1962,7 +1962,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_pipes
-      source: src/nexus/remote/kernel_client.py:768
+      source: src/nexus/remote/kernel_client.py:821
   profiles:
     lite: supported
     sandbox: supported
@@ -1979,7 +1979,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_streams
-      source: src/nexus/remote/kernel_client.py:804
+      source: src/nexus/remote/kernel_client.py:874
   profiles:
     lite: supported
     sandbox: supported
@@ -1996,7 +1996,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_pipe
-      source: src/nexus/remote/kernel_client.py:762
+      source: src/nexus/remote/kernel_client.py:811
   profiles:
     lite: supported
     sandbox: supported
@@ -2013,7 +2013,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_stream
-      source: src/nexus/remote/kernel_client.py:798
+      source: src/nexus/remote/kernel_client.py:865
   profiles:
     lite: supported
     sandbox: supported
@@ -2265,7 +2265,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_pipe
-      source: src/nexus/remote/kernel_client.py:756
+      source: src/nexus/remote/kernel_client.py:803
   profiles:
     lite: supported
     sandbox: supported
@@ -2299,7 +2299,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_stream
-      source: src/nexus/remote/kernel_client.py:773
+      source: src/nexus/remote/kernel_client.py:828
   profiles:
     lite: supported
     sandbox: supported
@@ -2629,7 +2629,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_pipe
-      source: src/nexus/remote/kernel_client.py:759
+      source: src/nexus/remote/kernel_client.py:807
   profiles:
     lite: supported
     sandbox: supported
@@ -2646,7 +2646,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_stream
-      source: src/nexus/remote/kernel_client.py:801
+      source: src/nexus/remote/kernel_client.py:870
   profiles:
     lite: supported
     sandbox: supported
@@ -2752,7 +2752,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_post_hooks
-      source: src/nexus/remote/kernel_client.py:518
+      source: src/nexus/remote/kernel_client.py:557
   profiles:
     lite: supported
     sandbox: supported
@@ -2769,7 +2769,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks
-      source: src/nexus/remote/kernel_client.py:525
+      source: src/nexus/remote/kernel_client.py:564
   profiles:
     lite: supported
     sandbox: supported
@@ -2786,7 +2786,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks_batch_stat
-      source: src/nexus/remote/kernel_client.py:553
+      source: src/nexus/remote/kernel_client.py:592
   profiles:
     lite: supported
     sandbox: supported
@@ -3204,7 +3204,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1335
     sdk:
       name: KernelClient.exists_batch
-      source: src/nexus/remote/kernel_client.py:579
+      source: src/nexus/remote/kernel_client.py:618
   profiles:
     lite: supported
     sandbox: supported
@@ -4290,7 +4290,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.get
-      source: src/nexus/remote/kernel_client.py:1096
+      source: src/nexus/remote/kernel_client.py:1235
   profiles:
     lite: supported
     sandbox: supported
@@ -4307,7 +4307,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.heartbeat
-      source: src/nexus/remote/kernel_client.py:1122
+      source: src/nexus/remote/kernel_client.py:1261
   profiles:
     lite: supported
     sandbox: supported
@@ -4358,7 +4358,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.open
-      source: src/nexus/remote/kernel_client.py:122
+      source: src/nexus/remote/kernel_client.py:124
   profiles:
     lite: supported
     sandbox: supported
@@ -4392,7 +4392,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:1057
+      source: src/nexus/remote/kernel_client.py:1196
   profiles:
     lite: supported
     sandbox: supported
@@ -4460,7 +4460,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.signal
-      source: src/nexus/remote/kernel_client.py:1099
+      source: src/nexus/remote/kernel_client.py:1238
   profiles:
     lite: supported
     sandbox: supported
@@ -4545,7 +4545,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:1090
+      source: src/nexus/remote/kernel_client.py:1229
   profiles:
     lite: supported
     sandbox: supported
@@ -4662,7 +4662,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:627
     sdk:
       name: KernelClient.get_content_id
-      source: src/nexus/remote/kernel_client.py:570
+      source: src/nexus/remote/kernel_client.py:609
   profiles:
     lite: supported
     sandbox: supported
@@ -4730,7 +4730,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_mount_points
-      source: src/nexus/remote/kernel_client.py:584
+      source: src/nexus/remote/kernel_client.py:623
   profiles:
     lite: supported
     sandbox: supported
@@ -4852,7 +4852,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:268
     sdk:
       name: KernelClient.get_top_level_mounts
-      source: src/nexus/remote/kernel_client.py:591
+      source: src/nexus/remote/kernel_client.py:630
   profiles:
     lite: supported
     sandbox: supported
@@ -4904,7 +4904,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr
-      source: src/nexus/remote/kernel_client.py:729
+      source: src/nexus/remote/kernel_client.py:768
   profiles:
     lite: supported
     sandbox: supported
@@ -4921,7 +4921,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr_bulk
-      source: src/nexus/remote/kernel_client.py:744
+      source: src/nexus/remote/kernel_client.py:789
   profiles:
     lite: supported
     sandbox: supported
@@ -5126,7 +5126,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_pipe
-      source: src/nexus/remote/kernel_client.py:765
+      source: src/nexus/remote/kernel_client.py:816
   profiles:
     lite: supported
     sandbox: supported
@@ -5143,7 +5143,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_stream
-      source: src/nexus/remote/kernel_client.py:776
+      source: src/nexus/remote/kernel_client.py:832
   profiles:
     lite: supported
     sandbox: supported
@@ -5212,7 +5212,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.hook_count
-      source: src/nexus/remote/kernel_client.py:515
+      source: src/nexus/remote/kernel_client.py:554
   profiles:
     lite: supported
     sandbox: supported
@@ -5350,7 +5350,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.is_directory
-      source: src/nexus/remote/kernel_client.py:561
+      source: src/nexus/remote/kernel_client.py:600
   profiles:
     lite: supported
     sandbox: supported
@@ -5489,7 +5489,7 @@ operations:
       source: src/nexus/services/agents/agent_rpc_service.py:584
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:1125
+      source: src/nexus/remote/kernel_client.py:1264
   profiles:
     lite: supported
     sandbox: supported
@@ -5634,7 +5634,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_processes
-      source: src/nexus/remote/kernel_client.py:1128
+      source: src/nexus/remote/kernel_client.py:1267
   profiles:
     lite: supported
     sandbox: supported
@@ -6099,7 +6099,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.metastore_list_paginated
-      source: src/nexus/remote/kernel_client.py:599
+      source: src/nexus/remote/kernel_client.py:638
   profiles:
     lite: supported
     sandbox: supported
@@ -6533,6 +6533,40 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead; tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead
   gap_issue: null
   owning_issue: 4127
+- id: nexus_v_f_s_service.batch_stat
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.BatchStat
+      source: proto/nexus/grpc/vfs/vfs.proto:46
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.batch_write
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.BatchWrite
+      source: proto/nexus/grpc/vfs/vfs.proto:36
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: nexus_v_f_s_service.call
   module: nexus_fs
   summary: Generic NexusVFSService Call method exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -6551,6 +6585,74 @@ operations:
   perf_link: generic RPC dispatcher/control-plane entry; operation-specific hot paths are benchmarked separately
   gap_issue: null
   owning_issue: 4127
+- id: nexus_v_f_s_service.close_all_pipes
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.CloseAllPipes
+      source: proto/nexus/grpc/vfs/vfs.proto:78
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.close_pipe
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.ClosePipe
+      source: proto/nexus/grpc/vfs/vfs.proto:76
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.close_stream
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.CloseStream
+      source: proto/nexus/grpc/vfs/vfs.proto:80
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.copy
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Copy
+      source: proto/nexus/grpc/vfs/vfs.proto:56
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: nexus_v_f_s_service.delete
   module: nexus_fs
   summary: Typed NexusVFSService method exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -6568,6 +6670,108 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead; tests/benchmarks/bench_read_write_overhead.py::TestRouteOverhead
   gap_issue: null
   owning_issue: 4127
+- id: nexus_v_f_s_service.get_xattr
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.GetXattr
+      source: proto/nexus/grpc/vfs/vfs.proto:67
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.get_xattr_bulk
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.GetXattrBulk
+      source: proto/nexus/grpc/vfs/vfs.proto:69
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.has_pipe
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.HasPipe
+      source: proto/nexus/grpc/vfs/vfs.proto:77
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.has_stream
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.HasStream
+      source: proto/nexus/grpc/vfs/vfs.proto:81
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.lock
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Lock
+      source: proto/nexus/grpc/vfs/vfs.proto:59
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.mkdir
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Mkdir
+      source: proto/nexus/grpc/vfs/vfs.proto:72
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
   summary: Typed NexusVFSService health probe exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -6602,6 +6806,176 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead; tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead
   gap_issue: null
   owning_issue: 4127
+- id: nexus_v_f_s_service.readdir
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Readdir
+      source: proto/nexus/grpc/vfs/vfs.proto:42
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.rename
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Rename
+      source: proto/nexus/grpc/vfs/vfs.proto:55
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.set_xattr
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.SetXattr
+      source: proto/nexus/grpc/vfs/vfs.proto:68
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.setattr
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Setattr
+      source: proto/nexus/grpc/vfs/vfs.proto:52
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.stat
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Stat
+      source: proto/nexus/grpc/vfs/vfs.proto:39
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.stream_collect_all
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.StreamCollectAll
+      source: proto/nexus/grpc/vfs/vfs.proto:84
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.stream_read_at
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.StreamReadAt
+      source: proto/nexus/grpc/vfs/vfs.proto:83
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.stream_write_nowait
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.StreamWriteNowait
+      source: proto/nexus/grpc/vfs/vfs.proto:82
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.unlock
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Unlock
+      source: proto/nexus/grpc/vfs/vfs.proto:60
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.watch
+  module: nexus_fs
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Watch
+      source: proto/nexus/grpc/vfs/vfs.proto:63
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: nexus_v_f_s_service.write
   module: nexus_fs
   summary: Typed NexusVFSService method exposed by daemon profiles, including sandbox when NEXUS_GRPC_PORT is set.
@@ -7512,7 +7886,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1600
     sdk:
       name: KernelClient.read_batch
-      source: src/nexus/remote/kernel_client.py:430
+      source: src/nexus/remote/kernel_client.py:452
   profiles:
     lite: supported
     sandbox: supported
@@ -7843,7 +8217,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register_external
-      source: src/nexus/remote/kernel_client.py:1060
+      source: src/nexus/remote/kernel_client.py:1199
   profiles:
     lite: supported
     sandbox: supported
@@ -7860,7 +8234,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_hook
-      source: src/nexus/remote/kernel_client.py:532
+      source: src/nexus/remote/kernel_client.py:571
   profiles:
     lite: supported
     sandbox: supported
@@ -7894,7 +8268,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_native_hook
-      source: src/nexus/remote/kernel_client.py:823
+      source: src/nexus/remote/kernel_client.py:893
   profiles:
     lite: supported
     sandbox: supported
@@ -8945,7 +9319,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_close_all
-      source: src/nexus/remote/kernel_client.py:507
+      source: src/nexus/remote/kernel_client.py:546
   profiles:
     lite: supported
     sandbox: supported
@@ -8962,7 +9336,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_enlist
-      source: src/nexus/remote/kernel_client.py:494
+      source: src/nexus/remote/kernel_client.py:533
   profiles:
     lite: supported
     sandbox: supported
@@ -8979,7 +9353,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_lookup
-      source: src/nexus/remote/kernel_client.py:482
+      source: src/nexus/remote/kernel_client.py:521
   profiles:
     lite: supported
     sandbox: supported
@@ -8996,7 +9370,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_mark_bootstrapped
-      source: src/nexus/remote/kernel_client.py:479
+      source: src/nexus/remote/kernel_client.py:518
   profiles:
     lite: supported
     sandbox: supported
@@ -9013,7 +9387,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_start_all
-      source: src/nexus/remote/kernel_client.py:476
+      source: src/nexus/remote/kernel_client.py:515
   profiles:
     lite: supported
     sandbox: supported
@@ -9030,7 +9404,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_stop_all
-      source: src/nexus/remote/kernel_client.py:504
+      source: src/nexus/remote/kernel_client.py:543
   profiles:
     lite: supported
     sandbox: supported
@@ -9047,7 +9421,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_swap
-      source: src/nexus/remote/kernel_client.py:486
+      source: src/nexus/remote/kernel_client.py:525
   profiles:
     lite: supported
     sandbox: supported
@@ -9064,7 +9438,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_unregister
-      source: src/nexus/remote/kernel_client.py:710
+      source: src/nexus/remote/kernel_client.py:749
   profiles:
     lite: supported
     sandbox: supported
@@ -9081,7 +9455,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_hook_count
-      source: src/nexus/remote/kernel_client.py:549
+      source: src/nexus/remote/kernel_client.py:588
   profiles:
     lite: supported
     sandbox: supported
@@ -9098,7 +9472,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_metastore_path
-      source: src/nexus/remote/kernel_client.py:811
+      source: src/nexus/remote/kernel_client.py:881
   profiles:
     lite: supported
     sandbox: supported
@@ -9115,7 +9489,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_permission_provider
-      source: src/nexus/remote/kernel_client.py:827
+      source: src/nexus/remote/kernel_client.py:897
   profiles:
     lite: supported
     sandbox: supported
@@ -9149,7 +9523,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_vfs_lock
-      source: src/nexus/remote/kernel_client.py:819
+      source: src/nexus/remote/kernel_client.py:889
   profiles:
     lite: supported
     sandbox: supported
@@ -9166,7 +9540,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_xattr
-      source: src/nexus/remote/kernel_client.py:737
+      source: src/nexus/remote/kernel_client.py:781
   profiles:
     lite: supported
     sandbox: supported
@@ -9462,7 +9836,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stat_batch
-      source: src/nexus/remote/kernel_client.py:463
+      source: src/nexus/remote/kernel_client.py:486
   profiles:
     lite: supported
     sandbox: supported
@@ -9496,7 +9870,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_collect_all
-      source: src/nexus/remote/kernel_client.py:794
+      source: src/nexus/remote/kernel_client.py:861
   profiles:
     lite: supported
     sandbox: supported
@@ -9530,7 +9904,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at
-      source: src/nexus/remote/kernel_client.py:791
+      source: src/nexus/remote/kernel_client.py:849
   profiles:
     lite: supported
     sandbox: supported
@@ -9547,7 +9921,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at_blocking
-      source: src/nexus/remote/kernel_client.py:779
+      source: src/nexus/remote/kernel_client.py:836
   profiles:
     lite: supported
     sandbox: supported
@@ -9564,7 +9938,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_write_nowait
-      source: src/nexus/remote/kernel_client.py:788
+      source: src/nexus/remote/kernel_client.py:844
   profiles:
     lite: supported
     sandbox: supported
@@ -9649,7 +10023,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_copy
-      source: src/nexus/remote/kernel_client.py:368
+      source: src/nexus/remote/kernel_client.py:386
   profiles:
     lite: supported
     sandbox: supported
@@ -9666,7 +10040,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_lock
-      source: src/nexus/remote/kernel_client.py:403
+      source: src/nexus/remote/kernel_client.py:422
   profiles:
     lite: supported
     sandbox: supported
@@ -9683,7 +10057,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_mkdir
-      source: src/nexus/remote/kernel_client.py:347
+      source: src/nexus/remote/kernel_client.py:355
   profiles:
     lite: supported
     sandbox: supported
@@ -9700,7 +10074,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read
-      source: src/nexus/remote/kernel_client.py:250
+      source: src/nexus/remote/kernel_client.py:252
   profiles:
     lite: supported
     sandbox: supported
@@ -9717,7 +10091,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read_raw
-      source: src/nexus/remote/kernel_client.py:286
+      source: src/nexus/remote/kernel_client.py:284
   profiles:
     lite: supported
     sandbox: supported
@@ -9734,7 +10108,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_readdir
-      source: src/nexus/remote/kernel_client.py:380
+      source: src/nexus/remote/kernel_client.py:406
   profiles:
     lite: supported
     sandbox: supported
@@ -9751,7 +10125,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_rename
-      source: src/nexus/remote/kernel_client.py:356
+      source: src/nexus/remote/kernel_client.py:363
   profiles:
     lite: supported
     sandbox: supported
@@ -9768,7 +10142,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_setattr
-      source: src/nexus/remote/kernel_client.py:333
+      source: src/nexus/remote/kernel_client.py:322
   profiles:
     lite: supported
     sandbox: supported
@@ -9785,7 +10159,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_stat
-      source: src/nexus/remote/kernel_client.py:307
+      source: src/nexus/remote/kernel_client.py:305
   profiles:
     lite: supported
     sandbox: supported
@@ -9802,7 +10176,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlink
-      source: src/nexus/remote/kernel_client.py:340
+      source: src/nexus/remote/kernel_client.py:341
   profiles:
     lite: supported
     sandbox: supported
@@ -9819,7 +10193,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlock
-      source: src/nexus/remote/kernel_client.py:426
+      source: src/nexus/remote/kernel_client.py:446
   profiles:
     lite: supported
     sandbox: supported
@@ -9839,7 +10213,7 @@ operations:
       source: src/nexus/core/nexus_fs_watch.py:26
     sdk:
       name: KernelClient.sys_watch
-      source: src/nexus/remote/kernel_client.py:470
+      source: src/nexus/remote/kernel_client.py:501
   profiles:
     lite: supported
     sandbox: supported
@@ -9856,7 +10230,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_write
-      source: src/nexus/remote/kernel_client.py:291
+      source: src/nexus/remote/kernel_client.py:289
   profiles:
     lite: supported
     sandbox: supported
@@ -9941,7 +10315,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_lookup
-      source: src/nexus/remote/kernel_client.py:721
+      source: src/nexus/remote/kernel_client.py:760
   profiles:
     lite: supported
     sandbox: supported
@@ -9958,7 +10332,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_register
-      source: src/nexus/remote/kernel_client.py:718
+      source: src/nexus/remote/kernel_client.py:757
   profiles:
     lite: supported
     sandbox: supported
@@ -9975,7 +10349,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_unregister
-      source: src/nexus/remote/kernel_client.py:724
+      source: src/nexus/remote/kernel_client.py:763
   profiles:
     lite: supported
     sandbox: supported
@@ -10351,7 +10725,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister_external
-      source: src/nexus/remote/kernel_client.py:1093
+      source: src/nexus/remote/kernel_client.py:1232
   profiles:
     lite: supported
     sandbox: supported
@@ -10368,7 +10742,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.unregister_hook
-      source: src/nexus/remote/kernel_client.py:537
+      source: src/nexus/remote/kernel_client.py:576
   profiles:
     lite: supported
     sandbox: supported
@@ -10457,7 +10831,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.update_state
-      source: src/nexus/remote/kernel_client.py:1111
+      source: src/nexus/remote/kernel_client.py:1250
   profiles:
     lite: supported
     sandbox: supported
@@ -10807,7 +11181,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1438
     sdk:
       name: KernelClient.write_batch
-      source: src/nexus/remote/kernel_client.py:831
+      source: src/nexus/remote/kernel_client.py:901
   profiles:
     lite: supported
     sandbox: supported
@@ -13230,6 +13604,22 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: nexus_v_f_s_service.batch_stat
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.batch_write
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
 - operation_id: nexus_v_f_s_service.call
   has:
   - grpc_typed
@@ -13238,7 +13628,87 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: nexus_v_f_s_service.close_all_pipes
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.close_pipe
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.close_stream
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.copy
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
 - operation_id: nexus_v_f_s_service.delete
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.get_xattr
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.get_xattr_bulk
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.has_pipe
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.has_stream
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.lock
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.mkdir
   has:
   - grpc_typed
   missing:
@@ -13255,6 +13725,86 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: nexus_v_f_s_service.read
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.readdir
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.rename
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.set_xattr
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.setattr
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.stat
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.stream_collect_all
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.stream_read_at
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.stream_write_nowait
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.unlock
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.watch
   has:
   - grpc_typed
   missing:

@@ -307,7 +307,7 @@ class RPCTransport:
         Use ``read()`` when the caller needs entry_type / stream_next_offset
         (e.g. pipe / stream / range reads). This helper just unwraps content.
         """
-        return self.read(path, content_id=content_id, read_timeout=read_timeout).content
+        return bytes(self.read(path, content_id=content_id, read_timeout=read_timeout).content)
 
     def read(
         self,

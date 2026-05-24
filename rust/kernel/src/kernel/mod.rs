@@ -469,7 +469,6 @@ struct KernelObserverRegistry {
     observers: Vec<KernelObserverEntry>,
 }
 
-#[allow(dead_code)]
 impl KernelObserverRegistry {
     fn new() -> Self {
         Self {
@@ -523,12 +522,10 @@ impl KernelObserverRegistry {
 
 use crate::dispatch::{HookContext, NativeInterceptHook};
 
-#[allow(dead_code)]
 struct NativeHookEntry {
     hook: Box<dyn NativeInterceptHook>,
 }
 
-#[allow(dead_code)]
 pub(crate) struct NativeHookRegistry {
     hooks: Vec<NativeHookEntry>,
     /// Suffixes declared by registered mutating hooks (via
@@ -541,7 +538,6 @@ pub(crate) struct NativeHookRegistry {
     mutating_suffixes: Vec<&'static str>,
 }
 
-#[allow(dead_code)]
 impl NativeHookRegistry {
     pub(crate) fn new() -> Self {
         Self {

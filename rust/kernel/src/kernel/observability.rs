@@ -16,7 +16,6 @@ impl Kernel {
     /// All OBSERVE callbacks run on `observer_pool` (the kernel's
     /// background ThreadPool). Observers needing synchronous-blocking
     /// semantics must be moved to INTERCEPT POST.
-    #[allow(dead_code)]
     pub fn register_observer(
         &self,
         observer: Arc<dyn MutationObserver>,
@@ -27,7 +26,6 @@ impl Kernel {
     }
 
     /// Unregister observer by name. Returns true if removed.
-    #[allow(dead_code)]
     pub fn unregister_observer(&self, name: &str) -> bool {
         self.observers.lock().unregister(name)
     }

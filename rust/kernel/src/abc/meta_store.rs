@@ -118,7 +118,8 @@ pub struct PutIfVersionResult {
 /// `(path, optional value)` pairs used by bulk auxiliary-metadata reads
 /// and bulk content-id lookups. Values are UTF-8 strings — every real
 /// caller stores text (`parsed_text`, `parser_name`, JSON-encoded
-/// blobs), so the kernel boundary avoids a `PyBytes` GIL crossing.
+/// blobs), so the kernel boundary stays string-typed and avoids
+/// per-row byte-buffer allocation.
 pub type PathValueStr = (String, Option<String>);
 pub type PathEtag = (String, Option<String>);
 

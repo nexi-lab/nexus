@@ -1,9 +1,8 @@
 //! Kernel — pure Rust kernel owning all core state.
 //!
-//! Zero PyO3 dependency. All Python bridging lives in generated_pyo3.rs.
-//!
-//! Owns VFSRouter, Trie, VFS Lock, MetaStore.
-//! Hook/Observer registries live in generated_pyo3::PyKernel (wrapper-only).
+//! Owns VFSRouter, Trie, VFS Lock, MetaStore, dispatch (NativeHookRegistry +
+//! ObserverRegistry under `core/dispatch/`), agent registry, service
+//! registry, file-watch registry.
 //!
 //! Architecture:
 //!   - Created empty via Kernel::new(), then components are wired by wrapper.
@@ -96,9 +95,7 @@ mod observability;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
-/// Kernel-level error type — pure Rust, no PyO3 dependency.
-///
-/// Error conversion to PyErr lives in generated_pyo3.rs.
+/// Kernel-level error type.
 #[derive(Debug, Clone)]
 pub enum KernelError {
     InvalidPath(String),

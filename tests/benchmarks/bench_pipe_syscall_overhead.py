@@ -16,7 +16,6 @@ Run:
   uv run python tests/benchmarks/bench_pipe_syscall_overhead.py --json
 """
 
-import asyncio
 import json
 import statistics
 import sys
@@ -70,7 +69,7 @@ def _print_stats(label: str, idx: int, st: dict) -> None:
 # ── Setup ──────────────────────────────────────────────────────────────
 
 
-async def _setup(tmp_dir: Path):
+def _setup(tmp_dir: Path):
     """Create NexusFS + Rust kernel pipe for benchmarking."""
     from nexus.backends.storage.path_local import PathLocalBackend
     from nexus.core.config import ParseConfig
@@ -214,10 +213,10 @@ def _bench_ideal_fast_path(kernel, path: str, data: bytes) -> list[float]:
 # ── Main ───────────────────────────────────────────────────────────────
 
 
-async def _run() -> dict:
+def _run() -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        nx, kernel = await _setup(tmp_dir)
+        nx, kernel = _setup(tmp_dir)
 
         payload = json.dumps(
             {
@@ -256,7 +255,7 @@ async def _run() -> dict:
 
 def main() -> None:
     json_mode = "--json" in sys.argv
-    results = asyncio.run(_run())
+    results = _run()
 
     if json_mode:
         print(json.dumps({"iterations": ITERATIONS, "warmup": WARMUP, **results}, indent=2))

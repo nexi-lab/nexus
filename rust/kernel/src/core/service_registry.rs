@@ -278,29 +278,52 @@ impl ServiceRegistry {
     }
 
     /// Release a refcount. Notifies drain waiters if count reaches 0.
+    ///
+    /// Takes `drain_mutex` briefly before `notify_all` to close the
+    /// classic Mesa-condvar lost-wakeup window: parking_lot's Condvar
+    /// does not store notifications, so a notify that fires while a
+    /// drainer is between its refcount check and `wait_for` would be
+    /// dropped on the floor. Acquiring the same mutex the drainer is
+    /// about to wait on serializes the notify with the wait.
     pub(crate) fn ref_release(&self, name: &str) {
         if let Some(rc) = self.refcounts.get(name) {
-            let prev = rc.fetch_sub(1, Ordering::Relaxed);
+            let prev = rc.fetch_sub(1, Ordering::Release);
             if prev <= 1 {
+                let _g = self.drain_mutex.lock();
                 self.drain_condvar.notify_all();
             }
         }
     }
 
     /// Drain: wait for refcount on `name` to reach 0.
+    ///
+    /// Loop discipline: parking_lot's `wait_for` can return early on
+    /// a spurious wake, and `notify_all` from [`Self::ref_release`]
+    /// wakes drainers for every service (not just `name`). Re-check
+    /// the target's refcount on every wake and only return when it
+    /// reaches zero or the deadline expires.
     pub(crate) fn drain(&self, name: &str, timeout_ms: u64) {
-        let current = self
-            .refcounts
-            .get(name)
-            .map(|r| r.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        if current == 0 {
-            return;
-        }
-
-        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let deadline =
+            std::time::Instant::now().checked_add(std::time::Duration::from_millis(timeout_ms));
         let mut guard = self.drain_mutex.lock();
-        let _result = self.drain_condvar.wait_for(&mut guard, timeout);
+        loop {
+            let current = self
+                .refcounts
+                .get(name)
+                .map(|r| r.load(Ordering::Acquire))
+                .unwrap_or(0);
+            if current == 0 {
+                return;
+            }
+            let remaining = match deadline {
+                Some(d) => match d.checked_duration_since(std::time::Instant::now()) {
+                    Some(r) if !r.is_zero() => r,
+                    _ => return,
+                },
+                None => std::time::Duration::from_millis(timeout_ms),
+            };
+            let _ = self.drain_condvar.wait_for(&mut guard, remaining);
+        }
     }
 
     /// Start all services (managed + Rust).
@@ -394,6 +417,56 @@ mod tests {
     fn test_drain_returns_immediately_when_zero() {
         let reg = ServiceRegistry::new();
         reg.drain("nonexistent", 100);
+    }
+
+    #[test]
+    fn drain_waits_until_ref_release_then_returns() {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let reg = Arc::new(ServiceRegistry::new());
+        reg.ref_acquire("svc-a");
+
+        let releaser = {
+            let reg = Arc::clone(&reg);
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(50));
+                reg.ref_release("svc-a");
+            })
+        };
+
+        let started = Instant::now();
+        reg.drain("svc-a", 5_000);
+        let elapsed = started.elapsed();
+        // Released at ~50ms; drain should wake well before the 5s
+        // ceiling. Allow generous slack for slow CI runners.
+        assert!(
+            elapsed < Duration::from_millis(1_000),
+            "drain blocked past release: {elapsed:?}"
+        );
+        releaser.join().unwrap();
+    }
+
+    #[test]
+    fn drain_returns_at_deadline_when_ref_not_released() {
+        use std::time::{Duration, Instant};
+
+        let reg = ServiceRegistry::new();
+        reg.ref_acquire("svc-b");
+
+        let started = Instant::now();
+        reg.drain("svc-b", 100);
+        let elapsed = started.elapsed();
+        // Caller asked for 100ms; we should not wait substantially
+        // longer (spurious wake loop must respect the deadline).
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "drain returned before deadline: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "drain blocked far past deadline: {elapsed:?}"
+        );
     }
 
     #[test]

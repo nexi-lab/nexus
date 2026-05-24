@@ -257,7 +257,7 @@ impl MemoryPipeBackend {
         self.closed.load(Ordering::Acquire)
     }
 
-    /// Create a new MemoryPipeBackend (pub(crate), no PyO3).
+    /// Create a new MemoryPipeBackend.
     pub(crate) fn new(capacity: usize) -> Self {
         let ring_cap = capacity * 2;
         Self {
@@ -322,12 +322,12 @@ mod tests {
         MemoryPipeBackend::new(cap)
     }
 
-    /// Test-only push helper (bypasses PyO3 Python parameter).
+    /// Test-only push helper.
     fn push(core: &MemoryPipeBackend, data: &[u8]) -> usize {
         core.push(data).expect("push failed in test helper")
     }
 
-    /// Test-only pop helper (bypasses PyO3, returns raw bytes).
+    /// Test-only pop helper.
     fn pop(core: &MemoryPipeBackend) -> Vec<u8> {
         let (start, len, advance) = core.pop_position().expect("pop failed in test helper");
         let ring = unsafe { &*core.ring.get() };

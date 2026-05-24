@@ -249,13 +249,12 @@ impl StreamManager {
     /// Collect all message payloads from offset 0, concatenated into one Vec.
     ///
     /// Walks the entire stream from the beginning, joining payload bytes
-    /// (without the per-frame length prefix). Equivalent to repeated
-    /// `read_at` until empty, but in a single Rust call (no per-frame
-    /// PyO3 round-trip).
+    /// (without the per-frame length prefix). One kernel call replaces
+    /// a per-frame `read_at` loop.
     ///
-    /// Returns empty Vec if the stream has no data. Used by Python LLM
-    /// backends for `collect_all + CAS persist` pattern after the producer
-    /// finishes pumping tokens.
+    /// Returns empty Vec if the stream has no data. Used by LLM
+    /// backends for the `collect_all + CAS persist` pattern after the
+    /// producer finishes pumping tokens.
     pub fn collect_all_payloads(&self, path: &str) -> Result<Vec<u8>, StreamManagerError> {
         let buf = self
             .buffers

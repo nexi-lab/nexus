@@ -319,7 +319,6 @@ impl LockManager {
 
     /// Blocking acquire with timeout (for Rust-internal I/O callers).
     /// Returns non-zero handle on success, 0 on timeout.
-    /// Does NOT require GIL — safe to call from within py.allow_threads().
     pub fn blocking_acquire(&self, path: &str, mode: LockMode, timeout_ms: u64) -> u64 {
         let norm_path = normalize_path(path);
         let start = Instant::now();

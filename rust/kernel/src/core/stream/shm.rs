@@ -65,8 +65,8 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 ///
 /// Kernel-internal primitive: constructed by the kernel inside
 /// `sys_setattr` when `io_profile=shared_memory` is requested for a
-/// DT_STREAM inode.  Python callers reach it via `sys_read` /
-/// `sys_write`; there is no PyO3 surface on the type itself.
+/// DT_STREAM inode. Callers reach it via `sys_read` / `sys_write`
+/// only — the type has no direct syscall surface of its own.
 pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,
@@ -264,7 +264,7 @@ impl crate::stream::StreamBackend for SharedMemoryStreamBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Pure Rust constructors (no PyO3 dependency)
+// Constructors
 // ---------------------------------------------------------------------------
 
 impl SharedMemoryStreamBackend {
@@ -324,7 +324,6 @@ impl SharedMemoryStreamBackend {
     }
 
     /// Attach to an existing shared stream buffer (same-process tests).
-    /// Pure Rust — no PyO3.
     #[cfg(test)]
     fn attach(shm_path: &str, notify_data_wr: i32) -> Result<Self, std::io::Error> {
         let file = std::fs::OpenOptions::new()

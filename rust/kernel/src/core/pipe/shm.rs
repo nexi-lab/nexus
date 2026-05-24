@@ -326,7 +326,7 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Pure Rust constructors (no PyO3 dependency)
+// Constructors
 // ---------------------------------------------------------------------------
 
 impl SharedMemoryPipeBackend {
@@ -403,7 +403,7 @@ impl SharedMemoryPipeBackend {
     }
 
     /// Attach to an existing shared ring buffer (same-process tests + future
-    /// kernel-internal cross-process attach paths).  Pure Rust — no PyO3.
+    /// kernel-internal cross-process attach paths).
     #[cfg(test)]
     fn attach(
         shm_path: &str,
@@ -502,12 +502,12 @@ mod tests {
         (creator, attacher)
     }
 
-    /// Helper: push raw bytes via push_inner (bypass PyO3).
+    /// Helper: push raw bytes via push_inner.
     fn push(core: &SharedMemoryPipeBackend, data: &[u8]) -> usize {
         core.push_inner(data).expect("push failed")
     }
 
-    /// Helper: pop raw bytes via pop_position + commit_pop (bypass PyO3).
+    /// Helper: pop raw bytes via pop_position + commit_pop.
     fn pop(core: &SharedMemoryPipeBackend) -> Vec<u8> {
         let (start, len, advance) = core.pop_position().expect("pop failed");
         let ring = core.ring_slice();

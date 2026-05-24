@@ -340,6 +340,7 @@ def create_nexus_fs(
         workflow_engine=workflow_engine,
         federation=federation,
         security=security,
+        backend=backend,
     )
     nx._linked = True
 
@@ -357,6 +358,7 @@ def _register_vfs_hooks(
     auto_parse: bool = True,
     svc_on: "Callable[[str], bool] | None" = None,
     parse_fn: Any = None,
+    backend: Any = None,
 ) -> None:
     """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
 
@@ -668,8 +670,19 @@ def _register_vfs_hooks(
     # sys_write/sys_unlink/sys_rename/sys_mkdir (rmdir is internal). No observer needed.
 
     # ── CAS GC (Issue #1320, #1772) ────────────────────────────────────
-    # ref_count eliminated; reachability-based GC via CASGarbageCollector.
-    # GC is owned by CASLocalBackend, metastore injected via set_metastore().
+    # ref_count eliminated; reachability-based GC via CasGcService.
+    # Factory-gated: enlist one instance when the root backend is CAS so
+    # the kernel auto-starts it as a BackgroundService. Non-CAS backends
+    # (path_local, external connectors) skip this — they own no blob set
+    # to collect.
+    if backend is not None:
+        from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
+
+        if isinstance(backend, CASAddressingEngine):
+            from nexus.backends.engines.cas_gc import CasGcService
+
+            _cas_gc = CasGcService(backend, nx)
+            _enlist("cas_gc", _cas_gc)
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.

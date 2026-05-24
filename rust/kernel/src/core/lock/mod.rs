@@ -222,7 +222,8 @@ fn shared_lock_to_kernel(lock: contracts::LockInfo) -> KernelLockInfo {
 /// (idempotent, first-wins per process). Kernel never names the
 /// concrete replicated impl — the trait boundary is the contract.
 ///
-/// Shared via ``Arc`` between Kernel and VFSLockManager PyO3 wrapper.
+/// Shared via ``Arc`` between Kernel and the distributed-lock
+/// coordinator that installs the advisory backend HAL.
 pub struct LockManager {
     io_state: Mutex<IOLockState>,
     /// Advisory backend HAL slot (``LocalLocks`` by default; replaced by
@@ -529,7 +530,7 @@ impl LockManager {
         }
     }
 
-    // ── I/O lock: query helpers (PyO3 VFSLockManager) ───────────────
+    // ── I/O lock: query helpers ─────────────────────────────────────
 
     /// Check whether `path` currently has any active I/O lock.
     pub fn is_locked(&self, path: &str) -> bool {
@@ -554,7 +555,7 @@ impl LockManager {
         }
     }
 
-    /// Number of actively locked paths (I/O locks only — for VFSLockManager.active_locks).
+    /// Number of actively locked paths (I/O locks only).
     pub fn io_active_locks(&self) -> usize {
         let state = self.io_state.lock();
         state.locks.values().filter(|e| !e.is_idle()).count()

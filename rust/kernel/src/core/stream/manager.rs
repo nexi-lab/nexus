@@ -3,8 +3,9 @@
 //! `DashMap<String, Arc<dyn StreamBackend>>` enables heterogeneous backends
 //! (memory, shared memory, future gRPC proxy).
 //!
-//! Blocking read uses `parking_lot::Condvar` + `py.allow_threads()` to
-//! release the GIL while waiting. This replaces Python's `ipc_waiter.py`.
+//! Blocking read uses `parking_lot::Condvar` so the waiter parks
+//! without spinning; `StreamNotify` wakes blocked readers after each
+//! `push` (or after `close`).
 
 use crate::stream::{MemoryStreamBackend, StreamBackend, StreamError};
 use dashmap::DashMap;

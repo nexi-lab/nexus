@@ -3,8 +3,9 @@
 //! `DashMap<String, Arc<dyn PipeBackend>>` enables heterogeneous backends
 //! (memory, shared memory, future gRPC proxy).
 //!
-//! Blocking read/write use `parking_lot::Condvar` + `py.allow_threads()` to
-//! release the GIL while waiting. This replaces Python's `ipc_waiter.py`.
+//! Blocking read/write use `parking_lot::Condvar` so the waiter parks
+//! without spinning; `PipeNotify` wakes the blocked side after each
+//! `push` / `pop` (or after `close`).
 
 use crate::pipe::{MemoryPipeBackend, PipeBackend, PipeError};
 use dashmap::DashMap;

@@ -212,7 +212,7 @@ class TestWaitThenRead:
 
         async def agent_a_wait_json():
             """Agent A: Wait for JSON files only."""
-            change = await nexus_fs.sys_watch("/data/*.json", timeout=5.0)
+            change = nexus_fs.sys_watch("/data/*.json", timeout=5.0)
             if change:
                 received_path["path"] = change["path"]
 
@@ -237,7 +237,7 @@ class TestWaitThenRead:
         # Drain any stale events from mkdir before subscribing
         await asyncio.sleep(0.3)
 
-        change = await nexus_fs.sys_watch("/empty/", timeout=0.5)
+        change = nexus_fs.sys_watch("/empty/", timeout=0.5)
 
         assert change is None
 
@@ -408,9 +408,9 @@ class TestEventNotification:
 
         async def waiter():
             # Wait specifically for file_write event (ignore lingering dir_create)
-            event = await nexus_fs.sys_watch("/notify/", timeout=5.0)
+            event = nexus_fs.sys_watch("/notify/", timeout=5.0)
             while event and event.get("type") != "file_write":
-                event = await nexus_fs.sys_watch("/notify/", timeout=3.0)
+                event = nexus_fs.sys_watch("/notify/", timeout=3.0)
             received_event["event"] = event
 
         async def writer():
@@ -443,9 +443,9 @@ class TestEventNotification:
 
         async def waiter():
             # second instance waits for delete event via Redis
-            event = await second_nexus_fs.sys_watch("/notify_del/", timeout=5.0)
+            event = second_nexus_fs.sys_watch("/notify_del/", timeout=5.0)
             while event and event.get("type") != "file_delete":
-                event = await second_nexus_fs.sys_watch("/notify_del/", timeout=3.0)
+                event = second_nexus_fs.sys_watch("/notify_del/", timeout=3.0)
             received_event["event"] = event
 
         async def deleter():
@@ -478,9 +478,9 @@ class TestEventNotification:
 
         async def waiter():
             # second instance waits for rename event via Redis
-            event = await second_nexus_fs.sys_watch("/notify_ren/", timeout=5.0)
+            event = second_nexus_fs.sys_watch("/notify_ren/", timeout=5.0)
             while event and event.get("type") != "file_rename":
-                event = await second_nexus_fs.sys_watch("/notify_ren/", timeout=3.0)
+                event = second_nexus_fs.sys_watch("/notify_ren/", timeout=3.0)
             received_event["event"] = event
 
         async def renamer():

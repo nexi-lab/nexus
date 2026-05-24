@@ -721,11 +721,11 @@ See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-a
 
 ### 4.5 Process-Local Kernel Caches
 
-`rust/kernel/src/cache/` holds kernel-internal process-local caches.
-These are **not** `CacheStoreABC` (§3.A.3) — they are inherent state
-on `Kernel`, scoped to one OS process, never shared across the cluster.
-Eviction is local-only; cross-zone consistency follows the metastore's
-apply-side cache coherence (§4 DLC primitive), not these caches.
+`rust/kernel/src/cache/` holds kernel-internal process-local caches —
+inherent state on `Kernel`, scoped to one OS process, with local-only
+eviction. The cluster-wide `CacheStoreABC` (§3.A.3) is a separate
+pillar; cross-zone consistency for these process-local caches flows
+through the metastore's apply-side cache coherence (§4 DLC primitive).
 
 | File | Owns |
 |------|------|

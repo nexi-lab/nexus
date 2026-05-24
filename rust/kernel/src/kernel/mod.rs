@@ -1099,8 +1099,8 @@ impl Kernel {
         }
     }
 
-    // No in-tree Rust caller; kept on the kernel surface for a future
-    // bulk-delete consumer.
+    /// Bulk-delete the given paths from the global metastore.
+    /// Mirror of `metastore_get_batch` on the delete side.
     #[allow(dead_code)]
     pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
         match self.metastore.read().as_ref() {

@@ -1,7 +1,7 @@
 //! Rust-native gRPC server for `NexusVFSService`.
 //!
 //! Owns the :2028 socket via tonic. Auth is handled by
-//! `services::auth::AuthProvider` (pure Rust).
+//! `transport::auth::AuthProvider` (pure Rust).
 //!
 //! Per-RPC architecture:
 //!
@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use services::auth::AuthProvider;
+use crate::auth::AuthProvider;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -130,7 +130,7 @@ impl VfsServiceImpl {
     pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
         Self {
             kernel,
-            auth: Arc::new(services::auth::ApiKeyAuth::new("test-key")),
+            auth: Arc::new(crate::auth::NoAuth),
             server_started_at: Instant::now(),
             server_version: Arc::from("test"),
             started_secs: Arc::new(AtomicU64::new(0)),
@@ -1108,8 +1108,7 @@ pub fn spawn(
 
     let routes = build_vfs_routes(kernel, auth, cfg.max_message_bytes, &cfg.server_version);
 
-    let mut server_builder = Server::builder()
-        .max_concurrent_streams(Some(1024))
+    let mut server_builder = lib::transport_primitives::apply_server_limits(Server::builder())
         .timeout(std::time::Duration::from_secs(60));
 
     if let Some(tls) = cfg.tls {
@@ -1406,6 +1405,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use kernel::kernel::convenience::{KernelConvenience, MountOptions};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
         BatchWriteItemRequest, BatchWriteRequest, StatRequest,
@@ -1465,30 +1465,13 @@ mod tests {
     fn kernel_with_mem_backend() -> Kernel {
         let k = Kernel::new();
         let backend: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(MemBackend::default());
-        k.sys_setattr(
+        k.mount(
             "/",
-            2,
-            "mem",
-            Some(backend),
-            None,
-            None,
-            "",
-            kernel::ROOT_ZONE_ID,
-            false,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            MountOptions::new("mem")
+                .with_backend(backend)
+                .with_io_profile(""),
         )
-        .expect("kernel_with_mem_backend: sys_setattr DT_MOUNT");
+        .expect("kernel_with_mem_backend: mount DT_MOUNT");
         k
     }
 

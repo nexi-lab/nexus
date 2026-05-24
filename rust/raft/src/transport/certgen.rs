@@ -14,6 +14,22 @@ use rcgen::{
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
+/// Validity window for a node certificate.
+///
+/// 90 days follows the Let's Encrypt convention — short enough that an
+/// expired-cert incident drives rotation discipline, long enough that
+/// routine ops don't churn certs. The CA outlives node certs (see
+/// `CA_VALIDITY_DAYS`); operators rotate node certs by redeploying the
+/// daemon, which re-runs the Day-1 bootstrap.
+const NODE_CERT_VALIDITY_DAYS: i64 = 90;
+
+/// Validity window for the cluster CA. Long-lived by design — every
+/// node cert in the cluster chains to this CA, so rotating it requires
+/// reissuing all node certs. 10 years lines up with public-CA
+/// long-lived-root conventions (DigiCert / ISRG Root X1 / Amazon Root
+/// CA all sit at 10-20y).
+const CA_VALIDITY_DAYS: i64 = 365 * 10;
+
 /// Generate a node certificate signed by the cluster CA.
 ///
 /// Returns `(node_cert_pem, node_key_pem)` as PEM-encoded bytes.
@@ -23,7 +39,7 @@ use std::path::{Path, PathBuf};
 /// - CN: `nexus-zone-{zone_id}-node-{node_id}`
 /// - SANs: localhost, 127.0.0.1, ::1
 /// - Extended Key Usage: serverAuth + clientAuth (mTLS)
-/// - Validity: 365 days
+/// - Validity: see `NODE_CERT_VALIDITY_DAYS`
 pub fn generate_node_cert(
     node_id: u64,
     zone_id: &str,
@@ -102,10 +118,9 @@ pub fn generate_node_cert(
     // Not a CA
     params.is_ca = IsCa::NoCa;
 
-    // Validity: 365 days (matches Python default)
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now;
-    params.not_after = now + time::Duration::days(365);
+    params.not_after = now + time::Duration::days(NODE_CERT_VALIDITY_DAYS);
 
     // Sign with CA
     let node_cert = params
@@ -143,7 +158,7 @@ pub fn generate_zone_ca(zone_id: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     ];
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now;
-    params.not_after = now + time::Duration::days(365 * 10);
+    params.not_after = now + time::Duration::days(CA_VALIDITY_DAYS);
 
     let cert = params
         .self_signed(&key)

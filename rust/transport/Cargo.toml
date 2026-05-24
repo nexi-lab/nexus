@@ -20,9 +20,6 @@ contracts = { workspace = true }
 # rlib; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
 backends = { workspace = true, default-features = false, features = ["driver-path-local", "driver-remote"] }
-# `services::auth::AuthProvider` trait consumed by grpc.rs for auth
-# resolution. No feature flags — auth module is always compiled.
-services = { workspace = true }
 # `lib::transport_primitives` (TLS / pool / addressing / TOFU /
 # PeerBlobClient trait) lives behind lib's `transport` feature.
 lib = { workspace = true, features = ["transport"] }

@@ -8,12 +8,17 @@
 //! overrides with optimized direct paths where the composition
 //! overhead matters.
 
+use std::any::Any;
+use std::sync::Arc;
+
 use super::{
     Kernel, KernelError, OperationContext, StatResult, SysMkdirResult, SysReadResult,
-    SysRmdirResult, SysUnlinkResult, SysWriteResult,
+    SysRmdirResult, SysSetAttrResult, SysUnlinkResult, SysWriteResult,
 };
+use crate::abc::object_store::ObjectStore;
 use crate::abi::KernelAbi;
-use crate::meta_store::{DT_EXTERNAL_STORAGE, DT_MOUNT};
+use crate::meta_store::{MetaStore, DT_EXTERNAL_STORAGE, DT_MOUNT};
+use crate::ROOT_ZONE_ID;
 
 // ── KernelConvenience trait ──────────────────────────────────────────
 
@@ -64,6 +69,43 @@ pub trait KernelConvenience: KernelAbi {
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError> {
         self.sys_unlink(path, ctx, recursive)
+    }
+
+    /// Tier 2 mount — composes `sys_setattr(DT_MOUNT, …)`.
+    ///
+    /// Replaces the 21-positional-argument `sys_setattr` call shape
+    /// (most positions are forced to `None`/`0` for DT_MOUNT) with a
+    /// builder-style [`MountOptions`]. Every parameter that is
+    /// definitionally inert for `DT_MOUNT` (capacity, FDs, mime,
+    /// content_id, modified_at_ms, version, created_at_ms,
+    /// link_target) is fixed at its no-op default here, leaving the
+    /// caller to specify only mount-relevant fields. Behaviour is
+    /// bit-identical to the equivalent `sys_setattr(DT_MOUNT, …)`
+    /// call.
+    fn mount(&self, path: &str, opts: MountOptions<'_>) -> Result<SysSetAttrResult, KernelError> {
+        self.sys_setattr(
+            path,
+            DT_MOUNT as i32,
+            opts.backend_name,
+            opts.backend,
+            opts.metastore,
+            opts.raft_backend,
+            opts.io_profile,
+            opts.zone_id,
+            opts.is_external,
+            0,    // capacity (DT_PIPE / DT_STREAM only)
+            None, // read_fd
+            None, // write_fd
+            None, // mime_type
+            None, // modified_at_ms
+            None, // content_id
+            None, // size
+            None, // version
+            None, // created_at_ms
+            None, // link_target (DT_LINK only)
+            opts.source,
+            opts.remote_metastore,
+        )
     }
 
     /// Tier 2 single-file read — composes `sys_read`.
@@ -175,6 +217,122 @@ pub trait KernelConvenience: KernelAbi {
             .into_iter()
             .map(|opt| opt.is_some())
             .collect()
+    }
+}
+
+// ── MountOptions ─────────────────────────────────────────────────────
+
+/// Builder-style parameters for [`KernelConvenience::mount`].
+///
+/// Carries the DT_MOUNT-relevant subset of `sys_setattr` arguments
+/// in a single value so callers do not thread 21 positional args
+/// (most of which are `None` for DT_MOUNT) through every mount
+/// site. Field semantics match `sys_setattr`'s DT_MOUNT branch
+/// 1-for-1; this struct is purely a call-site ergonomics wrapper
+/// and adds no kernel surface.
+///
+/// Construct via [`MountOptions::new`] and chain `with_*` setters
+/// for the fields that differ from the kernel-default
+/// owning-local-mount template.
+///
+/// ```ignore
+/// use std::sync::Arc;
+/// use kernel::kernel::convenience::{KernelConvenience, MountOptions};
+/// kernel.mount(
+///     "/scratch",
+///     MountOptions::new("local").with_backend(backend),
+/// )?;
+/// ```
+pub struct MountOptions<'a> {
+    backend_name: &'a str,
+    backend: Option<Arc<dyn ObjectStore>>,
+    metastore: Option<Arc<dyn MetaStore>>,
+    raft_backend: Option<Box<dyn Any + Send + Sync>>,
+    io_profile: &'a str,
+    zone_id: &'a str,
+    is_external: bool,
+    source: Option<&'a str>,
+    remote_metastore: Option<Arc<dyn MetaStore>>,
+}
+
+impl<'a> MountOptions<'a> {
+    /// Owning-local-mount template carrying `backend_name` (driver
+    /// label, e.g. `"local"`, `"memory"`, `"s3"`).
+    ///
+    /// Defaults: no backend handle, no metastore handle, no raft
+    /// backend, `"memory"` io_profile, root zone, not external,
+    /// no federation source, no remote metastore. Override the
+    /// fields that differ via the chainable `with_*` setters.
+    pub fn new(backend_name: &'a str) -> Self {
+        Self {
+            backend_name,
+            backend: None,
+            metastore: None,
+            raft_backend: None,
+            io_profile: "memory",
+            zone_id: ROOT_ZONE_ID,
+            is_external: false,
+            source: None,
+            remote_metastore: None,
+        }
+    }
+
+    /// Attach an owning `ObjectStore` (required for owning mounts;
+    /// federation join-mode mounts leave this unset).
+    pub fn with_backend(mut self, backend: Arc<dyn ObjectStore>) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    /// Attach a per-mount metastore. Default = the kernel's global
+    /// metastore handles this mount.
+    pub fn with_metastore(mut self, metastore: Arc<dyn MetaStore>) -> Self {
+        self.metastore = Some(metastore);
+        self
+    }
+
+    /// Attach a raft backend handle (federation use only). Erased
+    /// to `Box<dyn Any>` to keep the kernel crate free of raft
+    /// types.
+    pub fn with_raft_backend(mut self, raft_backend: Box<dyn Any + Send + Sync>) -> Self {
+        self.raft_backend = Some(raft_backend);
+        self
+    }
+
+    /// Override the io_profile label. Default = `"memory"`.
+    pub fn with_io_profile(mut self, io_profile: &'a str) -> Self {
+        self.io_profile = io_profile;
+        self
+    }
+
+    /// Override the zone id. Default = `ROOT_ZONE_ID` (`"root"`).
+    pub fn with_zone(mut self, zone_id: &'a str) -> Self {
+        self.zone_id = zone_id;
+        self
+    }
+
+    /// Mark this mount as external storage (DT_EXTERNAL_STORAGE
+    /// semantics).
+    pub fn external(mut self) -> Self {
+        self.is_external = true;
+        self
+    }
+
+    /// Mark this as a federation join-mode mount with the given
+    /// leader address (`host:port`). The mount entry then points
+    /// at a remote zone rather than creating one locally.
+    pub fn with_source(mut self, source: &'a str) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    /// Attach a remote metastore (federation: produced by the
+    /// object-store provider when the backend is remote). Installed
+    /// on the VFS route entry so remote reads resolve through the
+    /// correct metastore.
+    pub fn with_remote_metastore(mut self, remote_metastore: Arc<dyn MetaStore>) -> Self {
+        self.remote_metastore = Some(remote_metastore);
+        self
     }
 }
 

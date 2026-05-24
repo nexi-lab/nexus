@@ -24,9 +24,8 @@ use anyhow::{Context, Result};
 use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
-use kernel::abi::KernelAbi;
+use kernel::kernel::convenience::{KernelConvenience, MountOptions};
 use kernel::kernel::Kernel;
-use kernel::meta_store::DT_MOUNT;
 
 use nexus_raft::distributed_coordinator::{
     bootstrap_or_join_zone, read_or_mint_node_id, validate_bootstrap_mode,
@@ -142,84 +141,52 @@ enum Cmd {
         #[arg(long, default_value = "root")]
         parent_zone: String,
     },
-
-    /// Mount a backend at `<path>` via DLC (offline — daemon must be stopped).
-    ///
-    /// Only `--type=path_local` works in this binary because that is
-    /// the sole driver compiled in.  Other types produce a clean
-    /// "driver `X` not compiled into this binary" error from the
-    /// factory.
-    Mount {
-        /// Mount point inside the cluster's VFS (e.g. `/scratch`).
-        path: String,
-        /// Driver type — currently only `path_local` is compiled in.
-        #[arg(long = "type", default_value = "path_local")]
-        driver: String,
-        /// Host filesystem directory the mount serves (required for
-        /// `path_local`).  No default — the operator names the
-        /// directory explicitly to avoid shadowing the boot mount.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Backend name label.  Defaults to `local`.
-        #[arg(long, default_value = "local")]
-        backend_name: String,
-        /// Zone id for the new mount; defaults to root.
-        #[arg(long, default_value = "root")]
-        zone: String,
-    },
-
-    /// Unmount a previously-mounted path (offline — daemon must be stopped).
-    ///
-    /// Drops the DT_MOUNT entry and its routing/dcache state via
-    /// `Kernel::sys_unlink`, mirroring the Python `unmount()` shim.
-    Unmount {
-        /// Mount point to drop (e.g. `/scratch`).
-        path: String,
-    },
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     install_tracing();
     let args = Args::parse();
-    match args.cmd {
-        None => run_daemon(args.common).await,
-        Some(Cmd::Share {
-            path,
-            zone_id,
-            parent_zone,
-        }) => run_share(args.common, &parent_zone, &path, &zone_id).await,
-        Some(Cmd::Join {
-            peer_addr,
-            remote_zone_id,
-            local_path,
-            parent_zone,
-        }) => {
-            run_join(
-                args.common,
-                &peer_addr,
-                &remote_zone_id,
-                &local_path,
-                &parent_zone,
-            )
-            .await
-        }
-        Some(Cmd::Mount {
-            path,
-            driver,
-            root,
-            backend_name,
-            zone,
-        }) => run_mount(
-            args.common,
-            &path,
-            &driver,
-            root.as_deref(),
-            &backend_name,
-            &zone,
-        ),
-        Some(Cmd::Unmount { path }) => run_unmount(args.common, &path),
-    }
+    // Size the multi-thread runtime against the host: federation
+    // gRPC + raft IO is IO-bound, so the kernel `available_parallelism`
+    // estimate (logical cores under cgroup / affinity constraints) is
+    // the right target. Falls back to 2 — the previous hard-coded
+    // worker count — when the platform can't report a value (e.g.
+    // bare-metal probes that aren't WASI-style sandboxed but lack
+    // `_SC_NPROCESSORS_ONLN`).
+    let workers = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(2);
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .enable_all()
+        .thread_name("nexusd-cluster")
+        .build()
+        .context("build tokio runtime")?
+        .block_on(async move {
+            match args.cmd {
+                None => run_daemon(args.common).await,
+                Some(Cmd::Share {
+                    path,
+                    zone_id,
+                    parent_zone,
+                }) => run_share(args.common, &parent_zone, &path, &zone_id).await,
+                Some(Cmd::Join {
+                    peer_addr,
+                    remote_zone_id,
+                    local_path,
+                    parent_zone,
+                }) => {
+                    run_join(
+                        args.common,
+                        &peer_addr,
+                        &remote_zone_id,
+                        &local_path,
+                        &parent_zone,
+                    )
+                    .await
+                }
+            }
+        })
 }
 
 /// Bundle returned by [`open_zone_manager`].  Carries the opaque
@@ -387,29 +354,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
     );
     kernel
-        .sys_setattr(
-            "/",
-            DT_MOUNT as i32,
-            "local",
-            Some(backend),
-            None,
-            None,
-            "memory",
-            contracts::ROOT_ZONE_ID,
-            false,
-            0,
-            None,
-            None,
-            None, // mime_type
-            None, // modified_at_ms
-            None, // content_id
-            None, // size
-            None, // version
-            None, // created_at_ms
-            None, // link_target
-            None, // source
-            None, // remote_metastore
-        )
+        .mount("/", MountOptions::new("local").with_backend(backend))
         .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
     tracing::info!(
         root_fs = %root_fs.display(),
@@ -418,7 +363,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
 
     // Build VFS gRPC service as tonic Routes — co-hosted on the raft
     // port via ZoneManager. Uses NoAuth (mTLS is the boundary).
-    let vfs_auth: Arc<dyn services::auth::AuthProvider> = Arc::new(services::auth::NoAuth);
+    let vfs_auth: Arc<dyn transport::auth::AuthProvider> = Arc::new(transport::auth::NoAuth);
     let vfs_routes = transport::grpc::build_vfs_routes(
         Arc::clone(&kernel),
         vfs_auth,
@@ -517,8 +462,38 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     });
 
     wait_for_shutdown().await;
-    topology_handle.abort();
     tracing::info!("nexusd-cluster shutting down");
+
+    // Stop the convergence loop first — it's a best-effort reconciler,
+    // safe to abort mid-tick.
+    topology_handle.abort();
+
+    // Drain ZoneManager: signal gRPC + zone transport loops to exit
+    // their serve_with_shutdown paths so in-flight raft messages drain
+    // cleanly. ZoneManager::shutdown() is synchronous and uses an
+    // internal bridge_block_on; call it from spawn_blocking so we
+    // don't trigger "Cannot drop a runtime" / nested-runtime panics.
+    //
+    // 10s cap matches typical k8s preStop / SIGTERM grace windows —
+    // if tonic hasn't finished draining by then, force-drop and exit
+    // rather than hang the pod.
+    //
+    // TODO(leader-transfer): on graceful shutdown of a leader we could
+    // proactively transfer leadership before drain, sparing the cluster
+    // one election round. raft-rs's `MsgTransferLeader` is not exposed
+    // through our wrapper today, and `propose_conf_change(RemoveNode,
+    // self_id)` would permanently demote the node — wrong semantics
+    // for a restart-and-rejoin cycle. Out of scope for this PR; needs
+    // a dedicated commitment-timeline test plan.
+    let zm_for_drain = zm.clone();
+    let drain = tokio::task::spawn_blocking(move || {
+        zm_for_drain.shutdown();
+    });
+    match tokio::time::timeout(Duration::from_secs(10), drain).await {
+        Ok(Ok(())) => tracing::info!("ZoneManager drain complete"),
+        Ok(Err(join_err)) => tracing::warn!(?join_err, "ZoneManager drain task panicked"),
+        Err(_) => tracing::warn!("ZoneManager drain exceeded 10s — forcing exit"),
+    }
 
     // Drop Kernel (which owns a nested tokio Runtime) on a blocking
     // thread — dropping it inside the current async context panics with
@@ -562,96 +537,6 @@ async fn run_share(
         "Shared '{}' from zone '{}' as new zone '{}' ({} entries copied)",
         path, parent_zone, new_zone_id, copied
     );
-    Ok(())
-}
-
-/// Construct an `ObjectStore` for a driver name + local-root the cluster
-/// binary's compiled-in feature set actually supports.  The match below
-/// will grow as more `driver-*` features land in `Cargo.toml`.
-fn build_local_backend(driver: &str, root: &std::path::Path) -> Result<Arc<dyn ObjectStore>> {
-    match driver {
-        "path_local" => {
-            std::fs::create_dir_all(root)
-                .with_context(|| format!("create mount root {}", root.display()))?;
-            let b = PathLocalBackend::new(root, /* fsync */ false)
-                .with_context(|| format!("PathLocalBackend init at {}", root.display()))?;
-            Ok(Arc::new(b) as Arc<dyn ObjectStore>)
-        }
-        other => anyhow::bail!(
-            "driver `{}` not compiled into this binary (cluster binary ships only path_local)",
-            other
-        ),
-    }
-}
-
-fn run_mount(
-    common: CommonArgs,
-    mount_point: &str,
-    driver: &str,
-    local_root: Option<&std::path::Path>,
-    backend_name: &str,
-    zone: &str,
-) -> Result<()> {
-    // Open ZoneManager offline so the mount entry is written through
-    // the same redb file the daemon will reload on next start.  Same
-    // pattern as the `share` / `join` subcommands.
-    let _bundle = open_zone_manager(&common, None)?;
-    let kernel = Arc::new(Kernel::new());
-    let root =
-        local_root.ok_or_else(|| anyhow::anyhow!("--root is required for driver `{driver}`"))?;
-    let backend = build_local_backend(driver, root)?;
-    kernel
-        .sys_setattr(
-            mount_point,
-            DT_MOUNT as i32,
-            backend_name,
-            Some(backend),
-            None,
-            None,
-            "memory",
-            zone,
-            false,
-            0,
-            None, // read_fd
-            None, // write_fd
-            None, // mime_type
-            None, // modified_at_ms
-            None, // content_id
-            None, // size
-            None, // version
-            None, // created_at_ms
-            None, // link_target
-            None, // source
-            None, // remote_metastore
-        )
-        .map_err(|e| anyhow::anyhow!("mount {mount_point}: {:?}", e))?;
-    println!(
-        "Mounted '{}' (zone='{}', driver='{}', root='{}')",
-        mount_point,
-        zone,
-        driver,
-        root.display()
-    );
-    Ok(())
-}
-
-fn run_unmount(common: CommonArgs, mount_point: &str) -> Result<()> {
-    let _bundle = open_zone_manager(&common, None)?;
-    let kernel = Arc::new(Kernel::new());
-    let ctx = contracts::OperationContext::new(
-        /* user_id */ "operator", /* zone_id */ "root", /* is_admin */ true,
-        /* agent_id */ None, /* is_system */ true,
-    );
-    let res = KernelAbi::sys_unlink(&*kernel, mount_point, &ctx, /* recursive */ false)
-        .map_err(|e| anyhow::anyhow!("unmount {mount_point}: {:?}", e))?;
-    if res.hit {
-        println!(
-            "Unmounted '{}' (entry_type={})",
-            mount_point, res.entry_type
-        );
-    } else {
-        anyhow::bail!("'{}' is not a mount point on this node", mount_point);
-    }
     Ok(())
 }
 

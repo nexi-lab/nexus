@@ -39,11 +39,6 @@
 //!                          +--- backends     (peer; never crosses to services)
 //! ```
 
-// Rust-native authentication providers (ApiKeyAuth / NoAuth / JwtAuth).
-// Always compiled — no feature gate. The transport tier consumes
-// `Arc<dyn AuthProvider>` to resolve bearer tokens.
-pub mod auth;
-
 // AcpService — subprocess + ACP-over-stdio host for
 // `AgentKind::UNMANAGED` agents (claude / codex / gemini / …).
 #[cfg(feature = "service-acp")]

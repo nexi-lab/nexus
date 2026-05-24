@@ -1745,7 +1745,6 @@ dependencies = [
  "crc32fast",
  "criterion",
  "dashmap",
- "encoding_rs",
  "fastcdc",
  "futures",
  "futures-util",
@@ -1769,8 +1768,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "simdutf8",
- "simsimd",
  "string-interner",
  "tempfile",
  "tokio",
@@ -1800,6 +1797,7 @@ dependencies = [
  "ahash",
  "base64",
  "blake3",
+ "contracts",
  "crc32fast",
  "dashmap",
  "getrandom 0.4.2",
@@ -1991,7 +1989,6 @@ dependencies = [
  "gethostname",
  "kernel",
  "raft 0.1.0",
- "services",
  "tokio",
  "tonic",
  "tracing",
@@ -3243,15 +3240,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
-name = "simsimd"
-version = "6.5.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4fb3bc3cdce07a7d7d4caa4c54f8aa967f6be41690482b54b24100a2253fa70"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3765,7 +3753,6 @@ dependencies = [
  "rcgen",
  "serde",
  "serde_json",
- "services",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",

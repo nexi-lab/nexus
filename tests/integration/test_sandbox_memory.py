@@ -18,7 +18,7 @@ import nexus
 @pytest.mark.sandbox_memory
 @pytest.mark.asyncio
 async def test_sandbox_idle_rss_under_300mb(tmp_path: Path) -> None:
-    nx = await nexus.connect(config={"profile": "sandbox", "data_dir": str(tmp_path / "nexus")})
+    nx = nexus.connect(config={"profile": "sandbox", "data_dir": str(tmp_path / "nexus")})
     try:
         for i in range(100):
             nx.write(f"/file-{i:03d}.txt", f"content {i} — keyword{i % 7}".encode())

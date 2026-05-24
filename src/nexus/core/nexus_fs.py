@@ -115,14 +115,6 @@ class NexusFS(  # type: ignore[misc]
     - Efficient storage
     """
 
-    def __await__(self) -> Any:
-        """Return ``self`` for compatibility with async connect call sites."""
-
-        async def _identity() -> "NexusFS":
-            return self
-
-        return _identity().__await__()
-
     def __init__(
         self,
         metadata_store: "Any | str | Path | None",

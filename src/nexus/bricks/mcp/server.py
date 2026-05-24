@@ -1337,7 +1337,7 @@ async def create_mcp_server(
             extras["multi_zone_ambiguous"] = True
         if section is not None:
             extras["section_filter"] = section
-            extras["section_status"] = "matched" if post_filter_count else "no_matches"
+            extras["section_status"] = "matched" if paginated_results else "no_matches"
 
         result = build_paginated_list_response(
             items=paginated_results,

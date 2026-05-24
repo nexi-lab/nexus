@@ -19,6 +19,15 @@ from nexus.server.path_utils import (
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
+
+def _section_response_meta(section: str, results: list[Any]) -> dict[str, str]:
+    """Build section filter metadata for grep responses (SSOT helper)."""
+    return {
+        "section_filter": section,
+        "section_status": "matched" if results else "no_matches",
+    }
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,9 +108,9 @@ async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     results = await search.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
     response: dict[str, Any] = {"results": results}
-    if hasattr(params, "section") and params.section is not None:
-        response["section_filter"] = params.section
-        response["section_status"] = "matched" if results else "no_matches"
+    section = getattr(params, "section", None)
+    if section is not None:
+        response.update(_section_response_meta(section, results))
     return response
 
 

@@ -155,11 +155,11 @@ pub use contracts::OperationContext;
 /// handling. Federation remote fetch is handled internally (see
 /// `Kernel::try_remote_fetch`).
 ///
-/// DT_PIPE / DT_STREAM: `entry_type` tells the wrapper to dispatch IPC.
-/// `data` may be `None` when the Rust IPC registry has no buffer and
-/// Python must fall through to blocking backends (still transitional).
+/// DT_PIPE / DT_STREAM: `entry_type` tells the caller to dispatch IPC.
+/// `data` may be `None` when the Rust IPC registry has no buffer for
+/// this path; the caller decides whether to retry, miss, or block.
 pub struct SysReadResult {
-    /// Content bytes. Vec<u8> — wrapper converts to PyBytes.
+    /// Content bytes.
     pub data: Option<Vec<u8>>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,

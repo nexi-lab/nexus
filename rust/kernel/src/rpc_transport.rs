@@ -267,6 +267,30 @@ impl RpcTransport {
         Ok(resp.success)
     }
 
+    /// Typed StreamWriteNowait RPC — returns the offset where data landed.
+    pub fn stream_write_nowait(&self, path: &str, data: &[u8]) -> Result<u64, String> {
+        self.block_on(self.stream_write_nowait_async(path, data))
+    }
+
+    async fn stream_write_nowait_async(&self, path: &str, data: &[u8]) -> Result<u64, String> {
+        let mut client = self.client();
+        let req = tonic::Request::new(vfs_proto::StreamWriteRequest {
+            path: path.to_string(),
+            data: data.to_vec(),
+            auth_token: self.auth_token.clone(),
+        });
+        let resp = client
+            .stream_write_nowait(req)
+            .await
+            .map_err(|e| format!("StreamWriteNowait({path}): {e}"))?
+            .into_inner();
+        if resp.is_error {
+            let err = String::from_utf8_lossy(&resp.error_payload);
+            return Err(format!("StreamWriteNowait({path}): server error: {err}"));
+        }
+        Ok(resp.offset)
+    }
+
     /// Typed StreamReadAt RPC — bytes + next_offset + eof flag.
     /// `blocking=true` lets the server wait up to `timeout_ms` for data.
     pub fn stream_read_at(

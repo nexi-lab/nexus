@@ -1336,9 +1336,8 @@ async def create_mcp_server(
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
         if section is not None:
-            from nexus.server.rpc.handlers.filesystem import _section_response_meta
-
-            extras.update(_section_response_meta(section, paginated_results))
+            extras["section_filter"] = section
+            extras["section_status"] = "matched" if paginated_results else "no_matches"
 
         result = build_paginated_list_response(
             items=paginated_results,

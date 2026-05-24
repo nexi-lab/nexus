@@ -1,18 +1,18 @@
-//! Lock-free SPSC RingBuffer core for DT_PIPE kernel IPC (Task #806, #902).
+//! Lock-free SPSC RingBuffer core for DT_PIPE kernel IPC.
 //!
-//! **L1**: Lock-free contiguous byte ring (Mutex → atomic head/tail).
-//! **L2**: `push_u64`/`pop_u64` — return Python int directly, zero PyBytes allocation.
-//! **L3**: Direct ring→PyBytes copy (eliminate intermediate Vec<u8>).
+//! Contiguous byte ring with atomic monotonic head/tail counters; one
+//! producer thread calls `push`, one consumer thread calls `pop`, and
+//! neither side blocks the other.
 //!
-//! SAFETY: SPSC by design. Python GIL serializes all PyO3 method calls.
-//! Producer writes [tail..new_tail], consumer reads [head..new_head] — ranges
-//! never overlap because head only advances after consumer copies data.
+//! SAFETY: SPSC by data-structure contract — exactly one producer and
+//! one consumer thread; concurrent `push()` calls from multiple threads
+//! (or concurrent `pop()` calls from multiple threads) are undefined
+//! behavior. Producer writes [tail..new_tail], consumer reads
+//! [head..new_head] — ranges never overlap because head only advances
+//! after the consumer copies data.
 //!
 //! Message framing: `[4B u32 LE length][N bytes payload]`.
 //! Sentinel = `[0x00 0x00 0x00 0x00]` marks waste-and-wrap at ring boundary.
-//!
-//! Error encoding: Rust raises `RuntimeError("PipeFull:…")` etc. Python translates
-//! to the matching exception class.
 
 // §4.2 — DT_PIPE pillar.
 pub mod backend;

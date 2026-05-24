@@ -804,4 +804,66 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_store_snapshot_persists_hardstate_advance_across_reopen() {
+        // Sender-side companion to `test_apply_snapshot_persists_across_reopen`.
+        //
+        // Pins the raft protocol invariant that `HardState.commit >=
+        // snapshot.metadata.index` holds **even when the leader writes
+        // its own snapshot** via `store_snapshot` (post-AddNode catch-
+        // up snapshot for a new follower) — not just when receiving
+        // one via `apply_snapshot`.
+        //
+        // Pre-F8 (PR following #4215), `store_snapshot` wrote only
+        // `KEY_SNAPSHOT` and left `HardState` to the driver's separate
+        // `set_hard_state` in the same Ready iteration.  An abrupt
+        // termination between the two writes stranded storage with a
+        // persisted snapshot at index N but a `HardState.commit < N`,
+        // panicking raft-rs at next boot.  Surfaced today as Win's
+        // `sharedzone` reopen failing with `hs.commit 0 is out of
+        // range [5, 6]` after the leader had stored an index-6 snapshot
+        // for the newly joined Learner.
+        //
+        // Test drops `RaftStorage` without `flush()` to mirror the
+        // abrupt-termination path — any invariant we rely on must
+        // survive the redb commit alone.
+        let dir = TempDir::new().unwrap();
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            // Seed log entries so the leader-style store_snapshot scenario
+            // is realistic: log [1..=6] with snapshot at index=6 term=2.
+            let entries: Vec<Entry> = (1..=6)
+                .map(|i| Entry {
+                    index: i,
+                    term: 2,
+                    ..Default::default()
+                })
+                .collect();
+            storage.append(&entries).unwrap();
+            let snap = make_snapshot(6, 2, &[100]);
+            storage.store_snapshot(&snap).unwrap();
+        }
+
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let stored = storage.snapshot(0, 0).unwrap();
+            assert_eq!(stored.get_metadata().index, 6);
+            assert_eq!(stored.get_metadata().term, 2);
+
+            // The crash-safety invariant — without this, the next
+            // raft-rs init would panic at RaftLog::commit_to.
+            let state = storage.initial_state().unwrap();
+            assert!(
+                state.hard_state.commit >= 6,
+                "hs.commit ({}) must be >= store_snapshot index (6) — F8 invariant",
+                state.hard_state.commit,
+            );
+            assert!(
+                state.hard_state.term >= 2,
+                "hs.term ({}) must be >= store_snapshot term (2) — F8 invariant",
+                state.hard_state.term,
+            );
+        }
+    }
 }

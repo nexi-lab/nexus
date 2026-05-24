@@ -15,7 +15,6 @@ use kernel::abi::KernelAbi;
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentError, AgentKind, AgentSignal, AgentState, ExternalProcessInfo,
 };
-use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::CallResponse;
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 use kernel::meta_store::remote::RemoteMetaStore;
@@ -38,7 +37,6 @@ pub fn dispatch(
     let result = match method {
         "sys_read" => do_sys_read(kernel, &params, ctx),
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
-        "sys_mkdir" => do_sys_mkdir(kernel, &params, ctx),
         "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
         "get_mount_points" => ok_json(serde_json::json!(kernel.get_mount_points())),
 
@@ -644,23 +642,6 @@ fn do_sys_setattr(
             "path": r.path,
             "created": r.created,
             "entry_type": r.entry_type,
-        })),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_mkdir(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let parents = bool_or(params, "parents", false);
-    let exist_ok = bool_or(params, "exist_ok", true);
-    match KernelConvenience::mkdir(kernel, &path, ctx, parents, exist_ok) {
-        Ok(r) => ok_json(serde_json::json!({
-            "hit": r.hit,
-            "post_hook_needed": r.post_hook_needed,
         })),
         Err(e) => Err(kernel_err_to_payload(e)),
     }

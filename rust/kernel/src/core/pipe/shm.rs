@@ -33,6 +33,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -72,13 +74,22 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 // SharedMemoryPipeBackend
 // ---------------------------------------------------------------------------
 
-/// Cross-process SPSC ring buffer backed by mmap + OS pipe notification.
+/// Cross-process ring buffer backed by mmap + OS pipe notification.
+///
+/// Cross-process contract is SPSC: one producer process pushes, one
+/// consumer process pops; the on-disk mmap layout (header slots + ring
+/// data) carries no inter-process lock. In-process, the `writer` and
+/// `reader` mutexes serialize threads on this side so multi-threaded
+/// `sys_write` / `sys_read` from inside this process is safe; threads
+/// in a peer process see only their own struct + their own mutexes,
+/// so the cross-process SPSC contract is what protects shared
+/// head/tail accesses.
 ///
 /// Kernel-internal primitive: the kernel constructs one via
 /// [`SharedMemoryPipeBackend::create_native`] inside `sys_setattr` when
 /// `io_profile=shared_memory` is requested for a DT_PIPE inode.  Only
-/// the kernel ever holds the struct; Python reaches it via the
-/// DT_PIPE syscalls (`sys_read` / `sys_write`).
+/// the kernel ever holds the struct; callers reach it via the DT_PIPE
+/// syscalls (`sys_read` / `sys_write`).
 pub struct SharedMemoryPipeBackend {
     mmap: memmap2::MmapMut,
     ring_cap: usize,
@@ -95,9 +106,21 @@ pub struct SharedMemoryPipeBackend {
     is_creator: bool,
     #[allow(dead_code)]
     shm_path: String,
+    /// Serializes in-process producers calling `push`. Uncontended in
+    /// single-writer use within this process. Cross-process serialization
+    /// is the producer process's responsibility under the SPSC contract.
+    writer: Mutex<()>,
+    /// Serializes in-process consumers calling `pop`. Uncontended in
+    /// single-reader use within this process. Cross-process serialization
+    /// is the consumer process's responsibility under the SPSC contract.
+    reader: Mutex<()>,
 }
 
-// SAFETY: SPSC by design — single producer + single consumer across processes.
+// SAFETY: The `writer` mutex makes the `&mut [u8]` borrow into the
+// mmap ring inside `push_inner` unique across in-process threads;
+// the `reader` mutex makes the read + head advance inside `pop`
+// atomic w.r.t. other in-process readers. Cross-process SPSC is the
+// peer process's responsibility per the type's contract.
 unsafe impl Send for SharedMemoryPipeBackend {}
 unsafe impl Sync for SharedMemoryPipeBackend {}
 
@@ -201,6 +224,12 @@ impl SharedMemoryPipeBackend {
             return Err(PipeError::Oversized(payload_len, self.user_capacity));
         }
 
+        // Serialize in-process producers; held across the Release-store
+        // of `tail` so any in-process consumer sees a fully-published
+        // frame and so the `&mut [u8]` borrow into the mmap ring is
+        // unique within this process.
+        let _writer_guard = self.writer.lock();
+
         let used = self.used_bytes().load(Ordering::Relaxed);
         if used + payload_len > self.user_capacity {
             return Err(PipeError::Full(used, self.user_capacity));
@@ -299,6 +328,10 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
         Ok(n)
     }
     fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        // Serialize in-process consumers across pop_position +
+        // ring copy + commit_pop so multiple in-process readers cannot
+        // double-claim the same frame on a sentinel skip.
+        let _reader_guard = self.reader.lock();
         let (start, len, advance) = self.pop_position()?;
         let ring = self.ring_slice();
         let data = ring[start..start + len].to_vec();
@@ -397,6 +430,8 @@ impl SharedMemoryPipeBackend {
             notify_space_wr: space_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         };
 
         Ok((core, shm_path, data_fds[0], space_fds[0]))
@@ -444,6 +479,8 @@ impl SharedMemoryPipeBackend {
             notify_space_wr,
             is_creator: false,
             shm_path: shm_path.to_string(),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         })
     }
 

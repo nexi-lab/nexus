@@ -146,11 +146,9 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_read(s))),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Ok(Response::new(error_read(Status::permission_denied(
-                "federation token: use Call dispatch (sys_read RPC) — typed Read bypasses zone authorization",
-            ))));
-        }
+        // No federation guard: KernelAbi::sys_read consults ctx.zone_perms via
+        // the permission gate (kernel::dispatch.rs:101). The same SSOT runs
+        // whether the call entered via typed Read or generic Call.
         match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, 5000, 0) {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
@@ -183,11 +181,8 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_write(s))),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Ok(Response::new(error_write(Status::permission_denied(
-                "federation token: use Call dispatch (sys_write RPC) — typed Write bypasses zone authorization",
-            ))));
-        }
+        // No federation guard: ctx.zone_perms is enforced inside sys_write's
+        // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
         match KernelAbi::sys_write(&*self.kernel, &req.path, &ctx, &req.content, 0) {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
@@ -218,11 +213,8 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_delete(s))),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Ok(Response::new(error_delete(Status::permission_denied(
-                "federation token: use Call dispatch (sys_unlink RPC) — typed Delete bypasses zone authorization",
-            ))));
-        }
+        // No federation guard: ctx.zone_perms is enforced inside sys_unlink's
+        // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
         match KernelAbi::sys_unlink(&*self.kernel, &req.path, &ctx, req.recursive) {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
@@ -920,11 +912,9 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Err(s),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Err(Status::permission_denied(
-                "federation token: use Call dispatch (BatchRead RPC) — typed BatchRead bypasses zone authorization",
-            ));
-        }
+        // No federation guard: read_batch composes per-item sys_read on the
+        // KernelConvenience SSOT, which honors ctx.zone_perms in the
+        // permission gate (kernel::dispatch.rs:101).
 
         let rust_reqs: Vec<kernel::kernel::ReadRequest> = req
             .items
@@ -987,11 +977,9 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Err(s),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Err(Status::permission_denied(
-                "federation token: use Call dispatch — typed BatchStat bypasses zone authorization",
-            ));
-        }
+        // No federation guard: stat_batch goes through metastore-direct path
+        // and the per-path sys_stat fallback, both of which inherit the
+        // permission gate's zone_perms enforcement.
         let zone_id = if req.zone_id.is_empty() {
             ctx.zone_id.as_str()
         } else {
@@ -1041,11 +1029,9 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Err(s),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Err(Status::permission_denied(
-                "federation token: use Call dispatch — typed BatchWrite bypasses zone authorization",
-            ));
-        }
+        // No federation guard: write_batch composes per-item KernelConvenience
+        // ::write on the SSOT, which honors ctx.zone_perms in the permission
+        // gate (kernel::dispatch.rs:101).
 
         // Tier 2 `write_batch`: create-or-overwrite per item, each item
         // independent. One bad path no longer aborts the batch the way

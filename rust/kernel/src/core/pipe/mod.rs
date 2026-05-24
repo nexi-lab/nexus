@@ -46,7 +46,8 @@ const HEADER_SIZE: usize = 4;
 /// Lock-free SPSC ring buffer core for DT_PIPE.
 ///
 /// Contiguous byte ring with atomic monotonic head/tail counters.
-/// Kernel-internal only — no PyO3 export. Python uses kernel.create_pipe().
+/// Kernel-internal — callers go through `PipeManager` (see the
+/// `create_pipe` / `pipe_write_nowait` Kernel surface).
 pub struct MemoryPipeBackend {
     ring: UnsafeCell<Vec<u8>>,
     ring_cap: usize,
@@ -60,8 +61,14 @@ pub struct MemoryPipeBackend {
     used_bytes: AtomicUsize,
 }
 
-// SAFETY: SPSC — producer and consumer operate on non-overlapping ring regions.
-// Python GIL serializes all PyO3 method calls.
+// SAFETY: SPSC by contract — at most one producer thread holds
+// `&self` for `push()` and at most one consumer thread holds `&self`
+// for `pop()`. Under that contract the producer's writes
+// ([tail..new_tail]) and the consumer's reads ([head..new_head])
+// never overlap, since `head` only advances after the consumer has
+// finished its copy. `Sync` is therefore sound provided callers
+// respect the SPSC invariant; concurrent `push()` (or concurrent
+// `pop()`) from multiple threads is undefined behavior.
 unsafe impl Send for MemoryPipeBackend {}
 unsafe impl Sync for MemoryPipeBackend {}
 
@@ -234,7 +241,7 @@ impl MemoryPipeBackend {
         self.pop_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Pop one message from the ring, returning owned bytes (no PyBytes dependency).
+    /// Pop one message from the ring, returning owned bytes.
     /// Combines pop_position + ring copy + commit_pop.
     pub(crate) fn pop(&self) -> Result<Vec<u8>, PipeError> {
         let (payload_start, payload_len, total_advance) = self.pop_position()?;

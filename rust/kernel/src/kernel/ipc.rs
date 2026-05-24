@@ -85,8 +85,10 @@ impl Kernel {
 
     /// Blocking read — Condvar wait.
     ///
-    /// Currently no in-tree caller; kept as the kernel-side surface
-    /// for a future Rust service that needs to block on a pipe.
+    /// Kernel-side surface for Rust services that need to wait on
+    /// a pipe; the underlying `PipeManager::read_blocking` parks
+    /// the caller on a Condvar until data arrives or `timeout_ms`
+    /// elapses.
     #[allow(dead_code)]
     pub fn pipe_read_blocking(&self, path: &str, timeout_ms: u64) -> Result<Vec<u8>, KernelError> {
         self.pipe_manager
@@ -204,8 +206,11 @@ impl Kernel {
 
     /// Blocking read at offset — Condvar wait.
     ///
-    /// Currently no in-tree caller; kept as the kernel-side surface
-    /// for a future Rust service that needs to block on a stream.
+    /// Kernel-side surface for Rust services that need to wait on
+    /// a stream's tail to advance past `offset`; the underlying
+    /// `StreamManager::read_at_blocking` parks the caller on a
+    /// Condvar until a frame whose `offset_in >= offset` arrives
+    /// or `timeout_ms` elapses.
     #[allow(dead_code)]
     pub fn stream_read_at_blocking(
         &self,

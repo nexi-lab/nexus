@@ -1623,6 +1623,8 @@ class SearchService:
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
+        from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+        from nexus.contracts.metadata import DT_DIR
         from nexus.contracts.types import OperationContext
         from nexus.core.pagination import PaginatedResult
         from nexus.lib.pagination import encode_cursor
@@ -1630,7 +1632,7 @@ class SearchService:
         context = context or self._default_context
         import time as _time
 
-        _start = _time.time()
+        _start = _time.time()  # noqa: F841 — retained for parity with non-paginated list timing
 
         list_zone_id, _, _ = self._extract_zone_info(context)
 
@@ -1642,10 +1644,10 @@ class SearchService:
 
         buffer_multiplier = 1.5
         fetch_limit = int(limit * buffer_multiplier)
-        collected_items: builtins.list[Any] = []
+        collected_items: builtins.list[dict[str, Any]] = []
         has_more = True
 
-        # Decode encoded cursor to plain path for paginate_iter
+        # Decode encoded cursor to plain path for sys_readdir's keyset cursor.
         current_cursor_path: str | None = None
         if cursor:
             from nexus.lib.pagination import CursorError, decode_cursor
@@ -1671,9 +1673,10 @@ class SearchService:
                 context=sys_ctx,
             )
 
-            from nexus.contracts.constants import SYSTEM_PATH_PREFIX
-
-            batch.items = [
+            # sys_readdir already drops cfg:/ns: internal paths; additionally
+            # filter SYSTEM_PATH_PREFIX and reject any non-/ entries
+            # (nexi-lab/nexus#3733 Bug B).
+            batch_items = [
                 item
                 for item in batch.items
                 # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata entries
@@ -1683,11 +1686,11 @@ class SearchService:
             ]
 
             if self._enforce_permissions and context:
-                paths = [str(item["path"]) for item in batch.items]
+                paths = [item["path"] for item in batch_items]
                 allowed_paths = set(self._permission_enforcer.filter_list(paths, context))
-                filtered_items = [item for item in batch.items if item["path"] in allowed_paths]
+                filtered_items = [item for item in batch_items if item["path"] in allowed_paths]
             else:
-                filtered_items = batch.items
+                filtered_items = batch_items
 
             collected_items.extend(filtered_items)
             has_more = batch.has_more
@@ -1709,6 +1712,8 @@ class SearchService:
             )
 
         if details:
+            # sys_readdir(details=True) emits created_at/modified_at as ISO
+            # strings (JSON-safe over RPC); they flow through unchanged.
             items_output = [
                 {
                     "path": meta["path"],
@@ -1717,7 +1722,7 @@ class SearchService:
                     "created_at": meta.get("created_at"),
                     "content_id": meta.get("content_id"),
                     "mime_type": meta.get("mime_type"),
-                    "is_directory": meta.get("entry_type") == 1,
+                    "is_directory": meta.get("entry_type") == DT_DIR,
                 }
                 for meta in result_items
             ]

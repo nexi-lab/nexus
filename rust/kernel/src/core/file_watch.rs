@@ -35,9 +35,13 @@ use std::time::{Duration, Instant};
 use crate::dispatch::FileEvent;
 
 /// Per-blocking-watch notification channel. The condition-variable
-/// signals event arrival; the inbox accumulates events that fire
-/// before the waiter has re-armed (so a fast burst of writes doesn't
-/// drop wake-ups). One per `wait_for_event` call.
+/// signals event arrival; the inbox buffers events that fire before
+/// the waiter has actually parked on the condvar, so a notify racing
+/// in just after registration isn't dropped on the floor.
+///
+/// Lifetime is scoped to a single `wait_for_event` call — on return,
+/// the temp watch is unregistered and any unconsumed events are
+/// dropped along with the [`WatchNotify`].
 struct WatchNotify {
     inbox: Mutex<Vec<FileEvent>>,
     condvar: Condvar,
@@ -194,8 +198,12 @@ impl FileWatchRegistry {
         // Spurious-wake-tolerant loop: parking_lot's `wait_for`
         // can return early without a notify, so we re-check the
         // inbox + remaining-timeout each iteration. Returns the
-        // first event (FIFO) — bursts queue up; the caller
-        // re-arms with another `sys_watch` call to drain.
+        // first event (FIFO); additional events that fired while
+        // we were parked are dropped when the `UnregisterOnDrop`
+        // guard tears down the temp watch on return. Callers that
+        // need to consume successive events re-arm with another
+        // `sys_watch` call — each call is its own independent
+        // one-shot window with a fresh inbox.
         loop {
             if let Some(first) = inbox.first() {
                 let event = first.clone();

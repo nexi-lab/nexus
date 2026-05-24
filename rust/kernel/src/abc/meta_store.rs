@@ -9,13 +9,8 @@
 //! lives in `crate::core::meta_store`. Remote / raft impls live in
 //! their respective parallel crates (`raft::meta_store`).
 //!
-//! Pure Rust ABI — no PyO3 dependency. PyO3 adapters live in
-//! `generated_kernel_abi_pyo3.rs` (auto-generated).
-//!
-//! Naming note: the Rust trait is `MetaStore` for visual symmetry with
-//! `ObjectStore` / `CacheStore`. The Python ABC stays `MetastoreABC`
-//! (sunset path); the cross-language asymmetry is anchored at exactly
-//! one PyO3 boundary in `raft/src/pyo3_bindings.rs`.
+//! Naming note: the Rust trait is `MetaStore`, for visual symmetry
+//! with `ObjectStore` / `CacheStore`.
 
 // ── Dirent-type constants ────────────────────────────────────────────
 //

@@ -82,7 +82,6 @@ impl StreamManager {
     }
 
     /// Register an external backend (SHM, gRPC, etc.).
-    #[allow(dead_code)]
     pub fn register(
         &self,
         path: &str,
@@ -165,7 +164,6 @@ impl StreamManager {
     /// Blocking read at offset — waits for data with Condvar (GIL-free).
     ///
     /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
-    #[allow(dead_code)]
     pub fn read_at_blocking(
         &self,
         path: &str,

@@ -174,7 +174,6 @@ impl PipeManager {
     ///
     /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
     /// Returns data bytes, or WouldBlock on timeout.
-    #[allow(dead_code)]
     pub(crate) fn read_blocking(
         &self,
         path: &str,

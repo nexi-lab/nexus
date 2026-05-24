@@ -636,14 +636,6 @@ class KernelClient:
         seen_dirs: set[str] = set()
         pending_dirs: list[str] = [root]
 
-        def _looks_like_directory(path: str, etype: int) -> bool:
-            if etype in dir_entry_types:
-                return True
-            try:
-                return bool(self.sys_readdir(_normalize_dir(path)))
-            except Exception:
-                return False
-
         while pending_dirs:
             current = pending_dirs.pop()
             if current in seen_dirs:
@@ -656,10 +648,8 @@ class KernelClient:
                     continue
                 seen_entries.add(name)
                 entries.append((name, etype))
-                if _looks_like_directory(name, etype):
-                    if recursive:
-                        pending_dirs.append(_normalize_dir(name))
-                    continue
+                if etype in dir_entry_types and recursive:
+                    pending_dirs.append(_normalize_dir(name))
             if not recursive:
                 break
 

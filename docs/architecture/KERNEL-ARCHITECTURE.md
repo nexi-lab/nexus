@@ -449,10 +449,12 @@ for §3.B DI surfaces, `core/` is for primitives.
 **Orthogonality:** Between pillars = different query patterns. Within pillars =
 interchangeable drivers (deployment-time config). See `data-storage-matrix.md`.
 
-**Kernel self-inclusiveness:** Kernel boots with **1 pillar** (Metastore).
-ObjectStore mounted post-init. Kernel does NOT need: JOINs, FK, vector search,
-TTL, pub/sub (all service-layer). Like Linux: kernel defines VFS + block device
-interface but doesn't ship a filesystem.
+**Kernel self-inclusiveness:** Kernel boots with **1 pillar** (Metastore);
+ObjectStore mounts post-init. The kernel's own data needs are intentionally
+minimal — O(1) KV with ordered prefix scan over zone-tagged `FileMetadata`
+rows. Higher-level shapes (JOINs, FK, vector search, TTL, pub/sub) live in
+the service layer, mirroring Linux's split: kernel defines VFS + block-device
+interfaces while filesystems ship as separate modules.
 
 #### 3.A.1 MetastoreABC — Inode Layer
 

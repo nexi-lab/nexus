@@ -130,8 +130,11 @@ impl ServiceRegistry {
             exports,
         };
 
-        let is_new = !self.services.contains_key(name);
-        self.services.insert(name.to_string(), entry);
+        // `insert().is_none()` distinguishes "new key" from "overwrite"
+        // atomically — a separate contains_key check would race with
+        // a concurrent enlist() of the same name and double-push to
+        // insertion_order.
+        let is_new = self.services.insert(name.to_string(), entry).is_none();
         if is_new {
             self.insertion_order.lock().push(name.to_string());
         }
@@ -167,8 +170,8 @@ impl ServiceRegistry {
             exports,
         };
 
-        let is_new = !self.services.contains_key(name);
-        self.services.insert(name.to_string(), entry);
+        // See `enlist` — atomic is_new via the insert return value.
+        let is_new = self.services.insert(name.to_string(), entry).is_none();
         if is_new {
             self.insertion_order.lock().push(name.to_string());
         }

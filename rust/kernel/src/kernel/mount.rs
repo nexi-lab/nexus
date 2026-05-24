@@ -78,9 +78,9 @@ impl Kernel {
         }
         // Federation distributed-lock install lives on the trait
         // surface (`DistributedCoordinator::locks_for_zone` — §3.B.1).
-        // `RaftDistributedCoordinator`, installed by the cdylib boot
-        // path, wires the `DistributedLocks` backend the first time
-        // a federated mount lands. Kernel sees only `Box<dyn Any>`
+        // `RaftDistributedCoordinator`, installed by the host binary's
+        // boot path, wires the `DistributedLocks` backend the first
+        // time a federated mount lands. Kernel sees only `Box<dyn Any>`
         // here so the raft edge stays inverted.
         let _ = raft_backend;
         Ok(())

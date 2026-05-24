@@ -16,7 +16,6 @@ Run:
   uv run python tests/benchmarks/bench_pipe_syscall_overhead.py --json
 """
 
-import asyncio
 import json
 import statistics
 import sys
@@ -70,7 +69,7 @@ def _print_stats(label: str, idx: int, st: dict) -> None:
 # ── Setup ──────────────────────────────────────────────────────────────
 
 
-async def _setup(tmp_dir: Path):
+def _setup(tmp_dir: Path):
     """Create NexusFS + Rust kernel pipe for benchmarking."""
     from nexus.backends.storage.path_local import PathLocalBackend
     from nexus.core.config import ParseConfig
@@ -123,7 +122,7 @@ def _bench_direct(kernel, data: bytes) -> list[float]:
     return times
 
 
-async def _bench_sys_write(nx, data: bytes) -> list[float]:
+def _bench_sys_write(nx, data: bytes) -> list[float]:
     """[2] nx.sys_write(pipe_path, data) — full syscall path."""
     # warmup
     for _ in range(WARMUP):
@@ -180,7 +179,7 @@ def _bench_resolve_write(nx, path: str, data: bytes) -> list[float]:
     return times
 
 
-async def _bench_sys_read(nx, kernel, data: bytes) -> list[float]:
+def _bench_sys_read(nx, kernel, data: bytes) -> list[float]:
     """[2b] nx.sys_read(pipe_path) — full syscall path (pre-fill + read)."""
     # warmup
     for _ in range(WARMUP):
@@ -214,10 +213,10 @@ def _bench_ideal_fast_path(kernel, path: str, data: bytes) -> list[float]:
 # ── Main ───────────────────────────────────────────────────────────────
 
 
-async def _run() -> dict:
+def _run() -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        nx, kernel = await _setup(tmp_dir)
+        nx, kernel = _setup(tmp_dir)
 
         payload = json.dumps(
             {
@@ -230,14 +229,14 @@ async def _run() -> dict:
 
         # Run benchmarks
         direct = _bench_direct(kernel, payload)
-        sys_write = await _bench_sys_write(nx, payload)
-        sys_read = await _bench_sys_read(nx, kernel, payload)
+        sys_write = _bench_sys_write(nx, payload)
+        sys_read = _bench_sys_read(nx, kernel, payload)
         meta_get = _bench_sys_stat(kernel, _BENCH_PIPE_PATH)
         validate = _bench_validate_path(nx, _BENCH_PIPE_PATH)
         resolve = _bench_resolve_write(nx, _BENCH_PIPE_PATH, payload)
         fast_path = _bench_ideal_fast_path(kernel, _BENCH_PIPE_PATH, payload)
-        sys_write_opt = await _bench_sys_write(nx, payload)
-        sys_read_opt = await _bench_sys_read(nx, kernel, payload)
+        sys_write_opt = _bench_sys_write(nx, payload)
+        sys_read_opt = _bench_sys_read(nx, kernel, payload)
 
         kernel.close_all_pipes()
 
@@ -256,7 +255,7 @@ async def _run() -> dict:
 
 def main() -> None:
     json_mode = "--json" in sys.argv
-    results = asyncio.run(_run())
+    results = _run()
 
     if json_mode:
         print(json.dumps({"iterations": ITERATIONS, "warmup": WARMUP, **results}, indent=2))

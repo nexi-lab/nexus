@@ -774,7 +774,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         thread while asyncpg connections are bound to a *different* live loop;
         that path produces ``RuntimeError: Future attached to a different
         loop``. Callers who own such an engine must use :meth:`aclose` from
-        the engine's origin loop instead — see ``NexusFS.adispose_async_engines``.
+        the engine's origin loop instead — see
+        ``nexus.server.lifespan._async_engines.adispose_async_engines``.
 
         On dispose failure the reference is preserved (not nulled), so the
         caller can attempt explicit recovery via ``aclose`` rather than

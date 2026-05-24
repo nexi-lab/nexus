@@ -19,7 +19,6 @@ pub enum StreamError {
 ///
 /// Enables `DashMap<String, Arc<dyn StreamBackend>>` in StreamManager for
 /// heterogeneous backend dispatch.
-#[allow(dead_code)] // Used via Arc<dyn StreamBackend> in StreamManager + generated_pyo3.rs
 pub trait StreamBackend: Send + Sync {
     fn push(&self, data: &[u8]) -> Result<usize, StreamError>;
     fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError>;

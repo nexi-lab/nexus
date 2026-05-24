@@ -143,6 +143,10 @@ def _boot_post_kernel_services(
 
                 rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
                 rebac_manager._version_store = MetastoreVersionStore(nx)
+                # DirectoryExpander descendant queries go through sys_readdir on
+                # this NexusFS handle (Tier 1 syscall, not a kernel primitive).
+                if hasattr(rebac_manager, "set_nexus_fs"):
+                    rebac_manager.set_nexus_fs(nx)
                 logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
             except Exception as exc:
                 logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)

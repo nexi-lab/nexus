@@ -67,8 +67,10 @@ class _FakeKernel:
         self._pipes: dict[str, tuple[collections.deque[bytes], int, bool]] = {}
         # path → (deque, capacity_bytes, closed)
 
-    def create_pipe(self, path: str, capacity: int) -> None:
+    def sys_setattr(self, path: str, *, entry_type: int, capacity: int) -> dict:
+        # Minimal stub: only DT_PIPE creation is exercised by DedupWorkQueue.
         self._pipes[path] = (collections.deque(), capacity, False)
+        return {"path": path, "created": True, "entry_type": entry_type}
 
     def sys_write(self, path: str, ctx: Any, data: bytes, offset: int = 0) -> Any:
         """Syscall write — delegates to pipe write for DT_PIPE paths."""

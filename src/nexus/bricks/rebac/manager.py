@@ -2021,9 +2021,9 @@ class ReBACManager:
         """Get all file paths under a directory."""
         return self._directory_expander.get_directory_descendants(directory_path, zone_id)
 
-    def set_metadata_store(self, metadata_store: Any) -> None:
-        """Set the metadata store reference for directory queries."""
-        self._directory_expander.set_metadata_store(metadata_store)
+    def set_nexus_fs(self, nexus_fs: Any) -> None:
+        """Set the NexusFS reference for directory queries."""
+        self._directory_expander.set_nexus_fs(nexus_fs)
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.

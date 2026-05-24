@@ -11,7 +11,7 @@ Three invariants maintained by add/get/done:
   3. An item can be in both ``dirty`` and ``processing`` (re-added during
      processing → will be re-queued on ``done()``).
 
-Transport: Rust kernel IPC pipe (``kernel.create_pipe``) carries u64 LE
+Transport: Rust kernel IPC pipe (``sys_setattr(DT_PIPE)``) carries u64 LE
 sequence tokens (8 bytes each); actual items stay in a Python dict — no
 serialization needed. Dedup logic (dirty/processing sets) remains in Python.
 
@@ -32,6 +32,8 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Generic, TypeVar
 
+from nexus.contracts.metadata import DT_PIPE
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -47,14 +49,14 @@ class DedupWorkQueue(Generic[T]):
     Coalesces duplicate keys so that rapid additions of the same key
     result in at most one processing run.
 
-    **Architectural layer (kernel-level primitive):** ``DedupWorkQueue``
-    holds a ``PyKernel`` handle directly rather than going through the
-    ``NexusFS`` facade. It is a kernel-level primitive (a tight polling
-    loop over a sequence-token pipe with no business logic), conceptually
-    the same tier as ``PyKernel.create_pipe`` itself, so the
-    ``self._kernel.pipe_*`` calls in this file are NOT abstraction
-    violations — ``_kernel`` is the construction-time injected dependency,
-    not a reach-in through a service abstraction.
+    **Architectural layer:** ``DedupWorkQueue`` holds a ``PyKernel`` handle
+    directly rather than going through the ``NexusFS`` facade — the queue
+    is a tight polling loop with no business logic that needs the pipeline
+    overhead of a full facade call. All pipe operations go through Tier 1
+    syscalls (``sys_setattr(DT_PIPE)`` / ``sys_write`` / ``sys_read`` /
+    ``sys_unlink``) — no direct ``PipeManager`` primitive access. The
+    is_system context bypasses the permission gate; INTERCEPT hooks and
+    OBSERVE still fire normally.
 
     **Transport:** Uses a Rust kernel IPC pipe for the internal FIFO.
     The pipe carries u64 LE sequence tokens (8 bytes each); actual items
@@ -99,7 +101,13 @@ class DedupWorkQueue(Generic[T]):
         self._kernel = kernel
         self._pipe_path = pipe_path or f"/__sys__/dedup/{id(self)}"
         self._sys_ctx = PyOperationContext(is_system=True)
-        self._kernel.create_pipe(self._pipe_path, capacity * self._TOKEN_SIZE)
+        # Tier 1 syscall — sys_setattr(DT_PIPE) creates the pipe; the
+        # create_pipe kernel primitive is no longer reachable from service tier.
+        self._kernel.sys_setattr(
+            self._pipe_path,
+            entry_type=DT_PIPE,
+            capacity=capacity * self._TOKEN_SIZE,
+        )
 
         self._seq = 0  # monotonic sequence counter
         self._items: dict[int, T] = {}  # seq → item (actual data stays in Python)
@@ -163,8 +171,8 @@ class DedupWorkQueue(Generic[T]):
         The caller MUST call ``done(key)`` when processing is complete,
         even if processing fails.  Use a try/finally block.
 
-        Polls the kernel pipe with ``sys_read``.  If the pipe is
-        empty, yields to the event loop briefly (10 ms) and retries.
+        Polls the kernel pipe with non-blocking ``sys_read``. If the pipe
+        is empty, yields to the event loop briefly (10 ms) and retries.
 
         Returns:
             The next key to process.
@@ -177,12 +185,14 @@ class DedupWorkQueue(Generic[T]):
                 raise ShutdownError("DedupWorkQueue has been shut down")
 
             try:
-                result = self._kernel.sys_read(self._pipe_path, self._sys_ctx, timeout_ms=0)
-                data = result.data
+                result = self._kernel.sys_read(
+                    self._pipe_path, self._sys_ctx, timeout_ms=0, offset=0
+                )
             except RuntimeError as exc:
                 if "PipeClosed" in str(exc):
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
                 raise
+            data = result.data
 
             if data is None or data == b"":
                 # Pipe empty — yield and retry
@@ -239,14 +249,13 @@ class DedupWorkQueue(Generic[T]):
         """Shut down the queue gracefully.
 
         After shutdown, ``add()`` raises ``ShutdownError`` and ``get()``
-        drains remaining items then raises ``ShutdownError``.
-        Signals the kernel pipe as closed so blocked readers wake up.
+        drains remaining items then raises ``ShutdownError``. No kernel
+        call is needed — workers exit on the Python ``_shutting_down``
+        flag once ``_items`` empties. The pipe inode is removed by
+        ``close()`` (sys_unlink), not here.
         """
         async with self._lock:
             self._shutting_down = True
-
-        with contextlib.suppress(RuntimeError):
-            self._kernel.close_pipe(self._pipe_path)
 
         logger.info(
             "DedupWorkQueue shutdown (adds=%d, coalesced=%d, gets=%d)",

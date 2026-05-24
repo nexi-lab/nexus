@@ -125,7 +125,8 @@ class MetadataExportService:
                 # ``backend_name``/``physical_path`` were removed from
                 # FileMetadata — the kernel resolves the physical
                 # location at read time via the mount/route layer, so
-                # exported metadata no longer surfaces them.
+                # exported metadata no longer surfaces them. created_at /
+                # modified_at are already ISO-8601 strings from sys_readdir.
                 metadata_dict: dict[str, Any] = {
                     "path": entry.get("path"),
                     "size": entry.get("size", 0),

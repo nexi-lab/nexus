@@ -1674,17 +1674,26 @@ class MetadataMixin:
                 is_implicit_dir = _s is not None and _s.get("is_directory", False)
             if is_implicit_dir:
                 et = DT_DIR
+        # Full FileMetadata projection — sys_readdir(details=True) is the
+        # Tier 1 surface service callers use in place of the
+        # metastore_list_paginated kernel primitive, so the dict must carry
+        # every FileMetadata field (not just the display subset). Additive:
+        # CLI / API consumers keying on the original fields are unaffected.
         return {
             "path": entry.path,
             "size": entry.size,
             "content_id": entry.content_id,
-            "entry_type": et,
-            "zone_id": entry.zone_id,
-            "owner_id": entry.owner_id,
             "mime_type": entry.mime_type,
             "created_at": entry.created_at.isoformat() if entry.created_at else None,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
             "version": entry.version,
+            "zone_id": entry.zone_id,
+            "owner_id": entry.owner_id,
+            "entry_type": et,
+            "target_zone_id": entry.target_zone_id,
+            "ttl_seconds": entry.ttl_seconds,
+            "last_writer_address": entry.last_writer_address,
+            "link_target": entry.link_target,
             "gen": entry.gen,
         }
 

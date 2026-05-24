@@ -26,6 +26,9 @@ class _InitContext:
     svc_on: Callable[[str], bool]
     parse_fn: Any
     permission_checker: Any
+    # Root backend handed to create_nexus_fs — needed by _register_vfs_hooks
+    # to decide whether to enlist CasGcService (only for CAS root backends).
+    backend: Any = None
 
 
 def _wire_services(
@@ -38,6 +41,7 @@ def _wire_services(
     workflow_engine: Any = None,
     federation: Any = None,
     security: Any = None,
+    backend: Any = None,
 ) -> _InitContext:
     """Phase 1: wire service topology.  Pure memory — NO I/O.
 
@@ -212,6 +216,7 @@ def _wire_services(
         svc_on=svc_on,
         parse_fn=_parse_fn,
         permission_checker=_permission_checker,
+        backend=backend,
     )
 
 
@@ -245,6 +250,7 @@ def _initialize_services(
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
         svc_on=ctx.svc_on,
         parse_fn=ctx.parse_fn,
+        backend=ctx.backend,
     )
 
     # Background services (DeferredPermissionBuffer, EventDeliveryWorker,

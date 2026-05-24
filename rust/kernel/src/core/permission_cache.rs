@@ -93,7 +93,14 @@ impl PermissionLeaseCache {
             .insert((path.to_string(), agent_id.to_string()), Instant::now());
     }
 
-    /// Invalidate all leases matching the given path prefix.
+    /// Invalidate all leases stamped for the exact given path.
+    ///
+    /// Note: this does **not** propagate to descendants. A stale lease
+    /// stamped on `/docs` will still satisfy a `check("/docs/file")`
+    /// via the inheritance walk in [`Self::check`]. Callers that need
+    /// to invalidate a whole subtree must either invalidate each
+    /// stamped path explicitly or use [`Self::invalidate_all`]. This
+    /// asymmetry mirrors the Python `PermissionLeaseTable`.
     pub fn invalidate_path(&self, path: &str) {
         self.leases.retain(|k, _| k.0 != path);
     }

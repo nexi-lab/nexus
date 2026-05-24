@@ -1425,8 +1425,6 @@ class SearchService:
         _dir_start = _time.time()
         directories: set[str] = set()
 
-        from nexus.contracts.metadata import DT_DIR, DT_MOUNT
-
         for meta in results:
             if _entry_is_dir(meta):
                 directories.add(meta["path"])
@@ -1565,7 +1563,6 @@ class SearchService:
         import time as _time
 
         _details_start = _time.time()
-        from nexus.contracts.metadata import DT_DIR, DT_MOUNT
 
         file_results = [
             {

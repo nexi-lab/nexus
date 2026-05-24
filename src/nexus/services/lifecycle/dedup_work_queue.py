@@ -30,12 +30,9 @@ import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from nexus.contracts.metadata import DT_PIPE
-
-if TYPE_CHECKING:
-    from nexus_runtime import PyKernel
 
 logger = logging.getLogger(__name__)
 

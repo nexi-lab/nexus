@@ -48,7 +48,6 @@ from nexus.services.lifecycle.dedup_work_queue import (
     run_worker,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fake kernel — in-process pipe backed by collections.deque
 # ---------------------------------------------------------------------------

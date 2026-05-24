@@ -61,12 +61,13 @@ const FILE_METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("
 /// **Internal cache** — every `MetaStore` impl backed by a slow store
 /// (disk / RPC / raft) carries its own `cache: DashMap` projection of
 /// hot entries.  `get` consults the cache first and populates on miss;
-/// `put` is write-through (cache + store, in that order, so concurrent
-/// reads can never observe a stale store-write before the cache update);
-/// `delete` invalidates the cache before delete.  This replaces the
-/// pre-PR global `Kernel.dcache` — there is no longer a separate
-/// metadata cache that callers can consult; cache management is
-/// metastore-internal and transparent to callers.
+/// `put` commits the store first and refreshes the cache row on
+/// commit success, so a failed commit can never leave a phantom hit
+/// in the cache; `delete` invalidates the cache before the store
+/// delete so concurrent readers cannot observe a stale hit after the
+/// row is gone. Cache management is metastore-internal and
+/// transparent to callers — there is no separate metadata cache that
+/// callers can consult.
 pub struct LocalMetaStore {
     db: Arc<Database>,
     cache: DashMap<String, FileMetadata>,

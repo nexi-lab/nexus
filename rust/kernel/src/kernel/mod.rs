@@ -26,7 +26,7 @@ use crate::meta_store::DT_REG;
 use crate::meta_store::{DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::vfs_router::VFSRouter;
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
+use parking_lot::{Condvar, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -518,19 +518,17 @@ pub struct Kernel {
     delete_hook_count: AtomicU64,
     rename_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching lock-free).
-    #[allow(dead_code)]
-    observers: Mutex<ObserverRegistry>,
-    // OBSERVE is fire-and-forget by contract: the syscall returns as soon
-    // as the event is queued; observer callbacks run on this pool, off
-    // the hot path.
     //
-    // 4 worker threads is enough for the typical workload (a handful of
-    // long-lived observers: FileWatchRegistry, EventBus, etc.). Many
-    // parallel Python observers will serialize on the GIL, but
-    // Rust-native observers run truly parallel.
+    // RwLock (not Mutex): dispatch is the hot path (fires from every
+    // successful Tier 1 mutation syscall) and only needs a snapshot of
+    // the Arc list — `&self` access via `ObserverRegistry::matching`.
+    // Register / unregister are rare (boot-time wiring + occasional
+    // service swap) and take the write lock. Concurrent dispatches
+    // proceed in parallel.
     #[allow(dead_code)]
-    // observer_pool removed — inline dispatch, no background threads.
+    observers: RwLock<ObserverRegistry>,
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
+    #[allow(dead_code)]
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatchRegistry>,
@@ -699,7 +697,7 @@ impl Kernel {
             copy_hook_count: AtomicU64::new(0),
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
-            observers: Mutex::new(ObserverRegistry::new()),
+            observers: RwLock::new(ObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),

@@ -610,7 +610,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
 | **AgentRegistry** | `rust/kernel/src/core/agents/registry.rs` | Linux `task_struct` table + signal queue | Kernel SSOT for agent lifecycle: PID allocation, parent/child tree, signal semantics (SIGTERM/SIGSTOP/SIGCONT/SIGKILL/SIGUSR1), `AgentState::can_transition_to` validation, per-PID condvar wake-ups. Shared `Arc` exposed to procfs view (`AgentStatusResolver`) — no dual-write. Details in §1 Service Lifecycle |
 | **DT_LINK** | `proto/nexus/core/metadata.proto` (`DT_LINK = 6`) + `FileMetadata.link_target` | `symlink(2)` | Path-internal symlink resolved by `VFSRouter::route()` before reaching the backend. Single-hop redirect with `ELOOP` on chained or self-loop links. Details in §4.4 |
-| **Process-Local Caches** | `rust/kernel/src/cache/` | inode / dentry caches (`struct dentry`, `struct inode_cache`) | Per-process bounded TTL caches inherent to `Kernel` (e.g. `IndexCache` for `readdir` listings + prefix-scan results). Eviction is local-only; cross-zone consistency flows through metastore apply-side coherence. Details in §4.5 |
+| **Process-Local Caches** | `rust/kernel/src/core/index_cache.rs` + `rust/kernel/src/core/permission_cache.rs` | inode / dentry caches (`struct dentry`, `struct inode_cache`) | Per-process bounded TTL caches inherent to `Kernel` (e.g. `IndexCache` for `readdir` listings + prefix-scan results). Eviction is local-only; cross-zone consistency flows through metastore apply-side coherence. Details in §4.5 |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 
@@ -719,15 +719,17 @@ See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-a
 
 ### 4.5 Process-Local Kernel Caches
 
-`rust/kernel/src/cache/` holds kernel-internal process-local caches —
-inherent state on `Kernel`, scoped to one OS process, with local-only
-eviction. The cluster-wide `CacheStoreABC` (§3.A.3) is a separate
-pillar; cross-zone consistency for these process-local caches flows
-through the metastore's apply-side cache coherence (§4 DLC primitive).
+Kernel-internal process-local caches live alongside other §4
+primitives in `rust/kernel/src/core/` — inherent state on `Kernel`,
+scoped to one OS process, with local-only eviction. The cluster-wide
+`CacheStoreABC` (§3.A.3) is a separate pillar; cross-zone consistency
+for these process-local caches flows through the metastore's
+apply-side cache coherence (§4 DLC primitive).
 
 | File | Owns |
 |------|------|
-| `cache/index_cache.rs` | `IndexCache` — bounded TTL'd cache of `readdir` listings and metastore prefix-scan results, keyed by `(zone, path, kind)`. Invalidated by `sys_setattr` / `sys_unlink` / `sys_rename` post-hooks on the same routed metastore. |
+| `core/index_cache.rs` | `IndexCache` — bounded TTL'd cache of `readdir` listings and metastore prefix-scan results, keyed by `(zone, path, kind)`. Invalidated by `sys_setattr` / `sys_unlink` / `sys_rename` post-hooks on the same routed metastore. |
+| `core/permission_cache.rs` | `PermissionLeaseCache` — two-level DashMap of `(path, agent_id) → expiry`. Short-circuits the permission gate's full ReBAC walk on a recent hit. Details in §2.4.1. |
 
 ---
 

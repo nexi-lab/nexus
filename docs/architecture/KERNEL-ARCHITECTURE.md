@@ -602,7 +602,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
 | **VFSRouter** | `rust/kernel/src/core/vfs_router.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
-| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`, `semaphore.rs`) | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct (§4.1). I/O: per-path condvar-based RW lock. Advisory: `sys_lock`/`sys_unlock` with TTL. Local: VFSSemaphore. Federation: auto-upgrade via `upgrade_to_distributed()` at mount time |
+| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`) | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct (§4.1). I/O: per-path condvar-based RW lock. Advisory: `sys_lock`/`sys_unlock` with TTL via the `Locks` HAL trait — `LocalLocks` mutates `Arc<Mutex<LockState>>` directly; a replicated backend swaps in via `install_locks(Arc<dyn Locks>)` at federation mount time |
 | **Dispatch (Rust Kernel + DispatchMixin)** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/dispatch/` + `core.nexus_fs_dispatch` (Python event broadcaster) | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
 | **PipeManager + StreamManager** | `rust/kernel/src/core/pipe/` + `rust/kernel/src/core/stream/` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileDescriptorTable** | `rust/kernel/src/core/fdt.rs` | fd table (`task_struct.files`) | Pre-opened fd registry for PAS backends. `sys_write` registers via `ObjectStore::resolve_physical_path()`; `sys_read` fast-path via `libc::pread`; `sys_unlink` removes; `sys_rename` re-keys. CAS/remote backends opt out (trait default `None`) |
@@ -617,23 +617,24 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 Rust `LockManager` (`rust/kernel/src/core/lock/`) unifies both lock
 concerns in one struct. I/O lock (condvar-based, per-path RW) and advisory
 lock (TTL-based, user-facing) share one code path. Constructed in
-`Kernel::new()`; federation upgrades via `upgrade_to_distributed(ZoneConsensus, Handle)`
-at DLC mount time.
+`Kernel::new()` with a default `LocalLocks` advisory backend. A
+replicated backend swaps in via `install_locks(Arc<dyn Locks>)` at
+federation mount time (first-wins, idempotent).
 
 | Property | I/O Lock | Advisory Lock |
 |----------|----------|---------------|
 | Linux analogue | `i_rwsem` | `flock(2)` / `fcntl(F_SETLK)` |
-| Modes | `read` (shared) / `write` (exclusive) | exclusive (mutex), TTL-based |
-| Latency | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
+| Modes | `read` (shared) / `write` (exclusive) | exclusive (mutex), shared (max_holders ≥ 2), TTL-based |
+| Latency target | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
 | Scope | Process-scoped, crash → released | TTL-based, expire → released |
-| Visibility | Kernel-internal (sys_read/write) | User-facing (sys_lock/sys_unlock) |
-| Storage | In-memory only | redb `sm_locks` table (metastore) |
-| Local impl | per-path condvar RW | `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore) |
-| Distributed impl | n/a (process-local) | replicated via Raft after `upgrade_to_distributed(ZoneConsensus, Handle)` |
-| Syscalls | implicit (taken inside sys_read / sys_write) | `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2) |
+| Visibility | Kernel-internal (`sys_read`/`sys_write`) | User-facing (`sys_lock`/`sys_unlock`) |
+| Storage | In-memory only | Shared `Arc<Mutex<LockState>>` — `contracts::lock_state` is SSOT; the replicated backend's apply-path writes into the same Arc |
+| Local impl | per-path condvar RW | `LocalLocks` (`core/lock/locks.rs`) — mutates the shared `LockState` Arc directly |
+| Distributed impl | n/a (process-local) | replicated `Locks` HAL backend installed via `install_locks(Arc<dyn Locks>)`; apply-path mutates the same `LockState` Arc so reads observe committed state without a quorum round-trip |
+| Syscalls | implicit (taken inside `sys_read` / `sys_write`) | `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2) |
 
 See `lock-architecture.md` for full design. See `federation-memo.md` for
-distributed lock upgrade path.
+the replicated-backend install path.
 
 ### 4.2 IPC Primitives — Named Pipes & Streams
 

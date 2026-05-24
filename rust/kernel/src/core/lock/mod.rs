@@ -1,26 +1,17 @@
 //! Unified lock manager — kernel primitive
 //! (KERNEL-ARCHITECTURE.md "Unified LockManager — I/O Lock + Advisory Lock").
 //!
-//! Single `LockManager` struct replaces both `VFSLockManagerInner` (I/O locks)
-//! and `LocalLockManager` / `DistributedLockManager` (advisory locks).
-//!
-//! Two acquire modes:
-//!   - **I/O lock** (kernel-internal): blocking, hierarchy-aware, no TTL, auto
-//!     handle via `blocking_acquire` / `do_release`. Stays in the node-local
-//!     `IOLockState`; never replicates.
+//! Two orthogonal acquire modes share one struct:
+//!   - **I/O lock** (kernel-internal): blocking, hierarchy-aware, no TTL,
+//!     auto handle via `blocking_acquire` / `do_release`. Held in the
+//!     node-local `IOLockState` mutex.
 //!   - **Advisory lock** (user-facing): try-once, hierarchy-aware, TTL-based,
 //!     explicit lock_id via `acquire_lock` / `release_lock` / `extend_lock`.
-//!     Backed by the shared `Arc<Mutex<contracts::LockState>>` — same Arc
-//!     the raft state machine holds once `upgrade_to_distributed` fires.
-//!
-//! I/O and advisory locks are orthogonal — they do not conflict with each
-//! other. They live in separate structures now that advisory state is
-//! shared with raft.
-//!
-//! After R14, distributed mode does not split reads from writes: writes
-//! still go through `node.propose()` for raft consensus, and the apply
-//! path mutates the same `Arc<Mutex<LockState>>`. Reads hit that Arc
-//! directly, so they observe exactly what the local apply committed.
+//!     Mutations go through the installed `Locks` HAL backend (`LocalLocks`
+//!     by default, swapped via `install_locks` at federation mount time);
+//!     every backend mutates the same shared `Arc<Mutex<contracts::LockState>>`,
+//!     so a replicated apply-path commit is visible to a local read without
+//!     a quorum round-trip.
 
 pub mod locks;
 pub mod semaphore;

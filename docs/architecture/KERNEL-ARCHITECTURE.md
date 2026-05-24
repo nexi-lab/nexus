@@ -794,13 +794,14 @@ See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matchin
 ## 6. Tier-Neutral Infrastructure (`contracts/`, `lib/`)
 
 Two packages sit **outside** the Kernel → Services → Drivers stack.
-Any layer may import from them; they must **not** import from `nexus.core`,
-`nexus.services`, `nexus.fuse`, `nexus.bricks`, or any other tier-specific package.
+Any layer may import from them; their own imports stay within
+`contracts/` and `lib/` (plus the standard library), keeping them
+tier-neutral leaves of the dependency graph.
 
 | Package | Contains | Linux Analogue | Rule |
 |---------|----------|----------------|------|
-| **`contracts/`** | Types, enums, exceptions, constants | `include/linux/` (header files) | Declarations only — no implementation logic, no I/O |
-| **`lib/`** | Reusable helper functions, pure utilities | `lib/` (libc, libm) | Implementation allowed, but zero kernel deps |
+| **`contracts/`** | Types, enums, exceptions, constants | `include/linux/` (header files) | Declarations only — zero implementation logic, zero I/O |
+| **`lib/`** | Reusable helper functions, pure utilities | `lib/` (libc, libm) | Implementation allowed; depends on `contracts/` and stdlib only |
 
 **Core distinction:** `contracts/` = **what** (shapes of data). `lib/` = **how** (behavior).
 

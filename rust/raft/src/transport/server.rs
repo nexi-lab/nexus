@@ -279,9 +279,6 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             max_holders: 1, // Default to mutex
             ttl_secs: ms_to_secs_ceil(al.ttl_ms),
             holder_info: al.holder_id,
-            // Witness-path `AcquireLock` proto has no `mode` field;
-            // default to Exclusive.
-            mode: crate::prelude::LockMode::Exclusive,
             now_secs: crate::prelude::FullStateMachine::now(),
         }),
         ProtoCommandVariant::ReleaseLock(rl) => Some(Command::ReleaseLock {

@@ -22,25 +22,11 @@ use serde::{Deserialize, Serialize};
 
 // ── Types ───────────────────────────────────────────────────────────
 
-/// Per-holder conflict mode.
-///
-/// `Shared` holders may coexist with other `Shared` holders up to
-/// `LockEntry::max_holders`. `Exclusive` holders must be the sole
-/// holder — they block both other `Exclusive` acquirers and any
-/// `Shared` acquirers. This is the standard reader-writer rule.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-pub enum LockMode {
-    #[default]
-    Exclusive,
-    Shared,
-}
-
 /// Information about a single advisory lock holder.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HolderInfo {
     pub lock_id: String,
     pub holder_info: String,
-    pub mode: LockMode,
     /// Unix seconds.
     pub acquired_at: u64,
     /// Unix seconds.
@@ -142,51 +128,25 @@ impl LockState {
         });
     }
 
-    fn ancestor_conflict(&self, path: &str, mode: LockMode) -> bool {
-        for anc in ancestors(path) {
-            if let Some(entry) = self.locks.get(anc) {
-                if entry.is_empty() {
-                    continue;
-                }
-                match mode {
-                    LockMode::Exclusive => return true,
-                    LockMode::Shared => {
-                        if entry.holders.iter().any(|h| h.mode == LockMode::Exclusive) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
+    /// Any holder on a strict ancestor blocks descendant acquires.
+    /// Hierarchical lock = "I'm using this subtree, leave it alone."
+    fn ancestor_conflict(&self, path: &str) -> bool {
+        ancestors(path).into_iter().any(|anc| {
+            self.locks
+                .get(anc)
+                .is_some_and(|entry| !entry.is_empty())
+        })
     }
 
-    fn descendant_conflict(&self, path: &str, mode: LockMode) -> bool {
+    /// Any holder on a strict descendant blocks ancestor acquires.
+    fn descendant_conflict(&self, path: &str) -> bool {
         let (lo, hi) = descendant_range(path);
-        for (_, entry) in self.locks.range(lo..hi) {
-            if entry.is_empty() {
-                continue;
-            }
-            match mode {
-                LockMode::Exclusive => return true,
-                LockMode::Shared => {
-                    if entry.holders.iter().any(|h| h.mode == LockMode::Exclusive) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+        self.locks.range(lo..hi).any(|(_, entry)| !entry.is_empty())
     }
 
-    fn accepts_new_holder(entry: &LockEntry, mode: LockMode) -> bool {
-        match mode {
-            LockMode::Exclusive => entry.holders.is_empty(),
-            LockMode::Shared => {
-                let has_exclusive = entry.holders.iter().any(|h| h.mode == LockMode::Exclusive);
-                !has_exclusive && (entry.holders.len() as u32) < entry.max_holders
-            }
-        }
+    /// Capacity check: room remaining under `max_holders`.
+    fn accepts_new_holder(entry: &LockEntry) -> bool {
+        (entry.holders.len() as u32) < entry.max_holders
     }
 
     fn to_result(entry: &LockEntry, acquired: bool) -> LockAcquireResult {
@@ -212,9 +172,8 @@ impl LockState {
     /// Acquire (or re-acquire) an advisory lock holder.
     ///
     /// Does hierarchy conflict detection, idempotent re-acquire, and
-    /// capacity matching. Behaviour matches the pre-R14 kernel local
-    /// path — raft apply now calls this via `FullStateMachine`.
-    #[allow(clippy::too_many_arguments)]
+    /// capacity matching. `max_holders` parametrizes the lock shape:
+    /// `1` is a mutex, `> 1` is a counting semaphore.
     pub fn apply_acquire(
         &mut self,
         path: &str,
@@ -222,18 +181,17 @@ impl LockState {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
-        mode: LockMode,
         now_secs: u64,
     ) -> LockAcquireResult {
         // Hierarchy conflict: reject without creating a dangling entry.
-        if self.ancestor_conflict(path, mode) || self.descendant_conflict(path, mode) {
+        if self.ancestor_conflict(path) || self.descendant_conflict(path) {
             return Self::empty_result(max_holders);
         }
 
         let expires_at = now_secs.saturating_add(ttl_secs as u64);
         let entry = self.locks.entry(path.to_string()).or_default();
 
-        // Prune expired holders before checking capacity / mode.
+        // Prune expired holders before checking capacity.
         entry.holders.retain(|h| h.expires_at > now_secs);
 
         // Idempotent re-acquire by same lock_id — bump TTL.
@@ -249,11 +207,10 @@ impl LockState {
             return Self::to_result(entry, false);
         }
 
-        if Self::accepts_new_holder(entry, mode) {
+        if Self::accepts_new_holder(entry) {
             entry.holders.push(HolderInfo {
                 lock_id: lock_id.to_string(),
                 holder_info: holder_info.to_string(),
-                mode,
                 acquired_at: now_secs,
                 expires_at,
             });
@@ -385,12 +342,13 @@ impl LockState {
 pub trait Locks: Send + Sync {
     /// Try to acquire a lock. Returns ``Ok(true)`` if the caller
     /// became (or already was) a holder, ``Ok(false)`` on conflict.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `max_holders` parametrizes the lock shape: `1` is a mutex,
+    /// `> 1` is a counting semaphore.
     fn acquire(
         &self,
         path: &str,
         lock_id: &str,
-        mode: LockMode,
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
@@ -434,52 +392,31 @@ pub trait Locks: Send + Sync {
 mod tests {
     use super::*;
 
-    fn acq(
-        state: &mut LockState,
-        path: &str,
-        id: &str,
-        mode: LockMode,
-        max: u32,
-        ttl: u32,
-    ) -> LockAcquireResult {
-        state.apply_acquire(path, id, max, ttl, "agent", mode, 1000)
+    fn acq(state: &mut LockState, path: &str, id: &str, max: u32, ttl: u32) -> LockAcquireResult {
+        state.apply_acquire(path, id, max, ttl, "agent", 1000)
     }
 
     #[test]
-    fn exclusive_blocks_exclusive() {
+    fn mutex_blocks_second_acquire() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "h1", LockMode::Exclusive, 1, 60).acquired);
-        assert!(!acq(&mut s, "/a", "h2", LockMode::Exclusive, 1, 60).acquired);
+        assert!(acq(&mut s, "/a", "h1", 1, 60).acquired);
+        assert!(!acq(&mut s, "/a", "h2", 1, 60).acquired);
     }
 
     #[test]
-    fn shared_coexists_up_to_max() {
+    fn semaphore_coexists_up_to_max() {
         let mut s = LockState::new();
         for id in ["r1", "r2", "r3"] {
-            assert!(acq(&mut s, "/a", id, LockMode::Shared, 3, 60).acquired);
+            assert!(acq(&mut s, "/a", id, 3, 60).acquired);
         }
-        assert!(!acq(&mut s, "/a", "r4", LockMode::Shared, 3, 60).acquired);
-    }
-
-    #[test]
-    fn exclusive_blocked_by_shared() {
-        let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "r1", LockMode::Shared, 3, 60).acquired);
-        assert!(!acq(&mut s, "/a", "w1", LockMode::Exclusive, 3, 60).acquired);
-    }
-
-    #[test]
-    fn shared_blocked_by_exclusive() {
-        let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "w1", LockMode::Exclusive, 3, 60).acquired);
-        assert!(!acq(&mut s, "/a", "r1", LockMode::Shared, 3, 60).acquired);
+        assert!(!acq(&mut s, "/a", "r4", 3, 60).acquired);
     }
 
     #[test]
     fn idempotent_reacquire_same_holder() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "h1", LockMode::Exclusive, 1, 60).acquired);
-        let second = acq(&mut s, "/a", "h1", LockMode::Exclusive, 1, 60);
+        assert!(acq(&mut s, "/a", "h1", 1, 60).acquired);
+        let second = acq(&mut s, "/a", "h1", 1, 60);
         assert!(second.acquired);
         assert_eq!(second.current_holders, 1);
     }
@@ -487,37 +424,38 @@ mod tests {
     #[test]
     fn capacity_mismatch_rejects() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "r1", LockMode::Shared, 3, 60).acquired);
-        assert!(!acq(&mut s, "/a", "w1", LockMode::Exclusive, 1, 60).acquired);
+        assert!(acq(&mut s, "/a", "r1", 3, 60).acquired);
+        // Second acquire with a different max_holders is rejected.
+        assert!(!acq(&mut s, "/a", "w1", 1, 60).acquired);
     }
 
     #[test]
-    fn hierarchy_parent_exclusive_blocks_child() {
+    fn hierarchy_parent_blocks_child() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/folder", "h1", LockMode::Exclusive, 1, 60).acquired);
-        assert!(!acq(&mut s, "/folder/file", "h2", LockMode::Exclusive, 1, 60).acquired);
-        assert!(!acq(&mut s, "/folder/file", "h3", LockMode::Shared, 2, 60).acquired);
+        assert!(acq(&mut s, "/folder", "h1", 1, 60).acquired);
+        assert!(!acq(&mut s, "/folder/file", "h2", 1, 60).acquired);
+        assert!(!acq(&mut s, "/folder/file", "h3", 2, 60).acquired);
     }
 
     #[test]
-    fn hierarchy_child_exclusive_blocks_parent() {
+    fn hierarchy_child_blocks_parent() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/folder/file", "h1", LockMode::Exclusive, 1, 60).acquired);
-        assert!(!acq(&mut s, "/folder", "h2", LockMode::Exclusive, 1, 60).acquired);
+        assert!(acq(&mut s, "/folder/file", "h1", 1, 60).acquired);
+        assert!(!acq(&mut s, "/folder", "h2", 1, 60).acquired);
     }
 
     #[test]
     fn hierarchy_sibling_no_conflict() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/a/bc", "h1", LockMode::Exclusive, 1, 60).acquired);
+        assert!(acq(&mut s, "/a/bc", "h1", 1, 60).acquired);
         // /a/b is a sibling (not ancestor or descendant) of /a/bc
-        assert!(acq(&mut s, "/a/b", "h2", LockMode::Exclusive, 1, 60).acquired);
+        assert!(acq(&mut s, "/a/b", "h2", 1, 60).acquired);
     }
 
     #[test]
     fn release_removes_holder() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "h1", LockMode::Exclusive, 1, 60).acquired);
+        assert!(acq(&mut s, "/a", "h1", 1, 60).acquired);
         assert!(s.apply_release("/a", "h1"));
         assert!(s.get_lock("/a").is_none());
     }
@@ -525,8 +463,8 @@ mod tests {
     #[test]
     fn force_release_drops_all_holders() {
         let mut s = LockState::new();
-        assert!(acq(&mut s, "/a", "r1", LockMode::Shared, 3, 60).acquired);
-        assert!(acq(&mut s, "/a", "r2", LockMode::Shared, 3, 60).acquired);
+        assert!(acq(&mut s, "/a", "r1", 3, 60).acquired);
+        assert!(acq(&mut s, "/a", "r2", 3, 60).acquired);
         assert!(s.apply_force_release("/a"));
         assert!(s.get_lock("/a").is_none());
     }
@@ -534,7 +472,7 @@ mod tests {
     #[test]
     fn extend_refreshes_ttl() {
         let mut s = LockState::new();
-        s.apply_acquire("/a", "h1", 1, 1, "agent", LockMode::Exclusive, 1000);
+        s.apply_acquire("/a", "h1", 1, 1, "agent", 1000);
         let before = s.get_lock("/a").unwrap().holders[0].expires_at;
         assert!(s.apply_extend("/a", "h1", 3600, 1000));
         let after = s.get_lock("/a").unwrap().holders[0].expires_at;
@@ -545,9 +483,9 @@ mod tests {
     fn expired_holder_auto_evicted_on_reacquire() {
         let mut s = LockState::new();
         // TTL=1 at t=1000 → expires at 1001
-        s.apply_acquire("/a", "h1", 1, 1, "agent", LockMode::Exclusive, 1000);
+        s.apply_acquire("/a", "h1", 1, 1, "agent", 1000);
         // Another holder at t=1002 — the original should be pruned.
-        let res = s.apply_acquire("/a", "h2", 1, 60, "agent", LockMode::Exclusive, 1002);
+        let res = s.apply_acquire("/a", "h2", 1, 60, "agent", 1002);
         assert!(res.acquired);
         let lock = s.get_lock("/a").unwrap();
         assert_eq!(lock.holders.len(), 1);
@@ -557,9 +495,9 @@ mod tests {
     #[test]
     fn list_locks_filters_by_prefix() {
         let mut s = LockState::new();
-        acq(&mut s, "/ns/a", "h1", LockMode::Exclusive, 1, 60);
-        acq(&mut s, "/ns/b", "h2", LockMode::Shared, 2, 60);
-        acq(&mut s, "/other", "h3", LockMode::Exclusive, 1, 60);
+        acq(&mut s, "/ns/a", "h1", 1, 60);
+        acq(&mut s, "/ns/b", "h2", 2, 60);
+        acq(&mut s, "/other", "h3", 1, 60);
         assert_eq!(s.list_locks("/ns/", 10).len(), 2);
         assert_eq!(s.list_locks("/", 10).len(), 3);
     }
@@ -567,8 +505,8 @@ mod tests {
     #[test]
     fn clone_preserves_state() {
         let mut s = LockState::new();
-        acq(&mut s, "/a", "h1", LockMode::Exclusive, 1, 60);
-        acq(&mut s, "/b", "r1", LockMode::Shared, 3, 60);
+        acq(&mut s, "/a", "h1", 1, 60);
+        acq(&mut s, "/b", "r1", 3, 60);
         let copy = s.clone();
         assert_eq!(copy.get_lock("/a"), s.get_lock("/a"));
         assert_eq!(copy.get_lock("/b"), s.get_lock("/b"));
@@ -577,7 +515,7 @@ mod tests {
     #[test]
     fn gc_prunes_expired_entries() {
         let mut s = LockState::new();
-        s.apply_acquire("/a", "h1", 1, 1, "agent", LockMode::Exclusive, 1000);
+        s.apply_acquire("/a", "h1", 1, 1, "agent", 1000);
         s.gc_expired(2000);
         assert!(s.get_lock("/a").is_none());
     }

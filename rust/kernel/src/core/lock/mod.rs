@@ -21,29 +21,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use contracts::lock_state::{
-    HolderInfo as SharedHolderInfo, LockMode as SharedLockMode, LockState as SharedLockState, Locks,
-};
+use contracts::lock_state::{HolderInfo as SharedHolderInfo, LockState as SharedLockState, Locks};
 
 // ── Lock types (advisory) ───────────────────────────────────────────
-
-/// Per-holder conflict mode (advisory locks).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum KernelLockMode {
-    /// Sole-holder lock. Blocks any concurrent acquire.
-    #[default]
-    Exclusive,
-    /// Read-like lock. Coexists with other Shared holders up to
-    /// `KernelLockInfo::max_holders`; blocked by any Exclusive holder.
-    Shared,
-}
 
 /// Information about a single advisory lock holder.
 #[derive(Clone, Debug, Default)]
 pub struct KernelHolderInfo {
     pub lock_id: String,
     pub holder_info: String,
-    pub mode: KernelLockMode,
     pub acquired_at_secs: u64,
     pub expires_at_secs: u64,
 }
@@ -202,27 +188,12 @@ pub fn lock_now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-// ── Raft conversion helpers ─────────────────────────────────────────
-
-fn kernel_to_shared_mode(m: KernelLockMode) -> SharedLockMode {
-    match m {
-        KernelLockMode::Exclusive => SharedLockMode::Exclusive,
-        KernelLockMode::Shared => SharedLockMode::Shared,
-    }
-}
-
-fn shared_to_kernel_mode(m: SharedLockMode) -> KernelLockMode {
-    match m {
-        SharedLockMode::Exclusive => KernelLockMode::Exclusive,
-        SharedLockMode::Shared => KernelLockMode::Shared,
-    }
-}
+// ── Conversion: contracts::LockInfo → KernelLockInfo ────────────────
 
 fn shared_holder_to_kernel(h: &SharedHolderInfo) -> KernelHolderInfo {
     KernelHolderInfo {
         lock_id: h.lock_id.clone(),
         holder_info: h.holder_info.clone(),
-        mode: shared_to_kernel_mode(h.mode),
         acquired_at_secs: h.acquired_at,
         expires_at_secs: h.expires_at,
     }
@@ -627,7 +598,6 @@ impl LockManager {
         &self,
         path: &str,
         lock_id: &str,
-        mode: KernelLockMode,
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
@@ -635,7 +605,6 @@ impl LockManager {
         self.locks_backend().acquire(
             path,
             lock_id,
-            kernel_to_shared_mode(mode),
             max_holders,
             ttl_secs.min(u32::MAX as u64) as u32,
             holder_info,
@@ -1064,63 +1033,29 @@ mod tests {
         assert!(io_acquire(&lm, "/a/b", LockMode::Write).is_none());
     }
 
-    // ── Advisory lock tests (migrated from old LocalLockManager) ────
+    // ── Advisory lock tests ─────────────────────────────────────────
 
     #[test]
-    fn advisory_exclusive_blocks_exclusive() {
+    fn advisory_mutex_blocks_second_acquire() {
         let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/a", "h1", KernelLockMode::Exclusive, 1, 60, "agent:1")
-            .unwrap());
-        assert!(!lm
-            .acquire_lock("/lk/a", "h2", KernelLockMode::Exclusive, 1, 60, "agent:2")
-            .unwrap());
+        assert!(lm.acquire_lock("/lk/a", "h1", 1, 60, "agent:1").unwrap());
+        assert!(!lm.acquire_lock("/lk/a", "h2", 1, 60, "agent:2").unwrap());
     }
 
     #[test]
-    fn advisory_shared_coexists_up_to_max() {
+    fn advisory_semaphore_coexists_up_to_max() {
         let lm = LockManager::new();
         for id in ["r1", "r2", "r3"] {
-            assert!(lm
-                .acquire_lock("/lk/b", id, KernelLockMode::Shared, 3, 60, "agent")
-                .unwrap());
+            assert!(lm.acquire_lock("/lk/b", id, 3, 60, "agent").unwrap());
         }
-        assert!(!lm
-            .acquire_lock("/lk/b", "r4", KernelLockMode::Shared, 3, 60, "agent")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_shared_blocked_by_exclusive() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/c", "w1", KernelLockMode::Exclusive, 3, 60, "agent:w")
-            .unwrap());
-        assert!(!lm
-            .acquire_lock("/lk/c", "r1", KernelLockMode::Shared, 3, 60, "agent:r")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_exclusive_blocked_by_shared() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/d", "r1", KernelLockMode::Shared, 3, 60, "agent:r")
-            .unwrap());
-        assert!(!lm
-            .acquire_lock("/lk/d", "w1", KernelLockMode::Exclusive, 3, 60, "agent:w")
-            .unwrap());
+        assert!(!lm.acquire_lock("/lk/b", "r4", 3, 60, "agent").unwrap());
     }
 
     #[test]
     fn advisory_idempotent_reacquire_and_release() {
         let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/e", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-        assert!(lm
-            .acquire_lock("/lk/e", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
+        assert!(lm.acquire_lock("/lk/e", "h1", 1, 60, "agent").unwrap());
+        assert!(lm.acquire_lock("/lk/e", "h1", 1, 60, "agent").unwrap());
         let info = lm.get_lock_info("/lk/e").unwrap();
         assert_eq!(info.holders.len(), 1);
 
@@ -1131,12 +1066,9 @@ mod tests {
     #[test]
     fn advisory_list_filters_by_prefix() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/ns/a", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
-        lm.acquire_lock("/lk/ns/b", "h2", KernelLockMode::Shared, 2, 60, "agent")
-            .unwrap();
-        lm.acquire_lock("/lk/other", "h3", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
+        lm.acquire_lock("/lk/ns/a", "h1", 1, 60, "agent").unwrap();
+        lm.acquire_lock("/lk/ns/b", "h2", 2, 60, "agent").unwrap();
+        lm.acquire_lock("/lk/other", "h3", 1, 60, "agent").unwrap();
 
         let under_ns = lm.list_locks("/lk/ns/", 10);
         assert_eq!(under_ns.len(), 2);
@@ -1148,8 +1080,7 @@ mod tests {
     #[test]
     fn advisory_extend_refreshes_ttl() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/x", "h1", KernelLockMode::Exclusive, 1, 1, "agent")
-            .unwrap();
+        lm.acquire_lock("/lk/x", "h1", 1, 1, "agent").unwrap();
         let before = lm.get_lock_info("/lk/x").unwrap().holders[0].expires_at_secs;
         assert!(lm.extend_lock("/lk/x", "h1", 3600).unwrap());
         let after = lm.get_lock_info("/lk/x").unwrap().holders[0].expires_at_secs;
@@ -1159,93 +1090,41 @@ mod tests {
     #[test]
     fn advisory_capacity_mismatch_rejects() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/y", "r1", KernelLockMode::Shared, 3, 60, "agent")
-            .unwrap();
-        assert!(!lm
-            .acquire_lock("/lk/y", "w1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
+        lm.acquire_lock("/lk/y", "r1", 3, 60, "agent").unwrap();
+        // Second acquire with different max_holders is rejected.
+        assert!(!lm.acquire_lock("/lk/y", "w1", 1, 60, "agent").unwrap());
     }
 
     #[test]
     fn advisory_force_release() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/f", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
+        lm.acquire_lock("/lk/f", "h1", 1, 60, "agent").unwrap();
         assert!(lm.force_release_lock("/lk/f").unwrap());
         assert!(lm.get_lock_info("/lk/f").is_none());
     }
 
-    // ── Advisory hierarchy tests (NEW — not in old LocalLockManager) ─
+    // ── Advisory hierarchy tests ────────────────────────────────────
 
     #[test]
-    fn advisory_hierarchy_parent_exclusive_blocks_child() {
+    fn advisory_hierarchy_parent_blocks_child() {
         let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/folder", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-        // Locking /folder should block /folder/file
+        assert!(lm.acquire_lock("/folder", "h1", 1, 60, "agent").unwrap());
+        // Holder on /folder blocks any acquire on /folder/file.
         assert!(!lm
-            .acquire_lock(
-                "/folder/file",
-                "h2",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
+            .acquire_lock("/folder/file", "h2", 1, 60, "agent")
             .unwrap());
         assert!(!lm
-            .acquire_lock("/folder/file", "h3", KernelLockMode::Shared, 2, 60, "agent")
+            .acquire_lock("/folder/file", "h3", 2, 60, "agent")
             .unwrap());
     }
 
     #[test]
-    fn advisory_hierarchy_child_blocks_parent_exclusive() {
+    fn advisory_hierarchy_child_blocks_parent() {
         let lm = LockManager::new();
         assert!(lm
-            .acquire_lock(
-                "/folder/file",
-                "h1",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
+            .acquire_lock("/folder/file", "h1", 1, 60, "agent")
             .unwrap());
-        assert!(!lm
-            .acquire_lock("/folder", "h2", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_hierarchy_shared_parent_allows_shared_child() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/folder", "h1", KernelLockMode::Shared, 5, 60, "agent")
-            .unwrap());
-        // Shared parent should allow shared child
-        assert!(lm
-            .acquire_lock("/folder/file", "h2", KernelLockMode::Shared, 5, 60, "agent")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_hierarchy_shared_parent_blocks_exclusive_child() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/folder", "h1", KernelLockMode::Shared, 5, 60, "agent")
-            .unwrap());
-        // Shared parent should block exclusive child
-        assert!(!lm
-            .acquire_lock(
-                "/folder/file",
-                "h2",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
-            .unwrap());
+        assert!(!lm.acquire_lock("/folder", "h2", 1, 60, "agent").unwrap());
     }
 
     // ── I/O + advisory orthogonality test ────────────────────────────
@@ -1255,16 +1134,9 @@ mod tests {
         let lm = LockManager::new();
         // I/O write lock on /data/file
         let h = io_acquire(&lm, "/data/file", LockMode::Write).unwrap();
-        // Advisory exclusive lock on same path should succeed (orthogonal)
+        // Advisory mutex-form lock on same path should succeed (orthogonal)
         assert!(lm
-            .acquire_lock(
-                "/data/file",
-                "adv1",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
+            .acquire_lock("/data/file", "adv1", 1, 60, "agent")
             .unwrap());
         // Release I/O lock
         lm.do_release(h);

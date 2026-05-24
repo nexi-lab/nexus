@@ -151,7 +151,7 @@ pub mod prelude {
 
     pub use crate::raft::{
         Command, CommandResult, FullStateMachine, HolderInfo, LockAcquireResult, LockEntry,
-        LockInfo, LockMode, LockState, RaftError, StateMachine, WitnessStateMachine,
+        LockInfo, LockState, RaftError, StateMachine, WitnessStateMachine,
     };
 
     #[cfg(feature = "consensus")]

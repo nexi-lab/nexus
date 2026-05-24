@@ -16,11 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::storage::{RedbStore, RedbTree};
 
 // Advisory lock types are the shared SSOT, defined in `contracts::lock_state`.
-// Re-exported from this module (and from `crate::raft`) so existing
-// callers keep their `use raft::{LockMode, ...}` paths.
-pub use contracts::lock_state::{
-    HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState,
-};
+// Re-exported here so callers can `use raft::{LockInfo, ...}` directly.
+pub use contracts::lock_state::{HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockState};
 
 use super::Result;
 
@@ -69,15 +66,9 @@ pub enum Command {
         ttl_secs: u32,
         /// Information about the holder (e.g., "agent:xxx").
         holder_info: String,
-        /// Conflict mode for this acquire (Exclusive or Shared).
-        ///
-        /// Older snapshots that predate this field deserialize with
-        /// `Exclusive` defaults (see the snapshot version byte in
-        /// `FullStateMachine::snapshot` / `restore_snapshot`).
-        mode: LockMode,
         /// Wall-clock timestamp captured at proposal time (Unix secs).
         /// All replicas use this value instead of local clocks to ensure
-        /// deterministic state machine application (Issue #3029 / Bug 1).
+        /// deterministic state machine application.
         now_secs: u64,
     },
 
@@ -179,12 +170,12 @@ pub enum CommandResult {
     Error(String),
 }
 
-// Advisory lock types — `LockMode`, `HolderInfo`, `LockInfo`,
-// `LockAcquireResult`, `LockEntry`, `LockState` — are now defined in
-// `contracts::lock_state` and re-exported at the top of this file. All
-// state-transition logic lives on `LockState` (the shared BTreeMap-based
-// SSOT) so the local `LockManager` path and the raft apply path go
-// through the same primitives under the same mutex.
+// Advisory lock types — `HolderInfo`, `LockInfo`, `LockAcquireResult`,
+// `LockEntry`, `LockState` — live in `contracts::lock_state` and are
+// re-exported at the top of this file. All state-transition logic
+// lives on `LockState` (the shared BTreeMap-based SSOT) so the local
+// `LockManager` path and the raft apply path go through the same
+// primitives under the same mutex.
 
 /// State machine trait that must be implemented by applications.
 ///
@@ -1064,7 +1055,6 @@ impl FullStateMachine {
     ///
     /// `now` is the wall-clock timestamp captured at proposal time so
     /// all replicas reach identical state (#3029 / Bug 1).
-    #[allow(clippy::too_many_arguments)]
     fn apply_acquire_lock(
         &self,
         path: &str,
@@ -1072,12 +1062,10 @@ impl FullStateMachine {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
-        mode: LockMode,
         now: u64,
     ) -> Result<CommandResult> {
         let mut guard = self.advisory.lock();
-        let result =
-            guard.apply_acquire(path, lock_id, max_holders, ttl_secs, holder_info, mode, now);
+        let result = guard.apply_acquire(path, lock_id, max_holders, ttl_secs, holder_info, now);
         Ok(CommandResult::LockResult(result))
     }
 
@@ -1292,7 +1280,6 @@ impl FullStateMachine {
                 max_holders,
                 ttl_secs,
                 holder_info,
-                mode,
                 now_secs,
             } => self.apply_acquire_lock(
                 path,
@@ -1300,7 +1287,6 @@ impl FullStateMachine {
                 *max_holders,
                 *ttl_secs,
                 holder_info,
-                *mode,
                 *now_secs,
             ),
             Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id),
@@ -1534,7 +1520,6 @@ impl StateMachine for FullStateMachine {
                     max_holders,
                     ttl_secs,
                     holder_info,
-                    mode,
                     now_secs,
                 } => self.apply_acquire_lock(
                     path,
@@ -1542,7 +1527,6 @@ impl StateMachine for FullStateMachine {
                     *max_holders,
                     *ttl_secs,
                     holder_info,
-                    *mode,
                     *now_secs,
                 )?,
                 Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id)?,
@@ -1875,7 +1859,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
 
@@ -1889,7 +1872,6 @@ mod tests {
                 max_holders,
                 ttl_secs,
                 holder_info,
-                mode,
                 now_secs,
             } => {
                 assert_eq!(path, "/data/test.txt");
@@ -1897,7 +1879,6 @@ mod tests {
                 assert_eq!(max_holders, 3);
                 assert_eq!(ttl_secs, 30);
                 assert_eq!(holder_info, "agent:test");
-                assert_eq!(mode, LockMode::Exclusive);
                 assert_eq!(now_secs, 1000);
             }
             _ => panic!("wrong command type"),
@@ -2188,7 +2169,6 @@ mod tests {
                     max_holders: 1,
                     ttl_secs: 60,
                     holder_info: "agent:a".into(),
-                    mode: LockMode::Exclusive,
                     now_secs: 1000,
                 },
             ),
@@ -2200,7 +2180,6 @@ mod tests {
                     max_holders: 3,
                     ttl_secs: 30,
                     holder_info: "agent:b".into(),
-                    mode: LockMode::Exclusive,
                     now_secs: 1001,
                 },
             ),
@@ -2229,7 +2208,6 @@ mod tests {
                     max_holders: 1,
                     ttl_secs: 60,
                     holder_info: "agent:c".into(),
-                    mode: LockMode::Exclusive,
                     now_secs: 2000, // well past lock-2's 30s TTL
                 },
             ),
@@ -2297,7 +2275,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -2315,7 +2292,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
@@ -2341,7 +2317,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
@@ -2364,7 +2339,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -2383,7 +2357,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
-            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
@@ -2401,7 +2374,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test3".into(),
-            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(3, &cmd).unwrap();
@@ -2419,7 +2391,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
-            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
@@ -2444,7 +2415,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
-            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(6, &cmd).unwrap();
@@ -2486,7 +2456,6 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:test".into(),
-                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
@@ -2519,7 +2488,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
@@ -2547,7 +2515,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -2565,7 +2532,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1002,
         };
         let result = sm.apply(2, &cmd2).unwrap();
@@ -2592,7 +2558,6 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -2609,7 +2574,6 @@ mod tests {
             max_holders: 1, // Mismatch: 1 != 3
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(2, &cmd2).unwrap();
@@ -2633,7 +2597,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
@@ -2668,7 +2631,6 @@ mod tests {
             max_holders: u32::MAX,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -2698,35 +2660,30 @@ mod tests {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // LockMode + RW semantics
+    // Advisory lock semantics — `max_holders` parametrizes the shape
+    // (mutex = 1, counting semaphore > 1).
     // ───────────────────────────────────────────────────────────────
 
-    /// Helper: build an AcquireLock command with the given mode.
-    fn acquire_cmd(
-        path: &str,
-        lock_id: &str,
-        max_holders: u32,
-        mode: LockMode,
-        now_secs: u64,
-    ) -> Command {
+    /// Helper: build an AcquireLock command. `max_holders == 1` is a
+    /// mutex; `max_holders > 1` is a counting semaphore.
+    fn acquire_cmd(path: &str, lock_id: &str, max_holders: u32, now_secs: u64) -> Command {
         Command::AcquireLock {
             path: path.into(),
             lock_id: lock_id.into(),
             max_holders,
             ttl_secs: 60,
             holder_info: format!("agent:{lock_id}"),
-            mode,
             now_secs,
         }
     }
 
     #[test]
-    fn test_f4_exclusive_blocks_exclusive() {
+    fn test_f4_mutex_blocks_second_acquire() {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        let c1 = acquire_cmd("/rw/a", "h1", 1, LockMode::Exclusive, 1000);
-        let c2 = acquire_cmd("/rw/a", "h2", 1, LockMode::Exclusive, 1000);
+        let c1 = acquire_cmd("/rw/a", "h1", 1, 1000);
+        let c2 = acquire_cmd("/rw/a", "h2", 1, 1000);
 
         match sm.apply(1, &c1).unwrap() {
             CommandResult::LockResult(s) => assert!(s.acquired),
@@ -2739,21 +2696,21 @@ mod tests {
     }
 
     #[test]
-    fn test_f4_shared_coexists_up_to_max() {
+    fn test_f4_semaphore_coexists_up_to_max() {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        // max_holders=3, three Shared holders all acquire.
+        // max_holders=3, three holders all acquire.
         for (idx, id) in ["r1", "r2", "r3"].iter().enumerate() {
-            let cmd = acquire_cmd("/rw/b", id, 3, LockMode::Shared, 1000);
+            let cmd = acquire_cmd("/rw/b", id, 3, 1000);
             match sm.apply((idx + 1) as u64, &cmd).unwrap() {
                 CommandResult::LockResult(s) => assert!(s.acquired, "{} should acquire", id),
                 _ => panic!("LockResult"),
             }
         }
 
-        // Fourth Shared holder fails — at capacity.
-        let c4 = acquire_cmd("/rw/b", "r4", 3, LockMode::Shared, 1000);
+        // Fourth holder fails — at capacity.
+        let c4 = acquire_cmd("/rw/b", "r4", 3, 1000);
         match sm.apply(4, &c4).unwrap() {
             CommandResult::LockResult(s) => assert!(!s.acquired),
             _ => panic!("LockResult"),
@@ -2761,50 +2718,30 @@ mod tests {
     }
 
     #[test]
-    fn test_f4_exclusive_blocked_by_shared() {
+    fn test_f4_max_holders_mismatch_rejects() {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        let shared = acquire_cmd("/rw/c", "r1", 3, LockMode::Shared, 1000);
-        let excl = acquire_cmd("/rw/c", "w1", 3, LockMode::Exclusive, 1000);
+        let first = acquire_cmd("/rw/c", "r1", 3, 1000);
+        let mismatch = acquire_cmd("/rw/c", "w1", 1, 1000);
 
-        match sm.apply(1, &shared).unwrap() {
+        match sm.apply(1, &first).unwrap() {
             CommandResult::LockResult(s) => assert!(s.acquired),
             _ => panic!("LockResult"),
         }
-        // Exclusive-after-Shared: fail-fast (no waiter queue).
-        match sm.apply(2, &excl).unwrap() {
+        // Second acquire with different max_holders is rejected.
+        match sm.apply(2, &mismatch).unwrap() {
             CommandResult::LockResult(s) => assert!(!s.acquired),
             _ => panic!("LockResult"),
         }
     }
 
     #[test]
-    fn test_f4_shared_blocked_by_exclusive() {
+    fn test_f4_snapshot_roundtrip() {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        let excl = acquire_cmd("/rw/d", "w1", 3, LockMode::Exclusive, 1000);
-        let shared = acquire_cmd("/rw/d", "r1", 3, LockMode::Shared, 1000);
-
-        match sm.apply(1, &excl).unwrap() {
-            CommandResult::LockResult(s) => assert!(s.acquired),
-            _ => panic!("LockResult"),
-        }
-        match sm.apply(2, &shared).unwrap() {
-            CommandResult::LockResult(s) => assert!(!s.acquired),
-            _ => panic!("LockResult"),
-        }
-    }
-
-    #[test]
-    fn test_f4_snapshot_roundtrip_with_mode() {
-        let store = RedbStore::open_temporary().unwrap();
-        let mut sm = FullStateMachine::new(&store).unwrap();
-
-        // Build a Shared reader-writer lock.
-        sm.apply(7, &acquire_cmd("/rw/f", "r1", 3, LockMode::Shared, 1000))
-            .unwrap();
+        sm.apply(7, &acquire_cmd("/rw/f", "r1", 3, 1000)).unwrap();
 
         let snap = sm.snapshot().unwrap();
         let store2 = RedbStore::open_temporary().unwrap();
@@ -2812,7 +2749,7 @@ mod tests {
         sm2.restore_snapshot(&snap).unwrap();
 
         let lock = sm2.get_lock("/rw/f").unwrap().unwrap();
-        assert_eq!(lock.holders[0].mode, LockMode::Shared);
+        assert_eq!(lock.holders[0].lock_id, "r1");
         assert_eq!(lock.max_holders, 3);
     }
 
@@ -3155,7 +3092,6 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:old".into(),
-                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
@@ -3203,7 +3139,6 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:test".into(),
-                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
@@ -3253,7 +3188,6 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 60,
                 holder_info: "agent".into(),
-                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
@@ -3282,15 +3216,7 @@ mod tests {
         // Simulate local-mode kernel holders that existed pre-upgrade.
         {
             let mut guard = advisory.lock();
-            guard.apply_acquire(
-                "/r14/pre",
-                "local-h1",
-                1,
-                60,
-                "agent",
-                LockMode::Exclusive,
-                1000,
-            );
+            guard.apply_acquire("/r14/pre", "local-h1", 1, 60, "agent", 1000);
         }
 
         let sm = FullStateMachine::with_advisory(&store, advisory.clone()).unwrap();
@@ -3306,13 +3232,9 @@ mod tests {
     fn r14_snapshot_roundtrip_advisory_only() {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
-        for (idx, (path, id, mode)) in [
-            ("/r14/a", "h1", LockMode::Exclusive),
-            ("/r14/b", "r1", LockMode::Shared),
-            ("/r14/b", "r2", LockMode::Shared),
-        ]
-        .iter()
-        .enumerate()
+        for (idx, (path, id)) in [("/r14/a", "h1"), ("/r14/b", "r1"), ("/r14/b", "r2")]
+            .iter()
+            .enumerate()
         {
             sm.apply(
                 (idx + 1) as u64,
@@ -3322,7 +3244,6 @@ mod tests {
                     max_holders: 3,
                     ttl_secs: 60,
                     holder_info: "agent".into(),
-                    mode: *mode,
                     now_secs: 1000,
                 },
             )
@@ -3360,7 +3281,6 @@ mod tests {
             max_holders: 1,
             ttl_secs: 60,
             holder_info: "agent".into(),
-            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
@@ -3413,7 +3333,6 @@ mod tests {
                             max_holders: 32,
                             ttl_secs: 60,
                             holder_info: "agent".into(),
-                            mode: LockMode::Shared,
                             now_secs: 1000,
                         },
                     )
@@ -3484,7 +3403,6 @@ mod tests {
                             max_holders: 1,
                             ttl_secs: 60,
                             holder_info: "agent".into(),
-                            mode: LockMode::Exclusive,
                             now_secs: 1000,
                         },
                     )

@@ -1,18 +1,20 @@
-"""CAS Garbage Collector — reachability-based background cleanup.
+"""CAS Garbage Collector — reachability-based background service.
 
 Two-phase GC:
-  Phase 1 (collect): Scan metastore → build set of all referenced content_ids.
-          For CDC manifests, parse manifest → add chunk hashes to referenced set.
+  Phase 1 (collect): Scan the namespace via sys_readdir → build set of all
+          referenced content_ids. For CDC manifests, parse the manifest →
+          add chunk hashes to the referenced set.
   Phase 2 (sweep):   Enumerate CAS blobs via transport.list_content_hashes(),
-          delete unreferenced blobs older than grace period.
+          delete unreferenced blobs older than the grace period.
 
-Each CASAddressingEngine instance owns its own GC — no shared state, no
-federation concerns (each node GCs its own local transport).
+The collector is a service (BackgroundService), not a driver-owned helper.
+The factory enlists one instance when the root backend is CAS; nexus-cluster
+(Rust binary, no Python factory) is naturally unaffected.
 
 Design:
     - Grace period: uses write timestamp from transport (volume index or file mtime)
     - Scan interval is configurable (default 60s)
-    - GC runs as an asyncio.Task, started/stopped by the engine owner
+    - Implements BackgroundService — async start/stop, idempotent
     - Thread-safe: blob deletion is idempotent (already-deleted = no-op)
     - Transport-agnostic: works with both file-per-blob and volume-packed storage
 
@@ -40,40 +42,37 @@ DEFAULT_GRACE_PERIOD_S = 300.0  # 5 minutes
 DEFAULT_SCAN_INTERVAL_S = 60.0  # 1 minute
 
 
-class CASGarbageCollector:
-    """Reachability-based GC for CAS blobs.
+class CasGcService:
+    """Reachability-based GC for CAS blobs (BackgroundService).
 
     Usage::
 
-        gc = CASGarbageCollector(engine, metastore)
-        gc.start()   # spawns asyncio.Task
+        gc = CasGcService(engine, nexus_fs)
+        await gc.start()   # spawns asyncio.Task
         ...
-        await gc.stop()  # cancels task, waits for clean exit
+        await gc.stop()    # cancels task, waits for clean exit
     """
 
     def __init__(
         self,
         engine: CASAddressingEngine,
-        metastore: Any | None = None,
+        nexus_fs: Any,
         *,
         grace_period: float = DEFAULT_GRACE_PERIOD_S,
         scan_interval: float = DEFAULT_SCAN_INTERVAL_S,
     ) -> None:
         self._engine = engine
-        self._metastore = metastore
-        self._kernel = metastore
+        # NexusFS handle — the reachability scan walks the global namespace
+        # through the Tier 1 sys_readdir syscall, never the
+        # metastore_list_paginated kernel primitive.
+        self._nexus_fs = nexus_fs
         self._grace_period = grace_period
         self._scan_interval = scan_interval
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
 
-    def set_metastore(self, metastore: Any) -> None:
-        """Deferred injection — metastore may not be available at construction time."""
-        self._metastore = metastore
-        self._kernel = metastore
-
-    def start(self) -> None:
-        """Start GC background task in the current event loop."""
+    async def start(self) -> None:
+        """Start the GC background task (BackgroundService entry point)."""
         if self._task is not None:
             return
         self._stopped = False
@@ -86,7 +85,7 @@ class CASGarbageCollector:
         )
 
     async def stop(self) -> None:
-        """Stop GC background task."""
+        """Stop the GC background task."""
         self._stopped = True
         if self._task is not None:
             self._task.cancel()
@@ -111,30 +110,31 @@ class CASGarbageCollector:
     def _collect(self) -> None:
         """Single GC pass — two-phase reachability scan.
 
-        Phase 1: Scan metastore to collect all referenced content_ids.
-                 For CDC manifests, expand to include chunk hashes.
+        Phase 1: Walk the namespace via sys_readdir(details=True) to collect
+                 all referenced content_ids. For CDC manifests, expand to
+                 include chunk hashes.
         Phase 2: Enumerate all CAS blobs via transport.list_content_hashes(),
-                 delete unreferenced blobs older than grace period.
+                 delete unreferenced blobs older than the grace period.
                  Transport-agnostic — works with both file-per-blob and
                  volume-packed storage (Issue #3403).
         """
-        if self._metastore is None:
-            logger.debug("CAS GC: metastore not set, skipping collection")
+        if self._nexus_fs is None:
+            logger.debug("CAS GC: nexus_fs not set, skipping collection")
             return
 
         engine = self._engine
         transport = engine._transport
         now = time.time()
 
-        # Phase 1: Collect referenced content_ids from metastore
+        # Phase 1: Collect referenced content_ids from the namespace.
         referenced: set[str] = set()
         try:
-            self._scan_metastore(referenced)
+            self._scan_namespace(referenced)
         except Exception:
-            logger.warning("CAS GC: metastore scan failed for %s", engine.name, exc_info=True)
+            logger.warning("CAS GC: namespace scan failed for %s", engine.name, exc_info=True)
             return
 
-        # Phase 2: Sweep CAS blobs — transport-agnostic enumeration
+        # Phase 2: Sweep CAS blobs — transport-agnostic enumeration.
         try:
             if hasattr(transport, "list_content_hashes"):
                 # Preferred: transport provides (hash, timestamp) pairs directly
@@ -203,25 +203,24 @@ class CASGarbageCollector:
             entries.append((content_hash, mtime))
         return entries
 
-    def _scan_metastore(self, referenced: set[str]) -> None:
-        """Scan metastore to collect all referenced content_ids.
+    def _scan_namespace(self, referenced: set[str]) -> None:
+        """Scan the namespace to collect all referenced content_ids.
 
         For CDC manifests (is_chunked_manifest in .meta), parse the manifest
         blob to add individual chunk hashes to the referenced set.
         """
         engine = self._engine
-        kernel = self._kernel
-        assert kernel is not None
 
-        # Scan all entries in metastore for content_ids
+        # Tier 1 syscall — sys_readdir(details=True) yields full FileMetadata
+        # projection as JSON-safe dicts, including each entry's content_id.
         try:
-            all_entries = kernel.metastore_list_paginated("", True, 100000, None)["items"]
+            all_entries = self._nexus_fs.sys_readdir("/", recursive=True, details=True)
         except Exception:
-            logger.warning("CAS GC: kernel.metastore_list_paginated() failed", exc_info=True)
+            logger.warning("CAS GC: nexus_fs.sys_readdir() failed", exc_info=True)
             return
 
         for entry in all_entries:
-            content_id = getattr(entry, "content_id", None)
+            content_id = entry.get("content_id")
             if not content_id:
                 continue
             referenced.add(content_id)

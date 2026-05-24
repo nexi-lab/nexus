@@ -1,4 +1,4 @@
-"""Unit tests for CASGarbageCollector — reachability-based GC (Issue #1772).
+"""Unit tests for CasGcService — reachability-based GC (Issue #1772).
 
 Verifies that GC correctly:
 - Deletes unreferenced blobs past grace period
@@ -12,40 +12,39 @@ from __future__ import annotations
 import os
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from nexus import CASLocalBackend
-from nexus.backends.engines.cas_gc import CASGarbageCollector
+from nexus.backends.engines.cas_gc import CasGcService
 
 
-@dataclass
-class FakeMetaEntry:
-    path: str
-    content_id: str | None = None
+class FakeNexusFs:
+    """Tier 1 syscall stub for CAS GC tests.
 
-
-class FakeMetastore:
-    """Kernel-handle stub for CAS GC tests.
-
-    Post-C24 ``CASGarbageCollector`` reaches the metastore via
-    ``self._kernel.metastore_list_paginated``. The constructor's
-    ``hasattr(metastore, "_rust_kernel")`` guard treats this stub as
-    a bare kernel.
+    CasGcService walks the namespace via ``self._nexus_fs.sys_readdir(
+    "/", recursive=True, details=True)`` — the detail-dict shape this
+    fake returns matches what the real sys_readdir emits.
     """
 
-    def __init__(self, entries: list[FakeMetaEntry] | None = None):
+    def __init__(self, entries: list[dict] | None = None):
         self._entries = entries or []
 
     def add(self, path: str, content_id: str) -> None:
-        self._entries.append(FakeMetaEntry(path=path, content_id=content_id))
+        self._entries.append({"path": path, "content_id": content_id})
 
-    def metastore_list_paginated(
-        self, prefix: str = "", recursive: bool = True, limit: int = 100000, cursor: object = None
-    ) -> dict:
-        return {"items": list(self._entries), "cursor": None}
+    def sys_readdir(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        **_kwargs: object,
+    ) -> list[dict]:
+        assert path == "/"
+        assert recursive is True
+        assert details is True
+        return list(self._entries)
 
 
 @pytest.fixture
@@ -66,8 +65,8 @@ class TestGCReachability:
         content_id = result.content_id
         assert engine.content_exists(content_id)
 
-        # Metastore has no reference to this blob
-        metastore = FakeMetastore()
+        # NexusFS has no reference to this blob
+        nexus_fs = FakeNexusFs()
 
         # Backdate the blob's mtime to exceed grace period
         blob_key = engine._blob_key(content_id)
@@ -75,7 +74,7 @@ class TestGCReachability:
         old_time = time.time() - 600  # 10 min ago
         os.utime(str(blob_path), (old_time, old_time))
 
-        gc = CASGarbageCollector(engine, metastore, grace_period=300, scan_interval=1)
+        gc = CasGcService(engine, nexus_fs, grace_period=300, scan_interval=1)
         gc._collect()
 
         assert not engine.content_exists(content_id)
@@ -85,10 +84,10 @@ class TestGCReachability:
         result = engine.write_content(b"still in use")
         content_id = result.content_id
 
-        metastore = FakeMetastore()
-        metastore.add("/file.txt", content_id)
+        nexus_fs = FakeNexusFs()
+        nexus_fs.add("/file.txt", content_id)
 
-        gc = CASGarbageCollector(engine, metastore, grace_period=0, scan_interval=1)
+        gc = CasGcService(engine, nexus_fs, grace_period=0, scan_interval=1)
         gc._collect()
 
         assert engine.content_exists(content_id)
@@ -98,9 +97,9 @@ class TestGCReachability:
         result = engine.write_content(b"recently written")
         content_id = result.content_id
 
-        metastore = FakeMetastore()
+        nexus_fs = FakeNexusFs()
 
-        gc = CASGarbageCollector(engine, metastore, grace_period=300, scan_interval=1)
+        gc = CasGcService(engine, nexus_fs, grace_period=300, scan_interval=1)
         gc._collect()
 
         # Should still exist — within grace period (just written)
@@ -111,19 +110,19 @@ class TestGCReachability:
         result = engine.write_content(b"ephemeral")
         content_id = result.content_id
 
-        metastore = FakeMetastore()
+        nexus_fs = FakeNexusFs()
 
-        gc = CASGarbageCollector(engine, metastore, grace_period=0, scan_interval=1)
+        gc = CasGcService(engine, nexus_fs, grace_period=0, scan_interval=1)
         gc._collect()
 
         assert not engine.content_exists(content_id)
 
-    def test_gc_no_metastore_skips(self, engine: CASLocalBackend) -> None:
-        """No metastore injected → skip collection, don't delete anything."""
+    def test_gc_no_nexus_fs_skips(self, engine: CASLocalBackend) -> None:
+        """No NexusFS injected → skip collection, don't delete anything."""
         result = engine.write_content(b"safe data")
         content_id = result.content_id
 
-        gc = CASGarbageCollector(engine, metastore=None, grace_period=0, scan_interval=1)
+        gc = CasGcService(engine, nexus_fs=None, grace_period=0, scan_interval=1)
         gc._collect()
 
         assert engine.content_exists(content_id)

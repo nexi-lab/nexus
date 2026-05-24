@@ -122,23 +122,18 @@ fn fm_composite_key(path: &str, key: &str) -> String {
     s
 }
 
-/// Compact binary serialization for FileMetadata.
+/// Compact binary serialization for FileMetadata (v4).
 ///
-/// Format: [version_tag:u8=2][path_len:u32][path][backend_name_len:u32][backend_name]
-///         [physical_path_len:u32][physical_path][size:u64]
-///         [has_etag:u8][etag_len:u32][content_id][version:u32][entry_type:u8]
-///         [has_zone_id:u8][zone_id_len:u32][zone_id]
-///         [has_mime_type:u8][mime_type_len:u32][mime_type]
-///         [has_created_at:u8][created_at:i64]
-///         [has_modified_at:u8][modified_at:i64]
-///         [optional trailing bytes — tolerated for forward-compat]
+/// Field order: tag (u8 = 4), path, size, content_id?, version (u32),
+/// entry_type (u8), zone_id?, mime_type?, created_at_ms?,
+/// modified_at_ms?, last_writer_address?, target_zone_id?,
+/// link_target?, gen (u64), owner_id?.
 ///
-/// version_tag distinguishes v1 (no timestamps) from v2 (timestamps appended).
-/// v1 has no leading tag; the first byte is the path length, which always
-/// has a high byte of 0 for paths shorter than 16M, while v2 starts with 2.
-/// Older redb files that carry trailing extension bytes deserialize
-/// fine — the reader stops at the last tracked field and ignores any
-/// remaining bytes.
+/// Strings carry a u32 length prefix; `Option<_>` fields are framed by
+/// a 1-byte present flag (0 = absent, no payload; 1 = payload follows).
+///
+/// The reader also accepts tag `3` — records written before `gen`
+/// landed — and substitutes `gen = 0` for those.
 fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     let mut buf = Vec::with_capacity(280);
 

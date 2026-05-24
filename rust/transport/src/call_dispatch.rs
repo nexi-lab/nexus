@@ -50,14 +50,7 @@ pub fn dispatch(
         | "service_close_all" => ok_json(serde_json::json!(null)),
 
         // Lookup-shaped ops the subprocess kernel doesn't expose.
-        "service_lookup"
-        | "service_swap"
-        | "trie_register"
-        | "trie_lookup"
-        | "trie_unregister"
-        | "agent_register"
-        | "agent_unregister"
-        | "agent_list" => Err(encode_rpc_error(
+        "service_lookup" | "service_swap" => Err(encode_rpc_error(
             RpcErrorCode::InternalError,
             &format!("{method} is not available in subprocess mode"),
         )),

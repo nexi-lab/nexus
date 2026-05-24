@@ -83,6 +83,35 @@ class TestServerHealth:
         assert result == {"status": "healthy", "service": "nexus-rpc"}
         assert mock_client.get.call_count == 2
 
+    def test_detailed_timeout_falls_back_to_public_health_without_bearer(self) -> None:
+        """The public fallback must not reuse the bearer that made detailed health slow."""
+        clients: list[MagicMock] = []
+
+        def _client_factory(*, timeout: float, headers: dict[str, str] | None = None) -> MagicMock:
+            client = MagicMock()
+            client.headers_seen = headers or {}
+            client.__enter__ = lambda s: client
+            client.__exit__ = MagicMock(return_value=False)
+            clients.append(client)
+
+            if headers and headers.get("Authorization"):
+                client.get.side_effect = httpx.TimeoutException("authenticated health timed out")
+            else:
+                fallback_resp = MagicMock(status_code=200)
+                fallback_resp.json.return_value = {"status": "healthy", "service": "nexus-rpc"}
+                client.get.return_value = fallback_resp
+
+            return client
+
+        with patch("httpx.Client", side_effect=_client_factory):
+            result = _server_health("http://localhost:2026", api_key="sk-test")
+
+        assert result == {"status": "healthy", "service": "nexus-rpc"}
+        assert [client.headers_seen for client in clients] == [
+            {"Authorization": "Bearer sk-test"},
+            {},
+        ]
+
 
 # ---------------------------------------------------------------------------
 # _collect_status

@@ -22,9 +22,11 @@ class _Kernel:
     def __init__(self) -> None:
         self.sys_read_calls = 0
         self.sys_write_calls = 0
+        self.read_timeouts: list[int] = []
 
     def sys_read(self, path: str, _ctx: object, _timeout_ms: int, _offset: int = 0) -> Any:
         self.sys_read_calls += 1
+        self.read_timeouts.append(_timeout_ms)
         return SimpleNamespace(
             data=b"abc",
             post_hook_needed=False,
@@ -260,6 +262,22 @@ def test_sys_read_records_backend_latency_and_bytes() -> None:
 
     assert _sample("nexus_read_bytes_total", tier="backend") == before_bytes + 3
     assert _sample("nexus_read_latency_seconds_count", tier="backend") == before_count + 1
+
+
+def test_sys_read_defaults_to_nonblocking_regular_read() -> None:
+    harness = _Harness()
+
+    assert harness.sys_read("/file.txt") == b"abc"
+
+    assert harness._kernel.read_timeouts == [0]
+
+
+def test_sys_read_preserves_explicit_ipc_timeout() -> None:
+    harness = _Harness()
+
+    assert harness.sys_read("/file.txt", timeout_ms=250) == b"abc"
+
+    assert harness._kernel.read_timeouts == [250]
 
 
 def test_sys_read_records_virtual_resolver_reads() -> None:

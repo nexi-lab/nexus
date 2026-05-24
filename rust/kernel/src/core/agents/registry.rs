@@ -356,15 +356,6 @@ impl AgentRegistry {
         }
     }
 
-    /// Drop a termination callback by `id`. Returns true if a callback
-    /// was registered under that name.
-    pub fn unregister_on_terminate(&self, id: &str) -> bool {
-        let mut guard = self.on_terminate.write();
-        let prev = guard.len();
-        guard.retain(|(k, _)| k != id);
-        guard.len() != prev
-    }
-
     /// Fire every registered `on_terminate` callback for `pid`.
     /// Snapshots the callback list under a read lock and drops the lock
     /// before calling so callbacks can re-enter the registry without
@@ -998,7 +989,7 @@ mod tests {
     }
 
     #[test]
-    fn test_on_terminate_register_replace_and_unregister() {
+    fn test_on_terminate_register_replaces_under_same_id() {
         use std::sync::atomic::{AtomicU32, Ordering};
         let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "a1"));
@@ -1021,23 +1012,6 @@ mod tests {
         );
         reg.update_state("p1", AgentState::Terminated).unwrap();
         assert_eq!(calls_a.load(Ordering::SeqCst), 0);
-        assert_eq!(calls_b.load(Ordering::SeqCst), 1);
-        // Unregister + re-fire should produce no extra calls.
-        let p2 = reg
-            .spawn(
-                "n2".to_string(),
-                "u".to_string(),
-                "z".to_string(),
-                AgentKind::Managed,
-                None,
-                None,
-                "/".to_string(),
-                None,
-                HashMap::new(),
-            )
-            .unwrap();
-        assert!(reg.unregister_on_terminate("obs"));
-        reg.update_state(&p2.pid, AgentState::Terminated).unwrap();
         assert_eq!(calls_b.load(Ordering::SeqCst), 1);
     }
 

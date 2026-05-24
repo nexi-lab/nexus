@@ -623,22 +623,6 @@ impl AgentRegistry {
         Ok(true)
     }
 
-    /// Variant accepted by callers that already have an authoritative
-    /// timestamp (e.g. dual-write paths from the wider system clock).
-    /// No kind/info validation — simply stamps the heartbeat field.
-    pub fn heartbeat_at(&self, pid: &str, timestamp_ms: u64) -> bool {
-        if let Some(mut entry) = self.agents.get_mut(pid) {
-            entry.last_heartbeat_ms = Some(timestamp_ms);
-            if let Some(info) = entry.external_info.as_mut() {
-                info.last_heartbeat_ms = Some(timestamp_ms);
-            }
-            entry.updated_at_ms = now_ms();
-            true
-        } else {
-            false
-        }
-    }
-
     /// List all agents, optionally filtered by zone_id, owner_id, kind,
     /// state.
     pub fn list(

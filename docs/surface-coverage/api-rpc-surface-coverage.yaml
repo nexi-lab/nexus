@@ -1789,7 +1789,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2047
+      source: src/nexus/core/nexus_fs_metadata.py:2038
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -8580,7 +8580,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/purge-unscoped
-      source: src/nexus/server/api/v2/routers/search.py:1904
+      source: src/nexus/server/api/v2/routers/search.py:1905
   profiles:
     lite: supported
     sandbox: supported
@@ -8633,7 +8633,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1359
+      source: src/nexus/server/api/v2/routers/search.py:1360
   profiles:
     lite: supported
     sandbox: supported

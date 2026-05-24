@@ -63,13 +63,15 @@ pub(crate) use core::stream::shm as shm_stream;
 
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive
-// (Linux-VFS analogue).  `pub` so `backends::storage::cas_local` can
-// wrap a `CASEngine` inside its `ObjectStore` impl; see
+// (Linux-VFS analogue). Implementation lives in `core::cas/` per §4;
+// re-exported under the historical `kernel::cas_*` flat names so
+// `backends::storage::cas_local` (and other external consumers) keep
+// their existing import paths. See
 // `docs/architecture/KERNEL-ARCHITECTURE.md` §4 for the rationale.
-pub mod cas_chunking;
-pub mod cas_engine;
-pub mod cas_remote;
-pub mod cas_transport;
+pub use core::cas::chunking as cas_chunking;
+pub use core::cas::engine as cas_engine;
+pub use core::cas::remote as cas_remote;
+pub use core::cas::transport as cas_transport;
 
 // Kernel struct + syscalls.  `pub` so peer crates (`services`,
 // `transport`, `backends`) hold `&kernel::Kernel` and call the

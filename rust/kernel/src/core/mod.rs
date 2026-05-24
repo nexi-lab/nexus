@@ -48,6 +48,10 @@ pub mod meta_store;
 pub mod pipe;
 pub mod stream;
 
+// Content-addressable storage primitive — `CASEngine`, CDC chunking,
+// scatter-gather remote fetcher, local blob transport (§4 CAS row).
+pub mod cas;
+
 // Shared mmap header accessors used by both pipe/shm and stream/shm.
 #[cfg(unix)]
 pub(crate) mod shm_header;

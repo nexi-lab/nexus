@@ -70,7 +70,7 @@ pub trait ObjectStore: Send + Sync {
     /// surface so callers can reach the CAS API without every backend
     /// carrying CAS-shaped noise.
     #[allow(private_interfaces)]
-    fn as_cas(&self) -> Option<&crate::cas_engine::CASEngine> {
+    fn as_cas(&self) -> Option<&crate::core::cas::engine::CASEngine> {
         None
     }
 

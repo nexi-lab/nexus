@@ -59,7 +59,7 @@ impl Kernel {
     ///
     /// Returns `KernelError::FileNotFound` if no pipe is registered at
     /// `path`. `Ok(0)` means the pipe exists but has nothing to pop.
-    /// Kernel-internal helper — no PyO3 wrapper, no Python syscall.
+    /// Kernel-internal helper: read-only probe, no syscall dispatch.
     pub fn pipe_size(&self, path: &str) -> Result<usize, KernelError> {
         self.pipe_manager
             .size(path)
@@ -148,8 +148,8 @@ impl Kernel {
     /// Returns `KernelError::FileNotFound` if no stream is registered at
     /// `path`. Callers use this for the seek-to-end pattern: read the
     /// tail, then pass it as the offset to `stream_read_at_blocking`
-    /// to skip history and block until new data arrives.  Kernel-internal
-    /// helper — no PyO3 wrapper, no Python syscall.
+    /// to skip history and block until new data arrives. Kernel-internal
+    /// helper: read-only probe, no syscall dispatch.
     pub fn stream_tail(&self, path: &str) -> Result<usize, KernelError> {
         self.stream_manager
             .tail(path)
@@ -188,8 +188,9 @@ impl Kernel {
 
     /// Collect all stream payloads from offset 0, concatenated.
     ///
-    /// Replaces the manual `read_at` loop in Python LLM backends.
-    /// Single Rust call → no per-frame PyO3 round-trip.
+    /// One kernel call returns the whole stream, so LLM-backend
+    /// callers can replace a per-frame `read_at` loop with a single
+    /// drain.
     pub fn stream_collect_all(&self, path: &str) -> Result<Vec<u8>, KernelError> {
         self.stream_manager
             .collect_all_payloads(path)

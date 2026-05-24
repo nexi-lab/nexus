@@ -17,7 +17,7 @@
 
 use crate::cache::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
-use crate::dispatch::{MutationObserver, Trie};
+use crate::dispatch::{NativeHookRegistry, ObserverRegistry, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
@@ -445,152 +445,6 @@ pub struct ZonesProcfsEntry {
     pub mount_reconciliation_done: bool,
 }
 
-// ── KernelObserverRegistry — pure Rust observer dispatch ────────────────
-
-/// Observer entry — pure Rust, no PyO3 dependency.
-///
-/// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
-/// can clone the trait object across threads. `event_mask` bitmask
-/// matching happens without external dependency.
-struct KernelObserverEntry {
-    observer: Arc<dyn MutationObserver>,
-    name: String,
-    event_mask: u32,
-}
-
-/// Pure Rust observer registry — event-type bitmask filtering lock-free.
-///
-/// Single dispatch path for all OBSERVE-phase observers. The trait
-/// `MutationObserver` takes `&FileEvent`.
-///
-/// OBSERVE is fire-and-forget by definition — observers needing causal
-/// ordering or sync blocking belong in INTERCEPT POST, not OBSERVE.
-struct KernelObserverRegistry {
-    observers: Vec<KernelObserverEntry>,
-}
-
-impl KernelObserverRegistry {
-    fn new() -> Self {
-        Self {
-            observers: Vec::new(),
-        }
-    }
-
-    /// Register an observer with its event-type bitmask.
-    fn register(&mut self, observer: Arc<dyn MutationObserver>, name: String, event_mask: u32) {
-        self.observers.push(KernelObserverEntry {
-            observer,
-            name,
-            event_mask,
-        });
-    }
-
-    /// Unregister by name (identity is not available for trait objects).
-    /// Returns true if a registration with that name was removed.
-    fn unregister(&mut self, name: &str) -> bool {
-        if let Some(pos) = self.observers.iter().position(|e| e.name == name) {
-            self.observers.remove(pos);
-            return true;
-        }
-        false
-    }
-
-    /// Return clones of all observers whose event_mask matches `event.event_type`.
-    ///
-    /// The dispatch loop (`Kernel::dispatch_observers`) submits each
-    /// clone to the OBSERVE ThreadPool. Returning Arc clones lets the
-    /// pool borrow the registry lock for the minimum possible time —
-    /// the caller releases the lock before doing any per-observer work.
-    fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
-        self.observers
-            .iter()
-            .filter(|e| e.event_mask & event_type_bit != 0)
-            .map(|e| Arc::clone(&e.observer))
-            .collect()
-    }
-
-    fn count(&self) -> usize {
-        self.observers.len()
-    }
-}
-
-// ── Native Hook Registry ───────────────────────────────────────────────
-//
-// Pure Rust hook dispatch — no GIL crossing for Rust-native hooks.
-// Parallel to the PyO3-dependent HookRegistry in hook_registry.rs.
-// NativeInterceptHook trait defined in dispatch.rs.
-
-use crate::dispatch::{HookContext, NativeInterceptHook};
-
-struct NativeHookEntry {
-    hook: Box<dyn NativeInterceptHook>,
-}
-
-pub(crate) struct NativeHookRegistry {
-    hooks: Vec<NativeHookEntry>,
-    /// Suffixes declared by registered mutating hooks (via
-    /// `NativeInterceptHook::mutating_path_suffix`). Populated on
-    /// register; consulted by `has_mutating_match` so the kernel can
-    /// decide whether to clone write content into `WriteHookCtx`. An
-    /// empty Vec is the steady state today (no mutating hooks
-    /// registered) — the call site short-circuits before any path
-    /// comparison.
-    mutating_suffixes: Vec<&'static str>,
-}
-
-impl NativeHookRegistry {
-    pub(crate) fn new() -> Self {
-        Self {
-            hooks: Vec::new(),
-            mutating_suffixes: Vec::new(),
-        }
-    }
-
-    pub(crate) fn register(&mut self, hook: Box<dyn NativeInterceptHook>) {
-        if let Some(suffix) = hook.mutating_path_suffix() {
-            self.mutating_suffixes.push(suffix);
-        }
-        self.hooks.push(NativeHookEntry { hook });
-    }
-
-    /// Dispatch pre-hooks. Returns Err on first abort. The
-    /// `HookOutcome::Replace` variant is propagated to the caller via
-    /// the returned bytes; today only `sys_write` honours it, other
-    /// syscalls drop the replacement.
-    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<Option<Vec<u8>>, String> {
-        let mut replacement: Option<Vec<u8>> = None;
-        for entry in &self.hooks {
-            match entry.hook.on_pre(ctx)? {
-                crate::dispatch::HookOutcome::Pass => {}
-                crate::dispatch::HookOutcome::Replace(bytes) => replacement = Some(bytes),
-            }
-        }
-        Ok(replacement)
-    }
-
-    /// Dispatch post-hooks (fire-and-forget).
-    pub(crate) fn dispatch_post(&self, ctx: &HookContext) {
-        for entry in &self.hooks {
-            entry.hook.on_post(ctx);
-        }
-    }
-
-    pub(crate) fn count(&self) -> usize {
-        self.hooks.len()
-    }
-
-    /// Returns true when at least one registered hook declared a
-    /// mutating path suffix that matches `path`. Cheap (linear scan
-    /// over a Vec that today has at most a handful of entries); the
-    /// steady state (no mutating hooks) returns false on the
-    /// empty-Vec check before any string comparison.
-    pub(crate) fn has_mutating_match(&self, path: &str) -> bool {
-        self.mutating_suffixes
-            .iter()
-            .any(|suffix| path.ends_with(suffix))
-    }
-}
-
 // ── Zone Revision Entry ─────────────────────────────────────────────────
 
 /// Per-zone monotonic revision counter + condvar for waiters.
@@ -665,7 +519,7 @@ pub struct Kernel {
     rename_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching lock-free).
     #[allow(dead_code)]
-    observers: Mutex<KernelObserverRegistry>,
+    observers: Mutex<ObserverRegistry>,
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
     // as the event is queued; observer callbacks run on this pool, off
     // the hot path.
@@ -840,7 +694,12 @@ impl Kernel {
             write_hook_count: AtomicU64::new(0),
             delete_hook_count: AtomicU64::new(0),
             rename_hook_count: AtomicU64::new(0),
-            observers: Mutex::new(KernelObserverRegistry::new()),
+            mkdir_hook_count: AtomicU64::new(0),
+            rmdir_hook_count: AtomicU64::new(0),
+            copy_hook_count: AtomicU64::new(0),
+            access_hook_count: AtomicU64::new(0),
+            write_batch_hook_count: AtomicU64::new(0),
+            observers: Mutex::new(ObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),

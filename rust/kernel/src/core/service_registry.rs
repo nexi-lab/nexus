@@ -4,9 +4,9 @@
 //! Holds two flavours of service:
 //!
 //!   * `ServiceInstance::Managed(Box<dyn ServiceLifecycle>)` — language-
-//!     agnostic lifecycle wrapper. Reserved for non-Rust services that
-//!     register through the host (currently no in-tree caller; future
-//!     managed-agent runtimes plug in here).
+//!     agnostic lifecycle wrapper. The slot for foreign-language
+//!     service runtimes that the host wraps in a `ServiceLifecycle`
+//!     impl before enlistment.
 //!   * `ServiceInstance::Rust(Arc<dyn RustService>)` — services
 //!     implemented in Rust (e.g. ManagedAgentService) are registered
 //!     through the Rust-callable `Kernel::register_rust_service`

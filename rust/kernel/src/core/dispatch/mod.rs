@@ -9,7 +9,6 @@
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 // ── FileEvent / FileEventType ────────────────────────────────────────
@@ -617,7 +616,6 @@ impl TrieNode {
 
 pub(crate) struct Trie {
     root: RwLock<TrieNode>,
-    count: AtomicUsize,
     patterns: RwLock<HashMap<usize, String>>,
 }
 
@@ -625,7 +623,6 @@ impl Trie {
     pub(crate) fn new() -> Self {
         Self {
             root: RwLock::new(TrieNode::new()),
-            count: AtomicUsize::new(0),
             patterns: RwLock::new(HashMap::new()),
         }
     }
@@ -645,7 +642,6 @@ impl Trie {
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         self.root.write().insert(&segments, resolver_idx);
         patterns.insert(resolver_idx, pattern.to_string());
-        self.count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -657,13 +653,15 @@ impl Trie {
         };
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         self.root.write().remove(&segments);
-        self.count.fetch_sub(1, Ordering::Relaxed);
         true
     }
 
-    /// Number of registered patterns.
+    /// Number of registered patterns. SSOT is `patterns` — `trie_len()` is
+    /// diagnostics-only (Kernel accessor for tests/introspection), not on
+    /// any hot path, so reading the HashMap length directly avoids
+    /// keeping a parallel atomic in sync.
     pub(crate) fn len(&self) -> usize {
-        self.count.load(Ordering::Relaxed)
+        self.patterns.read().len()
     }
 }
 

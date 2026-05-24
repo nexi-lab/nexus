@@ -2751,34 +2751,30 @@ class SearchService:
         return filtered
 
     def _load_md_structure_data(self, file_path: str) -> dict[str, Any] | None:
-        """Load stored md_structure metadata across old and new metastore APIs."""
+        """Load stored md_structure xattr for a file.
+
+        Uses ``get_xattr`` — the single kernel API for extended attributes.
+        No fallback chain: if get_xattr is unavailable the file is excluded
+        (fail-closed).
+        """
+        getter = getattr(self._kernel, "get_xattr", None)
+        if not callable(getter):
+            return None
+        try:
+            raw = getter(file_path, "md_structure")
+        except Exception:
+            return None
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            return raw
         import json as _json
 
-        getters = (
-            getattr(self._kernel, "get_xattr", None),
-            getattr(self._kernel, "metastore_get_file_metadata", None),
-            getattr(self.metadata, "get_file_metadata", None),
-        )
-        seen: set[int] = set()
-        for getter in getters:
-            if not callable(getter) or id(getter) in seen:
-                continue
-            seen.add(id(getter))
-            try:
-                raw = getter(file_path, "md_structure")
-            except Exception:
-                continue
-            if raw is None:
-                continue
-            if isinstance(raw, dict):
-                return raw
-            try:
-                loaded = _json.loads(raw)
-            except Exception:
-                continue
-            if isinstance(loaded, dict):
-                return loaded
-        return None
+        try:
+            loaded = _json.loads(raw)
+        except Exception:
+            return None
+        return loaded if isinstance(loaded, dict) else None
 
     @staticmethod
     def _normalize_section_query(section: str) -> tuple[str, int | None]:

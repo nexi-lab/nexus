@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
+from nexus.server.lifespan._async_engines import adispose_async_engines
 from nexus.server.lifespan.services_container import LifespanServices
 from nexus.server.lifespan.zone_runners import shutdown_zone_runners
 
@@ -367,12 +368,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         # dispatching aclose to a worker thread. Async engines hold asyncpg
         # connections bound to this loop; disposing them from another thread
         # raises "Future attached to a different loop".
-        adispose = getattr(app.state.nexus_fs, "adispose_async_engines", None)
-        if adispose is not None:
-            try:
-                await adispose()
-            except Exception:
-                logger.debug("adispose_async_engines failed", exc_info=True)
+        await adispose_async_engines(app.state.nexus_fs)
 
         close_fn = getattr(app.state.nexus_fs, "aclose", None)
         if close_fn is None:

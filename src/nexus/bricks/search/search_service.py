@@ -643,6 +643,9 @@ class SearchService:
                         try:
                             ct_stat = self._nexus_fs.sys_stat(ct_path, context=_xz_ctx)
                             if ct_stat:
+                                # Cross-zone entries flow through the same
+                                # detail-dict shape as sys_readdir(details=True)
+                                # so downstream consumers stay dict-typed.
                                 all_files.append(
                                     {
                                         "path": ct_path,
@@ -1422,6 +1425,8 @@ class SearchService:
         _dir_start = _time.time()
         directories: set[str] = set()
 
+        from nexus.contracts.metadata import DT_DIR, DT_MOUNT
+
         for meta in results:
             if _entry_is_dir(meta):
                 directories.add(meta["path"])
@@ -1560,6 +1565,8 @@ class SearchService:
         import time as _time
 
         _details_start = _time.time()
+        from nexus.contracts.metadata import DT_DIR, DT_MOUNT
+
         file_results = [
             {
                 "path": meta["path"],

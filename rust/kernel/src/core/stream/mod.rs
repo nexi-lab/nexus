@@ -35,6 +35,8 @@ pub mod wal;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -48,8 +50,11 @@ const HEADER_SIZE: usize = 4;
 
 /// Linear append-only buffer for DT_STREAM.
 ///
-/// Pre-allocated linear buffer with monotonic tail. Reads are non-destructive
-/// and offset-based — each reader supplies its own byte offset.
+/// Pre-allocated linear buffer with monotonic tail. Reads are
+/// non-destructive and offset-based — each reader supplies its own
+/// byte offset and any number of readers can run concurrently.
+/// Writers are serialized internally so multi-threaded `sys_write`
+/// to the same DT_STREAM path is safe without any external lock.
 /// Kernel-internal — callers go through `StreamManager` via the
 /// `Kernel::create_stream` / `Kernel::stream_write_nowait` surface.
 pub struct MemoryStreamBackend {
@@ -59,15 +64,21 @@ pub struct MemoryStreamBackend {
     closed: AtomicBool,
     push_count: AtomicU64,
     msg_count: AtomicUsize,
+    /// Serializes writers so the exclusive `&mut [u8]` borrow inside
+    /// `push()` is the only one alive for that frame. Readers do not
+    /// take this lock — they only Acquire-load `tail` and read
+    /// already-committed bytes.
+    writer: Mutex<()>,
 }
 
-// SAFETY: Single-writer by contract — at most one producer thread
-// holds `&self` for `push()`. Under that contract the writer
-// extends [tail..new_tail] exclusively, then publishes the new tail
-// via a Release-store; any number of reader threads may then take
-// an Acquire-load of `tail` and read [offset..offset+len] for any
-// `offset + len <= tail`, since those bytes are already committed.
-// Concurrent `push()` from multiple threads is undefined behavior.
+// SAFETY: The `writer` mutex serializes all writers, so the only
+// thread that holds the exclusive `&mut [u8]` borrow via
+// `UnsafeCell::get()` is the current writer. Readers do not touch
+// `&mut`: they Acquire-load `tail` and read `[offset..offset+len]`
+// for `offset + len <= tail`, and those bytes are already committed
+// by the writer's Release-store of `tail` before the mutex was
+// dropped. `Send + Sync` is therefore sound under arbitrary
+// multi-thread use.
 unsafe impl Send for MemoryStreamBackend {}
 unsafe impl Sync for MemoryStreamBackend {}
 
@@ -132,6 +143,11 @@ impl MemoryStreamBackend {
         if payload_len > self.capacity {
             return Err(StreamError::Oversized(payload_len, self.capacity));
         }
+
+        // Serialize writers so the `&mut [u8]` borrow below is the
+        // only one in flight; held across the Release-store of `tail`
+        // so readers see a fully-published frame.
+        let _writer_guard = self.writer.lock();
 
         let frame_len = HEADER_SIZE + payload_len;
         let tail = self.tail.load(Ordering::Relaxed);
@@ -241,6 +257,7 @@ impl MemoryStreamBackend {
             closed: AtomicBool::new(false),
             push_count: AtomicU64::new(0),
             msg_count: AtomicUsize::new(0),
+            writer: Mutex::new(()),
         }
     }
 
@@ -455,5 +472,69 @@ mod tests {
         let (d2, _) = read_at(&core, o2);
         assert_eq!(u64::from_le_bytes(d1.try_into().unwrap()), 42);
         assert_eq!(u64::from_le_bytes(d2.try_into().unwrap()), u64::MAX);
+    }
+
+    /// Concurrent multi-writer push must not corrupt the buffer:
+    /// every pushed message frame must be readable from its returned
+    /// offset, and the count of distinct payloads observed by a
+    /// reader must equal the number of pushes. Before the writer
+    /// mutex was added, the `&mut [u8]` borrow inside `push` could
+    /// alias across threads.
+    #[test]
+    fn test_concurrent_writers_do_not_corrupt() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const WRITERS: usize = 8;
+        const PER_WRITER: usize = 64;
+        // Frame = 4-byte header + 8-byte u64 payload = 12 bytes per push.
+        let capacity = WRITERS * PER_WRITER * 12;
+        let core = Arc::new(make(capacity));
+
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|w| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    let mut offsets = Vec::with_capacity(PER_WRITER);
+                    for i in 0..PER_WRITER {
+                        let val = (w as u64) << 32 | (i as u64);
+                        offsets.push(core.push(&val.to_le_bytes()).expect("push failed"));
+                    }
+                    offsets
+                })
+            })
+            .collect();
+
+        let mut all_offsets: Vec<usize> = handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("writer thread panicked"))
+            .collect();
+        assert_eq!(all_offsets.len(), WRITERS * PER_WRITER);
+
+        // Every returned offset addresses a valid 8-byte frame.
+        for off in &all_offsets {
+            let (data, _) = read_at(&core, *off);
+            assert_eq!(data.len(), 8);
+        }
+        // Offsets are pairwise distinct — no two writers got the same
+        // slot.
+        all_offsets.sort_unstable();
+        all_offsets.dedup();
+        assert_eq!(all_offsets.len(), WRITERS * PER_WRITER);
+
+        // Walking the buffer linearly from offset 0 must yield exactly
+        // WRITERS * PER_WRITER frames, in the order writers' Release
+        // stores published them.
+        let mut walked = 0usize;
+        let mut offset = 0usize;
+        while let Ok((data, next)) = core.read_at(offset) {
+            assert_eq!(data.len(), 8);
+            walked += 1;
+            if next == offset {
+                break;
+            }
+            offset = next;
+        }
+        assert_eq!(walked, WRITERS * PER_WRITER);
     }
 }

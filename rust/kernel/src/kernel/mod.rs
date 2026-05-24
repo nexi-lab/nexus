@@ -574,8 +574,8 @@ pub struct Kernel {
     /// shared across every async caller (peer RPC fan-out, federation
     /// remote reads, LLM connector streaming). Kernel owns the runtime
     /// directly so kernel-internal callers keep the same shared runtime
-    /// regardless of whether the cdylib has installed the real peer
-    /// client yet.
+    /// regardless of whether the host binary has installed the real
+    /// peer client yet.
     // `Option` so `Drop` can `take()` the Arc and hand it to an
     // off-context thread — see the `Drop for Kernel` impl. `Some` for
     // the entire observable lifetime of the kernel.
@@ -603,12 +603,12 @@ pub struct Kernel {
     pub(crate) distributed_coordinator:
         parking_lot::RwLock<Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>>,
     // No `chunk_fetcher` field: `Kernel::peer_client` is the SSOT for
-    // the cross-node blob client.  `PyKernel::sys_setattr` constructs a
+    // the cross-node blob client.  `Kernel::sys_setattr` constructs a
     // fresh `GrpcChunkFetcher` per `DT_MOUNT` against the just-cloned
     // peer_client + current `self_address`, so a peer_client swap (or
     // a `set_self_address` after federation init) is reflected on the
     // next mount with no rebuild dance.
-    /// Blob-fetcher slot stashed by federation init for the cdylib's
+    /// Blob-fetcher slot stashed by federation init for the
     /// transport-tier install hook to drain. Typed as
     /// `Box<dyn Any + Send + Sync>` so kernel does not name the
     /// raft-side `BlobFetcherSlot` type — `transport::blob::fetcher::
@@ -661,9 +661,9 @@ impl Kernel {
         );
         // The real peer_blob_client lives in
         // `transport::blob::peer_client`. Kernel boots with the no-op
-        // fallback; the cdylib wires the real impl via
+        // fallback; the host binary wires the real impl via
         // `Kernel::set_peer_client` before any federation read fires.
-        // No `chunk_fetcher` snapshot is built here — `PyKernel::sys_setattr`
+        // No `chunk_fetcher` snapshot is built here — `Kernel::sys_setattr`
         // derives a fresh `GrpcChunkFetcher` per `DT_MOUNT` against the
         // current peer_client + self_address (see `Kernel.peer_client`
         // doc).
@@ -724,19 +724,18 @@ impl Kernel {
             has_permission_provider: AtomicBool::new(false),
         };
         // Distributed-coordinator bootstrap is driven by
-        // `nexus_raft::distributed_coordinator::install`. The cdylib boot
-        // path constructs `Kernel`, then calls `install(kernel)` which
-        // wires the `RaftDistributedCoordinator` and dispatches
+        // `nexus_raft::distributed_coordinator::install`. The host
+        // binary constructs `Kernel`, then calls `install(kernel)`
+        // which wires the `RaftDistributedCoordinator` and dispatches
         // `init_from_env` through the trait. Kernel construction stays
-        // raft-free at this seam so non-cdylib callers (Rust tests,
-        // embedded) skip federation init unless they explicitly install
-        // the coordinator.
-        // ManagedAgentService is installed by the cdylib boot path
-        // (services lives in a peer crate; kernel does NOT depend on
-        // services). Python-side: `nexus_runtime.nx_managed_agent_install
-        // (kernel)` runs in `_wired.py` after `Kernel::new` returns.
-        // Pure-Rust embedders call `services::managed_agent::ManagedAgentService::install(&k)`
-        // themselves; nothing happens automatically here.
+        // raft-free at this seam, so callers that don't run federation
+        // (tests, embedders) skip federation init unless they
+        // explicitly install the coordinator.
+        // ManagedAgentService lives in a peer crate; kernel does NOT
+        // depend on services. The host binary calls
+        // `services::managed_agent::ManagedAgentService::install(&k)`
+        // at boot when it wants the managed-agent service wired up;
+        // nothing happens automatically here.
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
@@ -1100,7 +1099,8 @@ impl Kernel {
         }
     }
 
-    // Called by PyKernel.metastore_delete_batch() via PyO3 — no direct Rust caller.
+    // No in-tree Rust caller; kept on the kernel surface for a future
+    // bulk-delete consumer.
     #[allow(dead_code)]
     pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
         match self.metastore.read().as_ref() {
@@ -2168,7 +2168,7 @@ impl Kernel {
 
     /// Replace the kernel's `peer_client` slot with a concrete
     /// implementation. Kernel boots with `NoopPeerBlobClient`; the
-    /// cdylib boot path calls this with the real
+    /// host binary calls this with the real
     /// `transport::blob::peer_client::PeerBlobClient` once per kernel.
     pub fn set_peer_client(&self, client: Arc<dyn crate::hal::peer::PeerBlobClient>) {
         *self.peer_client.write() = client;

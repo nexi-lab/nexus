@@ -5,10 +5,15 @@
 //! registry, file-watch registry.
 //!
 //! Architecture:
-//!   - Created empty via Kernel::new(), then components are wired by wrapper.
+//!   - Created empty via Kernel::new(), then components are wired
+//!     in by the host through `install_*` methods (locks,
+//!     metastore, distributed coordinator, peer blob client).
 //!   - VFSRouter / Trie use interior mutability (&self methods).
-//!   - VFS Lock is optionally Arc-shared with VFSLockManager (blocking acquire).
-//!   - MetaStore (Box<dyn MetaStore>) wraps any impl (Python adapter, redb, gRPC).
+//!   - LockManager is Arc-shared so external distributed-lock
+//!     coordinators can hold their own handle to the advisory
+//!     backend HAL.
+//!   - MetaStore (Box<dyn MetaStore>) wraps any impl (LocalMetaStore
+//!     on redb, RemoteMetaStore over gRPC, ZoneMetaStore over Raft).
 //!     Each impl owns its own internal cache; there is no kernel-global
 //!     metadata cache.
 //!

@@ -201,8 +201,8 @@ mod tests {
     use super::*;
 
     /// `is_driver_enabled` returns true when the gate has not been
-    /// initialised — this is what keeps non-cdylib Rust tests working
-    /// without explicit profile wiring.
+    /// initialised — this is what keeps Rust tests working without
+    /// explicit profile wiring.
     #[test]
     fn ungated_returns_true_for_any_driver() {
         // NB: the OnceLock is process-wide, so this assertion is only

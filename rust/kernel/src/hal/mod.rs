@@ -7,8 +7,8 @@
 //!
 //! * Trait declared here in the kernel crate.
 //! * Concrete impl in the owner crate (raft, backends).
-//! * `OnceLock` / `RwLock<Arc<dyn Trait>>` slot the cdylib boot wires
-//!   before any syscall fires.
+//! * `OnceLock` / `RwLock<Arc<dyn Trait>>` slot that the host binary
+//!   wires at startup, before any syscall fires.
 //!
 //! Members:
 //!

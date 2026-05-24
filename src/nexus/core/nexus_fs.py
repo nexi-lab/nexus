@@ -968,10 +968,7 @@ class NexusFS(  # type: ignore[misc]
         self._kernel.close_stream(path)
 
     def stream_destroy(self, path: str) -> None:
-        """Destroy a DT_STREAM — close kernel buffer + custom backend cleanup.
-
-        Sync alternative to ``await sys_unlink(path)``.
-        """
+        """Destroy a DT_STREAM — close kernel buffer + custom backend cleanup."""
         self._stream_destroy(path)
 
     def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:

@@ -550,6 +550,182 @@ class TestRPCTransportTypedMethods:
         with pytest.raises(NexusFileNotFoundError):
             transport.stat("/x.txt")
 
+    # ── B8 — xattr ─────────────────────────────────────────────────
+
+    def test_get_xattr_found(self, transport) -> None:
+        """get_xattr returns the response with found=true + value."""
+        mock_response = MagicMock(is_error=False, found=True, value="hello")
+        transport._mock_stub.GetXattr.return_value = mock_response
+
+        result = transport.get_xattr("/p", "k")
+
+        assert result is mock_response
+        request = transport._mock_stub.GetXattr.call_args[0][0]
+        assert request.path == "/p"
+        assert request.key == "k"
+        assert request.auth_token == "test-token"
+
+    def test_get_xattr_not_found(self, transport) -> None:
+        """get_xattr with found=false is in-band, not an error."""
+        mock_response = MagicMock(is_error=False, found=False, value="")
+        transport._mock_stub.GetXattr.return_value = mock_response
+
+        result = transport.get_xattr("/p", "missing")
+
+        assert result.found is False
+
+    def test_set_xattr_sends_request(self, transport) -> None:
+        """set_xattr returns nothing; verifies path/key/value land on the request."""
+        mock_response = MagicMock(is_error=False)
+        transport._mock_stub.SetXattr.return_value = mock_response
+
+        transport.set_xattr("/p", "k", "v")
+
+        request = transport._mock_stub.SetXattr.call_args[0][0]
+        assert request.path == "/p"
+        assert request.key == "k"
+        assert request.value == "v"
+
+    def test_get_xattr_bulk_returns_items(self, transport) -> None:
+        """get_xattr_bulk returns the per-item list in input order."""
+        i1 = MagicMock(found=True, value="a")
+        i1.path = "/x"
+        i2 = MagicMock(found=False, value="")
+        i2.path = "/y"
+        mock_response = MagicMock(is_error=False, items=[i1, i2])
+        transport._mock_stub.GetXattrBulk.return_value = mock_response
+
+        result = transport.get_xattr_bulk(["/x", "/y"], "k")
+
+        assert result == [i1, i2]
+        request = transport._mock_stub.GetXattrBulk.call_args[0][0]
+        assert list(request.paths) == ["/x", "/y"]
+        assert request.key == "k"
+
+    # ── B9 — IPC pipe / stream ─────────────────────────────────────
+
+    def test_close_pipe_no_op_on_success(self, transport) -> None:
+        mock_response = MagicMock(is_error=False)
+        transport._mock_stub.ClosePipe.return_value = mock_response
+
+        transport.close_pipe("/pipe")
+
+        request = transport._mock_stub.ClosePipe.call_args[0][0]
+        assert request.path == "/pipe"
+
+    def test_has_pipe_returns_bool(self, transport) -> None:
+        mock_response = MagicMock(is_error=False, present=True)
+        transport._mock_stub.HasPipe.return_value = mock_response
+
+        assert transport.has_pipe("/pipe") is True
+
+    def test_close_all_pipes_no_op_on_success(self, transport) -> None:
+        mock_response = MagicMock(is_error=False)
+        transport._mock_stub.CloseAllPipes.return_value = mock_response
+
+        transport.close_all_pipes()
+
+        request = transport._mock_stub.CloseAllPipes.call_args[0][0]
+        assert request.auth_token == "test-token"
+
+    def test_close_stream_no_op_on_success(self, transport) -> None:
+        mock_response = MagicMock(is_error=False)
+        transport._mock_stub.CloseStream.return_value = mock_response
+
+        transport.close_stream("/stream")
+
+    def test_has_stream_returns_bool(self, transport) -> None:
+        mock_response = MagicMock(is_error=False, present=False)
+        transport._mock_stub.HasStream.return_value = mock_response
+
+        assert transport.has_stream("/stream") is False
+
+    def test_stream_write_nowait_returns_offset(self, transport) -> None:
+        mock_response = MagicMock(is_error=False, offset=42)
+        transport._mock_stub.StreamWriteNowait.return_value = mock_response
+
+        assert transport.stream_write_nowait("/s", b"hi") == 42
+
+        request = transport._mock_stub.StreamWriteNowait.call_args[0][0]
+        assert request.path == "/s"
+        assert request.data == b"hi"
+
+    def test_stream_read_at_non_blocking_eof(self, transport) -> None:
+        """Non-blocking read with eof=true surfaces in-band."""
+        mock_response = MagicMock(is_error=False, eof=True, data=b"", next_offset=7)
+        transport._mock_stub.StreamReadAt.return_value = mock_response
+
+        result = transport.stream_read_at("/s", 7, blocking=False)
+
+        assert result.eof is True
+        request = transport._mock_stub.StreamReadAt.call_args[0][0]
+        assert request.blocking is False
+        assert request.offset == 7
+
+    def test_stream_read_at_blocking_uses_timeout_for_deadline(self, transport) -> None:
+        """Blocking read sizes the RPC deadline to timeout_ms + slack."""
+        mock_response = MagicMock(is_error=False, eof=False, data=b"abc", next_offset=10)
+        transport._mock_stub.StreamReadAt.return_value = mock_response
+
+        transport.stream_read_at("/s", 7, blocking=True, timeout_ms=60000)
+
+        # Should pass timeout=65.0 (60s + 5s slack) > the 30s default _timeout.
+        timeout = transport._mock_stub.StreamReadAt.call_args[1]["timeout"]
+        assert timeout >= 60.0
+
+    def test_stream_collect_all_returns_bytes(self, transport) -> None:
+        mock_response = MagicMock(is_error=False, data=b"everything")
+        transport._mock_stub.StreamCollectAll.return_value = mock_response
+
+        assert transport.stream_collect_all("/s") == b"everything"
+
+    # ── B10 — Mkdir + richer Delete ────────────────────────────────
+
+    def test_mkdir_success(self, transport) -> None:
+        mock_response = MagicMock(is_error=False, hit=True)
+        transport._mock_stub.Mkdir.return_value = mock_response
+
+        result = transport.mkdir("/d", parents=True, exist_ok=True)
+
+        assert result is mock_response
+        request = transport._mock_stub.Mkdir.call_args[0][0]
+        assert request.path == "/d"
+        assert request.parents is True
+        assert request.exist_ok is True
+
+    def test_mkdir_error_raises(self, transport) -> None:
+        mock_response = MagicMock(
+            is_error=True,
+            error_payload=encode_rpc_message({"code": -32004, "message": "bad path"}),
+        )
+        transport._mock_stub.Mkdir.return_value = mock_response
+
+        with pytest.raises(Exception):  # noqa: B017,PT011 — code -32004 → InvalidPathError
+            transport.mkdir("/bad")
+
+    def test_delete_returns_full_response(self, transport) -> None:
+        """delete() returns the richer response (entry_type / path / etc.)."""
+        mock_response = MagicMock(
+            is_error=False, success=True, entry_type=1, content_id="cid", size=99
+        )
+        mock_response.path = "/x"
+        transport._mock_stub.Delete.return_value = mock_response
+
+        result = transport.delete("/x")
+
+        assert result is mock_response
+        assert result.entry_type == 1
+        assert result.size == 99
+        request = transport._mock_stub.Delete.call_args[0][0]
+        assert request.path == "/x"
+
+    def test_delete_file_backcompat_bool(self, transport) -> None:
+        """delete_file() still returns a bool for legacy callers."""
+        mock_response = MagicMock(is_error=False, success=True)
+        transport._mock_stub.Delete.return_value = mock_response
+
+        assert transport.delete_file("/x") is True
+
     def test_ping_success(self, transport) -> None:
         """ping returns version/zone_id/uptime dict."""
         mock_response = MagicMock()

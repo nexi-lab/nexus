@@ -170,9 +170,17 @@ def dump_yaml(coverage: SurfaceCoverage, path: Path) -> None:
         "stale_rows": [asdict(s) for s in coverage.stale_rows],
     }
     content = yaml.safe_dump(payload, sort_keys=False, width=120)
-    # Atomic write: temp file in same dir, fsync, os.replace.
+    # Atomic write: temp file in same dir, fsync (best-effort), os.replace.
+    # `newline="\n"` keeps Windows from inflating LF into CRLF — the
+    # committed YAML uses LF and a CRLF rewrite would otherwise produce
+    # a fully-different file on every regen. On Windows the fsync via a
+    # file opened "rb" can hit EBADF; atomicity still comes from os.replace.
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(content, encoding="utf-8")
-    with open(tmp, "rb") as fh:
-        os.fsync(fh.fileno())
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
+    try:
+        with open(tmp, "rb") as fh:
+            os.fsync(fh.fileno())
+    except OSError:
+        pass
     os.replace(tmp, path)

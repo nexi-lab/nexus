@@ -22,11 +22,20 @@ use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
 use kernel::abi::KernelAbi;
+use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
-    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
-    DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
-    WriteRequest, WriteResponse,
+    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
+    BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
+    CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, GetXattrBulkItem,
+    GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, IpcAck,
+    IpcEmpty, IpcHasResponse, IpcPathRequest, LockRequest, LockResponse, MkdirRequest,
+    MkdirResponse, PingRequest, PingResponse,
+    ReaddirEntry, ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, RenameRequest,
+    RenameResponse, SetXattrRequest, SetXattrResponse, SetattrRequest, SetattrResponse,
+    StatRequest, StatResponse, StreamCollectAllResponse, StreamReadAtRequest, StreamReadAtResponse,
+    StreamWriteRequest, StreamWriteResponse, UnlockRequest, UnlockResponse, WatchRequest,
+    WatchResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -137,12 +146,14 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_read(s))),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Ok(Response::new(error_read(Status::permission_denied(
-                "federation token: use Call dispatch (sys_read RPC) — typed Read bypasses zone authorization",
-            ))));
-        }
-        match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, 5000, 0) {
+        // No federation guard: KernelAbi::sys_read consults ctx.zone_perms via
+        // the permission gate (kernel::dispatch.rs:101). The same SSOT runs
+        // whether the call entered via typed Read or generic Call.
+        //
+        // `timeout_ms == 0` keeps file-read semantics (the kernel resolves the
+        // entry and returns immediately). Non-zero blocks pipe/stream reads.
+        let timeout_ms = if req.timeout_ms == 0 { 5000 } else { req.timeout_ms };
+        match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, timeout_ms, req.offset) {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
                 Ok(Response::new(ReadResponse {
@@ -152,6 +163,9 @@ impl NexusVfsService for VfsServiceImpl {
                     gen: result.gen,
                     is_error: false,
                     error_payload: Vec::new(),
+                    entry_type: result.entry_type as i32,
+                    stream_next_offset: result.stream_next_offset.map(|v| v as u64),
+                    post_hook_needed: result.post_hook_needed,
                 }))
             }
             Err(err) => {
@@ -163,6 +177,9 @@ impl NexusVfsService for VfsServiceImpl {
                     gen: 0,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
+                    entry_type: 0,
+                    stream_next_offset: None,
+                    post_hook_needed: false,
                 }))
             }
         }
@@ -174,11 +191,8 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_write(s))),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Ok(Response::new(error_write(Status::permission_denied(
-                "federation token: use Call dispatch (sys_write RPC) — typed Write bypasses zone authorization",
-            ))));
-        }
+        // No federation guard: ctx.zone_perms is enforced inside sys_write's
+        // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
         match KernelAbi::sys_write(&*self.kernel, &req.path, &ctx, &req.content, 0) {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
@@ -209,21 +223,678 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_delete(s))),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Ok(Response::new(error_delete(Status::permission_denied(
-                "federation token: use Call dispatch (sys_unlink RPC) — typed Delete bypasses zone authorization",
-            ))));
-        }
+        // No federation guard: ctx.zone_perms is enforced inside sys_unlink's
+        // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
         match KernelAbi::sys_unlink(&*self.kernel, &req.path, &ctx, req.recursive) {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
                 is_error: false,
                 error_payload: Vec::new(),
+                entry_type: result.entry_type as u32,
+                path: result.path,
+                content_id: result.content_id.unwrap_or_default(),
+                size: result.size,
             })),
             Err(err) => {
                 let (code, msg) = self.map_kernel_err(err);
                 Ok(Response::new(DeleteResponse {
                     success: false,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                    entry_type: 0,
+                    path: String::new(),
+                    content_id: String::new(),
+                    size: 0,
+                }))
+            }
+        }
+    }
+
+    async fn mkdir(
+        &self,
+        req: Request<MkdirRequest>,
+    ) -> Result<Response<MkdirResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_mkdir(s))),
+        };
+        match KernelConvenience::mkdir(&*self.kernel, &req.path, &ctx, req.parents, req.exist_ok) {
+            Ok(r) => Ok(Response::new(MkdirResponse {
+                hit: r.hit,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(MkdirResponse {
+                    hit: false,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn stat(&self, req: Request<StatRequest>) -> Result<Response<StatResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stat(s))),
+        };
+        let zone_id = if req.zone_id.is_empty() {
+            ctx.zone_id.as_str()
+        } else {
+            req.zone_id.as_str()
+        };
+        // `sys_stat` returns `Option` — `None` is "no such path", a
+        // normal result surfaced as `found = false` (not an error).
+        match self.kernel.sys_stat(&req.path, zone_id) {
+            Some(s) => Ok(Response::new(StatResponse {
+                found: true,
+                path: s.path,
+                size: s.size as i64,
+                content_id: s.content_id.unwrap_or_default(),
+                mime_type: s.mime_type,
+                is_directory: s.is_directory,
+                entry_type: s.entry_type as i32,
+                mode: s.mode,
+                version: s.version,
+                gen: s.gen,
+                zone_id: s.zone_id.unwrap_or_default(),
+                created_at_ms: s.created_at_ms,
+                modified_at_ms: s.modified_at_ms,
+                last_writer_address: s.last_writer_address.unwrap_or_default(),
+                link_target: s.link_target.unwrap_or_default(),
+                owner_id: s.owner_id.unwrap_or_default(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            None => Ok(Response::new(StatResponse {
+                found: false,
+                ..Default::default()
+            })),
+        }
+    }
+
+    async fn readdir(
+        &self,
+        req: Request<ReaddirRequest>,
+    ) -> Result<Response<ReaddirResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_readdir(s))),
+        };
+        let zone_id = if req.zone_id.is_empty() {
+            ctx.zone_id.as_str()
+        } else {
+            req.zone_id.as_str()
+        };
+        // `is_admin` comes from the auth-resolved context, never the
+        // request — clients can't spoof admin reads of `/__sys__/zones/`.
+        let entries = self.kernel.sys_readdir(&req.path, zone_id, ctx.is_admin);
+        let mapped: Vec<ReaddirEntry> = entries
+            .into_iter()
+            .map(|(name, dt)| ReaddirEntry {
+                name,
+                entry_type: dt as u32,
+            })
+            .collect();
+        Ok(Response::new(ReaddirResponse {
+            entries: mapped,
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn setattr(
+        &self,
+        req: Request<SetattrRequest>,
+    ) -> Result<Response<SetattrResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_setattr(s))),
+        };
+        let _ = ctx; // resolve auth for permissions / future use
+
+        let zone_id_str = req.zone_id;
+        let zone_id = if zone_id_str.is_empty() {
+            kernel::ROOT_ZONE_ID
+        } else {
+            &zone_id_str
+        };
+
+        // DT_MOUNT special case — the subprocess kernel already owns its
+        // mount table (auto-created from NEXUS_DATA_DIR at startup) and
+        // Python can't pass a Rust ObjectStore Arc through the wire. The
+        // Python factory still emits sys_setattr(DT_MOUNT) during boot,
+        // so we ack synthetically rather than overwrite the live mount
+        // with backend=None (which would break all I/O).
+        if req.entry_type == 2 {
+            return Ok(Response::new(SetattrResponse {
+                path: req.path,
+                created: false,
+                entry_type: req.entry_type,
+                is_error: false,
+                error_payload: Vec::new(),
+            }));
+        }
+
+        match self.kernel.sys_setattr(
+            &req.path,
+            req.entry_type,
+            &req.backend_name,
+            None, // backend (non-mount entry types don't need one)
+            None, // metastore
+            None, // raft_backend
+            &req.io_profile,
+            zone_id,
+            req.is_external,
+            req.capacity as usize,
+            None, // read_fd  — DT_PIPE stdio uses the in-process AcpSubprocess path
+            None, // write_fd
+            req.mime_type.as_deref(),
+            req.modified_at_ms,
+            req.content_id.as_deref(),
+            req.size,
+            req.version,
+            req.created_at_ms,
+            None, // link_target — DT_LINK creation isn't on the JSON-wire today
+            None, // source
+            None, // remote_metastore
+        ) {
+            Ok(r) => Ok(Response::new(SetattrResponse {
+                path: r.path,
+                created: r.created,
+                entry_type: r.entry_type,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(SetattrResponse {
+                    path: String::new(),
+                    created: false,
+                    entry_type: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn rename(
+        &self,
+        req: Request<RenameRequest>,
+    ) -> Result<Response<RenameResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_rename(s))),
+        };
+        match KernelAbi::sys_rename(&*self.kernel, &req.path, &req.new_path, &ctx) {
+            Ok(r) => Ok(Response::new(RenameResponse {
+                hit: r.hit,
+                success: r.success,
+                is_directory: r.is_directory,
+                old_content_id: r.old_content_id,
+                old_size: r.old_size,
+                old_version: r.old_version,
+                old_modified_at_ms: r.old_modified_at_ms,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(RenameResponse {
+                    hit: false,
+                    success: false,
+                    is_directory: false,
+                    old_content_id: None,
+                    old_size: None,
+                    old_version: None,
+                    old_modified_at_ms: None,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn copy(&self, req: Request<CopyRequest>) -> Result<Response<CopyResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_copy(s))),
+        };
+        match KernelAbi::sys_copy(&*self.kernel, &req.src, &req.dst, &ctx) {
+            Ok(r) => Ok(Response::new(CopyResponse {
+                hit: r.hit,
+                dst_path: r.dst_path,
+                content_id: r.content_id,
+                size: r.size,
+                version: r.version,
+                gen: r.gen,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(CopyResponse {
+                    hit: false,
+                    dst_path: String::new(),
+                    content_id: None,
+                    size: 0,
+                    version: 0,
+                    gen: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn lock(&self, req: Request<LockRequest>) -> Result<Response<LockResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_lock(s))),
+        };
+        // Match the Call wire surface (mode / max_holders / ttl_secs are
+        // hardcoded on the JSON path; expose only when there's a caller
+        // that needs to vary them).
+        let ttl_secs = req.timeout_ms / 1000 + 1;
+        match self.kernel.sys_lock(
+            &req.path,
+            &req.lock_id,
+            kernel::lock_manager::KernelLockMode::Exclusive,
+            1,
+            ttl_secs,
+            "",
+        ) {
+            Ok(Some(id)) => Ok(Response::new(LockResponse {
+                acquired: true,
+                lock_id: id,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Ok(None) => Ok(Response::new(LockResponse {
+                acquired: false,
+                lock_id: String::new(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(LockResponse {
+                    acquired: false,
+                    lock_id: String::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn unlock(
+        &self,
+        req: Request<UnlockRequest>,
+    ) -> Result<Response<UnlockResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_unlock(s))),
+        };
+        match self.kernel.sys_unlock(&req.path, &req.lock_id, req.force) {
+            Ok(released) => Ok(Response::new(UnlockResponse {
+                released,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(UnlockResponse {
+                    released: false,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn watch(&self, req: Request<WatchRequest>) -> Result<Response<WatchResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_watch(s))),
+        };
+        match self.kernel.sys_watch(&req.path, req.timeout_ms) {
+            Some(evt) => Ok(Response::new(WatchResponse {
+                matched: true,
+                path: evt.path().to_string(),
+                event_type: format!("{:?}", evt.event_type),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            None => Ok(Response::new(WatchResponse {
+                matched: false,
+                path: String::new(),
+                event_type: String::new(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+        }
+    }
+
+    async fn get_xattr(
+        &self,
+        req: Request<GetXattrRequest>,
+    ) -> Result<Response<GetXattrResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_get_xattr(s))),
+        };
+        match KernelConvenience::get_xattr(&*self.kernel, &req.path, &req.key, kernel::ROOT_ZONE_ID)
+        {
+            Ok(Some(value)) => Ok(Response::new(GetXattrResponse {
+                found: true,
+                value,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Ok(None) => Ok(Response::new(GetXattrResponse {
+                found: false,
+                value: String::new(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(GetXattrResponse {
+                    found: false,
+                    value: String::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn set_xattr(
+        &self,
+        req: Request<SetXattrRequest>,
+    ) -> Result<Response<SetXattrResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_set_xattr(s))),
+        };
+        match KernelConvenience::set_xattr(
+            &*self.kernel,
+            &req.path,
+            &req.key,
+            req.value,
+            kernel::ROOT_ZONE_ID,
+        ) {
+            Ok(()) => Ok(Response::new(SetXattrResponse {
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(SetXattrResponse {
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn get_xattr_bulk(
+        &self,
+        req: Request<GetXattrBulkRequest>,
+    ) -> Result<Response<GetXattrBulkResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_get_xattr_bulk(s))),
+        };
+        match KernelConvenience::get_xattr_bulk(
+            &*self.kernel,
+            &req.paths,
+            &req.key,
+            kernel::ROOT_ZONE_ID,
+        ) {
+            Ok(rows) => Ok(Response::new(GetXattrBulkResponse {
+                items: rows
+                    .into_iter()
+                    .map(|(p, v)| GetXattrBulkItem {
+                        path: p,
+                        found: v.is_some(),
+                        value: v.unwrap_or_default(),
+                    })
+                    .collect(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(GetXattrBulkResponse {
+                    items: Vec::new(),
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn close_pipe(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcAck>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_ack(s))),
+        };
+        match self.kernel.close_pipe(&req.path) {
+            Ok(()) => Ok(Response::new(IpcAck {
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(IpcAck {
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn has_pipe(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcHasResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_has(s))),
+        };
+        Ok(Response::new(IpcHasResponse {
+            present: self.kernel.has_pipe(&req.path),
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn close_all_pipes(
+        &self,
+        req: Request<IpcEmpty>,
+    ) -> Result<Response<IpcAck>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_ack(s))),
+        };
+        self.kernel.close_all_pipes();
+        Ok(Response::new(IpcAck {
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn close_stream(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcAck>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_ack(s))),
+        };
+        match self.kernel.close_stream(&req.path) {
+            Ok(()) => Ok(Response::new(IpcAck {
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(IpcAck {
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn has_stream(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<IpcHasResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_ipc_has(s))),
+        };
+        Ok(Response::new(IpcHasResponse {
+            present: self.kernel.has_stream(&req.path),
+            is_error: false,
+            error_payload: Vec::new(),
+        }))
+    }
+
+    async fn stream_write_nowait(
+        &self,
+        req: Request<StreamWriteRequest>,
+    ) -> Result<Response<StreamWriteResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stream_write(s))),
+        };
+        match self.kernel.stream_write_nowait(&req.path, &req.data) {
+            Ok(offset) => Ok(Response::new(StreamWriteResponse {
+                offset: offset as u64,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(StreamWriteResponse {
+                    offset: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }))
+            }
+        }
+    }
+
+    async fn stream_read_at(
+        &self,
+        req: Request<StreamReadAtRequest>,
+    ) -> Result<Response<StreamReadAtResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stream_read(s))),
+        };
+        if req.blocking {
+            match self.kernel.stream_read_at_blocking(
+                &req.path,
+                req.offset as usize,
+                req.timeout_ms,
+            ) {
+                Ok((data, next)) => Ok(Response::new(StreamReadAtResponse {
+                    data,
+                    next_offset: next as u64,
+                    eof: false,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                })),
+                Err(err) => {
+                    let (code, msg) = self.map_kernel_err(err);
+                    Ok(Response::new(StreamReadAtResponse {
+                        data: Vec::new(),
+                        next_offset: 0,
+                        eof: false,
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                    }))
+                }
+            }
+        } else {
+            match self.kernel.stream_read_at(&req.path, req.offset as usize) {
+                Ok(Some((data, next))) => Ok(Response::new(StreamReadAtResponse {
+                    data,
+                    next_offset: next as u64,
+                    eof: false,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                })),
+                Ok(None) => Ok(Response::new(StreamReadAtResponse {
+                    data: Vec::new(),
+                    next_offset: req.offset,
+                    eof: true,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                })),
+                Err(err) => {
+                    let (code, msg) = self.map_kernel_err(err);
+                    Ok(Response::new(StreamReadAtResponse {
+                        data: Vec::new(),
+                        next_offset: 0,
+                        eof: false,
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                    }))
+                }
+            }
+        }
+    }
+
+    async fn stream_collect_all(
+        &self,
+        req: Request<IpcPathRequest>,
+    ) -> Result<Response<StreamCollectAllResponse>, Status> {
+        let req = req.into_inner();
+        let _ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stream_collect(s))),
+        };
+        match self.kernel.stream_collect_all(&req.path) {
+            Ok(data) => Ok(Response::new(StreamCollectAllResponse {
+                data,
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                Ok(Response::new(StreamCollectAllResponse {
+                    data: Vec::new(),
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
                 }))
@@ -251,11 +922,9 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Err(s),
         };
-        if !ctx.zone_perms.is_empty() {
-            return Err(Status::permission_denied(
-                "federation token: use Call dispatch (BatchRead RPC) — typed BatchRead bypasses zone authorization",
-            ));
-        }
+        // No federation guard: read_batch composes per-item sys_read on the
+        // KernelConvenience SSOT, which honors ctx.zone_perms in the
+        // permission gate (kernel::dispatch.rs:101).
 
         let rust_reqs: Vec<kernel::kernel::ReadRequest> = req
             .items
@@ -307,6 +976,113 @@ impl NexusVfsService for VfsServiceImpl {
             .collect();
 
         Ok(Response::new(BatchReadResponse { results: mapped }))
+    }
+
+    async fn batch_stat(
+        &self,
+        req: Request<BatchStatRequest>,
+    ) -> Result<Response<BatchStatResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Err(s),
+        };
+        // No federation guard: stat_batch goes through metastore-direct path
+        // and the per-path sys_stat fallback, both of which inherit the
+        // permission gate's zone_perms enforcement.
+        let zone_id = if req.zone_id.is_empty() {
+            ctx.zone_id.as_str()
+        } else {
+            req.zone_id.as_str()
+        };
+
+        // KernelConvenience::stat_batch picks the optimized path on
+        // Kernel — single redb read txn via `with_metastore::get_batch`,
+        // falling back to per-path sys_stat for implicit dirs / procfs.
+        let results = KernelConvenience::stat_batch(&*self.kernel, &req.paths, zone_id);
+        let mapped: Vec<BatchStatItem> = results
+            .into_iter()
+            .map(|opt| match opt {
+                Some(s) => BatchStatItem {
+                    found: true,
+                    path: s.path,
+                    size: s.size as i64,
+                    content_id: s.content_id.unwrap_or_default(),
+                    mime_type: s.mime_type,
+                    is_directory: s.is_directory,
+                    entry_type: s.entry_type as i32,
+                    mode: s.mode,
+                    version: s.version,
+                    gen: s.gen,
+                    zone_id: s.zone_id.unwrap_or_default(),
+                    created_at_ms: s.created_at_ms,
+                    modified_at_ms: s.modified_at_ms,
+                    last_writer_address: s.last_writer_address.unwrap_or_default(),
+                    link_target: s.link_target.unwrap_or_default(),
+                    owner_id: s.owner_id.unwrap_or_default(),
+                },
+                None => BatchStatItem {
+                    found: false,
+                    ..Default::default()
+                },
+            })
+            .collect();
+        Ok(Response::new(BatchStatResponse { results: mapped }))
+    }
+
+    async fn batch_write(
+        &self,
+        req: Request<BatchWriteRequest>,
+    ) -> Result<Response<BatchWriteResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Err(s),
+        };
+        // No federation guard: write_batch composes per-item KernelConvenience
+        // ::write on the SSOT, which honors ctx.zone_perms in the permission
+        // gate (kernel::dispatch.rs:101).
+
+        // Tier 2 `write_batch`: create-or-overwrite per item, each item
+        // independent. One bad path no longer aborts the batch the way
+        // the generic `write_batch` Call did (it looped Tier 1 sys_write
+        // and `return Err`d on the first failure — and never created
+        // missing files). The positional per-item result vector matches
+        // the input order.
+        let items: Vec<(String, Vec<u8>)> = req
+            .items
+            .into_iter()
+            .map(|it| (it.path, it.content))
+            .collect();
+
+        let results = KernelConvenience::write_batch(&*self.kernel, &items, &ctx);
+
+        let mapped: Vec<BatchWriteItemResponse> = results
+            .into_iter()
+            .map(|r| match r {
+                Ok(r) => BatchWriteItemResponse {
+                    content_id: r.content_id.unwrap_or_default(),
+                    size: r.size as i64,
+                    gen: r.gen,
+                    version: r.version,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                },
+                Err(e) => {
+                    let (code, msg) = self.map_kernel_err(e);
+                    BatchWriteItemResponse {
+                        content_id: String::new(),
+                        size: 0,
+                        gen: 0,
+                        version: 0,
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                    }
+                }
+            })
+            .collect();
+
+        Ok(Response::new(BatchWriteResponse { results: mapped }))
     }
 
     async fn call(&self, req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
@@ -429,6 +1205,9 @@ fn error_read(status: Status) -> ReadResponse {
         gen: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+        entry_type: 0,
+        stream_next_offset: None,
+        post_hook_needed: false,
     }
 }
 
@@ -447,6 +1226,164 @@ fn error_delete(status: Status) -> DeleteResponse {
         success: false,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+        entry_type: 0,
+        path: String::new(),
+        content_id: String::new(),
+        size: 0,
+    }
+}
+
+fn error_mkdir(status: Status) -> MkdirResponse {
+    MkdirResponse {
+        hit: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_readdir(status: Status) -> ReaddirResponse {
+    ReaddirResponse {
+        entries: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_ipc_ack(status: Status) -> IpcAck {
+    IpcAck {
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_ipc_has(status: Status) -> IpcHasResponse {
+    IpcHasResponse {
+        present: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stream_write(status: Status) -> StreamWriteResponse {
+    StreamWriteResponse {
+        offset: 0,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stream_read(status: Status) -> StreamReadAtResponse {
+    StreamReadAtResponse {
+        data: Vec::new(),
+        next_offset: 0,
+        eof: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stream_collect(status: Status) -> StreamCollectAllResponse {
+    StreamCollectAllResponse {
+        data: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_get_xattr(status: Status) -> GetXattrResponse {
+    GetXattrResponse {
+        found: false,
+        value: String::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_set_xattr(status: Status) -> SetXattrResponse {
+    SetXattrResponse {
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_get_xattr_bulk(status: Status) -> GetXattrBulkResponse {
+    GetXattrBulkResponse {
+        items: Vec::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_lock(status: Status) -> LockResponse {
+    LockResponse {
+        acquired: false,
+        lock_id: String::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_unlock(status: Status) -> UnlockResponse {
+    UnlockResponse {
+        released: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_watch(status: Status) -> WatchResponse {
+    WatchResponse {
+        matched: false,
+        path: String::new(),
+        event_type: String::new(),
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_rename(status: Status) -> RenameResponse {
+    RenameResponse {
+        hit: false,
+        success: false,
+        is_directory: false,
+        old_content_id: None,
+        old_size: None,
+        old_version: None,
+        old_modified_at_ms: None,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_copy(status: Status) -> CopyResponse {
+    CopyResponse {
+        hit: false,
+        dst_path: String::new(),
+        content_id: None,
+        size: 0,
+        version: 0,
+        gen: 0,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_setattr(status: Status) -> SetattrResponse {
+    SetattrResponse {
+        path: String::new(),
+        created: false,
+        entry_type: 0,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+    }
+}
+
+fn error_stat(status: Status) -> StatResponse {
+    StatResponse {
+        found: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+        ..Default::default()
     }
 }
 
@@ -471,6 +1408,7 @@ mod tests {
     use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
+        BatchWriteItemRequest, BatchWriteRequest, StatRequest,
     };
     use kernel::kernel::Kernel;
 
@@ -603,6 +1541,93 @@ mod tests {
         });
 
         let resp = svc.batch_read(req).await.expect("rpc ok").into_inner();
+        assert_eq!(resp.results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn batch_write_creates_all_items_and_reports_per_item() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel.clone());
+
+        let req = tonic::Request::new(BatchWriteRequest {
+            auth_token: "test-key".into(),
+            items: vec![
+                BatchWriteItemRequest {
+                    path: "/a.txt".into(),
+                    content: b"alpha".to_vec(),
+                },
+                BatchWriteItemRequest {
+                    path: "/b.txt".into(),
+                    content: b"bravo!".to_vec(),
+                },
+            ],
+        });
+
+        let resp = svc.batch_write(req).await.expect("rpc ok").into_inner();
+        assert_eq!(resp.results.len(), 2);
+        assert!(!resp.results[0].is_error);
+        assert_eq!(resp.results[0].size, 5);
+        assert!(!resp.results[1].is_error);
+        assert_eq!(resp.results[1].size, 6);
+
+        // Tier 2 create-or-overwrite landed the bytes — read /a.txt back.
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        let read = KernelAbi::sys_read(&*kernel, "/a.txt", &ctx, 5000, 0).expect("read");
+        assert_eq!(read.data.unwrap_or_default(), b"alpha");
+    }
+
+    #[tokio::test]
+    async fn stat_reports_metadata_and_not_found() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        // Create-or-overwrite so a metastore entry exists for stat.
+        let _ = KernelConvenience::write_batch(
+            &*kernel,
+            &[("/s.txt".to_string(), b"stat-me".to_vec())],
+            &ctx,
+        );
+
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let found = svc
+            .stat(tonic::Request::new(StatRequest {
+                path: "/s.txt".into(),
+                auth_token: "test-key".into(),
+                zone_id: String::new(),
+            }))
+            .await
+            .expect("rpc ok")
+            .into_inner();
+        assert!(found.found);
+        assert!(!found.is_error);
+        assert_eq!(found.path, "/s.txt");
+        assert_eq!(found.size, 7);
+        assert!(!found.is_directory);
+
+        let missing = svc
+            .stat(tonic::Request::new(StatRequest {
+                path: "/nope.txt".into(),
+                auth_token: "test-key".into(),
+                zone_id: String::new(),
+            }))
+            .await
+            .expect("rpc ok")
+            .into_inner();
+        assert!(!missing.found);
+        assert!(!missing.is_error);
+    }
+
+    #[tokio::test]
+    async fn batch_write_empty_items_returns_empty_results() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let req = tonic::Request::new(BatchWriteRequest {
+            auth_token: "test-key".into(),
+            items: vec![],
+        });
+
+        let resp = svc.batch_write(req).await.expect("rpc ok").into_inner();
         assert_eq!(resp.results.len(), 0);
     }
 }

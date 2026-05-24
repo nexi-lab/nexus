@@ -202,12 +202,6 @@ impl<K: KernelAbi> NativeInterceptHook for AuditHook<K> {
             HookContext::Read(_) => "read",
             HookContext::Delete(_) => "delete",
             HookContext::Rename(_) => "rename",
-            HookContext::Mkdir(_) => "mkdir",
-            HookContext::Rmdir(_) => "rmdir",
-            HookContext::Copy(_) => "copy",
-            HookContext::Stat(_) => "stat",
-            HookContext::Access(_) => "access",
-            HookContext::WriteBatch(_) => "write_batch",
         };
         let record = Self::build_record(ctx, op);
         // Non-blocking — drop silently on backpressure (audit is best-effort).

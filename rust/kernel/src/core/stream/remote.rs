@@ -5,19 +5,15 @@
 //! local backends (MemoryStreamBackend, WalStreamCore).
 //!
 //! Wire protocol:
-//!   push  → Call("sys_write", {path, content: base64}) → {"offset": N}
-//!   read  → Call("sys_read",  {path, offset: N})       → {"content": base64, "next_offset": N}
+//!   push  → typed StreamWriteNowait(path, data)  → offset
+//!   read  → typed StreamReadAt(path, offset, …) → (data, next_offset, eof)
 //!
-//! The typed Write RPC is intentionally NOT used for push because the proto
-//! WriteResponse carries file-semantics fields (content_id, size) and no stream
-//! byte-offset. The Call RPC routes through the server's Python dispatch layer
-//! which understands stream-path semantics.
+//! Both are stream-shaped typed RPCs: native bytes (no base64 tax) and
+//! native byte-offsets. The file-semantics Write RPC was the wrong target
+//! because its response carries content_id / size, not stream offsets.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine as _;
 
 use crate::rpc_transport::RpcTransport;
 use crate::stream::{StreamBackend, StreamError};
@@ -56,31 +52,14 @@ impl StreamBackend for RemoteStreamBackend {
             return Err(StreamError::Closed("write to closed remote stream"));
         }
 
-        let payload = serde_json::json!({
-            "path": self.path,
-            "content": B64.encode(data),
-        });
-        let payload_bytes = serde_json::to_vec(&payload)
-            .map_err(|_| StreamError::Closed("remote stream: payload serialization failed"))?;
-
-        let (resp_bytes, is_error) = self
-            .transport
-            .call("sys_write", &payload_bytes)
-            .map_err(|_| StreamError::Closed("remote stream: sys_write RPC failed"))?;
-
-        if is_error {
-            return Err(StreamError::Closed(
-                "remote stream: sys_write returned error",
-            ));
-        }
-
-        // Parse byte offset from {"offset": N}. Fall back to current tail so
-        // the local approximation stays monotonic even on unexpected responses.
-        let offset = serde_json::from_slice::<serde_json::Value>(&resp_bytes)
-            .ok()
-            .and_then(|v| v.get("offset").and_then(|o| o.as_u64()))
-            .map(|o| o as usize)
-            .unwrap_or_else(|| self.tail.load(Ordering::Relaxed));
+        let offset = match self.transport.stream_write_nowait(&self.path, data) {
+            Ok(offset) => offset as usize,
+            Err(_) => {
+                return Err(StreamError::Closed(
+                    "remote stream: StreamWriteNowait failed",
+                ))
+            }
+        };
 
         self.tail
             .store(offset + HEADER_SIZE + data.len(), Ordering::Release);
@@ -90,41 +69,16 @@ impl StreamBackend for RemoteStreamBackend {
     }
 
     fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
-        let payload = serde_json::json!({
-            "path": self.path,
-            "offset": offset,
-        });
-        let payload_bytes =
-            serde_json::to_vec(&payload).map_err(|_| StreamError::InvalidOffset(offset, 0))?;
-
-        let (resp_bytes, is_error) = self
+        let result = self
             .transport
-            .call("sys_read", &payload_bytes)
+            .stream_read_at(&self.path, offset as u64, false, 0)
             .map_err(|_| StreamError::Empty)?;
 
-        if is_error {
+        if result.eof {
             return Err(StreamError::Empty);
         }
 
-        let resp: serde_json::Value = serde_json::from_slice(&resp_bytes)
-            .map_err(|_| StreamError::InvalidOffset(offset, 0))?;
-
-        let content_b64 = resp
-            .get("content")
-            .and_then(|v| v.as_str())
-            .ok_or(StreamError::InvalidOffset(offset, 0))?;
-
-        let content = B64
-            .decode(content_b64)
-            .map_err(|_| StreamError::InvalidOffset(offset, 0))?;
-
-        let next_offset = resp
-            .get("next_offset")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(offset + HEADER_SIZE + content.len());
-
-        Ok((content, next_offset))
+        Ok((result.data, result.next_offset as usize))
     }
 
     fn read_batch(

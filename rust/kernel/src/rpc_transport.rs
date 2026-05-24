@@ -153,12 +153,32 @@ impl RpcTransport {
         }
     }
 
-    /// Typed Read RPC — raw bytes, no base64.
+    /// Typed Read RPC — raw bytes, no base64. `timeout_ms=0` keeps file
+    /// semantics (server picks the default block budget); set non-zero for
+    /// pipe/stream blocking reads. `offset` is honored for stream + range
+    /// reads.
     pub fn read(&self, path: &str, content_id: &str) -> Result<ReadResult, String> {
-        self.block_on(self.read_async(path, content_id))
+        self.block_on(self.read_async(path, content_id, 0, 0))
     }
 
-    async fn read_async(&self, path: &str, content_id: &str) -> Result<ReadResult, String> {
+    /// Typed Read with explicit timeout / offset for pipes + range reads.
+    pub fn read_with(
+        &self,
+        path: &str,
+        content_id: &str,
+        timeout_ms: u64,
+        offset: u64,
+    ) -> Result<ReadResult, String> {
+        self.block_on(self.read_async(path, content_id, timeout_ms, offset))
+    }
+
+    async fn read_async(
+        &self,
+        path: &str,
+        content_id: &str,
+        timeout_ms: u64,
+        offset: u64,
+    ) -> Result<ReadResult, String> {
         let mut client = self.client();
         let mut retries = 0u8;
         loop {
@@ -166,6 +186,8 @@ impl RpcTransport {
                 path: path.to_string(),
                 auth_token: self.auth_token.clone(),
                 content_id: content_id.to_string(),
+                timeout_ms,
+                offset,
             });
             match client.read(req).await {
                 Ok(resp) => {
@@ -179,6 +201,9 @@ impl RpcTransport {
                         content_id: inner.content_id,
                         size: inner.size as u64,
                         gen: inner.gen,
+                        entry_type: inner.entry_type,
+                        stream_next_offset: inner.stream_next_offset,
+                        post_hook_needed: inner.post_hook_needed,
                     });
                 }
                 Err(status) if retries < 2 && is_retryable(&status) => {
@@ -267,6 +292,73 @@ impl RpcTransport {
         Ok(resp.success)
     }
 
+    /// Typed StreamWriteNowait RPC — returns the offset where data landed.
+    pub fn stream_write_nowait(&self, path: &str, data: &[u8]) -> Result<u64, String> {
+        self.block_on(self.stream_write_nowait_async(path, data))
+    }
+
+    async fn stream_write_nowait_async(&self, path: &str, data: &[u8]) -> Result<u64, String> {
+        let mut client = self.client();
+        let req = tonic::Request::new(vfs_proto::StreamWriteRequest {
+            path: path.to_string(),
+            data: data.to_vec(),
+            auth_token: self.auth_token.clone(),
+        });
+        let resp = client
+            .stream_write_nowait(req)
+            .await
+            .map_err(|e| format!("StreamWriteNowait({path}): {e}"))?
+            .into_inner();
+        if resp.is_error {
+            let err = String::from_utf8_lossy(&resp.error_payload);
+            return Err(format!("StreamWriteNowait({path}): server error: {err}"));
+        }
+        Ok(resp.offset)
+    }
+
+    /// Typed StreamReadAt RPC — bytes + next_offset + eof flag.
+    /// `blocking=true` lets the server wait up to `timeout_ms` for data.
+    pub fn stream_read_at(
+        &self,
+        path: &str,
+        offset: u64,
+        blocking: bool,
+        timeout_ms: u64,
+    ) -> Result<StreamReadResult, String> {
+        self.block_on(self.stream_read_at_async(path, offset, blocking, timeout_ms))
+    }
+
+    async fn stream_read_at_async(
+        &self,
+        path: &str,
+        offset: u64,
+        blocking: bool,
+        timeout_ms: u64,
+    ) -> Result<StreamReadResult, String> {
+        let mut client = self.client();
+        let req = tonic::Request::new(vfs_proto::StreamReadAtRequest {
+            path: path.to_string(),
+            offset,
+            blocking,
+            timeout_ms,
+            auth_token: self.auth_token.clone(),
+        });
+        let resp = client
+            .stream_read_at(req)
+            .await
+            .map_err(|e| format!("StreamReadAt({path}): {e}"))?
+            .into_inner();
+        if resp.is_error {
+            let err = String::from_utf8_lossy(&resp.error_payload);
+            return Err(format!("StreamReadAt({path}): server error: {err}"));
+        }
+        Ok(StreamReadResult {
+            data: resp.data,
+            next_offset: resp.next_offset,
+            eof: resp.eof,
+        })
+    }
+
     /// Health check — returns (version, zone_id, uptime_seconds).
     #[allow(dead_code)]
     pub fn ping(&self) -> Result<(String, String, i64), String> {
@@ -295,6 +387,9 @@ pub struct ReadResult {
     pub content_id: String,
     pub size: u64,
     pub gen: u64,
+    pub entry_type: i32,
+    pub stream_next_offset: Option<u64>,
+    pub post_hook_needed: bool,
 }
 
 /// Result of a typed Write RPC.
@@ -302,6 +397,13 @@ pub struct WriteRpcResult {
     pub content_id: String,
     pub size: u64,
     pub gen: u64,
+}
+
+/// Result of a typed StreamReadAt RPC.
+pub struct StreamReadResult {
+    pub data: Vec<u8>,
+    pub next_offset: u64,
+    pub eof: bool,
 }
 
 /// Retry only on transient gRPC failures (UNAVAILABLE, DEADLINE_EXCEEDED).

@@ -208,43 +208,50 @@ def test_kernel_client_agent_registry_proxy_wraps_external_lifecycle_calls() -> 
     ]
 
 
-def test_kernel_client_sys_read_honors_nonblocking_timeout() -> None:
+def test_kernel_client_sys_read_threads_timeout_and_offset_through_typed_read() -> None:
+    """sys_read goes through the typed Read RPC with timeout_ms/offset on the wire.
+
+    Replaces the prior Call("sys_read", …) fallback path. Asserts the
+    proto-extension contract: the typed handler reads timeout_ms / offset
+    from the request and returns the full pipe/stream fields.
+    """
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.content = b""
+            self.content_id = ""
+            self.gen = 0
+            self.entry_type = 3
+            self.post_hook_needed = False
+
+        @staticmethod
+        def HasField(_name: str) -> bool:
+            return False
+
     class FakeTransport:
         def __init__(self) -> None:
-            self.read_file_calls = 0
-            self.call_rpc_calls: list[tuple[str, dict[str, object]]] = []
+            self.read_calls: list[dict[str, object]] = []
 
-        def read_file(self, *_args: object, **_kwargs: object) -> bytes:
-            self.read_file_calls += 1
-            return b"typed"
-
-        def call_rpc(
-            self,
-            method: str,
-            params: dict[str, object],
-            auth_token: str | None = None,  # noqa: ARG002
-        ) -> dict[str, object]:
-            self.call_rpc_calls.append((method, params))
-            return {
-                "data": b"",
-                "content_id": None,
-                "gen": 0,
-                "entry_type": 3,
-                "stream_next_offset": None,
-                "post_hook_needed": False,
-            }
+        def read(self, path: str, **kwargs: object) -> FakeResponse:
+            self.read_calls.append({"path": path, **kwargs})
+            return FakeResponse()
 
     client = KernelClient(server_address="127.0.0.1:1")
     transport = FakeTransport()
     client._transport = transport
 
-    result = client.sys_read("/nexus/pipes/task-dispatch", timeout_ms=0)
+    result = client.sys_read("/nexus/pipes/task-dispatch", timeout_ms=0, offset=42)
 
     assert result.data == b""
     assert result.entry_type == 3
-    assert transport.read_file_calls == 0
-    assert transport.call_rpc_calls == [
-        ("sys_read", {"path": "/nexus/pipes/task-dispatch", "timeout_ms": 0, "offset": 0})
+    assert transport.read_calls == [
+        {
+            "path": "/nexus/pipes/task-dispatch",
+            "content_id": "",
+            "timeout_ms": 0,
+            "offset": 42,
+            "read_timeout": client._timeout,
+        }
     ]
 
 

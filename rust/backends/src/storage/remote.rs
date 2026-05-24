@@ -124,86 +124,24 @@ impl ObjectStore for RemoteBackend {
             zone_path = %self.zone_path,
             server_path = %path,
             content_id = %content_id,
-            "RemoteBackend::read_content → Call RPC sys_read"
+            "RemoteBackend::read_content → typed Read RPC"
         );
 
-        // Issue #3786: use Call RPC, not native Read RPC.
-        //
-        // The native Read RPC path on hub calls `resolve_context(token)` which
-        // builds a minimal OperationContext with no `zone_perms`.  Hub's
-        // enforcer then falls through to the namespace/ReBAC visibility check
-        // which raises NexusFileNotFoundError for multi-zone tokens whose
-        // subject has no registered namespace.
-        //
-        // The Call RPC path goes through hub's `dispatch_call_sync` →
-        // `authenticate(token)` → full auth dict including `zone_perms` →
-        // `get_operation_context(auth_dict)` → Python OperationContext with
-        // zone_perms populated.  The enforcer's zone_perms fast-path then
-        // correctly grants access to zones listed in the token.
-        let payload = serde_json::json!({ "path": path });
-        let bytes = serde_json::to_vec(&payload)
-            .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
-        let (resp, is_error) = self.transport.call("sys_read", &bytes).map_err(|e| {
+        // Typed Read carries the full OperationContext (incl. zone_perms)
+        // because hub `resolve_context(token)` returns the same dict the
+        // generic Call path used to build — the federation guards in the
+        // typed handler were dropped once that became the SSOT.
+        let result = self.transport.read(&path, "").map_err(|e| {
             tracing::warn!(path = %path, err = %e, "RemoteBackend::read_content transport error");
             StorageError::IOError(std::io::Error::other(e))
         })?;
 
-        if is_error {
-            let msg = String::from_utf8_lossy(&resp);
-            tracing::warn!(
-                path = %path,
-                error = %msg,
-                "RemoteBackend::read_content hub returned error"
-            );
-            return Err(StorageError::IOError(std::io::Error::other(format!(
-                "sys_read({path}): {msg}"
-            ))));
-        }
-
-        // Response envelope: {"result": {"__type__": "bytes", "data": "<base64>"}}
-        let value: serde_json::Value = serde_json::from_slice(&resp)
-            .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
-        let result = value.get("result").ok_or_else(|| {
-            StorageError::IOError(std::io::Error::other(format!(
-                "sys_read({path}): no result key in response"
-            )))
-        })?;
-
-        if result.get("__type__").and_then(|t| t.as_str()) == Some("bytes") {
-            let data = result
-                .get("data")
-                .and_then(|d| d.as_str())
-                .unwrap_or_default();
-            use base64::Engine;
-            let content = base64::engine::general_purpose::STANDARD
-                .decode(data)
-                .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
-            tracing::debug!(
-                path = %path,
-                bytes = content.len(),
-                "RemoteBackend::read_content ok (bytes)"
-            );
-            return Ok(content);
-        }
-
-        // Fallback: plain string (text files that bypassed bytes-wrapping)
-        if let Some(s) = result.as_str() {
-            tracing::debug!(
-                path = %path,
-                bytes = s.len(),
-                "RemoteBackend::read_content ok (string fallback)"
-            );
-            return Ok(s.as_bytes().to_vec());
-        }
-
-        tracing::warn!(
+        tracing::debug!(
             path = %path,
-            result = ?result,
-            "RemoteBackend::read_content unexpected result shape"
+            bytes = result.content.len(),
+            "RemoteBackend::read_content ok"
         );
-        Err(StorageError::IOError(std::io::Error::other(format!(
-            "sys_read({path}): unexpected result shape"
-        ))))
+        Ok(result.content)
     }
 
     fn write_content(
@@ -364,35 +302,16 @@ impl ObjectStore for RemoteBackend {
     }
 
     fn delete_file(&self, path: &str) -> Result<(), StorageError> {
-        // Issue #3786: route deletes through Call RPC, not native Delete RPC.
-        // Native Delete on the hub uses Rust resolve_context which does NOT
-        // carry zone_perms into Python — so a federation token with zone:r
-        // would otherwise reach sys_unlink without the read-only enforcement
-        // path firing.  Call RPC goes through dispatch_call_sync where the
-        // Python OperationContext is rebuilt with full zone_perms and the
-        // enforcer's read-only gate runs before the kernel touches anything.
+        // Same SSOT story as read_content: typed Delete hands the full
+        // OperationContext (incl. zone_perms for federation tokens) to
+        // KernelAbi::sys_unlink, so the read-only enforcement path the
+        // legacy Issue #3786 comment cared about now fires identically
+        // on the typed wire.
         let server_path = to_server_path(&self.zone_path, path);
-        let payload = serde_json::json!({ "path": server_path });
-        let bytes = serde_json::to_vec(&payload)
-            .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
-        let (resp, is_error) = self
-            .transport
-            .call("sys_unlink", &bytes)
-            .map_err(|e| {
-                tracing::warn!(path = %server_path, err = %e, "RemoteBackend::delete_file transport error");
-                StorageError::IOError(std::io::Error::other(e))
-            })?;
-        if is_error {
-            let msg = String::from_utf8_lossy(&resp);
-            tracing::warn!(
-                path = %server_path,
-                error = %msg,
-                "RemoteBackend::delete_file hub returned error"
-            );
-            return Err(StorageError::IOError(std::io::Error::other(format!(
-                "sys_unlink({server_path}): {msg}"
-            ))));
-        }
+        self.transport.delete(&server_path, false).map_err(|e| {
+            tracing::warn!(path = %server_path, err = %e, "RemoteBackend::delete_file failed");
+            StorageError::IOError(std::io::Error::other(e))
+        })?;
         Ok(())
     }
 

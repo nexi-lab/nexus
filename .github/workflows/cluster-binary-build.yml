@@ -32,10 +32,13 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nexusd-cluster-linux-x86_64
             binary: nexusd-cluster
-            # Real measured size after kernel + slim backends + VFS Call
-            # file API surface + remote-zone backend support: ~12.64 MiB.
-            # Keep ~128 KiB headroom rather than masking large regressions.
-            max_size_bytes: 13369344  # 12.75 MiB
+            # Real measured size after the data-plane work (~12.6 MiB
+            # baseline on develop) + the gRPC typed-RPC surface this PR
+            # adds on top. Budget set to leave ~400 KiB headroom for the
+            # remaining typed-RPC additions; still a finite 2x-regression
+            # tripwire. TODO: cut back via release-profile LTO +
+            # panic=abort + strip; sudowork target is 5 MiB.
+            max_size_bytes: 13631488  # 13 MiB
           - os: macos-14
             artifact_name: nexusd-cluster-macos-arm64
             binary: nexusd-cluster

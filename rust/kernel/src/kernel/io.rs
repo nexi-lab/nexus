@@ -2,10 +2,12 @@
 //! `convenience.rs` for Tier 2.
 //!
 //! File I/O syscalls: `sys_read`, `sys_write`, `sys_stat`,
-//! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`.
+//! `sys_unlink`, `sys_rename`, `sys_copy`.
 //!
-//! `sys_rmdir` is kernel-internal (`pub(crate)`) — only called from
-//! `sys_unlink` DT_DIR branch. Removed from PyO3 surface in C21.
+//! Also hosts the optimized inherent bodies for the Tier 2 `access`,
+//! `mkdir`, and `rmdir` overrides — reached by Rust callers via
+//! `KernelConvenience`. `rmdir` is additionally invoked in-kernel by
+//! the `sys_unlink` DT_DIR branch.
 
 use std::sync::atomic::Ordering;
 
@@ -1210,9 +1212,10 @@ impl Kernel {
             }
             DT_DIR => {
                 // §12e: handle DT_DIR inline instead of returning miss.
-                // Delegates to sys_rmdir which handles recursive delete,
-                // backend rmdir, dcache evict, and observer dispatch.
-                let rmdir_result = self.sys_rmdir(path, ctx, recursive)?;
+                // Delegates to the Tier 2 `rmdir` override, which handles
+                // recursive delete, backend rmdir, dcache evict, and
+                // observer dispatch.
+                let rmdir_result = self.rmdir(path, ctx, recursive)?;
                 return Ok(SysUnlinkResult {
                     hit: rmdir_result.hit,
                     entry_type: DT_DIR,
@@ -1973,7 +1976,7 @@ impl Kernel {
 
         Ok(SysCopyResult {
             hit: true,
-            post_hook_needed: self.copy_hook_count.load(Ordering::Relaxed) > 0,
+            post_hook_needed: false,
             dst_path: dst_path.to_string(),
             content_id: Some(content_id),
             size,
@@ -2025,14 +2028,16 @@ impl Kernel {
         Ok((wr.content_id, wr.size))
     }
 
-    // ── sys_mkdir ──────────────────────────────────────────────────────
+    // ── mkdir (Tier 2 override) ────────────────────────────────────────
 
-    /// Rust syscall: full mkdir (validate → route → backend → metastore → dcache).
+    /// Tier 2 `mkdir` — optimized inherent body behind
+    /// `KernelConvenience::mkdir` (validate → route → backend →
+    /// metastore → observer dispatch).
     ///
-    /// Returns `hit=true` when Rust completed the full operation.
-    /// Python only dispatches event notify + POST hooks when hit=true.
-    /// `parents=true` creates parent directories. `exist_ok=true` ignores existing.
-    pub fn sys_mkdir(
+    /// Returns `hit=true` when the kernel completed the full operation.
+    /// `parents=true` creates parent directories; `exist_ok=true`
+    /// treats an existing directory as success.
+    pub(crate) fn mkdir(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -2069,7 +2074,7 @@ impl Kernel {
             }
             return Ok(SysMkdirResult {
                 hit: true,
-                post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                post_hook_needed: false,
             });
         }
 
@@ -2099,7 +2104,7 @@ impl Kernel {
                 }
                 return Ok(SysMkdirResult {
                     hit: true,
-                    post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                    post_hook_needed: false,
                 });
             }
         }
@@ -2146,7 +2151,7 @@ impl Kernel {
 
         Ok(SysMkdirResult {
             hit: true,
-            post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+            post_hook_needed: false,
         })
     }
 
@@ -2205,13 +2210,16 @@ impl Kernel {
         Ok(())
     }
 
-    // ── sys_rmdir ──────────────────────────────────────────────────────
+    // ── rmdir (Tier 2 override) ────────────────────────────────────────
 
-    /// Rust syscall: full rmdir (validate → route → children check → delete → dcache).
+    /// Tier 2 `rmdir` — optimized inherent body behind
+    /// `KernelConvenience::rmdir` (validate → route → children check →
+    /// delete → observer dispatch).
     ///
-    /// Returns `hit=true` when Rust completed the full operation.
-    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE → Python handles unmount.
-    pub fn sys_rmdir(
+    /// Returns `hit=true` when the kernel completed the full operation.
+    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE — unmount is
+    /// handled by the mount-lifecycle path, not `rmdir`.
+    pub(crate) fn rmdir(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -2308,7 +2316,7 @@ impl Kernel {
         self.lock_manager.do_release(lock_handle);
 
         // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
-        // Like sys_mkdir, only the top-level rmdir event fires —
+        // Like mkdir, only the top-level rmdir event fires —
         // recursively-deleted children don't generate individual events
         // (observers needing per-child notifications can list the
         // directory before unlink themselves; the top-level event is
@@ -2319,7 +2327,7 @@ impl Kernel {
 
         Ok(SysRmdirResult {
             hit: true,
-            post_hook_needed: self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
+            post_hook_needed: false,
             children_deleted,
         })
     }
@@ -2511,8 +2519,7 @@ impl Kernel {
                     results.push(Ok(SysWriteResult {
                         hit: true,
                         content_id: Some(wr.content_id),
-                        post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0
-                            || self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
+                        post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                         version: new_version,
                         gen: new_gen,
                         size: wr.size,

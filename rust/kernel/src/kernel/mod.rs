@@ -674,14 +674,8 @@ pub struct Kernel {
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
-    stat_hook_count: AtomicU64,
     delete_hook_count: AtomicU64,
     rename_hook_count: AtomicU64,
-    mkdir_hook_count: AtomicU64,
-    rmdir_hook_count: AtomicU64,
-    copy_hook_count: AtomicU64,
-    access_hook_count: AtomicU64,
-    write_batch_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching lock-free).
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
@@ -741,7 +735,10 @@ pub struct Kernel {
     /// directly so kernel-internal callers keep the same shared runtime
     /// regardless of whether the cdylib has installed the real peer
     /// client yet.
-    pub(crate) runtime: Arc<tokio::runtime::Runtime>,
+    // `Option` so `Drop` can `take()` the Arc and hand it to an
+    // off-context thread — see the `Drop for Kernel` impl. `Some` for
+    // the entire observable lifetime of the kernel.
+    pub(crate) runtime: Option<Arc<tokio::runtime::Runtime>>,
     // Shared tokio runtime — constructed once at Kernel::new and used by
     // every peer RPC (scatter-gather chunk fetch + federation remote
     // reads). Replaces the one-shot `Builder::new_current_thread()` inside
@@ -854,14 +851,8 @@ impl Kernel {
             read_batch_max_aggregate_bytes: AtomicUsize::new(usize::MAX),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
-            stat_hook_count: AtomicU64::new(0),
             delete_hook_count: AtomicU64::new(0),
             rename_hook_count: AtomicU64::new(0),
-            mkdir_hook_count: AtomicU64::new(0),
-            rmdir_hook_count: AtomicU64::new(0),
-            copy_hook_count: AtomicU64::new(0),
-            access_hook_count: AtomicU64::new(0),
-            write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
@@ -873,7 +864,7 @@ impl Kernel {
             fdt: crate::fdt::FileDescriptorTable::new(),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
-            runtime,
+            runtime: Some(runtime),
             peer_client: parking_lot::RwLock::new(peer_client_dyn),
             distributed_coordinator: parking_lot::RwLock::new(
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
@@ -1058,7 +1049,7 @@ impl Kernel {
     /// every other field supplied by the caller.
     ///
     /// DRY helper for the ~10 write paths that persist inode
-    /// records (sys_write, sys_mkdir, rename destination, pipe/stream
+    /// records (sys_write, mkdir, rename destination, pipe/stream
     /// registration, batch write, …). `zone_id` is the destination zone —
     /// callers pass `&route.zone_id` or an explicit zone (e.g.
     /// `contracts::ROOT_ZONE_ID` for kernel-internal IPC inodes). The
@@ -1806,13 +1797,19 @@ impl Kernel {
 
     /// DT_PIPE: create pipe buffer, or idempotent-open if it already exists.
     ///
+    /// Private `sys_setattr` helper — the DT_PIPE arm of the
+    /// `sys_setattr` matrix dispatches here. Not a standalone syscall:
+    /// callers reach DT_PIPE creation through `sys_setattr(entry_type=
+    /// DT_PIPE, read_fd=…, write_fd=…, capacity=…)`, the same way
+    /// `setattr_stream` backs the DT_STREAM arm.
+    ///
     /// `io_profile`:
     /// - `"memory"` (default) → MemoryPipeBackend
     /// - `"shared_memory"` → SharedMemoryPipeBackend (mmap, cross-process)
     /// - `"stdio"` → StdioPipeBackend (subprocess fd, newline-framed)
     /// - `"wal"` → WalPipeCore (raft-replicated, cross-node, single-consumer)
     #[allow(unused_variables)]
-    pub fn setattr_pipe(
+    fn setattr_pipe(
         &self,
         path: &str,
         capacity: usize,
@@ -2292,14 +2289,8 @@ impl Kernel {
         match op {
             "read" => self.read_hook_count.store(count, Ordering::Relaxed),
             "write" => self.write_hook_count.store(count, Ordering::Relaxed),
-            "stat" => self.stat_hook_count.store(count, Ordering::Relaxed),
             "delete" => self.delete_hook_count.store(count, Ordering::Relaxed),
             "rename" => self.rename_hook_count.store(count, Ordering::Relaxed),
-            "mkdir" => self.mkdir_hook_count.store(count, Ordering::Relaxed),
-            "rmdir" => self.rmdir_hook_count.store(count, Ordering::Relaxed),
-            "copy" => self.copy_hook_count.store(count, Ordering::Relaxed),
-            "access" => self.access_hook_count.store(count, Ordering::Relaxed),
-            "write_batch" => self.write_batch_hook_count.store(count, Ordering::Relaxed),
             _ => {}
         }
     }
@@ -2309,14 +2300,8 @@ impl Kernel {
         match op {
             "read" => self.read_hook_count.load(Ordering::Relaxed) > 0,
             "write" => self.write_hook_count.load(Ordering::Relaxed) > 0,
-            "stat" => self.stat_hook_count.load(Ordering::Relaxed) > 0,
             "delete" => self.delete_hook_count.load(Ordering::Relaxed) > 0,
             "rename" => self.rename_hook_count.load(Ordering::Relaxed) > 0,
-            "mkdir" => self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
-            "rmdir" => self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
-            "copy" => self.copy_hook_count.load(Ordering::Relaxed) > 0,
-            "access" => self.access_hook_count.load(Ordering::Relaxed) > 0,
-            "write_batch" => self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
             _ => false,
         }
     }
@@ -2331,7 +2316,9 @@ impl Kernel {
     /// directly; peer crates (backends LLM connectors, transport gRPC
     /// server) clone it for their async work.
     pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
-        &self.runtime
+        self.runtime
+            .as_ref()
+            .expect("kernel runtime present for the Kernel's lifetime")
     }
 
     /// Replace the kernel's `peer_client` slot with a concrete
@@ -2639,19 +2626,21 @@ impl Drop for Kernel {
         // survive past Python process exit and keep xdist worker processes
         // alive indefinitely (~39 min hang on macOS CI).
         //
-        // We replace the Arc with a dummy single-threaded runtime, then
-        // drop the original. When the last Arc ref drops, tokio's own
-        // Drop impl shuts down the worker threads. The swap ensures this
-        // Kernel's drop triggers the shutdown even if other Arcs exist
-        // (they'd hold the dummy, which is cheap to drop).
-        let dummy = std::sync::Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .build()
-                .expect("dummy runtime for Kernel::drop"),
-        );
-        let old = std::mem::replace(&mut self.runtime, dummy);
-        // Explicitly drop — if this is the last Arc, tokio shuts down workers.
-        drop(old);
+        // Dropping a multi-thread `Runtime` joins its worker threads — a
+        // blocking operation tokio forbids from inside an async context
+        // (it panics: "Cannot drop a runtime in a context where blocking
+        // is not allowed"). A `Kernel` can legitimately be dropped from
+        // such a context — e.g. an `Arc<Kernel>` going out of scope at
+        // the end of a `#[tokio::test]` body. `runtime` is therefore an
+        // `Option`: `take()` it (leaving `None`, whose field-drop is a
+        // no-op) and drop the Arc on a dedicated OS thread, where the
+        // join is allowed. When it is the last ref, tokio shuts the
+        // workers down there.
+        if let Some(old) = self.runtime.take() {
+            let _ = std::thread::Builder::new()
+                .name("nexus-kernel-rt-drop".into())
+                .spawn(move || drop(old));
+        }
     }
 }
 
@@ -2861,7 +2850,7 @@ mod tests {
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write_with_link_depth("/src.txt", &ctx, b"body", 0, 1)
             .unwrap();
-        k.sys_mkdir("/dst", &ctx, true, true).unwrap();
+        k.mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
             Err(KernelError::InvalidPath(msg)) => {
@@ -3748,7 +3737,7 @@ mod tests {
         use std::time::Duration;
 
         #[test]
-        fn sys_mkdir_invalidates_parent_listing_index_cache() {
+        fn mkdir_invalidates_parent_listing_index_cache() {
             let k = Kernel::new();
             let _td = tempfile::tempdir().unwrap();
             let ms: Arc<dyn MetaStore> =
@@ -3768,7 +3757,7 @@ mod tests {
             );
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            k.sys_mkdir("/data/fresh", &ctx, false, false).unwrap();
+            k.mkdir("/data/fresh", &ctx, false, false).unwrap();
 
             let entries = k.sys_readdir("/data", "root", false);
             assert!(entries.contains(&("/data/fresh".to_string(), DT_DIR)));

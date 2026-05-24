@@ -5,7 +5,7 @@ import warnings
 
 from nexus.grpc.vfs import vfs_pb2 as nexus_dot_grpc_dot_vfs_dot_vfs__pb2
 
-GRPC_GENERATED_VERSION = '1.78.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -64,6 +64,116 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.FromString,
                 _registered_method=True)
+        self.BatchWrite = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/BatchWrite',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.FromString,
+                _registered_method=True)
+        self.Stat = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Stat',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.FromString,
+                _registered_method=True)
+        self.Readdir = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Readdir',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.FromString,
+                _registered_method=True)
+        self.BatchStat = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/BatchStat',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.FromString,
+                _registered_method=True)
+        self.Setattr = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Setattr',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.FromString,
+                _registered_method=True)
+        self.Rename = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Rename',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameResponse.FromString,
+                _registered_method=True)
+        self.Copy = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Copy',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.FromString,
+                _registered_method=True)
+        self.Lock = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Lock',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockResponse.FromString,
+                _registered_method=True)
+        self.Unlock = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Unlock',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockResponse.FromString,
+                _registered_method=True)
+        self.Watch = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Watch',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.FromString,
+                _registered_method=True)
+        self.GetXattr = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/GetXattr',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrResponse.FromString,
+                _registered_method=True)
+        self.SetXattr = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/SetXattr',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrResponse.FromString,
+                _registered_method=True)
+        self.GetXattrBulk = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/GetXattrBulk',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
+                _registered_method=True)
+        self.Mkdir = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Mkdir',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirResponse.FromString,
+                _registered_method=True)
+        self.ClosePipe = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/ClosePipe',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+                _registered_method=True)
+        self.HasPipe = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/HasPipe',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+                _registered_method=True)
+        self.CloseAllPipes = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/CloseAllPipes',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcEmpty.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+                _registered_method=True)
+        self.CloseStream = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/CloseStream',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+                _registered_method=True)
+        self.HasStream = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/HasStream',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+                _registered_method=True)
+        self.StreamWriteNowait = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/StreamWriteNowait',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteResponse.FromString,
+                _registered_method=True)
+        self.StreamReadAt = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/StreamReadAt',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtResponse.FromString,
+                _registered_method=True)
+        self.StreamCollectAll = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/StreamCollectAll',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamCollectAllResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -111,6 +221,156 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def BatchWrite(self, request, context):
+        """Vectored batch write — native bytes (no base64 tax) + per-item
+        error isolation. Replaces the generic `write_batch` Call.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Stat(self, request, context):
+        """Typed metadata stat — the hottest metadata op.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Readdir(self, request, context):
+        """Typed directory listing — metastore + backend merge, procfs intercepts.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BatchStat(self, request, context):
+        """Vectored stat — single redb txn on the optimized KernelConvenience
+        override. Per-path not-found is in-band (`found = false`).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Setattr(self, request, context):
+        """Typed attribute set / inode create. Exposes the subset of the
+        21-param inherent sys_setattr that crosses the JSON wire today —
+        Arc<ObjectStore>, metastore, raft_backend, read_fd/write_fd, source,
+        and remote_metastore stay off this RPC (they need in-process refs).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Rename(self, request, context):
+        """Typed rename / server-side copy.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Copy(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Lock(self, request, context):
+        """Typed advisory-lock acquire / release.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Unlock(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Watch(self, request, context):
+        """Typed file-event watch (blocking, inotify-shaped).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetXattr(self, request, context):
+        """Typed xattr (extended-attribute) ops — Tier 2 KernelConvenience.
+        Direct-metastore path, no hooks / no permission gate.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetXattr(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetXattrBulk(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Mkdir(self, request, context):
+        """Typed mkdir — the prior generic `sys_mkdir` Call retired.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClosePipe(self, request, context):
+        """Typed IPC pipe / stream ops. Creation goes through `Setattr` with
+        entry_type=DT_PIPE / DT_STREAM (no separate Create*Ipc RPC needed).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def HasPipe(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseAllPipes(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def HasStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamWriteNowait(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamReadAt(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamCollectAll(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -143,6 +403,116 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.BatchRead,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.SerializeToString,
+            ),
+            'BatchWrite': grpc.unary_unary_rpc_method_handler(
+                    servicer.BatchWrite,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.SerializeToString,
+            ),
+            'Stat': grpc.unary_unary_rpc_method_handler(
+                    servicer.Stat,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.SerializeToString,
+            ),
+            'Readdir': grpc.unary_unary_rpc_method_handler(
+                    servicer.Readdir,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.SerializeToString,
+            ),
+            'BatchStat': grpc.unary_unary_rpc_method_handler(
+                    servicer.BatchStat,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.SerializeToString,
+            ),
+            'Setattr': grpc.unary_unary_rpc_method_handler(
+                    servicer.Setattr,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.SerializeToString,
+            ),
+            'Rename': grpc.unary_unary_rpc_method_handler(
+                    servicer.Rename,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameResponse.SerializeToString,
+            ),
+            'Copy': grpc.unary_unary_rpc_method_handler(
+                    servicer.Copy,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.SerializeToString,
+            ),
+            'Lock': grpc.unary_unary_rpc_method_handler(
+                    servicer.Lock,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockResponse.SerializeToString,
+            ),
+            'Unlock': grpc.unary_unary_rpc_method_handler(
+                    servicer.Unlock,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockResponse.SerializeToString,
+            ),
+            'Watch': grpc.unary_unary_rpc_method_handler(
+                    servicer.Watch,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.SerializeToString,
+            ),
+            'GetXattr': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetXattr,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrResponse.SerializeToString,
+            ),
+            'SetXattr': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetXattr,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrResponse.SerializeToString,
+            ),
+            'GetXattrBulk': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetXattrBulk,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.SerializeToString,
+            ),
+            'Mkdir': grpc.unary_unary_rpc_method_handler(
+                    servicer.Mkdir,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirResponse.SerializeToString,
+            ),
+            'ClosePipe': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClosePipe,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.SerializeToString,
+            ),
+            'HasPipe': grpc.unary_unary_rpc_method_handler(
+                    servicer.HasPipe,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.SerializeToString,
+            ),
+            'CloseAllPipes': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseAllPipes,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcEmpty.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.SerializeToString,
+            ),
+            'CloseStream': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseStream,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.SerializeToString,
+            ),
+            'HasStream': grpc.unary_unary_rpc_method_handler(
+                    servicer.HasStream,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.SerializeToString,
+            ),
+            'StreamWriteNowait': grpc.unary_unary_rpc_method_handler(
+                    servicer.StreamWriteNowait,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteResponse.SerializeToString,
+            ),
+            'StreamReadAt': grpc.unary_unary_rpc_method_handler(
+                    servicer.StreamReadAt,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtResponse.SerializeToString,
+            ),
+            'StreamCollectAll': grpc.unary_unary_rpc_method_handler(
+                    servicer.StreamCollectAll,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamCollectAllResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -307,6 +677,600 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/BatchRead',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def BatchWrite(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/BatchWrite',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Stat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Stat',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Readdir(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Readdir',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReaddirResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def BatchStat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/BatchStat',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchStatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Setattr(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Setattr',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetattrResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Rename(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Rename',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.RenameResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Copy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Copy',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CopyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Lock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Lock',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.LockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Unlock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Unlock',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.UnlockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Watch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Watch',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.WatchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetXattr(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/GetXattr',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetXattr(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/SetXattr',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.SetXattrResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetXattrBulk(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/GetXattrBulk',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.GetXattrBulkResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Mkdir(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Mkdir',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.MkdirResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ClosePipe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/ClosePipe',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HasPipe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/HasPipe',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseAllPipes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/CloseAllPipes',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcEmpty.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/CloseStream',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HasStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/HasStream',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcHasResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamWriteNowait(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamWriteNowait',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamWriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamReadAt(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamReadAt',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadAtResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamCollectAll(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/StreamCollectAll',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.IpcPathRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamCollectAllResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -302,18 +302,36 @@ class RPCTransport:
     def read_file(
         self, path: str, *, content_id: str = "", read_timeout: float | None = None
     ) -> bytes:
-        """Read file content via typed Read RPC — no JSON/base64 overhead.
+        """Read file content via typed Read RPC — bytes-only convenience.
 
-        Args:
-            path: Virtual file path (used for routing on server).
-            content_id: Opaque content identifier. When set, server reads
-                content directly from the backend (no metastore lookup).
-            read_timeout: Optional per-call timeout override.
-
-        Returns:
-            Raw file content as bytes.
+        Use ``read()`` when the caller needs entry_type / stream_next_offset
+        (e.g. pipe / stream / range reads). This helper just unwraps content.
         """
-        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token, content_id=content_id)
+        return bytes(self.read(path, content_id=content_id, read_timeout=read_timeout).content)
+
+    def read(
+        self,
+        path: str,
+        *,
+        content_id: str = "",
+        timeout_ms: int = 0,
+        offset: int = 0,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Typed Read RPC — returns the full ReadResponse message.
+
+        ``timeout_ms=0`` keeps file-read semantics; non-zero blocks pipe /
+        stream reads up to that budget. ``offset`` is honored for stream
+        + range reads. Caller reads ``response.entry_type`` /
+        ``response.stream_next_offset`` for pipe/stream classification.
+        """
+        request = vfs_pb2.ReadRequest(
+            path=path,
+            auth_token=self._auth_token,
+            content_id=content_id,
+            timeout_ms=int(timeout_ms),
+            offset=int(offset),
+        )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Read(request, timeout=timeout)
@@ -321,7 +339,7 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Read")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return bytes(response.content)
+        return response
 
     @retry(
         stop=stop_after_attempt(3),
@@ -362,16 +380,18 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
-    def delete_file(
+    def delete(
         self,
         path: str,
         recursive: bool = False,
         read_timeout: float | None = None,
-    ) -> bool:
-        """Delete file or directory via typed Delete RPC.
+    ) -> Any:
+        """Delete a file or directory via the typed Delete RPC.
 
-        Returns:
-            True on success.
+        Returns the full ``DeleteResponse`` — ``success`` plus the
+        ``entry_type`` / ``path`` / ``content_id`` / ``size`` fields the
+        former ``sys_unlink`` Call carried for audit / metrics callers.
+        Raises on auth or transport failure.
         """
         request = vfs_pb2.DeleteRequest(path=path, auth_token=self._auth_token, recursive=recursive)
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -381,7 +401,606 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Delete")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return bool(response.success)
+        return response
+
+    def delete_file(
+        self,
+        path: str,
+        recursive: bool = False,
+        read_timeout: float | None = None,
+    ) -> bool:
+        """Back-compat thin wrapper over ``delete()`` — returns the
+        ``success`` bool that the legacy callers expect."""
+        return bool(self.delete(path, recursive, read_timeout).success)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = True,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Mkdir via the typed Mkdir RPC. Returns the MkdirResponse."""
+        request = vfs_pb2.MkdirRequest(
+            path=path, auth_token=self._auth_token, parents=parents, exist_ok=exist_ok
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Mkdir(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Mkdir")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def batch_read(
+        self,
+        items: list[tuple[str, int, int | None]],
+        read_timeout: float | None = None,
+    ) -> list[Any]:
+        """Vectored batch read via the typed BatchRead RPC — one round-trip.
+
+        ``items`` is a list of ``(path, offset, length)`` tuples; ``length``
+        is omitted from the request when ``None`` (read to EOF from offset).
+        Returns the ``BatchReadItemResponse`` messages in input order —
+        per-item failures are reported in-band (``is_error`` /
+        ``error_payload``); only transport-level failures raise.
+        """
+        req_items = []
+        for path, offset, length in items:
+            item = vfs_pb2.BatchReadItemRequest(path=path, offset=offset)
+            if length is not None:
+                item.length = length
+            req_items.append(item)
+        request = vfs_pb2.BatchReadRequest(auth_token=self._auth_token, items=req_items)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.BatchRead(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "BatchRead")
+        return list(response.results)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def batch_write(
+        self,
+        files: list[tuple[str, bytes]],
+        read_timeout: float | None = None,
+    ) -> list[Any]:
+        """Vectored batch write via the typed BatchWrite RPC — one round-trip.
+
+        Native bytes — no base64/JSON tax. The kernel attempts every item
+        (create-or-overwrite, per-item isolated); this raises the first
+        per-item failure, preserving the all-or-nothing contract of the
+        former generic ``write_batch`` Call. Returns the per-item success
+        responses in input order.
+        """
+        request = vfs_pb2.BatchWriteRequest(
+            auth_token=self._auth_token,
+            items=[
+                vfs_pb2.BatchWriteItemRequest(path=path, content=content) for path, content in files
+            ],
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.BatchWrite(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "BatchWrite")
+        for item in response.results:
+            if item.is_error:
+                self._handle_typed_error(item.error_payload)
+        return list(response.results)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def readdir(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> list[Any]:
+        """List directory entries via the typed Readdir RPC.
+
+        Returns the ``ReaddirEntry`` list from the response (raw protobuf
+        objects with ``.name`` / ``.entry_type``). Raises on auth or
+        transport failure; the handler treats ``is_admin`` as a
+        ctx-derived field, so it's not part of the request.
+        """
+        request = vfs_pb2.ReaddirRequest(path=path, auth_token=self._auth_token, zone_id=zone_id)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Readdir(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Readdir")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return list(response.entries)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def batch_stat(
+        self,
+        paths: list[str],
+        zone_id: str = "",
+        read_timeout: float | None = None,
+    ) -> list[Any]:
+        """Vectored stat via the typed BatchStat RPC.
+
+        Returns the ``BatchStatItem`` list in input order (same length as
+        ``paths``). Each item exposes the stat fields plus a ``found``
+        flag — per-path not-found is in-band, not an error. Raises on
+        auth or transport failure.
+        """
+        request = vfs_pb2.BatchStatRequest(
+            auth_token=self._auth_token, zone_id=zone_id, paths=list(paths)
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.BatchStat(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "BatchStat")
+        return list(response.results)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
+        """Stat a path via the typed Stat RPC.
+
+        Returns the ``StatResponse`` message, or ``None`` when the path
+        does not exist (``found == false`` — not an error). Raises on
+        auth / transport failure.
+        """
+        request = vfs_pb2.StatRequest(path=path, auth_token=self._auth_token, zone_id=zone_id)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Stat(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Stat")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response if response.found else None
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def setattr(self, path: str, read_timeout: float | None = None, **kwargs: Any) -> Any:
+        """Set attributes via the typed Setattr RPC.
+
+        Accepts the JSON-Call kwargs (``entry_type``, ``zone_id``,
+        ``mime_type``, ``content_id``, ``modified_at_ms``,
+        ``created_at_ms``, ``size``, ``version``, ``backend_name``,
+        ``io_profile``, ``is_external``, ``capacity``); unknown kwargs
+        are silently dropped, matching the Call path's pick-known-keys
+        behaviour. Returns the ``SetattrResponse`` message; raises on
+        auth or transport failure.
+        """
+        request = vfs_pb2.SetattrRequest(
+            path=path,
+            auth_token=self._auth_token,
+            entry_type=int(kwargs.get("entry_type", 0) or 0),
+            zone_id=kwargs.get("zone_id", "") or "",
+            backend_name=kwargs.get("backend_name", "") or "",
+            io_profile=kwargs.get("io_profile", "") or "",
+            is_external=bool(kwargs.get("is_external", False)),
+            capacity=int(kwargs.get("capacity", 0) or 0),
+        )
+        # Optional fields — only set when the caller actually supplied a
+        # non-None value so `HasField` round-trips correctly.
+        for opt_field in (
+            "mime_type",
+            "content_id",
+            "modified_at_ms",
+            "created_at_ms",
+            "size",
+            "version",
+        ):
+            val = kwargs.get(opt_field)
+            if val is not None:
+                setattr(request, opt_field, val)
+
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Setattr(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Setattr")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def rename(self, path: str, new_path: str, read_timeout: float | None = None) -> Any:
+        """Rename via the typed Rename RPC. Returns the RenameResponse."""
+        request = vfs_pb2.RenameRequest(path=path, new_path=new_path, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Rename(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Rename")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def copy(self, src: str, dst: str, read_timeout: float | None = None) -> Any:
+        """Server-side copy via the typed Copy RPC. Returns the CopyResponse."""
+        request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Copy(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Copy")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def lock(
+        self,
+        path: str,
+        lock_id: str = "",
+        timeout_ms: int = 5000,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Acquire an advisory lock via the typed Lock RPC.
+
+        Returns the ``LockResponse`` — ``acquired=false`` means contention,
+        not a transport error. Raises on auth or transport failure.
+        """
+        request = vfs_pb2.LockRequest(
+            path=path,
+            auth_token=self._auth_token,
+            lock_id=lock_id,
+            timeout_ms=timeout_ms,
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Lock(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Lock")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def unlock(
+        self,
+        path: str,
+        lock_id: str = "",
+        force: bool = False,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Release an advisory lock via the typed Unlock RPC."""
+        request = vfs_pb2.UnlockRequest(
+            path=path, auth_token=self._auth_token, lock_id=lock_id, force=force
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Unlock(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Unlock")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def watch(
+        self,
+        path: str,
+        timeout_ms: int = 30000,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Block on a file-event match via the typed Watch RPC.
+
+        Returns the ``WatchResponse`` — ``matched=false`` means the
+        kernel timed out (no event), not a transport error. The RPC
+        deadline is sized to the kernel timeout plus a small slack so
+        callers with ``timeout_ms`` larger than the transport's default
+        90 s aren't cut short.
+        """
+        request = vfs_pb2.WatchRequest(
+            path=path, auth_token=self._auth_token, timeout_ms=timeout_ms
+        )
+        timeout = read_timeout if read_timeout is not None else max(timeout_ms / 1000.0 + 5.0, 5.0)
+        try:
+            response = self._stub.Watch(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Watch")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def get_xattr(self, path: str, key: str, read_timeout: float | None = None) -> Any:
+        """Get a single xattr via the typed GetXattr RPC.
+
+        Returns the ``GetXattrResponse`` — ``found=false`` means the key
+        is not set, not an error.
+        """
+        request = vfs_pb2.GetXattrRequest(path=path, key=key, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.GetXattr(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "GetXattr")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def set_xattr(self, path: str, key: str, value: str, read_timeout: float | None = None) -> None:
+        """Set an xattr via the typed SetXattr RPC."""
+        request = vfs_pb2.SetXattrRequest(
+            path=path, key=key, value=value, auth_token=self._auth_token
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.SetXattr(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "SetXattr")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def get_xattr_bulk(
+        self, paths: list[str], key: str, read_timeout: float | None = None
+    ) -> list[Any]:
+        """Bulk get a single xattr via the typed GetXattrBulk RPC.
+
+        Returns the ``GetXattrBulkItem`` list (positional, same length as
+        ``paths``).
+        """
+        request = vfs_pb2.GetXattrBulkRequest(
+            paths=list(paths), key=key, auth_token=self._auth_token
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.GetXattrBulk(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "GetXattrBulk")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return list(response.items)
+
+    # ── Typed IPC pipe / stream ops ────────────────────────────────────
+
+    def _ipc_path_request(self, path: str) -> Any:
+        return vfs_pb2.IpcPathRequest(path=path, auth_token=self._auth_token)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def close_pipe(self, path: str, read_timeout: float | None = None) -> None:
+        """Close a pipe via the typed ClosePipe RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.ClosePipe(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "ClosePipe")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def has_pipe(self, path: str, read_timeout: float | None = None) -> bool:
+        """Has-pipe query via the typed HasPipe RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.HasPipe(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "HasPipe")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return bool(resp.present)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def close_all_pipes(self, read_timeout: float | None = None) -> None:
+        """Close every pipe via the typed CloseAllPipes RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.CloseAllPipes(
+                vfs_pb2.IpcEmpty(auth_token=self._auth_token), timeout=timeout
+            )
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "CloseAllPipes")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def close_stream(self, path: str, read_timeout: float | None = None) -> None:
+        """Close a stream via the typed CloseStream RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.CloseStream(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "CloseStream")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def has_stream(self, path: str, read_timeout: float | None = None) -> bool:
+        """Has-stream query via the typed HasStream RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.HasStream(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "HasStream")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return bool(resp.present)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stream_write_nowait(self, path: str, data: bytes, read_timeout: float | None = None) -> int:
+        """Non-blocking stream write via the typed StreamWriteNowait RPC.
+
+        Returns the offset where the data landed (native bytes — no base64).
+        """
+        request = vfs_pb2.StreamWriteRequest(path=path, data=data, auth_token=self._auth_token)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.StreamWriteNowait(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamWriteNowait")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return int(resp.offset)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stream_read_at(
+        self,
+        path: str,
+        offset: int,
+        blocking: bool = False,
+        timeout_ms: int = 30000,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Stream read via the typed StreamReadAt RPC.
+
+        Returns the ``StreamReadAtResponse``. On non-blocking ``eof=true``
+        means no data was available. Long blocking reads size the RPC
+        deadline to ``timeout_ms + slack`` so the transport's default
+        90 s cap doesn't cut them short.
+        """
+        request = vfs_pb2.StreamReadAtRequest(
+            path=path,
+            offset=offset,
+            blocking=blocking,
+            timeout_ms=timeout_ms,
+            auth_token=self._auth_token,
+        )
+        if read_timeout is not None:
+            timeout = read_timeout
+        elif blocking:
+            timeout = max(timeout_ms / 1000.0 + 5.0, 5.0)
+        else:
+            timeout = self._timeout
+        try:
+            resp = self._stub.StreamReadAt(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamReadAt")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return resp
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
+    def stream_collect_all(self, path: str, read_timeout: float | None = None) -> bytes:
+        """Collect all bytes from a stream via the typed StreamCollectAll RPC."""
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            resp = self._stub.StreamCollectAll(self._ipc_path_request(path), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "StreamCollectAll")
+        if resp.is_error:
+            self._handle_typed_error(resp.error_payload)
+        return bytes(resp.data)
 
     @retry(
         stop=stop_after_attempt(3),

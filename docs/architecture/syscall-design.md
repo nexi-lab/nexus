@@ -56,7 +56,8 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 
 | Method | Tier | Composes | Notes |
 |--------|------|----------|-------|
-| `rmdir` | 2 | `sys_unlink(recursive=)` | Thin delegation, overridable |
+| `mkdir` | 2 | `sys_setattr(entry_type=DT_DIR)` | Directory create; optimized inherent override on `KernelConvenience` |
+| `rmdir` | 2 | `sys_unlink(recursive=)` | Recursive directory delete; optimized inherent override on `KernelConvenience` |
 | `access` | 2 | `sys_stat` | Returns `True` if stat succeeds |
 | `is_directory` | 2 | `sys_stat` | Checks `is_directory` field |
 | `glob` | 2 | `sys_readdir` + `fnmatch` | Pattern matching over directory listing. Python-side composition. |
@@ -146,7 +147,7 @@ CAS content is freed when refcount reaches zero.
 inode types all flow through it:
 
 - **Create DT_REG**: `entry_type=DT_REG` creates a regular file (upsert — creates if absent, updates metadata if present). Accepts `content_id`, `size`, `version`, `created_at_ms`, `owner_id` for metadata population at creation time.
-- **Create others**: `entry_type=DT_DIR/DT_PIPE/DT_STREAM/DT_MOUNT` creates the inode
+- **Create others**: `entry_type=DT_DIR/DT_PIPE/DT_STREAM/DT_MOUNT` creates the inode. DT_PIPE accepts `read_fd`/`write_fd`/`capacity` for stdio-backed pipes — there is no separate pipe-creation syscall
 - **Update**: No `entry_type` updates mutable metadata fields (content_id, size, version, created_at_ms, owner_id)
 - **Idempotent open**: Same `entry_type` on existing path recovers the buffer (pipes/streams)
 - **`/__sys__/`**: Kernel management namespace (service register, config, etc.)
@@ -223,7 +224,8 @@ between DataNodes — separate from NameNode API).
 Tier 2 convenience (not kernel syscalls):
 - `access` → Tier 2 (derives from `sys_stat`)
 - `is_directory` → Tier 2 (derives from `sys_stat`)
-- `rmdir` → Tier 2 (delegates to `sys_unlink`)
+- `mkdir` → Tier 2 (`sys_setattr(entry_type=DT_DIR)`; optimized override on `KernelConvenience`)
+- `rmdir` → Tier 2 (`sys_unlink(recursive=)`; optimized override on `KernelConvenience`)
 - `get_xattr(path, key)` / `set_xattr(path, key, value)` / `get_xattr_bulk(paths, key)` → Tier 2 (Rust `KernelConvenience` trait, direct metastore — no hooks, no permission gate)
 - `glob` → Tier 2 Python (composes `sys_readdir` + `fnmatch`)
 - `grep` → Tier 2 Python (composes `sys_readdir` + `sys_read` + `re`)
@@ -436,3 +438,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §2, §4, §5 | 2026-05-07 | sys_setattr: DT_REG create (upsert) + content_id/size/version/created_at_ms/owner_id params. sys_stat: owner_id in StatResult. sys_write: file-must-exist contract. glob/grep: Tier 2 convenience (search-tier, PR #3921). Tier 1 surface: 8 syscalls (read, write, stat, setattr, unlink, rename, copy, readdir). |
 | §5 | 2026-05-15 | Delete `/__xattr__/` path intercept from sys_read/sys_write — redundant with Tier 2 `get_xattr`/`set_xattr` (KernelConvenience). Document xattr as Tier 2 convenience. |
 | §2, §5 | 2026-05-15 | glob/grep: Python Tier 2 (compose readdir + sys_read). Single-path convenience: Tier 2 `read()`/`unlink()` in KernelConvenience; internal callers use `sys_read_single`/`sys_write_with_link_depth`/`sys_unlink_single`. |
+| §2, §4 | 2026-05-20 | mkdir/rmdir reclassified as Tier 2 `KernelConvenience` (removed from the Tier 1 `KernelAbi` surface — both express in terms of existing Tier 1s). `setattr_pipe` folded into `sys_setattr(DT_PIPE)`: DT_PIPE creation now has a single entry point. |

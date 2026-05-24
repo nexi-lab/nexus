@@ -41,8 +41,8 @@ use contracts::{OperationContext, RustService};
 
 use crate::core::dispatch::{FileEvent, NativeInterceptHook};
 use crate::kernel::{
-    KernelError, StatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult,
-    SysSetAttrResult, SysUnlinkResult, SysWriteResult,
+    KernelError, StatResult, SysCopyResult, SysReadResult, SysRenameResult, SysSetAttrResult,
+    SysUnlinkResult, SysWriteResult,
 };
 use crate::lock_manager::KernelLockMode;
 
@@ -127,14 +127,6 @@ pub trait KernelAbi: Send + Sync + 'static {
         ctx: &OperationContext,
     ) -> Result<SysCopyResult, KernelError>;
 
-    fn sys_mkdir(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        parents: bool,
-        exist_ok: bool,
-    ) -> Result<SysMkdirResult, KernelError>;
-
     // ── Locks ────────────────────────────────────────────────────────
 
     /// Acquire or create a lock on `path`. Returns the lock_id on
@@ -165,21 +157,6 @@ pub trait KernelAbi: Send + Sync + 'static {
     fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         self.sys_readdir(parent_path, zone_id, is_admin)
     }
-
-    /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
-    /// surface the agent's stdio fds inside VFS as
-    /// `/{zone}/proc/{pid}/fd/{0,1,2}`. Stays a dedicated method
-    /// because the `read_fd` / `write_fd` shape is pipe-specific and
-    /// does not generalise into the generic `sys_setattr` matrix.
-    fn setattr_pipe(
-        &self,
-        path: &str,
-        capacity: usize,
-        io_profile: &str,
-        read_fd: Option<i32>,
-        write_fd: Option<i32>,
-        zone_id: &str,
-    ) -> Result<SysSetAttrResult, KernelError>;
 
     // ── Event watch (inotify equivalent) ──────────────────────────
 
@@ -321,16 +298,6 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::sys_copy(self, src_path, dst_path, ctx)
     }
 
-    fn sys_mkdir(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        parents: bool,
-        exist_ok: bool,
-    ) -> Result<SysMkdirResult, KernelError> {
-        Self::sys_mkdir(self, path, ctx, parents, exist_ok)
-    }
-
     fn sys_lock(
         &self,
         path: &str,
@@ -357,18 +324,6 @@ impl KernelAbi for crate::kernel::Kernel {
 
     fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         Self::sys_readdir(self, parent_path, zone_id, is_admin)
-    }
-
-    fn setattr_pipe(
-        &self,
-        path: &str,
-        capacity: usize,
-        io_profile: &str,
-        read_fd: Option<i32>,
-        write_fd: Option<i32>,
-        zone_id: &str,
-    ) -> Result<SysSetAttrResult, KernelError> {
-        Self::setattr_pipe(self, path, capacity, io_profile, read_fd, write_fd, zone_id)
     }
 
     fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {

@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
     coverage = load_yaml(args.input)
-    args.output.write_text(render_html(coverage))
+    args.output.write_text(render_html(coverage), encoding="utf-8")
     return 0
 
 

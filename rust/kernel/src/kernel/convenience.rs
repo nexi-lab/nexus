@@ -9,8 +9,8 @@
 //! overhead matters.
 
 use super::{
-    Kernel, KernelError, OperationContext, StatResult, SysReadResult, SysUnlinkResult,
-    SysWriteResult,
+    Kernel, KernelError, OperationContext, StatResult, SysMkdirResult, SysReadResult,
+    SysRmdirResult, SysUnlinkResult, SysWriteResult,
 };
 use crate::abi::KernelAbi;
 use crate::meta_store::{DT_EXTERNAL_STORAGE, DT_MOUNT};
@@ -92,6 +92,33 @@ pub trait KernelConvenience: KernelAbi {
         offset: u64,
     ) -> Result<SysWriteResult, KernelError>;
 
+    /// Tier 2 `mkdir` — create a directory.
+    ///
+    /// Conceptually `sys_setattr(entry_type=DT_DIR)` plus the
+    /// `parents` / `exist_ok` directory-tree semantics. No default
+    /// body — the composition needs kernel routing internals, so
+    /// `Kernel` supplies the optimized inherent override (`io.rs`).
+    fn mkdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Result<SysMkdirResult, KernelError>;
+
+    /// Tier 2 `rmdir` — remove a directory.
+    ///
+    /// Conceptually `sys_unlink(recursive=…)` narrowed to directories.
+    /// No default body — `Kernel` supplies the optimized inherent
+    /// override (`io.rs`), which the `sys_unlink` DT_DIR branch also
+    /// calls directly.
+    fn rmdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        recursive: bool,
+    ) -> Result<SysRmdirResult, KernelError>;
+
     /// `sys_stat(path).content_id` — single-field convenience.
     fn get_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
         self.sys_stat(path, zone_id).and_then(|s| s.content_id)
@@ -157,6 +184,27 @@ impl KernelConvenience for Kernel {
     fn access(&self, path: &str, zone_id: &str) -> bool {
         // Delegate to the inherent method on Kernel (io.rs).
         Kernel::access(self, path, zone_id)
+    }
+
+    fn mkdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Result<SysMkdirResult, KernelError> {
+        // Delegate to the optimized inherent method on Kernel (io.rs).
+        Kernel::mkdir(self, path, ctx, parents, exist_ok)
+    }
+
+    fn rmdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        recursive: bool,
+    ) -> Result<SysRmdirResult, KernelError> {
+        // Delegate to the optimized inherent method on Kernel (io.rs).
+        Kernel::rmdir(self, path, ctx, recursive)
     }
 
     fn stat_batch(&self, paths: &[String], zone_id: &str) -> Vec<Option<StatResult>> {

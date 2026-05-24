@@ -27,6 +27,8 @@ from types import SimpleNamespace
 from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rpc_types import RPCErrorCode
+from nexus.lib.rpc_codec import decode_rpc_message
 from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
@@ -254,34 +256,30 @@ class KernelClient:
         timeout_ms: int = 0,
         offset: int = 0,
     ) -> Any:
-        """Read file content via typed Read RPC."""
+        """Read file content via the typed Read RPC.
+
+        ``timeout_ms`` / ``offset`` go on the wire — the typed Read carries
+        full sys_read fidelity since the ReadRequest proto extension.
+        """
         assert self._transport is not None
-        if timeout_ms != 5000 or offset:
-            result = self._call(
-                "sys_read",
-                {
-                    "path": path,
-                    "timeout_ms": int(timeout_ms),
-                    "offset": int(offset),
-                },
-            )
-            if isinstance(result, dict):
-                data = result.get("data")
-                if data is None:
-                    data = b""
-                elif isinstance(data, str):
-                    data = data.encode("utf-8")
-                return _SysReadResult(
-                    data=data,
-                    content_id=result.get("content_id"),
-                    gen=int(result.get("gen") or 0),
-                    entry_type=int(result.get("entry_type") or 1),
-                    stream_next_offset=result.get("stream_next_offset"),
-                    post_hook_needed=bool(result.get("post_hook_needed"))
-                    or self.hook_count("read") > 0,
-                )
-        content = self._transport.read_file(path, content_id="", read_timeout=self._timeout)
-        return _SysReadResult(data=content, post_hook_needed=self.hook_count("read") > 0)
+        response = self._transport.read(
+            path,
+            content_id="",
+            timeout_ms=int(timeout_ms),
+            offset=int(offset),
+            read_timeout=self._timeout,
+        )
+        stream_next_offset = (
+            response.stream_next_offset if response.HasField("stream_next_offset") else None
+        )
+        return _SysReadResult(
+            data=bytes(response.content),
+            content_id=response.content_id or None,
+            gen=int(response.gen or 0),
+            entry_type=int(response.entry_type or 1),
+            stream_next_offset=stream_next_offset,
+            post_hook_needed=bool(response.post_hook_needed) or self.hook_count("read") > 0,
+        )
 
     def sys_read_raw(self, path: str, zone_id: str = ROOT_ZONE_ID) -> bytes:  # noqa: ARG002
         """Read raw file bytes for compatibility with versioning/parsers services."""
@@ -305,53 +303,62 @@ class KernelClient:
         )
 
     def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
-        """Stat a path — returns metadata dict or None on not-found.
+        """Stat a path via the typed Stat RPC.
 
-        Enriches the Rust JSON response with ISO-8601 string fields:
-        - modified_at / created_at: ISO strings from epoch-ms fields
+        Returns a metadata dict (the `stat_to_json` shape, enriched with
+        ISO-8601 `created_at` / `modified_at`), or None on not-found.
         """
+        assert self._transport is not None
         try:
-            result = self._call("sys_stat", {"path": path, "zone_id": zone_id})
+            resp = self._transport.stat(path, zone_id)
         except Exception:
-            # FileNotFound is raised as an RPC error — translate to None.
+            # Auth / transport errors translate to None — matching the
+            # prior Call-path behaviour (FileNotFound was an RPC error).
             return None
-        if result is None:
+        if resp is None:
             return None
-        # Enrich with ISO-string timestamps that Python callers expect.
-        # Callers that need datetime objects should parse via fromisoformat().
-        if isinstance(result, dict):
-            from datetime import UTC, datetime
-
-            ms = result.get("modified_at_ms")
-            if ms is not None and "modified_at" not in result:
-                result["modified_at"] = datetime.fromtimestamp(ms / 1000.0, UTC).isoformat()
-            ms = result.get("created_at_ms")
-            if ms is not None and "created_at" not in result:
-                result["created_at"] = datetime.fromtimestamp(ms / 1000.0, UTC).isoformat()
-        return result
+        return _stat_response_to_dict(resp)
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:
-        """Set attributes on a path."""
-        result = self._call("sys_setattr", {"path": path, **kwargs})
-        if isinstance(result, dict):
-            return _SysSetAttrResult(result)
-        return result
+        """Set attributes via the typed Setattr RPC.
+
+        Accepts the same kwargs the Call path did (entry_type, zone_id,
+        mime_type, content_id, modified_at_ms, created_at_ms, size,
+        version, backend_name, io_profile, is_external, capacity).
+        Unknown kwargs are silently dropped — parity with the Call
+        handler's pick-known-keys behaviour.
+        """
+        assert self._transport is not None
+        response = self._transport.setattr(path, **kwargs)
+        return _SysSetAttrResult(
+            {
+                "path": response.path,
+                "created": response.created,
+                "entry_type": response.entry_type,
+            }
+        )
 
     def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
-        """Delete a file/directory via Call RPC."""
-        result = self._call("sys_unlink", {"path": path, "recursive": recursive})
-        if isinstance(result, dict):
-            return _SysUnlinkResult(result)
-        return _SysUnlinkResult({})
+        """Delete a file or directory via the typed Delete RPC."""
+        assert self._transport is not None
+        r = self._transport.delete(path, recursive)
+        return _SysUnlinkResult(
+            {
+                "hit": r.success,
+                "entry_type": r.entry_type,
+                "path": r.path,
+                "content_id": r.content_id or None,
+                "size": r.size,
+            }
+        )
 
     def sys_mkdir(
         self, path: str, context: Any = None, parents: bool = False, exist_ok: bool = True
     ) -> Any:
-        """Create a directory."""
-        result = self._call("sys_mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok})
-        if isinstance(result, dict):
-            return _SysMkdirResult(result)
-        return _SysMkdirResult({})
+        """Create a directory via the typed Mkdir RPC."""
+        assert self._transport is not None
+        r = self._transport.mkdir(path, parents=parents, exist_ok=exist_ok)
+        return _SysMkdirResult({"hit": r.hit})
 
     def sys_rename(
         self,
@@ -359,11 +366,22 @@ class KernelClient:
         new_path: str,
         context: Any = None,
     ) -> Any:
-        """Rename/move a file or directory."""
-        result = self._call("sys_rename", {"path": path, "new_path": new_path})
-        if isinstance(result, dict):
-            return _SysRenameResult(result)
-        return _SysRenameResult({})
+        """Rename/move a file or directory via the typed Rename RPC."""
+        assert self._transport is not None
+        r = self._transport.rename(path, new_path)
+        return _SysRenameResult(
+            {
+                "hit": r.hit,
+                "success": r.success,
+                "is_directory": r.is_directory,
+                "old_content_id": r.old_content_id if r.HasField("old_content_id") else None,
+                "old_size": r.old_size if r.HasField("old_size") else None,
+                "old_version": r.old_version if r.HasField("old_version") else None,
+                "old_modified_at_ms": r.old_modified_at_ms
+                if r.HasField("old_modified_at_ms")
+                else None,
+            }
+        )
 
     def sys_copy(
         self,
@@ -371,105 +389,126 @@ class KernelClient:
         dst: str,
         context: Any = None,
     ) -> Any:
-        """Copy a file."""
-        result = self._call("sys_copy", {"src": src, "dst": dst})
-        if isinstance(result, dict):
-            return _SysCopyResult(result)
-        return _SysCopyResult({})
+        """Copy a file via the typed Copy RPC."""
+        assert self._transport is not None
+        r = self._transport.copy(src, dst)
+        return _SysCopyResult(
+            {
+                "hit": r.hit,
+                "dst_path": r.dst_path,
+                "content_id": r.content_id if r.HasField("content_id") else None,
+                "size": r.size,
+                "version": r.version,
+                "gen": r.gen,
+            }
+        )
 
     def sys_readdir(
         self,
         path: str,
         zone_id: str = ROOT_ZONE_ID,
-        is_admin: bool = False,
+        is_admin: bool = False,  # noqa: ARG002 — kept for API compat; ctx-derived server-side
     ) -> list[tuple[str, int]]:
-        """List directory contents — returns list of (path, entry_type) tuples."""
-        result = self._call(
-            "sys_readdir",
-            {"path": path, "zone_id": zone_id},
-        )
-        if result is None:
-            return []
-        if isinstance(result, list):
-            entries: list[tuple[str, int]] = []
-            for e in result:
-                if isinstance(e, dict):
-                    entries.append((e.get("name", ""), e.get("entry_type", 0)))
-                elif isinstance(e, (list, tuple)) and len(e) >= 2:
-                    entries.append((e[0], e[1]))
-            return entries
-        return []
+        """List directory contents via the typed Readdir RPC.
+
+        Returns ``list[(path, entry_type)]``. ``is_admin`` is accepted for
+        API compatibility but ignored — the server reads it from the
+        auth-resolved OperationContext (the generic Call path did the
+        same, so this is parity).
+        """
+        assert self._transport is not None
+        return [(e.name, e.entry_type) for e in self._transport.readdir(path, zone_id)]
 
     def sys_lock(
         self,
         path: str,
         lock_id: str = "",
-        mode: int = 1,
-        max_holders: int = 1,
-        ttl_secs: int = 60,
+        mode: int = 1,  # noqa: ARG002 — kept for API compat; kernel hardcodes Exclusive
+        max_holders: int = 1,  # noqa: ARG002 — kept for API compat
+        ttl_secs: int = 60,  # noqa: ARG002 — kept for API compat
         timeout_ms: int = 5000,
         **_kwargs: Any,
     ) -> Any:
-        """Acquire advisory lock."""
-        result = self._call(
-            "sys_lock",
-            {
-                "path": path,
-                "lock_id": lock_id,
-                "timeout_ms": timeout_ms,
-            },
-        )
-        if isinstance(result, dict):
-            return result.get("lock_id", "")
-        return result
+        """Acquire an advisory lock via the typed Lock RPC.
+
+        Returns the lock_id string on success; raises on contention to
+        match the prior Call path (which surfaced contention as an RPC
+        error).
+        """
+        from nexus.contracts.exceptions import NexusError
+
+        assert self._transport is not None
+        resp = self._transport.lock(path, lock_id, timeout_ms)
+        if not resp.acquired:
+            raise NexusError(f"lock acquisition failed (contention): {path}")
+        return resp.lock_id
 
     def sys_unlock(self, path: str, lock_id: str = "", force: bool = False) -> Any:
-        """Release advisory lock."""
-        return self._call("sys_unlock", {"path": path, "lock_id": lock_id, "force": force})
+        """Release advisory lock via the typed Unlock RPC."""
+        assert self._transport is not None
+        resp = self._transport.unlock(path, lock_id, force)
+        return {"released": resp.released}
 
     def read_batch(
         self,
         items: list[tuple[str, int, int | None]],
         context: Any = None,
     ) -> list[Any]:
-        """Batch read — loop individual typed Read RPCs.
+        """Batch read via the typed BatchRead RPC — one round-trip.
 
-        Uses the existing typed Read RPC per item (same as sys_read).
-        Returns list of _SysReadResult in same order as items.
-        On per-item failure, surfaces error_kind so the caller
+        Replaces the former N-round-trip loop of single Read RPCs. The
+        Rust kernel reads every item in one pass (rayon par_iter) and
+        returns a per-item result vector in input order.
+
+        Returns a list of _SysReadResult in the same order as ``items``.
+        Per-item failures are surfaced via ``error_kind`` so the caller
         (nexus_fs_content.read_batch) can distinguish not_found from
         other errors and implement partial/strict mode correctly.
         """
-        from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
-
+        assert self._transport is not None
+        if not items:
+            return []
         results: list[Any] = []
-        for path, offset, _count in items:
-            try:
-                results.append(self.sys_read(path, offset=offset))
-            except NexusFileNotFoundError:
+        for item in self._transport.batch_read(items):
+            if item.is_error:
+                kind, message = _error_kind_from_payload(item.error_payload)
+                results.append(_SysReadResult(data=None, error_kind=kind, error_message=message))
+            else:
                 results.append(
-                    _SysReadResult(data=None, error_kind="not_found", error_message=path)
-                )
-            except NexusPermissionError as e:
-                results.append(
-                    _SysReadResult(data=None, error_kind="permission_denied", error_message=str(e))
-                )
-            except Exception as e:
-                results.append(
-                    _SysReadResult(data=None, error_kind="io_error", error_message=str(e))
+                    _SysReadResult(
+                        data=bytes(item.content),
+                        content_id=item.content_id or None,
+                        gen=item.gen,
+                    )
                 )
         return results
 
     def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
-        """Batch stat multiple paths — returns list of stat dicts or None."""
-        result = self._call("stat_batch", {"paths": paths, "zone_id": zone_id})
-        if isinstance(result, list):
-            return result
-        return [None] * len(paths)
+        """Batch stat via the typed BatchStat RPC.
+
+        Returns ``list[dict | None]`` in input order — a stat dict (the
+        same shape ``sys_stat`` returns) per existing path, ``None``
+        per missing path.
+        """
+        assert self._transport is not None
+        if not paths:
+            return []
+        return [
+            _stat_response_to_dict(item) if item.found else None
+            for item in self._transport.batch_stat(paths, zone_id)
+        ]
 
     def sys_watch(self, path: str, timeout_ms: int = 30000) -> Any:
-        """Watch for file changes (blocking)."""
-        return self._call("sys_watch", {"path": path, "timeout_ms": timeout_ms})
+        """Block for a file-event match via the typed Watch RPC.
+
+        Returns ``{"path", "event_type"}`` on a match; ``None`` on
+        kernel timeout (no event).
+        """
+        assert self._transport is not None
+        resp = self._transport.watch(path, timeout_ms)
+        if not resp.matched:
+            return None
+        return {"path": resp.path, "event_type": resp.event_type}
 
     # ── Service registry ───────────────────────────────────────────────
 
@@ -727,79 +766,110 @@ class KernelClient:
     # ── Xattr (file metadata side-car) ──────────────────────────────────
 
     def get_xattr(self, path: str, key: str) -> str | None:
-        """Get extended attribute via Rust kernel metastore."""
+        """Get an extended attribute via the typed GetXattr RPC.
+
+        Returns the value string, or ``None`` when the key is not set or
+        any error occurs (matches the prior Call path's broad-catch).
+        """
+        assert self._transport is not None
         try:
-            result = self._call("get_xattr", {"path": path, "key": key})
-            return str(result) if result is not None else None
+            resp = self._transport.get_xattr(path, key)
         except Exception:
             return None
+        return resp.value if resp.found else None
 
     def set_xattr(self, path: str, key: str, value: str) -> None:
-        """Set extended attribute via Rust kernel metastore."""
+        """Set an extended attribute via the typed SetXattr RPC."""
         import contextlib
 
+        assert self._transport is not None
         with contextlib.suppress(Exception):
-            self._call("set_xattr", {"path": path, "key": key, "value": value})
+            self._transport.set_xattr(path, key, value)
 
     def get_xattr_bulk(self, paths: list[str], key: str) -> dict[str, str | None]:
-        """Bulk get extended attribute via Rust kernel metastore."""
+        """Bulk get an xattr across paths via the typed GetXattrBulk RPC.
+
+        Returns ``{path: value | None}`` — matches the prior Call shape.
+        """
+        assert self._transport is not None
         try:
-            result = self._call("get_xattr_bulk", {"paths": paths, "key": key})
-            if isinstance(result, dict):
-                return result
+            items = self._transport.get_xattr_bulk(paths, key)
         except Exception:
-            pass
-        return dict.fromkeys(paths)
+            return dict.fromkeys(paths)
+        return {item.path: (item.value if item.found else None) for item in items}
 
     # ── IPC: Pipes ─────────────────────────────────────────────────────
 
     def create_pipe(self, path: str, capacity: int = 64) -> None:
-        self._call("create_pipe", {"path": path, "capacity": capacity})
+        """Create a DT_PIPE via the typed Setattr RPC (entry_type=DT_PIPE)."""
+        self.sys_setattr(path, entry_type=3, capacity=capacity)
 
     def destroy_pipe(self, path: str) -> None:
-        self._call("destroy_pipe", {"path": path})
+        """Alias for close_pipe (the prior Call surface had both)."""
+        self.close_pipe(path)
 
     def close_pipe(self, path: str) -> None:
-        self._call("close_pipe", {"path": path})
+        """Close a pipe via the typed ClosePipe RPC."""
+        assert self._transport is not None
+        self._transport.close_pipe(path)
 
     def has_pipe(self, path: str) -> Any:
-        return self._call("has_pipe", {"path": path})
+        """Has-pipe query via the typed HasPipe RPC."""
+        assert self._transport is not None
+        return self._transport.has_pipe(path)
 
     def close_all_pipes(self) -> None:
-        self._call("close_all_pipes", {})
+        """Close every pipe via the typed CloseAllPipes RPC."""
+        assert self._transport is not None
+        self._transport.close_all_pipes()
 
     # ── IPC: Streams ───────────────────────────────────────────────────
 
     def create_stream(self, path: str, capacity: int = 1024) -> None:
-        self._call("create_stream", {"path": path, "capacity": capacity})
+        """Create a DT_STREAM via the typed Setattr RPC (entry_type=DT_STREAM)."""
+        self.sys_setattr(path, entry_type=4, capacity=capacity)
 
     def has_stream(self, path: str) -> Any:
-        return self._call("has_stream", {"path": path})
+        assert self._transport is not None
+        return self._transport.has_stream(path)
 
     def stream_read_at_blocking(
         self, path: str, offset: int, timeout_ms: int = 30000
     ) -> tuple[bytes, int]:
-        result = self._call(
-            "stream_read_at_blocking",
-            {"path": path, "offset": offset, "timeout_ms": timeout_ms},
-        )
-        return result["data"], result["next_offset"]
+        """Blocking stream read via the typed StreamReadAt RPC."""
+        assert self._transport is not None
+        resp = self._transport.stream_read_at(path, offset, blocking=True, timeout_ms=timeout_ms)
+        return bytes(resp.data), int(resp.next_offset)
 
     def stream_write_nowait(self, path: str, data: bytes) -> Any:
-        return self._call("stream_write_nowait", {"path": path, "data": data})
+        """Non-blocking stream write via the typed StreamWriteNowait RPC."""
+        assert self._transport is not None
+        return self._transport.stream_write_nowait(path, data)
 
     def stream_read_at(self, path: str, offset: int) -> Any:
-        return self._call("stream_read_at", {"path": path, "offset": offset})
+        """Non-blocking stream read via the typed StreamReadAt RPC.
+
+        Returns ``{"data": bytes, "next_offset": int}`` on data, ``None``
+        on eof (matches the prior Call-path shape).
+        """
+        assert self._transport is not None
+        resp = self._transport.stream_read_at(path, offset, blocking=False)
+        if resp.eof:
+            return None
+        return {"data": bytes(resp.data), "next_offset": int(resp.next_offset)}
 
     def stream_collect_all(self, path: str) -> bytes:
-        result = self._call("stream_collect_all", {"path": path})
-        return result if isinstance(result, bytes) else b""
+        assert self._transport is not None
+        return self._transport.stream_collect_all(path)
 
     def close_stream(self, path: str) -> None:
-        self._call("close_stream", {"path": path})
+        """Close a stream via the typed CloseStream RPC."""
+        assert self._transport is not None
+        self._transport.close_stream(path)
 
     def destroy_stream(self, path: str) -> None:
-        self._call("destroy_stream", {"path": path})
+        """Alias for close_stream (the prior Call surface had both)."""
+        self.close_stream(path)
 
     def close_all_streams(self) -> None:
         """Close all streams (shutdown)."""
@@ -829,18 +899,28 @@ class KernelClient:
         pass
 
     def write_batch(self, files: list[tuple[str, bytes]], context: Any = None) -> list[Any]:
-        """Batch write multiple files."""
-        import base64
+        """Batch write via the typed BatchWrite RPC — one round-trip.
 
-        encoded_files = []
-        for path, data in files:
-            encoded_files.append(
-                [path, {"__type__": "bytes", "data": base64.b64encode(data).decode()}]
+        Replaces the former generic ``write_batch`` Call, which
+        base64-encoded every file's bytes into a JSON blob inside the
+        protobuf envelope (double encoding). Returns one
+        ``_BatchWriteItemResult`` per file in input order; a per-item
+        failure raises (all-or-nothing, as before).
+        """
+        assert self._transport is not None
+        if not files:
+            return []
+        return [
+            _BatchWriteItemResult(
+                {
+                    "content_id": item.content_id or None,
+                    "size": item.size,
+                    "gen": item.gen,
+                    "version": item.version,
+                }
             )
-        result = self._call("write_batch", {"files": encoded_files})
-        if isinstance(result, list):
-            return [_BatchWriteItemResult(r) if isinstance(r, dict) else r for r in result]
-        return []
+            for item in self._transport.batch_write(files)
+        ]
 
     @property
     def agent_registry(self) -> Any:
@@ -849,6 +929,65 @@ class KernelClient:
 
 
 # ── Result types ───────────────────────────────────────────────────────
+
+
+def _error_kind_from_payload(error_payload: bytes) -> tuple[str, str]:
+    """Classify a typed-RPC error payload into a ``(error_kind, message)``
+    pair for ``_SysReadResult``.
+
+    BatchRead reports per-item failures in-band as a JSON ``{code,
+    message}`` dict. Mapping the JSON-RPC code here yields the same
+    ``error_kind`` the former per-item single-Read path derived from its
+    raised exception, so the caller's partial/strict handling is
+    unchanged.
+    """
+    err = decode_rpc_message(error_payload) if error_payload else {}
+    code = err.get("code") if isinstance(err, dict) else None
+    message = err.get("message", "") if isinstance(err, dict) else ""
+    if code == RPCErrorCode.FILE_NOT_FOUND.value:
+        return "not_found", message
+    if code in (RPCErrorCode.PERMISSION_ERROR.value, RPCErrorCode.ACCESS_DENIED.value):
+        return "permission_denied", message
+    return "io_error", message
+
+
+def _stat_response_to_dict(resp: Any) -> dict[str, Any]:
+    """Build the sys_stat metadata dict from a typed StatResponse.
+
+    Mirrors the `stat_to_json` shape of the former Call path: optional
+    string fields collapse ``""`` -> ``None``, and epoch-ms timestamps
+    gain the enriched ISO-8601 ``created_at`` / ``modified_at`` companions
+    that Python callers expect.
+    """
+    from datetime import UTC, datetime
+
+    def _opt(v: str) -> str | None:
+        return v or None
+
+    created = resp.created_at_ms if resp.HasField("created_at_ms") else None
+    modified = resp.modified_at_ms if resp.HasField("modified_at_ms") else None
+    d: dict[str, Any] = {
+        "path": resp.path,
+        "size": resp.size,
+        "content_id": _opt(resp.content_id),
+        "mime_type": resp.mime_type,
+        "is_directory": resp.is_directory,
+        "entry_type": resp.entry_type,
+        "mode": resp.mode,
+        "version": resp.version,
+        "gen": resp.gen,
+        "zone_id": _opt(resp.zone_id),
+        "created_at_ms": created,
+        "modified_at_ms": modified,
+        "last_writer_address": _opt(resp.last_writer_address),
+        "link_target": _opt(resp.link_target),
+        "owner_id": _opt(resp.owner_id),
+    }
+    if modified is not None:
+        d["modified_at"] = datetime.fromtimestamp(modified / 1000.0, UTC).isoformat()
+    if created is not None:
+        d["created_at"] = datetime.fromtimestamp(created / 1000.0, UTC).isoformat()
+    return d
 
 
 class _SysReadResult:

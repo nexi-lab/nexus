@@ -27,11 +27,14 @@ use crate::grpc::{encode_rpc_error, RpcErrorCode};
 /// Dispatch a generic Call RPC. After the typed-RPC migration only the
 /// non-syscall control plane stays here.
 pub fn dispatch(
-    _kernel: &Arc<Kernel>,
-    _ctx: &OperationContext,
+    kernel: &Arc<Kernel>,
+    ctx: &OperationContext,
     method: &str,
-    _payload: &[u8],
+    payload: &[u8],
 ) -> Result<Response<CallResponse>, Status> {
+    let params: serde_json::Value =
+        serde_json::from_slice(payload).unwrap_or(serde_json::Value::Object(Default::default()));
+
     let result = match method {
         "sys_read" => do_sys_read(kernel, &params, ctx),
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),

@@ -63,49 +63,10 @@ const OFF_CLOSED: usize = SLOT_SIZE * 3;
 // Use shared PipeError from pipe.rs
 use crate::pipe::PipeError;
 
-// ---------------------------------------------------------------------------
-// Shared-memory header accessors (safe wrappers over raw mmap)
-// ---------------------------------------------------------------------------
-
-/// Read a u32 from mmap at the given offset.
+// Shared mmap header accessors live in `crate::core::shm_header`.
 #[cfg(test)]
-#[inline]
-fn read_u32(base: *const u8, off: usize) -> u32 {
-    unsafe {
-        let ptr = base.add(off) as *const u32;
-        ptr.read()
-    }
-}
-
-/// Write a u32 to mmap at the given offset.
-#[inline]
-fn write_u32(base: *mut u8, off: usize, val: u32) {
-    unsafe {
-        let ptr = base.add(off) as *mut u32;
-        ptr.write(val);
-    }
-}
-
-/// Get an AtomicUsize reference from mmap at the given offset.
-///
-/// SAFETY: The caller must ensure the pointer is valid and 8-byte aligned,
-/// and lives for the duration of the returned reference.
-#[inline]
-unsafe fn atomic_usize(base: *const u8, off: usize) -> &'static AtomicUsize {
-    &*(base.add(off) as *const AtomicUsize)
-}
-
-/// Get an AtomicU64 reference from mmap at the given offset.
-#[inline]
-unsafe fn atomic_u64(base: *const u8, off: usize) -> &'static AtomicU64 {
-    &*(base.add(off) as *const AtomicU64)
-}
-
-/// Get an AtomicBool reference from mmap at the given offset.
-#[inline]
-unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
-    &*(base.add(off) as *const AtomicBool)
-}
+use crate::core::shm_header::read_u32;
+use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 
 // ---------------------------------------------------------------------------
 // SharedMemoryPipeBackend

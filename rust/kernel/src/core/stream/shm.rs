@@ -52,35 +52,10 @@ const OFF_CLOSED: usize = SLOT_SIZE * 2;
 // Use shared StreamError from stream.rs
 use crate::stream::StreamError;
 
-// ---------------------------------------------------------------------------
-// Header accessors (same pattern as shm_pipe.rs)
-// ---------------------------------------------------------------------------
-
+// Shared mmap header accessors live in `crate::core::shm_header`.
 #[cfg(test)]
-#[inline]
-fn read_u32(base: *const u8, off: usize) -> u32 {
-    unsafe { (base.add(off) as *const u32).read() }
-}
-
-#[inline]
-fn write_u32(base: *mut u8, off: usize, val: u32) {
-    unsafe { (base.add(off) as *mut u32).write(val) }
-}
-
-#[inline]
-unsafe fn atomic_usize(base: *const u8, off: usize) -> &'static AtomicUsize {
-    &*(base.add(off) as *const AtomicUsize)
-}
-
-#[inline]
-unsafe fn atomic_u64(base: *const u8, off: usize) -> &'static AtomicU64 {
-    &*(base.add(off) as *const AtomicU64)
-}
-
-#[inline]
-unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
-    &*(base.add(off) as *const AtomicBool)
-}
+use crate::core::shm_header::read_u32;
+use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 
 // ---------------------------------------------------------------------------
 // SharedMemoryStreamBackend

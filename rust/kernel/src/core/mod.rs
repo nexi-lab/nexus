@@ -48,6 +48,10 @@ pub mod meta_store;
 pub mod pipe;
 pub mod stream;
 
+// Shared mmap header accessors used by both pipe/shm and stream/shm.
+#[cfg(unix)]
+pub(crate) mod shm_header;
+
 // File-descriptor table — pre-opened fds for PAS fast-path reads
 // (§4 PermissionGate row's FileDescriptorTable peer).
 pub mod fdt;

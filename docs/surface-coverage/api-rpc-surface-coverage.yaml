@@ -3553,7 +3553,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: append
-      source: src/nexus/core/nexus_fs_content.py:1073
+      source: src/nexus/core/nexus_fs_content.py:1072
   profiles:
     lite: supported
     sandbox: supported
@@ -3674,7 +3674,7 @@ operations:
   transports:
     grpc_expose:
       name: edit
-      source: src/nexus/core/nexus_fs_content.py:1194
+      source: src/nexus/core/nexus_fs_content.py:1193
   profiles:
     lite: supported
     sandbox: supported
@@ -4096,7 +4096,7 @@ operations:
   transports:
     grpc_expose:
       name: stream
-      source: src/nexus/core/nexus_fs_content.py:472
+      source: src/nexus/core/nexus_fs_content.py:471
   profiles:
     lite: supported
     sandbox: supported
@@ -7886,7 +7886,7 @@ operations:
   transports:
     grpc_expose:
       name: read_batch
-      source: src/nexus/core/nexus_fs_content.py:1600
+      source: src/nexus/core/nexus_fs_content.py:1599
     sdk:
       name: KernelClient.read_batch
       source: src/nexus/remote/kernel_client.py:452
@@ -7908,7 +7908,7 @@ operations:
   transports:
     grpc_expose:
       name: read_bulk
-      source: src/nexus/core/nexus_fs_content.py:234
+      source: src/nexus/core/nexus_fs_content.py:233
   profiles:
     lite: supported
     sandbox: supported
@@ -7944,7 +7944,7 @@ operations:
   transports:
     grpc_expose:
       name: read_range
-      source: src/nexus/core/nexus_fs_content.py:407
+      source: src/nexus/core/nexus_fs_content.py:406
   profiles:
     lite: supported
     sandbox: supported
@@ -9890,7 +9890,7 @@ operations:
   transports:
     grpc_expose:
       name: stream_range
-      source: src/nexus/core/nexus_fs_content.py:520
+      source: src/nexus/core/nexus_fs_content.py:519
   profiles:
     lite: supported
     sandbox: supported
@@ -11181,7 +11181,7 @@ operations:
   transports:
     grpc_expose:
       name: write_batch
-      source: src/nexus/core/nexus_fs_content.py:1438
+      source: src/nexus/core/nexus_fs_content.py:1437
     sdk:
       name: KernelClient.write_batch
       source: src/nexus/remote/kernel_client.py:901
@@ -11220,7 +11220,7 @@ operations:
   transports:
     grpc_expose:
       name: write_stream
-      source: src/nexus/core/nexus_fs_content.py:562
+      source: src/nexus/core/nexus_fs_content.py:561
   profiles:
     lite: supported
     sandbox: supported

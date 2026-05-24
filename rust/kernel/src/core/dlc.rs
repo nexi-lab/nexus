@@ -38,7 +38,6 @@ impl DriverLifecycleCoordinator {
     /// - `kernel` — back-reference to the owning Kernel (interior mutability)
     /// - `mount_point` — virtual path (e.g. `/`, `/data`)
     /// - `zone_id` — zone identifier
-    /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
     /// - `raft_backend` — opaque raft handle for federation DI; downcast by
@@ -49,7 +48,6 @@ impl DriverLifecycleCoordinator {
         kernel: &Kernel,
         mount_point: &str,
         zone_id: &str,
-        backend_name: &str,
         backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
@@ -105,12 +103,6 @@ impl DriverLifecycleCoordinator {
             raft_backend,
             is_external,
         )?;
-        // ``backend_name`` (the legacy parameter to this fn) is kept for
-        // API compatibility with callers but no longer persisted in the
-        // metadata record — each node decides the backend from its own
-        // mount table at read time.
-        let _ = backend_name;
-
         Ok(())
     }
 

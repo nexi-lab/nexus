@@ -1437,7 +1437,6 @@ impl Kernel {
                     self,
                     path,
                     zone_id,
-                    backend_name,
                     backend,
                     metastore,
                     raft_backend,

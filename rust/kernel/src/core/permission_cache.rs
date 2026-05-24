@@ -1,4 +1,4 @@
-//! Permission lease cache — pure Rust, no PyO3 dependency.
+//! Permission lease cache.
 //!
 //! Two-level DashMap: outer keyed by path, inner keyed by agent_id.
 //! The two-level structure lets `check`'s inheritance walk look up

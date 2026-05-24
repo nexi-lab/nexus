@@ -19,7 +19,7 @@
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
-use crate::cache::index_cache::IndexCache;
+use crate::core::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
 use crate::dispatch::{NativeHookRegistry, ObserverRegistry, Trie};
 use crate::file_watch::FileWatchRegistry;
@@ -3578,7 +3578,7 @@ mod tests {
     // ── Logical cache split ───────────────────────────────────────────
     mod logical_cache_split {
         use super::*;
-        use crate::cache::index_cache::{IndexCacheKey, IndexKind};
+        use crate::core::index_cache::{IndexCacheKey, IndexKind};
         use crate::meta_store::{LocalMetaStore, MetaStore};
         use std::time::Duration;
 

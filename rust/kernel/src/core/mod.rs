@@ -36,8 +36,12 @@ pub mod lock;
 // VFS dispatch + hook/observer registry (§2.4).
 pub mod dispatch;
 
-// Permission lease cache, DashMap-based, pure Rust (§2.4.1 + §4 PermissionGate).
+// Permission lease cache, DashMap-based (§2.4.1 + §4 PermissionGate).
 pub mod permission_cache;
+
+// Index cache — TTL-bounded stat/listing/negative cache fronting the
+// metastore on the syscall hot path.
+pub mod index_cache;
 
 // MetaStore primitive impls — LocalMetaStore + remote proxy.
 // The trait declaration lives in `crate::abc::meta_store` (§3.A.1);

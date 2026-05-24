@@ -22,7 +22,6 @@ pub use contracts::ROOT_ZONE_ID;
 //                     dispatch, in-memory reference impls of the §3.A
 //                     pillars).
 pub mod abc;
-pub mod cache;
 pub mod core;
 pub mod hal;
 

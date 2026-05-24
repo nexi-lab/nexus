@@ -11,7 +11,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::cache::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
+use crate::core::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,

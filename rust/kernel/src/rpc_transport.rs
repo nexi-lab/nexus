@@ -153,12 +153,32 @@ impl RpcTransport {
         }
     }
 
-    /// Typed Read RPC — raw bytes, no base64.
+    /// Typed Read RPC — raw bytes, no base64. `timeout_ms=0` keeps file
+    /// semantics (server picks the default block budget); set non-zero for
+    /// pipe/stream blocking reads. `offset` is honored for stream + range
+    /// reads.
     pub fn read(&self, path: &str, content_id: &str) -> Result<ReadResult, String> {
-        self.block_on(self.read_async(path, content_id))
+        self.block_on(self.read_async(path, content_id, 0, 0))
     }
 
-    async fn read_async(&self, path: &str, content_id: &str) -> Result<ReadResult, String> {
+    /// Typed Read with explicit timeout / offset for pipes + range reads.
+    pub fn read_with(
+        &self,
+        path: &str,
+        content_id: &str,
+        timeout_ms: u64,
+        offset: u64,
+    ) -> Result<ReadResult, String> {
+        self.block_on(self.read_async(path, content_id, timeout_ms, offset))
+    }
+
+    async fn read_async(
+        &self,
+        path: &str,
+        content_id: &str,
+        timeout_ms: u64,
+        offset: u64,
+    ) -> Result<ReadResult, String> {
         let mut client = self.client();
         let mut retries = 0u8;
         loop {
@@ -166,6 +186,8 @@ impl RpcTransport {
                 path: path.to_string(),
                 auth_token: self.auth_token.clone(),
                 content_id: content_id.to_string(),
+                timeout_ms,
+                offset,
             });
             match client.read(req).await {
                 Ok(resp) => {
@@ -179,6 +201,9 @@ impl RpcTransport {
                         content_id: inner.content_id,
                         size: inner.size as u64,
                         gen: inner.gen,
+                        entry_type: inner.entry_type,
+                        stream_next_offset: inner.stream_next_offset,
+                        post_hook_needed: inner.post_hook_needed,
                     });
                 }
                 Err(status) if retries < 2 && is_retryable(&status) => {
@@ -362,6 +387,9 @@ pub struct ReadResult {
     pub content_id: String,
     pub size: u64,
     pub gen: u64,
+    pub entry_type: i32,
+    pub stream_next_offset: Option<u64>,
+    pub post_hook_needed: bool,
 }
 
 /// Result of a typed Write RPC.

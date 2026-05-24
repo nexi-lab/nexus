@@ -256,34 +256,30 @@ class KernelClient:
         timeout_ms: int = 0,
         offset: int = 0,
     ) -> Any:
-        """Read file content via typed Read RPC."""
+        """Read file content via the typed Read RPC.
+
+        ``timeout_ms`` / ``offset`` go on the wire — the typed Read carries
+        full sys_read fidelity since the ReadRequest proto extension.
+        """
         assert self._transport is not None
-        if timeout_ms != 5000 or offset:
-            result = self._call(
-                "sys_read",
-                {
-                    "path": path,
-                    "timeout_ms": int(timeout_ms),
-                    "offset": int(offset),
-                },
-            )
-            if isinstance(result, dict):
-                data = result.get("data")
-                if data is None:
-                    data = b""
-                elif isinstance(data, str):
-                    data = data.encode("utf-8")
-                return _SysReadResult(
-                    data=data,
-                    content_id=result.get("content_id"),
-                    gen=int(result.get("gen") or 0),
-                    entry_type=int(result.get("entry_type") or 1),
-                    stream_next_offset=result.get("stream_next_offset"),
-                    post_hook_needed=bool(result.get("post_hook_needed"))
-                    or self.hook_count("read") > 0,
-                )
-        content = self._transport.read_file(path, content_id="", read_timeout=self._timeout)
-        return _SysReadResult(data=content, post_hook_needed=self.hook_count("read") > 0)
+        response = self._transport.read(
+            path,
+            content_id="",
+            timeout_ms=int(timeout_ms),
+            offset=int(offset),
+            read_timeout=self._timeout,
+        )
+        stream_next_offset = (
+            response.stream_next_offset if response.HasField("stream_next_offset") else None
+        )
+        return _SysReadResult(
+            data=bytes(response.content),
+            content_id=response.content_id or None,
+            gen=int(response.gen or 0),
+            entry_type=int(response.entry_type or 1),
+            stream_next_offset=stream_next_offset,
+            post_hook_needed=bool(response.post_hook_needed) or self.hook_count("read") > 0,
+        )
 
     def sys_read_raw(self, path: str, zone_id: str = ROOT_ZONE_ID) -> bytes:  # noqa: ARG002
         """Read raw file bytes for compatibility with versioning/parsers services."""

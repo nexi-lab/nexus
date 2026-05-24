@@ -102,6 +102,10 @@ message ReadRequest {
   string path = 1;
   string auth_token = 2;
   string content_id = 3;   // Opaque content identifier (hash for CAS, path for PAS) — when set, server reads content directly (no metastore lookup)
+  // Pipe-/stream-read knobs — full-fidelity sys_read on the wire.
+  // Defaults give plain file-read semantics: blocking ≤5s, from offset 0.
+  uint64 timeout_ms = 4;   // 0 → non-blocking; otherwise pipe/stream block budget
+  uint64 offset = 5;       // byte offset within content (streams + range reads)
 }
 
 message ReadResponse {
@@ -111,6 +115,11 @@ message ReadResponse {
   bool is_error = 4;
   bytes error_payload = 5; // JSON error dict (same format as CallResponse)
   uint64 gen = 6;
+  // Stream / typed-entry fields — let Python sys_read drop its Call
+  // fallback (timeout_ms/offset on the wire + these fields out).
+  int32 entry_type = 7;             // DT_* of the resolved entry
+  optional uint64 stream_next_offset = 8;  // streams: where the next read picks up
+  bool post_hook_needed = 9;        // OBSERVE chain trigger
 }
 
 message WriteRequest {

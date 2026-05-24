@@ -302,18 +302,36 @@ class RPCTransport:
     def read_file(
         self, path: str, *, content_id: str = "", read_timeout: float | None = None
     ) -> bytes:
-        """Read file content via typed Read RPC — no JSON/base64 overhead.
+        """Read file content via typed Read RPC — bytes-only convenience.
 
-        Args:
-            path: Virtual file path (used for routing on server).
-            content_id: Opaque content identifier. When set, server reads
-                content directly from the backend (no metastore lookup).
-            read_timeout: Optional per-call timeout override.
-
-        Returns:
-            Raw file content as bytes.
+        Use ``read()`` when the caller needs entry_type / stream_next_offset
+        (e.g. pipe / stream / range reads). This helper just unwraps content.
         """
-        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token, content_id=content_id)
+        return self.read(path, content_id=content_id, read_timeout=read_timeout).content
+
+    def read(
+        self,
+        path: str,
+        *,
+        content_id: str = "",
+        timeout_ms: int = 0,
+        offset: int = 0,
+        read_timeout: float | None = None,
+    ) -> Any:
+        """Typed Read RPC — returns the full ReadResponse message.
+
+        ``timeout_ms=0`` keeps file-read semantics; non-zero blocks pipe /
+        stream reads up to that budget. ``offset`` is honored for stream
+        + range reads. Caller reads ``response.entry_type`` /
+        ``response.stream_next_offset`` for pipe/stream classification.
+        """
+        request = vfs_pb2.ReadRequest(
+            path=path,
+            auth_token=self._auth_token,
+            content_id=content_id,
+            timeout_ms=int(timeout_ms),
+            offset=int(offset),
+        )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Read(request, timeout=timeout)
@@ -321,7 +339,7 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Read")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return bytes(response.content)
+        return response
 
     @retry(
         stop=stop_after_attempt(3),

@@ -149,7 +149,11 @@ impl NexusVfsService for VfsServiceImpl {
         // No federation guard: KernelAbi::sys_read consults ctx.zone_perms via
         // the permission gate (kernel::dispatch.rs:101). The same SSOT runs
         // whether the call entered via typed Read or generic Call.
-        match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, 5000, 0) {
+        //
+        // `timeout_ms == 0` keeps file-read semantics (the kernel resolves the
+        // entry and returns immediately). Non-zero blocks pipe/stream reads.
+        let timeout_ms = if req.timeout_ms == 0 { 5000 } else { req.timeout_ms };
+        match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, timeout_ms, req.offset) {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
                 Ok(Response::new(ReadResponse {
@@ -159,6 +163,9 @@ impl NexusVfsService for VfsServiceImpl {
                     gen: result.gen,
                     is_error: false,
                     error_payload: Vec::new(),
+                    entry_type: result.entry_type as i32,
+                    stream_next_offset: result.stream_next_offset.map(|v| v as u64),
+                    post_hook_needed: result.post_hook_needed,
                 }))
             }
             Err(err) => {
@@ -170,6 +177,9 @@ impl NexusVfsService for VfsServiceImpl {
                     gen: 0,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
+                    entry_type: 0,
+                    stream_next_offset: None,
+                    post_hook_needed: false,
                 }))
             }
         }
@@ -1195,6 +1205,9 @@ fn error_read(status: Status) -> ReadResponse {
         gen: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+        entry_type: 0,
+        stream_next_offset: None,
+        post_hook_needed: false,
     }
 }
 

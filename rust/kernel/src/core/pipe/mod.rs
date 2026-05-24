@@ -1,15 +1,16 @@
-//! Lock-free SPSC RingBuffer core for DT_PIPE kernel IPC.
+//! RingBuffer core for DT_PIPE kernel IPC.
 //!
-//! Contiguous byte ring with atomic monotonic head/tail counters; one
-//! producer thread calls `push`, one consumer thread calls `pop`, and
-//! neither side blocks the other.
+//! Contiguous byte ring with atomic monotonic head/tail counters and
+//! separate writer / reader mutexes. The SPSC fast path (one
+//! producer, one consumer) is uncontended on both mutexes;
+//! multi-producer or multi-consumer use is sound because each mutex
+//! serializes its side.
 //!
-//! SAFETY: SPSC by data-structure contract — exactly one producer and
-//! one consumer thread; concurrent `push()` calls from multiple threads
-//! (or concurrent `pop()` calls from multiple threads) are undefined
-//! behavior. Producer writes [tail..new_tail], consumer reads
-//! [head..new_head] — ranges never overlap because head only advances
-//! after the consumer copies data.
+//! Producer writes `[tail..new_tail]` then publishes the new tail
+//! via a Release-store; consumer Acquire-loads the tail, reads
+//! `[head..new_head]`, then advances head via a Release-store.
+//! Ranges never overlap because head only advances after the
+//! consumer copies data.
 //!
 //! Message framing: `[4B u32 LE length][N bytes payload]`.
 //! Sentinel = `[0x00 0x00 0x00 0x00]` marks waste-and-wrap at ring boundary.
@@ -32,6 +33,8 @@ pub mod wal;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -43,9 +46,15 @@ const HEADER_SIZE: usize = 4;
 // MemoryPipeBackend
 // ---------------------------------------------------------------------------
 
-/// Lock-free SPSC ring buffer core for DT_PIPE.
+/// Ring buffer core for DT_PIPE.
 ///
 /// Contiguous byte ring with atomic monotonic head/tail counters.
+/// Writers are serialized internally and readers are serialized
+/// internally (via separate mutexes), so multi-threaded `sys_write`
+/// or `sys_read` against the same DT_PIPE path is safe without any
+/// external lock. The writer / reader mutexes do not contend with
+/// each other, preserving the SPSC fast path: producer and consumer
+/// can run fully concurrently with zero lock contention.
 /// Kernel-internal — callers go through `PipeManager` (see the
 /// `create_pipe` / `pipe_write_nowait` Kernel surface).
 pub struct MemoryPipeBackend {
@@ -59,16 +68,23 @@ pub struct MemoryPipeBackend {
     pop_count: AtomicU64,
     msg_count: AtomicUsize,
     used_bytes: AtomicUsize,
+    /// Serializes producers (`push()`). Uncontended in single-writer
+    /// use; serializes the exclusive `&mut [u8]` borrow into the
+    /// ring under multi-writer use.
+    writer: Mutex<()>,
+    /// Serializes consumers (`pop()` and the `pop_position` +
+    /// `commit_pop` building blocks reached through it). Uncontended
+    /// in single-reader use.
+    reader: Mutex<()>,
 }
 
-// SAFETY: SPSC by contract — at most one producer thread holds
-// `&self` for `push()` and at most one consumer thread holds `&self`
-// for `pop()`. Under that contract the producer's writes
-// ([tail..new_tail]) and the consumer's reads ([head..new_head])
-// never overlap, since `head` only advances after the consumer has
-// finished its copy. `Sync` is therefore sound provided callers
-// respect the SPSC invariant; concurrent `push()` (or concurrent
-// `pop()`) from multiple threads is undefined behavior.
+// SAFETY: The `writer` mutex makes the exclusive `&mut [u8]` borrow
+// inside `push()` unique across threads; the `reader` mutex makes
+// the `&[u8]` reads + `head` advance inside `pop()` atomic w.r.t.
+// other readers. Writer-side and reader-side disjoint head/tail
+// regions then keep producer/consumer concurrent without
+// cross-mutex contention. `Send + Sync` is therefore sound under
+// arbitrary multi-thread use.
 unsafe impl Send for MemoryPipeBackend {}
 unsafe impl Sync for MemoryPipeBackend {}
 
@@ -124,6 +140,11 @@ impl MemoryPipeBackend {
         if payload_len > self.user_capacity {
             return Err(PipeError::Oversized(payload_len, self.user_capacity));
         }
+
+        // Serialize producers; held across the Release-store of
+        // `tail` so consumers see a fully-published frame and so the
+        // `&mut [u8]` borrow into the ring is unique.
+        let _writer_guard = self.writer.lock();
 
         let used = self.used_bytes.load(Ordering::Relaxed);
         if used + payload_len > self.user_capacity {
@@ -242,8 +263,11 @@ impl MemoryPipeBackend {
     }
 
     /// Pop one message from the ring, returning owned bytes.
-    /// Combines pop_position + ring copy + commit_pop.
+    /// Combines pop_position + ring copy + commit_pop atomically
+    /// under the reader mutex, so multiple consumer threads cannot
+    /// double-read the same frame.
     pub(crate) fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        let _reader_guard = self.reader.lock();
         let (payload_start, payload_len, total_advance) = self.pop_position()?;
         let ring = unsafe { &*self.ring.get() };
         let data = ring[payload_start..payload_start + payload_len].to_vec();
@@ -271,6 +295,8 @@ impl MemoryPipeBackend {
             pop_count: AtomicU64::new(0),
             msg_count: AtomicUsize::new(0),
             used_bytes: AtomicUsize::new(0),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         }
     }
 
@@ -717,5 +743,129 @@ mod tests {
         assert!(core.is_empty());
         assert_eq!(core.push_count.load(Ordering::Relaxed), n as u64);
         assert_eq!(core.pop_count.load(Ordering::Relaxed), n as u64);
+    }
+
+    /// Multi-producer single-consumer: concurrent push() from many
+    /// threads must not corrupt the ring or alias the `&mut [u8]`
+    /// borrow into it. Producers and consumer run concurrently
+    /// (otherwise producers would block on Full forever, since the
+    /// ring is sized smaller than the total message count); after
+    /// every producer finishes, the consumer drains the remainder
+    /// and verifies the union equals the expected universe.
+    #[test]
+    fn test_mpsc_writers_do_not_corrupt() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const PRODUCERS: usize = 4;
+        const PER_PRODUCER: usize = 256;
+        let total = PRODUCERS * PER_PRODUCER;
+
+        let core = Arc::new(make(4096));
+
+        let producers: Vec<_> = (0..PRODUCERS)
+            .map(|p| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    for i in 0..PER_PRODUCER {
+                        let val = ((p as u64) << 32) | (i as u64);
+                        loop {
+                            match core.push(&val.to_le_bytes()) {
+                                Ok(_) => break,
+                                Err(PipeError::Full(_, _)) => thread::yield_now(),
+                                Err(e) => panic!("unexpected push error: {:?}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Consumer runs concurrently — pop() acquires the reader
+        // mutex but we're single-consumer so contention is zero.
+        let consumer = {
+            let core = Arc::clone(&core);
+            thread::spawn(move || {
+                let mut got = Vec::with_capacity(total);
+                while got.len() < total {
+                    match core.pop() {
+                        Ok(bytes) => {
+                            assert_eq!(bytes.len(), 8);
+                            got.push(u64::from_le_bytes(bytes.try_into().expect("8 bytes")));
+                        }
+                        Err(PipeError::Empty) | Err(PipeError::ClosedEmpty) => {
+                            thread::yield_now();
+                        }
+                        Err(e) => panic!("unexpected pop error: {:?}", e),
+                    }
+                }
+                got
+            })
+        };
+
+        for p in producers {
+            p.join().unwrap();
+        }
+        let mut got = consumer.join().unwrap();
+
+        // Every produced value appears, exactly once.
+        let mut expected: Vec<u64> = (0..PRODUCERS)
+            .flat_map(|p| (0..PER_PRODUCER).map(move |i| ((p as u64) << 32) | (i as u64)))
+            .collect();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected);
+    }
+
+    /// Single-producer multi-consumer: many consumer threads racing
+    /// on pop() must not double-claim any frame. The producer fills
+    /// the ring up front, then all consumers drain concurrently.
+    #[test]
+    fn test_spmc_readers_do_not_double_pop() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const TOTAL: usize = 1024;
+        const CONSUMERS: usize = 4;
+
+        let core = Arc::new(make(TOTAL * 12 + 16));
+
+        // Fill (single-threaded — straight pushes, no contention).
+        for i in 0..TOTAL {
+            core.push(&(i as u64).to_le_bytes()).expect("push failed");
+        }
+        // Mark closed so consumers exit on ClosedEmpty.
+        core.close();
+
+        let consumers: Vec<_> = (0..CONSUMERS)
+            .map(|_| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    let mut got = Vec::new();
+                    loop {
+                        match core.pop() {
+                            Ok(bytes) => {
+                                assert_eq!(bytes.len(), 8);
+                                got.push(u64::from_le_bytes(bytes.try_into().expect("8 bytes")));
+                            }
+                            Err(PipeError::ClosedEmpty) | Err(PipeError::Empty) => break,
+                            Err(e) => panic!("unexpected pop error: {:?}", e),
+                        }
+                    }
+                    got
+                })
+            })
+            .collect();
+
+        let mut all: Vec<u64> = consumers
+            .into_iter()
+            .flat_map(|c| c.join().expect("consumer panicked"))
+            .collect();
+
+        // Every value popped exactly once, total count exactly TOTAL.
+        all.sort_unstable();
+        let mut expected: Vec<u64> = (0..TOTAL).map(|i| i as u64).collect();
+        expected.sort_unstable();
+        assert_eq!(all, expected);
     }
 }

@@ -50,7 +50,8 @@ const HEADER_SIZE: usize = 4;
 ///
 /// Pre-allocated linear buffer with monotonic tail. Reads are non-destructive
 /// and offset-based — each reader supplies its own byte offset.
-/// Kernel-internal only — no PyO3 export. Python uses kernel.create_stream().
+/// Kernel-internal — callers go through `StreamManager` via the
+/// `Kernel::create_stream` / `Kernel::stream_write_nowait` surface.
 pub struct MemoryStreamBackend {
     buf: UnsafeCell<Vec<u8>>,
     capacity: usize,
@@ -60,9 +61,13 @@ pub struct MemoryStreamBackend {
     msg_count: AtomicUsize,
 }
 
-// SAFETY: Append-only buffer. Writes extend [tail..new_tail], reads access
-// [offset..offset+len] which is already committed. Python GIL serializes
-// all PyO3 method calls.
+// SAFETY: Single-writer by contract — at most one producer thread
+// holds `&self` for `push()`. Under that contract the writer
+// extends [tail..new_tail] exclusively, then publishes the new tail
+// via a Release-store; any number of reader threads may then take
+// an Acquire-load of `tail` and read [offset..offset+len] for any
+// `offset + len <= tail`, since those bytes are already committed.
+// Concurrent `push()` from multiple threads is undefined behavior.
 unsafe impl Send for MemoryStreamBackend {}
 unsafe impl Sync for MemoryStreamBackend {}
 
@@ -227,7 +232,7 @@ impl MemoryStreamBackend {
         self.closed.load(Ordering::Acquire)
     }
 
-    /// Create a new MemoryStreamBackend (pub(crate), no PyO3).
+    /// Create a new MemoryStreamBackend.
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             buf: UnsafeCell::new(vec![0u8; capacity]),

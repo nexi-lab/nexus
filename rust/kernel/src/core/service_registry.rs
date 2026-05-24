@@ -4,9 +4,9 @@
 //! Holds two flavours of service:
 //!
 //!   * `ServiceInstance::Managed(Box<dyn ServiceLifecycle>)` — language-
-//!     agnostic lifecycle wrapper. Python services are wrapped via
-//!     `PyServiceLifecycle` adapter (in `generated_kernel_abi_pyo3.rs`);
-//!     future Rust-only managed services can implement the trait directly.
+//!     agnostic lifecycle wrapper. Reserved for non-Rust services that
+//!     register through the host (currently no in-tree caller; future
+//!     managed-agent runtimes plug in here).
 //!   * `ServiceInstance::Rust(Arc<dyn RustService>)` — services
 //!     implemented in Rust (e.g. ManagedAgentService) are registered
 //!     through the Rust-callable `Kernel::register_rust_service`
@@ -24,15 +24,11 @@ use std::sync::Arc;
 pub use contracts::rust_service::{RustCallError, RustService};
 
 // ── ServiceLifecycle trait ──────────────────────────────────────────────
-//
-// Language-agnostic lifecycle abstraction. Python services implement
-// this via a `PyServiceLifecycle` adapter in the cdylib layer; the
-// kernel never imports pyo3 for service management.
 
 /// Language-agnostic service lifecycle. Implementors must be `Send +
-/// Sync` (held in DashMap across threads) and support `Any` downcasting
-/// so the PyO3 layer can recover the original `Py<PyAny>` for
-/// `nx.service(name)` lookups.
+/// Sync` (held in DashMap across threads). The `Any` super-trait
+/// preserves downcasting for hosts that wrap a foreign-language
+/// service object and need to recover the concrete wrapper type.
 pub trait ServiceLifecycle: Send + Sync + std::any::Any {
     fn start(&self, timeout_secs: f64) -> Result<(), String>;
     fn stop(&self, timeout_secs: f64) -> Result<(), String>;
@@ -182,9 +178,10 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    /// Kernel-internal lookup for managed services, returning a ref to
-    /// the `ServiceLifecycle` trait object. The PyO3 layer downcasts
-    /// to `PyServiceLifecycle` to extract the `Py<PyAny>`.
+    /// Kernel-internal lookup for managed services, returning a fresh
+    /// clone of the `ServiceLifecycle` trait object. Hosts that need
+    /// the concrete wrapper type downcast through the `Any`
+    /// super-trait.
     pub(crate) fn lookup_managed(&self, name: &str) -> Option<Box<dyn ServiceLifecycle>> {
         self.services.get(name).and_then(|e| match &e.instance {
             ServiceInstance::Managed(lc) => Some(lc.clone_box()),

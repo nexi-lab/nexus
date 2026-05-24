@@ -101,6 +101,7 @@ class TestServerHealth:
         assert result == {"status": "healthy", "service": "nexus-rpc"}
         assert mock_client.get.call_count == 2
 
+
 # ---------------------------------------------------------------------------
 # _collect_status
 # ---------------------------------------------------------------------------

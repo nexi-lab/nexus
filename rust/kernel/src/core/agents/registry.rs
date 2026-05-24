@@ -596,21 +596,6 @@ impl AgentRegistry {
         Ok(true)
     }
 
-    /// Raw, unvalidated state set. Reserved for boot-time / test hooks
-    /// that intentionally bypass the FSM. Do not use from production
-    /// code paths.
-    pub fn set_state_unchecked(&self, pid: &str, new_state: AgentState) -> bool {
-        if let Some(mut entry) = self.agents.get_mut(pid) {
-            entry.state = new_state;
-            entry.updated_at_ms = now_ms();
-            drop(entry);
-            self.wake(pid);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Update heartbeat timestamp. Returns Err(NotFound) / Err(InvalidKind)
     /// for protocol violations to mirror the Python contract; otherwise
     /// Ok(true) on success.

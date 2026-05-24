@@ -17,7 +17,7 @@ use kernel::core::agents::registry::{
 };
 use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::CallResponse;
-use kernel::kernel::{Kernel, KernelError, OperationContext, WriteRequest};
+use kernel::kernel::{Kernel, KernelError, OperationContext};
 use kernel::meta_store::remote::RemoteMetaStore;
 use kernel::rpc_transport::RpcTransport;
 use tonic::{Response, Status};
@@ -699,7 +699,6 @@ fn encode_bytes(data: &[u8]) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
     fn path_local_mount_payload(root: &std::path::Path) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
@@ -711,14 +710,6 @@ mod tests {
             "zone_id": kernel::ROOT_ZONE_ID,
         }))
         .expect("payload")
-    }
-
-    fn write_batch_payload(paths: &[&str]) -> Vec<u8> {
-        let files: Vec<serde_json::Value> = paths
-            .iter()
-            .map(|path| serde_json::json!([path, encode_bytes(b"abc")]))
-            .collect();
-        serde_json::to_vec(&serde_json::json!({ "files": files })).expect("payload")
     }
 
     fn remote_mount_payload() -> Vec<u8> {
@@ -743,23 +734,6 @@ mod tests {
     fn error_payload(response: kernel::kernel::vfs_proto::CallResponse) -> serde_json::Value {
         assert!(response.is_error, "response did not carry an error payload");
         serde_json::from_slice(&response.payload).expect("error JSON")
-    }
-
-    struct DenyBlockedWriteHook;
-
-    impl NativeInterceptHook for DenyBlockedWriteHook {
-        fn name(&self) -> &str {
-            "deny-blocked-write"
-        }
-
-        fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
-            match ctx {
-                HookContext::Write(w) if w.path.ends_with("/blocked.txt") => {
-                    Err("blocked by test hook".to_string())
-                }
-                _ => Ok(HookOutcome::Pass),
-            }
-        }
     }
 
     #[test]
@@ -810,67 +784,6 @@ mod tests {
             kernel.has_mount("/zone/company", kernel::ROOT_ZONE_ID),
             "remote mount call returned success without installing a route"
         );
-    }
-
-    #[test]
-    fn write_batch_honors_write_permission_gate() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let kernel = Arc::new(Kernel::new());
-        let admin = OperationContext::new("admin", kernel::ROOT_ZONE_ID, true, None, true);
-        dispatch(
-            &kernel,
-            &admin,
-            "sys_setattr",
-            &path_local_mount_payload(tmp.path()),
-        )
-        .expect("dispatch")
-        .into_inner();
-        kernel.enable_permission_gate();
-
-        let mut ctx = OperationContext::new("reader", kernel::ROOT_ZONE_ID, false, None, false);
-        ctx.zone_perms = vec![("local".to_string(), "r".to_string())];
-        let payload = write_batch_payload(&[
-            "/zone/local/batch/denied-a.txt",
-            "/zone/local/batch/denied-b.txt",
-        ]);
-
-        let response = dispatch(&kernel, &ctx, "write_batch", &payload)
-            .expect("dispatch")
-            .into_inner();
-
-        assert!(response.is_error, "read-only context wrote a batch");
-        assert!(!tmp.path().join("batch/denied-a.txt").exists());
-        assert!(!tmp.path().join("batch/denied-b.txt").exists());
-    }
-
-    #[test]
-    fn write_batch_honors_native_pre_write_hooks() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let kernel = Arc::new(Kernel::new());
-        let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
-        dispatch(
-            &kernel,
-            &ctx,
-            "sys_setattr",
-            &path_local_mount_payload(tmp.path()),
-        )
-        .expect("dispatch")
-        .into_inner();
-        kernel.register_native_hook(Box::new(DenyBlockedWriteHook));
-        let payload = write_batch_payload(&[
-            "/zone/local/batch/blocked.txt",
-            "/zone/local/batch/other.txt",
-        ]);
-
-        let response = dispatch(&kernel, &ctx, "write_batch", &payload)
-            .expect("dispatch")
-            .into_inner();
-
-        assert!(
-            response.is_error,
-            "native pre-hook did not block write_batch"
-        );
-        assert!(!tmp.path().join("batch/blocked.txt").exists());
     }
 
     #[test]

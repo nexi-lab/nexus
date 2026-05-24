@@ -9,16 +9,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
-use kernel::abi::KernelAbi;
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentError, AgentKind, AgentSignal, AgentState, ExternalProcessInfo,
 };
 use kernel::kernel::vfs_proto::CallResponse;
-use kernel::kernel::{Kernel, KernelError, OperationContext};
-use kernel::meta_store::remote::RemoteMetaStore;
-use kernel::rpc_transport::RpcTransport;
+use kernel::kernel::{Kernel, OperationContext};
 use tonic::{Response, Status};
 
 use crate::grpc::{encode_rpc_error, RpcErrorCode};
@@ -27,7 +23,7 @@ use crate::grpc::{encode_rpc_error, RpcErrorCode};
 /// non-syscall control plane stays here.
 pub fn dispatch(
     kernel: &Arc<Kernel>,
-    ctx: &OperationContext,
+    _ctx: &OperationContext,
     method: &str,
     payload: &[u8],
 ) -> Result<Response<CallResponse>, Status> {
@@ -35,9 +31,6 @@ pub fn dispatch(
         serde_json::from_slice(payload).unwrap_or(serde_json::Value::Object(Default::default()));
 
     let result = match method {
-        "sys_read" => do_sys_read(kernel, &params, ctx),
-        "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
-        "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
         "get_mount_points" => ok_json(serde_json::json!(kernel.get_mount_points())),
 
         // Service lifecycle — no-ops for subprocess mode (the Rust
@@ -105,18 +98,6 @@ fn opt_s(v: &serde_json::Value, key: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn i64_or(v: &serde_json::Value, key: &str, default: i64) -> i64 {
-    v.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
-}
-
-fn u64_or(v: &serde_json::Value, key: &str, default: u64) -> u64 {
-    v.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
-}
-
-fn bool_or(v: &serde_json::Value, key: &str, default: bool) -> bool {
-    v.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
-}
-
 fn labels_map(v: &serde_json::Value, key: &str) -> HashMap<String, String> {
     v.get(key)
         .and_then(|v| v.as_object())
@@ -141,16 +122,6 @@ fn ok_json(val: serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
 
 fn call_err(code: RpcErrorCode, msg: &str) -> Vec<u8> {
     encode_rpc_error(code, msg)
-}
-
-fn kernel_err_to_payload(err: KernelError) -> Vec<u8> {
-    let (code, msg) = match err {
-        KernelError::FileNotFound(p) => (RpcErrorCode::FileNotFound, p),
-        KernelError::PermissionDenied(m) => (RpcErrorCode::PermissionError, m),
-        KernelError::InvalidPath(m) => (RpcErrorCode::InvalidPath, m),
-        other => (RpcErrorCode::InternalError, format!("{:?}", other)),
-    };
-    encode_rpc_error(code, &msg)
 }
 
 fn agent_err_to_payload(err: AgentError) -> Vec<u8> {
@@ -394,317 +365,10 @@ fn do_agent_heartbeat(
     }
 }
 
-// ── Syscall handlers ────────────────────────────────────────────────
-
-fn do_sys_read(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let timeout_ms = u64_or(params, "timeout_ms", 5000);
-    let offset = u64_or(params, "offset", 0);
-    match KernelAbi::sys_read(kernel, &path, ctx, timeout_ms, offset) {
-        Ok(result) => {
-            let data = result.data.as_deref().map(encode_bytes);
-            ok_json(serde_json::json!({
-                "data": data,
-                "content_id": result.content_id,
-                "gen": result.gen,
-                "entry_type": result.entry_type,
-                "stream_next_offset": result.stream_next_offset,
-                "post_hook_needed": result.post_hook_needed,
-            }))
-        }
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_setattr(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let entry_type = i64_or(params, "entry_type", 0) as i32;
-    let zone_id_str = s(params, "zone_id");
-    let zone_id = if zone_id_str.is_empty() {
-        kernel::ROOT_ZONE_ID
-    } else {
-        &zone_id_str
-    };
-
-    if entry_type == 2 {
-        let backend_type = s(params, "backend_type");
-        let local_root = s(params, "local_root");
-        let backend_name_str = s(params, "backend_name");
-        let backend_name = if backend_name_str.is_empty() {
-            backend_type.as_str()
-        } else {
-            backend_name_str.as_str()
-        };
-        let is_external = bool_or(params, "is_external", false);
-        let fsync = bool_or(params, "fsync", false);
-
-        // The Python subprocess client can only describe mounts as JSON.
-        // Honor the sandbox/workspace path-local case by constructing the
-        // Rust backend here. Keep returning synthetic success for other
-        // mount calls, especially the root CAS mount sent during generic
-        // NexusFS boot, because the cluster process already mounted its
-        // own root filesystem at startup.
-        if backend_type == "path_local" && !local_root.is_empty() {
-            if !ctx.is_admin && !ctx.is_system {
-                return Err(call_err(
-                    RpcErrorCode::PermissionError,
-                    "sys_setattr DT_MOUNT path_local requires admin or system context",
-                ));
-            }
-            let backend = backends::storage::path_local::PathLocalBackend::new(
-                std::path::Path::new(&local_root),
-                fsync,
-            )
-            .map_err(|e| {
-                call_err(
-                    RpcErrorCode::InternalError,
-                    &format!("path_local mount init failed for {local_root}: {e}"),
-                )
-            })?;
-            match kernel.sys_setattr(
-                &path,
-                entry_type,
-                backend_name,
-                Some(Arc::new(backend)),
-                None,
-                None,
-                "",
-                zone_id,
-                is_external,
-                0,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ) {
-                Ok(r) => {
-                    return ok_json(serde_json::json!({
-                        "path": r.path,
-                        "created": r.created,
-                        "entry_type": r.entry_type,
-                        "backend_name": r.backend_name,
-                    }));
-                }
-                Err(e) => return Err(kernel_err_to_payload(e)),
-            }
-        }
-
-        if backend_type == "remote" {
-            if !ctx.is_admin && !ctx.is_system {
-                return Err(call_err(
-                    RpcErrorCode::PermissionError,
-                    "sys_setattr DT_MOUNT remote requires admin or system context",
-                ));
-            }
-            let server_address = s(params, "server_address");
-            if server_address.is_empty() {
-                return Err(call_err(
-                    RpcErrorCode::InternalError,
-                    "sys_setattr DT_MOUNT remote requires server_address",
-                ));
-            }
-            let remote_auth_token = s(params, "remote_auth_token");
-            let remote_timeout = params
-                .get("remote_timeout")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(90.0);
-            let transport = Arc::new(
-                RpcTransport::new(
-                    Arc::clone(kernel.runtime()),
-                    &server_address,
-                    &remote_auth_token,
-                    None,
-                    Duration::from_secs_f64(remote_timeout),
-                )
-                .map_err(|e| {
-                    call_err(
-                        RpcErrorCode::InternalError,
-                        &format!("remote transport init failed for {server_address}: {e}"),
-                    )
-                })?,
-            );
-            let backend = backends::storage::remote::RemoteBackend::with_zone_path(
-                Arc::clone(&transport),
-                path.clone(),
-            );
-            let remote_metastore = RemoteMetaStore::new(transport);
-            match kernel.sys_setattr(
-                &path,
-                entry_type,
-                backend_name,
-                Some(Arc::new(backend)),
-                None,
-                None,
-                "",
-                zone_id,
-                is_external,
-                0,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(Arc::new(remote_metastore)),
-            ) {
-                Ok(r) => {
-                    return ok_json(serde_json::json!({
-                        "path": r.path,
-                        "created": r.created,
-                        "entry_type": r.entry_type,
-                        "backend_name": r.backend_name,
-                    }));
-                }
-                Err(e) => return Err(kernel_err_to_payload(e)),
-            }
-        }
-
-        return ok_json(serde_json::json!({
-            "path": path,
-            "created": false,
-            "entry_type": entry_type,
-        }));
-    }
-
-    let mime_type_str = params
-        .get("mime_type")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let content_id_str = params
-        .get("content_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let modified_at_ms = params.get("modified_at_ms").and_then(|v| v.as_i64());
-    let created_at_ms = params.get("created_at_ms").and_then(|v| v.as_i64());
-    let size = params.get("size").and_then(|v| v.as_u64());
-    let version = params
-        .get("version")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32);
-    let backend_name_str = s(params, "backend_name");
-    let backend_name = if backend_name_str.is_empty() {
-        ""
-    } else {
-        &backend_name_str
-    };
-    let io_profile_str = s(params, "io_profile");
-    let io_profile = if io_profile_str.is_empty() {
-        ""
-    } else {
-        &io_profile_str
-    };
-    let is_external = bool_or(params, "is_external", false);
-    let capacity = u64_or(params, "capacity", 0) as usize;
-
-    match kernel.sys_setattr(
-        &path,
-        entry_type,
-        backend_name,
-        None, // backend (non-mount entry types don't need one)
-        None, // metastore
-        None, // raft_backend
-        io_profile,
-        zone_id,
-        is_external,
-        capacity,
-        None, // read_fd
-        None, // write_fd
-        mime_type_str.as_deref(),
-        modified_at_ms,
-        content_id_str.as_deref(),
-        size,
-        version,
-        created_at_ms,
-        None, // link_target
-        None, // source
-        None, // remote_metastore
-    ) {
-        Ok(r) => ok_json(serde_json::json!({
-            "path": r.path,
-            "created": r.created,
-            "entry_type": r.entry_type,
-        })),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_unlink(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let recursive = bool_or(params, "recursive", false);
-    match KernelAbi::sys_unlink(kernel, &path, ctx, recursive) {
-        Ok(r) => ok_json(serde_json::json!({
-            "hit": r.hit,
-            "entry_type": r.entry_type,
-            "post_hook_needed": r.post_hook_needed,
-            "path": r.path,
-            "content_id": r.content_id,
-            "size": r.size,
-        })),
-        Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-// ── Bytes encoding/decoding ─────────────────────────────────────────
-// Python rpc_codec sends bytes as {"__type__": "bytes", "data": "<base64>"}
-
-fn encode_bytes(data: &[u8]) -> serde_json::Value {
-    use base64::Engine;
-    serde_json::json!({
-        "__type__": "bytes",
-        "data": base64::engine::general_purpose::STANDARD.encode(data),
-    })
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn path_local_mount_payload(root: &std::path::Path) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
-            "path": "/zone/local",
-            "entry_type": 2,
-            "backend_type": "path_local",
-            "backend_name": "path_local",
-            "local_root": root.to_string_lossy(),
-            "zone_id": kernel::ROOT_ZONE_ID,
-        }))
-        .expect("payload")
-    }
-
-    fn remote_mount_payload() -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
-            "path": "/zone/company",
-            "entry_type": 2,
-            "backend_type": "remote",
-            "backend_name": "remote_zone:company",
-            "server_address": "127.0.0.1:9",
-            "remote_auth_token": "sk-test",
-            "zone_id": kernel::ROOT_ZONE_ID,
-        }))
-        .expect("payload")
-    }
 
     fn result_payload(response: kernel::kernel::vfs_proto::CallResponse) -> serde_json::Value {
         let payload: serde_json::Value =
@@ -715,56 +379,6 @@ mod tests {
     fn error_payload(response: kernel::kernel::vfs_proto::CallResponse) -> serde_json::Value {
         assert!(response.is_error, "response did not carry an error payload");
         serde_json::from_slice(&response.payload).expect("error JSON")
-    }
-
-    #[test]
-    fn sys_setattr_path_local_mount_from_json_routes_io_to_local_root() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let kernel = Arc::new(Kernel::new());
-        let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
-        let payload = path_local_mount_payload(tmp.path());
-
-        let response = dispatch(&kernel, &ctx, "sys_setattr", &payload)
-            .expect("dispatch")
-            .into_inner();
-
-        assert!(!response.is_error, "mount returned error payload");
-        KernelAbi::sys_write(&*kernel, "/zone/local/live/a.txt", &ctx, b"abc", 0)
-            .expect("write through path-local mount");
-        assert_eq!(
-            std::fs::read(tmp.path().join("live/a.txt")).unwrap(),
-            b"abc"
-        );
-    }
-
-    #[test]
-    fn sys_setattr_path_local_mount_from_json_requires_admin_or_system() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let kernel = Arc::new(Kernel::new());
-        let ctx = OperationContext::new("user", kernel::ROOT_ZONE_ID, false, None, false);
-        let payload = path_local_mount_payload(tmp.path());
-
-        let response = dispatch(&kernel, &ctx, "sys_setattr", &payload)
-            .expect("dispatch")
-            .into_inner();
-
-        assert!(response.is_error, "non-admin path_local mount succeeded");
-    }
-
-    #[test]
-    fn sys_setattr_remote_mount_from_json_installs_mount() {
-        let kernel = Arc::new(Kernel::new());
-        let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
-
-        let response = dispatch(&kernel, &ctx, "sys_setattr", &remote_mount_payload())
-            .expect("dispatch")
-            .into_inner();
-
-        assert!(!response.is_error, "remote mount returned error payload");
-        assert!(
-            kernel.has_mount("/zone/company", kernel::ROOT_ZONE_ID),
-            "remote mount call returned success without installing a route"
-        );
     }
 
     #[test]

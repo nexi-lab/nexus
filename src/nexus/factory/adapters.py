@@ -356,93 +356,26 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
-        if recursive:
-            try:
-                result = self._nx.sys_readdir(
-                    path,
-                    recursive=True,
-                    details=True,
-                    context=admin_ctx,
-                )
-                recursive_items: list[Any] = result.items if hasattr(result, "items") else result
-            except Exception:
-                recursive_items = []
+        result = self._nx.sys_readdir(
+            path,
+            recursive=recursive,
+            details=True,
+            context=admin_ctx,
+        )
+        items: list[Any] = result.items if hasattr(result, "items") else result
 
-            recursive_files: list[str] = []
-            for entry in recursive_items:
-                entry_path = (
-                    entry if isinstance(entry, str) else entry.get("path") or entry.get("name")
-                )
-                if not entry_path:
-                    continue
-                if isinstance(entry, dict) and (
-                    entry.get("entry_type") == 1 or entry.get("is_directory") is True
-                ):
-                    continue
-                if not str(entry_path).endswith("/"):
-                    recursive_files.append(str(entry_path))
-            if recursive_files:
-                return list(dict.fromkeys(recursive_files))
-
-        pending: list[tuple[str, int]] = [(path, 0)]
-        seen_dirs: set[str] = set()
         files: list[str] = []
-        max_depth = 100
-
-        while pending:
-            current, depth = pending.pop(0)
-            if current in seen_dirs or depth > max_depth:
+        for entry in items:
+            entry_path = entry if isinstance(entry, str) else entry.get("path") or entry.get("name")
+            if not entry_path:
                 continue
-            seen_dirs.add(current)
-
-            result = self._nx.sys_readdir(
-                current,
-                recursive=False,
-                details=True,
-                context=admin_ctx,
-            )
-            items: list[Any] = result.items if hasattr(result, "items") else result
-
-            # Root may only return path rows on the current sandbox kernel.
-            if not items and current == "/":
-                result = self._nx.sys_readdir(
-                    current,
-                    recursive=False,
-                    details=False,
-                    context=admin_ctx,
-                )
-                raw_items: list[Any] = result.items if hasattr(result, "items") else result
-                items = [{"path": item} for item in raw_items if isinstance(item, str)]
-
-            for entry in items:
-                entry_path = (
-                    entry if isinstance(entry, str) else entry.get("path") or entry.get("name")
-                )
-                if not entry_path:
-                    continue
-
-                is_dir = False
-                if isinstance(entry, dict) and (
-                    entry.get("entry_type") == 1 or entry.get("is_directory") is True
-                ):
-                    is_dir = True
-                elif not isinstance(entry, dict) or "entry_type" not in entry:
-                    try:
-                        stat = self._nx.sys_stat(entry_path, context=admin_ctx)
-                    except Exception:
-                        stat = None
-                    is_dir = bool(
-                        isinstance(stat, dict)
-                        and (stat.get("entry_type") == 1 or stat.get("is_directory") is True)
-                    )
-
-                if is_dir:
-                    if recursive:
-                        pending.append((entry_path, depth + 1))
-                    continue
-                files.append(entry_path)
-
-        return files
+            if isinstance(entry, dict) and (
+                entry.get("entry_type") == 1 or entry.get("is_directory") is True
+            ):
+                continue
+            if not str(entry_path).endswith("/"):
+                files.append(str(entry_path))
+        return list(dict.fromkeys(files))
 
     def get_session(self) -> Any:
         return self._nx.SessionLocal()

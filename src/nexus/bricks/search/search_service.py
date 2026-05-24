@@ -2284,16 +2284,6 @@ class SearchService:
 
         # Phase 2: Bulk fetch searchable text
         searchable_texts = metastore_get_searchable_text_bulk(self._kernel, candidate_files)
-        if not searchable_texts:
-            legacy_bulk = getattr(self.metadata, "get_searchable_text_bulk", None)
-            if callable(legacy_bulk):
-                legacy_result = legacy_bulk(candidate_files)
-                if isinstance(legacy_result, dict):
-                    searchable_texts = {
-                        str(path): str(text)
-                        for path, text in legacy_result.items()
-                        if text is not None
-                    }
         cached_text_ratio = len(searchable_texts) / len(candidate_files) if candidate_files else 0.0
         files_needing_raw = [f for f in candidate_files if f not in searchable_texts]
 

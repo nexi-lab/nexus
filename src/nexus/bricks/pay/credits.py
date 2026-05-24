@@ -42,6 +42,7 @@ from nexus.bricks.pay.constants import (
     credits_to_micro,
     make_tb_account_id,
     micro_to_credits,
+    tb_status_code,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -214,17 +215,9 @@ class CreditsService:
             self._tb = tb
         return self._tb
 
-    @staticmethod
-    def _tb_status_code(result: Any) -> int:
-        """Normalize TigerBeetle 0.16 ``.result`` and 0.17 ``.status`` results."""
-        status = getattr(result, "result", None)
-        if status is None:
-            status = getattr(result, "status", result)
-        return int(getattr(status, "value", status))
-
     def _tb_errors(self, results: list[Any], *, ok_codes: set[int] | None = None) -> list[Any]:
         ok = {0, TB_CREATED_CODE, *(ok_codes or set())}
-        return [result for result in results if self._tb_status_code(result) not in ok]
+        return [result for result in results if tb_status_code(result) not in ok]
 
     async def _get_client(self) -> Any:
         """Get or create TigerBeetle client.
@@ -279,7 +272,7 @@ class CreditsService:
         # Ignore "exists" errors - idempotent operation
         # TigerBeetle CreateAccountResult.EXISTS = 21
         for error in errors:
-            if self._tb_status_code(error) not in (0, 21):  # OK or EXISTS
+            if tb_status_code(error) not in (0, 21):  # OK or EXISTS
                 # Log but don't fail - system might still work
                 pass
 
@@ -406,7 +399,7 @@ class CreditsService:
         )
 
         results = await client.create_transfers([transfer])
-        idempotent_exists = any(self._tb_status_code(result) == 46 for result in results)
+        idempotent_exists = any(tb_status_code(result) == 46 for result in results)
         errors = self._tb_errors(results, ok_codes={46})
         if idempotent_exists and not errors:
             self._fire_audit(
@@ -421,7 +414,7 @@ class CreditsService:
             return str(transfer_id)
         if errors:
             error = errors[0]
-            status_code = self._tb_status_code(error)
+            status_code = tb_status_code(error)
             # TigerBeetle CreateTransferResult error codes:
             # EXISTS = 46 (idempotent success)
             # EXCEEDS_CREDITS = 54 (insufficient balance)
@@ -510,7 +503,7 @@ class CreditsService:
                 zone_id=zone_id,
                 transfer_id=str(transfer_id),
             )
-            raise CreditsError(f"Topup failed: {self._tb_status_code(errors[0])}")
+            raise CreditsError(f"Topup failed: {tb_status_code(errors[0])}")
 
         self._fire_audit(
             protocol="internal",
@@ -577,7 +570,7 @@ class CreditsService:
         errors = self._tb_errors(await client.create_transfers([transfer]))
         if errors:
             error = errors[0]
-            status_code = self._tb_status_code(error)
+            status_code = tb_status_code(error)
             # TigerBeetle CreateTransferResult.EXCEEDS_CREDITS = 54
             if status_code == 54:
                 self._fire_audit(
@@ -658,7 +651,7 @@ class CreditsService:
                 status="failed",
                 transfer_id=reservation_id,
             )
-            raise CreditsError(f"Commit failed: {self._tb_status_code(errors[0])}")
+            raise CreditsError(f"Commit failed: {tb_status_code(errors[0])}")
 
         self._fire_audit(
             protocol="internal",
@@ -704,7 +697,7 @@ class CreditsService:
                 status="failed",
                 transfer_id=reservation_id,
             )
-            raise CreditsError(f"Release failed: {self._tb_status_code(errors[0])}")
+            raise CreditsError(f"Release failed: {tb_status_code(errors[0])}")
 
         self._fire_audit(
             protocol="internal",
@@ -884,8 +877,8 @@ class CreditsService:
         errors = self._tb_errors(await client.create_accounts([account]), ok_codes={21})
         # Ignore "exists" error - idempotent operation
         # TigerBeetle CreateAccountResult.EXISTS = 21
-        if errors and self._tb_status_code(errors[0]) not in (0, 21):  # OK or EXISTS
-            raise CreditsError(f"Failed to create wallet: {self._tb_status_code(errors[0])}")
+        if errors and tb_status_code(errors[0]) not in (0, 21):  # OK or EXISTS
+            raise CreditsError(f"Failed to create wallet: {tb_status_code(errors[0])}")
 
     # =========================================================================
     # Budget Operations

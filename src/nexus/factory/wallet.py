@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from nexus.bricks.pay.constants import tb_status_code
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
@@ -20,13 +21,6 @@ class WalletProvisioner:
         self._tb_address = tb_address
         self._tb_cluster = tb_cluster
         self._client: Any = None
-
-    @staticmethod
-    def _tb_status_code(result: Any) -> int:
-        status = getattr(result, "result", None)
-        if status is None:
-            status = getattr(result, "status", result)
-        return int(getattr(status, "value", status))
 
     async def __call__(self, agent_id: str, zone_id: str = ROOT_ZONE_ID) -> None:
         """Create TigerBeetle account for *agent_id*. Idempotent."""
@@ -56,10 +50,8 @@ class WalletProvisioner:
         assert client is not None
         errors = await client.create_accounts([account])
         # Ignore EXISTS (21) — idempotent operation
-        if errors and self._tb_status_code(errors[0]) not in (0, 21, 2**32 - 1):
-            raise RuntimeError(
-                f"TigerBeetle account creation failed: {self._tb_status_code(errors[0])}"
-            )
+        if errors and tb_status_code(errors[0]) not in (0, 21, 2**32 - 1):
+            raise RuntimeError(f"TigerBeetle account creation failed: {tb_status_code(errors[0])}")
 
 
 def create_wallet_provisioner() -> WalletProvisioner | None:

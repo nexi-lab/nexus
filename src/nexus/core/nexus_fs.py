@@ -529,7 +529,7 @@ class NexusFS(  # type: ignore[misc]
         """
         if context is None:
             return
-        if getattr(context, "is_admin", False) or getattr(context, "is_system", False):
+        if getattr(context, "is_system", False):
             return
         enforcer = self.service("permission_enforcer") if hasattr(self, "service") else None
         if enforcer is None:

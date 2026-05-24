@@ -10,6 +10,7 @@ Related: Issue #1199 (Nexus Pay hybrid architecture)
 
 import hashlib
 from decimal import Decimal
+from typing import Any
 
 # =============================================================================
 # Ledger Codes
@@ -95,3 +96,16 @@ def make_tb_account_id(zone_id: str, agent_id: str) -> int:
     upper = zone_to_tb_prefix(zone_id)
     lower = agent_id_to_tb_id(agent_id)
     return (upper << 64) | lower
+
+
+# =============================================================================
+# Result Normalization
+# =============================================================================
+
+
+def tb_status_code(result: Any) -> int:
+    """Normalize TigerBeetle 0.16 ``.result`` and 0.17 ``.status`` results."""
+    status = getattr(result, "result", None)
+    if status is None:
+        status = getattr(result, "status", result)
+    return int(getattr(status, "value", status))

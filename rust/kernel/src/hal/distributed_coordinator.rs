@@ -5,8 +5,9 @@
 //! federation-aware syscalls dispatch via `kernel.distributed_coordinator()`
 //! rather than naming raft types directly. Distributed state
 //! (`ZoneManager`, `ZoneRaftRegistry`, tokio runtime, cross-zone mounts
-//! reverse index) lives on the concrete impl, which the cdylib boot
-//! installs through `nexus_raft::distributed_coordinator::install`.
+//! reverse index) lives on the concrete impl, which the host binary
+//! installs through `nexus_raft::distributed_coordinator::install` at
+//! startup.
 //!
 //! Linux analogue: kernel's `struct super_operations` — the filesystem
 //! abstraction surface that lets the VFS layer talk to any concrete
@@ -44,7 +45,7 @@ pub type CoordinatorResult<T> = Result<T, String>;
 /// Opaque handle stashed by the coordinator install hook so the
 /// raft-tier blob-fetcher handler can drain it. Kernel stores and
 /// returns the handle so `nexus_raft::blob_fetcher_handler::install`
-/// downcasts to the concrete type at cdylib boot.
+/// downcasts to the concrete type during boot wiring.
 pub type BlobFetcherSlot = Box<dyn std::any::Any + Send + Sync>;
 
 /// Bundled cluster status for one zone — typed return from
@@ -87,8 +88,8 @@ pub struct ShareInfo {
 /// Implementor: `nexus_raft::distributed_coordinator::RaftDistributedCoordinator`.
 ///
 /// `Send + Sync + 'static` so the `Arc<dyn DistributedCoordinator>` can
-/// be shared across syscall threads and the cdylib's tokio runtime
-/// without per-call cloning of trait objects.
+/// be shared across syscall threads and the host binary's tokio
+/// runtime without per-call cloning of trait objects.
 pub trait DistributedCoordinator: Send + Sync + 'static {
     // ── Introspection ──────────────────────────────────────────────────
 
@@ -264,12 +265,13 @@ pub trait DistributedCoordinator: Send + Sync + 'static {
 }
 
 /// No-op fallback used at `Kernel::new` so the coordinator slot is
-/// always populated — non-cdylib Rust tests + WASM builds keep the
-/// same call shape. Each method returns an empty/`None` value or
-/// errors out with a clear "DistributedCoordinator not installed"
-/// message; the cdylib's `install_distributed_coordinator` boot path
-/// replaces this with the real `RaftDistributedCoordinator` impl
-/// before any federation syscall fires.
+/// always populated — Rust tests + embedders that don't run
+/// federation keep the same call shape. Each method returns an
+/// empty/`None` value or errors out with a clear
+/// "DistributedCoordinator not installed" message; the host
+/// binary's `install_distributed_coordinator` boot path replaces
+/// this with the real `RaftDistributedCoordinator` impl before any
+/// federation syscall fires.
 pub struct NoopDistributedCoordinator;
 
 impl DistributedCoordinator for NoopDistributedCoordinator {

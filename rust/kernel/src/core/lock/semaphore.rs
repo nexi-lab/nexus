@@ -76,16 +76,17 @@ fn monotonic_ns() -> u64 {
 
 /// Rust-accelerated VFS counting semaphore.
 ///
-/// All mutations are serialized through a `parking_lot::Mutex`.
-/// A `Condvar` wakes blocked threads on release.
+/// Name-addressed POSIX-style semaphore (`sem_t` analogue), extended
+/// with UUID4 holder IDs, lazy TTL eviction, and SSOT `max_holders`
+/// enforcement at the first acquire. Process-local; for cluster-wide
+/// fair scheduling, federation wraps an advisory lock with
+/// `max_holders > 1` instead.
 ///
-/// **Reachability:** the PyO3 wrapper that previously exposed this
-/// to Python was deleted with the cdylib in PR #4161, and no Rust
-/// caller in the workspace currently constructs a `VFSSemaphore`.
-/// The primitive is kept here intentionally as a ready-to-wire
-/// kernel pillar (cluster-wide rate-limiting / fair scheduling
-/// surfaces are the planned consumers); should the audit confirm
-/// no upcoming consumer, this module is a candidate for deletion.
+/// All mutations are serialized through a `parking_lot::Mutex`; a
+/// `Condvar` wakes blocked threads on release.
+///
+/// See KERNEL-ARCHITECTURE.md §4 "Kernel Primitives" — the
+/// VFSSemaphore entry.
 pub struct VFSSemaphore {
     state: Mutex<SemaphoreState>,
     notify: Condvar,

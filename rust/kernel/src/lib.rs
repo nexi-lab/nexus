@@ -42,7 +42,9 @@ pub use core::lock as lock_manager;
 pub use core::lock::locks;
 pub use core::meta_store;
 pub use core::vfs_router;
-// The pure Rust API lives at `core::lock::semaphore::VFSSemaphore`.
+// `VFSSemaphore` lives at `core::lock::semaphore::VFSSemaphore` —
+// the counting-semaphore third of the LockManager primitive
+// (KERNEL-ARCHITECTURE.md §4.1).
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 

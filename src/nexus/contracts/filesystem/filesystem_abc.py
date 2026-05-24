@@ -132,7 +132,7 @@ class NexusFilesystem(Protocol):
 
     # ── Watch ──────────────────────────────────────────────────────
 
-    async def sys_watch(
+    def sys_watch(
         self,
         path: str,
         timeout: float = 30.0,

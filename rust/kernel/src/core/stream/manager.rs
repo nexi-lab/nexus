@@ -161,9 +161,9 @@ impl StreamManager {
         }
     }
 
-    /// Blocking read at offset — waits for data with Condvar (GIL-free).
+    /// Blocking read at offset — waits for data with Condvar.
     ///
-    /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
+    /// Called by `Kernel::stream_read_at_blocking`.
     pub fn read_at_blocking(
         &self,
         path: &str,

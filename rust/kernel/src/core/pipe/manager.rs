@@ -170,10 +170,10 @@ impl PipeManager {
         }
     }
 
-    /// Blocking read — waits for data with Condvar (GIL-free).
+    /// Blocking read — waits for data with Condvar.
     ///
-    /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
-    /// Returns data bytes, or WouldBlock on timeout.
+    /// Returns data bytes, or WouldBlock on timeout. Called by
+    /// `Kernel::pipe_read_blocking`.
     pub(crate) fn read_blocking(
         &self,
         path: &str,

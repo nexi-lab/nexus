@@ -7,6 +7,8 @@ dict must carry every ``FileMetadata`` field, not just the display subset.
 
 from __future__ import annotations
 
+import pytest
+
 from tests.testkit.nexus_factory import make_test_nexus
 
 # Every field on contracts.metadata.FileMetadata — the detail dict is a
@@ -34,6 +36,12 @@ _EXPECTED_KEYS = frozenset(
 
 def test_readdir_details_returns_full_filemetadata_projection(tmp_path):
     nx = make_test_nexus(tmp_path, is_admin=True)
+    if nx._kernel is None:
+        # Kernel binary (nexus-cluster) unavailable on this runner —
+        # the unit suite only requires the in-process kernel, which the
+        # macOS / Windows runners don't ship by default.
+        nx.close()
+        pytest.skip("kernel binary unavailable in this environment")
     try:
         nx.sys_write("/alpha.txt", b"alpha")
         nx.sys_write("/beta.txt", b"beta-content")

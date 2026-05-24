@@ -87,7 +87,14 @@ impl DriverLifecycleCoordinator {
                     link_target: None,
                     owner_id: None,
                 };
-                let _ = ms.put(mount_point, meta);
+                if let Err(e) = ms.put(mount_point, meta) {
+                    tracing::warn!(
+                        target: "kernel::dlc",
+                        mount = mount_point,
+                        zone = zone_id,
+                        "DT_MOUNT metadata write failed; router will still install the mount but on-disk metadata is out of sync: {e:?}",
+                    );
+                }
             });
         }
 
@@ -128,7 +135,14 @@ impl DriverLifecycleCoordinator {
         let route = kernel.vfs_router_arc().route(&parent_path, "root");
         if let Some(parent_route) = route {
             kernel.with_metastore(&parent_route.mount_point, |ms| {
-                let _ = ms.delete(mount_point);
+                if let Err(e) = ms.delete(mount_point) {
+                    tracing::warn!(
+                        target: "kernel::dlc",
+                        mount = mount_point,
+                        zone = zone_id,
+                        "DT_MOUNT metadata delete failed; router will still remove the mount but on-disk metadata may be stale: {e:?}",
+                    );
+                }
             });
         }
 

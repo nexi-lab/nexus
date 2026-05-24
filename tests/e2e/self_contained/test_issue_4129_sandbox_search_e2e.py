@@ -26,6 +26,7 @@ from click.testing import CliRunner
 import nexus
 from nexus.bricks.mcp.server import create_mcp_server
 from nexus.cli.commands import search as search_module
+from nexus.server.lifespan._async_engines import adispose_async_engines
 
 pytestmark = [pytest.mark.e2e, pytest.mark.xdist_group(name="issue_4129_search_e2e")]
 
@@ -323,9 +324,7 @@ async def test_issue_4129_sandbox_search_surfaces_correctness_and_latency(
         mcp_degraded = _assert_semantic_surface(mcp_semantic["items"])
         assert bool(mcp_semantic.get("semantic_degraded")) is mcp_degraded
     finally:
-        adispose = getattr(nx, "adispose_async_engines", None)
-        if adispose is not None:
-            await adispose()
+        await adispose_async_engines(nx)
         nx.close()
 
 
@@ -411,7 +410,5 @@ async def test_issue_4129_openai_hybrid_search_uses_vector_and_keyword_lanes(
         assert any(hit.get("keyword_score") is not None for hit in hybrid_hits)
         assert all(hit.get("semantic_degraded") is not True for hit in hybrid_hits)
     finally:
-        adispose = getattr(nx, "adispose_async_engines", None)
-        if adispose is not None:
-            await adispose()
+        await adispose_async_engines(nx)
         nx.close()

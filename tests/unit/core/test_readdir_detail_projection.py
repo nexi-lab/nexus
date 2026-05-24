@@ -35,11 +35,16 @@ _EXPECTED_KEYS = frozenset(
 
 
 def test_readdir_details_returns_full_filemetadata_projection(tmp_path):
-    nx = make_test_nexus(tmp_path, is_admin=True)
+    try:
+        nx = make_test_nexus(tmp_path, is_admin=True)
+    except AttributeError:
+        # make_test_nexus → create_nexus_fs calls nx.sys_setattr during
+        # boot; on runners where the nexus-cluster binary isn't installed
+        # (macOS / Windows unit suite, the kernel spawn fails →
+        # nx._kernel = None), that raises AttributeError before this test
+        # body runs. Skip — the test needs a working kernel by design.
+        pytest.skip("kernel binary unavailable in this environment")
     if nx._kernel is None:
-        # Kernel binary (nexus-cluster) unavailable on this runner —
-        # the unit suite only requires the in-process kernel, which the
-        # macOS / Windows runners don't ship by default.
         nx.close()
         pytest.skip("kernel binary unavailable in this environment")
     try:

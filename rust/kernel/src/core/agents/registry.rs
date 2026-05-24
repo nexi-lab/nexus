@@ -9,15 +9,10 @@
 //! AgentState mirrors `contracts/process_types.py` exactly:
 //!   REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED
 //!   READY/BUSY → SUSPENDED → READY
-//!
-//! Companion: AgentObserver — text-chunk accumulator + usage metrics for
-//! the managed-agent loop. Lock-free atomic counters; the chunk buffer
-//! uses parking_lot::Mutex.
 
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -948,76 +943,6 @@ impl Default for AgentRegistry {
     }
 }
 
-// ── AgentObserver ───────────────────────────────────────────────────────
-
-/// Text chunk accumulator + usage metrics for the managed-agent loop.
-///
-/// Tracks token usage and text output for agent turns. AtomicU64 counters
-/// for lock-free metric accumulation.
-pub struct AgentObserver {
-    /// Accumulated text chunks for current turn.
-    chunks: parking_lot::Mutex<Vec<String>>,
-    /// Total input tokens across all turns.
-    pub input_tokens: AtomicU64,
-    /// Total output tokens across all turns.
-    pub output_tokens: AtomicU64,
-    /// Number of completed turns.
-    pub turn_count: AtomicU64,
-}
-
-impl AgentObserver {
-    pub fn new() -> Self {
-        Self {
-            chunks: parking_lot::Mutex::new(Vec::new()),
-            input_tokens: AtomicU64::new(0),
-            output_tokens: AtomicU64::new(0),
-            turn_count: AtomicU64::new(0),
-        }
-    }
-
-    /// Append a text chunk to the current turn accumulator.
-    pub fn observe_chunk(&self, text: &str) {
-        self.chunks.lock().push(text.to_string());
-    }
-
-    /// Record token usage for a turn.
-    pub fn observe_usage(&self, input_tokens: u64, output_tokens: u64) {
-        self.input_tokens.fetch_add(input_tokens, Ordering::Relaxed);
-        self.output_tokens
-            .fetch_add(output_tokens, Ordering::Relaxed);
-    }
-
-    /// Finish the current turn: drain accumulated chunks, increment turn counter.
-    /// Returns the accumulated text for this turn.
-    pub fn finish_turn(&self) -> String {
-        self.turn_count.fetch_add(1, Ordering::Relaxed);
-        let mut chunks = self.chunks.lock();
-        let text = chunks.join("");
-        chunks.clear();
-        text
-    }
-
-    /// Get current accumulated text without finishing the turn.
-    pub fn peek_chunks(&self) -> String {
-        self.chunks.lock().join("")
-    }
-
-    /// Get usage stats: (input_tokens, output_tokens, turn_count).
-    pub fn stats(&self) -> (u64, u64, u64) {
-        (
-            self.input_tokens.load(Ordering::Relaxed),
-            self.output_tokens.load(Ordering::Relaxed),
-            self.turn_count.load(Ordering::Relaxed),
-        )
-    }
-}
-
-impl Default for AgentObserver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1417,21 +1342,6 @@ mod tests {
             batch[1].labels.get("eviction_priority").map(String::as_str),
             Some("20")
         );
-    }
-
-    #[test]
-    fn test_agent_observer() {
-        let obs = AgentObserver::new();
-        obs.observe_chunk("Hello ");
-        obs.observe_chunk("world");
-        obs.observe_usage(100, 50);
-        let text = obs.finish_turn();
-        assert_eq!(text, "Hello world");
-        let (inp, out, turns) = obs.stats();
-        assert_eq!(inp, 100);
-        assert_eq!(out, 50);
-        assert_eq!(turns, 1);
-        assert_eq!(obs.peek_chunks(), "");
     }
 
     #[test]

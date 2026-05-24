@@ -211,6 +211,10 @@ def _server_health(
     ``src/nexus/server/api/core/health.py:71-206``, so a tighter budget
     times out under realistic load.
     """
+    from nexus.cli.api_client import _is_loopback_url
+
+    base_url = base_url.rstrip("/")
+    trust_env = not _is_loopback_url(base_url)
 
     def public_health(client: Any) -> dict[str, Any] | None:
         try:
@@ -229,7 +233,7 @@ def _server_health(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        with httpx.Client(timeout=timeout, headers=headers) as client:
+        with httpx.Client(timeout=timeout, headers=headers, trust_env=trust_env) as client:
             if not api_key:
                 return public_health(client)
 

@@ -253,6 +253,28 @@ class _MutatingHookHarness(_Harness):
         self._kernel = _MutatingHookKernel()
 
 
+class _EditHarness(_Harness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stat_calls = 0
+
+    def sys_stat(
+        self,
+        path: str,
+        *,
+        context: object | None = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        self.stat_calls += 1
+        return {
+            "content_id": "cid",
+            "version": 1,
+            "gen": 1,
+            "modified_at": None,
+            "size": 3,
+        }
+
+
 def test_sys_read_records_backend_latency_and_bytes() -> None:
     harness = _Harness()
     before_bytes = _sample("nexus_read_bytes_total", tier="backend")
@@ -283,6 +305,25 @@ def test_sys_read_preserves_explicit_ipc_timeout() -> None:
     assert harness.sys_read("/file.txt", timeout_ms=250) == b"abc"
 
     assert harness._kernel.read_timeouts == [250]
+
+
+def test_edit_preview_without_if_match_does_not_stat() -> None:
+    harness = _EditHarness()
+
+    result = harness.edit("/file.txt", [("abc", "abd")], preview=True)
+
+    assert result["success"] is True
+    assert result["preview"] is True
+    assert harness.stat_calls == 0
+
+
+def test_edit_with_if_match_reads_metadata_for_occ() -> None:
+    harness = _EditHarness()
+
+    result = harness.edit("/file.txt", [("abc", "abd")], if_match="cid", preview=True)
+
+    assert result["success"] is True
+    assert harness.stat_calls == 1
 
 
 def test_sys_read_records_virtual_resolver_reads() -> None:

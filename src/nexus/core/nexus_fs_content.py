@@ -1324,12 +1324,23 @@ class ContentMixin:
         from nexus.utils.edit_engine import EditEngine
         from nexus.utils.edit_engine import EditOperation as EditOp
 
-        # Read current content with metadata (via Tier 2 convenience)
-        result = self.read(path, context=context, return_metadata=True)
-        assert isinstance(result, dict), "Expected dict when return_metadata=True"
-
-        content_bytes: bytes = result["content"]
-        current_content_id = result.get("content_id")
+        current_content_id = None
+        if if_match is None:
+            content_raw = self.sys_read(path, context=context)
+            content_bytes = (
+                content_raw.get("data", b"") if isinstance(content_raw, dict) else content_raw
+            )
+            if isinstance(content_bytes, str):
+                content_bytes = content_bytes.encode("utf-8")
+            elif not isinstance(content_bytes, bytes):
+                content_bytes = bytes(content_bytes)
+        else:
+            # OCC needs the current content_id. Plain/preview edits avoid the
+            # metadata stat round trip and read only the file bytes.
+            result = self.read(path, context=context, return_metadata=True)
+            assert isinstance(result, dict), "Expected dict when return_metadata=True"
+            content_bytes = result["content"]
+            current_content_id = result.get("content_id")
 
         # Check content_id if provided (optimistic concurrency control)
         if if_match is not None and current_content_id != if_match:

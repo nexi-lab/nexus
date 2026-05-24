@@ -1,30 +1,17 @@
 //! FileWatchRegistry — Rust-native file watch pattern matching (§10 A3).
 //!
-//! Kernel primitive for inotify-like file change notification.
-//! Stores watch patterns (glob-style) with unique IDs.
-//! On mutation, pure Rust pattern match returns matching watch IDs.
+//! Kernel primitive for inotify-like file change notification. Stores
+//! watch patterns (glob-style) with unique IDs.
 //!
-//! Two consumer shapes:
-//!
-//!   1. **Python `match_path`** — Python boundary calls
-//!      [`Self::match_path`] from a mutation observer to get the list
-//!      of matching watch IDs, then wakes the corresponding
-//!      asyncio.Futures on the Python side. Watches registered via
-//!      [`Self::register`] (no notify backing) participate in this
-//!      flow.
-//!
-//!   2. **In-Rust blocking `wait_for_event`** — In-tree Rust callers
-//!      (sudocode `spawn_task`, the matrix-adapter `/sync` long-poll
-//!      fallback, future managed-agent watch use cases) want a
-//!      blocking `sys_watch(pattern, timeout)` that returns when an
-//!      event matching the pattern fires. [`Self::wait_for_event`]
-//!      registers a temporary watch with a `WatchNotify` backing,
-//!      blocks the caller's thread on a condition variable, and
-//!      unregisters on return. [`Self::notify_match`] (called by the
-//!      kernel's `dispatch_observers` on every mutation) wakes
-//!      blocked waiters whose pattern matches.
-//!
-//! RemoteWatchProtocol trait defined here — impl deferred.
+//! In-tree Rust callers (sudocode `spawn_task`, the matrix-adapter
+//! `/sync` long-poll fallback, managed-agent watch use cases) reach
+//! the registry through the `sys_watch(pattern, timeout)` syscall:
+//! [`Self::wait_for_event`] registers a temporary watch with a
+//! `WatchNotify` backing, parks the caller on a condition variable
+//! until a matching event arrives or the timeout fires, and
+//! unregisters the temp watch on return. [`Self::notify_match`]
+//! (called from `dispatch_observers` on every mutation) wakes
+//! blocked waiters whose pattern matches.
 
 use globset::{Glob, GlobMatcher};
 use parking_lot::{Condvar, Mutex, RwLock};
@@ -53,11 +40,10 @@ struct WatchEntry {
     #[allow(dead_code)]
     pattern: String,
     matcher: GlobMatcher,
-    /// `Some` for blocking [`FileWatchRegistry::wait_for_event`]
-    /// registrations; `None` for the python-side
-    /// [`FileWatchRegistry::register`] flow that consumes match
-    /// results via [`FileWatchRegistry::match_path`] only.
-    notify: Option<Arc<WatchNotify>>,
+    /// Notification channel populated by [`FileWatchRegistry::wait_for_event`]
+    /// at temp-watch registration time. Always `Some` for the only
+    /// in-tree registration path.
+    notify: Arc<WatchNotify>,
 }
 
 /// Kernel file watch registry — pattern matching without GIL.
@@ -74,14 +60,7 @@ impl FileWatchRegistry {
         }
     }
 
-    /// Register a glob pattern watch with no notify backing. Used by
-    /// the Python boundary — match results are consumed via
-    /// [`Self::match_path`] from a mutation observer.
-    pub(crate) fn register(&self, pattern: &str) -> u64 {
-        self.register_with_notify(pattern, None)
-    }
-
-    fn register_with_notify(&self, pattern: &str, notify: Option<Arc<WatchNotify>>) -> u64 {
+    fn register_with_notify(&self, pattern: &str, notify: Arc<WatchNotify>) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         // Build glob matcher — fallback to literal match if glob parse fails
         let matcher = Glob::new(pattern)
@@ -105,17 +84,6 @@ impl FileWatchRegistry {
         } else {
             false
         }
-    }
-
-    /// Match a path against all registered patterns.
-    /// Returns list of matching watch IDs (pure Rust, no GIL).
-    pub(crate) fn match_path(&self, path: &str) -> Vec<u64> {
-        let watches = self.watches.read();
-        watches
-            .iter()
-            .filter(|w| w.matcher.is_match(path))
-            .map(|w| w.id)
-            .collect()
     }
 
     /// Number of registered watches.
@@ -142,7 +110,7 @@ impl FileWatchRegistry {
             guard
                 .iter()
                 .filter(|w| w.matcher.is_match(path))
-                .filter_map(|w| w.notify.as_ref().map(Arc::clone))
+                .map(|w| Arc::clone(&w.notify))
                 .collect()
         };
         for notify in notifies {
@@ -172,7 +140,7 @@ impl FileWatchRegistry {
             inbox: Mutex::new(Vec::new()),
             condvar: Condvar::new(),
         });
-        let watch_id = self.register_with_notify(pattern, Some(Arc::clone(&notify)));
+        let watch_id = self.register_with_notify(pattern, Arc::clone(&notify));
 
         // RAII guard so the temporary watch is unregistered even
         // on the panic path. Functionally equivalent to a defer
@@ -244,44 +212,6 @@ mod tests {
     use std::thread;
 
     #[test]
-    fn test_register_and_match() {
-        let registry = FileWatchRegistry::new();
-        let id = registry.register("/zone/files/**");
-        assert!(registry.match_path("/zone/files/test.txt").contains(&id));
-        assert!(registry
-            .match_path("/zone/files/sub/deep.txt")
-            .contains(&id));
-        assert!(registry.match_path("/other/path").is_empty());
-    }
-
-    #[test]
-    fn test_unregister() {
-        let registry = FileWatchRegistry::new();
-        let id = registry.register("/zone/**");
-        assert!(registry.unregister(id));
-        assert!(registry.match_path("/zone/test").is_empty());
-        assert!(!registry.unregister(id)); // Already removed
-    }
-
-    #[test]
-    fn test_multiple_watches() {
-        let registry = FileWatchRegistry::new();
-        let id1 = registry.register("/a/**");
-        let id2 = registry.register("/a/b/**");
-        let matches = registry.match_path("/a/b/c.txt");
-        assert!(matches.contains(&id1));
-        assert!(matches.contains(&id2));
-    }
-
-    #[test]
-    fn test_literal_pattern() {
-        let registry = FileWatchRegistry::new();
-        let id = registry.register("/exact/path.txt");
-        assert!(registry.match_path("/exact/path.txt").contains(&id));
-        assert!(registry.match_path("/exact/other.txt").is_empty());
-    }
-
-    #[test]
     fn wait_for_event_returns_on_matching_notify() {
         let registry = Arc::new(FileWatchRegistry::new());
         let notifier = Arc::clone(&registry);
@@ -347,25 +277,5 @@ mod tests {
             .expect("only the matching path should wake the waiter");
         assert_eq!(event.path(), "/proc/p1/chat-with-me");
         waker.join().unwrap();
-    }
-
-    #[test]
-    fn match_path_only_returns_python_side_watches_and_blocking_watches() {
-        // `match_path` returns all matching IDs regardless of notify
-        // backing — Python and Rust waiters share the same matcher
-        // table. The notify channel only affects whether
-        // `notify_match` pushes events into a per-watch inbox.
-        let registry = Arc::new(FileWatchRegistry::new());
-        let py_id = registry.register("/zone/**");
-        let rust_id = registry.register_with_notify(
-            "/zone/**",
-            Some(Arc::new(WatchNotify {
-                inbox: Mutex::new(Vec::new()),
-                condvar: Condvar::new(),
-            })),
-        );
-        let matches = registry.match_path("/zone/file.txt");
-        assert!(matches.contains(&py_id));
-        assert!(matches.contains(&rust_id));
     }
 }

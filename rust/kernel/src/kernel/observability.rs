@@ -108,22 +108,6 @@ impl Kernel {
 
     // ── File watch registry (§10 A3) ──────────────────────────────────
 
-    /// Register a file watch pattern. Returns watch ID.
-    pub fn register_watch(&self, pattern: &str) -> u64 {
-        self.file_watches.register(pattern)
-    }
-
-    /// Unregister a file watch by ID.
-    pub fn unregister_watch(&self, watch_id: u64) -> bool {
-        self.file_watches.unregister(watch_id)
-    }
-
-    /// Match a path against all registered watch patterns.
-    /// Returns list of matching watch IDs.
-    pub fn match_watches(&self, path: &str) -> Vec<u64> {
-        self.file_watches.match_path(path)
-    }
-
     /// sys_watch — block until a file event matching the pattern arrives, or timeout.
     /// Tier 1 syscall (inotify equivalent). Returns matching FileEvent or None on timeout.
     pub fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {

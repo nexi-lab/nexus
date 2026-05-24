@@ -183,8 +183,7 @@ impl Kernel {
     // ── Service registry facade ───────────────────────────────────────
     //
     // Every ServiceRegistry method is exposed through Kernel so that
-    // consumers (PyKernel wrapper, peer crates) never reach the
-    // pub(crate) ServiceRegistry directly.
+    // peer crates never reach the pub(crate) ServiceRegistry directly.
 
     /// Register a managed (language-agnostic) service.
     pub fn register_managed_service(

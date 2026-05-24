@@ -57,8 +57,8 @@ pub struct WriteResult {
 ///   - mkdir, rmdir
 ///
 /// Streaming (write_stream, stream_content, stream_range) and batch
-/// (batch_read/write/delete) have default impls in Python; they are
-/// not needed in the Rust kernel hot path and can be added later.
+/// (batch_read/write/delete) variants are not on the Rust kernel
+/// hot path and can be added later as the call sites materialize.
 #[allow(dead_code)]
 pub trait ObjectStore: Send + Sync {
     /// Backend identifier (e.g. "local", "gcs", "s3").
@@ -66,9 +66,9 @@ pub trait ObjectStore: Send + Sync {
 
     /// Downcast to `&CASEngine` for CAS-specific operations. Default
     /// returns `None` for non-CAS backends (PAS, external connectors).
-    /// Only `CasLocalBackend` overrides. Used by the `PyKernel::cas_*`
-    /// surface so Python delegators can reach the CAS API without every
-    /// backend carrying CAS-shaped noise.
+    /// Only `CasLocalBackend` overrides. Used by the `Kernel::cas_*`
+    /// surface so callers can reach the CAS API without every backend
+    /// carrying CAS-shaped noise.
     #[allow(private_interfaces)]
     fn as_cas(&self) -> Option<&crate::cas_engine::CASEngine> {
         None
@@ -76,7 +76,7 @@ pub trait ObjectStore: Send + Sync {
 
     /// Downcast to a streaming-capable LLM backend. Default returns `None`.
     /// `OpenAIBackend` and `AnthropicBackend` override. Consumed by
-    /// `PyKernel::llm_start_streaming` — any ObjectStore that returns
+    /// `Kernel::llm_start_streaming` — any ObjectStore that returns
     /// `Some` implements the full SSE → DT_STREAM →
     /// `CASEngine::write_content_tracked` pipeline.
     ///

@@ -923,7 +923,8 @@ impl Kernel {
         // status as a synthesised file entry; /__sys__/zones/ exposes the
         // zone-id directory.  This is the read side of the kernel's
         // virtual federation namespace — service-tier callers read zone
-        // state through `sys_stat` instead of a direct PyKernel surface.
+        // state through `sys_stat` instead of a direct kernel
+        // accessor on the coordinator.
         if let Some(stat) = self.zones_procfs_stat(path) {
             return Some(stat);
         }

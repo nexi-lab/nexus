@@ -494,7 +494,7 @@ pub struct Kernel {
     lock_manager: Arc<LockManager>,
     // MetaStore (Box<dyn MetaStore>), behind parking_lot::RwLock so
     // the setter paths (``set_metastore_path`` / ``release_metastores``)
-    // don't need ``&mut self`` — lets ``PyKernel`` hold an ``Arc<Kernel>``
+    // don't need ``&mut self`` — lets the host hold an ``Arc<Kernel>``
     // for the apply-side federation-mount callback.
     metastore: parking_lot::RwLock<Option<Box<dyn crate::meta_store::MetaStore>>>,
     // Tempdir backing the boot-default ``LocalMetaStore``. ``Kernel::new``
@@ -1194,8 +1194,9 @@ impl Kernel {
         paths: &[String],
         key: &str,
     ) -> Result<Vec<crate::meta_store::PathValueStr>, KernelError> {
-        // Bulk: fan out to the global metastore. Mixed-mount bulk reads
-        // go through the Python wrapper.
+        // Bulk: fan out to the global metastore. Mixed-mount bulk
+        // reads are not handled here; callers that need them fan out
+        // per-mount themselves.
         match self.metastore.read().as_ref() {
             Some(ms) => ms.get_file_metadata_bulk(paths, key).map_err(|e| {
                 KernelError::IOError(format!("metastore_get_file_metadata_bulk: {e:?}"))

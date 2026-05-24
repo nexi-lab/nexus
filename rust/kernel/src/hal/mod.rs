@@ -42,7 +42,7 @@
 //! (`CasLocalBackend` etc.). Moving the CAS primitives out would
 //! require either a runtime-dispatched `CasOps` trait (perf hit on
 //! the hot CAS read path) or an ABI-breaking move of the entire
-//! `PyKernel::cas_*` family — neither pays its way given the CAS
+//! `Kernel::cas_*` family — neither pays its way given the CAS
 //! engine is conceptually a kernel primitive.
 //!
 //! Directory layout enforces the §3.A / §3.B split: `abc/` holds the

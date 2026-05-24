@@ -104,8 +104,9 @@ impl ServiceRegistry {
 
     /// Register a managed (language-agnostic) service.
     ///
-    /// The caller (PyKernel wrapper) validates exports and wraps the
-    /// Python object in a `PyServiceLifecycle` before calling this.
+    /// The caller wraps its foreign-language service object in a
+    /// `ServiceLifecycle` impl and validates exports before invoking
+    /// this entry point.
     pub(crate) fn enlist(
         &self,
         name: &str,

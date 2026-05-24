@@ -1,9 +1,10 @@
 //! AgentRegistry — Rust SSOT for agent lifecycle state.
 //!
 //! Linux task_struct array analogue. Lifecycle state, PCB metadata, parent/
-//! child links, signal semantics, and condvar wake-ups all live here. The
-//! Python service layer is a thin pass-through; in-process callers reach the
-//! registry directly through ``PyKernel.agent_registry``.
+//! child links, signal semantics, and condvar wake-ups all live here.
+//! In-process callers reach the registry through the kernel surface
+//! (`Kernel::agent_registry()`); service-tier views read it through
+//! shared references.
 //!
 //! AgentState mirrors `contracts/process_types.py` exactly:
 //!   REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED

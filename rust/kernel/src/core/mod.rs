@@ -52,6 +52,11 @@ pub mod stream;
 // scatter-gather remote fetcher, local blob transport (§4 CAS row).
 pub mod cas;
 
+// Out-bound VFS gRPC client — backs `RemoteMetaStore` and the
+// `Remote{Pipe,Stream}Backend` wrappers in `core/meta_store/`,
+// `core/pipe/`, `core/stream/`.
+pub mod rpc_transport;
+
 // Shared mmap header accessors used by both pipe/shm and stream/shm.
 #[cfg(unix)]
 pub(crate) mod shm_header;

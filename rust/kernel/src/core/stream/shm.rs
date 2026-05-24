@@ -27,6 +27,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -63,6 +65,15 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 
 /// Cross-process append-only buffer backed by mmap + OS pipe notification.
 ///
+/// Cross-process contract is single-writer multi-reader: one producer
+/// process appends, any number of consumer processes Acquire-load
+/// `tail` and read already-committed bytes. The on-disk mmap layout
+/// carries no inter-process lock. In-process, the `writer` mutex
+/// serializes threads on this side so multi-threaded `sys_write` from
+/// inside this process is safe; threads in a peer process see only
+/// their own struct + their own mutex, so the cross-process
+/// single-writer contract is what protects shared `tail` advances.
+///
 /// Kernel-internal primitive: constructed by the kernel inside
 /// `sys_setattr` when `io_profile=shared_memory` is requested for a
 /// DT_STREAM inode. Callers reach it via `sys_read` / `sys_write`
@@ -78,8 +89,20 @@ pub struct SharedMemoryStreamBackend {
     is_creator: bool,
     #[allow(dead_code)]
     shm_path: String,
+    /// Serializes in-process producers calling `push`. Uncontended in
+    /// single-writer use within this process. Cross-process
+    /// serialization is the producer process's responsibility under
+    /// the single-writer contract.
+    writer: Mutex<()>,
 }
 
+// SAFETY: The `writer` mutex makes the `&mut [u8]` borrow into the
+// mmap data region inside `push` unique across in-process threads.
+// Readers Acquire-load `tail` and read already-committed bytes; no
+// reader-side mutex is needed because reads are non-destructive and
+// `[offset..offset+len]` for `offset+len <= tail` is published by
+// the writer's Release-store of `tail`. Cross-process single-writer
+// is the peer process's responsibility per the type's contract.
 unsafe impl Send for SharedMemoryStreamBackend {}
 unsafe impl Sync for SharedMemoryStreamBackend {}
 
@@ -151,6 +174,12 @@ impl SharedMemoryStreamBackend {
         if payload_len > self.capacity {
             return Err(StreamError::Oversized(payload_len, self.capacity));
         }
+
+        // Serialize in-process producers; held across the Release-store
+        // of `tail` so any in-process or cross-process reader sees a
+        // fully-published frame and so the `&mut [u8]` borrow into the
+        // mmap data region is unique within this process.
+        let _writer_guard = self.writer.lock();
 
         let frame_len = HEADER_SIZE + payload_len;
         let tail = self.tail_atomic().load(Ordering::Relaxed);
@@ -318,6 +347,7 @@ impl SharedMemoryStreamBackend {
             notify_data_wr: data_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
+            writer: Mutex::new(()),
         };
 
         Ok((core, shm_path, data_fds[0]))
@@ -357,6 +387,7 @@ impl SharedMemoryStreamBackend {
             notify_data_wr,
             is_creator: false,
             shm_path: shm_path.to_string(),
+            writer: Mutex::new(()),
         })
     }
 

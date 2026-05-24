@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! AgentRegistry — Rust SSOT for agent lifecycle state.
 //!
 //! Linux task_struct array analogue. Lifecycle state, PCB metadata, parent/

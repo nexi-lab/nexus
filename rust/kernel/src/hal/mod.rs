@@ -19,7 +19,8 @@
 //! * [`object_store_provider`] — `ObjectStoreProvider` trait (§3.B.2).
 //!   Constructs `Arc<dyn ObjectStore>` for backend types
 //!   (anthropic / openai / s3 / gcs / …) without the kernel naming
-//!   `backends::*`. Concrete impl in `backends::python::factory`.
+//!   `backends::*`. Concrete impl lives in the `backends` crate and
+//!   is registered by the host binary at startup.
 //! * [`peer`] — re-export of `lib::transport_primitives::PeerBlobClient`.
 //!   The trait declaration lives in the tier-neutral `lib` crate's
 //!   `transport_primitives` module so raft (server-side fetcher) and

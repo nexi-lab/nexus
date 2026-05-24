@@ -59,9 +59,9 @@ impl GrpcChunkFetcher {
     /// through `Kernel::peer_client_arc()` / cloned at `sys_setattr`
     /// time); `self_address` is the snapshot of `Kernel::self_address`
     /// that lets the fetcher skip this node when scattering reads.
-    /// Public so backends-tier (`backends::python::factory`) can build
-    /// the fetcher inline at mount time without going through a kernel
-    /// shadow field.
+    /// Public so the backends-tier `ObjectStoreProvider` impl can
+    /// build the fetcher inline at mount time without going through
+    /// a kernel shadow field.
     pub fn new(client: Arc<dyn PeerBlobClient>, self_address: Option<String>) -> Self {
         Self {
             client,

@@ -1,20 +1,15 @@
 //! CAS Engine — content-addressable read/write combining Transport + BLAKE3 hash.
 //!
-//! Reimplements the hot-path subset of Python `CASAddressingEngine.read_content()`
-//! and `write_content()`, eliminating FFI overhead for the Kernel fast path.
+//! Hot-path subset of content-addressable read/write — hashing,
+//! dedup, local blob I/O — consumed only by `Kernel`.
 //!
-//! This module is `pub(crate)` — consumed only by `Kernel`, never exposed
-//! as a PyO3 class. External callers (Python) still use `CASAddressingEngine`.
-//!
-//! Not included (stays in Python):
-//! - CDC chunked write (split into chunks) — read reassembly via ChunkAssembler DI
+//! Out of scope (handled elsewhere):
+//! - CDC chunked write (split into chunks) — read reassembly is
+//!   composed in via the `ChunkAssembler` DI trait
 //! - Content cache (LRU)
 //! - TTL routing
 //! - Multipart upload
 //! - Write callbacks (e.g., Zoekt reindex)
-//!
-//! References:
-//!     - Python: `src/nexus/backends/base/cas_addressing_engine.py`
 
 use std::io;
 use std::sync::{Arc, RwLock};

@@ -289,7 +289,6 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
         size: obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
         content_id: obj
             .get("content_id")
-            .or_else(|| obj.get("content_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         gen: obj.get("gen").and_then(|v| v.as_u64()).unwrap_or(0),

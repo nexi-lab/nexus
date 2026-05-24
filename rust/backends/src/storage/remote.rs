@@ -302,35 +302,16 @@ impl ObjectStore for RemoteBackend {
     }
 
     fn delete_file(&self, path: &str) -> Result<(), StorageError> {
-        // Issue #3786: route deletes through Call RPC, not native Delete RPC.
-        // Native Delete on the hub uses Rust resolve_context which does NOT
-        // carry zone_perms into Python — so a federation token with zone:r
-        // would otherwise reach sys_unlink without the read-only enforcement
-        // path firing.  Call RPC goes through dispatch_call_sync where the
-        // Python OperationContext is rebuilt with full zone_perms and the
-        // enforcer's read-only gate runs before the kernel touches anything.
+        // Same SSOT story as read_content: typed Delete hands the full
+        // OperationContext (incl. zone_perms for federation tokens) to
+        // KernelAbi::sys_unlink, so the read-only enforcement path the
+        // legacy Issue #3786 comment cared about now fires identically
+        // on the typed wire.
         let server_path = to_server_path(&self.zone_path, path);
-        let payload = serde_json::json!({ "path": server_path });
-        let bytes = serde_json::to_vec(&payload)
-            .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
-        let (resp, is_error) = self
-            .transport
-            .call("sys_unlink", &bytes)
-            .map_err(|e| {
-                tracing::warn!(path = %server_path, err = %e, "RemoteBackend::delete_file transport error");
-                StorageError::IOError(std::io::Error::other(e))
-            })?;
-        if is_error {
-            let msg = String::from_utf8_lossy(&resp);
-            tracing::warn!(
-                path = %server_path,
-                error = %msg,
-                "RemoteBackend::delete_file hub returned error"
-            );
-            return Err(StorageError::IOError(std::io::Error::other(format!(
-                "sys_unlink({server_path}): {msg}"
-            ))));
-        }
+        self.transport.delete(&server_path, false).map_err(|e| {
+            tracing::warn!(path = %server_path, err = %e, "RemoteBackend::delete_file failed");
+            StorageError::IOError(std::io::Error::other(e))
+        })?;
         Ok(())
     }
 

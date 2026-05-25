@@ -1291,6 +1291,37 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         self.replication_log.as_ref()
     }
 
+    /// Tell raft-rs that a peer became unreachable.
+    ///
+    /// Required by raft-rs's driver contract — when the transport
+    /// layer fails to deliver a message to ``peer_id``, the driver
+    /// must call this so the leader's Progress tracker for that
+    /// peer transitions out of ``Replicate`` state and resumes
+    /// probing.  Without it, raft-rs assumes "no response yet,
+    /// peer just slow" and stalls AppendEntries forever after the
+    /// first transport hiccup — the failure mode that surfaced on
+    /// the Win→Mac sharedzone path today.
+    ///
+    /// Idempotent and cheap (raft-rs no-ops when the peer is
+    /// already in a non-Replicate state).
+    pub fn report_unreachable(&mut self, peer_id: u64) {
+        self.raw_node.report_unreachable(peer_id);
+    }
+
+    /// Tell raft-rs whether a snapshot send to ``peer_id`` succeeded.
+    ///
+    /// Companion to [`report_unreachable`].  When the transport
+    /// layer fails to deliver a ``MsgSnapshot`` (or successfully
+    /// delivers one), the driver must call this so raft-rs's
+    /// Progress tracker for that peer can leave the ``Snapshot``
+    /// state — either by retrying the snapshot on failure, or by
+    /// resuming normal AppendEntries replication on success.
+    /// Without it, a single snapshot send failure freezes
+    /// replication to that peer permanently.
+    pub fn report_snapshot(&mut self, peer_id: u64, status: raft::SnapshotStatus) {
+        self.raw_node.report_snapshot(peer_id, status);
+    }
+
     /// Drain all pending messages from the channel and process them.
     ///
     /// Each message is executed **sequentially** on `raw_node`, which is the

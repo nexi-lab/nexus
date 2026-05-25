@@ -33,6 +33,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -72,7 +74,7 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 // SharedMemoryPipeBackend
 // ---------------------------------------------------------------------------
 
-/// Cross-process SPSC ring buffer backed by mmap + OS pipe notification.
+/// Cross-process ring buffer backed by mmap + OS pipe notification.
 ///
 /// Kernel-internal primitive: the kernel constructs one via
 /// [`SharedMemoryPipeBackend::create_native`] inside `sys_setattr` when
@@ -80,20 +82,23 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 /// the kernel ever holds the struct; callers reach it via the
 /// DT_PIPE syscalls (`sys_read` / `sys_write`).
 ///
-/// **Concurrency contract** — cross-process SPSC. The mmap layout
-/// carries no inter-process lock; correctness rests on the
-/// contract that at most one producer thread (in at most one
-/// process) calls `push` and at most one consumer thread (in at
-/// most one process) calls `pop`. Producer and consumer then
-/// touch disjoint regions of the ring, guarded by atomic
-/// head/tail.
+/// **Concurrency contract** — cross-process SPSC, in-process MPMC.
+/// The cross-process contract is single-producer single-consumer:
+/// at most one producer process pushes and at most one consumer
+/// process pops, with the on-disk mmap layout carrying no
+/// inter-process lock. Producer and consumer then touch disjoint
+/// regions of the ring, guarded by atomic head/tail.
 ///
-/// `push_inner` builds a `&mut [u8]` borrow into `ring_slice()`
-/// without any in-process lock, so concurrent calls from multiple
-/// threads on either side are undefined behavior. In-process
-/// MPMC callers must lift the data structure out of SPSC by
-/// adding a writer / reader mutex (mirroring
-/// `MemoryPipeBackend`'s pattern).
+/// In-process, the [`writer`] mutex serializes producers and the
+/// [`reader`] mutex serializes consumers, so multi-threaded
+/// `sys_write` / `sys_read` from inside this process is safe
+/// without any external lock. The two mutexes do not contend with
+/// each other, preserving the SPSC fast path: producer and
+/// consumer threads can run fully concurrently with zero lock
+/// contention.
+///
+/// [`writer`]: SharedMemoryPipeBackend::writer
+/// [`reader`]: SharedMemoryPipeBackend::reader
 pub struct SharedMemoryPipeBackend {
     mmap: memmap2::MmapMut,
     ring_cap: usize,
@@ -110,9 +115,28 @@ pub struct SharedMemoryPipeBackend {
     is_creator: bool,
     #[allow(dead_code)]
     shm_path: String,
+    /// Serializes in-process producers calling `push_inner`.
+    /// Uncontended in single-writer use within this process.
+    /// Cross-process producers in a peer process see only their own
+    /// struct + their own mutex; cross-process serialization is the
+    /// peer process's responsibility under the SPSC contract.
+    writer: Mutex<()>,
+    /// Serializes in-process consumers calling `pop`. Uncontended in
+    /// single-reader use within this process. Cross-process consumers
+    /// in a peer process see only their own struct + their own mutex;
+    /// cross-process serialization is the peer process's
+    /// responsibility under the SPSC contract.
+    reader: Mutex<()>,
 }
 
-// SAFETY: SPSC by design — single producer + single consumer across processes.
+// SAFETY: The `writer` mutex makes the `&mut [u8]` borrow into the
+// mmap ring inside `push_inner` unique across in-process threads;
+// the `reader` mutex makes the `pop_position` + ring read +
+// `commit_pop` sequence inside `pop` atomic w.r.t. other in-process
+// readers. Writer-side and reader-side disjoint head/tail regions
+// then keep producer/consumer concurrent without cross-mutex
+// contention. Cross-process SPSC is the peer process's
+// responsibility per the type's contract.
 unsafe impl Send for SharedMemoryPipeBackend {}
 unsafe impl Sync for SharedMemoryPipeBackend {}
 
@@ -216,6 +240,12 @@ impl SharedMemoryPipeBackend {
             return Err(PipeError::Oversized(payload_len, self.user_capacity));
         }
 
+        // Serialize in-process producers; held across the Release-store
+        // of `tail` so any in-process consumer sees a fully-published
+        // frame and so the `&mut [u8]` borrow into the mmap ring is
+        // unique within this process.
+        let _writer_guard = self.writer.lock();
+
         let used = self.used_bytes().load(Ordering::Relaxed);
         if used + payload_len > self.user_capacity {
             return Err(PipeError::Full(used, self.user_capacity));
@@ -314,6 +344,10 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
         Ok(n)
     }
     fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        // Serialize in-process consumers across pop_position +
+        // ring copy + commit_pop so multiple in-process readers
+        // cannot double-claim the same frame on a sentinel skip.
+        let _reader_guard = self.reader.lock();
         let (start, len, advance) = self.pop_position()?;
         let ring = self.ring_slice();
         let data = ring[start..start + len].to_vec();
@@ -412,6 +446,8 @@ impl SharedMemoryPipeBackend {
             notify_space_wr: space_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         };
 
         Ok((core, shm_path, data_fds[0], space_fds[0]))
@@ -459,6 +495,8 @@ impl SharedMemoryPipeBackend {
             notify_space_wr,
             is_creator: false,
             shm_path: shm_path.to_string(),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         })
     }
 

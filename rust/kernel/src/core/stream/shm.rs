@@ -495,4 +495,87 @@ mod tests {
         creator.cleanup().unwrap();
         assert!(!std::path::Path::new(&path).exists());
     }
+
+    /// Concurrent multi-writer push must not corrupt the buffer:
+    /// every pushed message frame must be readable from its
+    /// returned offset, all offsets must be pairwise distinct, and
+    /// walking the buffer linearly from offset 0 must yield exactly
+    /// the total number of pushes.
+    ///
+    /// Without an in-process writer mutex on the SHM backend this
+    /// fails: two producer threads can both read the same `tail`
+    /// snapshot, copy their payloads into the same
+    /// `[tail..tail+frame_len]` slice (aliasing the `&mut [u8]`
+    /// borrow into the mmap region — UB by Rust's aliasing rules),
+    /// and both Release-store the same new tail — losing one of
+    /// the two messages and returning the same offset to two
+    /// different writers.
+    #[test]
+    fn test_concurrent_writers_do_not_corrupt() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const WRITERS: usize = 8;
+        const PER_WRITER: usize = 64;
+        // Frame = 4-byte header + 8-byte u64 payload = 12 bytes per push.
+        let capacity = WRITERS * PER_WRITER * 12;
+
+        // Use only the creator side: creator and attacher are views
+        // into the same mmap, so a single Arc-shared backend
+        // suffices to exercise in-process multi-thread access.
+        let (creator, _shm_path, data_rd_fd) =
+            SharedMemoryStreamBackend::create_native(capacity).unwrap();
+        unsafe {
+            libc::close(data_rd_fd);
+        }
+        let core = Arc::new(creator);
+
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|w| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    let mut offsets = Vec::with_capacity(PER_WRITER);
+                    for i in 0..PER_WRITER {
+                        let val = ((w as u64) << 32) | (i as u64);
+                        offsets.push(core.push_inner(&val.to_le_bytes()).expect("push failed"));
+                    }
+                    offsets
+                })
+            })
+            .collect();
+
+        let mut all_offsets: Vec<usize> = handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("writer thread panicked"))
+            .collect();
+        assert_eq!(all_offsets.len(), WRITERS * PER_WRITER);
+
+        // Every returned offset addresses a valid 8-byte frame.
+        for off in &all_offsets {
+            let (data, _) = read_at(&core, *off);
+            assert_eq!(data.len(), 8);
+        }
+        // Offsets are pairwise distinct — no two writers got the same slot.
+        all_offsets.sort_unstable();
+        all_offsets.dedup();
+        assert_eq!(all_offsets.len(), WRITERS * PER_WRITER);
+
+        // Walking the buffer linearly from offset 0 must yield exactly
+        // WRITERS * PER_WRITER frames, in the order writers' Release
+        // stores published them.
+        let mut walked = 0usize;
+        let mut offset = 0usize;
+        while let Ok((start, len, next)) = core.read_at_inner(offset) {
+            let buf = core.data_slice();
+            assert_eq!(buf[start..start + len].len(), 8);
+            walked += 1;
+            if next == offset {
+                break;
+            }
+            offset = next;
+        }
+        assert_eq!(walked, WRITERS * PER_WRITER);
+
+        core.cleanup().unwrap();
+    }
 }

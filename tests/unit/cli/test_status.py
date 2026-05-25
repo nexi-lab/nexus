@@ -56,6 +56,7 @@ class TestServerHealth:
 
         assert result == {"status": "healthy", "service": "nexus-rpc"}
         mock_client.get.assert_called_once_with("http://localhost:2026/health")
+        mock_client_cls.assert_called_once_with(timeout=5.0, headers={}, trust_env=False)
 
     @patch("httpx.Client")
     def test_returns_none_on_connection_error(self, mock_client_cls: MagicMock) -> None:

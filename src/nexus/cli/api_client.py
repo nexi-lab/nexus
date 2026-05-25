@@ -44,7 +44,7 @@ def _normalize_loopback_url(url: str) -> str:
     return urlunparse(parsed._replace(netloc=netloc))
 
 
-def _is_loopback_url(url: str) -> bool:
+def is_loopback_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
 
@@ -63,7 +63,7 @@ class NexusApiClient:
         self._base_url = _normalize_loopback_url(resolved.rstrip("/"))
         self._api_key = api_key or os.environ.get("NEXUS_API_KEY", "")
         self._timeout = timeout
-        self._trust_env = not _is_loopback_url(self._base_url)
+        self._trust_env = not is_loopback_url(self._base_url)
 
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Accept": "application/json"}

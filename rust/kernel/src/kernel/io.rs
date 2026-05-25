@@ -11,7 +11,6 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::core::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
@@ -892,12 +891,6 @@ impl Kernel {
             }
             None => miss(),
         };
-        if let Ok(result) = &result {
-            if result.hit {
-                self.index_cache
-                    .invalidate_parent_listing(&input.ctx.zone_id, input.path);
-            }
-        }
 
         result
     }
@@ -1285,8 +1278,6 @@ impl Kernel {
             .backend
             .as_ref()
             .map(|b| b.delete_file(&route.backend_path));
-        self.index_cache
-            .invalidate_parent_listing(&ctx.zone_id, path);
 
         // 7b. FDT cleanup — close pre-opened fd (if any).
         self.fdt.remove(path);
@@ -1569,10 +1560,6 @@ impl Kernel {
         // already invalidated old_path / repopulated new_path during
         // ``rename_path`` above. The kernel side has nothing left to do
         // — there is no kernel-global metadata cache to keep in sync.
-        self.index_cache
-            .invalidate_parent_listing(&ctx.zone_id, old_path);
-        self.index_cache
-            .invalidate_parent_listing(&ctx.zone_id, new_path);
 
         // 9b. FDT: re-key pre-opened fd (Unix rename keeps fd valid).
         self.fdt.rename(old_path, new_path);
@@ -2151,8 +2138,6 @@ impl Kernel {
         // ensure_parent_directories don't get individual events; the
         // top-level mkdir event is enough for observers like
         // FileWatchRegistry to invalidate their dcache for the subtree.
-        self.index_cache
-            .invalidate_parent_listing(&ctx.zone_id, path);
         self.dispatch_mutation(FileEventType::DirCreate, path, ctx, |_ev| {});
 
         Ok(SysMkdirResult {
@@ -2330,8 +2315,6 @@ impl Kernel {
         // (observers needing per-child notifications can list the
         // directory before unlink themselves; the top-level event is
         // the cache-invalidation signal).
-        self.index_cache
-            .invalidate_parent_listing(&ctx.zone_id, path);
         self.dispatch_mutation(FileEventType::DirDelete, path, ctx, |_ev| {});
 
         Ok(SysRmdirResult {
@@ -2962,15 +2945,6 @@ impl Kernel {
         } else {
             parent_path
         };
-        let cache_scope = if is_admin {
-            format!("{zone_id}:admin")
-        } else {
-            zone_id.to_string()
-        };
-        let cache_key = IndexCacheKey::new(cache_scope, normalized, IndexKind::Listing);
-        if let Some(entries) = self.index_cache.get_listing(&cache_key) {
-            return entries;
-        }
         let route = match self.vfs_router.route(normalized, zone_id) {
             Some(r) => r,
             None => return Vec::new(),
@@ -3044,8 +3018,6 @@ impl Kernel {
                 .map(|(path, (etype, _))| (path, etype))
                 .collect()
         };
-        self.index_cache
-            .put_listing(cache_key, entries.clone(), ttl_for_backend("kernel"));
         entries
     }
 

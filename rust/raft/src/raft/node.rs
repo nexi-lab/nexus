@@ -1938,6 +1938,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_driver_report_unreachable_and_snapshot_are_safe_pass_throughs() {
+        // Pin the contract that transport_loop relies on: the driver
+        // exposes `report_unreachable` and `report_snapshot` that
+        // never panic, even when the peer_id is unknown to raft-rs
+        // (the realistic case — a freshly-joined Learner reporting
+        // failure before its Progress entry has been populated, or
+        // a stale peer_id from a wipe-rejoin still queued in the
+        // mpsc channel).  raft-rs's underlying `report_*` calls
+        // no-op gracefully on unknown peers, but we want a guard at
+        // our boundary too so a future raft-rs version change
+        // doesn't silently destabilise the driver loop.
+        let (_handle, mut driver, _dir) = create_test_node();
+
+        // Unknown peer — must be a no-op, not a panic.
+        driver.report_unreachable(9_999_999);
+        driver.report_snapshot(9_999_999, raft::SnapshotStatus::Failure);
+        driver.report_snapshot(9_999_999, raft::SnapshotStatus::Finish);
+
+        // Self id — also safe (raft-rs no-ops; we never send to self
+        // but the failure channel could in theory deliver one).
+        let self_id = driver.config().id;
+        driver.report_unreachable(self_id);
+        driver.report_snapshot(self_id, raft::SnapshotStatus::Failure);
+    }
+
+    #[tokio::test]
     async fn test_witness_node() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();

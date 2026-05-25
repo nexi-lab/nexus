@@ -205,16 +205,7 @@ def _server_health(
     endpoint requires authentication and no *api_key* is provided.
     """
 
-    def public_health(client: Any | None = None) -> dict[str, Any] | None:
-        if client is None:
-            try:
-                import httpx
-
-                with httpx.Client(timeout=timeout) as public_client:
-                    return public_health(public_client)
-            except Exception:
-                return None
-
+    def public_health(client: Any) -> dict[str, Any] | None:
         try:
             fallback = client.get(f"{base_url}/health")
         except Exception:
@@ -238,14 +229,21 @@ def _server_health(
             try:
                 resp = client.get(f"{base_url}/health/detailed")
             except (httpx.TimeoutException, httpx.RequestError):
-                return public_health()
+                # Surface the failure rather than masking it with an
+                # unauthenticated public /health probe — silent fallback
+                # makes monitoring report green while authenticated
+                # callers still hang.
+                return {
+                    "status": "degraded",
+                    "reason": "detailed health check timed out",
+                }
             if resp.status_code == 200:
                 result: dict[str, Any] = resp.json()
                 return result
             # Detailed endpoint may require admin auth — fall back to
             # the public /health endpoint so we still report "healthy".
             if resp.status_code in (401, 403):
-                return public_health()
+                return public_health(client)
             return {"status": "error", "http_status": resp.status_code}
     except Exception:
         return None

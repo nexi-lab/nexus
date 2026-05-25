@@ -196,13 +196,20 @@ def _enrich_with_image_info(
 
 
 def _server_health(
-    base_url: str, api_key: str | None = None, timeout: float = 1.5
+    base_url: str, api_key: str | None = None, timeout: float = 5.0
 ) -> dict[str, Any] | None:
     """Query the running server's ``/health/detailed`` endpoint.
 
     Returns the JSON payload or *None* if the server is unreachable.
     Falls back to the public ``/health`` endpoint when the detailed
     endpoint requires authentication and no *api_key* is provided.
+
+    The 5s default matches the Docker E2E ``curl --max-time 5`` budget
+    (``.github/workflows/docker-publish.yml``); ``/health/detailed``
+    legitimately runs ~9 sub-checks (including async Redis-backed
+    ``durable_invalidation.health_check()``) per
+    ``src/nexus/server/api/core/health.py:71-206``, so a tighter budget
+    times out under realistic load.
     """
 
     def public_health(client: Any) -> dict[str, Any] | None:

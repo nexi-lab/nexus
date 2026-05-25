@@ -11184,7 +11184,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1451
     sdk:
       name: KernelClient.write_batch
-      source: src/nexus/remote/kernel_client.py:901
+      source: src/nexus/remote/kernel_client.py:900
   profiles:
     lite: supported
     sandbox: supported

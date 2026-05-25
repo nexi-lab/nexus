@@ -293,8 +293,7 @@ async def _acquire_lock(
 
     existing = _prune_expired_lock(resource)
     if existing and (
-        existing.get("max_holders", 1) != max_holders
-        or len(_lock_holders(existing)) >= max_holders
+        existing.get("max_holders", 1) != max_holders or len(_lock_holders(existing)) >= max_holders
     ):
         raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
 
@@ -355,8 +354,7 @@ async def _acquire_lock(
     # Fallback: in-memory
     existing = _prune_expired_lock(resource)
     if existing and (
-        existing.get("max_holders", 1) != max_holders
-        or len(_lock_holders(existing)) >= max_holders
+        existing.get("max_holders", 1) != max_holders or len(_lock_holders(existing)) >= max_holders
     ):
         raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
 

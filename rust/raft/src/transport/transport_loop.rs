@@ -59,8 +59,25 @@ const EC_BACKOFF_BASE: Duration = Duration::from_millis(100);
 const EC_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
 /// Timeout for individual Raft consensus message sends.
-/// Kept short because Raft heartbeats/votes must be fast.
-const RAFT_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+///
+/// Sized to absorb a `MsgSnapshot` transfer (KB-MB of state machine
+/// bytes over a WAN path) plus initial connect setup, not just a
+/// bare heartbeat round-trip.  The previous 5s was tuned for "raft
+/// heartbeats must be fast" and is correct for that case alone, but
+/// the same `send_raft_message` call also delivers snapshots to a
+/// newly joined Learner — those routinely exceed 5s over Tailscale
+/// or DERP, leading to client-side cancellation that the *peer*
+/// never sees as a failure (the server-side receive may complete
+/// after our timeout already aborted the RPC), keeping replication
+/// permanently stuck after Mac (Learner) join.  30 s aligns with
+/// the keep-alive interval (PR #4234) and gives the snapshot path
+/// adequate room while still bounding the spawned task lifetime.
+///
+/// Real unreachable-peer detection lives elsewhere: tonic's H2
+/// keep-alive (30 s ping / 10 s timeout) and raft-rs `Progress`
+/// state managed via `report_unreachable` (PR #4230) handle it on
+/// their own time scales without depending on this per-call cap.
+const RAFT_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(30);
 
 /// Timeout for a single EC replication send.
 ///

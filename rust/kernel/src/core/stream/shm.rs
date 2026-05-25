@@ -27,6 +27,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -69,19 +71,20 @@ use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 /// only — the type has no direct syscall surface of its own.
 ///
 /// **Concurrency contract** — cross-process single-writer
-/// multi-reader. The mmap layout carries no inter-process lock;
-/// correctness rests on the contract that at most one producer
-/// thread (in at most one process) calls `push`, while any number
-/// of reader threads in any process Acquire-load `tail` and read
-/// already-committed bytes (reads are non-destructive and
-/// idempotent, so no reader-side lock is needed).
+/// multi-reader, in-process multi-writer multi-reader. The
+/// cross-process contract is one producer process appending and
+/// any number of consumer processes Acquire-loading `tail` to
+/// read already-committed bytes; the on-disk mmap layout carries
+/// no inter-process lock.
 ///
-/// `push_inner` builds a `&mut [u8]` borrow into `data_slice()`
-/// without any in-process lock, so concurrent pushes from
-/// multiple threads in the same process are undefined behavior.
-/// In-process multi-writer callers must lift the data structure
-/// out of single-writer by adding a writer mutex (mirroring
-/// `MemoryStreamBackend`'s pattern).
+/// In-process, the [`writer`] mutex serializes producers so
+/// multi-threaded `sys_write` from inside this process is safe
+/// without any external lock. Readers stay lock-free — reads are
+/// non-destructive and idempotent, and `[offset..offset+len]` for
+/// `offset + len <= tail` is published by the writer's
+/// Release-store of `tail` before the writer mutex is dropped.
+///
+/// [`writer`]: SharedMemoryStreamBackend::writer
 pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,
@@ -93,8 +96,24 @@ pub struct SharedMemoryStreamBackend {
     is_creator: bool,
     #[allow(dead_code)]
     shm_path: String,
+    /// Serializes in-process producers calling `push_inner`.
+    /// Uncontended in single-writer use within this process.
+    /// Cross-process producers in a peer process see only their own
+    /// struct + their own mutex; cross-process serialization is the
+    /// peer process's responsibility under the single-writer
+    /// contract.
+    writer: Mutex<()>,
 }
 
+// SAFETY: The `writer` mutex makes the `&mut [u8]` borrow into the
+// mmap data region inside `push_inner` unique across in-process
+// threads. Readers Acquire-load `tail` and read already-committed
+// bytes; no reader-side mutex is needed because reads are
+// non-destructive and `[offset..offset+len]` for
+// `offset + len <= tail` is published by the writer's Release-store
+// of `tail` before the writer mutex is dropped. Cross-process
+// single-writer is the peer process's responsibility per the type's
+// contract.
 unsafe impl Send for SharedMemoryStreamBackend {}
 unsafe impl Sync for SharedMemoryStreamBackend {}
 
@@ -166,6 +185,12 @@ impl SharedMemoryStreamBackend {
         if payload_len > self.capacity {
             return Err(StreamError::Oversized(payload_len, self.capacity));
         }
+
+        // Serialize in-process producers; held across the Release-store
+        // of `tail` so any in-process or cross-process reader sees a
+        // fully-published frame and so the `&mut [u8]` borrow into the
+        // mmap data region is unique within this process.
+        let _writer_guard = self.writer.lock();
 
         let frame_len = HEADER_SIZE + payload_len;
         let tail = self.tail_atomic().load(Ordering::Relaxed);
@@ -333,6 +358,7 @@ impl SharedMemoryStreamBackend {
             notify_data_wr: data_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
+            writer: Mutex::new(()),
         };
 
         Ok((core, shm_path, data_fds[0]))
@@ -372,6 +398,7 @@ impl SharedMemoryStreamBackend {
             notify_data_wr,
             is_creator: false,
             shm_path: shm_path.to_string(),
+            writer: Mutex::new(()),
         })
     }
 

@@ -44,25 +44,41 @@ pub struct ClientConfig {
 
 impl Default for ClientConfig {
     fn default() -> Self {
-        // Raft peer transport: tight timeouts + aggressive HTTP/2 keep-alive so
-        // a dead peer's Channel is invalidated by the TCP/H2 stack in a few
-        // seconds, not after the default 10s/20s defaults. When a node restarts
-        // (test failover or a real operator bounce), the next raft send on a
-        // stale cached client must NOT pay a 5-second connect timeout while the
-        // kernel's ``SYN_SENT`` retries finally give up — that latency is the
-        // post-restart catchup flake we keep seeing in the federation E2E.
+        // Industry-standard gRPC keep-alive numbers — same shape as
+        // etcd / TiKV / Consul defaults.  Covers same-LAN, docker-
+        // network, and WAN-via-Tailscale paths with the same config.
         //
-        // The numbers below are load-bearing:
-        // - ``connect_timeout=2s``: raft peers are same-LAN/docker-network; a
-        //   connect that takes longer means the peer is not accepting.
-        // - ``keep_alive_interval=2s`` + ``keep_alive_timeout=3s``: H2 PING
-        //   every 2s, connection declared dead after 3s of no PONG. Total
-        //   detection latency ~5s even when no raft message is in flight.
+        // Recovery from a stale peer (node restart, network blip) is
+        // driven by raft-rs's own `Progress` state machine — the
+        // transport layer reports send failures back via
+        // `report_unreachable` / `report_snapshot` and raft-rs
+        // transitions the peer to `Probe` state, retrying on the
+        // next tick.  Aggressive transport-level fast-fail
+        // (`connect_timeout=2s`, `keep_alive_interval=2s`,
+        // `keep_alive_timeout=3s` — the previous defaults) is no
+        // longer needed for recovery and actively breaks on paths
+        // with normal latency jitter: a Tailscale WAN hop's PING
+        // round-trip can exceed 3s under DERP fallback or NAT
+        // hole-punch warmup, which would tear down an otherwise
+        // healthy connection.
+        //
+        // The values:
+        // - `connect_timeout=10s`: covers Tailscale first-connect
+        //   warmup, DERP relay round-trip, and slow same-LAN setup
+        //   while still failing-loud on truly unreachable peers.
+        // - `keep_alive_interval=30s`: H2 PING only when the
+        //   connection has been idle 30s — for raft this is
+        //   essentially never (heartbeats flow every ~100ms), so
+        //   PINGs only fire when the raft tick stops, which is
+        //   itself the failure signal.
+        // - `keep_alive_timeout=10s`: PONG must arrive within 10s.
+        //   Big enough to absorb WAN jitter, small enough that a
+        //   real outage is detected within a tick or two.
         Self {
-            connect_timeout: Duration::from_secs(2),
+            connect_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(10),
-            keep_alive_interval: Duration::from_secs(2),
-            keep_alive_timeout: Duration::from_secs(3),
+            keep_alive_interval: Duration::from_secs(30),
+            keep_alive_timeout: Duration::from_secs(10),
             tls: Arc::new(std::sync::RwLock::new(None)),
         }
     }
@@ -800,11 +816,15 @@ mod tests {
 
     #[test]
     fn test_client_config_default() {
+        // Industry-standard gRPC defaults (etcd / TiKV / Consul shape).
+        // Recovery now lives in raft-rs Progress via the report_*
+        // path, so transport-level keepalive can tolerate WAN
+        // (Tailscale) jitter without tearing down healthy connections.
         let config = ClientConfig::default();
-        assert_eq!(config.connect_timeout, Duration::from_secs(2));
+        assert_eq!(config.connect_timeout, Duration::from_secs(10));
         assert_eq!(config.request_timeout, Duration::from_secs(10));
-        assert_eq!(config.keep_alive_interval, Duration::from_secs(2));
-        assert_eq!(config.keep_alive_timeout, Duration::from_secs(3));
+        assert_eq!(config.keep_alive_interval, Duration::from_secs(30));
+        assert_eq!(config.keep_alive_timeout, Duration::from_secs(10));
     }
 
     // ---------------------------------------------------------------

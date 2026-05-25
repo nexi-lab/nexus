@@ -33,6 +33,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -63,61 +65,40 @@ const OFF_CLOSED: usize = SLOT_SIZE * 3;
 // Use shared PipeError from pipe.rs
 use crate::pipe::PipeError;
 
-// ---------------------------------------------------------------------------
-// Shared-memory header accessors (safe wrappers over raw mmap)
-// ---------------------------------------------------------------------------
-
-/// Read a u32 from mmap at the given offset.
+// Shared mmap header accessors live in `crate::core::shm_header`.
 #[cfg(test)]
-#[inline]
-fn read_u32(base: *const u8, off: usize) -> u32 {
-    unsafe {
-        let ptr = base.add(off) as *const u32;
-        ptr.read()
-    }
-}
-
-/// Write a u32 to mmap at the given offset.
-#[inline]
-fn write_u32(base: *mut u8, off: usize, val: u32) {
-    unsafe {
-        let ptr = base.add(off) as *mut u32;
-        ptr.write(val);
-    }
-}
-
-/// Get an AtomicUsize reference from mmap at the given offset.
-///
-/// SAFETY: The caller must ensure the pointer is valid and 8-byte aligned,
-/// and lives for the duration of the returned reference.
-#[inline]
-unsafe fn atomic_usize(base: *const u8, off: usize) -> &'static AtomicUsize {
-    &*(base.add(off) as *const AtomicUsize)
-}
-
-/// Get an AtomicU64 reference from mmap at the given offset.
-#[inline]
-unsafe fn atomic_u64(base: *const u8, off: usize) -> &'static AtomicU64 {
-    &*(base.add(off) as *const AtomicU64)
-}
-
-/// Get an AtomicBool reference from mmap at the given offset.
-#[inline]
-unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
-    &*(base.add(off) as *const AtomicBool)
-}
+use crate::core::shm_header::read_u32;
+use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 
 // ---------------------------------------------------------------------------
 // SharedMemoryPipeBackend
 // ---------------------------------------------------------------------------
 
-/// Cross-process SPSC ring buffer backed by mmap + OS pipe notification.
+/// Cross-process ring buffer backed by mmap + OS pipe notification.
 ///
 /// Kernel-internal primitive: the kernel constructs one via
 /// [`SharedMemoryPipeBackend::create_native`] inside `sys_setattr` when
-/// `io_profile=shared_memory` is requested for a DT_PIPE inode.  Only
-/// the kernel ever holds the struct; Python reaches it via the
+/// `io_profile=shared_memory` is requested for a DT_PIPE inode. Only
+/// the kernel ever holds the struct; callers reach it via the
 /// DT_PIPE syscalls (`sys_read` / `sys_write`).
+///
+/// **Concurrency contract** — cross-process SPSC, in-process MPMC.
+/// The cross-process contract is single-producer single-consumer:
+/// at most one producer process pushes and at most one consumer
+/// process pops, with the on-disk mmap layout carrying no
+/// inter-process lock. Producer and consumer then touch disjoint
+/// regions of the ring, guarded by atomic head/tail.
+///
+/// In-process, the [`writer`] mutex serializes producers and the
+/// [`reader`] mutex serializes consumers, so multi-threaded
+/// `sys_write` / `sys_read` from inside this process is safe
+/// without any external lock. The two mutexes do not contend with
+/// each other, preserving the SPSC fast path: producer and
+/// consumer threads can run fully concurrently with zero lock
+/// contention.
+///
+/// [`writer`]: SharedMemoryPipeBackend::writer
+/// [`reader`]: SharedMemoryPipeBackend::reader
 pub struct SharedMemoryPipeBackend {
     mmap: memmap2::MmapMut,
     ring_cap: usize,
@@ -134,9 +115,28 @@ pub struct SharedMemoryPipeBackend {
     is_creator: bool,
     #[allow(dead_code)]
     shm_path: String,
+    /// Serializes in-process producers calling `push_inner`.
+    /// Uncontended in single-writer use within this process.
+    /// Cross-process producers in a peer process see only their own
+    /// struct + their own mutex; cross-process serialization is the
+    /// peer process's responsibility under the SPSC contract.
+    writer: Mutex<()>,
+    /// Serializes in-process consumers calling `pop`. Uncontended in
+    /// single-reader use within this process. Cross-process consumers
+    /// in a peer process see only their own struct + their own mutex;
+    /// cross-process serialization is the peer process's
+    /// responsibility under the SPSC contract.
+    reader: Mutex<()>,
 }
 
-// SAFETY: SPSC by design — single producer + single consumer across processes.
+// SAFETY: The `writer` mutex makes the `&mut [u8]` borrow into the
+// mmap ring inside `push_inner` unique across in-process threads;
+// the `reader` mutex makes the `pop_position` + ring read +
+// `commit_pop` sequence inside `pop` atomic w.r.t. other in-process
+// readers. Writer-side and reader-side disjoint head/tail regions
+// then keep producer/consumer concurrent without cross-mutex
+// contention. Cross-process SPSC is the peer process's
+// responsibility per the type's contract.
 unsafe impl Send for SharedMemoryPipeBackend {}
 unsafe impl Sync for SharedMemoryPipeBackend {}
 
@@ -240,6 +240,12 @@ impl SharedMemoryPipeBackend {
             return Err(PipeError::Oversized(payload_len, self.user_capacity));
         }
 
+        // Serialize in-process producers; held across the Release-store
+        // of `tail` so any in-process consumer sees a fully-published
+        // frame and so the `&mut [u8]` borrow into the mmap ring is
+        // unique within this process.
+        let _writer_guard = self.writer.lock();
+
         let used = self.used_bytes().load(Ordering::Relaxed);
         if used + payload_len > self.user_capacity {
             return Err(PipeError::Full(used, self.user_capacity));
@@ -338,6 +344,10 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
         Ok(n)
     }
     fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        // Serialize in-process consumers across pop_position +
+        // ring copy + commit_pop so multiple in-process readers
+        // cannot double-claim the same frame on a sentinel skip.
+        let _reader_guard = self.reader.lock();
         let (start, len, advance) = self.pop_position()?;
         let ring = self.ring_slice();
         let data = ring[start..start + len].to_vec();
@@ -365,7 +375,7 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Pure Rust constructors (no PyO3 dependency)
+// Constructors
 // ---------------------------------------------------------------------------
 
 impl SharedMemoryPipeBackend {
@@ -436,13 +446,15 @@ impl SharedMemoryPipeBackend {
             notify_space_wr: space_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         };
 
         Ok((core, shm_path, data_fds[0], space_fds[0]))
     }
 
     /// Attach to an existing shared ring buffer (same-process tests + future
-    /// kernel-internal cross-process attach paths).  Pure Rust — no PyO3.
+    /// kernel-internal cross-process attach paths).
     #[cfg(test)]
     fn attach(
         shm_path: &str,
@@ -483,6 +495,8 @@ impl SharedMemoryPipeBackend {
             notify_space_wr,
             is_creator: false,
             shm_path: shm_path.to_string(),
+            writer: Mutex::new(()),
+            reader: Mutex::new(()),
         })
     }
 
@@ -541,12 +555,12 @@ mod tests {
         (creator, attacher)
     }
 
-    /// Helper: push raw bytes via push_inner (bypass PyO3).
+    /// Helper: push raw bytes via push_inner.
     fn push(core: &SharedMemoryPipeBackend, data: &[u8]) -> usize {
         core.push_inner(data).expect("push failed")
     }
 
-    /// Helper: pop raw bytes via pop_position + commit_pop (bypass PyO3).
+    /// Helper: pop raw bytes via pop_position + commit_pop.
     fn pop(core: &SharedMemoryPipeBackend) -> Vec<u8> {
         let (start, len, advance) = core.pop_position().expect("pop failed");
         let ring = core.ring_slice();
@@ -652,5 +666,98 @@ mod tests {
         assert_eq!(u64::from_le_bytes(buf), 42);
         attacher.commit_pop(advance, len);
         creator.cleanup().unwrap();
+    }
+
+    /// Multi-producer single-consumer: concurrent `push_inner` from
+    /// many threads inside the same process must not corrupt the
+    /// mmap ring or alias the `&mut [u8]` borrow into it. Producers
+    /// and consumer run concurrently against a single `Arc`-shared
+    /// backend (same-process view into the mmap); after every
+    /// producer finishes the consumer drains the remainder and
+    /// verifies the union equals the expected universe.
+    ///
+    /// Without an in-process writer mutex on the SHM backend this
+    /// fails with frame loss or UB: two producers can both compute
+    /// the same `tail` snapshot, copy their payload into the same
+    /// `[tail..tail+frame_len]` slice, and both Release-store the
+    /// same new tail — losing one of the two messages.
+    #[test]
+    fn test_mpsc_writers_do_not_corrupt() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const PRODUCERS: usize = 4;
+        const PER_PRODUCER: usize = 256;
+        let total = PRODUCERS * PER_PRODUCER;
+
+        // Use only the creator side: both creator and attacher are
+        // views into the same mmap, so a single Arc-shared backend
+        // suffices to exercise in-process multi-thread access.
+        let (creator, _shm_path, data_rd_fd, space_rd_fd) =
+            SharedMemoryPipeBackend::create_native(4096).unwrap();
+        unsafe {
+            libc::close(data_rd_fd);
+            libc::close(space_rd_fd);
+        }
+        let core = Arc::new(creator);
+
+        let producers: Vec<_> = (0..PRODUCERS)
+            .map(|p| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    for i in 0..PER_PRODUCER {
+                        let val = ((p as u64) << 32) | (i as u64);
+                        loop {
+                            match core.push_inner(&val.to_le_bytes()) {
+                                Ok(_) => break,
+                                Err(PipeError::Full(_, _)) => thread::yield_now(),
+                                Err(e) => panic!("unexpected push error: {:?}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Consumer runs concurrently — single-consumer, so its own
+        // `pop_position`/`commit_pop` calls do not contend with
+        // each other.
+        let consumer = {
+            let core = Arc::clone(&core);
+            thread::spawn(move || {
+                let mut got = Vec::with_capacity(total);
+                while got.len() < total {
+                    match core.pop_position() {
+                        Ok((start, len, advance)) => {
+                            let ring = core.ring_slice();
+                            let data = ring[start..start + len].to_vec();
+                            core.commit_pop(advance, len);
+                            assert_eq!(data.len(), 8);
+                            got.push(u64::from_le_bytes(data.try_into().expect("8 bytes")));
+                        }
+                        Err(PipeError::Empty) | Err(PipeError::ClosedEmpty) => {
+                            thread::yield_now();
+                        }
+                        Err(e) => panic!("unexpected pop error: {:?}", e),
+                    }
+                }
+                got
+            })
+        };
+
+        for p in producers {
+            p.join().unwrap();
+        }
+        let mut got = consumer.join().unwrap();
+
+        // Every produced value appears, exactly once.
+        let mut expected: Vec<u64> = (0..PRODUCERS)
+            .flat_map(|p| (0..PER_PRODUCER).map(move |i| ((p as u64) << 32) | (i as u64)))
+            .collect();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected);
+
+        core.cleanup().unwrap();
     }
 }

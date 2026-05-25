@@ -16,13 +16,18 @@ pub(crate) enum PipeError {
 ///
 /// Enables `DashMap<String, Arc<dyn PipeBackend>>` in PipeManager for
 /// heterogeneous backend dispatch.
-#[allow(dead_code)] // Used via Arc<dyn PipeBackend> in PipeManager + generated_pyo3.rs
 pub(crate) trait PipeBackend: Send + Sync {
     fn push(&self, data: &[u8]) -> Result<usize, PipeError>;
     fn pop(&self) -> Result<Vec<u8>, PipeError>;
     fn close(&self);
+    /// Diagnostic accessors — no dyn-dispatch caller exercises these
+    /// today; retained on the trait so future kernel introspection /
+    /// admin probes can read them through any backend uniformly.
+    #[allow(dead_code)]
     fn is_closed(&self) -> bool;
+    #[allow(dead_code)]
     fn is_empty(&self) -> bool;
     fn size(&self) -> usize;
+    #[allow(dead_code)]
     fn msg_count(&self) -> usize;
 }

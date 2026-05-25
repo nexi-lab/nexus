@@ -173,8 +173,9 @@ impl Kernel {
     ///
     /// Visibility is `pub` (not `pub(crate)`) so peer crates can install
     /// their own hook impls — services own their hook lifecycle
-    /// (services::audit, etc.) and call this from their PyO3 entry
-    /// points.
+    /// (services::audit, services::matrix_adapter,
+    /// services::managed_agent, etc.) and call this directly through
+    /// their `Arc<Kernel>` at install time.
     pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         self.native_hooks.write().register(hook);
     }
@@ -182,8 +183,7 @@ impl Kernel {
     // ── Service registry facade ───────────────────────────────────────
     //
     // Every ServiceRegistry method is exposed through Kernel so that
-    // consumers (PyKernel wrapper, peer crates) never reach the
-    // pub(crate) ServiceRegistry directly.
+    // peer crates never reach the pub(crate) ServiceRegistry directly.
 
     /// Register a managed (language-agnostic) service.
     pub fn register_managed_service(

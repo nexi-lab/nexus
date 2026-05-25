@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use contracts::lock_state::{LockInfo, LockMode, LockState, Locks};
+use contracts::lock_state::{LockInfo, LockState, Locks};
 
 use crate::raft::{Command, CommandResult, FullStateMachine, ZoneConsensus};
 
@@ -127,7 +127,6 @@ impl Locks for DistributedLocks {
         &self,
         path: &str,
         lock_id: &str,
-        mode: LockMode,
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
@@ -138,7 +137,6 @@ impl Locks for DistributedLocks {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
-            mode,
             now_secs: now_secs(),
         };
         let result = self

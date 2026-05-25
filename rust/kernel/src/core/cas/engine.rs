@@ -1,20 +1,15 @@
 //! CAS Engine — content-addressable read/write combining Transport + BLAKE3 hash.
 //!
-//! Reimplements the hot-path subset of Python `CASAddressingEngine.read_content()`
-//! and `write_content()`, eliminating FFI overhead for the Kernel fast path.
+//! Hot-path subset of content-addressable read/write — hashing,
+//! dedup, local blob I/O — consumed only by `Kernel`.
 //!
-//! This module is `pub(crate)` — consumed only by `Kernel`, never exposed
-//! as a PyO3 class. External callers (Python) still use `CASAddressingEngine`.
-//!
-//! Not included (stays in Python):
-//! - CDC chunked write (split into chunks) — read reassembly via ChunkAssembler DI
+//! Out of scope (handled elsewhere):
+//! - CDC chunked write (split into chunks) — read reassembly is
+//!   composed in via the `ChunkAssembler` DI trait
 //! - Content cache (LRU)
 //! - TTL routing
 //! - Multipart upload
 //! - Write callbacks (e.g., Zoekt reindex)
-//!
-//! References:
-//!     - Python: `src/nexus/backends/base/cas_addressing_engine.py`
 
 use std::io;
 use std::sync::{Arc, RwLock};
@@ -22,9 +17,9 @@ use std::sync::{Arc, RwLock};
 use bloomfilter::Bloom;
 use serde_json::{json, Value};
 
-use crate::cas_chunking::{finalize_manifest, read_and_verify_chunk, ChunkingStrategy};
-use crate::cas_remote::RemoteChunkFetcher;
-use crate::cas_transport::LocalCASTransport;
+use super::chunking::{finalize_manifest, read_and_verify_chunk, ChunkingStrategy};
+use super::remote::RemoteChunkFetcher;
+use super::transport::LocalCASTransport;
 
 /// Error type for CAS operations.
 #[derive(Debug)]
@@ -78,8 +73,8 @@ impl From<io::Error> for CASError {
 #[allow(dead_code)]
 pub struct CASEngine {
     transport: LocalCASTransport,
-    chunk_assembler: Option<Arc<dyn crate::cas_chunking::ChunkAssembler>>,
-    chunking_strategy: Option<Arc<dyn crate::cas_chunking::ChunkingStrategy>>,
+    chunk_assembler: Option<Arc<dyn super::chunking::ChunkAssembler>>,
+    chunking_strategy: Option<Arc<dyn super::chunking::ChunkingStrategy>>,
     /// Optional scatter-gather remote-chunk fetcher. When set, any local
     /// chunk miss falls through to a bounded fan-out RPC against the
     /// file's origin set. `None` = local-only (tests, single-node).
@@ -98,8 +93,8 @@ impl CASEngine {
     pub fn new(transport: LocalCASTransport) -> Self {
         Self {
             transport,
-            chunk_assembler: Some(crate::cas_chunking::default_chunk_assembler()),
-            chunking_strategy: Some(crate::cas_chunking::default_chunking_strategy()),
+            chunk_assembler: Some(super::chunking::default_chunk_assembler()),
+            chunking_strategy: Some(super::chunking::default_chunking_strategy()),
             fetcher: None,
             bloom: RwLock::new(Self::new_bloom()),
         }
@@ -119,7 +114,7 @@ impl CASEngine {
     ) -> Self {
         Self {
             transport,
-            chunk_assembler: Some(crate::cas_chunking::default_chunk_assembler()),
+            chunk_assembler: Some(super::chunking::default_chunk_assembler()),
             chunking_strategy: Some(strategy),
             fetcher: None,
             bloom: RwLock::new(Self::new_bloom()),
@@ -745,7 +740,7 @@ mod tests {
         let transport = LocalCASTransport::new(tmp.path(), false).unwrap();
         let engine = CASEngine::with_strategy(
             transport,
-            Arc::new(crate::cas_chunking::MessageBoundaryStrategy),
+            Arc::new(super::super::chunking::MessageBoundaryStrategy),
         );
         (tmp, engine)
     }
@@ -894,7 +889,7 @@ mod tests {
 
     // ---------- R10-SG: scatter-gather fetcher DI ----------
 
-    use crate::cas_remote::RemoteChunkFetcher as _RemoteFetcher;
+    use super::super::remote::RemoteChunkFetcher as _RemoteFetcher;
 
     struct RecordingFetcher {
         store: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,

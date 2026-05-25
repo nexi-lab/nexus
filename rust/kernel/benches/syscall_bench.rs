@@ -245,32 +245,35 @@ fn bench_sys_read(c: &mut Criterion) {
         });
     }
 
-    // OS baseline: pre-opened fd
-    let tmp_os = tempfile::tempdir().unwrap();
-    for (label, size) in [
-        ("1KB", 1024usize),
-        ("64KB", 64 * 1024),
-        ("1MB", 1024 * 1024),
-    ] {
-        let file_path = tmp_os.path().join(format!("test_{label}.bin"));
-        std::fs::write(&file_path, vec![b'x'; size]).unwrap();
+    // OS baseline: pre-opened fd. Unix-only — Windows `libc::read` takes
+    // `c_uint` (u32) where Linux takes `size_t` (usize); see syscall_bench
+    // file-level note.
+    #[cfg(unix)]
+    {
+        let tmp_os = tempfile::tempdir().unwrap();
+        for (label, size) in [
+            ("1KB", 1024usize),
+            ("64KB", 64 * 1024),
+            ("1MB", 1024 * 1024),
+        ] {
+            let file_path = tmp_os.path().join(format!("test_{label}.bin"));
+            std::fs::write(&file_path, vec![b'x'; size]).unwrap();
 
-        let c_path = std::ffi::CString::new(file_path.to_str().unwrap()).unwrap();
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
-        assert!(fd >= 0, "failed to open OS test file");
+            let c_path = std::ffi::CString::new(file_path.to_str().unwrap()).unwrap();
+            let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
+            assert!(fd >= 0, "failed to open OS test file");
 
-        let mut buf = vec![0u8; size];
-        group.bench_with_input(BenchmarkId::new("host_os", label), &size, |b, &sz| {
-            b.iter(|| unsafe {
-                libc::lseek(fd, 0, libc::SEEK_SET);
-                // `count` is `size_t` on Unix, `c_uint` on Windows —
-                // `as _` lets the cast infer the platform-correct type.
-                libc::read(fd, buf.as_mut_ptr() as *mut _, sz as _);
-                black_box(&buf);
-            })
-        });
+            let mut buf = vec![0u8; size];
+            group.bench_with_input(BenchmarkId::new("host_os", label), &size, |b, &sz| {
+                b.iter(|| unsafe {
+                    libc::lseek(fd, 0, libc::SEEK_SET);
+                    libc::read(fd, buf.as_mut_ptr() as *mut _, sz);
+                    black_box(&buf);
+                })
+            });
 
-        unsafe { libc::close(fd) };
+            unsafe { libc::close(fd) };
+        }
     }
 
     group.finish();
@@ -503,10 +506,10 @@ fn bench_pipe_roundtrip(c: &mut Criterion) {
         })
     });
 
-    // OS pipe baseline — Unix only. Windows `libc::pipe` has a
-    // different arity (`_pipe(fds, size, mode)`), so the raw-OS
-    // comparison column is dropped there; the nexus DT_PIPE
-    // measurement stands on its own.
+    // OS pipe baseline. Unix-only — Windows `libc::pipe` takes 3 args
+    // (fds, psize, flags) where Linux/macOS take 1; `libc::read`/`write`
+    // size also differs (c_uint vs size_t). Bench is a comparison to the
+    // production Linux deployment, so Windows just skips it.
     #[cfg(unix)]
     {
         let (r_fd, w_fd) = unsafe {
@@ -517,8 +520,8 @@ fn bench_pipe_roundtrip(c: &mut Criterion) {
         let mut read_buf = [0u8; 128];
         group.bench_function("host_os_pipe", |b| {
             b.iter(|| unsafe {
-                libc::write(w_fd, payload.as_ptr() as *const _, payload.len() as _);
-                libc::read(r_fd, read_buf.as_mut_ptr() as *mut _, payload.len() as _);
+                libc::write(w_fd, payload.as_ptr() as *const _, payload.len());
+                libc::read(r_fd, read_buf.as_mut_ptr() as *mut _, payload.len());
                 black_box(&read_buf);
             })
         });

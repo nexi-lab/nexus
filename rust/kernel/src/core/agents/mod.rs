@@ -2,9 +2,8 @@
 //!
 //! [`registry::AgentRegistry`] holds the per-PID agent descriptors
 //! (name, kind, state, owner) that the kernel mutates on agent
-//! lifecycle events.  It's a pure-Rust DashMap registry — no PyO3,
-//! no I/O — shared across syscall threads via `Arc` and read by
-//! service-tier views like
+//! lifecycle events. DashMap-backed, no I/O, shared across syscall
+//! threads via `Arc`, and read by service-tier views like
 //! `services::agents::status_resolver::AgentStatusResolver`.
 //!
 //! Linux analogue: this is the kernel-owned `task_struct` ↔ pid_hash

@@ -180,7 +180,8 @@ impl MetaStore for RemoteMetaStore {
         }
 
         // Server returns a bool or a JSON object with an "exists" field
-        let value: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
+            .map_err(|e| MetaStoreError::IOError(format!("decode access response: {e}")))?;
         let value = unwrap_result_envelope(&value);
         Ok(value.as_bool().unwrap_or_else(|| {
             value
@@ -204,7 +205,8 @@ impl MetaStore for RemoteMetaStore {
             return Ok(false);
         }
 
-        let value: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
+            .map_err(|e| MetaStoreError::IOError(format!("decode is_directory response: {e}")))?;
         let value = unwrap_result_envelope(&value);
         Ok(value.as_bool().unwrap_or(false))
     }
@@ -289,7 +291,6 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
         size: obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
         content_id: obj
             .get("content_id")
-            .or_else(|| obj.get("content_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         gen: obj.get("gen").and_then(|v| v.as_u64()).unwrap_or(0),

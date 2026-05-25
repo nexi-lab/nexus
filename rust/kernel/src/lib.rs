@@ -6,7 +6,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Canonical root zone identifier — re-exported from the ``contracts``
 /// crate (the Rust mirror of ``nexus.contracts.constants``) so kernel
-/// users can reach it via ``nexus_runtime::ROOT_ZONE_ID`` without pulling
+/// users can reach it via ``kernel::ROOT_ZONE_ID`` without pulling
 /// another workspace dep. Prefer this constant over hardcoded ``"root"``
 /// literals.
 pub use contracts::ROOT_ZONE_ID;
@@ -22,7 +22,6 @@ pub use contracts::ROOT_ZONE_ID;
 //                     dispatch, in-memory reference impls of the §3.A
 //                     pillars).
 pub mod abc;
-pub mod cache;
 pub mod core;
 pub mod hal;
 
@@ -41,10 +40,9 @@ pub(crate) use core::file_watch;
 pub use core::lock as lock_manager;
 pub use core::lock::locks;
 pub use core::meta_store;
-pub use core::vfs_router;
-// The pure Rust API lives at `core::lock::semaphore::VFSSemaphore`.
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
+pub use core::vfs_router;
 
 // `acp` and `managed_agent` modules used to live here; both moved to
 // the `services` crate (`rust/services/src/{acp,managed_agent}/`) so
@@ -64,13 +62,15 @@ pub(crate) use core::stream::shm as shm_stream;
 
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive
-// (Linux-VFS analogue).  `pub` so `backends::storage::cas_local` can
-// wrap a `CASEngine` inside its `ObjectStore` impl; see
+// (Linux-VFS analogue). Implementation lives in `core::cas/` per §4;
+// re-exported under the historical `kernel::cas_*` flat names so
+// `backends::storage::cas_local` (and other external consumers) keep
+// their existing import paths. See
 // `docs/architecture/KERNEL-ARCHITECTURE.md` §4 for the rationale.
-pub mod cas_chunking;
-pub mod cas_engine;
-pub mod cas_remote;
-pub mod cas_transport;
+pub use core::cas::chunking as cas_chunking;
+pub use core::cas::engine as cas_engine;
+pub use core::cas::remote as cas_remote;
+pub use core::cas::transport as cas_transport;
 
 // Kernel struct + syscalls.  `pub` so peer crates (`services`,
 // `transport`, `backends`) hold `&kernel::Kernel` and call the
@@ -94,10 +94,9 @@ pub mod abi;
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
-// proxies all syscalls over gRPC to a remote `nexusd`). The driver-
-// layer `rpc` crate re-exports this module as `rpc::vfs` so peer
-// crates name a single canonical path; the file lives here in the
-// kernel because the kernel-internal `RemoteMetaStore` /
-// `RemotePipeBackend` / `RemoteStreamBackend` wrappers also wrap
-// `RpcTransport` directly.
-pub mod rpc_transport;
+// proxies all syscalls over gRPC to a remote `nexusd`). Implementation
+// lives in `core::rpc_transport` per §4 alongside the kernel-internal
+// `RemoteMetaStore` / `Remote{Pipe,Stream}Backend` wrappers that wrap
+// it; re-exported here under the historical flat name so peer crates
+// (`transport`, `backends`) keep their existing import paths.
+pub use core::rpc_transport;

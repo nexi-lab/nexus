@@ -4,9 +4,9 @@
 //! Holds two flavours of service:
 //!
 //!   * `ServiceInstance::Managed(Box<dyn ServiceLifecycle>)` — language-
-//!     agnostic lifecycle wrapper. Python services are wrapped via
-//!     `PyServiceLifecycle` adapter (in `generated_kernel_abi_pyo3.rs`);
-//!     future Rust-only managed services can implement the trait directly.
+//!     agnostic lifecycle wrapper. The slot for foreign-language
+//!     service runtimes that the host wraps in a `ServiceLifecycle`
+//!     impl before enlistment.
 //!   * `ServiceInstance::Rust(Arc<dyn RustService>)` — services
 //!     implemented in Rust (e.g. ManagedAgentService) are registered
 //!     through the Rust-callable `Kernel::register_rust_service`
@@ -24,15 +24,11 @@ use std::sync::Arc;
 pub use contracts::rust_service::{RustCallError, RustService};
 
 // ── ServiceLifecycle trait ──────────────────────────────────────────────
-//
-// Language-agnostic lifecycle abstraction. Python services implement
-// this via a `PyServiceLifecycle` adapter in the cdylib layer; the
-// kernel never imports pyo3 for service management.
 
 /// Language-agnostic service lifecycle. Implementors must be `Send +
-/// Sync` (held in DashMap across threads) and support `Any` downcasting
-/// so the PyO3 layer can recover the original `Py<PyAny>` for
-/// `nx.service(name)` lookups.
+/// Sync` (held in DashMap across threads). The `Any` super-trait
+/// preserves downcasting for hosts that wrap a foreign-language
+/// service object and need to recover the concrete wrapper type.
 pub trait ServiceLifecycle: Send + Sync + std::any::Any {
     fn start(&self, timeout_secs: f64) -> Result<(), String>;
     fn stop(&self, timeout_secs: f64) -> Result<(), String>;
@@ -108,8 +104,9 @@ impl ServiceRegistry {
 
     /// Register a managed (language-agnostic) service.
     ///
-    /// The caller (PyKernel wrapper) validates exports and wraps the
-    /// Python object in a `PyServiceLifecycle` before calling this.
+    /// The caller wraps its foreign-language service object in a
+    /// `ServiceLifecycle` impl and validates exports before invoking
+    /// this entry point.
     pub(crate) fn enlist(
         &self,
         name: &str,
@@ -130,8 +127,11 @@ impl ServiceRegistry {
             exports,
         };
 
-        let is_new = !self.services.contains_key(name);
-        self.services.insert(name.to_string(), entry);
+        // `insert().is_none()` distinguishes "new key" from "overwrite"
+        // atomically — a separate contains_key check would race with
+        // a concurrent enlist() of the same name and double-push to
+        // insertion_order.
+        let is_new = self.services.insert(name.to_string(), entry).is_none();
         if is_new {
             self.insertion_order.lock().push(name.to_string());
         }
@@ -167,8 +167,8 @@ impl ServiceRegistry {
             exports,
         };
 
-        let is_new = !self.services.contains_key(name);
-        self.services.insert(name.to_string(), entry);
+        // See `enlist` — atomic is_new via the insert return value.
+        let is_new = self.services.insert(name.to_string(), entry).is_none();
         if is_new {
             self.insertion_order.lock().push(name.to_string());
         }
@@ -179,9 +179,10 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    /// Kernel-internal lookup for managed services, returning a ref to
-    /// the `ServiceLifecycle` trait object. The PyO3 layer downcasts
-    /// to `PyServiceLifecycle` to extract the `Py<PyAny>`.
+    /// Kernel-internal lookup for managed services, returning a fresh
+    /// clone of the `ServiceLifecycle` trait object. Hosts that need
+    /// the concrete wrapper type downcast through the `Any`
+    /// super-trait.
     pub(crate) fn lookup_managed(&self, name: &str) -> Option<Box<dyn ServiceLifecycle>> {
         self.services.get(name).and_then(|e| match &e.instance {
             ServiceInstance::Managed(lc) => Some(lc.clone_box()),
@@ -275,29 +276,52 @@ impl ServiceRegistry {
     }
 
     /// Release a refcount. Notifies drain waiters if count reaches 0.
+    ///
+    /// Takes `drain_mutex` briefly before `notify_all` to close the
+    /// classic Mesa-condvar lost-wakeup window: parking_lot's Condvar
+    /// does not store notifications, so a notify that fires while a
+    /// drainer is between its refcount check and `wait_for` would be
+    /// dropped on the floor. Acquiring the same mutex the drainer is
+    /// about to wait on serializes the notify with the wait.
     pub(crate) fn ref_release(&self, name: &str) {
         if let Some(rc) = self.refcounts.get(name) {
-            let prev = rc.fetch_sub(1, Ordering::Relaxed);
+            let prev = rc.fetch_sub(1, Ordering::Release);
             if prev <= 1 {
+                let _g = self.drain_mutex.lock();
                 self.drain_condvar.notify_all();
             }
         }
     }
 
     /// Drain: wait for refcount on `name` to reach 0.
+    ///
+    /// Loop discipline: parking_lot's `wait_for` can return early on
+    /// a spurious wake, and `notify_all` from [`Self::ref_release`]
+    /// wakes drainers for every service (not just `name`). Re-check
+    /// the target's refcount on every wake and only return when it
+    /// reaches zero or the deadline expires.
     pub(crate) fn drain(&self, name: &str, timeout_ms: u64) {
-        let current = self
-            .refcounts
-            .get(name)
-            .map(|r| r.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        if current == 0 {
-            return;
-        }
-
-        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let deadline =
+            std::time::Instant::now().checked_add(std::time::Duration::from_millis(timeout_ms));
         let mut guard = self.drain_mutex.lock();
-        let _result = self.drain_condvar.wait_for(&mut guard, timeout);
+        loop {
+            let current = self
+                .refcounts
+                .get(name)
+                .map(|r| r.load(Ordering::Acquire))
+                .unwrap_or(0);
+            if current == 0 {
+                return;
+            }
+            let remaining = match deadline {
+                Some(d) => match d.checked_duration_since(std::time::Instant::now()) {
+                    Some(r) if !r.is_zero() => r,
+                    _ => return,
+                },
+                None => std::time::Duration::from_millis(timeout_ms),
+            };
+            let _ = self.drain_condvar.wait_for(&mut guard, remaining);
+        }
     }
 
     /// Start all services (managed + Rust).
@@ -391,6 +415,56 @@ mod tests {
     fn test_drain_returns_immediately_when_zero() {
         let reg = ServiceRegistry::new();
         reg.drain("nonexistent", 100);
+    }
+
+    #[test]
+    fn drain_waits_until_ref_release_then_returns() {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let reg = Arc::new(ServiceRegistry::new());
+        reg.ref_acquire("svc-a");
+
+        let releaser = {
+            let reg = Arc::clone(&reg);
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(50));
+                reg.ref_release("svc-a");
+            })
+        };
+
+        let started = Instant::now();
+        reg.drain("svc-a", 5_000);
+        let elapsed = started.elapsed();
+        // Released at ~50ms; drain should wake well before the 5s
+        // ceiling. Allow generous slack for slow CI runners.
+        assert!(
+            elapsed < Duration::from_millis(1_000),
+            "drain blocked past release: {elapsed:?}"
+        );
+        releaser.join().unwrap();
+    }
+
+    #[test]
+    fn drain_returns_at_deadline_when_ref_not_released() {
+        use std::time::{Duration, Instant};
+
+        let reg = ServiceRegistry::new();
+        reg.ref_acquire("svc-b");
+
+        let started = Instant::now();
+        reg.drain("svc-b", 100);
+        let elapsed = started.elapsed();
+        // Caller asked for 100ms; we should not wait substantially
+        // longer (spurious wake loop must respect the deadline).
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "drain returned before deadline: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "drain blocked far past deadline: {elapsed:?}"
+        );
     }
 
     #[test]

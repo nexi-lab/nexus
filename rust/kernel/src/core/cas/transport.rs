@@ -1,18 +1,11 @@
 //! Local CAS Transport — Rust-native blob I/O for content-addressable storage.
 //!
-//! Reimplements the hot-path subset of Python `LocalTransport.fetch/store/exists`
-//! combined with `CASAddressingEngine._blob_key()`, eliminating FFI overhead for
-//! the Kernel fast path.
-//!
-//! This module is `pub(crate)` — consumed only by `CASEngine` and `Kernel`,
-//! never exposed as a PyO3 class.
+//! Hot-path blob `fetch` / `store` / `exists` over the local
+//! filesystem, plus the CAS `_blob_key()` derivation. Consumed only
+//! by `CASEngine` and `Kernel`.
 //!
 //! Storage layout:
 //!     root / "cas" / hash[0..2] / hash[2..4] / hash
-//!
-//! References:
-//!     - Python: `src/nexus/backends/base/cas_addressing_engine.py` (`_blob_key`)
-//!     - Python: `src/nexus/backends/transports/local_transport.py` (`fetch/store/exists`)
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

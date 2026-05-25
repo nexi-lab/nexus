@@ -11,7 +11,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::cache::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
+use crate::core::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
@@ -205,8 +205,8 @@ impl Kernel {
 
         // 2. Route (pure Rust LPM)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return Err(not_found()),
+            Some(r) => r,
+            None => return Err(not_found()),
         };
 
         // 3. MetaStore lookup. The metastore impl serves cache hits from
@@ -241,7 +241,8 @@ impl Kernel {
             }
         };
 
-        // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // 3a. DT_LINK transparent follow
+        // (KERNEL-ARCHITECTURE.md "DT_LINK — Path-Internal Symlink").
         // DT_LINK target requires its own §13 permission gate +
         // §11 native PRE-read hook. Always enters via `sys_read_single`
         // so auth fires on the target path.
@@ -558,8 +559,8 @@ impl Kernel {
 
         // 2. Route (check write access)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return miss(),
+            Some(r) => r,
+            None => return miss(),
         };
 
         // 3. Load entry (dcache + metastore fallback) — needed both for
@@ -574,7 +575,8 @@ impl Kernel {
             .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten();
 
-        // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // 3a. DT_LINK transparent follow
+        // (KERNEL-ARCHITECTURE.md "DT_LINK — Path-Internal Symlink").
         // Recursive call with `max_link_hops=0` rejects chained links via
         // this same branch.
         if let Some(e) = &entry {
@@ -921,7 +923,8 @@ impl Kernel {
         // status as a synthesised file entry; /__sys__/zones/ exposes the
         // zone-id directory.  This is the read side of the kernel's
         // virtual federation namespace — service-tier callers read zone
-        // state through `sys_stat` instead of a direct PyKernel surface.
+        // state through `sys_stat` instead of a direct kernel
+        // accessor on the coordinator.
         if let Some(stat) = self.zones_procfs_stat(path) {
             return Some(stat);
         }
@@ -929,8 +932,8 @@ impl Kernel {
         // 3. Route — try VFS routing; fall back to global metastore
         //    for paths outside any mount (e.g. /settings/* config entries).
         let route = match self.vfs_router.route(path, zone_id) {
-            Ok(r) => r,
-            Err(_) => {
+            Some(r) => r,
+            None => {
                 // No mount covers this path — check global metastore directly.
                 // This is the read-side counterpart of setattr_update's global
                 // metastore fallback (same path create_nexus_fs settings boot uses).
@@ -1037,7 +1040,7 @@ impl Kernel {
             })
             .to_string();
 
-        let lock = self.lock_manager.get_lock_info(path).ok().flatten();
+        let lock = self.lock_manager.get_lock_info(path);
 
         Some(StatResult {
             path: path.to_string(),
@@ -1141,8 +1144,8 @@ impl Kernel {
 
         // 2. Route (check write access)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return miss(0),
+            Some(r) => r,
+            None => return miss(0),
         };
 
         // 2.5. Mount-point synthesis: ``sys_unlink`` on a federation mount
@@ -1359,12 +1362,12 @@ impl Kernel {
 
         // 2. Route both
         let old_route = match self.vfs_router.route(old_path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return miss(),
+            Some(r) => r,
+            None => return miss(),
         };
         let new_route = match self.vfs_router.route(new_path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return miss(),
+            Some(r) => r,
+            None => return miss(),
         };
 
         // 3. Sorted VFS lock acquire (deadlock-free: min(old,new) first)
@@ -1672,12 +1675,12 @@ impl Kernel {
 
         // 2. Route both (read access for src, write access for dst)
         let src_route = match self.vfs_router.route(src_path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return miss(),
+            Some(r) => r,
+            None => return miss(),
         };
         let dst_route = match self.vfs_router.route(dst_path, &ctx.zone_id) {
-            Ok(r) => r,
-            Err(_) => return miss(),
+            Some(r) => r,
+            None => return miss(),
         };
         // 3. Get source metadata via the routed metastore (internal
         //    cache fast path) — full VFS paths (R20.3 contract).
@@ -2051,7 +2054,10 @@ impl Kernel {
         self.check_permission(path, Permission::Write, ctx)?;
 
         // 2. Route (check write access)
-        let route = self.vfs_router.route(path, &ctx.zone_id)?;
+        let route = self
+            .vfs_router
+            .route(path, &ctx.zone_id)
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
 
         // 2.5. mkdir on a mount point itself: the mount IS the
         // directory, by virtue of being a mount.  Materialising a
@@ -2240,7 +2246,10 @@ impl Kernel {
         self.check_permission(path, Permission::Write, ctx)?;
 
         // 2. Route (check write access)
-        let route = self.vfs_router.route(path, &ctx.zone_id)?;
+        let route = self
+            .vfs_router
+            .route(path, &ctx.zone_id)
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
 
         // 3. Get metadata (per-mount or global) — full path
         let entry_type = self
@@ -2346,8 +2355,8 @@ impl Kernel {
             return false;
         }
         let route = match self.vfs_router.route(path, zone_id) {
-            Ok(r) => r,
-            Err(_) => return false,
+            Some(r) => r,
+            None => return false,
         };
         self.with_metastore_route(&route, |ms| ms.exists(path).unwrap_or(false))
             .unwrap_or(false)
@@ -2432,7 +2441,7 @@ impl Kernel {
         // 2. Route all paths (single lock acquisition on mount table via read lock)
         let mut routes = Vec::with_capacity(n);
         for req in reqs {
-            let route = self.vfs_router.route(&req.path, &ctx.zone_id).ok();
+            let route = self.vfs_router.route(&req.path, &ctx.zone_id);
             routes.push(route);
         }
 
@@ -2651,8 +2660,8 @@ impl Kernel {
             }
             // 3. Routing
             let route = match self.vfs_router.route(&req.path, &ctx.zone_id) {
-                Ok(r) => r,
-                Err(_) => {
+                Some(r) => r,
+                None => {
                     results[i] = Some(Err(KernelError::FileNotFound(req.path.clone())));
                     continue;
                 }
@@ -2963,8 +2972,8 @@ impl Kernel {
             return entries;
         }
         let route = match self.vfs_router.route(normalized, zone_id) {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Some(r) => r,
+            None => return Vec::new(),
         };
         let global_prefix = if normalized == contracts::VFS_ROOT {
             contracts::VFS_ROOT.to_string()
@@ -3072,33 +3081,23 @@ impl Kernel {
                     .unwrap_or("")
             };
             let effective_limit = if limit == 0 { 10000 } else { limit };
-            match self.lock_manager.list_locks(prefix, effective_limit + 1) {
-                Ok(locks) => {
-                    let has_more = locks.len() > effective_limit;
-                    let items: Vec<(String, u8)> = locks
-                        .into_iter()
-                        .take(effective_limit)
-                        .map(|l| (l.path.clone(), DT_REG))
-                        .collect();
-                    let next_cursor = if has_more {
-                        items.last().map(|(p, _)| p.clone())
-                    } else {
-                        None
-                    };
-                    return super::ReadDirResult {
-                        items,
-                        next_cursor,
-                        has_more,
-                    };
-                }
-                Err(_) => {
-                    return super::ReadDirResult {
-                        items: Vec::new(),
-                        next_cursor: None,
-                        has_more: false,
-                    };
-                }
-            }
+            let locks = self.lock_manager.list_locks(prefix, effective_limit + 1);
+            let has_more = locks.len() > effective_limit;
+            let items: Vec<(String, u8)> = locks
+                .into_iter()
+                .take(effective_limit)
+                .map(|l| (l.path.clone(), DT_REG))
+                .collect();
+            let next_cursor = if has_more {
+                items.last().map(|(p, _)| p.clone())
+            } else {
+                None
+            };
+            return super::ReadDirResult {
+                items,
+                next_cursor,
+                has_more,
+            };
         }
 
         // Normal readdir with optional pagination.

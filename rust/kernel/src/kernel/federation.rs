@@ -24,9 +24,9 @@ use super::{Kernel, StatResult};
 impl Kernel {
     /// Replace the kernel's coordinator slot with a concrete
     /// `DistributedCoordinator` impl. Kernel boots with
-    /// `NoopDistributedCoordinator`; the cdylib boot path calls this
-    /// with the real `nexus_raft::distributed_coordinator` impl once
-    /// per kernel. Mirrors `set_peer_client`.
+    /// `NoopDistributedCoordinator`; the host binary's boot path calls
+    /// this with the real `nexus_raft::distributed_coordinator` impl
+    /// once per kernel. Mirrors `set_peer_client`.
     pub fn set_distributed_coordinator(
         &self,
         coordinator: Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>,
@@ -37,9 +37,8 @@ impl Kernel {
     /// Borrow the current distributed coordinator — read-locked snapshot.
     /// Internal callers use this to issue federation calls without
     /// holding the lock across `.await`. After `set_distributed_coordinator`
-    /// runs (cdylib boot), this returns the real raft-backed impl;
-    /// before then, a `NoopDistributedCoordinator` that errors on every
-    /// call.
+    /// runs at boot, this returns the real raft-backed impl; before
+    /// then, a `NoopDistributedCoordinator` that errors on every call.
     pub fn distributed_coordinator(
         &self,
     ) -> Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator> {
@@ -117,7 +116,7 @@ impl Kernel {
     }
 
     /// Stash the raft-tier blob-fetcher slot. Drained by
-    /// `nexus_raft::blob_fetcher_handler::install` at cdylib boot.
+    /// `nexus_raft::blob_fetcher_handler::install` during boot.
     /// Typed as `Box<dyn Any>` so kernel does not name the raft-side
     /// `BlobFetcherSlot` concrete type.
     pub fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
@@ -125,7 +124,7 @@ impl Kernel {
     }
 
     /// Drain the previously stashed blob-fetcher slot. Returns `None`
-    /// after the first drain so re-imports of the cdylib stay safe.
+    /// after the first drain so repeat-boot scenarios stay safe.
     pub fn take_pending_blob_fetcher_slot(&self) -> Option<Box<dyn std::any::Any + Send + Sync>> {
         self.pending_blob_fetcher_slot.lock().take()
     }

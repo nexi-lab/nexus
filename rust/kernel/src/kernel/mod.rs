@@ -1,32 +1,36 @@
 //! Kernel — pure Rust kernel owning all core state.
 //!
-//! Zero PyO3 dependency. All Python bridging lives in generated_pyo3.rs.
-//!
-//! Owns VFSRouter, Trie, VFS Lock, MetaStore.
-//! Hook/Observer registries live in generated_pyo3::PyKernel (wrapper-only).
+//! Owns VFSRouter, Trie, VFS Lock, MetaStore, dispatch (NativeHookRegistry +
+//! ObserverRegistry under `core/dispatch/`), agent registry, service
+//! registry, file-watch registry.
 //!
 //! Architecture:
-//!   - Created empty via Kernel::new(), then components are wired by wrapper.
+//!   - Created empty via Kernel::new(), then components are wired
+//!     in by the host through `install_*` methods (locks,
+//!     metastore, distributed coordinator, peer blob client).
 //!   - VFSRouter / Trie use interior mutability (&self methods).
-//!   - VFS Lock is optionally Arc-shared with VFSLockManager (blocking acquire).
-//!   - MetaStore (Box<dyn MetaStore>) wraps any impl (Python adapter, redb, gRPC).
+//!   - LockManager is Arc-shared so external distributed-lock
+//!     coordinators can hold their own handle to the advisory
+//!     backend HAL.
+//!   - MetaStore (Box<dyn MetaStore>) wraps any impl (LocalMetaStore
+//!     on redb, RemoteMetaStore over gRPC, ZoneMetaStore over Raft).
 //!     Each impl owns its own internal cache; there is no kernel-global
 //!     metadata cache.
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
-use crate::cache::index_cache::IndexCache;
+use crate::core::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
-use crate::dispatch::{MutationObserver, Trie};
+use crate::dispatch::{NativeHookRegistry, ObserverRegistry, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
 #[cfg(test)]
 use crate::meta_store::DT_REG;
 use crate::meta_store::{DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
-use crate::vfs_router::{RouteError, RouteResult, VFSRouter};
+use crate::vfs_router::VFSRouter;
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
+use parking_lot::{Condvar, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -96,17 +100,12 @@ mod observability;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
-/// Kernel-level error type — pure Rust, no PyO3 dependency.
-///
-/// Error conversion to PyErr lives in generated_pyo3.rs.
+/// Kernel-level error type.
 #[derive(Debug, Clone)]
 pub enum KernelError {
     InvalidPath(String),
     FileNotFound(String),
     FileExists(String),
-    /// Routing failure — stores the formatted `RouteError` message so
-    /// KernelError can derive Clone (RouteError itself is !Clone).
-    Route(String),
     IOError(String),
     TrieError(String),
     // IPC error variants
@@ -130,12 +129,6 @@ pub enum KernelError {
     /// Federation bootstrap (env parsing, ZoneManager construction,
     /// create_zone/join_zone, reconcile) failed.
     Federation(String),
-}
-
-impl From<RouteError> for KernelError {
-    fn from(e: RouteError) -> Self {
-        KernelError::Route(format!("{e:?}"))
-    }
 }
 
 impl From<std::io::Error> for KernelError {
@@ -162,11 +155,11 @@ pub use contracts::OperationContext;
 /// handling. Federation remote fetch is handled internally (see
 /// `Kernel::try_remote_fetch`).
 ///
-/// DT_PIPE / DT_STREAM: `entry_type` tells the wrapper to dispatch IPC.
-/// `data` may be `None` when the Rust IPC registry has no buffer and
-/// Python must fall through to blocking backends (still transitional).
+/// DT_PIPE / DT_STREAM: `entry_type` tells the caller to dispatch IPC.
+/// `data` may be `None` when the Rust IPC registry has no buffer for
+/// this path; the caller decides whether to retry, miss, or block.
 pub struct SysReadResult {
-    /// Content bytes. Vec<u8> — wrapper converts to PyBytes.
+    /// Content bytes.
     pub data: Option<Vec<u8>>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
@@ -454,156 +447,6 @@ pub struct ZonesProcfsEntry {
     pub mount_reconciliation_done: bool,
 }
 
-// ── KernelObserverRegistry — pure Rust observer dispatch ────────────────
-
-/// Observer entry — pure Rust, no PyO3 dependency.
-///
-/// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
-/// can clone the trait object across threads. `event_mask` bitmask
-/// matching happens without external dependency.
-struct KernelObserverEntry {
-    observer: Arc<dyn MutationObserver>,
-    name: String,
-    event_mask: u32,
-}
-
-/// Pure Rust observer registry — event-type bitmask filtering lock-free.
-///
-/// Single dispatch path for all OBSERVE-phase observers. The trait
-/// `MutationObserver` takes `&FileEvent`.
-///
-/// OBSERVE is fire-and-forget by definition — observers needing causal
-/// ordering or sync blocking belong in INTERCEPT POST, not OBSERVE.
-struct KernelObserverRegistry {
-    observers: Vec<KernelObserverEntry>,
-}
-
-#[allow(dead_code)]
-impl KernelObserverRegistry {
-    fn new() -> Self {
-        Self {
-            observers: Vec::new(),
-        }
-    }
-
-    /// Register an observer with its event-type bitmask.
-    fn register(&mut self, observer: Arc<dyn MutationObserver>, name: String, event_mask: u32) {
-        self.observers.push(KernelObserverEntry {
-            observer,
-            name,
-            event_mask,
-        });
-    }
-
-    /// Unregister by name (identity is not available for trait objects).
-    /// Returns true if a registration with that name was removed.
-    fn unregister(&mut self, name: &str) -> bool {
-        if let Some(pos) = self.observers.iter().position(|e| e.name == name) {
-            self.observers.remove(pos);
-            return true;
-        }
-        false
-    }
-
-    /// Return clones of all observers whose event_mask matches `event.event_type`.
-    ///
-    /// The dispatch loop (`Kernel::dispatch_observers`) submits each
-    /// clone to the OBSERVE ThreadPool. Returning Arc clones lets the
-    /// pool borrow the registry lock for the minimum possible time —
-    /// the caller releases the lock before doing any per-observer work.
-    fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
-        self.observers
-            .iter()
-            .filter(|e| e.event_mask & event_type_bit != 0)
-            .map(|e| Arc::clone(&e.observer))
-            .collect()
-    }
-
-    fn count(&self) -> usize {
-        self.observers.len()
-    }
-}
-
-// ── Native Hook Registry ───────────────────────────────────────────────
-//
-// Pure Rust hook dispatch — no GIL crossing for Rust-native hooks.
-// Parallel to the PyO3-dependent HookRegistry in hook_registry.rs.
-// NativeInterceptHook trait defined in dispatch.rs.
-
-use crate::dispatch::{HookContext, NativeInterceptHook};
-
-#[allow(dead_code)]
-struct NativeHookEntry {
-    hook: Box<dyn NativeInterceptHook>,
-}
-
-#[allow(dead_code)]
-pub(crate) struct NativeHookRegistry {
-    hooks: Vec<NativeHookEntry>,
-    /// Suffixes declared by registered mutating hooks (via
-    /// `NativeInterceptHook::mutating_path_suffix`). Populated on
-    /// register; consulted by `has_mutating_match` so the kernel can
-    /// decide whether to clone write content into `WriteHookCtx`. An
-    /// empty Vec is the steady state today (no mutating hooks
-    /// registered) — the call site short-circuits before any path
-    /// comparison.
-    mutating_suffixes: Vec<&'static str>,
-}
-
-#[allow(dead_code)]
-impl NativeHookRegistry {
-    pub(crate) fn new() -> Self {
-        Self {
-            hooks: Vec::new(),
-            mutating_suffixes: Vec::new(),
-        }
-    }
-
-    pub(crate) fn register(&mut self, hook: Box<dyn NativeInterceptHook>) {
-        if let Some(suffix) = hook.mutating_path_suffix() {
-            self.mutating_suffixes.push(suffix);
-        }
-        self.hooks.push(NativeHookEntry { hook });
-    }
-
-    /// Dispatch pre-hooks. Returns Err on first abort. The
-    /// `HookOutcome::Replace` variant is propagated to the caller via
-    /// the returned bytes; today only `sys_write` honours it, other
-    /// syscalls drop the replacement.
-    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<Option<Vec<u8>>, String> {
-        let mut replacement: Option<Vec<u8>> = None;
-        for entry in &self.hooks {
-            match entry.hook.on_pre(ctx)? {
-                crate::dispatch::HookOutcome::Pass => {}
-                crate::dispatch::HookOutcome::Replace(bytes) => replacement = Some(bytes),
-            }
-        }
-        Ok(replacement)
-    }
-
-    /// Dispatch post-hooks (fire-and-forget).
-    pub(crate) fn dispatch_post(&self, ctx: &HookContext) {
-        for entry in &self.hooks {
-            entry.hook.on_post(ctx);
-        }
-    }
-
-    pub(crate) fn count(&self) -> usize {
-        self.hooks.len()
-    }
-
-    /// Returns true when at least one registered hook declared a
-    /// mutating path suffix that matches `path`. Cheap (linear scan
-    /// over a Vec that today has at most a handful of entries); the
-    /// steady state (no mutating hooks) returns false on the
-    /// empty-Vec check before any string comparison.
-    pub(crate) fn has_mutating_match(&self, path: &str) -> bool {
-        self.mutating_suffixes
-            .iter()
-            .any(|suffix| path.ends_with(suffix))
-    }
-}
-
 // ── Zone Revision Entry ─────────────────────────────────────────────────
 
 /// Per-zone monotonic revision counter + condvar for waiters.
@@ -651,7 +494,7 @@ pub struct Kernel {
     lock_manager: Arc<LockManager>,
     // MetaStore (Box<dyn MetaStore>), behind parking_lot::RwLock so
     // the setter paths (``set_metastore_path`` / ``release_metastores``)
-    // don't need ``&mut self`` — lets ``PyKernel`` hold an ``Arc<Kernel>``
+    // don't need ``&mut self`` — lets the host hold an ``Arc<Kernel>``
     // for the apply-side federation-mount callback.
     metastore: parking_lot::RwLock<Option<Box<dyn crate::meta_store::MetaStore>>>,
     // Tempdir backing the boot-default ``LocalMetaStore``. ``Kernel::new``
@@ -677,19 +520,17 @@ pub struct Kernel {
     delete_hook_count: AtomicU64,
     rename_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching lock-free).
-    #[allow(dead_code)]
-    observers: Mutex<KernelObserverRegistry>,
-    // OBSERVE is fire-and-forget by contract: the syscall returns as soon
-    // as the event is queued; observer callbacks run on this pool, off
-    // the hot path.
     //
-    // 4 worker threads is enough for the typical workload (a handful of
-    // long-lived observers: FileWatchRegistry, EventBus, etc.). Many
-    // parallel Python observers will serialize on the GIL, but
-    // Rust-native observers run truly parallel.
+    // RwLock (not Mutex): dispatch is the hot path (fires from every
+    // successful Tier 1 mutation syscall) and only needs a snapshot of
+    // the Arc list — `&self` access via `ObserverRegistry::matching`.
+    // Register / unregister are rare (boot-time wiring + occasional
+    // service swap) and take the write lock. Concurrent dispatches
+    // proceed in parallel.
     #[allow(dead_code)]
-    // observer_pool removed — inline dispatch, no background threads.
+    observers: RwLock<ObserverRegistry>,
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
+    #[allow(dead_code)]
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatchRegistry>,
@@ -733,8 +574,8 @@ pub struct Kernel {
     /// shared across every async caller (peer RPC fan-out, federation
     /// remote reads, LLM connector streaming). Kernel owns the runtime
     /// directly so kernel-internal callers keep the same shared runtime
-    /// regardless of whether the cdylib has installed the real peer
-    /// client yet.
+    /// regardless of whether the host binary has installed the real
+    /// peer client yet.
     // `Option` so `Drop` can `take()` the Arc and hand it to an
     // off-context thread — see the `Drop for Kernel` impl. `Some` for
     // the entire observable lifetime of the kernel.
@@ -762,12 +603,12 @@ pub struct Kernel {
     pub(crate) distributed_coordinator:
         parking_lot::RwLock<Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>>,
     // No `chunk_fetcher` field: `Kernel::peer_client` is the SSOT for
-    // the cross-node blob client.  `PyKernel::sys_setattr` constructs a
+    // the cross-node blob client.  `Kernel::sys_setattr` constructs a
     // fresh `GrpcChunkFetcher` per `DT_MOUNT` against the just-cloned
     // peer_client + current `self_address`, so a peer_client swap (or
     // a `set_self_address` after federation init) is reflected on the
     // next mount with no rebuild dance.
-    /// Blob-fetcher slot stashed by federation init for the cdylib's
+    /// Blob-fetcher slot stashed by federation init for the
     /// transport-tier install hook to drain. Typed as
     /// `Box<dyn Any + Send + Sync>` so kernel does not name the
     /// raft-side `BlobFetcherSlot` type — `transport::blob::fetcher::
@@ -820,9 +661,9 @@ impl Kernel {
         );
         // The real peer_blob_client lives in
         // `transport::blob::peer_client`. Kernel boots with the no-op
-        // fallback; the cdylib wires the real impl via
+        // fallback; the host binary wires the real impl via
         // `Kernel::set_peer_client` before any federation read fires.
-        // No `chunk_fetcher` snapshot is built here — `PyKernel::sys_setattr`
+        // No `chunk_fetcher` snapshot is built here — `Kernel::sys_setattr`
         // derives a fresh `GrpcChunkFetcher` per `DT_MOUNT` against the
         // current peer_client + self_address (see `Kernel.peer_client`
         // doc).
@@ -853,7 +694,7 @@ impl Kernel {
             write_hook_count: AtomicU64::new(0),
             delete_hook_count: AtomicU64::new(0),
             rename_hook_count: AtomicU64::new(0),
-            observers: Mutex::new(KernelObserverRegistry::new()),
+            observers: RwLock::new(ObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
@@ -878,19 +719,18 @@ impl Kernel {
             has_permission_provider: AtomicBool::new(false),
         };
         // Distributed-coordinator bootstrap is driven by
-        // `nexus_raft::distributed_coordinator::install`. The cdylib boot
-        // path constructs `Kernel`, then calls `install(kernel)` which
-        // wires the `RaftDistributedCoordinator` and dispatches
+        // `nexus_raft::distributed_coordinator::install`. The host
+        // binary constructs `Kernel`, then calls `install(kernel)`
+        // which wires the `RaftDistributedCoordinator` and dispatches
         // `init_from_env` through the trait. Kernel construction stays
-        // raft-free at this seam so non-cdylib callers (Rust tests,
-        // embedded) skip federation init unless they explicitly install
-        // the coordinator.
-        // ManagedAgentService is installed by the cdylib boot path
-        // (services lives in a peer crate; kernel does NOT depend on
-        // services). Python-side: `nexus_runtime.nx_managed_agent_install
-        // (kernel)` runs in `_wired.py` after `Kernel::new` returns.
-        // Pure-Rust embedders call `services::managed_agent::ManagedAgentService::install(&k)`
-        // themselves; nothing happens automatically here.
+        // raft-free at this seam, so callers that don't run federation
+        // (tests, embedders) skip federation init unless they
+        // explicitly install the coordinator.
+        // ManagedAgentService lives in a peer crate; kernel does NOT
+        // depend on services. The host binary calls
+        // `services::managed_agent::ManagedAgentService::install(&k)`
+        // at boot when it wants the managed-agent service wired up;
+        // nothing happens automatically here.
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
@@ -1254,7 +1094,8 @@ impl Kernel {
         }
     }
 
-    // Called by PyKernel.metastore_delete_batch() via PyO3 — no direct Rust caller.
+    /// Bulk-delete the given paths from the global metastore.
+    /// Mirror of `metastore_get_batch` on the delete side.
     #[allow(dead_code)]
     pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
         match self.metastore.read().as_ref() {
@@ -1348,8 +1189,9 @@ impl Kernel {
         paths: &[String],
         key: &str,
     ) -> Result<Vec<crate::meta_store::PathValueStr>, KernelError> {
-        // Bulk: fan out to the global metastore. Mixed-mount bulk reads
-        // go through the Python wrapper.
+        // Bulk: fan out to the global metastore. Mixed-mount bulk
+        // reads are not handled here; callers that need them fan out
+        // per-mount themselves.
         match self.metastore.read().as_ref() {
             Some(ms) => ms.get_file_metadata_bulk(paths, key).map_err(|e| {
                 KernelError::IOError(format!("metastore_get_file_metadata_bulk: {e:?}"))
@@ -1409,7 +1251,7 @@ impl Kernel {
         }
     }
 
-    // ── Advisory lock primitive (§4.4) ──────────────────────────
+    // ── Advisory lock primitive ─────────────────────────────────
     // (Moved to `kernel::locks` submodule.)
 
     /// DT_LINK transparent follow for `sys_read` / `sys_write` /
@@ -1593,7 +1435,6 @@ impl Kernel {
                     self,
                     path,
                     zone_id,
-                    backend_name,
                     backend,
                     metastore,
                     raft_backend,
@@ -1633,7 +1474,6 @@ impl Kernel {
                 let parent_zone = self
                     .vfs_router
                     .route(parent_dir, contracts::ROOT_ZONE_ID)
-                    .ok()
                     .map(|r| r.zone_id)
                     .filter(|z| !z.is_empty())
                     .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
@@ -1698,7 +1538,8 @@ impl Kernel {
                 )
             }
             6 => {
-                // DT_LINK — VFS-internal symlink (KERNEL-ARCHITECTURE.md §4.5).
+                // DT_LINK — VFS-internal symlink
+                // (KERNEL-ARCHITECTURE.md "DT_LINK — Path-Internal Symlink").
                 let target = link_target.ok_or_else(|| {
                     KernelError::PermissionDenied(
                         "sys_setattr(DT_LINK): link_target is required".to_string(),
@@ -2127,7 +1968,7 @@ impl Kernel {
         // Route-scoped metastore resolution — same path sys_write/sys_read
         // use, ensuring SSOT. Falls back to global metastore_get/metastore_put
         // when no VFS route covers the path (e.g. boot-time, tests).
-        let route = self.vfs_router.route(path, zone_id).ok();
+        let route = self.vfs_router.route(path, zone_id);
 
         let existing: Option<crate::meta_store::FileMetadata> = if let Some(ref r) = route {
             self.with_metastore_route(r, |ms| ms.get(path).ok().flatten())
@@ -2323,7 +2164,7 @@ impl Kernel {
 
     /// Replace the kernel's `peer_client` slot with a concrete
     /// implementation. Kernel boots with `NoopPeerBlobClient`; the
-    /// cdylib boot path calls this with the real
+    /// host binary calls this with the real
     /// `transport::blob::peer_client::PeerBlobClient` once per kernel.
     pub fn set_peer_client(&self, client: Arc<dyn crate::hal::peer::PeerBlobClient>) {
         *self.peer_client.write() = client;
@@ -2362,7 +2203,7 @@ impl Kernel {
     /// through the same boundary the syscall API uses — no
     /// ``Arc<dyn MetaStore>`` leak across crates.
     pub fn lookup_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
-        let route = self.vfs_router.route(path, zone_id).ok()?;
+        let route = self.vfs_router.route(path, zone_id)?;
         self.with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten()
             .and_then(|m| m.content_id)
@@ -3732,7 +3573,7 @@ mod tests {
     // ── Logical cache split ───────────────────────────────────────────
     mod logical_cache_split {
         use super::*;
-        use crate::cache::index_cache::{IndexCacheKey, IndexKind};
+        use crate::core::index_cache::{IndexCacheKey, IndexKind};
         use crate::meta_store::{LocalMetaStore, MetaStore};
         use std::time::Duration;
 

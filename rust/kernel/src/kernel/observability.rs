@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
 
-use super::{Kernel, OperationContext};
+use super::{Kernel, OperationContext, RwLockExt};
 
 impl Kernel {
     // ── Observer registry ─────────────────────────────────────────────
@@ -16,20 +16,18 @@ impl Kernel {
     /// All OBSERVE callbacks run on `observer_pool` (the kernel's
     /// background ThreadPool). Observers needing synchronous-blocking
     /// semantics must be moved to INTERCEPT POST.
-    #[allow(dead_code)]
     pub fn register_observer(
         &self,
         observer: Arc<dyn MutationObserver>,
         name: String,
         event_mask: u32,
     ) {
-        self.observers.lock().register(observer, name, event_mask);
+        self.observers.write().register(observer, name, event_mask);
     }
 
     /// Unregister observer by name. Returns true if removed.
-    #[allow(dead_code)]
     pub fn unregister_observer(&self, name: &str) -> bool {
-        self.observers.lock().unregister(name)
+        self.observers.write().unregister(name)
     }
 
     /// OBSERVE-phase dispatch — call all matching observers inline.
@@ -40,7 +38,8 @@ impl Kernel {
     ///
     /// Snapshot-then-drop-lock pattern: collect Arc clones under the registry
     /// lock, release lock, then call each observer. Prevents deadlocks if an
-    /// observer re-enters the kernel.
+    /// observer re-enters the kernel; concurrent dispatches share the read
+    /// lock so the hot path scales with cores.
     ///
     /// Called by every successful Tier 1 mutation syscall via dispatch_mutation.
     /// Also wakes any thread parked in `FileWatchRegistry::wait_for_event`
@@ -49,7 +48,10 @@ impl Kernel {
     /// loop and the matrix-adapter `/sync` long-poll fallback drop their
     /// busy-poll sleeps once they pass a non-zero timeout.
     pub fn dispatch_observers(&self, event: &FileEvent) {
-        let observers = self.observers.lock().matching(event.event_type as u32);
+        let observers = self
+            .observers
+            .read_unconditional()
+            .matching(event.event_type as u32);
         for obs in observers {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 obs.on_mutation(event);
@@ -67,7 +69,7 @@ impl Kernel {
 
     /// Total registered Rust-native observers.
     pub fn observer_count(&self) -> usize {
-        self.observers.lock().count()
+        self.observers.read_unconditional().count()
     }
 
     /// Dispatch a manually constructed FileEvent (for DLC mount/unmount, Python fallback).
@@ -83,9 +85,9 @@ impl Kernel {
     /// Used by sys_* methods to keep the per-syscall dispatch site to
     /// 3-4 lines instead of a 15-field struct literal. Fast path: when
     /// no observers are registered, `dispatch_observers` is an early
-    /// return after a single Mutex acquire — the FileEvent construction
-    /// is essentially free against any observer-bearing workload, so
-    /// there's no point in gating it behind a count check.
+    /// return after a single read-lock acquire — the FileEvent
+    /// construction is essentially free against any observer-bearing
+    /// workload, so there's no point in gating it behind a count check.
     #[inline]
     pub(super) fn dispatch_mutation(
         &self,
@@ -105,22 +107,6 @@ impl Kernel {
     }
 
     // ── File watch registry (§10 A3) ──────────────────────────────────
-
-    /// Register a file watch pattern. Returns watch ID.
-    pub fn register_watch(&self, pattern: &str) -> u64 {
-        self.file_watches.register(pattern)
-    }
-
-    /// Unregister a file watch by ID.
-    pub fn unregister_watch(&self, watch_id: u64) -> bool {
-        self.file_watches.unregister(watch_id)
-    }
-
-    /// Match a path against all registered watch patterns.
-    /// Returns list of matching watch IDs.
-    pub fn match_watches(&self, path: &str) -> Vec<u64> {
-        self.file_watches.match_path(path)
-    }
 
     /// sys_watch — block until a file event matching the pattern arrives, or timeout.
     /// Tier 1 syscall (inotify equivalent). Returns matching FileEvent or None on timeout.

@@ -1,28 +1,19 @@
-//! Unified lock manager — kernel primitive §4.4.
+//! Unified lock manager — kernel primitive
+//! (KERNEL-ARCHITECTURE.md "Unified LockManager — I/O Lock + Advisory Lock").
 //!
-//! Single `LockManager` struct replaces both `VFSLockManagerInner` (I/O locks)
-//! and `LocalLockManager` / `DistributedLockManager` (advisory locks).
-//!
-//! Two acquire modes:
-//!   - **I/O lock** (kernel-internal): blocking, hierarchy-aware, no TTL, auto
-//!     handle via `blocking_acquire` / `do_release`. Stays in the node-local
-//!     `IOLockState`; never replicates.
+//! Two orthogonal acquire modes share one struct:
+//!   - **I/O lock** (kernel-internal): blocking, hierarchy-aware, no TTL,
+//!     auto handle via `blocking_acquire` / `do_release`. Held in the
+//!     node-local `IOLockState` mutex.
 //!   - **Advisory lock** (user-facing): try-once, hierarchy-aware, TTL-based,
 //!     explicit lock_id via `acquire_lock` / `release_lock` / `extend_lock`.
-//!     Backed by the shared `Arc<Mutex<contracts::LockState>>` — same Arc
-//!     the raft state machine holds once `upgrade_to_distributed` fires.
-//!
-//! I/O and advisory locks are orthogonal — they do not conflict with each
-//! other. They live in separate structures now that advisory state is
-//! shared with raft.
-//!
-//! After R14, distributed mode does not split reads from writes: writes
-//! still go through `node.propose()` for raft consensus, and the apply
-//! path mutates the same `Arc<Mutex<LockState>>`. Reads hit that Arc
-//! directly, so they observe exactly what the local apply committed.
+//!     Mutations go through the installed `Locks` HAL backend (`LocalLocks`
+//!     by default, swapped via `install_locks` at federation mount time);
+//!     every backend mutates the same shared `Arc<Mutex<contracts::LockState>>`,
+//!     so a replicated apply-path commit is visible to a local read without
+//!     a quorum round-trip.
 
 pub mod locks;
-pub mod semaphore;
 
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{BTreeMap, HashMap};
@@ -30,29 +21,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use contracts::lock_state::{
-    HolderInfo as SharedHolderInfo, LockMode as SharedLockMode, LockState as SharedLockState, Locks,
-};
+use contracts::lock_state::{HolderInfo as SharedHolderInfo, LockState as SharedLockState, Locks};
 
 // ── Lock types (advisory) ───────────────────────────────────────────
-
-/// Per-holder conflict mode (advisory locks).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum KernelLockMode {
-    /// Sole-holder lock. Blocks any concurrent acquire.
-    #[default]
-    Exclusive,
-    /// Read-like lock. Coexists with other Shared holders up to
-    /// `KernelLockInfo::max_holders`; blocked by any Exclusive holder.
-    Shared,
-}
 
 /// Information about a single advisory lock holder.
 #[derive(Clone, Debug, Default)]
 pub struct KernelHolderInfo {
     pub lock_id: String,
     pub holder_info: String,
-    pub mode: KernelLockMode,
     pub acquired_at_secs: u64,
     pub expires_at_secs: u64,
 }
@@ -103,15 +80,27 @@ struct IOLockState {
 
 // ── Path helpers ────────────────────────────────────────────────────
 
-/// Normalize a path: collapse repeated slashes, remove trailing slash (except root).
-pub(crate) fn normalize_path(path: &str) -> String {
+/// Normalize a path: collapse repeated slashes, remove trailing slash
+/// (except root).
+///
+/// Returns `Cow::Borrowed` when the input is already canonical (or
+/// requires only a trailing-slash trim — still expressible as a slice).
+/// Only paths containing consecutive slashes (`"/a//b"`) fall into the
+/// owning-`String` slow path. The I/O lock hot path
+/// (`blocking_acquire`, `is_locked`, `io_holders`) is normalized on
+/// every call, so the fast path is worth the inline scan.
+pub(crate) fn normalize_path(path: &str) -> std::borrow::Cow<'_, str> {
     if path.is_empty() {
-        return "/".to_string();
+        return std::borrow::Cow::Borrowed("/");
     }
-
+    if !path.as_bytes().windows(2).any(|w| w == b"//") {
+        if path.len() > 1 && path.ends_with('/') {
+            return std::borrow::Cow::Borrowed(&path[..path.len() - 1]);
+        }
+        return std::borrow::Cow::Borrowed(path);
+    }
     let mut result = String::with_capacity(path.len());
     let mut prev_slash = false;
-
     for ch in path.chars() {
         if ch == '/' {
             if !prev_slash {
@@ -123,32 +112,73 @@ pub(crate) fn normalize_path(path: &str) -> String {
             prev_slash = false;
         }
     }
-
     if result.len() > 1 && result.ends_with('/') {
         result.pop();
     }
-
-    result
+    std::borrow::Cow::Owned(result)
 }
 
-/// Collect the *strict* ancestors of `path` (must be normalized).
+/// Lazy iterator over the *strict* ancestors of `path`, deepest-first.
 ///
-/// Example: `"/a/b/c"` → `["/a/b", "/a", "/"]`
-fn ancestors(path: &str) -> Vec<&str> {
-    if path == "/" || path.is_empty() {
-        return Vec::new();
-    }
-    let mut result = Vec::new();
-    let mut end = path.len();
-    while let Some(pos) = path[..end].rfind('/') {
-        if pos == 0 {
-            result.push("/");
-            break;
+/// **Precondition:** `path` is the output of [`normalize_path`] (no
+/// double slashes, no trailing slash except for root). The walk
+/// uses `rfind('/')` to split on `/` boundaries; an un-normalized
+/// input like `"/a//b"` would emit a bogus `"/a/"` ancestor that
+/// never matches any real `IOLockState` key. Every caller
+/// (`ancestor_io_conflict`, `descendant_io_conflict` via its own
+/// prefix construction) feeds normalized paths in, so the
+/// invariant holds by construction; the `debug_assert!` documents
+/// it and catches future misuse.
+///
+/// Lazy: the I/O conflict checks short-circuit on the first matching
+/// ancestor, so the iterator avoids the per-acquire `Vec` allocation
+/// that the previous eager `Vec<&str>` form paid for every call.
+///
+/// Example: `"/a/b/c"` → yields `"/a/b"`, `"/a"`, `"/"` then `None`.
+struct Ancestors<'a> {
+    path: &'a str,
+    end: usize,
+    done: bool,
+}
+
+impl<'a> Iterator for Ancestors<'a> {
+    type Item = &'a str;
+    fn next(&mut self) -> Option<&'a str> {
+        if self.done || self.end == 0 {
+            return None;
         }
-        result.push(&path[..pos]);
-        end = pos;
+        match self.path[..self.end].rfind('/') {
+            Some(0) => {
+                self.done = true;
+                Some("/")
+            }
+            Some(pos) => {
+                let result = &self.path[..pos];
+                self.end = pos;
+                Some(result)
+            }
+            None => {
+                self.done = true;
+                None
+            }
+        }
     }
-    result
+}
+
+fn ancestors(path: &str) -> Ancestors<'_> {
+    debug_assert!(
+        path == normalize_path(path),
+        "ancestors() requires a normalized path; got {path:?}",
+    );
+    Ancestors {
+        path,
+        end: if path == "/" || path.is_empty() {
+            0
+        } else {
+            path.len()
+        },
+        done: false,
+    }
 }
 
 pub fn lock_now_secs() -> u64 {
@@ -158,27 +188,12 @@ pub fn lock_now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-// ── Raft conversion helpers ─────────────────────────────────────────
-
-fn kernel_to_shared_mode(m: KernelLockMode) -> SharedLockMode {
-    match m {
-        KernelLockMode::Exclusive => SharedLockMode::Exclusive,
-        KernelLockMode::Shared => SharedLockMode::Shared,
-    }
-}
-
-fn shared_to_kernel_mode(m: SharedLockMode) -> KernelLockMode {
-    match m {
-        SharedLockMode::Exclusive => KernelLockMode::Exclusive,
-        SharedLockMode::Shared => KernelLockMode::Shared,
-    }
-}
+// ── Conversion: contracts::LockInfo → KernelLockInfo ────────────────
 
 fn shared_holder_to_kernel(h: &SharedHolderInfo) -> KernelHolderInfo {
     KernelHolderInfo {
         lock_id: h.lock_id.clone(),
         holder_info: h.holder_info.clone(),
-        mode: shared_to_kernel_mode(h.mode),
         acquired_at_secs: h.acquired_at,
         expires_at_secs: h.expires_at,
     }
@@ -189,22 +204,6 @@ fn shared_lock_to_kernel(lock: contracts::LockInfo) -> KernelLockInfo {
         path: lock.path,
         max_holders: lock.max_holders,
         holders: lock.holders.iter().map(shared_holder_to_kernel).collect(),
-    }
-}
-
-// ── LockError ───────────────────────────────────────────────────────
-
-/// Error type for lock operations.
-#[derive(Debug)]
-pub enum LockError {
-    IOError(String),
-}
-
-impl std::fmt::Display for LockError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LockError::IOError(msg) => write!(f, "{}", msg),
-        }
     }
 }
 
@@ -223,7 +222,8 @@ impl std::fmt::Display for LockError {
 /// (idempotent, first-wins per process). Kernel never names the
 /// concrete replicated impl — the trait boundary is the contract.
 ///
-/// Shared via ``Arc`` between Kernel and VFSLockManager PyO3 wrapper.
+/// Shared via ``Arc`` between Kernel and the distributed-lock
+/// coordinator that installs the advisory backend HAL.
 pub struct LockManager {
     io_state: Mutex<IOLockState>,
     /// Advisory backend HAL slot (``LocalLocks`` by default; replaced by
@@ -319,7 +319,6 @@ impl LockManager {
 
     /// Blocking acquire with timeout (for Rust-internal I/O callers).
     /// Returns non-zero handle on success, 0 on timeout.
-    /// Does NOT require GIL — safe to call from within py.allow_threads().
     pub fn blocking_acquire(&self, path: &str, mode: LockMode, timeout_ms: u64) -> u64 {
         let norm_path = normalize_path(path);
         let start = Instant::now();
@@ -328,7 +327,7 @@ impl LockManager {
         {
             let mut state = self.io_state.lock();
             if let Some(handle) =
-                Self::try_acquire_io_locked(&mut state, &self.next_handle, &norm_path, mode)
+                Self::try_acquire_io_locked(&mut state, &self.next_handle, norm_path.as_ref(), mode)
             {
                 let elapsed = start.elapsed().as_nanos() as u64;
                 self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
@@ -360,7 +359,7 @@ impl LockManager {
             let wait_result = self.notify.wait_for(&mut state, remaining);
 
             if let Some(handle) =
-                Self::try_acquire_io_locked(&mut state, &self.next_handle, &norm_path, mode)
+                Self::try_acquire_io_locked(&mut state, &self.next_handle, norm_path.as_ref(), mode)
             {
                 let elapsed = start.elapsed().as_nanos() as u64;
                 self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
@@ -388,7 +387,18 @@ impl LockManager {
             if let Some(entry) = state.locks.get_mut(&info.path) {
                 match info.mode {
                     LockMode::Read => {
-                        entry.io_readers = entry.io_readers.saturating_sub(1);
+                        // Every live Read handle was produced by
+                        // `try_acquire_io_locked`, which increments
+                        // `io_readers` atomically with the handle insert.
+                        // `saturating_sub` here would silently mask a
+                        // handle/state desync — assert and crash debug
+                        // builds instead.
+                        debug_assert!(
+                            entry.io_readers > 0,
+                            "do_release(Read) on {:?} but io_readers==0 (handle/state desync)",
+                            info.path,
+                        );
+                        entry.io_readers -= 1;
                     }
                     LockMode::Write => {
                         if entry.io_writer == Some(handle) {
@@ -519,13 +529,16 @@ impl LockManager {
         }
     }
 
-    // ── I/O lock: query helpers (PyO3 VFSLockManager) ───────────────
+    // ── I/O lock: query helpers ─────────────────────────────────────
 
     /// Check whether `path` currently has any active I/O lock.
     pub fn is_locked(&self, path: &str) -> bool {
         let norm = normalize_path(path);
         let state = self.io_state.lock();
-        state.locks.get(&norm).is_some_and(|entry| !entry.is_idle())
+        state
+            .locks
+            .get(norm.as_ref())
+            .is_some_and(|entry| !entry.is_idle())
     }
 
     /// Return I/O lock-holder information for `path`: (readers, writer_handle).
@@ -533,7 +546,7 @@ impl LockManager {
     pub fn io_holders(&self, path: &str) -> Option<(u32, u64)> {
         let norm = normalize_path(path);
         let state = self.io_state.lock();
-        match state.locks.get(&norm) {
+        match state.locks.get(norm.as_ref()) {
             Some(entry) if !entry.is_idle() => {
                 Some((entry.io_readers, entry.io_writer.unwrap_or(0)))
             }
@@ -541,7 +554,7 @@ impl LockManager {
         }
     }
 
-    /// Number of actively locked paths (I/O locks only — for VFSLockManager.active_locks).
+    /// Number of actively locked paths (I/O locks only).
     pub fn io_active_locks(&self) -> usize {
         let state = self.io_state.lock();
         state.locks.values().filter(|e| !e.is_idle()).count()
@@ -585,42 +598,33 @@ impl LockManager {
         &self,
         path: &str,
         lock_id: &str,
-        mode: KernelLockMode,
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
-    ) -> Result<bool, LockError> {
-        self.locks_backend()
-            .acquire(
-                path,
-                lock_id,
-                kernel_to_shared_mode(mode),
-                max_holders,
-                ttl_secs.min(u32::MAX as u64) as u32,
-                holder_info,
-            )
-            .map_err(|e| LockError::IOError(format!("LockManager.acquire_lock({path}): {e}")))
+    ) -> Result<bool, String> {
+        self.locks_backend().acquire(
+            path,
+            lock_id,
+            max_holders,
+            ttl_secs.min(u32::MAX as u64) as u32,
+            holder_info,
+        )
     }
 
     /// Release a specific advisory lock holder. Returns ``Ok(true)`` if found.
-    pub fn release_lock(&self, path: &str, lock_id: &str) -> Result<bool, LockError> {
-        self.locks_backend()
-            .release(path, lock_id)
-            .map_err(|e| LockError::IOError(format!("LockManager.release_lock({path}): {e}")))
+    pub fn release_lock(&self, path: &str, lock_id: &str) -> Result<bool, String> {
+        self.locks_backend().release(path, lock_id)
     }
 
     /// Force-release ALL advisory holders on ``path`` (admin override).
-    pub fn force_release_lock(&self, path: &str) -> Result<bool, LockError> {
-        self.locks_backend()
-            .force_release(path)
-            .map_err(|e| LockError::IOError(format!("LockManager.force_release_lock({path}): {e}")))
+    pub fn force_release_lock(&self, path: &str) -> Result<bool, String> {
+        self.locks_backend().force_release(path)
     }
 
     /// Extend a holder's TTL. Returns ``Ok(true)`` if extended.
-    pub fn extend_lock(&self, path: &str, lock_id: &str, ttl_secs: u64) -> Result<bool, LockError> {
+    pub fn extend_lock(&self, path: &str, lock_id: &str, ttl_secs: u64) -> Result<bool, String> {
         self.locks_backend()
             .extend(path, lock_id, ttl_secs.min(u32::MAX as u64) as u32)
-            .map_err(|e| LockError::IOError(format!("LockManager.extend_lock({path}): {e}")))
     }
 
     /// Read the full advisory lock record for a path (or ``None`` if
@@ -631,21 +635,19 @@ impl LockManager {
     /// from the same shared ``Arc<Mutex<LockState>>`` — a committed
     /// replicated write is visible here as soon as apply returns, so
     /// no read-quorum round-trip is needed.
-    pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, LockError> {
-        Ok(self
-            .locks_backend()
+    pub fn get_lock_info(&self, path: &str) -> Option<KernelLockInfo> {
+        self.locks_backend()
             .get_lock(path)
-            .map(shared_lock_to_kernel))
+            .map(shared_lock_to_kernel)
     }
 
     /// Enumerate advisory locks with a given path prefix, capped at ``limit``.
-    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<KernelLockInfo>, LockError> {
-        Ok(self
-            .locks_backend()
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> Vec<KernelLockInfo> {
+        self.locks_backend()
             .list_locks(prefix, limit)
             .into_iter()
             .map(shared_lock_to_kernel)
-            .collect())
+            .collect()
     }
 }
 
@@ -698,17 +700,20 @@ mod tests {
 
     #[test]
     fn test_ancestors_root() {
-        assert_eq!(ancestors("/"), Vec::<&str>::new());
+        assert_eq!(ancestors("/").collect::<Vec<_>>(), Vec::<&str>::new());
     }
 
     #[test]
     fn test_ancestors_one_level() {
-        assert_eq!(ancestors("/a"), vec!["/"]);
+        assert_eq!(ancestors("/a").collect::<Vec<_>>(), vec!["/"]);
     }
 
     #[test]
     fn test_ancestors_deep() {
-        assert_eq!(ancestors("/a/b/c"), vec!["/a/b", "/a", "/"]);
+        assert_eq!(
+            ancestors("/a/b/c").collect::<Vec<_>>(),
+            vec!["/a/b", "/a", "/"]
+        );
     }
 
     // -- basic I/O acquire / release -------------------------------------------
@@ -1028,188 +1033,98 @@ mod tests {
         assert!(io_acquire(&lm, "/a/b", LockMode::Write).is_none());
     }
 
-    // ── Advisory lock tests (migrated from old LocalLockManager) ────
+    // ── Advisory lock tests ─────────────────────────────────────────
 
     #[test]
-    fn advisory_exclusive_blocks_exclusive() {
+    fn advisory_mutex_blocks_second_acquire() {
         let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/a", "h1", KernelLockMode::Exclusive, 1, 60, "agent:1")
-            .unwrap());
-        assert!(!lm
-            .acquire_lock("/lk/a", "h2", KernelLockMode::Exclusive, 1, 60, "agent:2")
-            .unwrap());
+        assert!(lm.acquire_lock("/lk/a", "h1", 1, 60, "agent:1").unwrap());
+        assert!(!lm.acquire_lock("/lk/a", "h2", 1, 60, "agent:2").unwrap());
     }
 
     #[test]
-    fn advisory_shared_coexists_up_to_max() {
+    fn advisory_semaphore_coexists_up_to_max() {
         let lm = LockManager::new();
         for id in ["r1", "r2", "r3"] {
-            assert!(lm
-                .acquire_lock("/lk/b", id, KernelLockMode::Shared, 3, 60, "agent")
-                .unwrap());
+            assert!(lm.acquire_lock("/lk/b", id, 3, 60, "agent").unwrap());
         }
-        assert!(!lm
-            .acquire_lock("/lk/b", "r4", KernelLockMode::Shared, 3, 60, "agent")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_shared_blocked_by_exclusive() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/c", "w1", KernelLockMode::Exclusive, 3, 60, "agent:w")
-            .unwrap());
-        assert!(!lm
-            .acquire_lock("/lk/c", "r1", KernelLockMode::Shared, 3, 60, "agent:r")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_exclusive_blocked_by_shared() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/d", "r1", KernelLockMode::Shared, 3, 60, "agent:r")
-            .unwrap());
-        assert!(!lm
-            .acquire_lock("/lk/d", "w1", KernelLockMode::Exclusive, 3, 60, "agent:w")
-            .unwrap());
+        assert!(!lm.acquire_lock("/lk/b", "r4", 3, 60, "agent").unwrap());
     }
 
     #[test]
     fn advisory_idempotent_reacquire_and_release() {
         let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/lk/e", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-        assert!(lm
-            .acquire_lock("/lk/e", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-        let info = lm.get_lock_info("/lk/e").unwrap().unwrap();
+        assert!(lm.acquire_lock("/lk/e", "h1", 1, 60, "agent").unwrap());
+        assert!(lm.acquire_lock("/lk/e", "h1", 1, 60, "agent").unwrap());
+        let info = lm.get_lock_info("/lk/e").unwrap();
         assert_eq!(info.holders.len(), 1);
 
         assert!(lm.release_lock("/lk/e", "h1").unwrap());
-        assert!(lm.get_lock_info("/lk/e").unwrap().is_none());
+        assert!(lm.get_lock_info("/lk/e").is_none());
     }
 
     #[test]
     fn advisory_list_filters_by_prefix() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/ns/a", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
-        lm.acquire_lock("/lk/ns/b", "h2", KernelLockMode::Shared, 2, 60, "agent")
-            .unwrap();
-        lm.acquire_lock("/lk/other", "h3", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
+        lm.acquire_lock("/lk/ns/a", "h1", 1, 60, "agent").unwrap();
+        lm.acquire_lock("/lk/ns/b", "h2", 2, 60, "agent").unwrap();
+        lm.acquire_lock("/lk/other", "h3", 1, 60, "agent").unwrap();
 
-        let under_ns = lm.list_locks("/lk/ns/", 10).unwrap();
+        let under_ns = lm.list_locks("/lk/ns/", 10);
         assert_eq!(under_ns.len(), 2);
 
-        let all_lk = lm.list_locks("/lk/", 10).unwrap();
+        let all_lk = lm.list_locks("/lk/", 10);
         assert_eq!(all_lk.len(), 3);
     }
 
     #[test]
     fn advisory_extend_refreshes_ttl() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/x", "h1", KernelLockMode::Exclusive, 1, 1, "agent")
-            .unwrap();
-        let before = lm.get_lock_info("/lk/x").unwrap().unwrap().holders[0].expires_at_secs;
+        lm.acquire_lock("/lk/x", "h1", 1, 1, "agent").unwrap();
+        let before = lm.get_lock_info("/lk/x").unwrap().holders[0].expires_at_secs;
         assert!(lm.extend_lock("/lk/x", "h1", 3600).unwrap());
-        let after = lm.get_lock_info("/lk/x").unwrap().unwrap().holders[0].expires_at_secs;
+        let after = lm.get_lock_info("/lk/x").unwrap().holders[0].expires_at_secs;
         assert!(after >= before);
     }
 
     #[test]
     fn advisory_capacity_mismatch_rejects() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/y", "r1", KernelLockMode::Shared, 3, 60, "agent")
-            .unwrap();
-        assert!(!lm
-            .acquire_lock("/lk/y", "w1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
+        lm.acquire_lock("/lk/y", "r1", 3, 60, "agent").unwrap();
+        // Second acquire with different max_holders is rejected.
+        assert!(!lm.acquire_lock("/lk/y", "w1", 1, 60, "agent").unwrap());
     }
 
     #[test]
     fn advisory_force_release() {
         let lm = LockManager::new();
-        lm.acquire_lock("/lk/f", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
+        lm.acquire_lock("/lk/f", "h1", 1, 60, "agent").unwrap();
         assert!(lm.force_release_lock("/lk/f").unwrap());
-        assert!(lm.get_lock_info("/lk/f").unwrap().is_none());
+        assert!(lm.get_lock_info("/lk/f").is_none());
     }
 
-    // ── Advisory hierarchy tests (NEW — not in old LocalLockManager) ─
+    // ── Advisory hierarchy tests ────────────────────────────────────
 
     #[test]
-    fn advisory_hierarchy_parent_exclusive_blocks_child() {
+    fn advisory_hierarchy_parent_blocks_child() {
         let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/folder", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-        // Locking /folder should block /folder/file
+        assert!(lm.acquire_lock("/folder", "h1", 1, 60, "agent").unwrap());
+        // Holder on /folder blocks any acquire on /folder/file.
         assert!(!lm
-            .acquire_lock(
-                "/folder/file",
-                "h2",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
+            .acquire_lock("/folder/file", "h2", 1, 60, "agent")
             .unwrap());
         assert!(!lm
-            .acquire_lock("/folder/file", "h3", KernelLockMode::Shared, 2, 60, "agent")
+            .acquire_lock("/folder/file", "h3", 2, 60, "agent")
             .unwrap());
     }
 
     #[test]
-    fn advisory_hierarchy_child_blocks_parent_exclusive() {
+    fn advisory_hierarchy_child_blocks_parent() {
         let lm = LockManager::new();
         assert!(lm
-            .acquire_lock(
-                "/folder/file",
-                "h1",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
+            .acquire_lock("/folder/file", "h1", 1, 60, "agent")
             .unwrap());
-        assert!(!lm
-            .acquire_lock("/folder", "h2", KernelLockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_hierarchy_shared_parent_allows_shared_child() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/folder", "h1", KernelLockMode::Shared, 5, 60, "agent")
-            .unwrap());
-        // Shared parent should allow shared child
-        assert!(lm
-            .acquire_lock("/folder/file", "h2", KernelLockMode::Shared, 5, 60, "agent")
-            .unwrap());
-    }
-
-    #[test]
-    fn advisory_hierarchy_shared_parent_blocks_exclusive_child() {
-        let lm = LockManager::new();
-        assert!(lm
-            .acquire_lock("/folder", "h1", KernelLockMode::Shared, 5, 60, "agent")
-            .unwrap());
-        // Shared parent should block exclusive child
-        assert!(!lm
-            .acquire_lock(
-                "/folder/file",
-                "h2",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
-            .unwrap());
+        assert!(!lm.acquire_lock("/folder", "h2", 1, 60, "agent").unwrap());
     }
 
     // ── I/O + advisory orthogonality test ────────────────────────────
@@ -1219,21 +1134,14 @@ mod tests {
         let lm = LockManager::new();
         // I/O write lock on /data/file
         let h = io_acquire(&lm, "/data/file", LockMode::Write).unwrap();
-        // Advisory exclusive lock on same path should succeed (orthogonal)
+        // Advisory mutex-form lock on same path should succeed (orthogonal)
         assert!(lm
-            .acquire_lock(
-                "/data/file",
-                "adv1",
-                KernelLockMode::Exclusive,
-                1,
-                60,
-                "agent"
-            )
+            .acquire_lock("/data/file", "adv1", 1, 60, "agent")
             .unwrap());
         // Release I/O lock
         lm.do_release(h);
         // Advisory still held
-        assert!(lm.get_lock_info("/data/file").unwrap().is_some());
+        assert!(lm.get_lock_info("/data/file").is_some());
         // Release advisory
         assert!(lm.release_lock("/data/file", "adv1").unwrap());
     }

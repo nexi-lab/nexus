@@ -1768,6 +1768,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "smallvec",
  "string-interner",
  "tempfile",
  "tokio",

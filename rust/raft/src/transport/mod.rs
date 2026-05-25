@@ -157,7 +157,7 @@ pub(crate) async fn forward_propose(
 fn proto_result_to_command_result(
     result: Option<proto::nexus::raft::RaftResponse>,
 ) -> crate::raft::CommandResult {
-    use crate::raft::{CommandResult, HolderInfo, LockAcquireResult, LockMode};
+    use crate::raft::{CommandResult, HolderInfo, LockAcquireResult};
     use proto::nexus::raft::raft_response::Result as ProtoVariant;
 
     let Some(resp) = result else {
@@ -170,10 +170,6 @@ fn proto_result_to_command_result(
                 vec![HolderInfo {
                     lock_id: String::new(),
                     holder_info: lr.current_holder.clone().unwrap_or_default(),
-                    // Witness-path gRPC response has no per-holder
-                    // mode field; default to Exclusive (the mode the
-                    // witness wire protocol assumes).
-                    mode: LockMode::Exclusive,
                     acquired_at: 0,
                     expires_at: (lr.expires_at_ms / 1000) as u64,
                 }]

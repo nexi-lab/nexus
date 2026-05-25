@@ -1,24 +1,32 @@
-//! Permission lease cache — pure Rust, no PyO3 dependency.
+//! Permission lease cache.
 //!
-//! DashMap-based (path, agent_id) → Instant lease table. On hit, the
-//! full ReBAC bitmap check is skipped entirely (~100-200ns vs
-//! ~50-200μs). Same algorithm as the Python `PermissionLeaseTable`
-//! (permission_lease.py) but in pure Rust with DashMap.
+//! Two-level DashMap: outer keyed by path, inner keyed by agent_id.
+//! The two-level structure lets `check`'s inheritance walk look up
+//! `(path, agent_id)` with zero String allocations on a hit — both
+//! `outer.get(&str)` and `inner.get(&str)` borrow via
+//! `String: Borrow<str>`. On hit the full ReBAC bitmap check is
+//! skipped entirely (~100-200ns vs ~50-200μs). Same algorithm as the
+//! Python `PermissionLeaseTable` (permission_lease.py).
 //!
 //! Inheritance-aware: `check` walks up the path hierarchy
-//! (O(depth) DashMap lookups) so a parent directory lease covers
-//! child files — matching the Python implementation exactly.
+//! (O(depth) outer lookups) so a parent directory lease covers
+//! child files.
 
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
 
-/// Permission lease cache — (path, agent_id) → granted_at.
+/// Permission lease cache — path → (agent_id → granted_at).
 ///
-/// Lock-free concurrent reads (DashMap sharded buckets). Writes are
-/// infrequent (only on lease miss → ReBAC check → stamp).
+/// Lock-free concurrent reads on both levels (DashMap sharded
+/// buckets). Writes are infrequent (only on lease miss → ReBAC
+/// check → stamp).
 pub struct PermissionLeaseCache {
-    leases: DashMap<(String, String), Instant>,
+    leases: DashMap<String, DashMap<String, Instant>>,
     ttl: Duration,
+    /// Soft cap on unique paths. When the outer map reaches 90% of
+    /// this bound, [`Self::stamp`] runs an `evict_expired` pass; if
+    /// the cap is still hit, the whole table is cleared (cold-start
+    /// fallback, same strategy as the Python `PermissionLeaseTable`).
     max_entries: usize,
 }
 
@@ -35,8 +43,12 @@ impl PermissionLeaseCache {
     /// Check whether a valid lease exists for (path, agent_id).
     ///
     /// Walks up the path hierarchy (inheritance-aware): a lease on
-    /// `/docs/` covers `/docs/readme.md`. Returns true on first hit.
+    /// `/docs` covers `/docs/readme.md`. Returns true on first hit.
     /// Expired entries are lazily removed on access.
+    ///
+    /// Hot path: zero String allocations on a hit. Both
+    /// `outer.get(&str)` and `inner.get(&str)` borrow via
+    /// `String: Borrow<str>`.
     pub fn check(&self, path: &str, agent_id: &str) -> bool {
         if agent_id.is_empty() {
             return false;
@@ -45,14 +57,16 @@ impl PermissionLeaseCache {
         // Walk up path segments: /a/b/c → /a/b/c, /a/b, /a, /
         let mut current = path;
         loop {
-            let key = (current.to_string(), agent_id.to_string());
-            if let Some(entry) = self.leases.get(&key) {
-                if entry.value().elapsed() < self.ttl {
-                    return true;
+            if let Some(inner) = self.leases.get(current) {
+                if let Some(stamped) = inner.get(agent_id) {
+                    if stamped.value().elapsed() < self.ttl {
+                        return true;
+                    }
+                    // Expired — release inner Ref before write to avoid
+                    // shared-vs-exclusive contention on the same shard.
+                    drop(stamped);
+                    inner.remove(agent_id);
                 }
-                // Expired — remove lazily
-                drop(entry);
-                self.leases.remove(&key);
             }
 
             // Walk up to parent
@@ -73,15 +87,16 @@ impl PermissionLeaseCache {
 
     /// Record a successful permission check as a lease.
     ///
-    /// Triggers lazy eviction at 90% capacity: expired entries are
-    /// removed first; if still over cap, the table is cleared (cold
-    /// start equivalent — same strategy as the Python implementation).
+    /// Triggers lazy eviction at 90% of the unique-path cap: expired
+    /// entries are removed first; if still over cap, the table is
+    /// cleared (cold start equivalent — same strategy as the Python
+    /// implementation).
     pub fn stamp(&self, path: &str, agent_id: &str) {
         if agent_id.is_empty() {
             return;
         }
 
-        // Lazy eviction at 90% capacity
+        // Lazy eviction at 90% of unique-path cap.
         if self.leases.len() >= self.max_entries * 9 / 10 {
             self.evict_expired();
             if self.leases.len() >= self.max_entries {
@@ -90,17 +105,28 @@ impl PermissionLeaseCache {
         }
 
         self.leases
-            .insert((path.to_string(), agent_id.to_string()), Instant::now());
+            .entry(path.to_string())
+            .or_default()
+            .insert(agent_id.to_string(), Instant::now());
     }
 
-    /// Invalidate all leases matching the given path prefix.
+    /// Invalidate all leases stamped for the exact given path.
+    ///
+    /// Note: this does **not** propagate to descendants. A stale lease
+    /// stamped on `/docs` will still satisfy a `check("/docs/file")`
+    /// via the inheritance walk in [`Self::check`]. Callers that need
+    /// to invalidate a whole subtree must either invalidate each
+    /// stamped path explicitly or use [`Self::invalidate_all`]. This
+    /// asymmetry mirrors the Python `PermissionLeaseTable`.
     pub fn invalidate_path(&self, path: &str) {
-        self.leases.retain(|k, _| k.0 != path);
+        self.leases.remove(path);
     }
 
-    /// Invalidate all leases for a specific agent.
+    /// Invalidate all leases for a specific agent across every path.
     pub fn invalidate_agent(&self, agent_id: &str) {
-        self.leases.retain(|k, _| k.1 != agent_id);
+        for entry in self.leases.iter() {
+            entry.value().remove(agent_id);
+        }
     }
 
     /// Clear all leases.
@@ -108,10 +134,13 @@ impl PermissionLeaseCache {
         self.leases.clear();
     }
 
-    /// Remove expired entries.
+    /// Remove expired entries and drop now-empty inner maps.
     fn evict_expired(&self) {
         let ttl = self.ttl;
-        self.leases.retain(|_, v| v.elapsed() < ttl);
+        for entry in self.leases.iter() {
+            entry.value().retain(|_, v| v.elapsed() < ttl);
+        }
+        self.leases.retain(|_, inner| !inner.is_empty());
     }
 }
 

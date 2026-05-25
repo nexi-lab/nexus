@@ -46,29 +46,6 @@ pub struct WriteResult {
     pub size: u64,
 }
 
-// ── ExternalTransport ──────────────────────────────────────────
-// Transport-layer capability for backends that can generate direct-access
-// URLs (presigned/signed). Separate from ObjectStore: not all storage
-// needs this, and it belongs at the transport abstraction level, not the
-// content-operations level. Only S3/GCS (and future cloud backends like
-// Azure, MinIO, R2) implement this.
-
-/// Transport-layer trait for generating direct-access URLs.
-///
-/// Enables clients to download/upload directly from cloud storage without
-/// routing bytes through Nexus (offloading I/O, reducing memory footprint).
-pub trait ExternalTransport: Send + Sync {
-    /// Generate a time-limited download URL for the given object key.
-    ///
-    /// Returns `Ok(url_string)` on success, or `Err` if the backend cannot
-    /// generate a signed URL (e.g. missing credentials).
-    fn generate_download_url(
-        &self,
-        object_key: &str,
-        expires_seconds: u64,
-    ) -> Result<String, StorageError>;
-}
-
 /// ObjectStore pillar — kernel `file_operations` contract.
 ///
 /// Rust equivalent of Python `ObjectStoreABC` (one of the Four Storage Pillars).
@@ -80,8 +57,8 @@ pub trait ExternalTransport: Send + Sync {
 ///   - mkdir, rmdir
 ///
 /// Streaming (write_stream, stream_content, stream_range) and batch
-/// (batch_read/write/delete) have default impls in Python; they are
-/// not needed in the Rust kernel hot path and can be added later.
+/// (batch_read/write/delete) variants are not on the Rust kernel
+/// hot path and can be added later as the call sites materialize.
 #[allow(dead_code)]
 pub trait ObjectStore: Send + Sync {
     /// Backend identifier (e.g. "local", "gcs", "s3").
@@ -89,17 +66,17 @@ pub trait ObjectStore: Send + Sync {
 
     /// Downcast to `&CASEngine` for CAS-specific operations. Default
     /// returns `None` for non-CAS backends (PAS, external connectors).
-    /// Only `CasLocalBackend` overrides. Used by the `PyKernel::cas_*`
-    /// surface so Python delegators can reach the CAS API without every
-    /// backend carrying CAS-shaped noise.
+    /// Only `CasLocalBackend` overrides. Used by the `Kernel::cas_*`
+    /// surface so callers can reach the CAS API without every backend
+    /// carrying CAS-shaped noise.
     #[allow(private_interfaces)]
-    fn as_cas(&self) -> Option<&crate::cas_engine::CASEngine> {
+    fn as_cas(&self) -> Option<&crate::core::cas::engine::CASEngine> {
         None
     }
 
     /// Downcast to a streaming-capable LLM backend. Default returns `None`.
     /// `OpenAIBackend` and `AnthropicBackend` override. Consumed by
-    /// `PyKernel::llm_start_streaming` — any ObjectStore that returns
+    /// `Kernel::llm_start_streaming` — any ObjectStore that returns
     /// `Some` implements the full SSE → DT_STREAM →
     /// `CASEngine::write_content_tracked` pipeline.
     ///

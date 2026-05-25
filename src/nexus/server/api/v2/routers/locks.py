@@ -30,7 +30,8 @@ _locks: dict[str, dict[str, Any]] = {}
 
 
 class PathAcquireRequest(BaseModel):
-    mode: str = "mutex"
+    # max_holders == 1 is a mutex; max_holders > 1 is a counting semaphore.
+    max_holders: int = 1
     ttl_seconds: int = 60
 
 
@@ -51,14 +52,6 @@ def _normalize_resource(resource: str) -> str:
         if _zone_id is not None:
             cleaned = unscoped or "/"
     return cleaned
-
-
-def _normalize_mode(mode: str) -> str:
-    """Map API lock modes to kernel advisory lock modes."""
-    mode_norm = (mode or "mutex").strip().lower()
-    if mode_norm in {"shared", "read", "reader"}:
-        return "shared"
-    return "exclusive"
 
 
 def _public_mode(max_holders: int) -> str:
@@ -114,7 +107,6 @@ def _build_lock_response(
         "lock_id": holder.get("lock_id") or lock["lock_id"],
         "path": lock["resource"],
         "resource": lock["resource"],
-        "mode": lock.get("mode", "mutex"),
         "max_holders": lock.get("max_holders", 1),
         "ttl": lock.get("ttl", 0),
         "expires_at": _expires_at_iso(
@@ -180,7 +172,6 @@ def _lock_to_response(lock: Any) -> dict[str, Any]:
         return {
             "lock_id": lock.get("lock_id") or first_holder.get("lock_id") or str(uuid.uuid4()),
             "resource": lock.get("resource", lock.get("path", "")),
-            "mode": lock.get("mode", "mutex"),
             "max_holders": lock.get("max_holders", 1),
             "holder_info": lock.get("holder_info", first_holder.get("holder_info", "")),
             "acquired_at": lock.get("acquired_at", first_holder.get("acquired_at", 0)),
@@ -194,7 +185,6 @@ def _lock_to_response(lock: Any) -> dict[str, Any]:
     return {
         "lock_id": first_holder.get("lock_id") or str(uuid.uuid4()),
         "resource": getattr(lock, "resource", getattr(lock, "path", "")),
-        "mode": getattr(lock, "mode", "mutex"),
         "max_holders": getattr(lock, "max_holders", 1),
         "holder_info": first_holder.get("holder_info", ""),
         "acquired_at": first_holder.get("acquired_at", 0),
@@ -251,7 +241,6 @@ async def list_locks(
                 {
                     "lock_id": holder.get("lock_id", ""),
                     "resource": lock_info.get("path", ""),
-                    "mode": holder.get("mode", "exclusive"),
                     "max_holders": lock_info.get("max_holders", 1),
                     "holder_info": holder.get("holder_info", ""),
                     "acquired_at": holder.get("acquired_at_secs", 0),
@@ -304,9 +293,7 @@ async def _acquire_lock(
 
     existing = _prune_expired_lock(resource)
     if existing and (
-        existing.get("mode") == "mutex"
-        or existing.get("max_holders", 1) != max_holders
-        or len(_lock_holders(existing)) >= max_holders
+        existing.get("max_holders", 1) != max_holders or len(_lock_holders(existing)) >= max_holders
     ):
         raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
 
@@ -314,10 +301,8 @@ async def _acquire_lock(
         deadline = time.monotonic() + timeout
         try:
             while True:
-                kernel_mode = "shared" if max_holders > 1 else "exclusive"
                 lock_id = nx.sys_lock(
                     resource,
-                    mode=kernel_mode,
                     ttl=ttl,
                     max_holders=max_holders,
                     context=ctx,
@@ -332,7 +317,6 @@ async def _acquire_lock(
                     }
                     lock = _prune_expired_lock(resource) or {
                         "resource": resource,
-                        "mode": _public_mode(max_holders),
                         "max_holders": max_holders,
                         "holders": [],
                         "ttl": ttl,
@@ -370,9 +354,7 @@ async def _acquire_lock(
     # Fallback: in-memory
     existing = _prune_expired_lock(resource)
     if existing and (
-        existing.get("mode") == "mutex"
-        or existing.get("max_holders", 1) != max_holders
-        or len(_lock_holders(existing)) >= max_holders
+        existing.get("max_holders", 1) != max_holders or len(_lock_holders(existing)) >= max_holders
     ):
         raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
 
@@ -386,7 +368,6 @@ async def _acquire_lock(
     }
     lock = existing or {
         "resource": resource,
-        "mode": _public_mode(max_holders),
         "max_holders": max_holders,
         "holders": [],
         "ttl": ttl,
@@ -428,12 +409,11 @@ async def acquire_lock(
     auth_result: dict = Depends(require_auth),
 ) -> dict[str, Any]:
     """Acquire a lock on a resource path."""
-    max_holders = 1 if body.mode == "mutex" else 2
     return await _acquire_lock(
         resource=resource,
         timeout=0,
         ttl=body.ttl_seconds,
-        max_holders=max_holders,
+        max_holders=body.max_holders,
         blocking=False,
         request=request,
         auth_result=auth_result,

@@ -1,4 +1,4 @@
-//! Kernel mount table — SSOT for **runtime routing state**.
+//! VFSRouter — kernel mount table SSOT for **runtime routing state**.
 //!
 //! Each `MountEntry` is the in-memory record for one mount: storage backend
 //! and optional per-mount metastore. Together they form `VFSRouter`, an
@@ -16,11 +16,36 @@
 //! remove are rare (mount-lifecycle events) so the per-shard write lock is
 //! invisible in practice.
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
-use crate::abc::object_store::{ExternalTransport, ObjectStore, StorageError};
+use crate::abc::object_store::ObjectStore;
 use crate::meta_store::MetaStore;
+
+// Stack-resident canonical-key buffer for the routing hot path.
+// 192 bytes covers `/{zone_id}/{path}` for typical workloads (zone_id
+// is a short slug, paths are usually <180 chars). Longer keys spill
+// to heap automatically — still correct, just no longer zero-alloc.
+//
+// Used by [`VFSRouter::route_in_zone`] to skip the `format!`-into-String
+// that `canonicalize_mount_path` performs on every syscall.
+type CanonKey = SmallVec<[u8; 192]>;
+
+// Core canonicalize logic shared by the String-returning public helper
+// and the stack-buffer hot-path form. Writes `/{zone_id}` or
+// `/{zone_id}/{stripped_path}` into `buf`, clearing any previous content.
+fn canonicalize_into(buf: &mut CanonKey, path: &str, zone_id: &str) {
+    buf.clear();
+    buf.push(b'/');
+    buf.extend_from_slice(zone_id.as_bytes());
+    let stripped = path.trim_start_matches('/');
+    if !stripped.is_empty() {
+        buf.push(b'/');
+        buf.extend_from_slice(stripped.as_bytes());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MountEntry — runtime record for a single mount
@@ -61,31 +86,27 @@ pub struct MountEntry {
     /// from a global path via the existing routing table.
     pub target_zone_id: Option<String>,
 
-    /// Transport-layer capability for generating direct-access URLs
-    /// (presigned/signed). Only cloud backends (S3, GCS) implement this.
-    /// Populated at mount time alongside `backend` — same Arc allocation,
-    /// separate vtable pointer.
-    pub external_transport: Option<Arc<dyn ExternalTransport>>,
+    /// Cached `backend.as_cas().is_some()` — CAS-vs-PAS classification
+    /// is fixed at backend-set time, not per syscall. Set by
+    /// [`MountEntry::new`] and refreshed by [`VFSRouter::rebind_missing_backends`]
+    /// (the only two places `backend` is written), so the cache cannot
+    /// drift relative to the backend it describes.
+    pub is_cas: bool,
 }
 
 impl MountEntry {
-    /// Construct a new entry. `metastore` is typically `None` at mount time
-    /// and installed later via `VFSRouter::install_metastore` (federation),
-    /// or set up-front via `with_metastore` (standalone redb).
+    /// Construct a new entry. `metastore` always starts `None`; the metastore
+    /// slot is owned by `VFSRouter::install_metastore` and never set through
+    /// `add` / `add_mount` / `add_federation_mount` (orthogonal-slot contract).
     pub fn new(backend: Option<Arc<dyn ObjectStore>>) -> Self {
+        let is_cas = backend.as_ref().is_some_and(|b| b.as_cas().is_some());
         Self {
             backend,
             metastore: None,
             is_external: false,
             target_zone_id: None,
-            external_transport: None,
+            is_cas,
         }
-    }
-
-    /// Builder-style external-transport setter (S3/GCS mounts).
-    pub fn with_external_transport(mut self, transport: Arc<dyn ExternalTransport>) -> Self {
-        self.external_transport = Some(transport);
-        self
     }
 
     /// Builder-style target-zone setter (federation mounts only).
@@ -99,23 +120,6 @@ impl MountEntry {
         self.is_external = is_external;
         self
     }
-
-    /// Builder-style metastore setter. Used when the metastore is known at
-    /// mount-creation time (standalone redb path).
-    pub fn with_metastore(mut self, ms: Arc<dyn MetaStore>) -> Self {
-        self.metastore = Some(ms);
-        self
-    }
-}
-
-// ---------------------------------------------------------------------------
-// RouteError — failures during LPM routing
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum RouteError {
-    /// No mount entry covers this path.
-    NotMounted(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -218,24 +222,41 @@ impl VFSRouter {
 
     // ── Write ops (called by DLC.mount/unmount) ────────────────────────
 
-    /// Insert a mount entry under its zone-canonical key.
+    /// Upsert the backend-side fields of a mount entry under its
+    /// zone-canonical key. The metastore slot is **never** written here —
+    /// it is owned by `install_metastore`.
     ///
-    /// If an entry already exists under the same canonical key and the
-    /// *new* entry has no metastore wired, the previous entry's metastore
-    /// is preserved. This makes the `install_metastore` → `add_mount`
-    /// ordering (used by federation when `attach_raft_zone_to_kernel`
-    /// runs before the root DLC mount) insensitive so the ZoneMetaStore
-    /// isn't wiped when the backend mount registers afterwards.
-    pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
+    /// Orthogonal-slot contract: each mount entry has two independent
+    /// slots — backend-side (backend, is_external, target_zone_id) and
+    /// metastore. `add` (and its wrappers `add_mount` /
+    /// `add_federation_mount`) own the first; `install_metastore` owns
+    /// the second. Neither operation clobbers the other's slot, so the
+    /// federation bootstrap order — `attach_raft_zone_to_kernel` installs
+    /// the metastore at `/` first, the root DLC mount adds the backend
+    /// later (or vice versa) — converges to the same final state without
+    /// any preserve-on-conflict heuristic.
+    ///
+    /// Atomic via `DashMap::entry()` — the read-decide-write sequence
+    /// runs under one shard write lock, so a concurrent `install_metastore`
+    /// for the same key cannot interleave.
+    pub fn add(&self, mount_point: &str, zone_id: &str, entry: MountEntry) {
+        debug_assert!(
+            entry.metastore.is_none(),
+            "VFSRouter::add ignores the metastore slot; callers must use \
+             install_metastore (orthogonal-slot contract)",
+        );
         let canonical = canonicalize_mount_path(mount_point, zone_id);
-        if entry.metastore.is_none() {
-            if let Some(existing) = self.entries.get(&canonical) {
-                if let Some(ms) = existing.metastore.as_ref() {
-                    entry.metastore = Some(Arc::clone(ms));
-                }
+        match self.entries.entry(canonical) {
+            Entry::Occupied(mut occ) => {
+                let preserved_metastore = occ.get().metastore.clone();
+                let mut new_entry = entry;
+                new_entry.metastore = preserved_metastore;
+                *occ.get_mut() = new_entry;
+            }
+            Entry::Vacant(vac) => {
+                vac.insert(entry);
             }
         }
-        self.entries.insert(canonical, entry);
     }
 
     /// Convenience: build a `MountEntry` from flat args and insert it.
@@ -291,14 +312,22 @@ impl VFSRouter {
     /// ``ZoneMetaStore`` at ``/`` before the root DLC mount registers its
     /// backend — when the backend mount arrives later, ``add`` preserves
     /// the already-installed metastore.
+    ///
+    /// Atomic via `DashMap::entry()` — the get-or-insert sequence runs
+    /// under one shard write lock, so a concurrent `add` cannot create
+    /// an entry between the lookup-miss and the insert and have its
+    /// content clobbered.
     pub fn install_metastore(&self, canonical_key: &str, metastore: Arc<dyn MetaStore>) {
-        if let Some(mut entry) = self.entries.get_mut(canonical_key) {
-            entry.metastore = Some(metastore);
-            return;
+        match self.entries.entry(canonical_key.to_string()) {
+            Entry::Occupied(mut occ) => {
+                occ.get_mut().metastore = Some(metastore);
+            }
+            Entry::Vacant(vac) => {
+                let mut entry = MountEntry::new(None);
+                entry.metastore = Some(metastore);
+                vac.insert(entry);
+            }
         }
-        let mut entry = MountEntry::new(None);
-        entry.metastore = Some(metastore);
-        self.entries.insert(canonical_key.to_string(), entry);
     }
 
     // ── Read ops ───────────────────────────────────────────────────────
@@ -360,27 +389,36 @@ impl VFSRouter {
             .collect()
     }
 
-    /// Rebind every federation mount (entries with a metastore but no
-    /// backend) to `new_backend`.
+    /// Rebind `new_backend` into every entry matching `should_rebind`.
+    /// Returns the number of entries touched.
     ///
-    /// Fixes a boot-order bug: on node restart,
+    /// The router stays federation-agnostic — it only provides the
+    /// "iterate + atomically update backend + refresh `is_cas`"
+    /// mechanism. The caller (currently `Kernel::add_mount` on the
+    /// root mount, which has the federation context) supplies the
+    /// policy (predicate) that decides which entries should receive
+    /// the new backend.
+    ///
+    /// Typical caller use: fix a boot-order bug where
     /// `RaftDistributedCoordinator::replay_existing_mounts` replays
-    /// DT_MOUNT entries BEFORE Python installs the root mount
-    /// (which carries this node's CAS backend). Each federation mount
-    /// gets cloned with `backend=None` at replay time, so subsequent
-    /// writes return `Ok(None)` (miss) — they look like they succeeded
-    /// at the Python layer but never persisted. Calling this from
-    /// `Kernel::add_mount` when the root mount arrives wires the
-    /// correct backend into every previously-stranded federation mount.
-    ///
-    /// Only touches entries with `metastore = Some(..)` — that's the
-    /// federation-mount marker. Plain local mounts (backend-only, no
-    /// metastore) are left untouched.
-    pub fn rebind_missing_backends(&self, new_backend: &Arc<dyn ObjectStore>) -> usize {
+    /// federation DT_MOUNT entries before Python installs the root
+    /// mount that carries this node's CAS backend, leaving those
+    /// entries with `backend=None`. The caller predicate
+    /// `|e| e.backend.is_none() && e.metastore.is_some()` selects
+    /// exactly the stranded-federation mounts; plain backend-only
+    /// local mounts (`metastore=None`) and Python-connector mounts
+    /// (`metastore=None`) are left alone.
+    pub fn rebind_missing_backends(
+        &self,
+        new_backend: &Arc<dyn ObjectStore>,
+        should_rebind: impl Fn(&MountEntry) -> bool,
+    ) -> usize {
+        let new_is_cas = new_backend.as_cas().is_some();
         let mut rebound = 0;
         for mut entry in self.entries.iter_mut() {
-            if entry.backend.is_none() && entry.metastore.is_some() {
+            if should_rebind(entry.value()) {
                 entry.backend = Some(Arc::clone(new_backend));
+                entry.is_cas = new_is_cas;
                 rebound += 1;
             }
         }
@@ -428,30 +466,6 @@ impl VFSRouter {
         points
     }
 
-    /// Generate a direct-access download URL for the given path, if the
-    /// routed mount's backend supports ExternalTransport.
-    ///
-    /// Returns `Ok(Some(url))` when the backend can sign, `Ok(None)` when
-    /// the mount has no ExternalTransport capability, or `Err` on signing
-    /// failure.
-    pub fn generate_download_url(
-        &self,
-        canonical_key: &str,
-        backend_path: &str,
-        expires_seconds: u64,
-    ) -> Result<Option<String>, StorageError> {
-        let entry = self
-            .entries
-            .get(canonical_key)
-            .ok_or_else(|| StorageError::NotFound(format!("mount not found: {canonical_key}")))?;
-        match &entry.external_transport {
-            Some(transport) => transport
-                .generate_download_url(backend_path, expires_seconds)
-                .map(Some),
-            None => Ok(None),
-        }
-    }
-
     /// Number of mounted entries.
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -472,37 +486,45 @@ impl VFSRouter {
     /// zone — root mounts are the global default visible to every zone
     /// (federation or standalone). Pure routing — access control
     /// (read-only, admin-only, RBAC) lives in rebac, not here.
-    pub fn route(&self, path: &str, zone_id: &str) -> Result<RouteResult, RouteError> {
-        if let Some(result) = self.route_in_zone(path, zone_id) {
-            return Ok(result);
-        }
-        if zone_id != contracts::ROOT_ZONE_ID {
-            if let Some(result) = self.route_in_zone(path, contracts::ROOT_ZONE_ID) {
-                return Ok(result);
-            }
-        }
-        Err(RouteError::NotMounted(format!(
-            "No mount found for path: {path} (zone={zone_id})"
-        )))
+    ///
+    /// Returns `None` when no mount covers the path. The miss reason is
+    /// always the same ("no mount"), so callers construct their own
+    /// caller-shaped error (`KernelError::FileNotFound`,
+    /// `KernelError::PermissionDenied`, …) at the call site — eliminates
+    /// the eager `format!` that the previous `RouteError::NotMounted`
+    /// wrapper paid for every miss, including `.ok()` callers that
+    /// discarded it.
+    pub fn route(&self, path: &str, zone_id: &str) -> Option<RouteResult> {
+        self.route_in_zone(path, zone_id).or_else(|| {
+            (zone_id != contracts::ROOT_ZONE_ID)
+                .then(|| self.route_in_zone(path, contracts::ROOT_ZONE_ID))
+                .flatten()
+        })
     }
 
     fn route_in_zone(&self, path: &str, zone_id: &str) -> Option<RouteResult> {
-        let canonical = canonicalize_mount_path(path, zone_id);
-        let mut current = canonical.as_str();
+        // Stack-buffered canonical key — zero-alloc for typical paths
+        // (<192 chars after `/{zone_id}/{path}` expansion). The buffer
+        // lives for the function body so `canonical` borrows can outlast
+        // the LPM walk's iterative reslices.
+        let mut buf: CanonKey = SmallVec::new();
+        canonicalize_into(&mut buf, path, zone_id);
+        // Inputs are `&str` (validated UTF-8) and we only inject ASCII
+        // `'/'`; the byte buffer is necessarily valid UTF-8. Validation
+        // is cheap (memchr) but unnecessary work on the hot path —
+        // `unwrap` documents the invariant without a release-build
+        // branch surviving optimization.
+        let canonical: &str = std::str::from_utf8(&buf).expect("UTF-8 by construction");
+        let mut current = canonical;
 
         loop {
             if let Some(entry) = self.entries.get(current) {
                 let mount_point = current.to_string();
-                let backend_path = strip_mount_prefix(&canonical, current);
+                let backend_path = strip_mount_prefix(canonical, current);
                 let is_external = entry.is_external;
-                // CAS detection via trait downcast — no string sniffing.
-                // Mounts with no Rust backend (Python-side connector) are
-                // not CAS.
-                let is_cas = entry
-                    .backend
-                    .as_ref()
-                    .map(|b| b.as_cas().is_some())
-                    .unwrap_or(false);
+                // CAS-ness is cached at backend-set time (`MountEntry::new` /
+                // `rebind_missing_backends`); the hot path just reads.
+                let is_cas = entry.is_cas;
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()
@@ -600,7 +622,26 @@ pub fn zone_to_global(mount_point: &str, zone_path: &str) -> String {
 
 /// Strip a mount-point prefix from a canonical path to get the
 /// backend-relative path (without leading slash).
+///
+/// **Precondition:** `mount_point` is an LPM prefix of `path` aligned on
+/// a `/` boundary (or `mount_point == path`, or `mount_point == "/"`).
+/// `VFSRouter::route_in_zone` is the only caller and enforces this by
+/// construction (its walk only inspects ancestors at `/` boundaries via
+/// `rfind('/')`), but the precondition is implicit; spelling it out as
+/// a `debug_assert!` documents the invariant and catches any future
+/// misuse (e.g. a caller passing `path="/root/data2/x"` with
+/// `mount_point="/root/data"` would otherwise silently produce
+/// `"2/x"` instead of a routing miss).
 fn strip_mount_prefix(path: &str, mount_point: &str) -> String {
+    debug_assert!(
+        path == mount_point
+            || mount_point == "/"
+            || path
+                .strip_prefix(mount_point)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
+        "strip_mount_prefix called with non-LPM mount_point: path={path:?} \
+         mount_point={mount_point:?}",
+    );
     if path == mount_point {
         String::new()
     } else if mount_point == "/" {
@@ -862,21 +903,14 @@ mod tests {
         });
 
         let table = VFSRouter::new();
-        table.add(
-            "/corp",
-            "root",
-            MountEntry::new(None).with_metastore(corp_a),
-        );
-        table.add(
-            "/family/work",
-            "root",
-            MountEntry::new(None).with_metastore(corp_b),
-        );
-        table.add(
-            "/family",
-            "root",
-            MountEntry::new(None).with_metastore(family),
-        );
+        // Orthogonal-slot contract: add_mount fills backend-side, install_metastore
+        // fills metastore. Order is irrelevant by construction.
+        table.add_mount("/corp", "root", None, false);
+        table.install_metastore(&canonicalize_mount_path("/corp", "root"), corp_a);
+        table.add_mount("/family/work", "root", None, false);
+        table.install_metastore(&canonicalize_mount_path("/family/work", "root"), corp_b);
+        table.add_mount("/family", "root", None, false);
+        table.install_metastore(&canonicalize_mount_path("/family", "root"), family);
 
         let mut corp_points = table.mount_points_for_coherence_key(CORP_KEY);
         corp_points.sort();

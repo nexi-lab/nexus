@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, LockAcquireResult, LockInfo, LockMode, RaftError,
-    Result, ZoneConsensus,
+    Command, CommandResult, FullStateMachine, LockAcquireResult, LockInfo, RaftError, Result,
+    ZoneConsensus,
 };
 // Bring the `StateMachine` trait into scope so the closures below can
 // call methods like `get_metadata` / `list_metadata` through the trait.
@@ -222,7 +222,6 @@ impl ZoneHandle {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
-        mode: LockMode,
     ) -> Result<LockAcquireResult> {
         let cmd = Command::AcquireLock {
             path: path.to_string(),
@@ -230,7 +229,6 @@ impl ZoneHandle {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
-            mode,
             now_secs: FullStateMachine::now(),
         };
         match self.propose_raw(cmd)? {

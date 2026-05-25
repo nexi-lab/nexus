@@ -27,6 +27,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use parking_lot::Mutex;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -52,35 +54,10 @@ const OFF_CLOSED: usize = SLOT_SIZE * 2;
 // Use shared StreamError from stream.rs
 use crate::stream::StreamError;
 
-// ---------------------------------------------------------------------------
-// Header accessors (same pattern as shm_pipe.rs)
-// ---------------------------------------------------------------------------
-
+// Shared mmap header accessors live in `crate::core::shm_header`.
 #[cfg(test)]
-#[inline]
-fn read_u32(base: *const u8, off: usize) -> u32 {
-    unsafe { (base.add(off) as *const u32).read() }
-}
-
-#[inline]
-fn write_u32(base: *mut u8, off: usize, val: u32) {
-    unsafe { (base.add(off) as *mut u32).write(val) }
-}
-
-#[inline]
-unsafe fn atomic_usize(base: *const u8, off: usize) -> &'static AtomicUsize {
-    &*(base.add(off) as *const AtomicUsize)
-}
-
-#[inline]
-unsafe fn atomic_u64(base: *const u8, off: usize) -> &'static AtomicU64 {
-    &*(base.add(off) as *const AtomicU64)
-}
-
-#[inline]
-unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
-    &*(base.add(off) as *const AtomicBool)
-}
+use crate::core::shm_header::read_u32;
+use crate::core::shm_header::{atomic_bool, atomic_u64, atomic_usize, write_u32};
 
 // ---------------------------------------------------------------------------
 // SharedMemoryStreamBackend
@@ -90,8 +67,24 @@ unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
 ///
 /// Kernel-internal primitive: constructed by the kernel inside
 /// `sys_setattr` when `io_profile=shared_memory` is requested for a
-/// DT_STREAM inode.  Python callers reach it via `sys_read` /
-/// `sys_write`; there is no PyO3 surface on the type itself.
+/// DT_STREAM inode. Callers reach it via `sys_read` / `sys_write`
+/// only — the type has no direct syscall surface of its own.
+///
+/// **Concurrency contract** — cross-process single-writer
+/// multi-reader, in-process multi-writer multi-reader. The
+/// cross-process contract is one producer process appending and
+/// any number of consumer processes Acquire-loading `tail` to
+/// read already-committed bytes; the on-disk mmap layout carries
+/// no inter-process lock.
+///
+/// In-process, the [`writer`] mutex serializes producers so
+/// multi-threaded `sys_write` from inside this process is safe
+/// without any external lock. Readers stay lock-free — reads are
+/// non-destructive and idempotent, and `[offset..offset+len]` for
+/// `offset + len <= tail` is published by the writer's
+/// Release-store of `tail` before the writer mutex is dropped.
+///
+/// [`writer`]: SharedMemoryStreamBackend::writer
 pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,
@@ -103,8 +96,24 @@ pub struct SharedMemoryStreamBackend {
     is_creator: bool,
     #[allow(dead_code)]
     shm_path: String,
+    /// Serializes in-process producers calling `push_inner`.
+    /// Uncontended in single-writer use within this process.
+    /// Cross-process producers in a peer process see only their own
+    /// struct + their own mutex; cross-process serialization is the
+    /// peer process's responsibility under the single-writer
+    /// contract.
+    writer: Mutex<()>,
 }
 
+// SAFETY: The `writer` mutex makes the `&mut [u8]` borrow into the
+// mmap data region inside `push_inner` unique across in-process
+// threads. Readers Acquire-load `tail` and read already-committed
+// bytes; no reader-side mutex is needed because reads are
+// non-destructive and `[offset..offset+len]` for
+// `offset + len <= tail` is published by the writer's Release-store
+// of `tail` before the writer mutex is dropped. Cross-process
+// single-writer is the peer process's responsibility per the type's
+// contract.
 unsafe impl Send for SharedMemoryStreamBackend {}
 unsafe impl Sync for SharedMemoryStreamBackend {}
 
@@ -176,6 +185,12 @@ impl SharedMemoryStreamBackend {
         if payload_len > self.capacity {
             return Err(StreamError::Oversized(payload_len, self.capacity));
         }
+
+        // Serialize in-process producers; held across the Release-store
+        // of `tail` so any in-process or cross-process reader sees a
+        // fully-published frame and so the `&mut [u8]` borrow into the
+        // mmap data region is unique within this process.
+        let _writer_guard = self.writer.lock();
 
         let frame_len = HEADER_SIZE + payload_len;
         let tail = self.tail_atomic().load(Ordering::Relaxed);
@@ -289,7 +304,7 @@ impl crate::stream::StreamBackend for SharedMemoryStreamBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Pure Rust constructors (no PyO3 dependency)
+// Constructors
 // ---------------------------------------------------------------------------
 
 impl SharedMemoryStreamBackend {
@@ -343,13 +358,13 @@ impl SharedMemoryStreamBackend {
             notify_data_wr: data_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
+            writer: Mutex::new(()),
         };
 
         Ok((core, shm_path, data_fds[0]))
     }
 
     /// Attach to an existing shared stream buffer (same-process tests).
-    /// Pure Rust — no PyO3.
     #[cfg(test)]
     fn attach(shm_path: &str, notify_data_wr: i32) -> Result<Self, std::io::Error> {
         let file = std::fs::OpenOptions::new()
@@ -383,6 +398,7 @@ impl SharedMemoryStreamBackend {
             notify_data_wr,
             is_creator: false,
             shm_path: shm_path.to_string(),
+            writer: Mutex::new(()),
         })
     }
 
@@ -505,5 +521,88 @@ mod tests {
         assert!(std::path::Path::new(&path).exists());
         creator.cleanup().unwrap();
         assert!(!std::path::Path::new(&path).exists());
+    }
+
+    /// Concurrent multi-writer push must not corrupt the buffer:
+    /// every pushed message frame must be readable from its
+    /// returned offset, all offsets must be pairwise distinct, and
+    /// walking the buffer linearly from offset 0 must yield exactly
+    /// the total number of pushes.
+    ///
+    /// Without an in-process writer mutex on the SHM backend this
+    /// fails: two producer threads can both read the same `tail`
+    /// snapshot, copy their payloads into the same
+    /// `[tail..tail+frame_len]` slice (aliasing the `&mut [u8]`
+    /// borrow into the mmap region — UB by Rust's aliasing rules),
+    /// and both Release-store the same new tail — losing one of
+    /// the two messages and returning the same offset to two
+    /// different writers.
+    #[test]
+    fn test_concurrent_writers_do_not_corrupt() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const WRITERS: usize = 8;
+        const PER_WRITER: usize = 64;
+        // Frame = 4-byte header + 8-byte u64 payload = 12 bytes per push.
+        let capacity = WRITERS * PER_WRITER * 12;
+
+        // Use only the creator side: creator and attacher are views
+        // into the same mmap, so a single Arc-shared backend
+        // suffices to exercise in-process multi-thread access.
+        let (creator, _shm_path, data_rd_fd) =
+            SharedMemoryStreamBackend::create_native(capacity).unwrap();
+        unsafe {
+            libc::close(data_rd_fd);
+        }
+        let core = Arc::new(creator);
+
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|w| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    let mut offsets = Vec::with_capacity(PER_WRITER);
+                    for i in 0..PER_WRITER {
+                        let val = ((w as u64) << 32) | (i as u64);
+                        offsets.push(core.push_inner(&val.to_le_bytes()).expect("push failed"));
+                    }
+                    offsets
+                })
+            })
+            .collect();
+
+        let mut all_offsets: Vec<usize> = handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("writer thread panicked"))
+            .collect();
+        assert_eq!(all_offsets.len(), WRITERS * PER_WRITER);
+
+        // Every returned offset addresses a valid 8-byte frame.
+        for off in &all_offsets {
+            let (data, _) = read_at(&core, *off);
+            assert_eq!(data.len(), 8);
+        }
+        // Offsets are pairwise distinct — no two writers got the same slot.
+        all_offsets.sort_unstable();
+        all_offsets.dedup();
+        assert_eq!(all_offsets.len(), WRITERS * PER_WRITER);
+
+        // Walking the buffer linearly from offset 0 must yield exactly
+        // WRITERS * PER_WRITER frames, in the order writers' Release
+        // stores published them.
+        let mut walked = 0usize;
+        let mut offset = 0usize;
+        while let Ok((start, len, next)) = core.read_at_inner(offset) {
+            let buf = core.data_slice();
+            assert_eq!(buf[start..start + len].len(), 8);
+            walked += 1;
+            if next == offset {
+                break;
+            }
+            offset = next;
+        }
+        assert_eq!(walked, WRITERS * PER_WRITER);
+
+        core.cleanup().unwrap();
     }
 }

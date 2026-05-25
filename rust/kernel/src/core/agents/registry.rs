@@ -1,23 +1,18 @@
-#![allow(dead_code)]
 //! AgentRegistry — Rust SSOT for agent lifecycle state.
 //!
 //! Linux task_struct array analogue. Lifecycle state, PCB metadata, parent/
-//! child links, signal semantics, and condvar wake-ups all live here. The
-//! Python service layer is a thin pass-through; in-process callers reach the
-//! registry directly through ``PyKernel.agent_registry``.
+//! child links, signal semantics, and condvar wake-ups all live here.
+//! In-process callers reach the registry through the kernel surface
+//! (`Kernel::agent_registry()`); service-tier views read it through
+//! shared references.
 //!
 //! AgentState mirrors `contracts/process_types.py` exactly:
 //!   REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED
 //!   READY/BUSY → SUSPENDED → READY
-//!
-//! Companion: AgentObserver — text-chunk accumulator + usage metrics for
-//! the managed-agent loop. Lock-free atomic counters; the chunk buffer
-//! uses parking_lot::Mutex.
 
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -361,15 +356,6 @@ impl AgentRegistry {
         }
     }
 
-    /// Drop a termination callback by `id`. Returns true if a callback
-    /// was registered under that name.
-    pub fn unregister_on_terminate(&self, id: &str) -> bool {
-        let mut guard = self.on_terminate.write();
-        let prev = guard.len();
-        guard.retain(|(k, _)| k != id);
-        guard.len() != prev
-    }
-
     /// Fire every registered `on_terminate` callback for `pid`.
     /// Snapshots the callback list under a read lock and drops the lock
     /// before calling so callbacks can re-enter the registry without
@@ -384,18 +370,6 @@ impl AgentRegistry {
         for cb in snapshot {
             cb(pid);
         }
-    }
-
-    /// Allocate a unique pid (uuid4 hex prefix). Bounded retry loop.
-    fn alloc_pid(&self) -> Result<String, AgentError> {
-        for _ in 0..100 {
-            let pid = Uuid::new_v4().simple().to_string();
-            let pid = pid[..12].to_string();
-            if !self.agents.contains_key(&pid) {
-                return Ok(pid);
-            }
-        }
-        Err(AgentError::PidExhausted)
     }
 
     fn wake(&self, pid: &str) {
@@ -444,26 +418,19 @@ impl AgentRegistry {
         external_info: Option<ExternalProcessInfo>,
         labels: HashMap<String, String>,
     ) -> Result<AgentDescriptor, AgentError> {
+        use dashmap::mapref::entry::Entry;
+
         if let Some(ppid) = parent_pid.as_ref() {
             if !self.agents.contains_key(ppid) {
                 return Err(AgentError::NotFound(format!("parent not found: {ppid}")));
             }
         }
 
-        let pid = match pid {
-            Some(p) => {
-                if self.agents.contains_key(&p) {
-                    return Err(AgentError::AlreadyExists(p));
-                }
-                p
-            }
-            None => self.alloc_pid()?,
-        };
-
         let now = now_ms();
         let connection_id = external_info.as_ref().map(|e| e.connection_id.clone());
-        let desc = AgentDescriptor {
-            pid: pid.clone(),
+        // pid filled in by the atomic alloc + insert step below.
+        let mut desc = AgentDescriptor {
+            pid: String::new(),
             name,
             kind,
             owner_id,
@@ -484,14 +451,41 @@ impl AgentRegistry {
             repos: Vec::new(),
         };
 
-        self.agents.insert(pid.clone(), desc.clone());
+        // Atomic pid allocation + insert. Entry::Vacant guarantees no two
+        // concurrent spawns can settle on the same pid; the prior code
+        // split contains_key from insert and let the explicit-pid and
+        // uuid-derived paths race.
+        let final_pid = match pid {
+            Some(p) => match self.agents.entry(p.clone()) {
+                Entry::Occupied(_) => return Err(AgentError::AlreadyExists(p)),
+                Entry::Vacant(v) => {
+                    desc.pid = p.clone();
+                    v.insert(desc.clone());
+                    p
+                }
+            },
+            None => {
+                let mut out = None;
+                for _ in 0..100 {
+                    let candidate = Uuid::new_v4().simple().to_string()[..12].to_string();
+                    if let Entry::Vacant(v) = self.agents.entry(candidate.clone()) {
+                        desc.pid = candidate.clone();
+                        v.insert(desc.clone());
+                        out = Some(candidate);
+                        break;
+                    }
+                }
+                out.ok_or(AgentError::PidExhausted)?
+            }
+        };
+
         self.notify
-            .entry(pid.clone())
+            .entry(final_pid.clone())
             .or_insert_with(|| Arc::new(AgentNotify::new()));
 
         if let Some(ppid) = parent_pid.as_ref() {
             if let Some(mut parent) = self.agents.get_mut(ppid) {
-                parent.children.push(pid.clone());
+                parent.children.push(final_pid.clone());
                 parent.updated_at_ms = now;
             }
         }
@@ -601,21 +595,6 @@ impl AgentRegistry {
         Ok(true)
     }
 
-    /// Raw, unvalidated state set. Reserved for boot-time / test hooks
-    /// that intentionally bypass the FSM. Do not use from production
-    /// code paths.
-    pub fn set_state_unchecked(&self, pid: &str, new_state: AgentState) -> bool {
-        if let Some(mut entry) = self.agents.get_mut(pid) {
-            entry.state = new_state;
-            entry.updated_at_ms = now_ms();
-            drop(entry);
-            self.wake(pid);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Update heartbeat timestamp. Returns Err(NotFound) / Err(InvalidKind)
     /// for protocol violations to mirror the Python contract; otherwise
     /// Ok(true) on success.
@@ -641,22 +620,6 @@ impl AgentRegistry {
         }
         entry.updated_at_ms = now;
         Ok(true)
-    }
-
-    /// Variant accepted by callers that already have an authoritative
-    /// timestamp (e.g. dual-write paths from the wider system clock).
-    /// No kind/info validation — simply stamps the heartbeat field.
-    pub fn heartbeat_at(&self, pid: &str, timestamp_ms: u64) -> bool {
-        if let Some(mut entry) = self.agents.get_mut(pid) {
-            entry.last_heartbeat_ms = Some(timestamp_ms);
-            if let Some(info) = entry.external_info.as_mut() {
-                info.last_heartbeat_ms = Some(timestamp_ms);
-            }
-            entry.updated_at_ms = now_ms();
-            true
-        } else {
-            false
-        }
     }
 
     /// List all agents, optionally filtered by zone_id, owner_id, kind,
@@ -948,76 +911,6 @@ impl Default for AgentRegistry {
     }
 }
 
-// ── AgentObserver ───────────────────────────────────────────────────────
-
-/// Text chunk accumulator + usage metrics for the managed-agent loop.
-///
-/// Tracks token usage and text output for agent turns. AtomicU64 counters
-/// for lock-free metric accumulation.
-pub struct AgentObserver {
-    /// Accumulated text chunks for current turn.
-    chunks: parking_lot::Mutex<Vec<String>>,
-    /// Total input tokens across all turns.
-    pub input_tokens: AtomicU64,
-    /// Total output tokens across all turns.
-    pub output_tokens: AtomicU64,
-    /// Number of completed turns.
-    pub turn_count: AtomicU64,
-}
-
-impl AgentObserver {
-    pub fn new() -> Self {
-        Self {
-            chunks: parking_lot::Mutex::new(Vec::new()),
-            input_tokens: AtomicU64::new(0),
-            output_tokens: AtomicU64::new(0),
-            turn_count: AtomicU64::new(0),
-        }
-    }
-
-    /// Append a text chunk to the current turn accumulator.
-    pub fn observe_chunk(&self, text: &str) {
-        self.chunks.lock().push(text.to_string());
-    }
-
-    /// Record token usage for a turn.
-    pub fn observe_usage(&self, input_tokens: u64, output_tokens: u64) {
-        self.input_tokens.fetch_add(input_tokens, Ordering::Relaxed);
-        self.output_tokens
-            .fetch_add(output_tokens, Ordering::Relaxed);
-    }
-
-    /// Finish the current turn: drain accumulated chunks, increment turn counter.
-    /// Returns the accumulated text for this turn.
-    pub fn finish_turn(&self) -> String {
-        self.turn_count.fetch_add(1, Ordering::Relaxed);
-        let mut chunks = self.chunks.lock();
-        let text = chunks.join("");
-        chunks.clear();
-        text
-    }
-
-    /// Get current accumulated text without finishing the turn.
-    pub fn peek_chunks(&self) -> String {
-        self.chunks.lock().join("")
-    }
-
-    /// Get usage stats: (input_tokens, output_tokens, turn_count).
-    pub fn stats(&self) -> (u64, u64, u64) {
-        (
-            self.input_tokens.load(Ordering::Relaxed),
-            self.output_tokens.load(Ordering::Relaxed),
-            self.turn_count.load(Ordering::Relaxed),
-        )
-    }
-}
-
-impl Default for AgentObserver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1104,7 +997,7 @@ mod tests {
     }
 
     #[test]
-    fn test_on_terminate_register_replace_and_unregister() {
+    fn test_on_terminate_register_replaces_under_same_id() {
         use std::sync::atomic::{AtomicU32, Ordering};
         let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "a1"));
@@ -1127,23 +1020,6 @@ mod tests {
         );
         reg.update_state("p1", AgentState::Terminated).unwrap();
         assert_eq!(calls_a.load(Ordering::SeqCst), 0);
-        assert_eq!(calls_b.load(Ordering::SeqCst), 1);
-        // Unregister + re-fire should produce no extra calls.
-        let p2 = reg
-            .spawn(
-                "n2".to_string(),
-                "u".to_string(),
-                "z".to_string(),
-                AgentKind::Managed,
-                None,
-                None,
-                "/".to_string(),
-                None,
-                HashMap::new(),
-            )
-            .unwrap();
-        assert!(reg.unregister_on_terminate("obs"));
-        reg.update_state(&p2.pid, AgentState::Terminated).unwrap();
         assert_eq!(calls_b.load(Ordering::SeqCst), 1);
     }
 
@@ -1417,21 +1293,6 @@ mod tests {
             batch[1].labels.get("eviction_priority").map(String::as_str),
             Some("20")
         );
-    }
-
-    #[test]
-    fn test_agent_observer() {
-        let obs = AgentObserver::new();
-        obs.observe_chunk("Hello ");
-        obs.observe_chunk("world");
-        obs.observe_usage(100, 50);
-        let text = obs.finish_turn();
-        assert_eq!(text, "Hello world");
-        let (inp, out, turns) = obs.stats();
-        assert_eq!(inp, 100);
-        assert_eq!(out, 50);
-        assert_eq!(turns, 1);
-        assert_eq!(obs.peek_chunks(), "");
     }
 
     #[test]

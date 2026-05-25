@@ -15,9 +15,9 @@
 //! the write path and read path have no overlapping state, and many callers
 //! need only the reader.
 
-use crate::cas_engine::CASError;
-use crate::cas_remote::RemoteChunkFetcher;
-use crate::cas_transport::LocalCASTransport;
+use super::engine::CASError;
+use super::remote::RemoteChunkFetcher;
+use super::transport::LocalCASTransport;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

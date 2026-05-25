@@ -121,11 +121,6 @@ class MetaStore(Protocol):
 
 
 @runtime_checkable
-class ExternalTransport(Protocol):
-    def generate_download_url(self, object_key: str, expires_seconds: int) -> Any: ...
-
-
-@runtime_checkable
 class ObjectStore(Protocol):
     def name(self) -> str: ...
     def as_cas(self) -> Any | None: ...

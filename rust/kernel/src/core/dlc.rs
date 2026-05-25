@@ -38,7 +38,6 @@ impl DriverLifecycleCoordinator {
     /// - `kernel` — back-reference to the owning Kernel (interior mutability)
     /// - `mount_point` — virtual path (e.g. `/`, `/data`)
     /// - `zone_id` — zone identifier
-    /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
     /// - `raft_backend` — opaque raft handle for federation DI; downcast by
@@ -49,7 +48,6 @@ impl DriverLifecycleCoordinator {
         kernel: &Kernel,
         mount_point: &str,
         zone_id: &str,
-        backend_name: &str,
         backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
@@ -68,7 +66,7 @@ impl DriverLifecycleCoordinator {
         // longest-prefix walk to find the enclosing mount, then write
         // through that mount's metastore with the full path as the key.
         let route = kernel.vfs_router_arc().route(mount_point, "root");
-        if let Ok(parent_route) = route {
+        if let Some(parent_route) = route {
             // RouteResult.mount_point is already a canonical key (e.g. "/root").
             kernel.with_metastore(&parent_route.mount_point, |ms| {
                 let meta = crate::meta_store::FileMetadata {
@@ -89,7 +87,14 @@ impl DriverLifecycleCoordinator {
                     link_target: None,
                     owner_id: None,
                 };
-                let _ = ms.put(mount_point, meta);
+                if let Err(e) = ms.put(mount_point, meta) {
+                    tracing::warn!(
+                        target: "kernel::dlc",
+                        mount = mount_point,
+                        zone = zone_id,
+                        "DT_MOUNT metadata write failed; router will still install the mount but on-disk metadata is out of sync: {e:?}",
+                    );
+                }
             });
         }
 
@@ -105,12 +110,6 @@ impl DriverLifecycleCoordinator {
             raft_backend,
             is_external,
         )?;
-        // ``backend_name`` (the legacy parameter to this fn) is kept for
-        // API compatibility with callers but no longer persisted in the
-        // metadata record — each node decides the backend from its own
-        // mount table at read time.
-        let _ = backend_name;
-
         Ok(())
     }
 
@@ -134,9 +133,16 @@ impl DriverLifecycleCoordinator {
             .map(|i| mount_point[..i].to_string())
             .unwrap_or_else(|| "/".to_string());
         let route = kernel.vfs_router_arc().route(&parent_path, "root");
-        if let Ok(parent_route) = route {
+        if let Some(parent_route) = route {
             kernel.with_metastore(&parent_route.mount_point, |ms| {
-                let _ = ms.delete(mount_point);
+                if let Err(e) = ms.delete(mount_point) {
+                    tracing::warn!(
+                        target: "kernel::dlc",
+                        mount = mount_point,
+                        zone = zone_id,
+                        "DT_MOUNT metadata delete failed; router will still remove the mount but on-disk metadata may be stale: {e:?}",
+                    );
+                }
             });
         }
 

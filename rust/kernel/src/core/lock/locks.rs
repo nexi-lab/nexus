@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use contracts::lock_state::{LockInfo, LockMode, LockState, Locks};
+use contracts::lock_state::{LockInfo, LockState, Locks};
 
 use crate::lock_manager::lock_now_secs;
 
@@ -49,15 +49,13 @@ impl Locks for LocalLocks {
         &self,
         path: &str,
         lock_id: &str,
-        mode: LockMode,
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
     ) -> Result<bool, String> {
         let now = lock_now_secs();
         let mut guard = self.state.lock();
-        let result =
-            guard.apply_acquire(path, lock_id, max_holders, ttl_secs, holder_info, mode, now);
+        let result = guard.apply_acquire(path, lock_id, max_holders, ttl_secs, holder_info, now);
         Ok(result.acquired)
     }
 
@@ -98,46 +96,32 @@ mod tests {
     #[test]
     fn acquire_release_roundtrip() {
         let b = backend();
-        assert!(b
-            .acquire("/a", "h1", LockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
+        assert!(b.acquire("/a", "h1", 1, 60, "agent").unwrap());
         assert!(b.release("/a", "h1").unwrap());
         assert!(b.get_lock("/a").is_none());
     }
 
     #[test]
-    fn exclusive_blocks_second_acquire() {
+    fn mutex_blocks_second_acquire() {
         let b = backend();
-        assert!(b
-            .acquire("/a", "h1", LockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
-        assert!(!b
-            .acquire("/a", "h2", LockMode::Exclusive, 1, 60, "agent")
-            .unwrap());
+        assert!(b.acquire("/a", "h1", 1, 60, "agent").unwrap());
+        assert!(!b.acquire("/a", "h2", 1, 60, "agent").unwrap());
     }
 
     #[test]
-    fn shared_coexists_up_to_max() {
+    fn semaphore_coexists_up_to_max() {
         let b = backend();
-        assert!(b
-            .acquire("/a", "h1", LockMode::Shared, 2, 60, "agent")
-            .unwrap());
-        assert!(b
-            .acquire("/a", "h2", LockMode::Shared, 2, 60, "agent")
-            .unwrap());
-        // Third reader exceeds max_holders=2
-        assert!(!b
-            .acquire("/a", "h3", LockMode::Shared, 2, 60, "agent")
-            .unwrap());
+        assert!(b.acquire("/a", "h1", 2, 60, "agent").unwrap());
+        assert!(b.acquire("/a", "h2", 2, 60, "agent").unwrap());
+        // Third holder exceeds max_holders=2
+        assert!(!b.acquire("/a", "h3", 2, 60, "agent").unwrap());
     }
 
     #[test]
     fn force_release_drops_all() {
         let b = backend();
-        b.acquire("/a", "h1", LockMode::Shared, 3, 60, "agent")
-            .unwrap();
-        b.acquire("/a", "h2", LockMode::Shared, 3, 60, "agent")
-            .unwrap();
+        b.acquire("/a", "h1", 3, 60, "agent").unwrap();
+        b.acquire("/a", "h2", 3, 60, "agent").unwrap();
         assert!(b.force_release("/a").unwrap());
         assert!(b.get_lock("/a").is_none());
     }
@@ -145,8 +129,7 @@ mod tests {
     #[test]
     fn extend_refreshes_ttl() {
         let b = backend();
-        b.acquire("/a", "h1", LockMode::Exclusive, 1, 1, "agent")
-            .unwrap();
+        b.acquire("/a", "h1", 1, 1, "agent").unwrap();
         let before = b.get_lock("/a").unwrap().holders[0].expires_at;
         assert!(b.extend("/a", "h1", 3600).unwrap());
         let after = b.get_lock("/a").unwrap().holders[0].expires_at;
@@ -156,12 +139,9 @@ mod tests {
     #[test]
     fn list_locks_filters_by_prefix() {
         let b = backend();
-        b.acquire("/a/one", "h1", LockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
-        b.acquire("/a/two", "h2", LockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
-        b.acquire("/b/three", "h3", LockMode::Exclusive, 1, 60, "agent")
-            .unwrap();
+        b.acquire("/a/one", "h1", 1, 60, "agent").unwrap();
+        b.acquire("/a/two", "h2", 1, 60, "agent").unwrap();
+        b.acquire("/b/three", "h3", 1, 60, "agent").unwrap();
         let under_a = b.list_locks("/a/", 100);
         assert_eq!(under_a.len(), 2);
     }

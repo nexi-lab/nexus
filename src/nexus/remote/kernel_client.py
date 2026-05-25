@@ -423,7 +423,6 @@ class KernelClient:
         self,
         path: str,
         lock_id: str = "",
-        mode: int = 1,  # noqa: ARG002 — kept for API compat; kernel hardcodes Exclusive
         max_holders: int = 1,  # noqa: ARG002 — kept for API compat
         ttl_secs: int = 60,  # noqa: ARG002 — kept for API compat
         timeout_ms: int = 5000,

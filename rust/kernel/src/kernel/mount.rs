@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::vfs_router::canonicalize_mount_path as canonicalize;
 
-use super::{Kernel, KernelError, RouteResult};
+use super::{Kernel, KernelError};
 
 impl Kernel {
     // ── Mount-table primitives (composed by sys_setattr DT_MOUNT) ──────
@@ -60,7 +60,13 @@ impl Kernel {
         // mounts so sys_write stops silently missing.
         if mount_point == "/" && zone_id == contracts::ROOT_ZONE_ID {
             if let Some(ref root_backend) = backend {
-                let rebound = self.vfs_router.rebind_missing_backends(root_backend);
+                // Federation marker: a stranded mount has a metastore (the
+                // replayed federation zone state) but no backend (root
+                // hadn't been mounted yet at replay time). Predicate kept
+                // here in the kernel — VFSRouter stays federation-agnostic.
+                let rebound = self.vfs_router.rebind_missing_backends(root_backend, |e| {
+                    e.backend.is_none() && e.metastore.is_some()
+                });
                 if rebound > 0 {
                     tracing::info!(
                         rebound_count = rebound,
@@ -72,9 +78,9 @@ impl Kernel {
         }
         // Federation distributed-lock install lives on the trait
         // surface (`DistributedCoordinator::locks_for_zone` — §3.B.1).
-        // `RaftDistributedCoordinator`, installed by the cdylib boot
-        // path, wires the `DistributedLocks` backend the first time
-        // a federated mount lands. Kernel sees only `Box<dyn Any>`
+        // `RaftDistributedCoordinator`, installed by the host binary's
+        // boot path, wires the `DistributedLocks` backend the first
+        // time a federated mount lands. Kernel sees only `Box<dyn Any>`
         // here so the raft edge stays inverted.
         let _ = raft_backend;
         Ok(())
@@ -116,13 +122,6 @@ impl Kernel {
     /// normalization rules.
     pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
         canonicalize(mount_point, zone_id)
-    }
-
-    /// Zone-canonical LPM routing.
-    pub fn route(&self, path: &str, zone_id: &str) -> Result<RouteResult, KernelError> {
-        self.vfs_router
-            .route(path, zone_id)
-            .map_err(KernelError::from)
     }
 
     /// Check if a mount exists.

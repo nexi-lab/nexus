@@ -1,5 +1,5 @@
 """Unified filesystem implementation for Nexus."""
-# Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
+# Kernel interface unification — see KERNEL-ARCHITECTURE.md "User Contract — Syscall Interface"
 
 import builtins
 import contextlib
@@ -467,7 +467,6 @@ class NexusFS(  # type: ignore[misc]
     def sys_lock(
         self,
         path: str,
-        mode: str = "exclusive",
         ttl: float = 30.0,
         max_holders: int = 1,
         lock_id: str | None = None,
@@ -475,6 +474,8 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None = None,
     ) -> str | None:
         """Acquire or extend advisory lock (POSIX fcntl(F_SETLK)).
+
+        `max_holders == 1` is a mutex; `max_holders > 1` is a counting semaphore.
 
         When lock_id is None: try-acquire a new lock.
         When lock_id is provided: extend TTL of an existing lock (heartbeat).
@@ -486,7 +487,6 @@ class NexusFS(  # type: ignore[misc]
         return self._kernel.sys_lock(
             path,
             lock_id=lock_id or "",
-            mode=mode,
             max_holders=max_holders,
             ttl_secs=int(ttl),
         )
@@ -1039,7 +1039,6 @@ class NexusFS(  # type: ignore[misc]
     def lock(
         self,
         path: str,
-        mode: str = "exclusive",
         timeout: float = 30.0,
         ttl: float = 60.0,
         max_holders: int = 1,
@@ -1048,6 +1047,7 @@ class NexusFS(  # type: ignore[misc]
     ) -> str | None:
         """Acquire lock with blocking wait (Tier 2 over sys_lock).
 
+        `max_holders == 1` is a mutex; `max_holders > 1` is a counting semaphore.
         Retries sys_lock() until acquired or timeout.
         Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
         """
@@ -1057,7 +1057,6 @@ class NexusFS(  # type: ignore[misc]
         while True:
             lock_id = self.sys_lock(
                 path,
-                mode=mode,
                 ttl=ttl,
                 max_holders=max_holders,
                 context=context,

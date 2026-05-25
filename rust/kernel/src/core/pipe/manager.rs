@@ -3,8 +3,9 @@
 //! `DashMap<String, Arc<dyn PipeBackend>>` enables heterogeneous backends
 //! (memory, shared memory, future gRPC proxy).
 //!
-//! Blocking read/write use `parking_lot::Condvar` + `py.allow_threads()` to
-//! release the GIL while waiting. This replaces Python's `ipc_waiter.py`.
+//! Blocking read/write use `parking_lot::Condvar` so the waiter parks
+//! without spinning; `PipeNotify` wakes the blocked side after each
+//! `push` / `pop` (or after `close`).
 
 use crate::pipe::{MemoryPipeBackend, PipeBackend, PipeError};
 use dashmap::DashMap;
@@ -170,11 +171,10 @@ impl PipeManager {
         }
     }
 
-    /// Blocking read — waits for data with Condvar (GIL-free).
+    /// Blocking read — waits for data with Condvar.
     ///
-    /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
-    /// Returns data bytes, or WouldBlock on timeout.
-    #[allow(dead_code)]
+    /// Returns data bytes, or WouldBlock on timeout. Called by
+    /// `Kernel::pipe_read_blocking`.
     pub(crate) fn read_blocking(
         &self,
         path: &str,
@@ -341,7 +341,6 @@ impl PipeManager {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum PipeManagerError {
     Exists(String),
     NotFound(String),

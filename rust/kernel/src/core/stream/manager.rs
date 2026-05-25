@@ -3,8 +3,9 @@
 //! `DashMap<String, Arc<dyn StreamBackend>>` enables heterogeneous backends
 //! (memory, shared memory, future gRPC proxy).
 //!
-//! Blocking read uses `parking_lot::Condvar` + `py.allow_threads()` to
-//! release the GIL while waiting. This replaces Python's `ipc_waiter.py`.
+//! Blocking read uses `parking_lot::Condvar` so the waiter parks
+//! without spinning; `StreamNotify` wakes blocked readers after each
+//! `push` (or after `close`).
 
 use crate::stream::{MemoryStreamBackend, StreamBackend, StreamError};
 use dashmap::DashMap;
@@ -82,7 +83,6 @@ impl StreamManager {
     }
 
     /// Register an external backend (SHM, gRPC, etc.).
-    #[allow(dead_code)]
     pub fn register(
         &self,
         path: &str,
@@ -162,10 +162,9 @@ impl StreamManager {
         }
     }
 
-    /// Blocking read at offset — waits for data with Condvar (GIL-free).
+    /// Blocking read at offset — waits for data with Condvar.
     ///
-    /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
-    #[allow(dead_code)]
+    /// Called by `Kernel::stream_read_at_blocking`.
     pub fn read_at_blocking(
         &self,
         path: &str,
@@ -250,13 +249,12 @@ impl StreamManager {
     /// Collect all message payloads from offset 0, concatenated into one Vec.
     ///
     /// Walks the entire stream from the beginning, joining payload bytes
-    /// (without the per-frame length prefix). Equivalent to repeated
-    /// `read_at` until empty, but in a single Rust call (no per-frame
-    /// PyO3 round-trip).
+    /// (without the per-frame length prefix). One kernel call replaces
+    /// a per-frame `read_at` loop.
     ///
-    /// Returns empty Vec if the stream has no data. Used by Python LLM
-    /// backends for `collect_all + CAS persist` pattern after the producer
-    /// finishes pumping tokens.
+    /// Returns empty Vec if the stream has no data. Used by LLM
+    /// backends for the `collect_all + CAS persist` pattern after the
+    /// producer finishes pumping tokens.
     pub fn collect_all_payloads(&self, path: &str) -> Result<Vec<u8>, StreamManagerError> {
         let buf = self
             .buffers
@@ -361,7 +359,6 @@ impl StreamManager {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum StreamManagerError {
     Exists(String),
     NotFound(String),

@@ -44,7 +44,6 @@ use crate::kernel::{
     KernelError, StatResult, SysCopyResult, SysReadResult, SysRenameResult, SysSetAttrResult,
     SysUnlinkResult, SysWriteResult,
 };
-use crate::lock_manager::KernelLockMode;
 
 /// Canonical syscall surface that every Rust service uses to reach
 /// the kernel.
@@ -132,11 +131,13 @@ pub trait KernelAbi: Send + Sync + 'static {
     /// Acquire or create a lock on `path`. Returns the lock_id on
     /// success (generated if `lock_id` is empty), or `None` if the lock
     /// could not be acquired (contention).
+    ///
+    /// `max_holders` parametrizes the lock shape: `1` is a mutex,
+    /// `> 1` is a counting semaphore.
     fn sys_lock(
         &self,
         path: &str,
         lock_id: &str,
-        mode: KernelLockMode,
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
@@ -302,20 +303,11 @@ impl KernelAbi for crate::kernel::Kernel {
         &self,
         path: &str,
         lock_id: &str,
-        mode: KernelLockMode,
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
     ) -> Result<Option<String>, KernelError> {
-        Self::sys_lock(
-            self,
-            path,
-            lock_id,
-            mode,
-            max_holders,
-            ttl_secs,
-            holder_info,
-        )
+        Self::sys_lock(self, path, lock_id, max_holders, ttl_secs, holder_info)
     }
 
     fn sys_unlock(&self, path: &str, lock_id: &str, force: bool) -> Result<bool, KernelError> {

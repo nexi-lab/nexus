@@ -5,18 +5,18 @@
 //! impls without the kernel naming `backends::*` (which would close
 //! the kernel ↔ backends Cargo cycle). Kernel declares this trait +
 //! a `OnceLock<Arc<dyn ObjectStoreProvider>>` slot; the concrete impl
-//! ([`backends::python::factory::DefaultObjectStoreProvider`]) lives
-//! in the `backends` crate, and `nexus-cdylib`'s `#[pymodule]` boot
-//! registers it before any `sys_setattr` call fires. Same DI shape as
-//! the §3.B.1 [`DistributedCoordinator`](super::distributed_coordinator::DistributedCoordinator).
+//! lives in the `backends` crate and is registered by the host
+//! binary (e.g. `profiles::cluster`) before any `sys_setattr` call
+//! fires. Same DI shape as the §3.B.1
+//! [`DistributedCoordinator`](super::distributed_coordinator::DistributedCoordinator).
 //!
 //! ## Args struct
 //!
 //! [`ObjectStoreProviderArgs`] bundles every parameter `sys_setattr`
 //! accepts that a backend constructor might consume — 30+ fields,
-//! mostly `Option<&str>`. Borrowed lifetimes match the `sys_setattr`
-//! PyO3 method's argument lifetimes so callers skip per-arg `String`
-//! allocation on the hot path.
+//! mostly `Option<&str>`. Borrowed lifetimes track the `sys_setattr`
+//! call's stack-borrowed args so the factory builds the backend
+//! without copying every option string onto the heap.
 
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -29,7 +29,8 @@ use crate::meta_store::MetaStore;
 ///
 /// Matches the union of all `sys_setattr` named-args that flow into
 /// `Backend*::new(...)` calls.  Borrowed lifetimes track the
-/// `sys_setattr` PyO3 args so no per-call allocation is needed.
+/// `sys_setattr` call's stack-borrowed args so no per-call
+/// allocation is needed.
 #[allow(missing_docs)]
 pub struct ObjectStoreProviderArgs<'a> {
     pub backend_type: &'a str,
@@ -126,9 +127,8 @@ pub trait ObjectStoreProvider: Send + Sync {
 static OBJECT_STORE_PROVIDER: OnceLock<Arc<dyn ObjectStoreProvider>> = OnceLock::new();
 
 /// Register the global `ObjectStoreProvider`. Idempotent on duplicate
-/// register attempts (returns `Err(existing)`). Called once at
-/// `nexus-cdylib`'s `#[pymodule]` boot before Python can invoke
-/// `sys_setattr`.
+/// register attempts (returns `Err(existing)`). Called once by the
+/// host binary at startup, before any `sys_setattr(DT_MOUNT)` fires.
 pub fn set_provider(
     provider: Arc<dyn ObjectStoreProvider>,
 ) -> Result<(), Arc<dyn ObjectStoreProvider>> {
@@ -137,44 +137,42 @@ pub fn set_provider(
 
 /// Read the registered provider. Returns `None` until a caller
 /// registers one — `sys_setattr` surfaces that as a runtime error
-/// rather than panicking, so non-cdylib Rust tests can wire up their
-/// own provider before exercising mounts.
+/// rather than panicking, so Rust tests can wire up their own
+/// provider before exercising mounts.
 pub fn get_provider() -> Option<Arc<dyn ObjectStoreProvider>> {
     OBJECT_STORE_PROVIDER.get().cloned()
 }
 
 // ── Driver gate (DeploymentProfile-driven, SSOT) ───────────────────────────
 //
-// A `DeploymentProfile` is a Python-side declaration of which bricks /
-// services / drivers a runtime image runs with.  Bricks + services are
-// gated by Python factory wiring; drivers are gated here because the
-// path that constructs them — `Kernel::sys_setattr(DT_MOUNT)` — is
-// shared across every profile and lives Rust-side.
+// A `DeploymentProfile` declares which bricks / services / drivers a
+// runtime image runs with. Bricks + services are gated by factory
+// wiring in the host binary; drivers are gated here because the path
+// that constructs them — `Kernel::sys_setattr(DT_MOUNT)` — is shared
+// across every profile and lives Rust-side.
 //
 // Layout:
 //
-//   * Python `DeploymentProfile` resolves to a `frozenset[str]` of
-//     enabled driver names — every driver, including local-host
-//     backends (`path_local`, `cas-local`, `local_connector`).
-//   * `services::python::register` exposes
-//     `nx_set_enabled_drivers(drivers: list[str])` that calls
-//     [`set_enabled_drivers`] below.
-//   * `DefaultObjectStoreProvider::build` calls [`is_driver_enabled`]
-//     on every dispatch — there is no implicit local-default bypass.
-//     A mount requesting a disabled driver fails with
+//   * `DeploymentProfile` resolves to a set of enabled driver names
+//     — every driver, including local-host backends (`path_local`,
+//     `cas-local`, `local_connector`).
+//   * The host binary calls [`set_enabled_drivers`] below at startup.
+//   * The registered `ObjectStoreProvider::build` impl calls
+//     [`is_driver_enabled`] on every dispatch — there is no implicit
+//     local-default bypass. A mount requesting a disabled driver
+//     fails with
 //     `Err("driver 'X' not enabled in current deployment profile")`.
 //
-// When the gate has never been set (pure-Rust embedders, tests),
-// [`is_driver_enabled`] returns `true` for every name — backward
-// compatible with the pre-gating behaviour.
+// When the gate has never been set (Rust tests, embedders that don't
+// gate by profile), [`is_driver_enabled`] returns `true` for every
+// name.
 
 static DRIVER_GATE: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
 
-/// Install the enabled driver set.  Called once during Python boot
-/// from `nexus_runtime.nx_set_enabled_drivers`, before any
-/// `sys_setattr(DT_MOUNT)` fires.  Idempotent — repeated calls
-/// overwrite the set, so a Python reload that re-resolves the
-/// profile sees the updated drivers without an interpreter restart.
+/// Install the enabled driver set. Called once by the host binary
+/// at startup, before any `sys_setattr(DT_MOUNT)` fires. Idempotent
+/// — repeated calls overwrite the set, so a host that re-resolves
+/// the profile sees the updated drivers without a restart.
 pub fn set_enabled_drivers<I, S>(drivers: I)
 where
     I: IntoIterator<Item = S>,
@@ -187,8 +185,8 @@ where
 
 /// Check whether `driver_name` is enabled in the current deployment
 /// profile.  Returns `true` when the gate has never been initialised
-/// (pure-Rust tests, non-cdylib embedders) so existing tests keep
-/// passing without explicit wiring.
+/// (Rust tests, embedders that don't gate by profile) so existing
+/// tests keep passing without explicit wiring.
 pub fn is_driver_enabled(driver_name: &str) -> bool {
     let Some(lock) = DRIVER_GATE.get() else {
         return true;
@@ -203,8 +201,8 @@ mod tests {
     use super::*;
 
     /// `is_driver_enabled` returns true when the gate has not been
-    /// initialised — this is what keeps non-cdylib Rust tests working
-    /// without explicit profile wiring.
+    /// initialised — this is what keeps Rust tests working without
+    /// explicit profile wiring.
     #[test]
     fn ungated_returns_true_for_any_driver() {
         // NB: the OnceLock is process-wide, so this assertion is only

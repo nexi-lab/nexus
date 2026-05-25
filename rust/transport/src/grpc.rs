@@ -506,14 +506,7 @@ impl NexusVfsService for VfsServiceImpl {
         // hardcoded on the JSON path; expose only when there's a caller
         // that needs to vary them).
         let ttl_secs = req.timeout_ms / 1000 + 1;
-        match self.kernel.sys_lock(
-            &req.path,
-            &req.lock_id,
-            kernel::lock_manager::KernelLockMode::Exclusive,
-            1,
-            ttl_secs,
-            "",
-        ) {
+        match self.kernel.sys_lock(&req.path, &req.lock_id, 1, ttl_secs, "") {
             Ok(Some(id)) => Ok(Response::new(LockResponse {
                 acquired: true,
                 lock_id: id,

@@ -9,13 +9,8 @@
 //! lives in `crate::core::meta_store`. Remote / raft impls live in
 //! their respective parallel crates (`raft::meta_store`).
 //!
-//! Pure Rust ABI — no PyO3 dependency. PyO3 adapters live in
-//! `generated_kernel_abi_pyo3.rs` (auto-generated).
-//!
-//! Naming note: the Rust trait is `MetaStore` for visual symmetry with
-//! `ObjectStore` / `CacheStore`. The Python ABC stays `MetastoreABC`
-//! (sunset path); the cross-language asymmetry is anchored at exactly
-//! one PyO3 boundary in `raft/src/pyo3_bindings.rs`.
+//! Naming note: the Rust trait is `MetaStore`, for visual symmetry
+//! with `ObjectStore` / `CacheStore`.
 
 // ── Dirent-type constants ────────────────────────────────────────────
 //
@@ -87,7 +82,7 @@ pub struct FileMetadata {
     /// VFS path the link resolves to.  `Some` only when entry_type is
     /// DT_LINK.  One-hop resolution at `route()` time with self-loop
     /// rejection at `sys_setattr` write time.  See
-    /// `KERNEL-ARCHITECTURE.md` §4.5.
+    /// `KERNEL-ARCHITECTURE.md` "DT_LINK — Path-Internal Symlink".
     pub link_target: Option<String>,
     /// User/agent identity that owns this file. Set by the application
     /// layer via ``sys_setattr``. The kernel stores and forwards but does
@@ -123,7 +118,8 @@ pub struct PutIfVersionResult {
 /// `(path, optional value)` pairs used by bulk auxiliary-metadata reads
 /// and bulk content-id lookups. Values are UTF-8 strings — every real
 /// caller stores text (`parsed_text`, `parser_name`, JSON-encoded
-/// blobs), so the kernel boundary avoids a `PyBytes` GIL crossing.
+/// blobs), so the kernel boundary stays string-typed and avoids
+/// per-row byte-buffer allocation.
 pub type PathValueStr = (String, Option<String>);
 pub type PathEtag = (String, Option<String>);
 

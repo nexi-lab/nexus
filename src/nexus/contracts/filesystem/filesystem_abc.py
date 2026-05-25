@@ -119,7 +119,6 @@ class NexusFilesystem(Protocol):
     def sys_lock(
         self,
         path: str,
-        mode: str = "exclusive",
         ttl: float = 30.0,
         max_holders: int = 1,
         *,

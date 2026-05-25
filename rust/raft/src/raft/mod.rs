@@ -60,7 +60,7 @@ pub use replication_log::ReplicationLog;
 pub use state_machine::MountApplyEvent;
 pub use state_machine::{
     Command, CommandResult, FullStateMachine, HolderInfo, LockAcquireResult, LockEntry, LockInfo,
-    LockMode, LockState, StateMachine, WitnessStateMachine, WitnessStateMachineInMemory,
+    LockState, StateMachine, WitnessStateMachine, WitnessStateMachineInMemory,
 };
 
 #[cfg(feature = "consensus")]

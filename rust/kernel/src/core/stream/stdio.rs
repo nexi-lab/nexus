@@ -9,8 +9,9 @@
 //!
 //! Kernel-internal: the core is composed by stream backends inside
 //! the kernel (e.g. for subprocess stdout streams when a future
-//! `io_profile` is added).  No PyO3 surface — Python reaches it via
-//! the DT_STREAM syscalls (`sys_read` / `sys_write`).
+//! `io_profile` is added). Callers reach it via the DT_STREAM
+//! syscalls (`sys_read` / `sys_write`) only — the type has no
+//! direct syscall surface of its own.
 
 use std::sync::{Condvar, Mutex};
 

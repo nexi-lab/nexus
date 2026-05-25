@@ -19,34 +19,52 @@
 //! via `pub use core::… as <flat>` shims, so callers can name a single
 //! canonical path regardless of the internal `core/` nesting.
 
-// §4.0 — agent table SSOT.
+// Agent table SSOT (§1 Service Lifecycle).
 pub mod agents;
 
-// §4.1 — VFS routing + DLC mount lifecycle.
+// VFS routing + DLC mount lifecycle.
 pub mod dlc;
 pub mod vfs_router;
 
-// §4.3 — kernel runtime services (registry, watch).
+// File-watch waiters + kernel-owned service registry.
 pub mod file_watch;
 pub mod service_registry;
 
-// §4.4 — locking primitives (I/O lock + advisory lock).
+// Unified locking — I/O lock + advisory lock (§4.1).
 pub mod lock;
 
-// §4.5 — dispatch + hook / observer registry.
+// VFS dispatch + hook/observer registry (§2.4).
 pub mod dispatch;
 
-// §4.7 — permission lease cache (DashMap-based, pure Rust).
+// Permission lease cache, DashMap-based (§2.4.1 + §4 PermissionGate).
 pub mod permission_cache;
 
-// §4.6 — metastore primitive impls (LocalMetaStore + remote proxy).
-// The trait declaration lives in `crate::abc::meta_store`; this module
-// only holds the kernel-internal concrete impls.
+// Index cache — TTL-bounded stat/listing/negative cache fronting the
+// metastore on the syscall hot path.
+pub mod index_cache;
+
+// MetaStore primitive impls — LocalMetaStore + remote proxy.
+// The trait declaration lives in `crate::abc::meta_store` (§3.A.1);
+// this module only holds the kernel-internal concrete impls.
 pub mod meta_store;
 
-// §4.2 — DT_PIPE / DT_STREAM IPC pillars.
+// DT_PIPE / DT_STREAM IPC pillars (§4.2).
 pub mod pipe;
 pub mod stream;
 
-// §4.8 — FileDescriptorTable (pre-opened fds for PAS fast-path reads).
+// Content-addressable storage primitive — `CASEngine`, CDC chunking,
+// scatter-gather remote fetcher, local blob transport (§4 CAS row).
+pub mod cas;
+
+// Out-bound VFS gRPC client — backs `RemoteMetaStore` and the
+// `Remote{Pipe,Stream}Backend` wrappers in `core/meta_store/`,
+// `core/pipe/`, `core/stream/`.
+pub mod rpc_transport;
+
+// Shared mmap header accessors used by both pipe/shm and stream/shm.
+#[cfg(unix)]
+pub(crate) mod shm_header;
+
+// File-descriptor table — pre-opened fds for PAS fast-path reads
+// (§4 PermissionGate row's FileDescriptorTable peer).
 pub mod fdt;

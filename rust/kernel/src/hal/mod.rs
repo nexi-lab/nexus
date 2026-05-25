@@ -7,8 +7,8 @@
 //!
 //! * Trait declared here in the kernel crate.
 //! * Concrete impl in the owner crate (raft, backends).
-//! * `OnceLock` / `RwLock<Arc<dyn Trait>>` slot the cdylib boot wires
-//!   before any syscall fires.
+//! * `OnceLock` / `RwLock<Arc<dyn Trait>>` slot that the host binary
+//!   wires at startup, before any syscall fires.
 //!
 //! Members:
 //!
@@ -19,7 +19,8 @@
 //! * [`object_store_provider`] — `ObjectStoreProvider` trait (§3.B.2).
 //!   Constructs `Arc<dyn ObjectStore>` for backend types
 //!   (anthropic / openai / s3 / gcs / …) without the kernel naming
-//!   `backends::*`. Concrete impl in `backends::python::factory`.
+//!   `backends::*`. Concrete impl lives in the `backends` crate and
+//!   is registered by the host binary at startup.
 //! * [`peer`] — re-export of `lib::transport_primitives::PeerBlobClient`.
 //!   The trait declaration lives in the tier-neutral `lib` crate's
 //!   `transport_primitives` module so raft (server-side fetcher) and
@@ -41,7 +42,7 @@
 //! (`CasLocalBackend` etc.). Moving the CAS primitives out would
 //! require either a runtime-dispatched `CasOps` trait (perf hit on
 //! the hot CAS read path) or an ABI-breaking move of the entire
-//! `PyKernel::cas_*` family — neither pays its way given the CAS
+//! `Kernel::cas_*` family — neither pays its way given the CAS
 //! engine is conceptually a kernel primitive.
 //!
 //! Directory layout enforces the §3.A / §3.B split: `abc/` holds the

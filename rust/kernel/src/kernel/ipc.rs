@@ -59,7 +59,7 @@ impl Kernel {
     ///
     /// Returns `KernelError::FileNotFound` if no pipe is registered at
     /// `path`. `Ok(0)` means the pipe exists but has nothing to pop.
-    /// Kernel-internal helper — no PyO3 wrapper, no Python syscall.
+    /// Kernel-internal helper: read-only probe, no syscall dispatch.
     pub fn pipe_size(&self, path: &str) -> Result<usize, KernelError> {
         self.pipe_manager
             .size(path)
@@ -83,8 +83,12 @@ impl Kernel {
         self.pipe_manager.list()
     }
 
-    /// Blocking read — Condvar wait (GIL-free via py.allow_threads).
-    /// Called from generated_pyo3.rs PyKernel wrapper.
+    /// Blocking read — Condvar wait.
+    ///
+    /// Kernel-side surface for Rust services that need to wait on
+    /// a pipe; the underlying `PipeManager::read_blocking` parks
+    /// the caller on a Condvar until data arrives or `timeout_ms`
+    /// elapses.
     #[allow(dead_code)]
     pub fn pipe_read_blocking(&self, path: &str, timeout_ms: u64) -> Result<Vec<u8>, KernelError> {
         self.pipe_manager
@@ -146,8 +150,8 @@ impl Kernel {
     /// Returns `KernelError::FileNotFound` if no stream is registered at
     /// `path`. Callers use this for the seek-to-end pattern: read the
     /// tail, then pass it as the offset to `stream_read_at_blocking`
-    /// to skip history and block until new data arrives.  Kernel-internal
-    /// helper — no PyO3 wrapper, no Python syscall.
+    /// to skip history and block until new data arrives. Kernel-internal
+    /// helper: read-only probe, no syscall dispatch.
     pub fn stream_tail(&self, path: &str) -> Result<usize, KernelError> {
         self.stream_manager
             .tail(path)
@@ -186,8 +190,9 @@ impl Kernel {
 
     /// Collect all stream payloads from offset 0, concatenated.
     ///
-    /// Replaces the manual `read_at` loop in Python LLM backends.
-    /// Single Rust call → no per-frame PyO3 round-trip.
+    /// One kernel call returns the whole stream, so LLM-backend
+    /// callers can replace a per-frame `read_at` loop with a single
+    /// drain.
     pub fn stream_collect_all(&self, path: &str) -> Result<Vec<u8>, KernelError> {
         self.stream_manager
             .collect_all_payloads(path)
@@ -199,8 +204,13 @@ impl Kernel {
         self.stream_manager.list()
     }
 
-    /// Blocking read at offset — Condvar wait (GIL-free via py.allow_threads).
-    /// Called from generated_pyo3.rs PyKernel wrapper.
+    /// Blocking read at offset — Condvar wait.
+    ///
+    /// Kernel-side surface for Rust services that need to wait on
+    /// a stream's tail to advance past `offset`; the underlying
+    /// `StreamManager::read_at_blocking` parks the caller on a
+    /// Condvar until a frame whose `offset_in >= offset` arrives
+    /// or `timeout_ms` elapses.
     #[allow(dead_code)]
     pub fn stream_read_at_blocking(
         &self,

@@ -9,7 +9,7 @@
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 // ── FileEvent / FileEventType ────────────────────────────────────────
 //
@@ -616,7 +616,6 @@ impl TrieNode {
 
 pub(crate) struct Trie {
     root: RwLock<TrieNode>,
-    count: AtomicUsize,
     patterns: RwLock<HashMap<usize, String>>,
 }
 
@@ -624,7 +623,6 @@ impl Trie {
     pub(crate) fn new() -> Self {
         Self {
             root: RwLock::new(TrieNode::new()),
-            count: AtomicUsize::new(0),
             patterns: RwLock::new(HashMap::new()),
         }
     }
@@ -644,7 +642,6 @@ impl Trie {
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         self.root.write().insert(&segments, resolver_idx);
         patterns.insert(resolver_idx, pattern.to_string());
-        self.count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -656,17 +653,168 @@ impl Trie {
         };
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         self.root.write().remove(&segments);
-        self.count.fetch_sub(1, Ordering::Relaxed);
         true
     }
 
-    /// Number of registered patterns.
+    /// Number of registered patterns. SSOT is `patterns` — `trie_len()` is
+    /// diagnostics-only (Kernel accessor for tests/introspection), not on
+    /// any hot path, so reading the HashMap length directly avoids
+    /// keeping a parallel atomic in sync.
     pub(crate) fn len(&self) -> usize {
-        self.count.load(Ordering::Relaxed)
+        self.patterns.read().len()
     }
 }
 
-// ── Tests (TrieNode only — pure Rust, no PyO3) ────────────────────────
+// ── ObserverRegistry — pure Rust observer dispatch ─────────────────────
+
+/// Observer entry.
+///
+/// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
+/// can clone the trait object across threads. `event_mask` bitmask
+/// matching happens without external dependency.
+struct ObserverEntry {
+    observer: Arc<dyn MutationObserver>,
+    name: String,
+    event_mask: u32,
+}
+
+/// Pure Rust observer registry — event-type bitmask filtering lock-free.
+///
+/// Single dispatch path for all OBSERVE-phase observers. The trait
+/// `MutationObserver` takes `&FileEvent`.
+///
+/// OBSERVE is fire-and-forget by definition — observers needing causal
+/// ordering or sync blocking belong in INTERCEPT POST, not OBSERVE.
+pub(crate) struct ObserverRegistry {
+    observers: Vec<ObserverEntry>,
+}
+
+impl ObserverRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            observers: Vec::new(),
+        }
+    }
+
+    /// Register an observer with its event-type bitmask.
+    pub(crate) fn register(
+        &mut self,
+        observer: Arc<dyn MutationObserver>,
+        name: String,
+        event_mask: u32,
+    ) {
+        self.observers.push(ObserverEntry {
+            observer,
+            name,
+            event_mask,
+        });
+    }
+
+    /// Unregister by name (identity is not available for trait objects).
+    /// Returns true if a registration with that name was removed.
+    pub(crate) fn unregister(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.observers.iter().position(|e| e.name == name) {
+            self.observers.remove(pos);
+            return true;
+        }
+        false
+    }
+
+    /// Return clones of all observers whose event_mask matches `event.event_type`.
+    ///
+    /// The dispatch loop (`Kernel::dispatch_observers`) submits each
+    /// clone to the OBSERVE ThreadPool. Returning Arc clones lets the
+    /// pool borrow the registry lock for the minimum possible time —
+    /// the caller releases the lock before doing any per-observer work.
+    pub(crate) fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
+        self.observers
+            .iter()
+            .filter(|e| e.event_mask & event_type_bit != 0)
+            .map(|e| Arc::clone(&e.observer))
+            .collect()
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.observers.len()
+    }
+}
+
+// ── NativeHookRegistry ────────────────────────────────────────────────
+//
+// Pure Rust hook dispatch for in-process Rust services. Stores
+// `Box<dyn NativeInterceptHook>` in a Vec so the dispatch loop fans
+// out without any allocation in the steady state.
+
+struct NativeHookEntry {
+    hook: Box<dyn NativeInterceptHook>,
+}
+
+pub(crate) struct NativeHookRegistry {
+    hooks: Vec<NativeHookEntry>,
+    /// Suffixes declared by registered mutating hooks (via
+    /// `NativeInterceptHook::mutating_path_suffix`). Populated on
+    /// register; consulted by `has_mutating_match` so the kernel can
+    /// decide whether to clone write content into `WriteHookCtx`. An
+    /// empty Vec is the steady state today (no mutating hooks
+    /// registered) — the call site short-circuits before any path
+    /// comparison.
+    mutating_suffixes: Vec<&'static str>,
+}
+
+impl NativeHookRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            hooks: Vec::new(),
+            mutating_suffixes: Vec::new(),
+        }
+    }
+
+    pub(crate) fn register(&mut self, hook: Box<dyn NativeInterceptHook>) {
+        if let Some(suffix) = hook.mutating_path_suffix() {
+            self.mutating_suffixes.push(suffix);
+        }
+        self.hooks.push(NativeHookEntry { hook });
+    }
+
+    /// Dispatch pre-hooks. Returns Err on first abort. The
+    /// `HookOutcome::Replace` variant is propagated to the caller via
+    /// the returned bytes; today only `sys_write` honours it, other
+    /// syscalls drop the replacement.
+    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<Option<Vec<u8>>, String> {
+        let mut replacement: Option<Vec<u8>> = None;
+        for entry in &self.hooks {
+            match entry.hook.on_pre(ctx)? {
+                HookOutcome::Pass => {}
+                HookOutcome::Replace(bytes) => replacement = Some(bytes),
+            }
+        }
+        Ok(replacement)
+    }
+
+    /// Dispatch post-hooks (fire-and-forget).
+    pub(crate) fn dispatch_post(&self, ctx: &HookContext) {
+        for entry in &self.hooks {
+            entry.hook.on_post(ctx);
+        }
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.hooks.len()
+    }
+
+    /// Returns true when at least one registered hook declared a
+    /// mutating path suffix that matches `path`. Cheap (linear scan
+    /// over a Vec that today has at most a handful of entries); the
+    /// steady state (no mutating hooks) returns false on the
+    /// empty-Vec check before any string comparison.
+    pub(crate) fn has_mutating_match(&self, path: &str) -> bool {
+        self.mutating_suffixes
+            .iter()
+            .any(|suffix| path.ends_with(suffix))
+    }
+}
+
+// ── Tests (TrieNode only) ────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -890,8 +1038,9 @@ mod tests {
     #[test]
     fn test_file_event_type_str_matches_python_strenum() {
         // String values must match Python `FileEventType(StrEnum)` `.value`
-        // — these strings cross the PyO3 boundary verbatim and feed into
-        // the reconstructed Python `FileEvent`.
+        // (`src/nexus/core/file_events.py`) — these strings cross the
+        // gRPC boundary verbatim and feed into the reconstructed
+        // Python `FileEvent`.
         assert_eq!(FileEventType::FileWrite.as_str(), "file_write");
         assert_eq!(FileEventType::FileDelete.as_str(), "file_delete");
         assert_eq!(FileEventType::FileRename.as_str(), "file_rename");

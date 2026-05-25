@@ -233,7 +233,7 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
   sys_read/sys_write and dispatches to PipeManager/StreamManager inline — no
   VFS lock, no metastore update, no observer dispatch (matching Linux `write(2)`
   on a pipe not triggering inotify)
-- **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.5);
+- **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.4);
   hooks fire on the resolved target path so audit and access checks behave identically
   to a direct write
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
@@ -249,7 +249,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob`/`grep` are search-tier convenience (PR #3921), composing `sys_readdir` + filter/regex |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob` / `grep` are search-tier convenience built atop `sys_readdir` + filter/regex |
 | **Xattr** (extended attributes) | `get_xattr(path, key)`, `set_xattr(path, key, value)`, `get_xattr_bulk(paths, key)` | Direct metastore `get_file_metadata`/`set_file_metadata` — no hooks, no routing, no permission gate. Rust `KernelConvenience` trait |
 | **HDFS half** (driver-level, kernel-internal) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
@@ -424,11 +424,9 @@ not by domain or implementation.
 
 **Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
 matches `ObjectStore` / `CacheStore` for visual symmetry across the
-three ABC pillars.  Phase 0.5 of
-`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
-`Metastore` (one word) to `MetaStore` (two words); the Python ABC
-stays `MetastoreABC` because the Python tier is on a sunset path and
-not worth ripple-renaming.
+three ABC pillars. The Python ABC stays `MetastoreABC` (one word) —
+the Python tier is on a sunset path, so the Rust trait carries the
+forward-looking name.
 
 **Rust-side strict layout:** `kernel/src/abc/` contains exactly the
 3 §3.A ABC pillar trait files. `kernel/src/hal/` contains the §3.B
@@ -449,10 +447,12 @@ for §3.B DI surfaces, `core/` is for primitives.
 **Orthogonality:** Between pillars = different query patterns. Within pillars =
 interchangeable drivers (deployment-time config). See `data-storage-matrix.md`.
 
-**Kernel self-inclusiveness:** Kernel boots with **1 pillar** (Metastore).
-ObjectStore mounted post-init. Kernel does NOT need: JOINs, FK, vector search,
-TTL, pub/sub (all service-layer). Like Linux: kernel defines VFS + block device
-interface but doesn't ship a filesystem.
+**Kernel self-inclusiveness:** Kernel boots with **1 pillar** (Metastore);
+ObjectStore mounts post-init. The kernel's own data needs are intentionally
+minimal — O(1) KV with ordered prefix scan over zone-tagged `FileMetadata`
+rows. Higher-level shapes (JOINs, FK, vector search, TTL, pub/sub) live in
+the service layer, mirroring Linux's split: kernel defines VFS + block-device
+interfaces while filesystems ship as separate modules.
 
 #### 3.A.1 MetastoreABC — Inode Layer
 
@@ -464,21 +464,19 @@ describe files. Operations: O(1) KV (get/put/delete), ordered prefix scan
 `/__sys__/` prefix.
 
 Data type: `FileMetadata` — path, backend_name, etag, size, version, zone_id,
-owner_id, timestamps, mime_type. Always tagged with `zone_id` (P0 invariant).
-`zone_id` is a **kernel namespace partition identifier** (analogous to Linux
-`sb->s_dev`). Federation extends zones with Raft consensus groups, but the
-kernel owns the concept. `owner_id` is the kernel's posix_uid — used by
+owner_id, timestamps, mime_type. Every row carries a `zone_id` — the
+**kernel namespace partition identifier** (analogous to Linux `sb->s_dev`),
+which federation extends with Raft consensus groups while the kernel owns
+the concept. `owner_id` is the kernel's posix_uid — consumed by
 `PermissionEnforcerProtocol.check_owner()` for O(1) DAC before service-layer
-hooks run. Audit trail (who created a file) is a service concern tracked by
-VersionRecorder, not a kernel inode field.
+hooks run. Audit trail (who created a file) lives in the service layer
+(`VersionRecorder`); the kernel inode keeps the steady-state fields only.
 
 **Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
 matches `ObjectStore` / `CacheStore` for visual symmetry across the
-three ABC pillars.  Phase 0.5 of
-`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
-`Metastore` (one word) to `MetaStore` (two words); the Python ABC
-stays `MetastoreABC` because the Python tier is on a sunset path and
-not worth ripple-renaming.
+three ABC pillars. The Python ABC stays `MetastoreABC` (one word) —
+the Python tier is on a sunset path, so the Rust trait carries the
+forward-looking name.
 
 #### 3.A.2 ObjectStoreABC (= Backend) — Blob I/O
 
@@ -601,32 +599,44 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
-| **VFSRouter** | `core.router` + `rust/kernel/src/mount_table.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
-| **LockManager** | `rust/kernel/src/lock_manager.rs` | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct. I/O: per-path condvar-based RW lock (§4.1). Advisory: `sys_lock`/`sys_unlock` with TTL (§4.4). Local: VFSSemaphore. Federation: auto-upgrade via `upgrade_to_distributed()` at mount time |
-| **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust). Empty = zero overhead |
-| **PipeManager + StreamManager** | `rust/kernel/src/pipe_manager.rs` + `rust/kernel/src/stream_manager.rs` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
+| **VFSRouter** | `rust/kernel/src/core/vfs_router.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
+| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`) | `i_rwsem` + `flock(2)` + `sem_t` | I/O lock + advisory lock in one primitive (§4.1). I/O lock: per-path condvar-based RW lock. Advisory lock: `sys_lock`/`sys_unlock` with TTL via the `Locks` HAL trait (`LocalLocks` default, replicated backend via `install_locks(Arc<dyn Locks>)`); `max_holders == 1` ⇒ mutex, `max_holders > 1` ⇒ counting semaphore — same code path |
+| **Dispatch (Rust Kernel + DispatchMixin)** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/dispatch/` + `core.nexus_fs_dispatch` (Python event broadcaster) | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
+| **PipeManager + StreamManager** | `rust/kernel/src/core/pipe/` + `rust/kernel/src/core/stream/` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileDescriptorTable** | `rust/kernel/src/core/fdt.rs` | fd table (`task_struct.files`) | Pre-opened fd registry for PAS backends. `sys_write` registers via `ObjectStore::resolve_physical_path()`; `sys_read` fast-path via `libc::pread`; `sys_unlink` removes; `sys_rename` re-keys. CAS/remote backends opt out (trait default `None`) |
-| **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
-| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). BackgroundService + duck-typed hook_spec() |
-| **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + lock manager upgrade. Apply-side cache coherence is metastore-internal (each `ZoneMetaStore` self-registers an invalidator on its consensus during construction; no kernel-level dcache to keep in sync). Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
+| **FileWatcher + FileEvent** | `rust/kernel/src/core/file_watch.rs` + `core.file_events` (Python dataclass mirror) | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
+| **ServiceRegistry** | `rust/kernel/src/core/service_registry.rs` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). BackgroundService + duck-typed hook_spec() |
+| **DriverLifecycleCoordinator** | `rust/kernel/src/core/dlc.rs` + `core.driver_lifecycle_coordinator` (Python unmount-event broadcaster) | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + lock manager upgrade. Apply-side cache coherence is metastore-internal (each `ZoneMetaStore` self-registers an invalidator on its consensus during construction; no kernel-level dcache to keep in sync). Python DLC: brick `on_unmount` event dispatch only |
 | **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
+| **AgentRegistry** | `rust/kernel/src/core/agents/registry.rs` | Linux `task_struct` table + signal queue | Kernel SSOT for agent lifecycle: PID allocation, parent/child tree, signal semantics (SIGTERM/SIGSTOP/SIGCONT/SIGKILL/SIGUSR1), `AgentState::can_transition_to` validation, per-PID condvar wake-ups. Shared `Arc` exposed to procfs view (`AgentStatusResolver`) — no dual-write. Details in §1 Service Lifecycle |
+| **DT_LINK** | `proto/nexus/core/metadata.proto` (`DT_LINK = 6`) + `FileMetadata.link_target` | `symlink(2)` | Path-internal symlink resolved by `VFSRouter::route()` before reaching the backend. Single-hop redirect with `ELOOP` on chained or self-loop links. Details in §4.4 |
+| **Process-Local Caches** | `rust/kernel/src/core/index_cache.rs` + `rust/kernel/src/core/permission_cache.rs` | inode / dentry caches (`struct dentry`, `struct inode_cache`) | Per-process bounded TTL caches inherent to `Kernel` (e.g. `IndexCache` for `readdir` listings + prefix-scan results). Eviction is local-only; cross-zone consistency flows through metastore apply-side coherence. Details in §4.5 |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 
-Rust `LockManager` (`rust/kernel/src/lock_manager.rs`) unifies both lock
-concerns in one struct. I/O lock (condvar-based, per-path RW) and advisory
-lock (TTL-based, user-facing) share one code path.
+Rust `LockManager` (`rust/kernel/src/core/lock/`) unifies the kernel's
+two locking concerns in one primitive — sharing the path-normalisation
+helper, the hierarchy-aware conflict logic, and the `core/lock/` module
+home. Constructed in `Kernel::new()` with a default `LocalLocks`
+advisory backend; a replicated backend swaps in via
+`install_locks(Arc<dyn Locks>)` at federation mount time (first-wins,
+idempotent).
 
 | Property | I/O Lock | Advisory Lock |
 |----------|----------|---------------|
-| Modes | `read` (shared) / `write` (exclusive) | exclusive (mutex), TTL-based |
-| Latency | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
+| Linux analogue | `i_rwsem` | `flock(2)` / `fcntl(F_SETLK)` / `sem_t` |
+| Modes | `read` (shared) / `write` (exclusive) | counting via `max_holders` — `max_holders == 1` is the mutex form, `max_holders > 1` is the counting-semaphore form; same code path |
+| Latency target | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
 | Scope | Process-scoped, crash → released | TTL-based, expire → released |
-| Visibility | Kernel-internal (sys_read/write) | User-facing (sys_lock/sys_unlock) |
-| Storage | In-memory only | redb `sm_locks` table (metastore) |
+| Visibility | Kernel-internal (`sys_read`/`sys_write`) | User-facing (`sys_lock`/`sys_unlock`) |
+| Holder ID | Implicit handle (u64 from `next_handle`) | Caller-supplied `lock_id` string |
+| Storage | In-memory only | Shared `Arc<Mutex<LockState>>` — `contracts::lock_state` is SSOT; the replicated backend's apply-path writes into the same Arc |
+| Local impl | per-path condvar RW | `LocalLocks` (`core/lock/locks.rs`) — mutates the shared `LockState` Arc directly |
+| Distributed impl | n/a (process-local) | replicated `Locks` HAL backend installed via `install_locks(Arc<dyn Locks>)`; apply-path mutates the same `LockState` Arc so reads observe committed state without a quorum round-trip |
+| Syscalls | implicit (taken inside `sys_read` / `sys_write`) | `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2) |
 
 See `lock-architecture.md` for full design. See `federation-memo.md` for
-distributed lock upgrade path.
+the replicated-backend install path.
 
 ### 4.2 IPC Primitives — Named Pipes & Streams
 
@@ -681,20 +691,7 @@ See `federation-memo.md` §7j for design rationale.
 | FileWatcher (kernel-knows) | Optional `RemoteWatchProtocol` for distributed watch, set via `set_remote_watcher()` |
 | Emission point | Always AFTER lock release |
 
-### 4.4 LockManager — Advisory Lock
-
-| Property | Value |
-|----------|-------|
-| Linux analogue | `flock(2)` / `fcntl(F_SETLK)` |
-| Package | `rust/kernel/src/lock_manager.rs` |
-| Storage | `sm_locks` redb table (separate from FileMetadata) |
-| Lifecycle | Kernel-owned: Rust `LockManager` constructed in `Kernel::new()`; federation upgrades via `upgrade_to_distributed()` at DLC mount time |
-
-- **Local**: `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore)
-- **Distributed**: `upgrade_to_distributed(ZoneConsensus, Handle)` — advisory locks replicated via Raft
-- **Syscalls**: `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2)
-
-### 4.5 DT_LINK — Path-Internal Symlink
+### 4.4 DT_LINK — Path-Internal Symlink
 
 | Property | Value |
 |----------|-------|
@@ -720,17 +717,19 @@ rejected at `sys_setattr` time.
 
 See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
 
-### 4.6 Process-Local Kernel Caches
+### 4.5 Process-Local Kernel Caches
 
-`rust/kernel/src/cache/` holds kernel-internal process-local caches.
-These are **not** `CacheStoreABC` (§3.A.3) — they are inherent state
-on `Kernel`, scoped to one OS process, never shared across the cluster.
-Eviction is local-only; cross-zone consistency follows the metastore's
-apply-side cache coherence (§4 DLC primitive), not these caches.
+Kernel-internal process-local caches live alongside other §4
+primitives in `rust/kernel/src/core/` — inherent state on `Kernel`,
+scoped to one OS process, with local-only eviction. The cluster-wide
+`CacheStoreABC` (§3.A.3) is a separate pillar; cross-zone consistency
+for these process-local caches flows through the metastore's
+apply-side cache coherence (§4 DLC primitive).
 
 | File | Owns |
 |------|------|
-| `cache/index_cache.rs` | `IndexCache` — bounded TTL'd cache of `readdir` listings and metastore prefix-scan results, keyed by `(zone, path, kind)`. Invalidated by `sys_setattr` / `sys_unlink` / `sys_rename` post-hooks on the same routed metastore. |
+| `core/index_cache.rs` | `IndexCache` — bounded TTL'd cache of `readdir` listings and metastore prefix-scan results, keyed by `(zone, path, kind)`. Invalidated by `sys_setattr` / `sys_unlink` / `sys_rename` post-hooks on the same routed metastore. |
+| `core/permission_cache.rs` | `PermissionLeaseCache` — two-level DashMap of `(path, agent_id) → expiry`. Short-circuits the permission gate's full ReBAC walk on a recent hit. Details in §2.4.1. |
 
 ---
 
@@ -756,7 +755,6 @@ automatically with any service that conforms.
 |---------------|--------------------|--------------------|----------------------|
 | `RecordStoreABC` | Session factory + read replica interface | PostgreSQL, SQLite drivers | Services get pooling, error translation, replica routing |
 | `VFS*Hook` protocols | Hook shapes (context dataclasses) | Service-layer hook implementations | KernelDispatch calls any conforming hook uniformly |
-| `VFSSemaphoreProtocol` | Named counting semaphore interface | `lib.semaphore` implementation | Advisory locks + CAS coordination use uniform semaphore API |
 | Service Protocols | `@runtime_checkable` typed interfaces | Concrete service implementations | Typed contracts for service implementors |
 
 **Integration mechanisms:** Factory auto-discovers bricks via `brick_factory.py`
@@ -770,11 +768,11 @@ conformance at registration, and resolves kernel dependencies via
 
 | Property | Value |
 |----------|-------|
-| Kernel role | Kernel **defines** the ABC; kernel does NOT consume it |
-| Consumers | Services only (ReBAC, Auth, Agents, Scheduler, etc.) |
+| Kernel role | Kernel **defines** the ABC — services consume |
+| Consumers | Services (ReBAC, Auth, Agents, Scheduler, etc.) |
 | Interface | `session_factory` + `read_session_factory` (SQLAlchemy ORM) |
 | Drivers | PostgreSQL, SQLite (interchangeable without code changes) |
-| Rule | Direct SQL or raw driver access is an abstraction break |
+| Access path | Through the ABC's session factories — pooling, error translation, replica routing flow from there |
 
 The kernel is the standards body — it defines the interface shape that forces
 driver implementors to provide pooling, error translation, read replica routing,
@@ -791,34 +789,19 @@ bilateral interface conformance, not from kernel providing these features direct
 
 See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matching.
 
-### 5.4 VFSSemaphore — Named Counting Semaphore
-
-**Package:** `lib.semaphore` | **Protocol:** `contracts.protocols.semaphore.VFSSemaphoreProtocol`
-
-| Property | Value |
-|----------|-------|
-| POSIX analogue | `sem_t` (named semaphore, extended with TTL + holder tracking) |
-| Kernel role | Kernel **defines** the protocol and provides the implementation in `lib/`; kernel does NOT own it as a primitive |
-| Modes | Counting (N holders), mutex (max_holders=1) |
-| Latency | ~200ns (Rust) / ~500ns-1us (Python fallback) |
-| Scope | In-memory, process-scoped, TTL-based lazy expiry |
-| Consumers | Advisory lock layer (`LocalLockManager`), CAS metadata RMW |
-
-Advisory lock layer uses two semaphores per path for RW gate pattern
-(shared/exclusive). See `lock-architecture.md` §3.
-
 ---
 
 ## 6. Tier-Neutral Infrastructure (`contracts/`, `lib/`)
 
 Two packages sit **outside** the Kernel → Services → Drivers stack.
-Any layer may import from them; they must **not** import from `nexus.core`,
-`nexus.services`, `nexus.fuse`, `nexus.bricks`, or any other tier-specific package.
+Any layer may import from them; their own imports stay within
+`contracts/` and `lib/` (plus the standard library), keeping them
+tier-neutral leaves of the dependency graph.
 
 | Package | Contains | Linux Analogue | Rule |
 |---------|----------|----------------|------|
-| **`contracts/`** | Types, enums, exceptions, constants | `include/linux/` (header files) | Declarations only — no implementation logic, no I/O |
-| **`lib/`** | Reusable helper functions, pure utilities | `lib/` (libc, libm) | Implementation allowed, but zero kernel deps |
+| **`contracts/`** | Types, enums, exceptions, constants | `include/linux/` (header files) | Declarations only — zero implementation logic, zero I/O |
+| **`lib/`** | Reusable helper functions, pure utilities | `lib/` (libc, libm) | Implementation allowed; depends on `contracts/` and stdlib only |
 
 **Core distinction:** `contracts/` = **what** (shapes of data). `lib/` = **how** (behavior).
 
@@ -893,7 +876,6 @@ syscall implementations across per-family submodules:
 | `kernel/mount.rs`   | Mount-table primitives (`add_mount`, `remove_mount`, `install_mount_metastore`, `route`, …). |
 | `kernel/federation.rs` | `DistributedCoordinator` slot accessors, `/__sys__/zones/` procfs synthesisers, blob-fetcher slot plumbing. |
 | `kernel/convenience.rs` | Tier 2 `KernelConvenience` trait composing Tier 1 syscalls — `access`, `mkdir`, `rmdir`, `stat_batch`, `exists_batch`, `get_content_id`, `is_directory`, `get_top_level_mounts`, `set_xattr` / `get_xattr` / `get_xattr_bulk`, Tier 2 `write` (create-or-overwrite) plus Tier 2 single-file `read` / `unlink` defaults. |
-| `kernel/write_buffer.rs` | Kernel-owned write-back buffer for DT_REG writes (§2.2 Write Coalescing Buffer) — strict pass-through and latency-coalesced policies, flush triggers (idle TTL, 4 MiB threshold, explicit barriers). |
 
 Every submodule writes its methods as `impl Kernel { … }` blocks —
 Rust treats each block as a member set of the same `Kernel` type, so

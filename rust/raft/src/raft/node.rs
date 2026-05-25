@@ -1291,6 +1291,37 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         self.replication_log.as_ref()
     }
 
+    /// Tell raft-rs that a peer became unreachable.
+    ///
+    /// Required by raft-rs's driver contract — when the transport
+    /// layer fails to deliver a message to ``peer_id``, the driver
+    /// must call this so the leader's Progress tracker for that
+    /// peer transitions out of ``Replicate`` state and resumes
+    /// probing.  Without it, raft-rs assumes "no response yet,
+    /// peer just slow" and stalls AppendEntries forever after the
+    /// first transport hiccup — the failure mode that surfaced on
+    /// the Win→Mac sharedzone path today.
+    ///
+    /// Idempotent and cheap (raft-rs no-ops when the peer is
+    /// already in a non-Replicate state).
+    pub fn report_unreachable(&mut self, peer_id: u64) {
+        self.raw_node.report_unreachable(peer_id);
+    }
+
+    /// Tell raft-rs whether a snapshot send to ``peer_id`` succeeded.
+    ///
+    /// Companion to [`report_unreachable`].  When the transport
+    /// layer fails to deliver a ``MsgSnapshot`` (or successfully
+    /// delivers one), the driver must call this so raft-rs's
+    /// Progress tracker for that peer can leave the ``Snapshot``
+    /// state — either by retrying the snapshot on failure, or by
+    /// resuming normal AppendEntries replication on success.
+    /// Without it, a single snapshot send failure freezes
+    /// replication to that peer permanently.
+    pub fn report_snapshot(&mut self, peer_id: u64, status: raft::SnapshotStatus) {
+        self.raw_node.report_snapshot(peer_id, status);
+    }
+
     /// Drain all pending messages from the channel and process them.
     ///
     /// Each message is executed **sequentially** on `raw_node`, which is the
@@ -1904,6 +1935,32 @@ mod tests {
         assert_eq!(handle.id(), 1);
         assert!(!handle.is_witness());
         assert_eq!(handle.role(), NodeRole::Follower);
+    }
+
+    #[tokio::test]
+    async fn test_driver_report_unreachable_and_snapshot_are_safe_pass_throughs() {
+        // Pin the contract that transport_loop relies on: the driver
+        // exposes `report_unreachable` and `report_snapshot` that
+        // never panic, even when the peer_id is unknown to raft-rs
+        // (the realistic case — a freshly-joined Learner reporting
+        // failure before its Progress entry has been populated, or
+        // a stale peer_id from a wipe-rejoin still queued in the
+        // mpsc channel).  raft-rs's underlying `report_*` calls
+        // no-op gracefully on unknown peers, but we want a guard at
+        // our boundary too so a future raft-rs version change
+        // doesn't silently destabilise the driver loop.
+        let (_handle, mut driver, _dir) = create_test_node();
+
+        // Unknown peer — must be a no-op, not a panic.
+        driver.report_unreachable(9_999_999);
+        driver.report_snapshot(9_999_999, raft::SnapshotStatus::Failure);
+        driver.report_snapshot(9_999_999, raft::SnapshotStatus::Finish);
+
+        // Self id — also safe (raft-rs no-ops; we never send to self
+        // but the failure channel could in theory deliver one).
+        let self_id = driver.config().id;
+        driver.report_unreachable(self_id);
+        driver.report_snapshot(self_id, raft::SnapshotStatus::Failure);
     }
 
     #[tokio::test]

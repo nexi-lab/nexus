@@ -264,12 +264,17 @@ def test_sys_read_records_backend_latency_and_bytes() -> None:
     assert _sample("nexus_read_latency_seconds_count", tier="backend") == before_count + 1
 
 
-def test_sys_read_defaults_to_nonblocking_regular_read() -> None:
+def test_sys_read_defaults_to_longpoll_budget() -> None:
+    """sys_read(timeout_ms=None) must pass the 5000ms long-poll default to the
+    kernel — the Issue #3699 opt-out contract. DT_REG ignores timeout_ms per
+    rust/kernel/src/kernel/io.rs:255-305, so this default is safe for regular
+    reads while preserving correct IPC blocking for DT_PIPE / DT_STREAM
+    consumers that don't opt out."""
     harness = _Harness()
 
     assert harness.sys_read("/file.txt") == b"abc"
 
-    assert harness._kernel.read_timeouts == [0]
+    assert harness._kernel.read_timeouts == [5000]
 
 
 def test_sys_read_preserves_explicit_ipc_timeout() -> None:

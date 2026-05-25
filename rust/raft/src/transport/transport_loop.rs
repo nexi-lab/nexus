@@ -30,13 +30,28 @@ use super::proto::nexus::raft::EcReplicationEntry;
 use super::{NodeAddress, SharedPeerMap};
 use crate::raft::{StateMachine, ZoneConsensusDriver};
 use protobuf::Message as ProtobufV2Message;
+use raft::eraftpb::MessageType;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use std::time::Duration as StdDuration;
+
+/// A transport send that failed — surfaced back from a spawned send task
+/// to the driver loop so raft-rs can be told and the affected peer's
+/// `Progress` tracker can leave its stuck state.
+///
+/// `is_snapshot` distinguishes a `MsgSnapshot` failure (needs
+/// `report_snapshot(peer, Failure)`) from any other message-type
+/// failure (needs `report_unreachable(peer)`).  Both are required
+/// to keep raft-rs's state machine honest under flaky transports.
+#[derive(Debug, Clone, Copy)]
+struct TransportFailure {
+    peer_id: u64,
+    is_snapshot: bool,
+}
 
 /// Base backoff interval for EC replication retries.
 const EC_BACKOFF_BASE: Duration = Duration::from_millis(100);
@@ -120,6 +135,18 @@ pub struct TransportLoop<S: StateMachine + 'static> {
     self_address: String,
     /// Per-peer EC replication tracking (peer_id → state).
     ec_peer_state: HashMap<u64, PeerReplicationState>,
+    /// Sender half of the transport-failure channel.  Cloned into each
+    /// `send_messages_fire_and_forget` task so a transport-level send
+    /// error (network down, HTTP/2 keepalive timeout, tonic transport
+    /// error) can be reported back to this loop without holding a
+    /// reference to the driver across `await` points.
+    failure_tx: mpsc::UnboundedSender<TransportFailure>,
+    /// Receiver half of the transport-failure channel.  Drained at the
+    /// top of each [`Self::run`] iteration and translated into
+    /// `driver.report_unreachable` / `driver.report_snapshot(_, Failure)`
+    /// calls — without those, raft-rs's `Progress` tracker stays in
+    /// `Replicate` / `Snapshot` state forever after a single failure.
+    failure_rx: mpsc::UnboundedReceiver<TransportFailure>,
 }
 
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
@@ -134,6 +161,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     ) -> Self {
         let tick_interval = driver.config().tick_interval;
         let node_id = driver.config().id;
+        let (failure_tx, failure_rx) = mpsc::unbounded_channel();
         Self {
             driver,
             peers,
@@ -143,6 +171,8 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             node_id,
             self_address: String::new(),
             ec_peer_state: HashMap::new(),
+            failure_tx,
+            failure_rx,
         }
     }
 
@@ -188,6 +218,22 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 _ = shutdown.changed() => {
                     tracing::info!("Transport loop shutting down");
                     break;
+                }
+            }
+
+            // 0. Drain any transport send failures reported by previously
+            //    spawned send tasks and forward them to raft-rs.  Must
+            //    run before `process_messages` / `advance` so the next
+            //    tick's outgoing-message set reflects the updated
+            //    `Progress` state (peer in Probe rather than stuck in
+            //    Replicate / Snapshot).  Cheap: non-blocking try_recv
+            //    drain, returns immediately when the channel is empty
+            //    (the steady-state happy path).
+            while let Ok(failure) = self.failure_rx.try_recv() {
+                self.driver.report_unreachable(failure.peer_id);
+                if failure.is_snapshot {
+                    self.driver
+                        .report_snapshot(failure.peer_id, raft::SnapshotStatus::Failure);
                 }
             }
 
@@ -251,9 +297,18 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 }
             };
 
+            // Capture the message type *before* the move into the spawned
+            // task so we can report a `MsgSnapshot` failure correctly.
+            // A failed snapshot send needs both `report_unreachable` and
+            // `report_snapshot(_, Failure)` — without the latter, the
+            // peer's Progress stays in the `Snapshot` state and raft-rs
+            // never retries.
+            let is_snapshot = msg.get_msg_type() == MessageType::MsgSnapshot;
+
             let client_pool = self.client_pool.clone();
             let zone_id = self.zone_id.clone();
             let self_address = self.self_address.clone();
+            let failure_tx = self.failure_tx.clone();
 
             tokio::spawn(async move {
                 let result = tokio::time::timeout(
@@ -262,11 +317,12 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 )
                 .await;
 
-                match result {
-                    Ok(Ok(())) => {}
+                let send_failed = match result {
+                    Ok(Ok(())) => false,
                     Ok(Err(e)) => {
                         tracing::warn!(peer = target_id, "Raft message send failed: {}", e);
                         client_pool.remove(target_id).await;
+                        true
                     }
                     Err(_elapsed) => {
                         tracing::warn!(
@@ -275,7 +331,19 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                             RAFT_SEND_TIMEOUT,
                         );
                         client_pool.remove(target_id).await;
+                        true
                     }
+                };
+
+                if send_failed {
+                    // Best-effort signal back to the driver loop.  If the
+                    // receiver was dropped (loop is shutting down) the
+                    // send is a no-op; that is fine because the driver
+                    // is on its way out anyway.
+                    let _ = failure_tx.send(TransportFailure {
+                        peer_id: target_id,
+                        is_snapshot,
+                    });
                 }
             });
         }

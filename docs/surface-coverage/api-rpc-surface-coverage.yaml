@@ -7886,7 +7886,7 @@ operations:
   transports:
     grpc_expose:
       name: read_batch
-      source: src/nexus/core/nexus_fs_content.py:1618
+      source: src/nexus/core/nexus_fs_content.py:1613
     sdk:
       name: KernelClient.read_batch
       source: src/nexus/remote/kernel_client.py:452
@@ -11181,7 +11181,7 @@ operations:
   transports:
     grpc_expose:
       name: write_batch
-      source: src/nexus/core/nexus_fs_content.py:1456
+      source: src/nexus/core/nexus_fs_content.py:1451
     sdk:
       name: KernelClient.write_batch
       source: src/nexus/remote/kernel_client.py:901

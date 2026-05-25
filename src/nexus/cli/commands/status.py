@@ -211,10 +211,10 @@ def _server_health(
     ``src/nexus/server/api/core/health.py:71-206``, so a tighter budget
     times out under realistic load.
     """
-    from nexus.cli.api_client import _is_loopback_url
+    from nexus.cli.api_client import is_loopback_url
 
     base_url = base_url.rstrip("/")
-    trust_env = not _is_loopback_url(base_url)
+    trust_env = not is_loopback_url(base_url)
 
     def public_health(client: Any) -> dict[str, Any] | None:
         try:

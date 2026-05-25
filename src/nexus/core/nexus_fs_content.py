@@ -1324,23 +1324,18 @@ class ContentMixin:
         from nexus.utils.edit_engine import EditEngine
         from nexus.utils.edit_engine import EditOperation as EditOp
 
-        current_content_id = None
-        if if_match is None:
-            content_raw = self.sys_read(path, context=context)
-            content_bytes = (
-                content_raw.get("data", b"") if isinstance(content_raw, dict) else content_raw
-            )
-            if isinstance(content_bytes, str):
-                content_bytes = content_bytes.encode("utf-8")
-            elif not isinstance(content_bytes, bytes):
-                content_bytes = bytes(content_bytes)
-        else:
-            # OCC needs the current content_id. Plain/preview edits avoid the
-            # metadata stat round trip and read only the file bytes.
-            result = self.read(path, context=context, return_metadata=True)
-            assert isinstance(result, dict), "Expected dict when return_metadata=True"
-            content_bytes = result["content"]
-            current_content_id = result.get("content_id")
+        # edit() operates on DT_REG: sys_read returns bytes per the Tier 1
+        # contract (syscall-design.md §2). Non-OCC paths skip the sys_stat
+        # round trip — only the if_match branch needs content_id.
+        content_bytes = self.sys_read(path, context=context)
+        assert isinstance(content_bytes, bytes), (
+            "edit() requires DT_REG (sys_read should return bytes)"
+        )
+
+        current_content_id: str | None = None
+        if if_match is not None:
+            meta = self.sys_stat(path, context=context)
+            current_content_id = meta.get("content_id") if meta else None
 
         # Check content_id if provided (optimistic concurrency control)
         if if_match is not None and current_content_id != if_match:

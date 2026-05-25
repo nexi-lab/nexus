@@ -111,9 +111,16 @@ class ContentMixin:
             timeout_ms: For DT_PIPE / DT_STREAM, how long to block waiting
                 for data. ``0`` is O_NONBLOCK (nowait pop, return immediately
                 with empty data if pipe drained). Default ``None`` uses the
-                non-blocking path so regular-file reads do not accidentally
-                pay an IPC wait budget. IPC consumers that want long-poll
-                behavior must pass a non-zero timeout explicitly.
+                long-poll default (5000 ms). Hot polling loops MUST pass
+                ``timeout_ms=0`` to avoid blocking the asyncio event loop —
+                the Rust kernel's ``pipe_read_blocking`` releases the GIL
+                but a 5 s wait per empty poll still starves uvicorn's
+                accept loop. Issue #3699.
+
+                DT_REG ignores ``timeout_ms`` entirely: per-type dispatch
+                lives in ``rust/kernel/src/kernel/io.rs`` (lines 255–305) —
+                only DT_PIPE / DT_STREAM consult it. Regular-file reads
+                never pay the IPC wait budget regardless of this value.
         """
 
         start = time.perf_counter()
@@ -165,11 +172,12 @@ class ContentMixin:
                     ),
                 )
             _rust_ctx = self._build_rust_ctx(context, _is_admin)
+            # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
             # The caller's `offset` param doubles as the stream cursor position.
-            # Default to O_NONBLOCK: regular-file reads must not inherit a
-            # DT_PIPE/DT_STREAM wait budget. Long-poll IPC callers pass an
-            # explicit non-zero timeout.
-            _timeout_ms = 0 if timeout_ms is None else int(timeout_ms)
+            # ``timeout_ms=0`` from the caller selects O_NONBLOCK (Issue #3699).
+            # Per-type dispatch lives in rust/kernel/src/kernel/io.rs:255-305 —
+            # DT_PIPE/DT_STREAM consult ``timeout_ms``, DT_REG ignores it.
+            _timeout_ms = 5000 if timeout_ms is None else int(timeout_ms)
             result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
 
             # DT_STREAM: return dict with next_offset for cursor advancement.

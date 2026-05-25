@@ -64,16 +64,33 @@ class TestServerHealth:
         assert result is None
 
     @patch("httpx.Client")
-    def test_falls_back_to_public_health_when_detailed_times_out(
-        self, mock_client_cls: MagicMock
-    ) -> None:
+    def test_returns_degraded_when_detailed_times_out(self, mock_client_cls: MagicMock) -> None:
+        """Timeout on authenticated /health/detailed surfaces as degraded —
+        never silently fall back to unauth /health, which would mask the real
+        failure while authenticated callers still hang."""
         mock_client = MagicMock()
+        mock_client.get.side_effect = httpx.TimeoutException("detailed health timed out")
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = _server_health("http://localhost:2026", api_key="sk-test")
+
+        assert result is not None
+        assert result["status"] == "degraded"
+        assert "timed out" in result["reason"]
+        assert mock_client.get.call_count == 1
+
+    @patch("httpx.Client")
+    def test_falls_back_to_public_health_on_401_403(self, mock_client_cls: MagicMock) -> None:
+        """Detailed endpoint may require admin auth — preserve the original
+        a0252a5f9 fallback to the public /health probe so we still report a
+        useful status when the supplied key lacks admin scope."""
+        mock_client = MagicMock()
+        detailed_resp = MagicMock(status_code=403)
         fallback_resp = MagicMock(status_code=200)
         fallback_resp.json.return_value = {"status": "healthy", "service": "nexus-rpc"}
-        mock_client.get.side_effect = [
-            httpx.TimeoutException("detailed health timed out"),
-            fallback_resp,
-        ]
+        mock_client.get.side_effect = [detailed_resp, fallback_resp]
         mock_client.__enter__ = lambda s: mock_client
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client_cls.return_value = mock_client
@@ -82,35 +99,6 @@ class TestServerHealth:
 
         assert result == {"status": "healthy", "service": "nexus-rpc"}
         assert mock_client.get.call_count == 2
-
-    def test_detailed_timeout_falls_back_to_public_health_without_bearer(self) -> None:
-        """The public fallback must not reuse the bearer that made detailed health slow."""
-        clients: list[MagicMock] = []
-
-        def _client_factory(*, timeout: float, headers: dict[str, str] | None = None) -> MagicMock:
-            client = MagicMock()
-            client.headers_seen = headers or {}
-            client.__enter__ = lambda s: client
-            client.__exit__ = MagicMock(return_value=False)
-            clients.append(client)
-
-            if headers and headers.get("Authorization"):
-                client.get.side_effect = httpx.TimeoutException("authenticated health timed out")
-            else:
-                fallback_resp = MagicMock(status_code=200)
-                fallback_resp.json.return_value = {"status": "healthy", "service": "nexus-rpc"}
-                client.get.return_value = fallback_resp
-
-            return client
-
-        with patch("httpx.Client", side_effect=_client_factory):
-            result = _server_health("http://localhost:2026", api_key="sk-test")
-
-        assert result == {"status": "healthy", "service": "nexus-rpc"}
-        assert [client.headers_seen for client in clients] == [
-            {"Authorization": "Bearer sk-test"},
-            {},
-        ]
 
 
 # ---------------------------------------------------------------------------

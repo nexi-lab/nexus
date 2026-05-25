@@ -67,6 +67,19 @@ def test_resolve_self_ipv4_only(fake_status):
     assert tp.resolve_self_ip() == "100.64.0.27"
 
 
+def test_resolve_local_endpoint_is_loopback():
+    # `resolve_local_endpoint` is the connect-to-self primitive and must
+    # always return loopback, regardless of Tailscale state.  Going
+    # through the Tailscale IP on Windows triggers a Go-net-stack
+    # hairpin quirk that times out; loopback is universally fast and
+    # avoids the Tailscale data plane entirely for self-connect.
+    #
+    # No `fake_status` fixture — the helper must not depend on
+    # Tailscale being installed or up to resolve "talk to my own
+    # daemon".
+    assert tp.resolve_local_endpoint() == "127.0.0.1"
+
+
 def test_resolve_peer_exact_match(fake_status):
     # Exact hostname match on a Peer block — no stale collision, no
     # filtering noise.

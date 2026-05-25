@@ -79,7 +79,17 @@ def _tailscale_status_json() -> dict:
 
 
 def resolve_self_ip() -> str:
-    """Return this node's primary Tailscale IPv4 address."""
+    """Return this node's primary Tailscale IPv4 address.
+
+    Use for **publishing** the node's address to other peers — e.g.
+    as ``NEXUS_HOSTNAME`` (so peers can dial back in) or as the
+    ``self_address`` recorded in raft ConfState.  For **connecting
+    to this node's own daemon**, use :func:`resolve_local_endpoint`
+    instead — going through the Tailscale IP triggers a Windows-side
+    hairpinning quirk where ``grpcurl`` (and other Go-net-stack
+    clients) time out even though ``Test-NetConnection`` at TCP
+    level succeeds.
+    """
     data = _tailscale_status_json()
     self_node = data.get("Self") or {}
     ips: list[str] = list(self_node.get("TailscaleIPs") or [])
@@ -90,6 +100,25 @@ def resolve_self_ip() -> str:
             "Run `tailscale status` to diagnose."
         )
     return ipv4[0]
+
+
+def resolve_local_endpoint() -> str:
+    """Return the address to use for connecting to this node's own daemon.
+
+    Always returns ``"127.0.0.1"`` — never the Tailscale IP — because
+    on Windows the Tailscale TUN's hairpin path (host connecting to
+    its own ``100.64.0.x`` IP) trips a Go-net-stack interaction that
+    times out at TCP dial time, even though the kernel-level TCP
+    handshake itself succeeds.  Looping through the loopback
+    interface is universally fast and avoids the Tailscale data
+    plane entirely for self-connect traffic.
+
+    Use whenever a script / test / debug invocation needs to reach
+    the local ``nexusd-cluster`` (or any local daemon) listening on
+    ``0.0.0.0``.  For peer-facing publication of this node's
+    address, use :func:`resolve_self_ip` instead.
+    """
+    return "127.0.0.1"
 
 
 def resolve_peer(hostname_pattern: str, *, online_only: bool = True) -> str:
@@ -159,13 +188,17 @@ def main(argv: Iterable[str] | None = None) -> int:
     if not args or args[0] in {"-h", "--help"}:
         print(__doc__)
         print("\nUsage:")
-        print("  python -m scripts._tailscale_peers self")
+        print("  python -m scripts._tailscale_peers self    # Tailscale IP (publish to peers)")
+        print("  python -m scripts._tailscale_peers local   # Loopback (connect to own daemon)")
         print("  python -m scripts._tailscale_peers peer <hostname-prefix>")
         return 0
 
     cmd = args[0]
     if cmd == "self":
         print(resolve_self_ip())
+        return 0
+    if cmd == "local":
+        print(resolve_local_endpoint())
         return 0
     if cmd == "peer":
         if len(args) < 2:

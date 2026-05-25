@@ -629,4 +629,97 @@ mod tests {
         attacher.commit_pop(advance, len);
         creator.cleanup().unwrap();
     }
+
+    /// Multi-producer single-consumer: concurrent `push_inner` from
+    /// many threads inside the same process must not corrupt the
+    /// mmap ring or alias the `&mut [u8]` borrow into it. Producers
+    /// and consumer run concurrently against a single `Arc`-shared
+    /// backend (same-process view into the mmap); after every
+    /// producer finishes the consumer drains the remainder and
+    /// verifies the union equals the expected universe.
+    ///
+    /// Without an in-process writer mutex on the SHM backend this
+    /// fails with frame loss or UB: two producers can both compute
+    /// the same `tail` snapshot, copy their payload into the same
+    /// `[tail..tail+frame_len]` slice, and both Release-store the
+    /// same new tail — losing one of the two messages.
+    #[test]
+    fn test_mpsc_writers_do_not_corrupt() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const PRODUCERS: usize = 4;
+        const PER_PRODUCER: usize = 256;
+        let total = PRODUCERS * PER_PRODUCER;
+
+        // Use only the creator side: both creator and attacher are
+        // views into the same mmap, so a single Arc-shared backend
+        // suffices to exercise in-process multi-thread access.
+        let (creator, _shm_path, data_rd_fd, space_rd_fd) =
+            SharedMemoryPipeBackend::create_native(4096).unwrap();
+        unsafe {
+            libc::close(data_rd_fd);
+            libc::close(space_rd_fd);
+        }
+        let core = Arc::new(creator);
+
+        let producers: Vec<_> = (0..PRODUCERS)
+            .map(|p| {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    for i in 0..PER_PRODUCER {
+                        let val = ((p as u64) << 32) | (i as u64);
+                        loop {
+                            match core.push_inner(&val.to_le_bytes()) {
+                                Ok(_) => break,
+                                Err(PipeError::Full(_, _)) => thread::yield_now(),
+                                Err(e) => panic!("unexpected push error: {:?}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Consumer runs concurrently — single-consumer, so its own
+        // `pop_position`/`commit_pop` calls do not contend with
+        // each other.
+        let consumer = {
+            let core = Arc::clone(&core);
+            thread::spawn(move || {
+                let mut got = Vec::with_capacity(total);
+                while got.len() < total {
+                    match core.pop_position() {
+                        Ok((start, len, advance)) => {
+                            let ring = core.ring_slice();
+                            let data = ring[start..start + len].to_vec();
+                            core.commit_pop(advance, len);
+                            assert_eq!(data.len(), 8);
+                            got.push(u64::from_le_bytes(data.try_into().expect("8 bytes")));
+                        }
+                        Err(PipeError::Empty) | Err(PipeError::ClosedEmpty) => {
+                            thread::yield_now();
+                        }
+                        Err(e) => panic!("unexpected pop error: {:?}", e),
+                    }
+                }
+                got
+            })
+        };
+
+        for p in producers {
+            p.join().unwrap();
+        }
+        let mut got = consumer.join().unwrap();
+
+        // Every produced value appears, exactly once.
+        let mut expected: Vec<u64> = (0..PRODUCERS)
+            .flat_map(|p| (0..PER_PRODUCER).map(move |i| ((p as u64) << 32) | (i as u64)))
+            .collect();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected);
+
+        core.cleanup().unwrap();
+    }
 }

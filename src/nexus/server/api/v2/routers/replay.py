@@ -6,9 +6,10 @@ Provides endpoints for MCL replay and index rebuilding:
 """
 
 import logging
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from nexus.server.api.v2.dependencies import get_auth_result, get_operation_logger
 from nexus.server.api.v2.models.aspects import (
@@ -82,13 +83,18 @@ async def replay_changes(
 
 @router.post("/api/v2/admin/reindex")
 async def trigger_reindex(
+    request: Request,
     body: ReindexRequest,
     logger_and_zone: tuple[Any, str] = Depends(get_operation_logger),
     auth_result: dict[str, Any] = Depends(get_auth_result),
 ) -> ReindexResponse:
     """Trigger an index rebuild from MCL records.
 
-    Replays operation_log MCL entries to rebuild aspect store state.
+    Replays operation_log MCL entries to rebuild aspect store state, and
+    — for ``target`` in ``{"all", "search"}`` — drives a search-daemon
+    refresh on every processed path so the BM25/vector index sees the
+    rebuilt state too (Issue #4241).
+
     Use dry_run=true to see what would be processed without making changes.
     Requires admin privileges.
     """
@@ -141,6 +147,10 @@ async def trigger_reindex(
         processed = 0
         errors = 0
         last_sequence = body.from_sequence or 0
+        # Issue #4241: track distinct paths so we can drive a search-daemon
+        # refresh after the aspect-store rebuild. Preserve change_type so
+        # deletes propagate as deletes (not refreshes) to BM25.
+        paths_seen: dict[str, str] = {}
 
         for row in op_logger.replay_changes(
             from_sequence=body.from_sequence or 0,
@@ -151,11 +161,43 @@ async def trigger_reindex(
                 processor.process(row)
                 processed += 1
                 last_sequence = row.sequence_number
+                row_path = getattr(row, "path", None)
+                if row_path:
+                    row_change = getattr(row, "change_type", "") or ""
+                    paths_seen[row_path] = "delete" if row_change == "delete" else "update"
             except Exception as e:
                 errors += 1
                 logger.warning("Reindex error at seq %d: %s", row.sequence_number, e)
 
         session.commit()
+
+        # Issue #4241: drive a search-index refresh so this endpoint
+        # actually rebuilds search state (previously it only rebuilt the
+        # aspect store, which left the BM25/vector index stale and
+        # search.stats.last_index_refresh untouched — operators saw
+        # "processed=N, errors=0" and concluded the index was rebuilt).
+        search_paths_refreshed = 0
+        last_refresh_ts: float | None = None
+        if body.target in ("all", "search") and paths_seen:
+            search_daemon = getattr(request.app.state, "search_daemon", None)
+            if search_daemon is not None:
+                for path, change in paths_seen.items():
+                    try:
+                        await search_daemon.notify_file_change(path, change)
+                        search_paths_refreshed += 1
+                    except Exception as e:
+                        logger.warning("Search refresh failed for %s during reindex: %s", path, e)
+                # Stamp the daemon so /api/v2/search/stats reflects the
+                # operator's reindex call even before the consumer loop
+                # finishes draining the queued mutations.
+                stats_obj = getattr(search_daemon, "stats", None)
+                if stats_obj is not None:
+                    last_refresh_ts = time.time()
+                    try:
+                        stats_obj.last_index_refresh = last_refresh_ts
+                    except Exception:
+                        # dataclass without setattr (frozen) or attr absent — best-effort.
+                        last_refresh_ts = None
 
         return ReindexResponse(
             target=body.target,
@@ -163,6 +205,8 @@ async def trigger_reindex(
             processed=processed,
             errors=errors,
             last_sequence=last_sequence,
+            search_paths_refreshed=search_paths_refreshed,
+            last_index_refresh=last_refresh_ts,
         )
 
     except Exception as e:

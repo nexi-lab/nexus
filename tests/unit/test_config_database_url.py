@@ -48,3 +48,29 @@ class TestDatabaseUrlFromEnv:
         monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://env:env@h/db")
         cfg = _load_from_dict({"database_url": "sqlite:///tmp/dict.db"})
         assert cfg.database_url == "sqlite:///tmp/dict.db"
+
+
+class TestPostgresSchemeNormalization:
+    """Issue #4238: canonical ``postgres://`` is rewritten to ``postgresql://``.
+
+    Cloud providers (Railway, Render, Supabase, Heroku) emit the canonical
+    scheme by default, but SQLAlchemy dropped the ``postgres`` dialect
+    alias in 1.4 and only loads ``postgresql``.
+    """
+
+    def test_constructor_rewrites_postgres_scheme(self) -> None:
+        cfg = NexusConfig(database_url="postgres://u:p@h:5432/db")
+        assert cfg.database_url == "postgresql://u:p@h:5432/db"
+
+    def test_dict_rewrites_postgres_scheme(self) -> None:
+        cfg = _load_from_dict({"database_url": "postgres://u:p@h/db"})
+        assert cfg.database_url == "postgresql://u:p@h/db"
+
+    def test_env_rewrites_postgres_scheme(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_DATABASE_URL", "postgres://e:e@h/e")
+        cfg = _load_from_environment()
+        assert cfg.database_url == "postgresql://e:e@h/e"
+
+    def test_postgresql_scheme_unchanged(self) -> None:
+        cfg = NexusConfig(database_url="postgresql://u:p@h/db")
+        assert cfg.database_url == "postgresql://u:p@h/db"

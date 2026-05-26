@@ -96,7 +96,7 @@ def check_permissions_bulk_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     try:
@@ -329,13 +329,13 @@ def check_permission_single_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     if _compute_permission_single is None:
         raise RuntimeError(
             "Rust single permission check not available. "
-            "Install nexus_runtime: cargo build --release -p nexus-cluster"
+            "nexus_runtime not present (kernel runs as a separate process via gRPC; see _rust_compat.py)"
         )
 
     try:
@@ -466,13 +466,13 @@ def expand_subjects_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     if _expand_subjects is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
-            "Install nexus_runtime: cargo build --release -p nexus-cluster"
+            "nexus_runtime not present (kernel runs as a separate process via gRPC; see _rust_compat.py)"
         )
 
     try:
@@ -583,13 +583,13 @@ def list_objects_for_subject_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     if _list_objects_for_subject is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
-            "Install nexus_runtime: cargo build --release -p nexus-cluster"
+            "nexus_runtime not present (kernel runs as a separate process via gRPC; see _rust_compat.py)"
         )
 
     try:

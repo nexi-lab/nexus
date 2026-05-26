@@ -97,3 +97,8 @@ class ReindexResponse(ApiModel):
     errors: int = 0
     last_sequence: int = 0
     dry_run: bool = False
+    # Issue #4241: surface the search-index side-effect so operators can
+    # verify that reindex actually refreshed the BM25/vector index, not
+    # just the aspect store.
+    search_paths_refreshed: int = 0
+    last_index_refresh: float | None = None

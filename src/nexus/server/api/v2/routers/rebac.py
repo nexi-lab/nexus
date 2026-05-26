@@ -94,6 +94,45 @@ def _subject_tuple(body: TupleBody) -> tuple[str, str] | tuple[str, str, str]:
     return (body.subject_namespace, body.subject_id)
 
 
+def _normalize_file_object_id(object_namespace: str, object_id: str) -> str:
+    """Issue #4239: collapse wildcard-style ``file`` object IDs to the
+    directory path so existing ancestor-walk / directory-grant machinery
+    grants every descendant.
+
+    Operators reach for shell-style globs by reflex:
+
+    - ``/workspaces/ws1/**`` → ``/workspaces/ws1``
+    - ``/workspaces/ws1/*``  → ``/workspaces/ws1``
+    - ``/workspaces/ws1/``   → ``/workspaces/ws1``  (trailing slash)
+    - ``/**``                → ``/``                (root grant)
+    - ``/*``                 → ``/``
+
+    The stored tuple is then a plain directory-path tuple, which
+    ``PermissionEnforcer._check_rebac`` already inherits to descendants
+    via its parent walk. We don't introduce a new tuple shape — just
+    canonicalize at the API surface so users don't have to know that
+    glob syntax isn't real ReBAC.
+
+    Only applies to ``object_namespace == "file"``; other namespaces
+    (``approvals``, ``zone``, …) are passed through unchanged so a
+    capability id literally containing ``*`` isn't mangled.
+    """
+    if object_namespace != "file" or not object_id:
+        return object_id
+    out = object_id
+    # Strip ``/**`` and ``/*`` suffixes (possibly repeated, e.g. ``/a/**/*``).
+    while out.endswith("/**") or out.endswith("/*"):
+        out = out[: -(3 if out.endswith("/**") else 2)]
+    # Strip a trailing slash unless we've collapsed all the way to root.
+    if len(out) > 1 and out.endswith("/"):
+        out = out.rstrip("/")
+    # An empty result means the user supplied something like ``/**`` or
+    # ``/*`` — collapse to the canonical root grant.
+    if not out:
+        out = "/"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -117,7 +156,17 @@ async def write_tuple(
     """
     rebac_manager = _resolve_rebac_manager(request)
     subject = _subject_tuple(body)
-    obj = (body.object_namespace, body.object_id)
+    # Issue #4239: normalize shell-style globs to a directory path so the
+    # tuple inherits to descendants via the existing ancestor walk.
+    normalized_object_id = _normalize_file_object_id(body.object_namespace, body.object_id)
+    if normalized_object_id != body.object_id:
+        logger.info(
+            "[#4239] rebac tuple object_id normalized: %r -> %r "
+            "(wildcard glob collapsed to directory grant)",
+            body.object_id,
+            normalized_object_id,
+        )
+    obj = (body.object_namespace, normalized_object_id)
 
     try:
         result = rebac_manager.rebac_write(
@@ -137,7 +186,8 @@ async def write_tuple(
         "subject_id": body.subject_id,
         "relation": body.relation,
         "object_namespace": body.object_namespace,
-        "object_id": body.object_id,
+        "object_id": normalized_object_id,
+        "object_id_input": body.object_id,
         "zone_id": body.zone_id,
     }
 
@@ -150,6 +200,7 @@ async def list_tuples(
     relation: str | None = None,
     object_namespace: str | None = None,
     object_id: str | None = None,
+    zone_id: str | None = None,
     _auth: dict[str, Any] = Depends(require_followup_admin),
 ) -> dict[str, Any]:
     """List ReBAC tuples matching optional filters (admin-only).
@@ -157,31 +208,27 @@ async def list_tuples(
     Diagnostic surface — production callers use the gRPC permission
     check, not this endpoint. Returns up to whatever the manager
     returns; we don't paginate.
+
+    Issue #4242: any subset of filters is honored — ``?subject_id=admin``
+    alone is valid (operators debugging a permission denial want to
+    grep by subject regardless of ``subject_type``).
     """
     rebac_manager = _resolve_rebac_manager(request)
 
-    subject: tuple[str, str] | None = None
-    if subject_namespace is not None and subject_id is not None:
-        subject = (subject_namespace, subject_id)
-    elif subject_namespace is not None or subject_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="subject_namespace and subject_id must be provided together",
-        )
-
-    obj: tuple[str, str] | None = None
-    if object_namespace is not None and object_id is not None:
-        obj = (object_namespace, object_id)
-    elif object_namespace is not None or object_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="object_namespace and object_id must be provided together",
-        )
+    # Issue #4239: canonicalize the lookup surface so
+    # ``?object_id=/workspaces/ws1/**`` finds tuples written via any of
+    # the equivalent glob spellings. Only meaningful when an object_id
+    # was actually provided.
+    if object_id is not None and object_namespace is not None:
+        object_id = _normalize_file_object_id(object_namespace, object_id)
 
     tuples: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
-        subject=subject,
         relation=relation,
-        object=obj,
+        subject_type=subject_namespace,
+        subject_id=subject_id,
+        object_type=object_namespace,
+        object_id=object_id,
+        zone_id=zone_id,
     )
     return {"tuples": tuples, "count": len(tuples)}
 
@@ -203,7 +250,9 @@ async def delete_tuple(
     # filter on subject_relation); the 3-tuple is only relevant for
     # writes. The zone_id filter below disambiguates same-shape tuples
     # across zones.
-    obj = (body.object_namespace, body.object_id)
+    # Issue #4239: canonicalize so DELETE matches what POST stored.
+    normalized_object_id = _normalize_file_object_id(body.object_namespace, body.object_id)
+    obj = (body.object_namespace, normalized_object_id)
 
     matches: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
         subject=(body.subject_namespace, body.subject_id),
@@ -226,6 +275,7 @@ async def delete_tuple(
         "subject_id": body.subject_id,
         "relation": body.relation,
         "object_namespace": body.object_namespace,
-        "object_id": body.object_id,
+        "object_id": normalized_object_id,
+        "object_id_input": body.object_id,
         "zone_id": body.zone_id,
     }

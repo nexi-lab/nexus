@@ -505,15 +505,20 @@ class SQLAlchemyRecordStore(RecordStoreABC):
     @staticmethod
     def _resolve_db_url(db_url: str | None, db_path: str | Path | None) -> str:
         """Resolve database URL from parameters and environment."""
+        # Issue #4238: accept the canonical ``postgres://`` scheme that
+        # cloud providers emit by default. SQLAlchemy only loads its
+        # ``postgresql`` dialect.
+        from nexus.core.db_utils import normalize_database_url
+
         if db_url:
-            return db_url
+            return normalize_database_url(db_url)
 
         # Check environment variables
         from nexus.lib.env import get_database_url
 
         env_url = get_database_url()
         if env_url:
-            return env_url
+            return normalize_database_url(env_url)
 
         # Fall back to db_path (SQLite)
         if db_path:

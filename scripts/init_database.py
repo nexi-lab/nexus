@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, inspect, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from alembic import command  # noqa: E402
+from nexus.core.db_utils import normalize_database_url  # noqa: E402
 from nexus.storage.schema_invariants import ensure_postgres_schema_invariants  # noqa: E402
 
 # Path to alembic.ini (located in alembic/ directory)
@@ -102,6 +103,14 @@ def main() -> None:
     if not database_url:
         print("ERROR: NEXUS_DATABASE_URL not set", file=sys.stderr)
         sys.exit(1)
+
+    # Issue #4238: Normalize the canonical ``postgres://`` scheme that
+    # cloud providers (Railway, Render, Supabase, Heroku) emit by default.
+    # SQLAlchemy only accepts ``postgresql://`` since 1.4.
+    normalized = normalize_database_url(database_url)
+    if normalized != database_url:
+        print("ℹ️  Normalized NEXUS_DATABASE_URL scheme: postgres:// → postgresql://")
+        database_url = normalized
 
     try:
         init_database(database_url)

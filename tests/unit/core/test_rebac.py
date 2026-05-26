@@ -1035,3 +1035,75 @@ def test_list_objects_sorted_by_path(enhanced_rebac_manager):
 
     object_ids = [obj_id for _, obj_id in objects]
     assert object_ids == sorted(object_ids), "Results should be sorted alphabetically"
+
+
+# ---------------------------------------------------------------------------
+# Issue #4242: rebac_list_tuples partial-filter support
+# ---------------------------------------------------------------------------
+
+
+def _seed_list_tuples_fixture(mgr: ReBACManager) -> None:
+    mgr.rebac_write(
+        subject=("user", "admin"),
+        relation="read",
+        object=("file", "/x/y.md"),
+        zone_id="default",
+    )
+    mgr.rebac_write(
+        subject=("user", "alice"),
+        relation="read",
+        object=("file", "/x/z.md"),
+        zone_id="default",
+    )
+    mgr.rebac_write(
+        subject=("agent", "admin"),
+        relation="read",
+        object=("file", "/x/y.md"),
+        zone_id="other",
+    )
+
+
+def test_list_tuples_subject_id_alone_matches_across_types(rebac_manager) -> None:
+    """Issue #4242: ``subject_id`` alone filters regardless of ``subject_type``.
+
+    Previously the router required both-or-neither; even at the manager
+    level only the 2-tuple ``subject=(type, id)`` was usable. Operators
+    debugging permission denials want to grep by id alone.
+    """
+    _seed_list_tuples_fixture(rebac_manager)
+
+    rows = rebac_manager.rebac_list_tuples(subject_id="admin")
+    subject_types = {(r["subject_type"], r["subject_id"]) for r in rows}
+    assert ("user", "admin") in subject_types
+    assert ("agent", "admin") in subject_types
+    # alice should not appear
+    assert ("user", "alice") not in subject_types
+
+
+def test_list_tuples_subject_type_alone_matches(rebac_manager) -> None:
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(subject_type="user")
+    subject_types = {r["subject_type"] for r in rows}
+    assert subject_types == {"user"}
+
+
+def test_list_tuples_object_id_alone_matches(rebac_manager) -> None:
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(object_id="/x/y.md")
+    paths = {r["object_id"] for r in rows}
+    assert paths == {"/x/y.md"}
+
+
+def test_list_tuples_zone_id_filter(rebac_manager) -> None:
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(zone_id="other")
+    zones = {r["zone_id"] for r in rows}
+    assert zones == {"other"}
+
+
+def test_list_tuples_legacy_tuple_shortcut_still_works(rebac_manager) -> None:
+    """Backward compat: passing the (type, id) 2-tuple still works."""
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(subject=("user", "alice"))
+    assert len(rows) == 1
+    assert rows[0]["subject_id"] == "alice"

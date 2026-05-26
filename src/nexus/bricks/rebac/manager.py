@@ -997,13 +997,21 @@ class ReBACManager:
         """
         start_time = time.perf_counter()
 
-        # Try Rust acceleration first (has proper memoization, prevents timeout)
-        try:
-            from nexus.bricks.rebac.utils.fast import (
-                check_permission_single_rust,
-            )
+        # Try Rust acceleration first (has proper memoization, prevents timeout).
+        # Issue #4240: gate on `is_rust_available()` so we don't raise + catch +
+        # log WARNING on every permission decision when nexus_runtime is
+        # permanently absent (the kernel runs as a separate process now —
+        # `_rust_compat.py` ships None sentinels). The warning fired ~5x per
+        # /api/v2/search/query and pointed operators at a non-fix
+        # (`cargo build -p nexus-cluster` does not install a Python extension).
+        from nexus.bricks.rebac.utils.fast import is_rust_available
 
-            if context is None:
+        if is_rust_available() and context is None:
+            try:
+                from nexus.bricks.rebac.utils.fast import (
+                    check_permission_single_rust,
+                )
+
                 # Fetch tuples and namespace configs for Rust.
                 # CROSS-ZONE FIX: Pass subject to include cross-zone shares.
                 tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
@@ -1030,9 +1038,12 @@ class ReBACManager:
                     return result
                 logger.debug("Skipping Rust permission check for conditional ReBAC tuples")
 
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
-            # Fall through to Python implementation
+            except (RuntimeError, ValueError) as e:
+                # Reached only when Rust was advertised available but a
+                # runtime call failed — that IS exceptional, so keep the
+                # warning. The hot path (no Rust ever) is gated above.
+                logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
+                # Fall through to Python implementation
 
         # Fallback to Python implementation
         result = self._compute_permission_zone_aware_with_limits(
@@ -2244,25 +2255,32 @@ class ReBACManager:
             f"[LIST-OBJECTS] Namespace configs: file relations={len(namespace_configs.get('file', {}).get('relations', {}))} permissions={len(namespace_configs.get('file', {}).get('permissions', {}))}"
         )
 
-        # Try Rust implementation first (much faster)
-        try:
-            result = list_objects_for_subject_rust(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission=permission,
-                object_type=object_type,
-                tuples=tuples,
-                namespace_configs=namespace_configs,
-                path_prefix=path_prefix,
-                limit=limit,
-                offset=offset,
-            )
-            elapsed = (time.perf_counter() - start_time) * 1000
-            logger.debug(f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms")
-            return result
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
-            # Fall through to Python implementation
+        # Try Rust implementation first (much faster). Issue #4240: gate on
+        # `is_rust_available()` to avoid the per-call raise+log when the
+        # Rust extension is permanently unavailable (kernel-as-subprocess).
+        from nexus.bricks.rebac.utils.fast import is_rust_available
+
+        if is_rust_available():
+            try:
+                result = list_objects_for_subject_rust(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    object_type=object_type,
+                    tuples=tuples,
+                    namespace_configs=namespace_configs,
+                    path_prefix=path_prefix,
+                    limit=limit,
+                    offset=offset,
+                )
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.debug(
+                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
+                )
+                return result
+            except (RuntimeError, ValueError) as e:
+                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+                # Fall through to Python implementation
 
         # Python fallback implementation
         return self._rebac_list_objects_python(
@@ -2284,6 +2302,12 @@ class ReBACManager:
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
+        *,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        zone_id: str | None = None,
         **_kw: Any,
     ) -> list[dict[str, Any]]:
         """List relationship tuples matching optional filters.
@@ -2293,10 +2317,16 @@ class ReBACManager:
         to find tuple IDs for targeted deletion.
 
         Args:
-            subject: Optional (type, id) filter.
+            subject: Optional (type, id) full-subject filter (shortcut for
+                both ``subject_type`` and ``subject_id``).
             relation: Optional single relation filter.
-            object: Optional (type, id) filter.
+            object: Optional (type, id) full-object filter (shortcut for
+                both ``object_type`` and ``object_id``).
             relation_in: Optional list of relations to match.
+            subject_type / subject_id: Optional individual subject filters
+                (Issue #4242 — operators want ``?subject_id=admin`` alone).
+            object_type / object_id: Optional individual object filters.
+            zone_id: Optional zone filter.
 
         Returns:
             List of tuple dicts with keys: tuple_id, subject_type,
@@ -2306,9 +2336,18 @@ class ReBACManager:
         clauses: list[str] = []
         params: list[Any] = []
 
+        # Tuple shortcuts override individual kwargs.
         if subject is not None:
-            clauses.append("subject_type = ? AND subject_id = ?")
-            params.extend(subject)
+            subject_type, subject_id = subject
+        if object is not None:
+            object_type, object_id = object
+
+        if subject_type is not None:
+            clauses.append("subject_type = ?")
+            params.append(subject_type)
+        if subject_id is not None:
+            clauses.append("subject_id = ?")
+            params.append(subject_id)
         if relation is not None:
             clauses.append("relation = ?")
             params.append(relation)
@@ -2316,9 +2355,15 @@ class ReBACManager:
             placeholders = ", ".join("?" for _ in relation_in)
             clauses.append(f"relation IN ({placeholders})")
             params.extend(relation_in)
-        if object is not None:
-            clauses.append("object_type = ? AND object_id = ?")
-            params.extend(object)
+        if object_type is not None:
+            clauses.append("object_type = ?")
+            params.append(object_type)
+        if object_id is not None:
+            clauses.append("object_id = ?")
+            params.append(object_id)
+        if zone_id is not None:
+            clauses.append("zone_id = ?")
+            params.append(zone_id)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = fix(

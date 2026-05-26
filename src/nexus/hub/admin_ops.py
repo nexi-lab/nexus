@@ -39,7 +39,10 @@ class HubAdminAmbiguousTargetError(HubAdminError):
 
 def get_env_session_factory() -> Callable[[], Session]:
     """Build a hub DB session factory from the server environment."""
-    db_url = (
+    from nexus.core.db_utils import normalize_database_url
+
+    # Issue #4238: accept the canonical ``postgres://`` scheme.
+    db_url = normalize_database_url(
         os.environ.get("NEXUS_DATABASE_URL")
         or os.environ.get("POSTGRES_URL")
         or os.environ.get("DATABASE_URL")

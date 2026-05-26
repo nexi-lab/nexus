@@ -15,8 +15,14 @@ def get_database_url() -> str | None:
 
     Checks ``NEXUS_DATABASE_URL`` first, falls back to ``POSTGRES_URL``.
     Returns None when neither is set.
+
+    Issue #4238: rewrites the canonical ``postgres://`` scheme (emitted
+    by Railway, Render, Supabase, Heroku) to ``postgresql://``, which is
+    the only Postgres dialect SQLAlchemy loads since 1.4.
     """
-    return os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+    from nexus.core.db_utils import normalize_database_url
+
+    return normalize_database_url(os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL"))
 
 
 def get_redis_url() -> str | None:

@@ -25,11 +25,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 def get_db_url() -> str:
-    """Get database URL from environment."""
-    return os.environ.get(
+    """Get database URL from environment.
+
+    Issue #4238: normalize the canonical ``postgres://`` scheme cloud
+    providers emit (SQLAlchemy only loads ``postgresql``).
+    """
+    from nexus.core.db_utils import normalize_database_url
+
+    raw = os.environ.get(
         "NEXUS_DATABASE_URL",
         os.environ.get("POSTGRES_URL", "sqlite:///nexus.db"),
     )
+    return normalize_database_url(raw)
 
 
 def backfill_posix_uid(dry_run: bool = False, batch_size: int = 1000) -> dict[str, int | str]:

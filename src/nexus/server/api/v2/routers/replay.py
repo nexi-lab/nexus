@@ -171,33 +171,32 @@ async def trigger_reindex(
 
         session.commit()
 
-        # Issue #4241: drive a search-index refresh so this endpoint
-        # actually rebuilds search state (previously it only rebuilt the
-        # aspect store, which left the BM25/vector index stale and
-        # search.stats.last_index_refresh untouched — operators saw
-        # "processed=N, errors=0" and concluded the index was rebuilt).
-        search_paths_refreshed = 0
-        last_refresh_ts: float | None = None
+        # Issue #4241 + round-1 review (codex finding MEDIUM):
+        # ``search_daemon.notify_file_change`` only ENQUEUES a mutation
+        # for the async consumer loop — it does not synchronously index.
+        # Report a queue-side counter + the moment we enqueued it, NOT a
+        # completion timestamp. We intentionally do NOT stamp
+        # ``stats.last_index_refresh`` here: that field is the consumer's
+        # to write when indexing actually completes, and overwriting it
+        # would preserve the operator false-positive this endpoint is
+        # supposed to remove.
+        search_paths_enqueued = 0
+        enqueued_at: float | None = None
         if body.target in ("all", "search") and paths_seen:
             search_daemon = getattr(request.app.state, "search_daemon", None)
             if search_daemon is not None:
                 for path, change in paths_seen.items():
                     try:
                         await search_daemon.notify_file_change(path, change)
-                        search_paths_refreshed += 1
+                        search_paths_enqueued += 1
                     except Exception as e:
-                        logger.warning("Search refresh failed for %s during reindex: %s", path, e)
-                # Stamp the daemon so /api/v2/search/stats reflects the
-                # operator's reindex call even before the consumer loop
-                # finishes draining the queued mutations.
-                stats_obj = getattr(search_daemon, "stats", None)
-                if stats_obj is not None:
-                    last_refresh_ts = time.time()
-                    try:
-                        stats_obj.last_index_refresh = last_refresh_ts
-                    except Exception:
-                        # dataclass without setattr (frozen) or attr absent — best-effort.
-                        last_refresh_ts = None
+                        logger.warning(
+                            "Search refresh enqueue failed for %s during reindex: %s",
+                            path,
+                            e,
+                        )
+                if search_paths_enqueued > 0:
+                    enqueued_at = time.time()
 
         return ReindexResponse(
             target=body.target,
@@ -205,8 +204,8 @@ async def trigger_reindex(
             processed=processed,
             errors=errors,
             last_sequence=last_sequence,
-            search_paths_refreshed=search_paths_refreshed,
-            last_index_refresh=last_refresh_ts,
+            search_paths_enqueued=search_paths_enqueued,
+            search_refresh_enqueued_at=enqueued_at,
         )
 
     except Exception as e:

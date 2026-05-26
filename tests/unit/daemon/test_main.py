@@ -926,35 +926,72 @@ class TestShouldDefaultAdminBypass:
     or an ``already_set=True`` config-file value defeats the auto-default.
     """
 
+    def _clean_env(self, monkeypatch) -> None:
+        """Strip all envs that influence the predicate so each test starts clean."""
+        for var in (
+            "NEXUS_ALLOW_ADMIN_BYPASS",
+            "NEXUS_API_KEY_FILE",
+            "NEXUS_DATABASE_URL",
+            "POSTGRES_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
     def test_static_auth_single_key_defaults_true(self, monkeypatch) -> None:
-        monkeypatch.delenv("NEXUS_ALLOW_ADMIN_BYPASS", raising=False)
-        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        self._clean_env(monkeypatch)
         assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is True
 
     def test_explicit_env_override_blocks_default(self, monkeypatch) -> None:
         """Operator can disable via ``NEXUS_ALLOW_ADMIN_BYPASS=false``."""
+        self._clean_env(monkeypatch)
         monkeypatch.setenv("NEXUS_ALLOW_ADMIN_BYPASS", "false")
-        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
         assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
 
     def test_env_true_does_not_re_apply(self, monkeypatch) -> None:
         """Env explicitly set to *anything* defers to env precedence."""
+        self._clean_env(monkeypatch)
         monkeypatch.setenv("NEXUS_ALLOW_ADMIN_BYPASS", "true")
-        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
         assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
 
     def test_config_file_set_blocks_default(self, monkeypatch) -> None:
         """Operator-explicit ``allow_admin_bypass`` in the YAML wins."""
-        monkeypatch.delenv("NEXUS_ALLOW_ADMIN_BYPASS", raising=False)
-        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        self._clean_env(monkeypatch)
         assert _should_default_admin_bypass("static", "sk-demo", already_set=True) is False
 
     def test_database_auth_keeps_secure_default(self, monkeypatch) -> None:
-        monkeypatch.delenv("NEXUS_ALLOW_ADMIN_BYPASS", raising=False)
-        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        self._clean_env(monkeypatch)
         assert _should_default_admin_bypass("database", "sk-demo", already_set=False) is False
 
     def test_no_api_key_no_default(self, monkeypatch) -> None:
-        monkeypatch.delenv("NEXUS_ALLOW_ADMIN_BYPASS", raising=False)
-        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        self._clean_env(monkeypatch)
         assert _should_default_admin_bypass("static", None, already_set=False) is False
+
+    def test_db_chain_via_database_url_param_blocks_default(self, monkeypatch) -> None:
+        """Round-1 review fix: DB auth chain present → refuse to flip global bypass.
+
+        ``--database-url`` (or ``NEXUS_DATABASE_URL`` / ``POSTGRES_URL`` env)
+        means ``_ChainedAPIKeyAuth(static, db)`` admits DB-stored admin keys
+        too. A global ``allow_admin_bypass`` would silently weaken ReBAC for
+        those keys, defeating #3063.
+        """
+        self._clean_env(monkeypatch)
+        assert (
+            _should_default_admin_bypass(
+                "static",
+                "sk-demo",
+                already_set=False,
+                database_url="postgresql://localhost/nexus",
+            )
+            is False
+        )
+
+    def test_db_chain_via_env_blocks_default(self, monkeypatch) -> None:
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://localhost/nexus")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
+
+    def test_postgres_url_env_blocks_default(self, monkeypatch) -> None:
+        """``POSTGRES_URL`` env is the legacy alias the daemon's auth path
+        also consumes — same chaining risk."""
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("POSTGRES_URL", "postgresql://localhost/nexus")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False

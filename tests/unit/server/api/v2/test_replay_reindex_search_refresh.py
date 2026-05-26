@@ -96,12 +96,16 @@ def test_reindex_all_calls_search_notify_per_path() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["processed"] == 2
-    assert body["search_paths_refreshed"] == 2
-    assert body["last_index_refresh"] is not None
+    # Round-1 review (codex MEDIUM): we now report *enqueued* paths, not
+    # completed indexing — notify_file_change only wakes the consumer.
+    assert body["search_paths_enqueued"] == 2
+    assert body["search_refresh_enqueued_at"] is not None
     notified = [call.args for call in daemon.notify_file_change.await_args_list]
     assert ("/repro/a.md", "update") in notified
     assert ("/repro/b.md", "update") in notified
-    assert daemon.stats.last_index_refresh is not None
+    # Round-1 fix: reindex MUST NOT pre-stamp stats.last_index_refresh —
+    # that field is the consumer's to write on actual indexing completion.
+    assert daemon.stats.last_index_refresh is None
 
 
 def test_reindex_search_target_also_refreshes() -> None:
@@ -121,7 +125,7 @@ def test_reindex_search_target_also_refreshes() -> None:
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["search_paths_refreshed"] == 1
+    assert body["search_paths_enqueued"] == 1
     daemon.notify_file_change.assert_awaited_once_with("/x.md", "update")
 
 
@@ -143,8 +147,8 @@ def test_reindex_versions_target_does_not_refresh_search() -> None:
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["search_paths_refreshed"] == 0
-    assert body["last_index_refresh"] is None
+    assert body["search_paths_enqueued"] == 0
+    assert body["search_refresh_enqueued_at"] is None
     daemon.notify_file_change.assert_not_awaited()
 
 
@@ -202,5 +206,5 @@ def test_reindex_without_search_daemon_still_succeeds() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["processed"] == 1
-    assert body["search_paths_refreshed"] == 0
-    assert body["last_index_refresh"] is None
+    assert body["search_paths_enqueued"] == 0
+    assert body["search_refresh_enqueued_at"] is None

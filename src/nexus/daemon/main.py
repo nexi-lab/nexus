@@ -505,30 +505,55 @@ def _will_use_static_admin_fallback(
     return bool(key_file and Path(key_file).is_file())
 
 
+def _database_auth_can_chain(
+    auth_type: str | None,
+    database_url: str | None,
+) -> bool:
+    """True when DB-backed admin keys may be admitted alongside the static
+    fallback (Issue #4237 review round 1, finding 1).
+
+    The daemon's auth resolution chains ``StaticAPIKeyAuth`` with
+    ``DatabaseAPIKeyAuth`` whenever a record store is available —
+    triggered by an explicit ``--database-url`` / ``$NEXUS_DATABASE_URL``
+    / ``$POSTGRES_URL``, or by ``auth_type == "database"``. Auto-enabling
+    a *global* ``allow_admin_bypass`` for that boot shape would let any
+    DB-stored admin key bypass ReBAC, not just the implicit static key
+    — which is exactly the security invariant #3063 introduced.
+    """
+    if auth_type == "database":
+        return True
+    if database_url:
+        return True
+    return bool(os.environ.get("NEXUS_DATABASE_URL") or os.environ.get("POSTGRES_URL"))
+
+
 def _should_default_admin_bypass(
     auth_type: str | None,
     api_key: str | None,
     *,
     already_set: bool,
+    database_url: str | None = None,
 ) -> bool:
     """Decide whether to default ``allow_admin_bypass=True`` for static-auth
     single-key deployments (Issue #4237).
 
-    Returns False when the operator has explicitly chosen a value
-    (``already_set=True`` from the config file, or any
-    ``$NEXUS_ALLOW_ADMIN_BYPASS`` env value), or when the static-auth
-    fallback won't fire.
-
-    The static-auth fallback at line ~951 creates an implicit
-    ``is_admin=True`` principal; without admin bypass the ReBAC filter
-    on the search read path denies every result. Auto-defaulting for
-    this deployment shape restores parity with the previous edge.
+    Returns False when:
+    - The operator has explicitly chosen a value (``already_set=True`` from
+      the config file, or any ``$NEXUS_ALLOW_ADMIN_BYPASS`` env value).
+    - The static-auth fallback won't fire.
+    - A database-auth chain can also admit admins (round-1 review fix):
+      ``allow_admin_bypass`` is a *global* PermissionEnforcer flag, so
+      enabling it in a deployment that ALSO accepts DB-stored admin keys
+      would silently bypass ReBAC for those keys too. Refuse to mutate
+      the global in that case and let the operator opt in explicitly.
     """
     if already_set:
         return False
     if os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS") is not None:
         return False
-    return _will_use_static_admin_fallback(auth_type, api_key)
+    if not _will_use_static_admin_fallback(auth_type, api_key):
+        return False
+    return not _database_auth_can_chain(auth_type, database_url)
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +975,7 @@ def main(
                     auth_type,
                     api_key,
                     already_set="allow_admin_bypass" in config_obj.model_fields_set,
+                    database_url=database_url or getattr(config_obj, "database_url", None),
                 ):
                     config_obj.allow_admin_bypass = True
                     logger.info(
@@ -968,6 +994,7 @@ def main(
                     auth_type,
                     api_key,
                     already_set="allow_admin_bypass" in connect_config,
+                    database_url=database_url,
                 ):
                     connect_config["allow_admin_bypass"] = True
                     logger.info(

@@ -97,8 +97,12 @@ class ReindexResponse(ApiModel):
     errors: int = 0
     last_sequence: int = 0
     dry_run: bool = False
-    # Issue #4241: surface the search-index side-effect so operators can
-    # verify that reindex actually refreshed the BM25/vector index, not
-    # just the aspect store.
-    search_paths_refreshed: int = 0
-    last_index_refresh: float | None = None
+    # Issue #4241: surface that the search-daemon refresh was *enqueued*
+    # for these paths. Round-1 review (codex finding MEDIUM): the consumer
+    # loop drains asynchronously, so a non-zero count means "queued", not
+    # "completed". Operators who need a hard barrier should poll
+    # /api/v2/search/stats for ``last_index_refresh`` advancing past
+    # ``search_refresh_enqueued_at``, or sleep until BM25 returns the
+    # expected hits before declaring success.
+    search_paths_enqueued: int = 0
+    search_refresh_enqueued_at: float | None = None

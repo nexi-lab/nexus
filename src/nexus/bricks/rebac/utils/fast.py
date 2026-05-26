@@ -238,7 +238,7 @@ def _check_permissions_bulk_python(
         subject = Entity(subject_tuple[0], subject_tuple[1])
         obj = Entity(object_tuple[0], object_tuple[1])
 
-        result = _compute_permission_simple(
+        result, _cycle_obs = _compute_permission_simple(
             subject, permission, obj, direct_index, namespaces, memo
         )
 
@@ -256,23 +256,28 @@ def _compute_permission_simple(
     namespaces: "dict[str, ReBACNamespaceConfig]",
     memo: dict[tuple[str, str, str, str, str], bool] | None = None,
     _visited: set[tuple[str, str, str, str, str]] | None = None,
-) -> bool:
+) -> tuple[bool, bool]:
     """Permission computation for the Python fallback (Issue #4240 rewrite).
 
     Expands both ``permissions`` (permission → usersets) and ``relations``
     (relation → union members) from the namespace config, matching the
     Zanzibar expansion model used by the Rust implementation.
 
+    Returns ``(granted, cycle_observed_during_computation)``. The cycle
+    bit propagates so callers can decide whether to memoize a False —
+    round-1 review fix: a False produced under a cycle is order-dependent
+    and must not be memoized, since the same relation can be True via a
+    non-cyclic sibling path (cycle-break returns False locally, but a
+    fresh-stack recompute of the same relation may resolve True).
+
     Args:
         direct_index: O(1)-lookup set of (subject_type, subject_id, relation,
             object_type, object_id) tuples derived once per bulk call.
         memo: Optional cross-recursion cache shared by the bulk wrapper —
-            stores completed positive AND negative answers so sibling
-            expansions don't re-explore the same subtree. Built fresh per
-            top-level wrapper call.
+            stores **positive answers and acyclic negatives** only. Built
+            fresh per top-level wrapper call.
         _visited: in-progress (subject, perm, obj) keys to break cycles in
-            cyclic namespace configs without poisoning ``memo`` with a
-            premature False.
+            cyclic namespace configs.
     """
     memo_key = (
         subject.entity_type,
@@ -285,55 +290,67 @@ def _compute_permission_simple(
     if memo is not None:
         cached = memo.get(memo_key)
         if cached is not None:
-            return cached
+            # Cached entries are acyclic by construction (see write
+            # rules below), so we can safely report cycle_observed=False.
+            return cached, False
 
     # Guard against infinite recursion from cyclic configs.
     if _visited is None:
         _visited = set()
     if memo_key in _visited:
-        # Cycle: return False locally but do NOT memoize — a parallel
-        # non-cyclic path may still produce True.
-        return False
+        # Cycle: return False locally and SIGNAL the cycle so the caller
+        # does not memoize this False.
+        return False, True
     _visited = {*_visited, memo_key}
 
-    # 1. Direct tuple match: O(1).
+    # 1. Direct tuple match: O(1). Always acyclic.
     if memo_key in direct_index:
         if memo is not None:
             memo[memo_key] = True
-        return True
+        return True, False
 
     namespace = namespaces.get(obj.entity_type)
     if not namespace:
+        # Acyclic terminal — safe to memoize negative.
         if memo is not None:
             memo[memo_key] = False
-        return False
+        return False, False
+
+    cycle_observed = False
 
     # 2. Expand via permissions dict: permission → list of usersets.
     permissions_dict = namespace.config.get("permissions", {})
     if permission in permissions_dict:
         for userset in permissions_dict[permission]:
-            if _compute_permission_simple(
+            sub_result, sub_cycle = _compute_permission_simple(
                 subject, userset, obj, direct_index, namespaces, memo, _visited
-            ):
+            )
+            if sub_result:
                 if memo is not None:
                     memo[memo_key] = True
-                return True
+                return True, False
+            cycle_observed = cycle_observed or sub_cycle
 
     # 3. Expand via relations dict: relation → union members.
     relations_dict = namespace.config.get("relations", {})
     relation_def = relations_dict.get(permission)
     if isinstance(relation_def, dict) and "union" in relation_def:
         for member in relation_def["union"]:
-            if _compute_permission_simple(
+            sub_result, sub_cycle = _compute_permission_simple(
                 subject, member, obj, direct_index, namespaces, memo, _visited
-            ):
+            )
+            if sub_result:
                 if memo is not None:
                     memo[memo_key] = True
-                return True
+                return True, False
+            cycle_observed = cycle_observed or sub_cycle
 
-    if memo is not None:
+    # Negative result: memoize only if no cycle was observed during
+    # computation. A cycle-tainted False is order-dependent and may
+    # become True on a fresh-stack recompute via a sibling path.
+    if memo is not None and not cycle_observed:
         memo[memo_key] = False
-    return False
+    return False, cycle_observed
 
 
 # Convenience functions for integration with existing code

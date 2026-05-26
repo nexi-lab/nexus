@@ -322,3 +322,97 @@ def test_python_fallback_memo_reuses_answers_across_checks() -> None:
     assert all(results.values())
     # 50 identical checks should be essentially free post-index.
     assert elapsed_ms < 500, f"50 duplicate checks took {elapsed_ms:.1f}ms"
+
+
+# ---------------------------------------------------------------------------
+# Round 1 review: cyclic-union negative memoization (codex finding HIGH)
+# ---------------------------------------------------------------------------
+
+
+def test_cyclic_union_does_not_poison_negative_memo() -> None:
+    """Regression for finding HIGH: ``a=union(b,c)``, ``b=union(a)``, direct
+    grant on c. The recursion expands b first (b → a is a cycle, returns
+    False locally), then expands c → True, so a=True. The previous code
+    memoized b=False under that cyclic-False, so a later check on b alone
+    in the same bulk call returned False even though b would resolve True
+    via the non-cyclic a→c path.
+
+    Post-fix: cycle-tainted False results do NOT enter the memo. b
+    recomputes on a fresh stack and resolves True via memo[a]=True.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    # Namespace: file has relations a, b, c. a expands b OR c. b expands a.
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "a": {"union": ["b", "c"]},
+                "b": {"union": ["a"]},
+                "c": "direct",
+            },
+            "permissions": {},
+        }
+    }
+
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "c",  # direct grant on c
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        }
+    ]
+
+    # Single bulk call with both checks. a must resolve True via c, AND b
+    # must also resolve True via a→c — the bulk-order must not differ from
+    # the standalone-check answer.
+    checks = [
+        (("user", "alice"), "a", ("file", "/doc.txt")),
+        (("user", "alice"), "b", ("file", "/doc.txt")),
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        checks, tuples, namespace_configs, force_python=True
+    )
+
+    assert results[("user", "alice", "a", "file", "/doc.txt")] is True
+    assert results[("user", "alice", "b", "file", "/doc.txt")] is True, (
+        "b must resolve True via a→c expansion — previous code returned False "
+        "because a cycle-tainted False on b got memoized when a was computed "
+        "first (codex round-1 finding HIGH)."
+    )
+
+    # Order-independence check: same fixture, b first.
+    checks_reversed = list(reversed(checks))
+    results_rev = fast.check_permissions_bulk_with_fallback(
+        checks_reversed, tuples, namespace_configs, force_python=True
+    )
+    assert results_rev == results, "bulk results must be order-independent"
+
+
+def test_cyclic_relation_with_no_grant_returns_false_consistently() -> None:
+    """Companion to the above: when neither cycle path has a direct grant,
+    BOTH checks return False, and the False is reproducible on standalone
+    re-check (we don't accidentally memoize a wrong True either)."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "a": {"union": ["b"]},
+                "b": {"union": ["a"]},
+            },
+            "permissions": {},
+        }
+    }
+    tuples: list = []
+    checks = [
+        (("user", "alice"), "a", ("file", "/doc.txt")),
+        (("user", "alice"), "b", ("file", "/doc.txt")),
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        checks, tuples, namespace_configs, force_python=True
+    )
+    assert results[("user", "alice", "a", "file", "/doc.txt")] is False
+    assert results[("user", "alice", "b", "file", "/doc.txt")] is False

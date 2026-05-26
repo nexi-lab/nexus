@@ -248,6 +248,35 @@ def _check_permissions_bulk_python(
     return results
 
 
+def _unwrap_userset(definition: Any) -> list[str]:
+    """Normalize a namespace permission/relation definition into a flat
+    list of userset names (Round-2 review fix for codex HIGH finding).
+
+    Accepts the three shapes that appear in namespace configs:
+
+    - ``None`` / ``"direct"`` / any non-iterable → ``[]`` (leaf).
+    - ``["viewer", "editor"]`` (list of strings) → unchanged.
+    - ``{"union": ["viewer", "editor"]}`` (dict-wrapped union) → the
+      ``"union"`` member list, NOT the dict's keys. Iterating the dict
+      directly yields ``"union"`` and silently denies valid access.
+
+    Other dict shapes (``tupleToUserset``, ``intersection``, etc.) are
+    not expanded in the simple fallback — they are returned as ``[]``
+    so the caller falls through to direct-tuple-only matching. The
+    Rust implementation handles them; this fallback is intentionally
+    conservative.
+    """
+    if definition is None:
+        return []
+    if isinstance(definition, str):
+        return []
+    if isinstance(definition, list):
+        return [m for m in definition if isinstance(m, str)]
+    if isinstance(definition, dict) and isinstance(definition.get("union"), list):
+        return [m for m in definition["union"] if isinstance(m, str)]
+    return []
+
+
 def _compute_permission_simple(
     subject: "Entity",
     permission: str,
@@ -319,31 +348,35 @@ def _compute_permission_simple(
     cycle_observed = False
 
     # 2. Expand via permissions dict: permission → list of usersets.
+    # Round-2 review (codex finding HIGH): a permission may be defined as
+    # ``"read": ["viewer"]`` (list) OR ``"read": {"union": ["viewer"]}``
+    # (dict). Iterating the dict form directly yields the key "union"
+    # instead of "viewer" — the previous code recursed on "union" as a
+    # relation that doesn't exist and silently denied valid access.
     permissions_dict = namespace.config.get("permissions", {})
-    if permission in permissions_dict:
-        for userset in permissions_dict[permission]:
-            sub_result, sub_cycle = _compute_permission_simple(
-                subject, userset, obj, direct_index, namespaces, memo, _visited
-            )
-            if sub_result:
-                if memo is not None:
-                    memo[memo_key] = True
-                return True, False
-            cycle_observed = cycle_observed or sub_cycle
+    perm_def = permissions_dict.get(permission)
+    for member in _unwrap_userset(perm_def):
+        sub_result, sub_cycle = _compute_permission_simple(
+            subject, member, obj, direct_index, namespaces, memo, _visited
+        )
+        if sub_result:
+            if memo is not None:
+                memo[memo_key] = True
+            return True, False
+        cycle_observed = cycle_observed or sub_cycle
 
-    # 3. Expand via relations dict: relation → union members.
+    # 3. Expand via relations dict: relation → list/union members.
     relations_dict = namespace.config.get("relations", {})
     relation_def = relations_dict.get(permission)
-    if isinstance(relation_def, dict) and "union" in relation_def:
-        for member in relation_def["union"]:
-            sub_result, sub_cycle = _compute_permission_simple(
-                subject, member, obj, direct_index, namespaces, memo, _visited
-            )
-            if sub_result:
-                if memo is not None:
-                    memo[memo_key] = True
-                return True, False
-            cycle_observed = cycle_observed or sub_cycle
+    for member in _unwrap_userset(relation_def):
+        sub_result, sub_cycle = _compute_permission_simple(
+            subject, member, obj, direct_index, namespaces, memo, _visited
+        )
+        if sub_result:
+            if memo is not None:
+                memo[memo_key] = True
+            return True, False
+        cycle_observed = cycle_observed or sub_cycle
 
     # Negative result: memoize only if no cycle was observed during
     # computation. A cycle-tainted False is order-dependent and may

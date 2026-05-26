@@ -248,10 +248,32 @@ def _reindex_via_rest(
     table.add_row("Processed", str(result.get("processed", 0)))
     table.add_row("Errors", str(result.get("errors", 0)))
     table.add_row("Dry run", str(result.get("dry_run", dry_run)))
+
+    # Issue #4241 + round-2 review (codex MEDIUM): surface the queued
+    # search-refresh fields so remote operators don't mistake
+    # "processed=N" for "BM25/vector index rebuilt". notify_file_change
+    # only wakes the async consumer loop; the actual indexing happens
+    # afterwards, so the count below is paths *enqueued*, not completed.
+    enqueued = result.get("search_paths_enqueued")
+    if enqueued is not None:
+        table.add_row("Search paths queued (async)", str(enqueued))
+    enqueued_at = result.get("search_refresh_enqueued_at")
+    if enqueued_at is not None:
+        from datetime import UTC, datetime
+
+        ts = datetime.fromtimestamp(float(enqueued_at), tz=UTC).isoformat(timespec="seconds")
+        table.add_row("Search refresh enqueued at", ts)
+
     if target == "all":
         console.print(
             "\n[nexus.warning]Note:[/nexus.warning] Semantic reindex requires local filesystem access "
             "and was skipped. Only search + versions targets were processed."
+        )
+    if enqueued:
+        console.print(
+            "\n[nexus.muted]Search refresh is asynchronous. Poll "
+            "/api/v2/search/stats or wait for BM25 to return expected hits "
+            "before declaring success.[/nexus.muted]"
         )
     console.print(table)
 

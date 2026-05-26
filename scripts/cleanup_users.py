@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from nexus.core.db_utils import normalize_database_url
 from nexus.storage.models import (
     APIKeyModel,
     UserModel,
@@ -31,6 +32,8 @@ def cleanup_database():
     database_url = os.environ.get(
         "NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:5432/nexus"
     )
+    # Issue #4238: accept the canonical ``postgres://`` scheme.
+    database_url = normalize_database_url(database_url)
 
     print(f"Connecting to: {database_url}")
     engine = create_engine(database_url)

@@ -555,6 +555,11 @@ def ensure_admin_api_key(zone_id: str = ROOT_ZONE_ID, env_file: str = ".env") ->
     # At this point database_url is guaranteed to be a string
     assert database_url is not None
 
+    # Issue #4238: accept the canonical ``postgres://`` scheme.
+    from nexus.core.db_utils import normalize_database_url
+
+    database_url = normalize_database_url(database_url)
+
     # Create engine and session
     engine = create_engine(database_url)
     SessionFactory = sessionmaker(bind=engine)

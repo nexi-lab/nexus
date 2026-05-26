@@ -1140,7 +1140,12 @@ def _register_routes(app: FastAPI) -> None:
                 # must degrade gracefully to "daemon routes disabled" rather than take
                 # the whole API server down during startup.
                 try:
-                    _v1_engine = create_engine(_database_url, future=True)
+                    # Issue #4238: defense in depth — already normalized by
+                    # daemon main + load_config validator, but app.state may
+                    # be set from other entrypoints (e.g. embedding callers).
+                    from nexus.core.db_utils import normalize_database_url
+
+                    _v1_engine = create_engine(normalize_database_url(_database_url), future=True)
                     # Idempotent: creates tenants / principals / auth_profiles /
                     # daemon_machines / auth_profile_reads / RLS policies if absent.
                     # Without this a fresh stack returns 500 ProgrammingError on the

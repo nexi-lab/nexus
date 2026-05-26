@@ -416,3 +416,78 @@ def test_cyclic_relation_with_no_grant_returns_false_consistently() -> None:
     )
     assert results[("user", "alice", "a", "file", "/doc.txt")] is False
     assert results[("user", "alice", "b", "file", "/doc.txt")] is False
+
+
+# ---------------------------------------------------------------------------
+# Round-2 review (codex finding HIGH): dict-form permission union
+# ---------------------------------------------------------------------------
+
+
+def test_python_fallback_unwraps_dict_form_permission_union() -> None:
+    """Regression for codex round-2 HIGH: ``"permissions": {"read":
+    {"union": ["viewer"]}}`` is a documented namespace shape. The
+    previous fallback iterated the dict directly, yielding the key
+    ``"union"`` as a relation name (which doesn't exist) and silently
+    denying a valid direct-viewer grant.
+
+    Post-fix: ``_unwrap_userset`` extracts the union member list.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": "direct"},
+            # Permission defined as dict-wrapped union — the bug case.
+            "permissions": {"read": {"union": ["viewer"]}},
+        }
+    }
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "viewer",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        }
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is True, (
+        "viewer grant must expand through {'union': ['viewer']} "
+        "permission definition (codex round-2 HIGH)"
+    )
+
+
+def test_python_fallback_handles_list_form_permission() -> None:
+    """The list-form ``"read": ["viewer"]`` must keep working — the
+    round-2 helper normalizes both shapes."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": "direct"},
+            "permissions": {"read": ["viewer"]},
+        }
+    }
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "viewer",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        }
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is True

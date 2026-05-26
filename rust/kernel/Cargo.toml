@@ -73,3 +73,7 @@ harness = false
 [[bench]]
 name = "syscall_bench"
 harness = false
+
+[[bench]]
+name = "readdir_bench"
+harness = false

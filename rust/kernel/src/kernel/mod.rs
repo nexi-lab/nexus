@@ -19,7 +19,6 @@
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
-use crate::core::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
 use crate::dispatch::{NativeHookRegistry, ObserverRegistry, Trie};
 use crate::file_watch::FileWatchRegistry;
@@ -542,7 +541,6 @@ pub struct Kernel {
     pub(crate) agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
-    index_cache: IndexCache,
     // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
@@ -699,7 +697,6 @@ impl Kernel {
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
-            index_cache: IndexCache::default(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             fdt: crate::fdt::FileDescriptorTable::new(),
@@ -3567,42 +3564,6 @@ mod tests {
                 .unwrap()
                 .unwrap_err();
             assert!(matches!(err, RustCallError::NotFound));
-        }
-    }
-
-    // ── Logical cache split ───────────────────────────────────────────
-    mod logical_cache_split {
-        use super::*;
-        use crate::core::index_cache::{IndexCacheKey, IndexKind};
-        use crate::meta_store::{LocalMetaStore, MetaStore};
-        use std::time::Duration;
-
-        #[test]
-        fn mkdir_invalidates_parent_listing_index_cache() {
-            let k = Kernel::new();
-            let _td = tempfile::tempdir().unwrap();
-            let ms: Arc<dyn MetaStore> =
-                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
-            k.add_mount("/data", "root", None, Some(ms), None, false)
-                .unwrap();
-
-            let key = IndexCacheKey::new("root", "/data", IndexKind::Listing);
-            k.index_cache.put_listing(
-                key,
-                vec![("/data/stale.txt".to_string(), DT_REG)],
-                Duration::from_secs(60),
-            );
-            assert_eq!(
-                k.sys_readdir("/data", "root", false),
-                vec![("/data/stale.txt".to_string(), DT_REG)]
-            );
-
-            let ctx = OperationContext::new("test", "root", true, None, true);
-            k.mkdir("/data/fresh", &ctx, false, false).unwrap();
-
-            let entries = k.sys_readdir("/data", "root", false);
-            assert!(entries.contains(&("/data/fresh".to_string(), DT_DIR)));
-            assert!(!entries.contains(&("/data/stale.txt".to_string(), DT_REG)));
         }
     }
 

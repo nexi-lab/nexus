@@ -180,11 +180,22 @@ def _check_permissions_bulk_python(
     tuples: list[dict[str, Any]],
     namespace_configs: dict[str, Any],
 ) -> dict[tuple[str, str, str, str, str], bool]:
-    """
-    Pure Python implementation for fallback.
+    """Pure Python implementation for the Rust-fallback path.
 
-    This is a simplified implementation. For production, this should delegate
-    to the existing ReBACManager._compute_permission logic.
+    Issue #4240: the previous implementation scanned the full ``tuples``
+    list per check (O(N × T)). For the reported 5-result search with a
+    few hundred tuples per zone that was ~4500ms total filter latency.
+
+    This rewrite is O(N + T) per bulk call:
+
+    * Build a set-based direct-grant index ONCE (T work, hashable keys).
+      Userset subjects (``subject_relation`` set) and conditioned tuples
+      are excluded — they cannot grant directly, matching the prior
+      behavior at the linear-scan filter (see ``_compute_permission_simple``
+      conditions in the old code).
+    * Memoize positive AND negative answers across recursive expansion
+      in the same bulk call (the prior ``_visited`` set only prevented
+      re-entry; siblings re-explored the same subtree from scratch).
     """
     from nexus.bricks.rebac.domain import Entity, NamespaceConfig
 
@@ -201,16 +212,35 @@ def _check_permissions_bulk_python(
                 config=config_dict,  # Pass the whole dict as config
             )
 
-    # Compute each check
-    results: dict[tuple[str, str, str, str, str], bool] = {}
+    # Issue #4240: pre-index direct grants for O(1) per-check lookup.
+    direct_index: set[tuple[str, str, str, str, str]] = set()
+    for t in tuples:
+        if t.get("subject_relation") is not None:
+            continue  # usersets cannot grant directly in the simple fallback
+        if t.get("conditions"):
+            continue  # conditioned tuples are fail-closed without ABAC context
+        direct_index.add(
+            (
+                t["subject_type"],
+                t["subject_id"],
+                t["relation"],
+                t["object_type"],
+                t["object_id"],
+            )
+        )
 
+    # Memo across the whole bulk call: completed (subject, perm, obj) → bool.
+    memo: dict[tuple[str, str, str, str, str], bool] = {}
+
+    # Compute each check.
+    results: dict[tuple[str, str, str, str, str], bool] = {}
     for subject_tuple, permission, object_tuple in checks:
         subject = Entity(subject_tuple[0], subject_tuple[1])
         obj = Entity(object_tuple[0], object_tuple[1])
 
-        # Simple implementation: check direct relations only
-        # For production, this should use full graph traversal
-        result = _compute_permission_simple(subject, permission, obj, tuples, namespaces)
+        result = _compute_permission_simple(
+            subject, permission, obj, direct_index, namespaces, memo
+        )
 
         key = (subject.entity_type, subject.entity_id, permission, obj.entity_type, obj.entity_id)
         results[key] = result
@@ -222,56 +252,87 @@ def _compute_permission_simple(
     subject: "Entity",
     permission: str,
     obj: "Entity",
-    tuples: list[dict[str, Any]],
+    direct_index: set[tuple[str, str, str, str, str]],
     namespaces: "dict[str, ReBACNamespaceConfig]",
-    _visited: set[str] | None = None,
+    memo: dict[tuple[str, str, str, str, str], bool] | None = None,
+    _visited: set[tuple[str, str, str, str, str]] | None = None,
 ) -> bool:
-    """Permission computation for Python fallback.
+    """Permission computation for the Python fallback (Issue #4240 rewrite).
 
     Expands both ``permissions`` (permission → usersets) and ``relations``
     (relation → union members) from the namespace config, matching the
     Zanzibar expansion model used by the Rust implementation.
+
+    Args:
+        direct_index: O(1)-lookup set of (subject_type, subject_id, relation,
+            object_type, object_id) tuples derived once per bulk call.
+        memo: Optional cross-recursion cache shared by the bulk wrapper —
+            stores completed positive AND negative answers so sibling
+            expansions don't re-explore the same subtree. Built fresh per
+            top-level wrapper call.
+        _visited: in-progress (subject, perm, obj) keys to break cycles in
+            cyclic namespace configs without poisoning ``memo`` with a
+            premature False.
     """
-    # Guard against infinite recursion from cyclic configs
+    memo_key = (
+        subject.entity_type,
+        subject.entity_id,
+        permission,
+        obj.entity_type,
+        obj.entity_id,
+    )
+
+    if memo is not None:
+        cached = memo.get(memo_key)
+        if cached is not None:
+            return cached
+
+    # Guard against infinite recursion from cyclic configs.
     if _visited is None:
         _visited = set()
-    cache_key = f"{permission}:{obj.entity_type}:{obj.entity_id}"
-    if cache_key in _visited:
+    if memo_key in _visited:
+        # Cycle: return False locally but do NOT memoize — a parallel
+        # non-cyclic path may still produce True.
         return False
-    _visited = {*_visited, cache_key}
+    _visited = {*_visited, memo_key}
 
-    # 1. Direct tuple match: does a tuple grant this exact relation?
-    for tuple_dict in tuples:
-        if (
-            tuple_dict["subject_type"] == subject.entity_type
-            and tuple_dict["subject_id"] == subject.entity_id
-            and tuple_dict.get("subject_relation") is None
-            and tuple_dict["relation"] == permission
-            and tuple_dict["object_type"] == obj.entity_type
-            and tuple_dict["object_id"] == obj.entity_id
-            and not tuple_dict.get("conditions")
-        ):
-            return True
+    # 1. Direct tuple match: O(1).
+    if memo_key in direct_index:
+        if memo is not None:
+            memo[memo_key] = True
+        return True
 
     namespace = namespaces.get(obj.entity_type)
     if not namespace:
+        if memo is not None:
+            memo[memo_key] = False
         return False
 
-    # 2. Expand via permissions dict: permission → list of usersets
+    # 2. Expand via permissions dict: permission → list of usersets.
     permissions_dict = namespace.config.get("permissions", {})
     if permission in permissions_dict:
         for userset in permissions_dict[permission]:
-            if _compute_permission_simple(subject, userset, obj, tuples, namespaces, _visited):
+            if _compute_permission_simple(
+                subject, userset, obj, direct_index, namespaces, memo, _visited
+            ):
+                if memo is not None:
+                    memo[memo_key] = True
                 return True
 
-    # 3. Expand via relations dict: relation → union members
+    # 3. Expand via relations dict: relation → union members.
     relations_dict = namespace.config.get("relations", {})
     relation_def = relations_dict.get(permission)
     if isinstance(relation_def, dict) and "union" in relation_def:
         for member in relation_def["union"]:
-            if _compute_permission_simple(subject, member, obj, tuples, namespaces, _visited):
+            if _compute_permission_simple(
+                subject, member, obj, direct_index, namespaces, memo, _visited
+            ):
+                if memo is not None:
+                    memo[memo_key] = True
                 return True
 
+    if memo is not None:
+        memo[memo_key] = False
     return False
 
 

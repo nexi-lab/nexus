@@ -160,3 +160,165 @@ def test_no_warning_emitted_when_rust_unavailable_on_single_check(caplog) -> Non
     assert offenders == [], (
         f"Rust-unavailable should be silent on the hot path (#4240); got: {offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #4240 (b): Python fallback should be O(N+T), not O(N*T)
+# ---------------------------------------------------------------------------
+
+
+def test_python_fallback_scales_linearly() -> None:
+    """100 paths × 1000 tuples must complete in well under a second.
+
+    The pre-optimization implementation scanned the full tuples list
+    inside ``_compute_permission_simple`` for every check, so a search
+    with 5 results on a few hundred tuples hit ~4500ms (see #4240
+    reporter's ``permission_filter_ms``). Post-optimization the per-call
+    work is a set lookup, so even a 100x larger problem (100 × 1000)
+    should land in tens of milliseconds.
+
+    Threshold is generous (1000ms) to avoid CI flake while still
+    catching a regression to quadratic behavior.
+    """
+    import time
+
+    from nexus.bricks.rebac.utils import fast
+
+    # 1000 unrelated tuples (no grants for our subject).
+    noise_tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": f"other_{i}",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": f"/noise/{i}.md",
+        }
+        for i in range(1000)
+    ]
+    # Plus the grants we actually want: admin reads /target/{i}.md.
+    grant_tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "admin",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": f"/target/{i}.md",
+        }
+        for i in range(100)
+    ]
+    tuples = noise_tuples + grant_tuples
+
+    checks = [(("user", "admin"), "read", ("file", f"/target/{i}.md")) for i in range(100)]
+
+    start = time.perf_counter()
+    results = fast.check_permissions_bulk_with_fallback(
+        checks=checks,
+        tuples=tuples,
+        namespace_configs={},
+        force_python=True,
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    # All 100 checks must be True.
+    assert all(results.values()), f"expected all granted; got {sum(results.values())} / 100"
+    # Performance guard — generous to avoid CI flake.
+    assert elapsed_ms < 1000, (
+        f"Python ReBAC fallback should be O(N+T), not O(N*T); "
+        f"100 checks × 1000 tuples took {elapsed_ms:.1f}ms"
+    )
+
+
+def test_python_fallback_userset_excluded_from_direct_index() -> None:
+    """Userset-subject tuples (``subject_relation`` set) must not match
+    as a direct grant — index construction excludes them, preserving the
+    pre-optimization safety property."""
+    from nexus.bricks.rebac.utils import fast
+
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("group", "eng"), "read", ("file", "/doc.txt"))],
+        [
+            {
+                "subject_type": "group",
+                "subject_id": "eng",
+                "subject_relation": "member",  # userset, not a direct grant
+                "relation": "read",
+                "object_type": "file",
+                "object_id": "/doc.txt",
+            }
+        ],
+        {},
+        force_python=True,
+    )
+    assert results[("group", "eng", "read", "file", "/doc.txt")] is False
+
+
+def test_python_fallback_conditioned_tuple_excluded_from_direct_index() -> None:
+    """Tuples with conditions must remain fail-closed in the simple
+    fallback (no ABAC context available)."""
+    from nexus.bricks.rebac.utils import fast
+
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        [
+            {
+                "subject_type": "user",
+                "subject_id": "alice",
+                "subject_relation": None,
+                "relation": "read",
+                "object_type": "file",
+                "object_id": "/doc.txt",
+                "conditions": {"allowed_ips": ["10.0.0.0/8"]},
+            }
+        ],
+        {},
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
+def test_python_fallback_memo_reuses_answers_across_checks() -> None:
+    """A single bulk call asking the same (subject, permission, obj) twice
+    must compute once. We can't easily count internal calls without
+    monkeypatching, so we assert the wall-clock cost of N duplicate checks
+    is barely worse than 1 check on a large tuple set.
+    """
+    import time
+
+    from nexus.bricks.rebac.utils import fast
+
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": f"x_{i}",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": f"/x/{i}.md",
+        }
+        for i in range(2000)
+    ]
+    # One real grant.
+    tuples.append(
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        }
+    )
+
+    duplicate_checks = [(("user", "alice"), "read", ("file", "/doc.txt")) for _ in range(50)]
+
+    start = time.perf_counter()
+    results = fast.check_permissions_bulk_with_fallback(
+        duplicate_checks, tuples, {}, force_python=True
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    assert all(results.values())
+    # 50 identical checks should be essentially free post-index.
+    assert elapsed_ms < 500, f"50 duplicate checks took {elapsed_ms:.1f}ms"

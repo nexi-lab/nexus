@@ -386,18 +386,16 @@ impl<K: KernelAbi> AcpService<K> {
 // `install` + `handle` live in a `K = Kernel` specific impl because
 // the global `ACP_SVC_HANDLE` is concretely typed
 // `OnceLock<Arc<AcpService<Kernel>>>` — production has a single
-// kernel instance per process and this matches the cdylib boot
-// path.  A future `K = MockKernel` test fixture builds an
-// `AcpService` via `new` directly and bypasses this lookup table.
+// kernel instance per process and this matches the boot path. A
+// future `K = MockKernel` test fixture builds an `AcpService` via
+// `new` directly and bypasses this lookup table.
 impl AcpService<Kernel> {
-    /// Install the AcpService into a kernel's `ServiceRegistry`.
-    /// Called from the cdylib post-construction (PyKernel boot)
-    /// because `Arc<Kernel>` is only available after the wrapping
-    /// step.
+    /// Install the AcpService into a kernel's `ServiceRegistry`. Called
+    /// from the boot path once `Arc<Kernel>` is available.
     ///
     /// Stores the concrete Arc<AcpService> in [`ACP_SVC_HANDLE`] so
-    /// the PyO3 wiring (set_agent_registry, register_on_terminate)
-    /// can reach the same instance the registry holds without
+    /// cross-callsite reach (set_agent_registry, register_on_terminate)
+    /// can land on the same instance the registry holds without
     /// downcasting `Arc<dyn RustService>`. The handle is process-wide;
     /// a second `install` against a different kernel instance is
     /// rejected by the underlying ServiceRegistry duplicate check.
@@ -409,7 +407,7 @@ impl AcpService<Kernel> {
 
     /// Look up the installed AcpService instance. `None` when
     /// install hasn't been called yet (e.g. tests that bypass the
-    /// PyKernel boot path).
+    /// production boot path).
     pub(crate) fn handle() -> Option<Arc<Self>> {
         ACP_SVC_HANDLE.get().cloned()
     }

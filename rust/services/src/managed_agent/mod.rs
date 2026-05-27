@@ -77,9 +77,8 @@ pub fn install_managed_agent_with_spawn(
 }
 
 /// Install ManagedAgentService on `kernel` without a runtime body
-/// (procfs + AgentRegistry only). Mirrors the existing pyo3 path
-/// `services::python::nx_managed_agent_install` for callers that
-/// don't ship a runtime.
+/// (procfs + AgentRegistry only) — for callers that do not ship a
+/// runtime spawn provider.
 pub fn install_managed_agent(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
     ManagedAgentService::<kernel::kernel::Kernel>::install(kernel)
 }

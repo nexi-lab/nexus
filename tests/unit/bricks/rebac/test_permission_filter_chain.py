@@ -98,3 +98,27 @@ def test_hierarchy_prefilter_keeps_subtree_when_grandparent_grants_read() -> Non
 
     assert allowed == paths
     assert len(rebac.calls) <= 2
+
+
+def test_hierarchy_prefilter_does_not_drop_direct_leaf_grants() -> None:
+    paths = [f"/workspace/demo/herb/customers/cust-{idx:03d}.md" for idx in range(101)]
+    rebac = _DirectOnlyBulkReBAC(
+        allowed_objects={
+            paths[0],
+        },
+    )
+    ctx = FilterContext(
+        paths=paths,
+        subject=("user", "alice"),
+        zone_id="root",
+        context=object(),
+        cache=cast(Any, _FakeCache()),
+        rebac_manager=cast(Any, rebac),
+    )
+
+    allowed = run_filter_chain(
+        ctx,
+        chain=[HierarchyPreFilterStrategy(), BulkReBACStrategy()],
+    )
+
+    assert allowed == [paths[0]]

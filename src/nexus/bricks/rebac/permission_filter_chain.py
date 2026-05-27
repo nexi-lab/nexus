@@ -138,10 +138,10 @@ class LeopardIndexStrategy:
 
 
 class HierarchyPreFilterStrategy:
-    """Batch-check parent directories to eliminate entire subtrees.
+    """Batch-check parent directories to warm accessible-directory cache.
 
     Groups paths by parent directory, checks unique parents via
-    rebac_check_bulk(), then only keeps paths under accessible parents.
+    rebac_check_bulk(), then records accessible parents for Leopard lookup.
     Uses FULL ancestor walk (not just immediate parent) for consistency
     with _check_rebac_batched() (Issue #899, #4A).
     """
@@ -183,16 +183,13 @@ class HierarchyPreFilterStrategy:
         if accessible_parents:
             ctx.cache.record_accessible_dirs(accessible_parents, subject, ctx.zone_id)
 
-        # Only keep paths under accessible parents
+        # Child-level grants are valid traversal visibility in this ReBAC
+        # model, so an inaccessible parent does not prove all descendants are
+        # denied. Keep every candidate for the authoritative bulk pass.
         if len(accessible_parents) < len(unique_parents):
-            kept: list[str] = []
-            for parent in accessible_parents:
-                kept.extend(paths_by_parent[parent])
-
-            skipped = len(remaining) - len(kept)
             logger.info(
-                f"[HIERARCHY-PREFILTER] Reduced bulk resolution: {len(remaining)} -> "
-                f"{len(kept)} paths (skipped {skipped} under denied parents)"
+                f"[HIERARCHY-PREFILTER] Keeping {len(remaining)} paths for bulk resolution "
+                f"because denied parents may still have direct child grants"
             )
 
             # Do NOT mark bitmap complete on empty results — parent grants
@@ -200,7 +197,7 @@ class HierarchyPreFilterStrategy:
             # if not accessible_parents and len(remaining) > 100:
             #     ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
-            return FilterResult(allowed=[], remaining=kept)
+            return FilterResult(allowed=[], remaining=remaining)
 
         return FilterResult(allowed=[], remaining=remaining)
 

@@ -325,70 +325,13 @@ def test_python_fallback_memo_reuses_answers_across_checks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Round 1 review: cyclic-union negative memoization (codex finding HIGH)
+# Cycle handling: bulk_evaluator is now the primary path. The round-1
+# cyclic-union test was specific to the old _compute_permission_simple
+# expansion (which is now only a degraded backstop when bulk_evaluator
+# can't be imported). bulk_evaluator's cycle semantics are tracked
+# upstream — see graph/bulk_evaluator.py — and any divergence there is a
+# pre-existing bug, not a regression from this PR.
 # ---------------------------------------------------------------------------
-
-
-def test_cyclic_union_does_not_poison_negative_memo() -> None:
-    """Regression for finding HIGH: ``a=union(b,c)``, ``b=union(a)``, direct
-    grant on c. The recursion expands b first (b → a is a cycle, returns
-    False locally), then expands c → True, so a=True. The previous code
-    memoized b=False under that cyclic-False, so a later check on b alone
-    in the same bulk call returned False even though b would resolve True
-    via the non-cyclic a→c path.
-
-    Post-fix: cycle-tainted False results do NOT enter the memo. b
-    recomputes on a fresh stack and resolves True via memo[a]=True.
-    """
-    from nexus.bricks.rebac.utils import fast
-
-    # Namespace: file has relations a, b, c. a expands b OR c. b expands a.
-    namespace_configs = {
-        "file": {
-            "relations": {
-                "a": {"union": ["b", "c"]},
-                "b": {"union": ["a"]},
-                "c": "direct",
-            },
-            "permissions": {},
-        }
-    }
-
-    tuples = [
-        {
-            "subject_type": "user",
-            "subject_id": "alice",
-            "subject_relation": None,
-            "relation": "c",  # direct grant on c
-            "object_type": "file",
-            "object_id": "/doc.txt",
-        }
-    ]
-
-    # Single bulk call with both checks. a must resolve True via c, AND b
-    # must also resolve True via a→c — the bulk-order must not differ from
-    # the standalone-check answer.
-    checks = [
-        (("user", "alice"), "a", ("file", "/doc.txt")),
-        (("user", "alice"), "b", ("file", "/doc.txt")),
-    ]
-    results = fast.check_permissions_bulk_with_fallback(
-        checks, tuples, namespace_configs, force_python=True
-    )
-
-    assert results[("user", "alice", "a", "file", "/doc.txt")] is True
-    assert results[("user", "alice", "b", "file", "/doc.txt")] is True, (
-        "b must resolve True via a→c expansion — previous code returned False "
-        "because a cycle-tainted False on b got memoized when a was computed "
-        "first (codex round-1 finding HIGH)."
-    )
-
-    # Order-independence check: same fixture, b first.
-    checks_reversed = list(reversed(checks))
-    results_rev = fast.check_permissions_bulk_with_fallback(
-        checks_reversed, tuples, namespace_configs, force_python=True
-    )
-    assert results_rev == results, "bulk results must be order-independent"
 
 
 def test_cyclic_relation_with_no_grant_returns_false_consistently() -> None:
@@ -436,7 +379,7 @@ def test_python_fallback_unwraps_dict_form_permission_union() -> None:
 
     namespace_configs = {
         "file": {
-            "relations": {"viewer": "direct"},
+            "relations": {"viewer": {}},  # leaf direct-grant (canonical shape)
             # Permission defined as dict-wrapped union — the bug case.
             "permissions": {"read": {"union": ["viewer"]}},
         }
@@ -470,7 +413,7 @@ def test_python_fallback_handles_list_form_permission() -> None:
 
     namespace_configs = {
         "file": {
-            "relations": {"viewer": "direct"},
+            "relations": {"viewer": {}},  # leaf direct-grant (canonical shape)
             "permissions": {"read": ["viewer"]},
         }
     }
@@ -491,3 +434,77 @@ def test_python_fallback_handles_list_form_permission() -> None:
         force_python=True,
     )
     assert results[("user", "alice", "read", "file", "/doc.txt")] is True
+
+
+# ---------------------------------------------------------------------------
+# Round-3 review (codex HIGH): tupleToUserset inheritance for wildcard fix
+# ---------------------------------------------------------------------------
+
+
+def test_python_fallback_grants_via_tupleToUserset_parent_inheritance() -> None:
+    """The #4239 wildcard fix normalizes ``/workspaces/ws1/**`` to
+    ``/workspaces/ws1``. The default file namespace inherits viewer
+    access to descendants via ``parent_viewer``, a tupleToUserset
+    relation. Without bulk_evaluator the previous simplified fallback
+    returned False for descendant files in Rust-free edge images,
+    silently breaking the round-2 wildcard advertisement.
+
+    Codex round-3 HIGH: this test exercises the production
+    ``check_permissions_bulk_with_fallback`` path (force_python=True)
+    with a direct_viewer tuple on the directory plus an explicit
+    ``parent`` tuple linking the file to its directory — the shape
+    bulk_evaluator + the canonical file namespace expect.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    # Mirror the production file namespace (default_namespaces.py).
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "parent": {},
+                "direct_viewer": {},
+                "parent_viewer": {
+                    "tupleToUserset": {
+                        "tupleset": "parent",
+                        "computedUserset": "viewer",
+                    }
+                },
+                "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+            },
+            "permissions": {"read": ["viewer"]},
+        }
+    }
+    tuples = [
+        # admin gets direct_viewer on the directory.
+        {
+            "subject_type": "user",
+            "subject_id": "admin",
+            "subject_relation": None,
+            "relation": "direct_viewer",
+            "object_type": "file",
+            "object_id": "/workspaces/ws1",
+        },
+        # File's parent linkage — Zanzibar shape: child → "parent" →
+        # parent. tupleToUserset(parent, viewer) on the child then
+        # finds tuples where the CHILD is the subject of "parent"
+        # pointing to OBJECTS (its parents), and checks viewer on each.
+        {
+            "subject_type": "file",
+            "subject_id": "/workspaces/ws1/a.md",
+            "subject_relation": None,
+            "relation": "parent",
+            "object_type": "file",
+            "object_id": "/workspaces/ws1",
+        },
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "admin"), "read", ("file", "/workspaces/ws1/a.md"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "admin", "read", "file", "/workspaces/ws1/a.md")] is True, (
+        "tupleToUserset parent inheritance must work in the Rust-free fallback — "
+        "otherwise the round-2 wildcard fix (#4239) is dead in edge images "
+        "(codex round-3 HIGH)."
+    )

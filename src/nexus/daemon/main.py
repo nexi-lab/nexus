@@ -508,23 +508,39 @@ def _will_use_static_admin_fallback(
 def _database_auth_can_chain(
     auth_type: str | None,
     database_url: str | None,
+    *,
+    record_store_path: str | None = None,
 ) -> bool:
     """True when DB-backed admin keys may be admitted alongside the static
-    fallback (Issue #4237 review round 1, finding 1).
+    fallback (Issue #4237 review rounds 1–3).
 
     The daemon's auth resolution chains ``StaticAPIKeyAuth`` with
-    ``DatabaseAPIKeyAuth`` whenever a record store is available —
-    triggered by an explicit ``--database-url`` / ``$NEXUS_DATABASE_URL``
-    / ``$POSTGRES_URL``, or by ``auth_type == "database"``. Auto-enabling
-    a *global* ``allow_admin_bypass`` for that boot shape would let any
-    DB-stored admin key bypass ReBAC, not just the implicit static key
-    — which is exactly the security invariant #3063 introduced.
+    ``DatabaseAPIKeyAuth`` whenever a record store of any kind is
+    available — Postgres OR SQLite. Any of these sources can wire a
+    record store:
+
+    - explicit ``--database-url`` / ``$NEXUS_DATABASE_URL`` / ``$POSTGRES_URL``
+    - ``auth_type == "database"``
+    - ``record_store_path:`` in a YAML config (or ``$NEXUS_RECORD_STORE_PATH``)
+    - sandbox/default profile that derives ``record_store_path`` from
+      ``data_dir`` (caller must pass that resolved value in)
+
+    Auto-enabling a *global* ``allow_admin_bypass`` for any of these boot
+    shapes would let any DB-stored admin key bypass ReBAC, not just the
+    implicit static key — which is exactly the security invariant
+    #3063 introduced.
     """
     if auth_type == "database":
         return True
     if database_url:
         return True
-    return bool(os.environ.get("NEXUS_DATABASE_URL") or os.environ.get("POSTGRES_URL"))
+    if record_store_path:
+        return True
+    return bool(
+        os.environ.get("NEXUS_DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
+        or os.environ.get("NEXUS_RECORD_STORE_PATH")
+    )
 
 
 def _should_default_admin_bypass(
@@ -533,6 +549,7 @@ def _should_default_admin_bypass(
     *,
     already_set: bool,
     database_url: str | None = None,
+    record_store_path: str | None = None,
 ) -> bool:
     """Decide whether to default ``allow_admin_bypass=True`` for static-auth
     single-key deployments (Issue #4237).
@@ -541,11 +558,14 @@ def _should_default_admin_bypass(
     - The operator has explicitly chosen a value (``already_set=True`` from
       the config file, or any ``$NEXUS_ALLOW_ADMIN_BYPASS`` env value).
     - The static-auth fallback won't fire.
-    - A database-auth chain can also admit admins (round-1 review fix):
+    - A database-auth chain can also admit admins (round-1 + round-3 fix):
       ``allow_admin_bypass`` is a *global* PermissionEnforcer flag, so
       enabling it in a deployment that ALSO accepts DB-stored admin keys
-      would silently bypass ReBAC for those keys too. Refuse to mutate
-      the global in that case and let the operator opt in explicitly.
+      would silently bypass ReBAC for those keys too. The chain fires
+      for both Postgres ``database_url`` AND SQLite ``record_store_path``
+      sources — round-3 review caught a leak where a YAML config with
+      ``record_store_path`` slipped past the round-1 ``database_url``-only
+      check.
     """
     if already_set:
         return False
@@ -553,7 +573,9 @@ def _should_default_admin_bypass(
         return False
     if not _will_use_static_admin_fallback(auth_type, api_key):
         return False
-    return not _database_auth_can_chain(auth_type, database_url)
+    return not _database_auth_can_chain(
+        auth_type, database_url, record_store_path=record_store_path
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -976,6 +998,9 @@ def main(
                     api_key,
                     already_set="allow_admin_bypass" in config_obj.model_fields_set,
                     database_url=database_url or getattr(config_obj, "database_url", None),
+                    # Round-3 review fix: a YAML record_store_path also
+                    # wires DatabaseAPIKeyAuth via the static-auth chain.
+                    record_store_path=getattr(config_obj, "record_store_path", None),
                 ):
                     config_obj.allow_admin_bypass = True
                     logger.info(

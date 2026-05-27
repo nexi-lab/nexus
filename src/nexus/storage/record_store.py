@@ -249,8 +249,16 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Determine if this is a PostgreSQL database
         self._is_postgresql = not self.database_url.startswith("sqlite")
 
-        # Determine if read replica should be used (PostgreSQL only)
-        self._read_replica_url = read_replica_url if self._is_postgresql else None
+        # Determine if read replica should be used (PostgreSQL only).
+        # Issue #4238 round 3: normalize ``postgres://`` here too — read
+        # replicas come from $NEXUS_READ_REPLICA_URL which cloud providers
+        # emit with the canonical scheme. Without this, the replica
+        # create_engine call aborts with NoSuchModuleError.
+        from nexus.core.db_utils import normalize_database_url
+
+        self._read_replica_url = (
+            normalize_database_url(read_replica_url) if self._is_postgresql else None
+        )
         self._has_read_replica = self._read_replica_url is not None
 
         # Create primary engine with appropriate pool configuration
@@ -746,9 +754,15 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
         Handles multiple PostgreSQL driver prefixes and SQLite variants.
 
+        Issue #4238 round 3: also accept the canonical ``postgres://``
+        scheme so direct callers (not going through ``_resolve_db_url``)
+        still get the right async driver.
+
         Raises:
             ValueError: If the URL scheme is not recognized.
         """
+        if sync_url.startswith("postgres://"):
+            sync_url = "postgresql://" + sync_url[len("postgres://") :]
         if sync_url.startswith("postgresql+asyncpg://"):
             return sync_url  # Already async
         if sync_url.startswith("postgresql+psycopg2://"):

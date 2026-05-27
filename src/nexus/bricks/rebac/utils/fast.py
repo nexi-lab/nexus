@@ -182,43 +182,107 @@ def _check_permissions_bulk_python(
 ) -> dict[tuple[str, str, str, str, str], bool]:
     """Pure Python implementation for the Rust-fallback path.
 
-    Issue #4240: the previous implementation scanned the full ``tuples``
-    list per check (O(N × T)). For the reported 5-result search with a
-    few hundred tuples per zone that was ~4500ms total filter latency.
+    Round-3 review fix (codex HIGH): delegate to the full Zanzibar-style
+    in-memory traversal in ``nexus.bricks.rebac.graph.bulk_evaluator``
+    instead of the previous simplified expansion. The simplified path
+    silently returned False for ``tupleToUserset``, ``intersection``,
+    and ``exclusion`` shapes — which made the wildcard fix in #4239
+    (a tuple at ``/workspaces/ws1`` granting ``/workspaces/ws1/a.md``)
+    not work in Rust-free edge images, because the default file
+    namespace inherits via ``parent_viewer/parent_editor tupleToUserset``.
 
-    This rewrite is O(N + T) per bulk call:
-
-    * Build a set-based direct-grant index ONCE (T work, hashable keys).
-      Userset subjects (``subject_relation`` set) and conditioned tuples
-      are excluded — they cannot grant directly, matching the prior
-      behavior at the linear-scan filter (see ``_compute_permission_simple``
-      conditions in the old code).
-    * Memoize positive AND negative answers across recursive expansion
-      in the same bulk call (the prior ``_visited`` set only prevented
-      re-entry; siblings re-explored the same subtree from scratch).
+    Round-2's ``_unwrap_userset`` helper + ``_compute_permission_simple``
+    are kept ONLY as a last-ditch backstop in case bulk_evaluator can't
+    be imported (e.g. partial install). The shared bulk_memo_cache gives
+    the same cross-check memoization benefit round-1 introduced.
     """
     from nexus.bricks.rebac.domain import Entity, NamespaceConfig
 
-    # Convert namespace configs to proper format
-    namespaces: dict[str, ReBACNamespaceConfig] = {}
+    # Convert namespace configs to NamespaceConfig instances so the
+    # bulk_evaluator's get_namespace callable returns the proper type.
+    namespaces: dict[str, NamespaceConfig] = {}
     for obj_type, config_dict in namespace_configs.items():
         if isinstance(config_dict, NamespaceConfig):
             namespaces[obj_type] = config_dict
         else:
-            # Convert dict to NamespaceConfig - config_dict should contain 'relations' and 'permissions'
             namespaces[obj_type] = NamespaceConfig(
-                namespace_id="",  # Will be auto-generated
+                namespace_id="",
                 object_type=obj_type,
-                config=config_dict,  # Pass the whole dict as config
+                config=config_dict,
             )
 
-    # Issue #4240: pre-index direct grants for O(1) per-check lookup.
+    def _get_namespace(obj_type: str) -> NamespaceConfig | None:
+        return namespaces.get(obj_type)
+
+    # Filter conditioned tuples — the bulk_evaluator can't evaluate
+    # ABAC predicates without a context, so they must fail-closed.
+    # Preserves the prior behavior covered by
+    # test_python_fallback_denies_conditioned_tuple_without_context.
+    eligible_tuples = [t for t in tuples if not t.get("conditions")]
+
+    results: dict[tuple[str, str, str, str, str], bool] = {}
+
+    try:
+        from nexus.bricks.rebac.graph import bulk_evaluator
+    except ImportError:
+        # Degraded path: bulk_evaluator unavailable. Use the
+        # round-2 simplified expansion as a backstop. This loses
+        # tupleToUserset/intersection/exclusion but at least handles
+        # direct + union, which is what the prior fallback did.
+        return _check_permissions_bulk_python_simple(checks, eligible_tuples, namespaces)
+
+    # Shared memo across all checks in this bulk call (round-1's
+    # cross-check positive memoization benefit, preserved).
+    bulk_memo: dict[tuple[str, str, str, str, str], bool] = {}
+
+    # Round-3 review fix: zone_id is required by bulk_evaluator for tuple
+    # zone filtering, but the simple-fallback callers don't carry zone
+    # context; pass "" so the evaluator's zone filter is a no-op (mirrors
+    # how compute_permission_zone_aware_with_limits treats missing zones).
+    zone_id = ""
+
+    for subject_tuple, permission, object_tuple in checks:
+        subject = Entity(subject_tuple[0], subject_tuple[1])
+        obj = Entity(object_tuple[0], object_tuple[1])
+
+        granted = bulk_evaluator.compute_permission(
+            subject=subject,
+            permission=permission,
+            obj=obj,
+            zone_id=zone_id,
+            tuples_graph=eligible_tuples,
+            get_namespace=_get_namespace,
+            bulk_memo_cache=bulk_memo,
+        )
+        key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
+        results[key] = bool(granted)
+
+    return results
+
+
+def _check_permissions_bulk_python_simple(
+    checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    eligible_tuples: list[dict[str, Any]],
+    namespaces: dict[str, Any],
+) -> dict[tuple[str, str, str, str, str], bool]:
+    """Round-2 simplified fallback — direct + union only.
+
+    Kept as a backstop for the degraded case where ``bulk_evaluator``
+    can't be imported. tupleToUserset/intersection/exclusion are not
+    supported here (Codex round-3 HIGH).
+    """
+    from nexus.bricks.rebac.domain import Entity
+
     direct_index: set[tuple[str, str, str, str, str]] = set()
-    for t in tuples:
+    for t in eligible_tuples:
         if t.get("subject_relation") is not None:
-            continue  # usersets cannot grant directly in the simple fallback
-        if t.get("conditions"):
-            continue  # conditioned tuples are fail-closed without ABAC context
+            continue
         direct_index.add(
             (
                 t["subject_type"],
@@ -229,22 +293,22 @@ def _check_permissions_bulk_python(
             )
         )
 
-    # Memo across the whole bulk call: completed (subject, perm, obj) → bool.
     memo: dict[tuple[str, str, str, str, str], bool] = {}
-
-    # Compute each check.
     results: dict[tuple[str, str, str, str, str], bool] = {}
     for subject_tuple, permission, object_tuple in checks:
         subject = Entity(subject_tuple[0], subject_tuple[1])
         obj = Entity(object_tuple[0], object_tuple[1])
-
-        result, _cycle_obs = _compute_permission_simple(
+        result, _ = _compute_permission_simple(
             subject, permission, obj, direct_index, namespaces, memo
         )
-
-        key = (subject.entity_type, subject.entity_id, permission, obj.entity_type, obj.entity_id)
+        key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
         results[key] = result
-
     return results
 
 

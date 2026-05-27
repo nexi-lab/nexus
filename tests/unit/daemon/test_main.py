@@ -995,3 +995,28 @@ class TestShouldDefaultAdminBypass:
         self._clean_env(monkeypatch)
         monkeypatch.setenv("POSTGRES_URL", "postgresql://localhost/nexus")
         assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
+
+    def test_record_store_path_param_blocks_default(self, monkeypatch) -> None:
+        """Round-3 review fix: a YAML config that supplies
+        ``record_store_path:`` also wires DatabaseAPIKeyAuth via the
+        static-auth chain (even when the store is SQLite). Without this
+        guard, a static-auth YAML with a SQLite record store would let
+        DB-stored admin keys silently bypass ReBAC.
+        """
+        self._clean_env(monkeypatch)
+        assert (
+            _should_default_admin_bypass(
+                "static",
+                "sk-demo",
+                already_set=False,
+                record_store_path="/var/lib/nexus/record_store.db",
+            )
+            is False
+        )
+
+    def test_record_store_path_env_blocks_default(self, monkeypatch) -> None:
+        """``NEXUS_RECORD_STORE_PATH`` env is the operator-set sibling
+        of the YAML option — same chaining risk."""
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("NEXUS_RECORD_STORE_PATH", "/var/lib/nexus/record_store.db")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False

@@ -5,6 +5,7 @@ for the search endpoint, including the federated=true parameter.
 """
 
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -55,7 +56,7 @@ class TestSearchQueryEndpoint:
             "rerank_ms": 0.0,
         }
 
-        async def mock_search(**kwargs):
+        async def mock_search(**kwargs: Any) -> list[_MockResult]:
             return [
                 _MockResult(path="result.txt", chunk_text="found", score=0.9),
             ]
@@ -126,7 +127,8 @@ class TestSearchQueryEndpoint:
         assert "score" in result
 
     def test_latency_breakdown_includes_backend_leg_timings(self, client: "TestClient") -> None:
-        client.app.state.search_daemon.last_search_timing = {
+        app: Any = client.app
+        app.state.search_daemon.last_search_timing = {
             "backend_ms": 42.567,
             "embed_ms": 3.214,
             "keyword_ms": 11.111,

@@ -18,23 +18,25 @@ _BACKEND_TIMING_KEYS = {
 }
 
 
-def _daemon_with_backend_result(search_type_seen: list[str]):
+def _daemon_with_backend_result(search_type_seen: list[str]) -> Any:
     from nexus.bricks.search.daemon import SearchDaemon, SearchResult
 
-    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._initialized = True
     daemon._fts_backend = object()
     daemon._vector_backend = object()
     daemon._permission_enforcer = None
     daemon.last_search_timing = {}
 
-    def _track_latency(self, latency_ms: float) -> None:
+    def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms
 
-    async def _attach_path_contexts(self, results: list[SearchResult], *, zone_id: str) -> None:
+    async def _attach_path_contexts(
+        self: Any, results: list[SearchResult], *, zone_id: str
+    ) -> None:
         self._last_context_zone = zone_id
 
-    async def _search_via_backends(self, *args: Any, **kwargs: Any) -> list[SearchResult]:
+    async def _search_via_backends(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
         search_type_seen.append(kwargs["search_type"])
         self.last_search_timing = {
             "backend_ms": 8.0,
@@ -51,7 +53,7 @@ def _daemon_with_backend_result(search_type_seen: list[str]):
             )
         ]
 
-    async def _keyword_search(self, *args: Any, **kwargs: Any) -> list[SearchResult]:
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
         raise AssertionError("legacy keyword path should not run before new backends")
 
     daemon._track_latency = MethodType(_track_latency, daemon)
@@ -61,7 +63,7 @@ def _daemon_with_backend_result(search_type_seen: list[str]):
     return daemon
 
 
-def test_engine_dialect_name_prefers_async_engine_dialect():
+def test_engine_dialect_name_prefers_async_engine_dialect() -> None:
     from nexus.bricks.search.daemon import SearchDaemon
 
     engine = SimpleNamespace(
@@ -72,7 +74,7 @@ def test_engine_dialect_name_prefers_async_engine_dialect():
     assert SearchDaemon._engine_dialect_name(engine) == "sqlite"
 
 
-def test_engine_dialect_name_falls_back_to_sync_engine_dialect():
+def test_engine_dialect_name_falls_back_to_sync_engine_dialect() -> None:
     from nexus.bricks.search.daemon import SearchDaemon
 
     engine = SimpleNamespace(
@@ -82,14 +84,14 @@ def test_engine_dialect_name_falls_back_to_sync_engine_dialect():
     assert SearchDaemon._engine_dialect_name(engine) == "postgresql"
 
 
-def test_engine_dialect_name_handles_missing_engine():
+def test_engine_dialect_name_handles_missing_engine() -> None:
     from nexus.bricks.search.daemon import SearchDaemon
 
     assert SearchDaemon._engine_dialect_name(None) == ""
 
 
 @pytest.mark.asyncio
-async def test_keyword_search_prefers_new_fts_backend_before_legacy_keyword_stack():
+async def test_keyword_search_prefers_new_fts_backend_before_legacy_keyword_stack() -> None:
     seen: list[str] = []
     daemon = _daemon_with_backend_result(seen)
 
@@ -103,7 +105,7 @@ async def test_keyword_search_prefers_new_fts_backend_before_legacy_keyword_stac
 
 
 @pytest.mark.asyncio
-async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exist():
+async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exist() -> None:
     seen: list[str] = []
     daemon = _daemon_with_backend_result(seen)
 
@@ -115,7 +117,7 @@ async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exis
 
 
 @pytest.mark.asyncio
-async def test_keyword_backend_timing_records_keyword_and_total():
+async def test_keyword_backend_timing_records_keyword_and_total() -> None:
     from nexus.bricks.search.daemon import SearchDaemon, SearchResult
 
     class FakeFtsBackend:
@@ -136,7 +138,7 @@ async def test_keyword_backend_timing_records_keyword_and_total():
                 )
             ]
 
-    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon.last_search_timing = {}
     daemon._fts_backend = FakeFtsBackend()
 
@@ -158,9 +160,10 @@ async def test_keyword_backend_timing_records_keyword_and_total():
 
 
 @pytest.mark.asyncio
-async def test_pg_hybrid_backend_timing_records_each_leg():
+async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
     from nexus.bricks.search.daemon import SearchDaemon, SearchResult
     from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+    from nexus.bricks.search.results import BaseSearchResult
 
     class FakePgFtsBackend(PgFtsBackend):
         def __init__(self) -> None:
@@ -168,7 +171,7 @@ async def test_pg_hybrid_backend_timing_records_each_leg():
 
         async def keyword_search(
             self, query: str, path: str, limit: int, zone_id: str
-        ) -> list[SearchResult]:
+        ) -> list[BaseSearchResult]:
             return [
                 SearchResult(
                     path="/chunk.md",
@@ -181,7 +184,7 @@ async def test_pg_hybrid_backend_timing_records_each_leg():
 
         async def keyword_search_pages(
             self, query: str, path: str, limit: int, zone_id: str
-        ) -> list[SearchResult]:
+        ) -> list[BaseSearchResult]:
             return [
                 SearchResult(
                     path="/page.md",
@@ -206,10 +209,10 @@ async def test_pg_hybrid_backend_timing_records_each_leg():
                 )
             ]
 
-    async def _embed_query(self: SearchDaemon, query: str) -> list[float]:
+    async def _embed_query(self: Any, query: str) -> list[float]:
         return [0.1, 0.2]
 
-    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon.last_search_timing = {}
     daemon._fts_backend = FakePgFtsBackend()
     daemon._vector_backend = FakeVectorBackend()

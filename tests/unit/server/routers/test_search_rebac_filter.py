@@ -313,53 +313,22 @@ class TestApplyRebacFilterBehaviour:
         )
         enforcer.filter_search_results.assert_not_called()
 
-    def test_operation_context_falls_back_to_exact_read_check_for_fast_path_denials(self) -> None:
-        """A stale or incomplete list fast path must not hide readable hits."""
+    def test_operation_context_trusts_filter_list_denials_without_rechecking(self) -> None:
+        """Search must not put fallback permission checks on the hot path."""
         results = [
-            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="granted"),
+            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="allowed"),
             _StubResult("/workspace/private/secret.md", marker="denied"),
         ]
         op_context = object()
         enforcer = MagicMock()
-        enforcer.filter_list = MagicMock(return_value=[])
-        enforcer.filter_search_results = MagicMock(return_value=[])
-
-        def exact_check(path: str, _permission: Any, context: Any) -> bool:
-            assert context is op_context
-            return path == "/workspace/demo/herb/customers/cust-002.md"
-
-        enforcer.check = MagicMock(side_effect=exact_check)
-
-        filtered, _ = _apply_rebac_filter(
-            results=results,
-            permission_enforcer=enforcer,
-            auth_result=_auth(),
-            zone_id=ROOT_ZONE_ID,
-            operation_context=op_context,
+        enforcer.filter_list = MagicMock(
+            return_value=["/workspace/demo/herb/customers/cust-002.md"]
         )
-
-        assert [r.marker for r in filtered] == ["granted"]
-        assert enforcer.check.call_count == 2
-        enforcer.filter_search_results.assert_not_called()
-
-    def test_operation_context_uses_bulk_inherited_read_fallback(self) -> None:
-        """Denied list fast-path hits should be recovered in one bulk pass."""
-        results = [
-            _StubResult("/workspace/demo/herb/customers/cust-001.md", marker="first"),
-            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="second"),
-            _StubResult("/workspace/private/secret.md", marker="denied"),
-        ]
-        op_context = object()
-        enforcer = MagicMock()
-        enforcer.filter_list = MagicMock(return_value=[])
+        enforcer.filter_search_results = MagicMock(return_value=[])
         enforcer.filter_read_with_inheritance = MagicMock(
-            return_value=[
-                "/workspace/demo/herb/customers/cust-001.md",
-                "/workspace/demo/herb/customers/cust-002.md",
-            ]
+            side_effect=AssertionError("search should trust filter_list")
         )
-        enforcer.filter_search_results = MagicMock(return_value=[])
-        enforcer.check = MagicMock(return_value=False)
+        enforcer.check = MagicMock(side_effect=AssertionError("search should trust filter_list"))
 
         filtered, _ = _apply_rebac_filter(
             results=results,
@@ -369,15 +338,15 @@ class TestApplyRebacFilterBehaviour:
             operation_context=op_context,
         )
 
-        assert [r.marker for r in filtered] == ["first", "second"]
-        enforcer.filter_read_with_inheritance.assert_called_once_with(
+        assert [r.marker for r in filtered] == ["allowed"]
+        enforcer.filter_list.assert_called_once_with(
             [
-                "/workspace/demo/herb/customers/cust-001.md",
                 "/workspace/demo/herb/customers/cust-002.md",
                 "/workspace/private/secret.md",
             ],
             op_context,
         )
+        enforcer.filter_read_with_inheritance.assert_not_called()
         enforcer.check.assert_not_called()
         enforcer.filter_search_results.assert_not_called()
 

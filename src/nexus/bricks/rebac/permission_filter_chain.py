@@ -5,7 +5,7 @@ Decomposes the ~450-line filter_list() into a chain of composable strategies:
 2. LeopardIndexStrategy  — cached accessible directory index
 3. HierarchyPreFilterStrategy — batch ancestor checks via rebac_check_bulk()
 4. ZonePreFilterStrategy  — cross-zone path elimination
-5. BulkReBACStrategy  — final fallback via rebac_check_bulk()
+5. BulkReBACStrategy  — authoritative bulk resolution via rebac_check_bulk()
 
 Each strategy receives remaining paths and returns (allowed, remaining).
 The chain short-circuits once all paths are resolved.
@@ -191,7 +191,7 @@ class HierarchyPreFilterStrategy:
 
             skipped = len(remaining) - len(kept)
             logger.info(
-                f"[HIERARCHY-PREFILTER] Reduced fallback: {len(remaining)} -> "
+                f"[HIERARCHY-PREFILTER] Reduced bulk resolution: {len(remaining)} -> "
                 f"{len(kept)} paths (skipped {skipped} under denied parents)"
             )
 
@@ -247,7 +247,7 @@ class ZonePreFilterStrategy:
 
 
 class BulkReBACStrategy:
-    """Final fallback: check all remaining paths via rebac_check_bulk().
+    """Final authoritative step: check all remaining paths via rebac_check_bulk().
 
     Includes retry-once on failure (Issue #899, #7A).
     """

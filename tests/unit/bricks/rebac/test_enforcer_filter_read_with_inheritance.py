@@ -1,4 +1,4 @@
-"""PermissionEnforcer search-filter batching regressions."""
+"""PermissionEnforcer filter_list inheritance regressions."""
 
 from __future__ import annotations
 
@@ -35,31 +35,6 @@ def _make_mock_rebac(allowed_map: dict[AllowedKey, bool]) -> MagicMock:
     return rebac
 
 
-def test_filter_read_with_inheritance_batches_parent_grants() -> None:
-    """Search fallback should recover inherited grants with one bulk check."""
-    paths = [
-        "/workspace/demo/herb/customers/cust-001.md",
-        "/workspace/demo/herb/customers/cust-002.md",
-        "/workspace/private/secret.md",
-    ]
-    rebac = _make_mock_rebac(
-        {
-            (
-                ("user", "alice"),
-                "read",
-                ("file", "/workspace/demo/herb/customers"),
-                "root",
-            ): True,
-        }
-    )
-    enforcer = PermissionEnforcer(rebac_manager=rebac)
-    ctx = OperationContext(user_id="alice", groups=[])
-
-    assert enforcer.filter_read_with_inheritance(paths, ctx) == paths[:2]
-    assert rebac.rebac_check_bulk.call_count == 1
-    rebac.rebac_check.assert_not_called()
-
-
 def test_filter_list_batches_parent_grants_in_primary_chain() -> None:
     """Normal filter_list() should not need search-specific fallback."""
     paths = [
@@ -83,26 +58,3 @@ def test_filter_list_batches_parent_grants_in_primary_chain() -> None:
     assert enforcer.filter_list(paths, ctx) == paths[:2]
     assert rebac.rebac_check_bulk.call_count == 1
     rebac.rebac_check.assert_not_called()
-
-
-def test_filter_read_with_inheritance_honors_zone_perms_allowlist() -> None:
-    paths = [
-        "/zone/eng/visible.md",
-        "/zone/ops/hidden.md",
-    ]
-    rebac = _make_mock_rebac(
-        {
-            (("user", "alice"), "read", ("file", "/eng"), "root"): True,
-            (("user", "alice"), "read", ("file", "/ops"), "root"): True,
-        }
-    )
-    enforcer = PermissionEnforcer(rebac_manager=rebac)
-    ctx = OperationContext(
-        user_id="alice",
-        groups=[],
-        zone_id="root",
-        zone_perms=(("eng", "r"),),
-    )
-
-    assert enforcer.filter_read_with_inheritance(paths, ctx) == ["/zone/eng/visible.md"]
-    assert rebac.rebac_check_bulk.call_count == 0

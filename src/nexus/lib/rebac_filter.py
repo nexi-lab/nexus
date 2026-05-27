@@ -47,54 +47,6 @@ def _admin_bypass_enabled(
     return bool(getattr(operation_context, "is_admin", False))
 
 
-def _explicit_callable(obj: Any, name: str) -> Any | None:
-    """Return explicitly implemented callables without triggering MagicMock duck typing."""
-    value = getattr(obj, name, None)
-    if not callable(value):
-        return None
-    if callable(getattr(type(obj), name, None)):
-        return value
-    if name in getattr(obj, "__dict__", {}):
-        return value
-    return None
-
-
-def _recover_inherited_read_paths(
-    permission_enforcer: Any,
-    denied_paths: list[str],
-    operation_context: Any,
-) -> list[str]:
-    bulk_filter = _explicit_callable(permission_enforcer, "filter_read_with_inheritance")
-    if bulk_filter is not None:
-        try:
-            return list(bulk_filter(denied_paths, operation_context))
-        except Exception:
-            logger.debug(
-                "[SEARCH-REBAC] bulk inherited-read fallback denied all",
-                exc_info=True,
-            )
-            return []
-
-    check_permission = getattr(permission_enforcer, "check", None)
-    if not callable(check_permission):
-        return []
-
-    from nexus.contracts.types import Permission
-
-    permitted: list[str] = []
-    for denied_path in denied_paths:
-        try:
-            if check_permission(denied_path, Permission.READ, operation_context):
-                permitted.append(denied_path)
-        except Exception:
-            logger.debug(
-                "[SEARCH-REBAC] exact read fallback denied %s",
-                denied_path,
-                exc_info=True,
-            )
-    return permitted
-
-
 def apply_rebac_filter(
     results: list[Any],
     permission_enforcer: Any | None,
@@ -149,16 +101,6 @@ def apply_rebac_filter(
     filter_start = time.perf_counter()
     if use_filter_list:
         permitted_abs = permission_enforcer.filter_list(unique_abs_paths, operation_context)
-        permitted_set = set(permitted_abs)
-        denied_by_fast_path = [p for p in unique_abs_paths if p not in permitted_set]
-        if denied_by_fast_path:
-            permitted_abs.extend(
-                _recover_inherited_read_paths(
-                    permission_enforcer,
-                    denied_by_fast_path,
-                    operation_context,
-                )
-            )
     else:
         permitted_abs = permission_enforcer.filter_search_results(
             unique_abs_paths,

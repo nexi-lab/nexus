@@ -14,6 +14,11 @@ Related: Issue #1459 Phase 11, Performance optimization
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.rebac.graph._operators import (
+    dispatch_permission_operators,
+    dispatch_relation_operators,
+)
+
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
 
@@ -155,187 +160,31 @@ def compute_permission(
         return result
 
     # P0-1: Permission -> usersets (e.g., "read" -> ["viewer", "editor", "owner"]).
-    # Round-4 fix (codex CRITICAL): the previous code expanded all
-    # permission-level operators (union/intersection/exclusion) into a
-    # flat userset list and iterated with OR semantics — turning
-    # ``"read": {"intersection": ["viewer", "mfa"]}`` into an OR grant.
-    # Inspect the raw shape and apply correct AND / NOT semantics, and
-    # fail closed for unknown dict operators so custom namespaces can't
-    # silently over-authorize.
+    # Shared dispatch handles union/intersection/exclusion with fail-closed
+    # validation (rounds 4-6).
     if namespace.has_permission(permission):
         perm_def = namespace.config.get("permissions", {}).get(permission)
-
-        if isinstance(perm_def, list):
-            logger.debug(
-                "compute_permission [depth=%d]: Permission '%s' (list-OR) -> %s",
-                depth,
-                permission,
-                perm_def,
-            )
-            for userset in perm_def:
-                if _recurse(subject, userset, obj):
-                    return _store(True)
-            return _store(False)
-
-        if isinstance(perm_def, dict):
-            # Round-5 review (codex HIGH): validate operands before
-            # evaluating. Empty intersection (``{"intersection": []}``)
-            # previously short-circuited True because the vacuous
-            # ``all([])`` is True; empty exclusion (``""``) previously
-            # granted because ``not _recurse(..., "")`` evaluated False
-            # for the unknown empty relation and the NOT inverted it.
-            # Both are fail-open holes — refuse to evaluate.
-            def _all_nonempty_strings(items: Any) -> bool:
-                return (
-                    isinstance(items, list)
-                    and len(items) > 0
-                    and all(isinstance(m, str) and m for m in items)
-                )
-
-            if "union" in perm_def:
-                if not _all_nonempty_strings(perm_def["union"]):
-                    logger.warning(
-                        "compute_permission: empty/invalid union for '%s' in %s; failing closed",
-                        permission,
-                        obj.entity_type,
-                    )
-                    return _store(False)
-                logger.debug(
-                    "compute_permission [depth=%d]: Permission '%s' (union) -> %s",
-                    depth,
-                    permission,
-                    perm_def["union"],
-                )
-                for userset in perm_def["union"]:
-                    if _recurse(subject, userset, obj):
-                        return _store(True)
-                return _store(False)
-
-            if "intersection" in perm_def:
-                if not _all_nonempty_strings(perm_def["intersection"]):
-                    logger.warning(
-                        "compute_permission: empty/invalid intersection for '%s' in %s; failing closed",
-                        permission,
-                        obj.entity_type,
-                    )
-                    return _store(False)
-                logger.debug(
-                    "compute_permission [depth=%d]: Permission '%s' (intersection) -> %s",
-                    depth,
-                    permission,
-                    perm_def["intersection"],
-                )
-                for userset in perm_def["intersection"]:
-                    if not _recurse(subject, userset, obj):
-                        return _store(False)
-                return _store(True)
-
-            if "exclusion" in perm_def:
-                exclusion_target = perm_def.get("exclusion")
-                if not isinstance(exclusion_target, str) or not exclusion_target:
-                    logger.warning(
-                        "compute_permission: empty/invalid exclusion for '%s' in %s; failing closed",
-                        permission,
-                        obj.entity_type,
-                    )
-                    return _store(False)
-                logger.debug(
-                    "compute_permission [depth=%d]: Permission '%s' (exclusion NOT %s)",
-                    depth,
-                    permission,
-                    exclusion_target,
-                )
-                return _store(not _recurse(subject, exclusion_target, obj))
-
-            # Unknown dict operator — fail closed, do NOT fall through
-            # to get_permission_usersets()'s flattened OR (security
-            # regression: this is the round-4 CRITICAL bug).
-            logger.warning(
-                "compute_permission: unknown permission operator for '%s' "
-                "in namespace %s; failing closed. Keys: %s",
-                permission,
-                obj.entity_type,
-                list(perm_def.keys()),
-            )
-            return _store(False)
-
-        # Permission defined but in an unrecognized shape — fail closed.
+        perm_result = dispatch_permission_operators(
+            perm_def, permission, obj.entity_type, lambda rel: _recurse(subject, rel, obj)
+        )
+        if perm_result is not None:
+            return _store(perm_result)
+        # Unknown dict operator or unrecognized shape — fail closed.
+        logger.warning(
+            "compute_permission: unknown permission operator for '%s' "
+            "in namespace %s; failing closed. perm_def=%s",
+            permission,
+            obj.entity_type,
+            type(perm_def).__name__,
+        )
         return _store(False)
 
-    # Helper for relation-level operand validation (round-6 review).
-    def _rel_nonempty(items: Any) -> bool:
-        return (
-            isinstance(items, list)
-            and len(items) > 0
-            and all(isinstance(m, str) and m for m in items)
-        )
-
-    # Union (OR of multiple relations)
-    if namespace.has_union(permission):
-        union_relations = namespace.get_union_relations(permission)
-        if not _rel_nonempty(union_relations):
-            logger.warning(
-                "compute_permission: empty/invalid relation-level union for '%s' in %s; failing closed",
-                permission,
-                obj.entity_type,
-            )
-            return _store(False)
-        logger.debug(
-            "compute_permission [depth=%d]: Union '%s' -> %s",
-            depth,
-            permission,
-            union_relations,
-        )
-        for rel in union_relations:
-            if _recurse(subject, rel, obj):
-                return _store(True)
-        return _store(False)
-
-    # Intersection (AND of multiple relations)
-    if namespace.has_intersection(permission):
-        intersection_relations = namespace.get_intersection_relations(permission)
-        # Round-6 review (codex HIGH): empty list previously short-
-        # circuited True after zero iterations. Fail closed instead.
-        if not _rel_nonempty(intersection_relations):
-            logger.warning(
-                "compute_permission: empty/invalid relation-level intersection for "
-                "'%s' in %s; failing closed",
-                permission,
-                obj.entity_type,
-            )
-            return _store(False)
-        logger.debug(
-            "compute_permission [depth=%d]: Intersection '%s' -> %s",
-            depth,
-            permission,
-            intersection_relations,
-        )
-        for rel in intersection_relations:
-            if not _recurse(subject, rel, obj):
-                return _store(False)
-        return _store(True)
-
-    # Exclusion (NOT relation)
-    if namespace.has_exclusion(permission):
-        excluded_rel = namespace.get_exclusion_relation(permission)
-        if not isinstance(excluded_rel, str) or not excluded_rel:
-            # Round-6 review: empty string previously fell through and
-            # returned False from the bare ``return False`` below —
-            # consistent, but make it explicit + log so it's auditable.
-            logger.warning(
-                "compute_permission: empty/invalid relation-level exclusion for "
-                "'%s' in %s; failing closed",
-                permission,
-                obj.entity_type,
-            )
-            return _store(False)
-        logger.debug(
-            "compute_permission [depth=%d]: Exclusion '%s' NOT %s",
-            depth,
-            permission,
-            excluded_rel,
-        )
-        return _store(not _recurse(subject, excluded_rel, obj))
+    # Relation-level union/intersection/exclusion dispatch (rounds 6-7).
+    rel_op_result = dispatch_relation_operators(
+        namespace, permission, obj.entity_type, lambda rel: _recurse(subject, rel, obj)
+    )
+    if rel_op_result is not None:
+        return _store(rel_op_result)
 
     # tupleToUserset (indirect relation via another object)
     if namespace.has_tuple_to_userset(permission):

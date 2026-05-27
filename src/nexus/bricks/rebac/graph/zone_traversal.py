@@ -16,12 +16,16 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
+from nexus.bricks.rebac.graph._operators import (
+    dispatch_permission_operators,
+    dispatch_relation_operators,
+    parent_path_of,
+)
 from nexus.contracts.rebac_types import (
     GraphLimitExceeded,
     GraphLimits,
@@ -197,101 +201,21 @@ class ZoneAwareTraversal:
                         break
             return result
 
-        # FIX: Check if permission is a mapped permission (e.g., "write" -> ["editor", "owner"])
-        # Round-6 review (codex CRITICAL): the previous code called
-        # ``get_permission_usersets()`` which FLATTENS every operator
-        # (union / intersection / exclusion) into the same list, and
-        # iterated with OR semantics — turning intersection into OR
-        # and granting exclusion to the excluded subject. Inspect the
-        # raw permission dict and apply correct AND / NOT / OR.
-        # Fail closed for empty operands and unknown shapes (matches
-        # bulk_evaluator round-5).
+        # Permission-level dispatch: inspect raw perm_def for union/
+        # intersection/exclusion with fail-closed validation (rounds 5-6).
         if namespace.has_permission(permission):
             perm_def = namespace.config.get("permissions", {}).get(permission)
-
-            def _all_nonempty_strings(items: Any) -> bool:
-                return (
-                    isinstance(items, list)
-                    and len(items) > 0
-                    and all(isinstance(m, str) and m for m in items)
-                )
-
-            def _try_relations_or(relations: list[str], label: str) -> bool:
-                logger.debug(
-                    f"{indent}├─[PERM-MAPPING] Permission '{permission}' ({label}) "
-                    f"maps to relations: {relations}"
-                )
-                for i, relation in enumerate(relations):
-                    logger.debug(
-                        f"{indent}├─[PERM-REL {i + 1}/{len(relations)}] "
-                        f"Checking relation '{relation}'"
-                    )
-                    try:
-                        result = _recurse(subject, relation, obj)
-                        logger.debug(f"{indent}│ └─[RESULT] '{relation}' = {result}")
-                        if result:
-                            logger.debug(f"{indent}└─[✅ GRANTED] via relation '{relation}'")
-                            return True
-                    except (RuntimeError, ValueError) as e:
-                        logger.error(
-                            f"{indent}│ └─[ERROR] Exception while checking '{relation}': "
-                            f"{type(e).__name__}: {e}"
-                        )
-                        raise
-                return False
-
-            if isinstance(perm_def, list):
-                if not _all_nonempty_strings(perm_def):
-                    logger.warning(f"{indent}└─[FAIL-CLOSED] empty/invalid list for '{permission}'")
-                    return _store(False)
-                return _store(_try_relations_or(list(perm_def), "list-OR"))
-
-            if isinstance(perm_def, dict):
-                if "union" in perm_def:
-                    if not _all_nonempty_strings(perm_def["union"]):
-                        logger.warning(
-                            f"{indent}└─[FAIL-CLOSED] empty/invalid union for '{permission}'"
-                        )
-                        return _store(False)
-                    return _store(_try_relations_or(list(perm_def["union"]), "union"))
-
-                if "intersection" in perm_def:
-                    if not _all_nonempty_strings(perm_def["intersection"]):
-                        logger.warning(
-                            f"{indent}└─[FAIL-CLOSED] empty/invalid intersection for '{permission}'"
-                        )
-                        return _store(False)
-                    logger.debug(
-                        f"{indent}├─[PERM-MAPPING] Permission '{permission}' (intersection) "
-                        f"-> {perm_def['intersection']}"
-                    )
-                    for relation in perm_def["intersection"]:
-                        if not _recurse(subject, relation, obj):
-                            return _store(False)
-                    return _store(True)
-
-                if "exclusion" in perm_def:
-                    exclusion_target = perm_def.get("exclusion")
-                    if not isinstance(exclusion_target, str) or not exclusion_target:
-                        logger.warning(
-                            f"{indent}└─[FAIL-CLOSED] empty/invalid exclusion for '{permission}'"
-                        )
-                        return _store(False)
-                    logger.debug(
-                        f"{indent}├─[PERM-MAPPING] Permission '{permission}' (exclusion NOT %s)",
-                        exclusion_target,
-                    )
-                    return _store(not _recurse(subject, exclusion_target, obj))
-
-                # Unknown dict operator — fail closed.
+            perm_result = dispatch_permission_operators(
+                perm_def, permission, obj.entity_type, lambda rel: _recurse(subject, rel, obj)
+            )
+            if perm_result is not None:
+                return _store(perm_result)
+            # Unknown dict operator or unrecognized shape — fail closed.
+            if perm_def is not None:
                 logger.warning(
                     f"{indent}└─[FAIL-CLOSED] unknown permission operator for "
-                    f"'{permission}': keys={list(perm_def.keys())}"
+                    f"'{permission}': type={type(perm_def).__name__}"
                 )
-                return _store(False)
-
-            # Permission defined but unrecognized shape — fail closed.
-            if perm_def is not None:
                 return _store(False)
 
         # If permission is not mapped, try as a direct relation
@@ -308,76 +232,12 @@ class ZoneAwareTraversal:
             memo[memo_key] = result
             return result
 
-        # Handle union (OR of multiple relations)
-        if namespace.has_union(permission):
-            union_relations = namespace.get_union_relations(permission)
-            logger.debug(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
-
-            # P0-5: Check fan-out limit
-            if self.enable_graph_limits and len(union_relations) > GraphLimits.MAX_FAN_OUT:
-                raise GraphLimitExceeded("fan_out", GraphLimits.MAX_FAN_OUT, len(union_relations))
-
-            for i, rel in enumerate(union_relations):
-                logger.debug(
-                    f"{indent}│ ├─[UNION {i + 1}/{len(union_relations)}] Checking: '{rel}'"
-                )
-                try:
-                    result = _recurse(subject, rel, obj)
-                    logger.debug(f"{indent}│ │ └─[RESULT] '{rel}' = {result}")
-                    if result:
-                        logger.debug(f"{indent}└─[✅ GRANTED] via union member '{rel}'")
-                        return _store(True)
-                except GraphLimitExceeded as e:
-                    logger.error(
-                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] GraphLimitExceeded while checking '{rel}': limit_type={e.limit_type}, limit_value={e.limit_value}, actual_value={e.actual_value}"
-                    )
-                    raise
-                except (RuntimeError, ValueError) as e:
-                    logger.error(
-                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Unexpected exception while checking '{rel}': {type(e).__name__}: {e}"
-                    )
-                    raise
-            logger.debug(f"{indent}└─[❌ DENIED] - no union members granted access")
-            return _store(False)
-
-        # Round-7 review (codex HIGH): relation-level intersection/
-        # exclusion were unhandled — flowed past to direct-tuple
-        # lookup and silently denied valid AND-grants while bulk
-        # path (post round-6) granted them. Apply correct AND/NOT
-        # with empty-operand fail-closed.
-        def _rel_nonempty_list(items: Any) -> bool:
-            return (
-                isinstance(items, list)
-                and len(items) > 0
-                and all(isinstance(m, str) and m for m in items)
-            )
-
-        if namespace.has_intersection(permission):
-            intersection_relations = namespace.get_intersection_relations(permission)
-            if not _rel_nonempty_list(intersection_relations):
-                logger.warning(
-                    f"{indent}└─[FAIL-CLOSED] empty/invalid relation-level intersection "
-                    f"for '{permission}'"
-                )
-                return _store(False)
-            logger.debug(
-                f"{indent}├─[INTERSECTION] Relation '{permission}' = AND({intersection_relations})"
-            )
-            for rel in intersection_relations:
-                if not _recurse(subject, rel, obj):
-                    return _store(False)
-            return _store(True)
-
-        if namespace.has_exclusion(permission):
-            excluded_rel = namespace.get_exclusion_relation(permission)
-            if not isinstance(excluded_rel, str) or not excluded_rel:
-                logger.warning(
-                    f"{indent}└─[FAIL-CLOSED] empty/invalid relation-level exclusion "
-                    f"for '{permission}'"
-                )
-                return _store(False)
-            logger.debug(f"{indent}├─[EXCLUSION] Relation '{permission}' = NOT '{excluded_rel}'")
-            return _store(not _recurse(subject, excluded_rel, obj))
+        # Relation-level union/intersection/exclusion dispatch (rounds 6-7).
+        rel_op_result = dispatch_relation_operators(
+            namespace, permission, obj.entity_type, lambda rel: _recurse(subject, rel, obj)
+        )
+        if rel_op_result is not None:
+            return _store(rel_op_result)
 
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
@@ -678,12 +538,12 @@ class ZoneAwareTraversal:
 
         # For parent relation on files, compute from path instead of querying DB
         if relation == "parent" and obj.entity_type == "file":
-            parent_path = str(PurePosixPath(obj.entity_id).parent)
-            if parent_path != obj.entity_id and parent_path != ".":
+            parent = parent_path_of(obj.entity_id)
+            if parent is not None:
                 logger.debug(
-                    f"find_related_objects: Computed parent from path: {obj.entity_id} -> {parent_path}"
+                    f"find_related_objects: Computed parent from path: {obj.entity_id} -> {parent}"
                 )
-                return [Entity("file", parent_path)]
+                return [Entity("file", parent)]
             return []
 
         now = datetime.now(UTC)

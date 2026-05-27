@@ -264,6 +264,16 @@ def _reindex_via_rest(
         ts = datetime.fromtimestamp(float(enqueued_at), tz=UTC).isoformat(timespec="seconds")
         table.add_row("Search refresh enqueued at", ts)
 
+    # Round-5 review (codex MEDIUM): surface enqueue failures so
+    # partial-failure isn't hidden behind processed=N, errors=0.
+    enqueue_errors = int(result.get("search_enqueue_errors") or 0)
+    failed_paths = result.get("search_enqueue_failed_paths") or []
+    if enqueue_errors:
+        table.add_row(
+            "Search refresh enqueue errors",
+            f"[nexus.warning]{enqueue_errors}[/nexus.warning]",
+        )
+
     if target == "all":
         console.print(
             "\n[nexus.warning]Note:[/nexus.warning] Semantic reindex requires local filesystem access "
@@ -275,7 +285,25 @@ def _reindex_via_rest(
             "/api/v2/search/stats or wait for BM25 to return expected hits "
             "before declaring success.[/nexus.muted]"
         )
+    if enqueue_errors:
+        console.print(
+            f"\n[nexus.warning]⚠ {enqueue_errors} path(s) failed to enqueue for search "
+            "refresh — those paths will NOT appear in BM25/vector results until "
+            "the next write or a successful /search/refresh call.[/nexus.warning]"
+        )
+        if failed_paths:
+            shown = "\n  ".join(failed_paths[:10])
+            extra = f"\n  ... and {len(failed_paths) - 10} more" if len(failed_paths) > 10 else ""
+            console.print(f"\nFailed paths:\n  {shown}{extra}")
     console.print(table)
+
+    # Round-5: non-zero CLI exit on partial enqueue failure for the
+    # search/all targets so CI / operator scripts can detect it.
+    if enqueue_errors and target in ("all", "search"):
+        raise click.ClickException(
+            f"Reindex completed but {enqueue_errors} search-refresh enqueue(s) failed. "
+            "See the table above for details."
+        )
 
 
 def _run_semantic_reindex(

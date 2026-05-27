@@ -642,6 +642,68 @@ def test_python_fallback_unknown_permission_operator_fails_closed() -> None:
     assert results[("user", "alice", "read", "file", "/doc.txt")] is False
 
 
+def test_python_fallback_empty_intersection_fails_closed() -> None:
+    """Round-5 review (codex HIGH): ``{"intersection": []}`` previously
+    short-circuited True (vacuous all-of nothing). Must fail closed —
+    a generated or partially-migrated namespace with an empty operand
+    would otherwise grant every subject."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": {}},
+            "permissions": {"read": {"intersection": []}},
+        }
+    }
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        [],
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
+def test_python_fallback_empty_union_fails_closed() -> None:
+    """Round-5 review: empty union list also fails closed."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": {}},
+            "permissions": {"read": {"union": []}},
+        }
+    }
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        [],
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
+def test_python_fallback_empty_exclusion_fails_closed() -> None:
+    """Round-5 review (codex HIGH): ``{"exclusion": ""}`` previously
+    granted because ``not _recurse(..., "")`` evaluated False for the
+    unknown empty relation and the NOT inverted it. Must fail closed."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"denied": {}},
+            "permissions": {"read": {"exclusion": ""}},
+        }
+    }
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        [],
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
 def test_python_fallback_cyclic_union_order_independence() -> None:
     """Codex round-4 HIGH (restored from round-1): in a bulk call with
     a cyclic union plus a real grant via another path, the bulk

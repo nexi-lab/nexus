@@ -387,6 +387,60 @@ def test_reindex_via_rest_renders_queued_fields(monkeypatch, capsys) -> None:
     assert captured["path"] == "/api/v2/admin/reindex"
 
 
+def test_reindex_via_rest_surfaces_enqueue_errors(monkeypatch) -> None:
+    """Round-5 review (codex MEDIUM): the remote CLI must render
+    ``search_enqueue_errors`` and the failed-paths list, plus exit
+    non-zero so operator scripts can detect partial failure.
+    """
+    import click
+
+    from nexus.cli.commands import reindex as reindex_mod
+
+    class _FakeClient:
+        def post(self, path: str, json_body: dict) -> dict:
+            return {
+                "target": "all",
+                "total": 3,
+                "processed": 3,
+                "errors": 0,
+                "dry_run": False,
+                "search_paths_enqueued": 2,
+                "search_refresh_enqueued_at": 1700000000.0,
+                "search_enqueue_errors": 1,
+                "search_enqueue_failed_paths": ["/bad.md"],
+            }
+
+    monkeypatch.setattr(
+        "nexus.cli.api_client.get_api_client_from_options",
+        lambda url, key: _FakeClient(),
+    )
+
+    from rich.console import Console as _Console
+
+    from nexus.cli.theme import NEXUS_THEME
+
+    rec_console = _Console(record=True, force_terminal=False, theme=NEXUS_THEME)
+    monkeypatch.setattr(reindex_mod, "console", rec_console)
+
+    with pytest.raises(click.ClickException) as exc_info:
+        reindex_mod._reindex_via_rest(
+            remote_url="http://example.invalid",
+            remote_api_key="sk-test",
+            target="all",
+            dry_run=False,
+            from_sequence=None,
+            batch_size=500,
+        )
+
+    text = rec_console.export_text()
+    assert "Search refresh enqueue errors" in text, text
+    assert "/bad.md" in text, text
+    assert "failed to enqueue" in text.lower()
+    assert "1 search-refresh enqueue(s) failed" in str(exc_info.value.message), (
+        "CLI must exit non-zero so operator scripts detect partial enqueue failures"
+    )
+
+
 def test_reindex_via_rest_no_queued_when_zero(monkeypatch) -> None:
     """When ``search_paths_enqueued=0`` (e.g. target=versions), the
     async caveat banner should NOT print — nothing was actually queued

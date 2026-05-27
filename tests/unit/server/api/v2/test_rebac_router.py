@@ -449,8 +449,17 @@ class TestNormalizeFileObjectId:
     def test_double_star_collapses(self) -> None:
         assert _normalize_file_object_id("file", "/workspaces/ws1/**") == "/workspaces/ws1"
 
-    def test_single_star_collapses(self) -> None:
-        assert _normalize_file_object_id("file", "/workspaces/ws1/*") == "/workspaces/ws1"
+    def test_single_star_rejected(self) -> None:
+        """Round-5 review (codex HIGH): ``/*`` previously collapsed to
+        the same directory tuple as ``/**``, silently granting the
+        entire subtree even though shell ``/*`` is one-level-only.
+        Now raises so the caller returns 400 — operator must pick
+        ``/**`` explicitly or list exact paths.
+        """
+        from nexus.server.api.v2.routers.rebac import _WildcardSemanticError
+
+        with pytest.raises(_WildcardSemanticError, match="single-level glob"):
+            _normalize_file_object_id("file", "/workspaces/ws1/*")
 
     def test_trailing_slash_collapses(self) -> None:
         assert _normalize_file_object_id("file", "/workspaces/ws1/") == "/workspaces/ws1"
@@ -458,14 +467,24 @@ class TestNormalizeFileObjectId:
     def test_root_double_star(self) -> None:
         assert _normalize_file_object_id("file", "/**") == "/"
 
-    def test_root_single_star(self) -> None:
-        assert _normalize_file_object_id("file", "/*") == "/"
+    def test_root_single_star_rejected(self) -> None:
+        """Round-5 review: same as nested ``/*`` — would silently grant
+        every file in every zone."""
+        from nexus.server.api.v2.routers.rebac import _WildcardSemanticError
+
+        with pytest.raises(_WildcardSemanticError):
+            _normalize_file_object_id("file", "/*")
 
     def test_exact_path_unchanged(self) -> None:
         assert _normalize_file_object_id("file", "/workspaces/ws1/a.md") == "/workspaces/ws1/a.md"
 
-    def test_repeated_globs_collapse(self) -> None:
-        assert _normalize_file_object_id("file", "/a/**/*") == "/a"
+    def test_mixed_globs_rejected(self) -> None:
+        """``/a/**/*`` mixes recursive + single-level — reject since the
+        ``/*`` semantic cannot be honored."""
+        from nexus.server.api.v2.routers.rebac import _WildcardSemanticError
+
+        with pytest.raises(_WildcardSemanticError):
+            _normalize_file_object_id("file", "/a/**/*")
 
     def test_non_file_namespace_passthrough(self) -> None:
         """Capabilities like ``("approvals", "global*")`` must not be mangled."""
@@ -515,10 +534,8 @@ def _file_body(object_id: str) -> dict[str, Any]:
     ("input_object_id", "expected_stored"),
     [
         ("/workspaces/ws1/**", "/workspaces/ws1"),
-        ("/workspaces/ws1/*", "/workspaces/ws1"),
         ("/workspaces/ws1/", "/workspaces/ws1"),
         ("/**", "/"),
-        ("/*", "/"),
         ("/workspaces/ws1/a.md", "/workspaces/ws1/a.md"),
     ],
 )
@@ -527,8 +544,9 @@ def test_post_wildcard_object_id_normalized(
     input_object_id: str,
     expected_stored: str,
 ) -> None:
-    """POST collapses ``/**``, ``/*`` and trailing ``/`` so the existing
-    ancestor-walk machinery grants every descendant (Issue #4239)."""
+    """POST collapses RECURSIVE ``/**`` and trailing ``/`` so the existing
+    ancestor-walk machinery grants every descendant (Issue #4239).
+    Round-5: ``/*`` is rejected — see test_post_single_star_returns_400."""
     auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
     app = _make_app(rebac_manager=fake_rebac_manager_file, auth_provider=auth)
     with _client(app) as client:
@@ -543,6 +561,25 @@ def test_post_wildcard_object_id_normalized(
     body = resp.json()
     assert body["object_id"] == expected_stored
     assert body["object_id_input"] == input_object_id
+
+
+def test_post_single_star_returns_400(fake_rebac_manager_file: MagicMock) -> None:
+    """Round-5 review (codex HIGH): a ``/*`` object_id must return 400
+    rather than silently collapsing to the parent directory tuple
+    (which would grant the whole subtree). Operators should pick
+    ``/**`` for recursive or list exact paths.
+    """
+    auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
+    app = _make_app(rebac_manager=fake_rebac_manager_file, auth_provider=auth)
+    with _client(app) as client:
+        resp = client.post(
+            "/api/v2/rebac/tuples",
+            json=_file_body("/workspaces/ws1/*"),
+            headers={"Authorization": "Bearer admin-tok"},
+        )
+    assert resp.status_code == 400, resp.text
+    assert "single-level glob" in resp.json()["detail"].lower()
+    fake_rebac_manager_file.rebac_write.assert_not_called()
 
 
 def test_post_non_file_namespace_not_normalized(fake_rebac_manager: MagicMock) -> None:

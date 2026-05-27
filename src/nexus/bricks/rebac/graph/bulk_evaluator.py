@@ -178,7 +178,28 @@ def compute_permission(
             return _store(False)
 
         if isinstance(perm_def, dict):
-            if isinstance(perm_def.get("union"), list):
+            # Round-5 review (codex HIGH): validate operands before
+            # evaluating. Empty intersection (``{"intersection": []}``)
+            # previously short-circuited True because the vacuous
+            # ``all([])`` is True; empty exclusion (``""``) previously
+            # granted because ``not _recurse(..., "")`` evaluated False
+            # for the unknown empty relation and the NOT inverted it.
+            # Both are fail-open holes — refuse to evaluate.
+            def _all_nonempty_strings(items: Any) -> bool:
+                return (
+                    isinstance(items, list)
+                    and len(items) > 0
+                    and all(isinstance(m, str) and m for m in items)
+                )
+
+            if "union" in perm_def:
+                if not _all_nonempty_strings(perm_def["union"]):
+                    logger.warning(
+                        "compute_permission: empty/invalid union for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
+                    )
+                    return _store(False)
                 logger.debug(
                     "compute_permission [depth=%d]: Permission '%s' (union) -> %s",
                     depth,
@@ -190,7 +211,14 @@ def compute_permission(
                         return _store(True)
                 return _store(False)
 
-            if isinstance(perm_def.get("intersection"), list):
+            if "intersection" in perm_def:
+                if not _all_nonempty_strings(perm_def["intersection"]):
+                    logger.warning(
+                        "compute_permission: empty/invalid intersection for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
+                    )
+                    return _store(False)
                 logger.debug(
                     "compute_permission [depth=%d]: Permission '%s' (intersection) -> %s",
                     depth,
@@ -202,14 +230,22 @@ def compute_permission(
                         return _store(False)
                 return _store(True)
 
-            if isinstance(perm_def.get("exclusion"), str):
+            if "exclusion" in perm_def:
+                exclusion_target = perm_def.get("exclusion")
+                if not isinstance(exclusion_target, str) or not exclusion_target:
+                    logger.warning(
+                        "compute_permission: empty/invalid exclusion for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
+                    )
+                    return _store(False)
                 logger.debug(
                     "compute_permission [depth=%d]: Permission '%s' (exclusion NOT %s)",
                     depth,
                     permission,
-                    perm_def["exclusion"],
+                    exclusion_target,
                 )
-                return _store(not _recurse(subject, perm_def["exclusion"], obj))
+                return _store(not _recurse(subject, exclusion_target, obj))
 
             # Unknown dict operator — fail closed, do NOT fall through
             # to get_permission_usersets()'s flattened OR (security

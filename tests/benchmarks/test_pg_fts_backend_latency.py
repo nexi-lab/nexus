@@ -22,6 +22,20 @@ SAMPLE_COUNT = 7
 QUERY = "needle4244 latency regression"
 
 
+_BM25_DDL_BY_EXTENSION = {
+    "pg_search": """
+        CREATE INDEX idx_chunks_bench_4244_bm25
+        ON document_chunks USING bm25 (chunk_id, chunk_text)
+        WITH (key_field='chunk_id', text_fields='{"chunk_text": {}}')
+    """,
+    "pg_textsearch": """
+        CREATE INDEX idx_chunks_bench_4244_bm25
+        ON document_chunks USING bm25(chunk_text)
+        WITH (text_config='english')
+    """,
+}
+
+
 def _get_pg_url() -> str | None:
     url = (
         os.environ.get("NEXUS_TEST_DATABASE_URL")
@@ -118,17 +132,37 @@ async def _ensure_schema(engine: AsyncEngine) -> None:
             ON document_chunks USING GIN (to_tsvector('english', chunk_text))
             """)
         )
-        has_bm25 = (
-            await conn.execute(text("SELECT 1 FROM pg_am WHERE amname = 'bm25' LIMIT 1"))
-        ).scalar_one_or_none()
-        if has_bm25:
-            await conn.execute(
-                text("""
-                CREATE INDEX idx_chunks_bench_4244_bm25
-                ON document_chunks USING bm25(chunk_text)
-                WITH (text_config='english')
-                """)
-            )
+        await _create_optional_bm25_index(conn)
+
+
+async def _create_optional_bm25_index(conn: Any) -> None:
+    has_bm25 = (
+        await conn.execute(text("SELECT 1 FROM pg_am WHERE amname = 'bm25' LIMIT 1"))
+    ).scalar_one_or_none()
+    if not has_bm25:
+        return
+
+    rows = (
+        await conn.execute(
+            text("SELECT extname FROM pg_extension WHERE extname IN ('pg_search', 'pg_textsearch')")
+        )
+    ).fetchall()
+    installed = {row[0] for row in rows}
+    ddl_candidates = [ddl for ext, ddl in _BM25_DDL_BY_EXTENSION.items() if ext in installed]
+    ddl_candidates.extend(
+        ddl for ext, ddl in _BM25_DDL_BY_EXTENSION.items() if ext not in installed
+    )
+
+    for index, ddl in enumerate(ddl_candidates):
+        savepoint = f"try_bench_4244_bm25_{index}"
+        try:
+            await conn.execute(text(f"SAVEPOINT {savepoint}"))
+            await conn.execute(text(ddl))
+            await conn.execute(text(f"RELEASE SAVEPOINT {savepoint}"))
+            return
+        except Exception:
+            await conn.execute(text(f"ROLLBACK TO SAVEPOINT {savepoint}"))
+            await conn.execute(text(f"RELEASE SAVEPOINT {savepoint}"))
 
 
 def _doc_text(index: int) -> str:

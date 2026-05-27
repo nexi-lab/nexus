@@ -20,15 +20,11 @@ wires the call site through ChunkStore's actual API
 the SearchBackend protocol shape so isinstance() checks pass immediately.
 
 Page-BM25 approach (keyword_search_pages):
-  The SQL uses a CTE to aggregate chunks per path into a page_text string,
-  then applies pg_textsearch BM25 over page_text. This is the most accurate
-  approach when pg_textsearch can process the CTE result. If the installed
-  build cannot index CTE columns (operator-not-found / undefined-function
-  raises ``ProgrammingError``), the backend transparently falls back to
-  chunk-level BM25 with a wider ``k * 4`` and client-side page aggregation
-  via :func:`result_builders._aggregate_chunks_to_pages`. The fallback
-  decision is cached per-instance so we only try-and-catch once per
-  daemon lifetime.
+  The backend pulls an over-fetched chunk-level candidate set through the
+  indexed BM25/native-FTS query, then max-pools those candidates to one row
+  per path. This keeps page search on the same indexed hot path as chunk
+  search. Avoid building a page aggregation CTE before matching: that forces
+  PostgreSQL to aggregate/rank the corpus for a single-hit query.
 """
 
 from __future__ import annotations
@@ -63,6 +59,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _BM25_MATCH_OP: str = "@@@"
 _BM25_SCORE_FN: str = "paradedb.score"
+_PAGE_SEARCH_CANDIDATE_MULTIPLIER = 8
+_PAGE_SEARCH_MIN_CANDIDATES = 64
 _NATIVE_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _NATIVE_FTS_STOPWORDS = {
     "a",
@@ -131,6 +129,12 @@ def _native_like_patterns(query: str) -> dict[str, str]:
     }
 
 
+def _page_candidate_limit(k: int) -> int:
+    if k <= 0:
+        return 0
+    return max(k * _PAGE_SEARCH_CANDIDATE_MULTIPLIER, _PAGE_SEARCH_MIN_CANDIDATES)
+
+
 def _is_missing_bm25_error(exc: BaseException) -> bool:
     """Return True for pg_search / pg_textsearch not-installed query failures."""
     orig = getattr(exc, "orig", None)
@@ -162,11 +166,6 @@ class PgFtsBackend:
     def __init__(self, engine: AsyncEngine, chunk_store: Any | None = None) -> None:
         self._engine = engine
         self._chunk_store = chunk_store  # reserved for T9 write delegation
-        # Cached page-BM25 strategy. ``None`` = untried (try CTE first),
-        # ``True`` = CTE works, ``False`` = fall back to client-side
-        # aggregation. Keeps us from try/except on every query once we
-        # know which path the installed pg_textsearch build supports.
-        self._page_cte_supported: bool | None = None
         # ``None`` = not checked yet, ``True`` = pg_search/pg_textsearch BM25
         # works, ``False`` = use built-in PostgreSQL FTS fallback.
         self._bm25_available: bool | None = None
@@ -192,8 +191,6 @@ class PgFtsBackend:
         except Exception as exc:
             logger.debug("PgFtsBackend.startup: BM25 capability probe failed: %s", exc)
             self._bm25_available = None
-        if self._bm25_available is False:
-            self._page_cte_supported = False
         return None
 
     async def shutdown(self) -> None:
@@ -270,7 +267,6 @@ class PgFtsBackend:
                 exc,
             )
             self._bm25_available = False
-            self._page_cte_supported = False
             return await self._keyword_search_native(query, path, k, zone_id)
 
     async def _keyword_search_bm25(
@@ -401,23 +397,12 @@ class PgFtsBackend:
         k: int,
         zone_id: str,
     ) -> list[BaseSearchResult]:
-        """BM25 page-level search (one result per path, not per chunk).
+        """Indexed page-level search (one result per path, not per chunk).
 
-        Aggregates all chunks for each path into a single page_text string
-        (ordered by chunk_index), then applies pg_textsearch BM25 over the
-        page text. Returns at most *k* results ordered by BM25 score desc.
-
-        This implements the #3980 parity requirement: a rare phrase buried
-        deep in a multi-chunk document should surface the whole document
-        rather than scoring only one chunk in isolation.
-
-        Page-BM25 strategy: try CTE aggregation first. If the installed
-        pg_textsearch build cannot apply ``@@@`` / ``paradedb.score`` over
-        the CTE result (operator-not-found / function-not-found raises
-        ``ProgrammingError``), fall back to chunk-level BM25 with a wider
-        ``k * 4`` and client-side aggregation via
-        ``_aggregate_chunks_to_pages``. The decision is cached on the
-        instance so we only try-and-catch once per daemon lifetime.
+        Pulls an over-fetched candidate set through ``keyword_search`` and
+        max-pools those already-ranked chunk rows to page granularity. This
+        preserves the #3980 rare-phrase behavior without a corpus-wide page
+        aggregation CTE on the query hot path.
 
         Args:
             query: BM25 search query string.
@@ -428,203 +413,22 @@ class PgFtsBackend:
         Returns:
             List of BaseSearchResult (one per path) ordered by score desc.
         """
-        if self._bm25_available is False:
-            return await self._keyword_search_pages_native(query, path, k, zone_id)
+        candidates = await self.keyword_search(query, path, self.page_candidate_limit(k), zone_id)
+        return self.page_results_from_chunks(candidates, k=k, zone_id=zone_id)
 
-        if self._page_cte_supported is False:
-            # Cached: previous attempt failed — go straight to fallback.
-            return await self._keyword_search_pages_fallback(query, path, k, zone_id)
+    def page_candidate_limit(self, k: int) -> int:
+        return _page_candidate_limit(k)
 
-        try:
-            results = await self._keyword_search_pages_cte(query, path, k, zone_id)
-        except (ProgrammingError, DBAPIError) as exc:
-            # ProgrammingError covers operator-not-found / function-not-found
-            # in psycopg / asyncpg; DBAPIError is the broader catch for builds
-            # that surface the same condition under a different SQLSTATE.
-            # Anything else (timeouts, IntegrityError) we re-raise.
-            if _is_missing_bm25_error(exc):
-                logger.warning(
-                    "PgFtsBackend.keyword_search_pages: BM25 query failed "
-                    "because pg_search/pg_textsearch is unavailable (%s: %s). "
-                    "Falling back to built-in PostgreSQL FTS for this process.",
-                    type(exc).__name__,
-                    exc,
-                )
-                self._bm25_available = False
-                self._page_cte_supported = False
-                return await self._keyword_search_pages_native(query, path, k, zone_id)
-
-            if self._page_cte_supported is None:
-                logger.warning(
-                    "PgFtsBackend.keyword_search_pages: CTE-aggregated BM25 "
-                    "failed on this pg_textsearch build (%s: %s). Falling "
-                    "back to chunk-level BM25 + client-side page "
-                    "aggregation; subsequent calls will skip the CTE attempt.",
-                    type(exc).__name__,
-                    exc,
-                )
-            self._page_cte_supported = False
-            return await self._keyword_search_pages_fallback(query, path, k, zone_id)
-        else:
-            # Cache success on first hit so subsequent calls skip the
-            # try/except overhead.
-            if self._page_cte_supported is None:
-                self._page_cte_supported = True
-            return results
-
-    async def _keyword_search_pages_cte(
+    def page_results_from_chunks(
         self,
-        query: str,
-        path: str,
+        chunks: Sequence[BaseSearchResult],
+        *,
         k: int,
         zone_id: str,
     ) -> list[BaseSearchResult]:
-        sql = text(
-            f"""
-            WITH pages AS (
-              SELECT fp.path_id,
-                     fp.virtual_path,
-                     fp.zone_id,
-                     string_agg(c.chunk_text, ' ' ORDER BY c.chunk_index) AS page_text
-              FROM document_chunks c
-              JOIN file_paths fp ON c.path_id = fp.path_id
-              WHERE fp.zone_id = :zone_id
-                AND fp.virtual_path LIKE :prefix || '%'
-                AND fp.deleted_at IS NULL
-              GROUP BY fp.path_id, fp.virtual_path, fp.zone_id
-            )
-            SELECT path_id,
-                   virtual_path AS path,
-                   page_text,
-                   {_BM25_SCORE_FN}(path_id) AS score
-            FROM pages
-            WHERE page_text {_BM25_MATCH_OP} :q
-            ORDER BY score DESC
-            LIMIT :k
-            """
-        )
-        async with self._engine.connect() as conn:
-            rows = (
-                (
-                    await conn.execute(
-                        sql,
-                        {"q": query, "prefix": path, "zone_id": zone_id, "k": k},
-                    )
-                )
-                .mappings()
-                .all()
-            )
-
-        return [
-            BaseSearchResult(
-                path=r["path"],
-                chunk_text=r["page_text"],
-                score=float(r["score"]),
-                chunk_index=0,  # page-level result has no single chunk_index
-                keyword_score=float(r["score"]),
-                zone_id=zone_id,
-            )
-            for r in rows
-        ]
-
-    async def _keyword_search_pages_native(
-        self,
-        query: str,
-        path: str,
-        k: int,
-        zone_id: str,
-    ) -> list[BaseSearchResult]:
-        fts_query = _native_fts_query(query)
-        if not fts_query:
-            return []
-        like_patterns = _native_like_patterns(query)
-
-        sql = text("""
-            WITH q AS (
-              SELECT to_tsquery('english', :fts_query) AS query
-            ),
-            pages AS (
-              SELECT fp.path_id,
-                     fp.virtual_path,
-                     string_agg(c.chunk_text, ' ' ORDER BY c.chunk_index) AS page_text
-              FROM document_chunks c
-              JOIN file_paths fp ON c.path_id = fp.path_id
-              WHERE fp.zone_id = :zone_id
-                AND fp.virtual_path LIKE :prefix || '%'
-                AND fp.deleted_at IS NULL
-              GROUP BY fp.path_id, fp.virtual_path
-            )
-            SELECT path_id,
-                   virtual_path AS path,
-                   page_text,
-                   (
-                     ts_rank_cd(to_tsvector('english', page_text), q.query)
-                     + CASE
-                         WHEN page_text ILIKE :heading_pattern ESCAPE '\\' THEN 10.0
-                         ELSE 0.0
-                       END
-                     + CASE
-                         WHEN page_text ILIKE :phrase_pattern ESCAPE '\\' THEN 1.0
-                         ELSE 0.0
-                       END
-                   ) AS score
-            FROM pages
-            CROSS JOIN q
-            WHERE to_tsvector('english', page_text) @@ q.query
-            ORDER BY score DESC
-            LIMIT :k
-        """)
-        async with self._engine.connect() as conn:
-            rows = (
-                (
-                    await conn.execute(
-                        sql,
-                        {
-                            "fts_query": fts_query,
-                            **like_patterns,
-                            "prefix": path,
-                            "zone_id": zone_id,
-                            "k": k,
-                        },
-                    )
-                )
-                .mappings()
-                .all()
-            )
-
-        return [
-            BaseSearchResult(
-                path=r["path"],
-                chunk_text=r["page_text"],
-                score=float(r["score"]),
-                chunk_index=0,
-                keyword_score=float(r["score"]),
-                zone_id=zone_id,
-            )
-            for r in rows
-        ]
-
-    async def _keyword_search_pages_fallback(
-        self,
-        query: str,
-        path: str,
-        k: int,
-        zone_id: str,
-    ) -> list[BaseSearchResult]:
-        """Client-side page aggregation when pg_textsearch can't index CTEs.
-
-        Pulls the top ``k * 4`` chunk-level matches and aggregates them into
-        pages via ``_aggregate_chunks_to_pages``. The widened ``k * 4`` keeps
-        recall close to the CTE path: a rare phrase that lands in chunk 30 of
-        a long page still shows up because we collected enough siblings to
-        max-pool at the page level.
-        """
-        chunks = await self.keyword_search(query, path, k * 4, zone_id)
-        if not chunks:
+        if k <= 0 or not chunks:
             return []
 
-        # ``_aggregate_chunks_to_pages`` works on dict rows; convert from
-        # BaseSearchResult and back so we can reuse the shared helper.
         rows = [
             {
                 "path": r.path,
@@ -635,7 +439,6 @@ class PgFtsBackend:
             }
             for r in chunks
         ]
-        # chunks_per_page=1 collapses to one row per page (page-level shape).
         aggregated = _aggregate_chunks_to_pages(rows, chunks_per_page=1)[:k]
         return [
             BaseSearchResult(

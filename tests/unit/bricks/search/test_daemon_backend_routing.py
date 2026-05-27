@@ -238,11 +238,12 @@ async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
 
     class FakePgFtsBackend(PgFtsBackend):
         def __init__(self) -> None:
-            pass
+            self.keyword_limits: list[int] = []
 
         async def keyword_search(
             self, query: str, path: str, limit: int, zone_id: str
         ) -> list[BaseSearchResult]:
+            self.keyword_limits.append(limit)
             return [
                 SearchResult(
                     path="/chunk.md",
@@ -250,21 +251,20 @@ async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
                     score=9.0,
                     chunk_index=0,
                     search_type="keyword",
-                )
+                ),
+                SearchResult(
+                    path="/page.md",
+                    chunk_text="page result",
+                    score=8.0,
+                    chunk_index=3,
+                    search_type="keyword",
+                ),
             ]
 
         async def keyword_search_pages(
             self, query: str, path: str, limit: int, zone_id: str
         ) -> list[BaseSearchResult]:
-            return [
-                SearchResult(
-                    path="/page.md",
-                    chunk_text="page result",
-                    score=8.0,
-                    chunk_index=0,
-                    search_type="keyword",
-                )
-            ]
+            raise AssertionError("PG hybrid should derive page results from indexed chunk matches")
 
     class FakeVectorBackend:
         async def semantic_search(
@@ -298,6 +298,7 @@ async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
     )
 
     assert {result.path for result in results} == {"/chunk.md", "/page.md", "/dense.md"}
+    assert daemon._fts_backend.keyword_limits == [64]
     assert daemon.last_search_timing.keys() >= _BACKEND_TIMING_KEYS
     assert daemon.last_search_timing["backend_ms"] >= 0.0
     assert daemon.last_search_timing["embed_ms"] >= 0.0

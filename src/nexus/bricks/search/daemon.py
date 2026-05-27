@@ -1827,15 +1827,31 @@ class SearchDaemon:
 
         is_pg = isinstance(self._fts_backend, PgFtsBackend)
         if is_pg:
-            chunk_kw, page_kw, dense = await asyncio.gather(
-                timed_leg(
-                    "keyword_ms",
-                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                ),
-                timed_leg(
-                    "page_keyword_ms",
-                    self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
-                ),
+            pg_fts_backend = self._fts_backend
+            assert isinstance(pg_fts_backend, PgFtsBackend)
+
+            async def timed_pg_keyword_legs() -> tuple[list[Any], list[Any]]:
+                keyword_limit = limit * 2
+                keyword_start = time.perf_counter()
+                keyword_candidates = await pg_fts_backend.keyword_search(
+                    query,
+                    path,
+                    pg_fts_backend.page_candidate_limit(keyword_limit),
+                    zone_id,
+                )
+                timing["keyword_ms"] = (time.perf_counter() - keyword_start) * 1000
+
+                page_start = time.perf_counter()
+                page_results = pg_fts_backend.page_results_from_chunks(
+                    keyword_candidates,
+                    k=keyword_limit,
+                    zone_id=zone_id,
+                )
+                timing["page_keyword_ms"] = (time.perf_counter() - page_start) * 1000
+                return keyword_candidates[:keyword_limit], page_results
+
+            (chunk_kw, page_kw), dense = await asyncio.gather(
+                timed_pg_keyword_legs(),
                 timed_leg(
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),

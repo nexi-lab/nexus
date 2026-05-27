@@ -60,6 +60,31 @@ def test_filter_read_with_inheritance_batches_parent_grants() -> None:
     rebac.rebac_check.assert_not_called()
 
 
+def test_filter_list_batches_parent_grants_in_primary_chain() -> None:
+    """Normal filter_list() should not need search-specific fallback."""
+    paths = [
+        "/workspace/demo/herb/customers/cust-001.md",
+        "/workspace/demo/herb/customers/cust-002.md",
+        "/workspace/private/secret.md",
+    ]
+    rebac = _make_mock_rebac(
+        {
+            (
+                ("user", "alice"),
+                "read",
+                ("file", "/workspace/demo/herb/customers"),
+                "root",
+            ): True,
+        }
+    )
+    enforcer = PermissionEnforcer(rebac_manager=rebac)
+    ctx = OperationContext(user_id="alice", groups=[])
+
+    assert enforcer.filter_list(paths, ctx) == paths[:2]
+    assert rebac.rebac_check_bulk.call_count == 1
+    rebac.rebac_check.assert_not_called()
+
+
 def test_filter_read_with_inheritance_honors_zone_perms_allowlist() -> None:
     paths = [
         "/zone/eng/visible.md",

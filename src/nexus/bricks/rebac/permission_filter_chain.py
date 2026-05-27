@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from nexus.bricks.rebac._path_utils import get_ancestors
 from nexus.core.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
@@ -53,6 +54,38 @@ class FilterStrategy(Protocol):
     """Single step in the permission filter chain."""
 
     def apply(self, ctx: FilterContext, remaining: list[str]) -> FilterResult: ...
+
+
+Check = tuple[tuple[str, str], str, tuple[str, str]]
+
+
+def _read_checks_for_path(subject: tuple[str, str], path: str) -> list[Check]:
+    """Build direct and inherited READ checks for a virtual path."""
+    object_id = unscope_internal_path(path)
+    candidate_ids = list(get_ancestors(object_id))
+    if "/" not in candidate_ids:
+        candidate_ids.append("/")
+    return [(subject, "read", ("file", candidate_id)) for candidate_id in candidate_ids]
+
+
+def _dedupe_checks_by_path(
+    subject: tuple[str, str],
+    paths: list[str],
+) -> tuple[dict[str, list[Check]], list[Check]]:
+    checks_by_path: dict[str, list[Check]] = {}
+    checks: list[Check] = []
+    seen: set[Check] = set()
+
+    for path in paths:
+        path_checks = _read_checks_for_path(subject, path)
+        checks_by_path[path] = path_checks
+        for check in path_checks:
+            if check in seen:
+                continue
+            seen.add(check)
+            checks.append(check)
+
+    return checks_by_path, checks
 
 
 # =============================================================================
@@ -132,16 +165,13 @@ class HierarchyPreFilterStrategy:
 
         subject = ctx.subject
 
-        # Batch check unique parent directories
-        parent_checks = [
-            (subject, "read", ("file", unscope_internal_path(parent))) for parent in unique_parents
-        ]
+        checks_by_parent, parent_checks = _dedupe_checks_by_path(subject, unique_parents)
         parent_results = ctx.rebac_manager.rebac_check_bulk(parent_checks, zone_id=ctx.zone_id)
 
         accessible_parents = {
             parent
-            for parent, check in zip(unique_parents, parent_checks, strict=False)
-            if parent_results.get(check, False)
+            for parent in unique_parents
+            if any(parent_results.get(check, False) for check in checks_by_parent[parent])
         }
 
         logger.info(
@@ -228,9 +258,7 @@ class BulkReBACStrategy:
 
         subject = ctx.subject
 
-        checks = []
-        for path in remaining:
-            checks.append((subject, "read", ("file", unscope_internal_path(path))))
+        checks_by_path, checks = _dedupe_checks_by_path(subject, remaining)
 
         # Retry-once on transient I/O failures only
         try:
@@ -246,17 +274,26 @@ class BulkReBACStrategy:
             logger.error(f"[BULK-REBAC] Bulk check failed (non-retryable): {e}")
             return FilterResult(allowed=[], remaining=[], short_circuit=True)
 
-        allowed = [
-            path
-            for path, check in zip(remaining, checks, strict=False)
-            if results.get(check, False)
-        ]
+        allowed: list[str] = []
+        inherited_allowed = False
+        for path in remaining:
+            path_checks = checks_by_path[path]
+            direct_check = path_checks[0] if path_checks else None
+            path_allowed = False
+            for check in path_checks:
+                if results.get(check, False):
+                    path_allowed = True
+                    if check != direct_check:
+                        inherited_allowed = True
+                    break
+            if path_allowed:
+                allowed.append(path)
 
-        # Only mark bitmap complete when bulk found SOME results from a large set.
-        # An empty result may indicate parent-level grants that aren't resolved
-        # in bulk mode — marking empty as "complete" would block fallback on
-        # subsequent requests and deny all access incorrectly.
-        if allowed and len(remaining) > 100:
+        # Only mark bitmap complete when the bulk pass found direct grants.
+        # Inherited grants mean the leaf bitmap is not complete for this
+        # subject, and marking it complete would let Tiger skip the ReBAC pass
+        # for later descendant paths.
+        if allowed and not inherited_allowed and len(remaining) > 100:
             ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
         return FilterResult(allowed=allowed, remaining=[], short_circuit=True)

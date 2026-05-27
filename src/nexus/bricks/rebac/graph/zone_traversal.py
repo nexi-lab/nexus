@@ -174,30 +174,100 @@ class ZoneAwareTraversal:
             )
 
         # FIX: Check if permission is a mapped permission (e.g., "write" -> ["editor", "owner"])
+        # Round-6 review (codex CRITICAL): the previous code called
+        # ``get_permission_usersets()`` which FLATTENS every operator
+        # (union / intersection / exclusion) into the same list, and
+        # iterated with OR semantics — turning intersection into OR
+        # and granting exclusion to the excluded subject. Inspect the
+        # raw permission dict and apply correct AND / NOT / OR.
+        # Fail closed for empty operands and unknown shapes (matches
+        # bulk_evaluator round-5).
         if namespace.has_permission(permission):
-            usersets = namespace.get_permission_usersets(permission)
-            if usersets:
-                logger.debug(
-                    f"{indent}├─[PERM-MAPPING] Permission '{permission}' maps to relations: {usersets}"
+            perm_def = namespace.config.get("permissions", {}).get(permission)
+
+            def _all_nonempty_strings(items: Any) -> bool:
+                return (
+                    isinstance(items, list)
+                    and len(items) > 0
+                    and all(isinstance(m, str) and m for m in items)
                 )
-                for i, relation in enumerate(usersets):
+
+            def _try_relations_or(relations: list[str], label: str) -> bool:
+                logger.debug(
+                    f"{indent}├─[PERM-MAPPING] Permission '{permission}' ({label}) "
+                    f"maps to relations: {relations}"
+                )
+                for i, relation in enumerate(relations):
                     logger.debug(
-                        f"{indent}├─[PERM-REL {i + 1}/{len(usersets)}] Checking relation '{relation}' for permission '{permission}'"
+                        f"{indent}├─[PERM-REL {i + 1}/{len(relations)}] "
+                        f"Checking relation '{relation}'"
                     )
                     try:
                         result = _recurse(subject, relation, obj)
                         logger.debug(f"{indent}│ └─[RESULT] '{relation}' = {result}")
                         if result:
                             logger.debug(f"{indent}└─[✅ GRANTED] via relation '{relation}'")
-                            return _store(True)
+                            return True
                     except (RuntimeError, ValueError) as e:
                         logger.error(
-                            f"{indent}│ └─[ERROR] Exception while checking '{relation}': {type(e).__name__}: {e}"
+                            f"{indent}│ └─[ERROR] Exception while checking '{relation}': "
+                            f"{type(e).__name__}: {e}"
                         )
                         raise
-                logger.debug(
-                    f"{indent}└─[❌ DENIED] No relations granted access for permission '{permission}'"
+                return False
+
+            if isinstance(perm_def, list):
+                if not _all_nonempty_strings(perm_def):
+                    logger.warning(f"{indent}└─[FAIL-CLOSED] empty/invalid list for '{permission}'")
+                    return _store(False)
+                return _store(_try_relations_or(list(perm_def), "list-OR"))
+
+            if isinstance(perm_def, dict):
+                if "union" in perm_def:
+                    if not _all_nonempty_strings(perm_def["union"]):
+                        logger.warning(
+                            f"{indent}└─[FAIL-CLOSED] empty/invalid union for '{permission}'"
+                        )
+                        return _store(False)
+                    return _store(_try_relations_or(list(perm_def["union"]), "union"))
+
+                if "intersection" in perm_def:
+                    if not _all_nonempty_strings(perm_def["intersection"]):
+                        logger.warning(
+                            f"{indent}└─[FAIL-CLOSED] empty/invalid intersection for '{permission}'"
+                        )
+                        return _store(False)
+                    logger.debug(
+                        f"{indent}├─[PERM-MAPPING] Permission '{permission}' (intersection) "
+                        f"-> {perm_def['intersection']}"
+                    )
+                    for relation in perm_def["intersection"]:
+                        if not _recurse(subject, relation, obj):
+                            return _store(False)
+                    return _store(True)
+
+                if "exclusion" in perm_def:
+                    exclusion_target = perm_def.get("exclusion")
+                    if not isinstance(exclusion_target, str) or not exclusion_target:
+                        logger.warning(
+                            f"{indent}└─[FAIL-CLOSED] empty/invalid exclusion for '{permission}'"
+                        )
+                        return _store(False)
+                    logger.debug(
+                        f"{indent}├─[PERM-MAPPING] Permission '{permission}' (exclusion NOT %s)",
+                        exclusion_target,
+                    )
+                    return _store(not _recurse(subject, exclusion_target, obj))
+
+                # Unknown dict operator — fail closed.
+                logger.warning(
+                    f"{indent}└─[FAIL-CLOSED] unknown permission operator for "
+                    f"'{permission}': keys={list(perm_def.keys())}"
                 )
+                return _store(False)
+
+            # Permission defined but unrecognized shape — fail closed.
+            if perm_def is not None:
                 return _store(False)
 
         # If permission is not mapped, try as a direct relation

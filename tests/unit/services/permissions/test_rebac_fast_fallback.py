@@ -683,6 +683,50 @@ def test_python_fallback_empty_union_fails_closed() -> None:
     assert results[("user", "alice", "read", "file", "/doc.txt")] is False
 
 
+def test_python_fallback_empty_relation_intersection_fails_closed() -> None:
+    """Round-6 review (codex HIGH): relation-level intersection with
+    an empty operand list previously short-circuited True after zero
+    iterations and granted every subject via any permission mapped
+    through that relation. Must fail closed."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {
+                # Relation-level intersection of nothing — must NOT grant.
+                "everyone": {"intersection": []},
+            },
+            "permissions": {"read": ["everyone"]},
+        }
+    }
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        [],
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
+def test_python_fallback_empty_relation_union_fails_closed() -> None:
+    """Round-6 review: relation-level empty union also fails closed."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": {"union": []}},
+            "permissions": {"read": ["viewer"]},
+        }
+    }
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        [],
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
 def test_python_fallback_empty_exclusion_fails_closed() -> None:
     """Round-5 review (codex HIGH): ``{"exclusion": ""}`` previously
     granted because ``not _recurse(..., "")`` evaluated False for the

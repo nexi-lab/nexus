@@ -486,17 +486,17 @@ class _MCLProcessor:
             change_type,
         )
 
-        if "search" in self._targets:
+        # Round-6 review (codex HIGH): ``_rebuild_versions`` is
+        # implemented by calling ``_rebuild_search`` (put_aspect builds
+        # history as a side-effect of the version-0 swap), so running
+        # both branches under ``target=all`` would replay the SAME MCL
+        # row through put_aspect twice — producing duplicate version-
+        # history rows and applying deletes twice. Run exactly once;
+        # the search rebuild's natural version-0 swap already produces
+        # one history entry per MCL row, which is what target=versions
+        # asks for too.
+        if self._targets & {"search", "versions"}:
             self._rebuild_search(
-                change_type=change_type,
-                entity_urn=entity_urn,
-                aspect_name=aspect_name,
-                aspect_value=aspect_value,
-                zone_id=zone_id,
-            )
-
-        if "versions" in self._targets:
-            self._rebuild_versions(
                 change_type=change_type,
                 entity_urn=entity_urn,
                 aspect_name=aspect_name,

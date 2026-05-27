@@ -197,6 +197,69 @@ class TestMCLProcessorRebuildsAspectStore:
         result = svc.get_aspect("urn:nexus:file:z1:id1", "path")
         assert result is not None
 
+    def test_all_target_does_not_double_history(self, db_session) -> None:
+        """Round-6 review (codex HIGH): ``_rebuild_versions`` was
+        implemented as a delegate to ``_rebuild_search``, so the previous
+        ``target=all`` ran put_aspect TWICE per MCL row — producing 2x
+        history entries (and applying deletes twice). Replaying N
+        upserts under ``target=all`` must yield exactly N history rows,
+        not 2N.
+        """
+        proc = _make_processor(db_session, target="all")
+        svc = AspectService(db_session)
+
+        for i in range(3):
+            row = _make_mcl_row(
+                sequence_number=i + 1,
+                entity_urn="urn:nexus:file:z1:id1",
+                aspect_name="path",
+                change_type="upsert",
+                metadata_snapshot=json.dumps({"virtual_path": f"/data/v{i}.csv"}),
+                zone_id="z1",
+            )
+            proc.process(row)
+
+        db_session.commit()
+
+        history = svc.get_aspect_history("urn:nexus:file:z1:id1", "path")
+        assert len(history) == 3, (
+            f"target=all must not double-apply: 3 MCL rows should produce 3 history "
+            f"entries, got {len(history)} (codex round-6 HIGH)"
+        )
+
+    def test_all_target_does_not_double_apply_delete(self, db_session) -> None:
+        """Round-6 review companion: a delete row under target=all must
+        not be applied twice (would error or leak state)."""
+        proc_search_only = _make_processor(db_session, target="search")
+        svc = AspectService(db_session)
+        # Seed an aspect.
+        proc_search_only.process(
+            _make_mcl_row(
+                sequence_number=1,
+                entity_urn="urn:nexus:file:z1:id_del",
+                aspect_name="path",
+                change_type="upsert",
+                metadata_snapshot=json.dumps({"virtual_path": "/data/x.csv"}),
+                zone_id="z1",
+            )
+        )
+        db_session.commit()
+        assert svc.get_aspect("urn:nexus:file:z1:id_del", "path") is not None
+
+        # Now process a delete under target=all — must NOT raise.
+        proc_all = _make_processor(db_session, target="all")
+        proc_all.process(
+            _make_mcl_row(
+                sequence_number=2,
+                entity_urn="urn:nexus:file:z1:id_del",
+                aspect_name="path",
+                change_type="delete",
+                zone_id="z1",
+            )
+        )
+        db_session.commit()
+        assert svc.get_aspect("urn:nexus:file:z1:id_del", "path") is None
+
     def test_replay_does_not_generate_new_mcl_rows(self, db_session) -> None:
         """Reindex replay must not self-amplify by generating new MCL rows.
 

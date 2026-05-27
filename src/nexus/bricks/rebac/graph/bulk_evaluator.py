@@ -262,9 +262,24 @@ def compute_permission(
         # Permission defined but in an unrecognized shape — fail closed.
         return _store(False)
 
+    # Helper for relation-level operand validation (round-6 review).
+    def _rel_nonempty(items: Any) -> bool:
+        return (
+            isinstance(items, list)
+            and len(items) > 0
+            and all(isinstance(m, str) and m for m in items)
+        )
+
     # Union (OR of multiple relations)
     if namespace.has_union(permission):
         union_relations = namespace.get_union_relations(permission)
+        if not _rel_nonempty(union_relations):
+            logger.warning(
+                "compute_permission: empty/invalid relation-level union for '%s' in %s; failing closed",
+                permission,
+                obj.entity_type,
+            )
+            return _store(False)
         logger.debug(
             "compute_permission [depth=%d]: Union '%s' -> %s",
             depth,
@@ -279,6 +294,16 @@ def compute_permission(
     # Intersection (AND of multiple relations)
     if namespace.has_intersection(permission):
         intersection_relations = namespace.get_intersection_relations(permission)
+        # Round-6 review (codex HIGH): empty list previously short-
+        # circuited True after zero iterations. Fail closed instead.
+        if not _rel_nonempty(intersection_relations):
+            logger.warning(
+                "compute_permission: empty/invalid relation-level intersection for "
+                "'%s' in %s; failing closed",
+                permission,
+                obj.entity_type,
+            )
+            return _store(False)
         logger.debug(
             "compute_permission [depth=%d]: Intersection '%s' -> %s",
             depth,
@@ -293,15 +318,24 @@ def compute_permission(
     # Exclusion (NOT relation)
     if namespace.has_exclusion(permission):
         excluded_rel = namespace.get_exclusion_relation(permission)
-        if excluded_rel:
-            logger.debug(
-                "compute_permission [depth=%d]: Exclusion '%s' NOT %s",
-                depth,
+        if not isinstance(excluded_rel, str) or not excluded_rel:
+            # Round-6 review: empty string previously fell through and
+            # returned False from the bare ``return False`` below —
+            # consistent, but make it explicit + log so it's auditable.
+            logger.warning(
+                "compute_permission: empty/invalid relation-level exclusion for "
+                "'%s' in %s; failing closed",
                 permission,
-                excluded_rel,
+                obj.entity_type,
             )
-            return _store(not _recurse(subject, excluded_rel, obj))
-        return False
+            return _store(False)
+        logger.debug(
+            "compute_permission [depth=%d]: Exclusion '%s' NOT %s",
+            depth,
+            permission,
+            excluded_rel,
+        )
+        return _store(not _recurse(subject, excluded_rel, obj))
 
     # tupleToUserset (indirect relation via another object)
     if namespace.has_tuple_to_userset(permission):

@@ -639,7 +639,32 @@ class BulkPermissionChecker:
         ancestor_paths: set[str],
         tuples_graph: list[dict[str, Any]],
     ) -> int:
-        """Compute parent relationships in memory from file paths. Returns count added."""
+        """Compute parent relationships in memory from file paths. Returns count added.
+
+        Round-9 review (codex HIGH): strip any stored ``file → parent``
+        row whose ``subject_id`` we're about to inject a path-derived
+        parent for. The path-derived edge is the canonical one
+        (matches ZoneAwareTraversal's PurePosixPath-derived parent and
+        the fast.py round-8 fix). Without this strip, a stale or
+        hand-edited row pointing at the WRONG ancestor would let
+        bulk_evaluator.find_related_objects see BOTH parents — and an
+        unrelated subject grant on /wrong would over-authorize a file
+        under /correct. This is the exact remaining single-vs-bulk
+        divergence codex round-9 caught.
+        """
+
+        # Strip overridden stored parent rows in place.
+        def _is_overridden(t: dict[str, Any]) -> bool:
+            return (
+                t.get("subject_type") == "file"
+                and t.get("object_type") == "file"
+                and t.get("relation") == "parent"
+                and t.get("subject_relation") is None
+                and t.get("subject_id") in ancestor_paths
+            )
+
+        tuples_graph[:] = [t for t in tuples_graph if not _is_overridden(t)]
+
         computed_parent_count = 0
         for file_path in ancestor_paths:
             parent_path = str(PurePosixPath(file_path).parent)

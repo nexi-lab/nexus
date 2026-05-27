@@ -1273,3 +1273,85 @@ def test_zone_traversal_relation_empty_intersection_fails_closed(rebac_manager):
         )
         is False
     )
+
+
+# ---------------------------------------------------------------------------
+# Round-9 review (codex HIGH): bulk path stale-parent stripping
+# ---------------------------------------------------------------------------
+
+
+def test_bulk_checker_stale_parent_does_not_override_path(rebac_manager):
+    """Round-9 review (codex HIGH): the production bulk checker
+    (``rebac_check_bulk``) must also strip stale stored ``file →
+    parent`` rows before evaluating, otherwise rebac_check_bulk
+    over-grants while a single rebac_check denies — the exact
+    single-vs-bulk divergence the round-8 fast.py fix closed in the
+    Rust-free fallback.
+
+    Setup mirrors the round-8 fast-fallback regression but exercises
+    the manager's bulk path. admin has direct_viewer on /correct,
+    NOT on /wrong. A bogus tuple claims /correct/file.md's parent is
+    /wrong → without the round-9 fix, bulk grants on /wrong's
+    (nonexistent) viewer.
+    """
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-stale-parent",
+        object_type="file",
+        config={
+            "relations": {
+                "parent": {},
+                "direct_viewer": {},
+                "parent_viewer": {
+                    "tupleToUserset": {
+                        "tupleset": "parent",
+                        "computedUserset": "viewer",
+                    }
+                },
+                "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+            },
+            "permissions": {"read": ["viewer"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    # admin direct_viewer on the REAL parent.
+    rebac_manager.rebac_write(
+        subject=("user", "admin"),
+        relation="direct_viewer",
+        object=("file", "/correct"),
+    )
+    # Stale/hand-edited parent row pointing at /wrong.
+    rebac_manager.rebac_write(
+        subject=("file", "/correct/file.md"),
+        relation="parent",
+        object=("file", "/wrong"),
+    )
+
+    # alice (not admin) must NOT gain read on /correct/file.md just
+    # because she happens to have viewer on /wrong (she doesn't, but
+    # this exercises the "stale parent steers traversal to wrong
+    # ancestor" failure mode).
+    bulk_result = rebac_manager.rebac_check_bulk(
+        [
+            (("user", "admin"), "read", ("file", "/correct/file.md")),
+        ],
+        zone_id="root",
+    )
+    granted = next(iter(bulk_result.values()))
+    assert granted is True, (
+        "admin viewer on /correct must reach /correct/file.md via "
+        "path-derived parent — stale /wrong row must not override "
+        "(codex round-9 HIGH)"
+    )
+
+    # Single-check should agree.
+    single = rebac_manager.rebac_check(
+        subject=("user", "admin"),
+        permission="read",
+        object=("file", "/correct/file.md"),
+    )
+    assert single is True
+    assert single == granted, (
+        "single-check and bulk-check must agree — round-9 closed the "
+        "remaining divergence on stale parent tuples"
+    )

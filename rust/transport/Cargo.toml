@@ -16,8 +16,8 @@ contracts = { workspace = true }
 # Transport depends on kernel for the in-tree Rust API surface
 # (`Kernel`, `KernelError`, `OperationContext`, `vfs_proto` generated
 # stubs). `default-features = false` keeps the kernel runtime defaults
-# (mimalloc allocator, connectors HTTP, py-hook adapters) off in this
-# rlib; the cdylib pulls them via its own kernel dep.
+# (mimalloc allocator, connectors HTTP) off in this rlib; final binaries
+# pull them via their own kernel dep with whatever feature set they need.
 kernel = { workspace = true }
 backends = { workspace = true, default-features = false, features = ["driver-path-local", "driver-remote"] }
 # `lib::transport_primitives` (TLS / pool / addressing / TOFU /

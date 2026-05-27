@@ -8767,7 +8767,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1381
+      source: src/nexus/server/api/v2/routers/search.py:1407
   profiles:
     lite: supported
     sandbox: supported
@@ -8791,7 +8791,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1791
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1262
+      source: src/nexus/server/api/v2/routers/search.py:1288
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -8818,7 +8818,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2101
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1139
+      source: src/nexus/server/api/v2/routers/search.py:1165
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -8854,7 +8854,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:154
+      source: src/nexus/server/api/v2/routers/search.py:174
   profiles:
     lite: supported
     sandbox: supported
@@ -8871,7 +8871,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1324
+      source: src/nexus/server/api/v2/routers/search.py:1350
   profiles:
     lite: supported
     sandbox: supported
@@ -8889,7 +8889,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/search.py:1523
+      source: src/nexus/server/api/v2/routers/search.py:1549
   profiles:
     lite: supported
     sandbox: supported
@@ -8906,7 +8906,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/search.py:1741
+      source: src/nexus/server/api/v2/routers/search.py:1767
   profiles:
     lite: supported
     sandbox: supported
@@ -8923,7 +8923,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/search.py:1778
+      source: src/nexus/server/api/v2/routers/search.py:1804
   profiles:
     lite: supported
     sandbox: supported
@@ -8940,7 +8940,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/locate
-      source: src/nexus/server/api/v2/routers/search.py:1959
+      source: src/nexus/server/api/v2/routers/search.py:1985
   profiles:
     lite: supported
     sandbox: supported
@@ -8957,7 +8957,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/purge-unscoped
-      source: src/nexus/server/api/v2/routers/search.py:1905
+      source: src/nexus/server/api/v2/routers/search.py:1931
   profiles:
     lite: supported
     sandbox: supported
@@ -8975,7 +8975,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:178
+      source: src/nexus/server/api/v2/routers/search.py:198
   profiles:
     lite: supported
     sandbox: supported
@@ -8993,7 +8993,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:569
+      source: src/nexus/server/api/v2/routers/search.py:595
   profiles:
     lite: supported
     sandbox: supported
@@ -9010,7 +9010,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1360
+      source: src/nexus/server/api/v2/routers/search.py:1386
   profiles:
     lite: supported
     sandbox: supported
@@ -9045,7 +9045,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:169
+      source: src/nexus/server/api/v2/routers/search.py:189
   profiles:
     lite: supported
     sandbox: supported

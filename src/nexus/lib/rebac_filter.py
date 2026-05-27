@@ -31,6 +31,22 @@ def normalize_path(path: str) -> str:
     return path
 
 
+def _admin_bypass_enabled(
+    auth_result: dict[str, Any],
+    operation_context: Any | None,
+    permission_enforcer: Any,
+) -> bool:
+    """Return true only for configured admin bypass subjects."""
+    allow_admin_bypass = getattr(permission_enforcer, "allow_admin_bypass", False)
+    if not isinstance(allow_admin_bypass, bool) or not allow_admin_bypass:
+        return False
+    if bool(auth_result.get("is_admin", False)):
+        return True
+    if isinstance(operation_context, dict):
+        return bool(operation_context.get("is_admin", False))
+    return bool(getattr(operation_context, "is_admin", False))
+
+
 def apply_rebac_filter(
     results: list[Any],
     permission_enforcer: Any | None,
@@ -67,6 +83,8 @@ def apply_rebac_filter(
 
     user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
     is_admin = bool(auth_result.get("is_admin", False))
+    if _admin_bypass_enabled(auth_result, operation_context, permission_enforcer):
+        return results, 0.0
 
     # Two-pass: deduplicate paths for the permission check, then filter
     # the original ordered list against the permitted set.
@@ -83,23 +101,6 @@ def apply_rebac_filter(
     filter_start = time.perf_counter()
     if use_filter_list:
         permitted_abs = permission_enforcer.filter_list(unique_abs_paths, operation_context)
-        check_permission = getattr(permission_enforcer, "check", None)
-        if callable(check_permission):
-            permitted_set = set(permitted_abs)
-            denied_by_fast_path = [p for p in unique_abs_paths if p not in permitted_set]
-            if denied_by_fast_path:
-                from nexus.contracts.types import Permission
-
-                for denied_path in denied_by_fast_path:
-                    try:
-                        if check_permission(denied_path, Permission.READ, operation_context):
-                            permitted_abs.append(denied_path)
-                    except Exception:
-                        logger.debug(
-                            "[SEARCH-REBAC] exact read fallback denied %s",
-                            denied_path,
-                            exc_info=True,
-                        )
     else:
         permitted_abs = permission_enforcer.filter_search_results(
             unique_abs_paths,

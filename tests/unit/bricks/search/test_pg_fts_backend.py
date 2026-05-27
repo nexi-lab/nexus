@@ -317,6 +317,24 @@ async def test_keyword_search_keeps_unrelated_dbapi_errors_visible():
 
 
 @pytest.mark.asyncio
+async def test_keyword_search_pages_uses_indexed_chunk_query_without_cte():
+    conn = _FakeConn(has_bm25=True)
+    backend = PgFtsBackend(engine=_FakeEngine(conn))
+    backend._bm25_available = True
+
+    hits = await backend.keyword_search_pages(
+        "Nexus Core",
+        "/workspace/demo/herb",
+        k=5,
+        zone_id="root",
+    )
+
+    assert [h.path for h in hits] == ["/workspace/demo/herb/products/prod-001.md"]
+    assert any("c.chunk_text @@@ :q" in sql for sql in conn.calls)
+    assert not any("string_agg" in sql for sql in conn.calls)
+
+
+@pytest.mark.asyncio
 async def test_keyword_search_pages_uses_native_page_search_without_bm25():
     conn = _FakeConn(has_bm25=False)
     backend = PgFtsBackend(engine=_FakeEngine(conn))
@@ -332,7 +350,8 @@ async def test_keyword_search_pages_uses_native_page_search_without_bm25():
     assert [h.path for h in hits] == ["/workspace/demo/herb/products/prod-001.md"]
     assert hits[0].chunk_text == "Nexus Core pricing is usage-based"
     assert not any("paradedb.score" in sql for sql in conn.calls)
-    assert any("string_agg" in sql and "ts_rank_cd" in sql for sql in conn.calls)
+    assert not any("string_agg" in sql for sql in conn.calls)
+    assert any("to_tsquery('english', :fts_query)" in sql for sql in conn.calls)
 
 
 @pytest.mark.asyncio

@@ -1265,10 +1265,10 @@ class PermissionEnforcer:
 
         Unlike filter_list(), this method:
         1. Skips the NamespaceManager pre-filter (search paths lack mount entries)
-        2. Uses compute_permissions_bulk with fresh graph (unique tuple_version)
-           to check only the N search result paths — O(N) not O(total_zone_tuples)
+        2. Resolves direct and inherited grants through rebac_check_bulk()
+           for only the N search result paths — O(N * path depth), deduped.
 
-        Performance: 1 SQL query + 1 Rust graph build + N permission checks.
+        Performance: 1 bulk permission pass over the returned result paths.
         Scales with search result count, NOT zone size.
 
         Args:
@@ -1306,34 +1306,17 @@ class PermissionEnforcer:
         user_id: str,
         zone_id: str,
     ) -> list[str]:
-        """Check only the given paths via Rust bulk permission check.
-
-        Uses a unique tuple_version (time_ns) to force a fresh graph build,
-        bypassing the stale GRAPH_CACHE bug in compute_permissions_bulk.
-        """
-        import time as time_module
-
-        from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
+        """Check only the given paths via the authoritative ReBAC bulk path."""
+        from nexus.bricks.rebac.permission_filter_chain import _dedupe_checks_by_path
 
         assert self.rebac_manager is not None  # caller already checked
 
-        # Fetch tuples for zone (1 SQL query) — includes cross-zone for user
-        tuples = self.rebac_manager._fetch_tuples_for_zone(
-            zone_id, include_cross_zone_for_user=user_id
-        )
-        namespace_configs = self.rebac_manager._get_namespace_configs_dict()
-
-        # Build checks: [(subject, permission, object), ...]
         subject = ("user", user_id)
-        checks = [(subject, "read", ("file", p)) for p in paths]
+        checks_by_path, checks = _dedupe_checks_by_path(subject, paths)
+        results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
 
-        # Use unique tuple_version to force fresh Rust graph (bypass stale cache)
-        results = check_permissions_bulk_with_fallback(
-            checks=checks,
-            tuples=tuples,
-            namespace_configs=namespace_configs,
-            tuple_version=time_module.time_ns(),
-        )
-
-        # results is dict[(subj_type, subj_id, perm, obj_type, obj_id) -> bool]
-        return [p for p in paths if results.get(("user", user_id, "read", "file", p), False)]
+        return [
+            path
+            for path in paths
+            if any(results.get(check, False) for check in checks_by_path[path])
+        ]

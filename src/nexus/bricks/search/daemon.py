@@ -36,7 +36,8 @@ import json
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,6 +68,15 @@ if TYPE_CHECKING:
     from nexus.bricks.search.path_context import PathContextCache
 
 logger = logging.getLogger(__name__)
+
+_BACKEND_LEG_TIMING_KEYS = (
+    "embed_ms",
+    "keyword_ms",
+    "page_keyword_ms",
+    "vector_ms",
+    "fusion_ms",
+    "rerank_ms",
+)
 
 
 @dataclass
@@ -99,6 +109,39 @@ class SearchResult(BaseSearchResult):
     """
 
     search_type: str = "hybrid"
+
+
+class SearchResultList(list[SearchResult]):
+    """Search results plus a request-local timing snapshot."""
+
+    def __init__(
+        self,
+        results: Iterable[SearchResult] = (),
+        *,
+        search_timing: dict[str, float] | None = None,
+    ) -> None:
+        super().__init__(results)
+        self.search_timing = dict(search_timing or {})
+
+
+def _empty_backend_timing() -> dict[str, float]:
+    return {
+        "backend_ms": 0.0,
+        "embed_ms": 0.0,
+        "keyword_ms": 0.0,
+        "page_keyword_ms": 0.0,
+        "vector_ms": 0.0,
+        "fusion_ms": 0.0,
+        "rerank_ms": 0.0,
+    }
+
+
+def _merge_backend_timing(total_ms: float, recorded: dict[str, float]) -> dict[str, float]:
+    timing = {"backend_ms": total_ms, "rerank_ms": recorded.get("rerank_ms", 0.0)}
+    for key in _BACKEND_LEG_TIMING_KEYS:
+        if key in recorded:
+            timing[key] = recorded[key]
+    return timing
 
 
 @dataclass
@@ -200,6 +243,31 @@ class SearchDaemon:
         # Cleanup
         await daemon.shutdown()
     """
+
+    def _search_timing_var(self) -> ContextVar[dict[str, float] | None]:
+        timing_var = self.__dict__.get("_last_search_timing_var")
+        if timing_var is None:
+            timing_var = ContextVar(
+                f"search_daemon_{id(self)}_last_search_timing",
+                default=None,
+            )
+            self.__dict__["_last_search_timing_var"] = timing_var
+        return timing_var
+
+    @property
+    def last_search_timing(self) -> dict[str, float]:
+        timing = self._search_timing_var().get()
+        if timing is None:
+            timing = {}
+            self._search_timing_var().set(timing)
+        return timing
+
+    @last_search_timing.setter
+    def last_search_timing(self, value: dict[str, float]) -> None:
+        self._search_timing_var().set(dict(value))
+
+    def _with_search_timing(self, results: Iterable[SearchResult]) -> SearchResultList:
+        return SearchResultList(results, search_timing=self.last_search_timing)
 
     def __init__(
         self,
@@ -304,6 +372,10 @@ class SearchDaemon:
         self._fts_backend: Any = None
         self._vector_backend: Any = None
         self._embedding_client: Any = None
+        self._last_search_timing_var: ContextVar[dict[str, float] | None] = ContextVar(
+            f"search_daemon_{id(self)}_last_search_timing",
+            default=None,
+        )
         self.last_search_timing: dict[str, float] = {}
 
         # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
@@ -1587,15 +1659,14 @@ class SearchDaemon:
                     )
                     backend_ms = (time.perf_counter() - backend_start) * 1000
                     backend_attempted = True
-                    self.last_search_timing = {
-                        "backend_ms": backend_ms,
-                        "rerank_ms": 0.0,
-                    }
+                    self.last_search_timing = _merge_backend_timing(
+                        backend_ms, self.last_search_timing
+                    )
                     if backend_results:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
                         await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
-                        return backend_results
+                        return self._with_search_timing(backend_results)
 
                 # Keyword mode should use the daemon's keyword stack first.
                 # The new fts backend above is the canonical BM25/native-FTS
@@ -1614,7 +1685,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
-                    return keyword_results
+                    return self._with_search_timing(keyword_results)
             elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
                 # matches are not lost before backend semantic ranking.
@@ -1642,10 +1713,7 @@ class SearchDaemon:
                     zone_id=effective_zone_id,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
-                self.last_search_timing = {
-                    "backend_ms": backend_ms,
-                    "rerank_ms": 0.0,
-                }
+                self.last_search_timing = _merge_backend_timing(backend_ms, self.last_search_timing)
                 if hybrid_keyword_ms:
                     self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
@@ -1661,7 +1729,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(results, zone_id=effective_zone_id)
-                    return results
+                    return self._with_search_timing(results)
                 # Backend returned empty — fall through to the legacy stack
                 # so Zoekt / BM25S / inline FTS can still serve the query.
 
@@ -1687,11 +1755,11 @@ class SearchDaemon:
                 self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
             await self._attach_path_contexts(results, zone_id=effective_zone_id)
-            return results
+            return self._with_search_timing(results)
 
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
-            return []
+            return self._with_search_timing([])
 
     async def _search_via_backends(
         self,
@@ -1712,45 +1780,104 @@ class SearchDaemon:
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
 
         path = path_filter or "/"
+        timing = _empty_backend_timing()
+        backend_start = time.perf_counter()
+
+        async def timed_leg(key: str, awaitable: Awaitable[T]) -> T:
+            leg_start = time.perf_counter()
+            result = await awaitable
+            timing[key] = (time.perf_counter() - leg_start) * 1000
+            return result
+
+        def record_total() -> None:
+            timing["backend_ms"] = (time.perf_counter() - backend_start) * 1000
+            self.last_search_timing = timing
 
         if search_type == "keyword":
-            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            results = await timed_leg(
+                "keyword_ms",
+                self._fts_backend.keyword_search(query, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         if search_type == "semantic":
-            qvec = await self._embed_query(query)
+            qvec = await timed_leg("embed_ms", self._embed_query(query))
             if qvec is None:
+                record_total()
                 return []
-            results = await self._vector_backend.semantic_search(qvec, path, limit, zone_id)
+            results = await timed_leg(
+                "vector_ms",
+                self._vector_backend.semantic_search(qvec, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         # Hybrid: 3-way RRF on PG, 2-way on SQLite.
-        qvec = await self._embed_query(query)
+        qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
-            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            results = await timed_leg(
+                "keyword_ms",
+                self._fts_backend.keyword_search(query, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         is_pg = isinstance(self._fts_backend, PgFtsBackend)
         if is_pg:
-            chunk_kw, page_kw, dense = await asyncio.gather(
-                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
-                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+            pg_fts_backend = self._fts_backend
+            assert isinstance(pg_fts_backend, PgFtsBackend)
+
+            async def timed_pg_keyword_legs() -> tuple[list[Any], list[Any]]:
+                keyword_limit = limit * 2
+                keyword_start = time.perf_counter()
+                keyword_candidates = await pg_fts_backend.keyword_search(
+                    query,
+                    path,
+                    pg_fts_backend.page_candidate_limit(keyword_limit),
+                    zone_id,
+                )
+                timing["keyword_ms"] = (time.perf_counter() - keyword_start) * 1000
+
+                page_start = time.perf_counter()
+                page_results = pg_fts_backend.page_results_from_chunks(
+                    keyword_candidates,
+                    k=keyword_limit,
+                    zone_id=zone_id,
+                )
+                timing["page_keyword_ms"] = (time.perf_counter() - page_start) * 1000
+                return keyword_candidates[:keyword_limit], page_results
+
+            (chunk_kw, page_kw), dense = await asyncio.gather(
+                timed_pg_keyword_legs(),
+                timed_leg(
+                    "vector_ms",
+                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                ),
                 return_exceptions=False,
             )
         else:
             chunk_kw, dense = await asyncio.gather(
-                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                timed_leg(
+                    "keyword_ms",
+                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+                ),
+                timed_leg(
+                    "vector_ms",
+                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                ),
                 return_exceptions=False,
             )
             page_kw = []
 
         # Fuse keyword legs first (chunk + page), then RRF that with dense.
+        fusion_start = time.perf_counter()
         kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
         fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+        timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+        record_total()
         return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
 
     async def _embed_query(self, query: str) -> list[float] | None:

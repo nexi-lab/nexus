@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
-import time
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -58,23 +56,16 @@ def _make_service(
     return svc, mock_nx
 
 
-class _BlockingReadNx:
+class _OffloadRequiredNx:
     def __init__(self) -> None:
         self.closed = False
-        self.read_started = threading.Event()
-        self.read_timeouts: list[int | None] = []
         self.setattr_calls: list[tuple[str, dict[str, object]]] = []
 
     def sys_setattr(self, path: str, **attrs: object) -> None:
         self.setattr_calls.append((path, attrs))
 
     def sys_read(self, path: str, *, timeout_ms: int | None = None) -> bytes:
-        self.read_started.set()
-        self.read_timeouts.append(timeout_ms)
-        time.sleep(0.5)
-        if self.closed:
-            raise NexusFileNotFoundError(path)
-        return b""
+        raise AssertionError("workflow pipe reads must be offloaded with asyncio.to_thread")
 
     def sys_write(self, path: str, data: bytes) -> dict[str, object]:  # noqa: ARG002
         return {"path": path, "bytes_written": len(data)}
@@ -215,28 +206,41 @@ class TestConsumer:
         assert svc._workflow_engine.fire_event.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_blocking_pipe_read_does_not_block_event_loop(self) -> None:
+    async def test_blocking_pipe_read_does_not_block_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Blocking pipe reads should not freeze unrelated HTTP request handling."""
-        nx = _BlockingReadNx()
+        nx = _OffloadRequiredNx()
         engine = AsyncMock()
         svc = WorkflowDispatchService(
             nx=cast(Any, nx),
             workflow_engine=engine,
             enable_workflows=True,
         )
+        to_thread_entered = asyncio.Event()
+        release_to_thread = asyncio.Event()
+        to_thread_calls: list[tuple[Any, tuple[object, ...], dict[str, object]]] = []
+
+        async def _fake_to_thread(func: Any, /, *args: object, **kwargs: object) -> bytes:
+            to_thread_calls.append((func, args, kwargs))
+            to_thread_entered.set()
+            await release_to_thread.wait()
+            raise NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)
+
+        monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
 
         await svc.start()
         try:
+            await asyncio.wait_for(to_thread_entered.wait(), timeout=1.0)
+            await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
 
-            async def _wait_for_read() -> None:
-                while not nx.read_started.is_set():
-                    await asyncio.sleep(0.01)
-
-            started_at = time.perf_counter()
-            await asyncio.wait_for(_wait_for_read(), timeout=1.0)
-            assert time.perf_counter() - started_at < 0.25
-            assert nx.read_timeouts == [0]
+            assert len(to_thread_calls) == 1
+            func, args, kwargs = to_thread_calls[0]
+            assert func == nx.sys_read
+            assert args == (_WORKFLOW_PIPE_PATH,)
+            assert kwargs == {"timeout_ms": 0}
         finally:
+            release_to_thread.set()
             await svc.stop()
 
 

@@ -36,8 +36,9 @@ contracts = { workspace = true }
 # — the in-tree Rust API surface is `Kernel::register_native_hook` /
 # `Kernel::prepare_audit_stream` / `kernel::core::dispatch::*`).
 # `default-features = false` keeps the kernel runtime defaults
-# (mimalloc allocator, connector HTTP stack, py-hook adapters) off so
-# this rlib stays slim; the cdylib pulls them via its own kernel dep.
+# (mimalloc allocator, connector HTTP stack) off so this rlib stays
+# slim; final binaries pull them via their own kernel dep with whatever
+# feature set they need.
 kernel = { workspace = true }
 # **HARD INVARIANT** — services ⊥ backends ⊥ raft. Services that need
 # backend or raft-replicated behaviour reach it through `kernel.sys_*`

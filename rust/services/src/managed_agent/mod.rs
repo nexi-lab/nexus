@@ -283,11 +283,10 @@ impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
     /// Service constructor.  Production callers reach this through
-    /// [`ManagedAgentService::<Kernel>::install`] which wraps the
-    /// cdylib's freshly-built `Kernel`; tests instantiate directly
-    /// with a `Kernel::new()` (cheap in-memory construction) so the
-    /// per-pid procfs entries land in the same metastore the
-    /// assertion helpers read back.
+    /// [`ManagedAgentService::<Kernel>::install`] against the boot-time
+    /// `Arc<Kernel>`; tests instantiate directly with a `Kernel::new()`
+    /// (cheap in-memory construction) so the per-pid procfs entries
+    /// land in the same metastore the assertion helpers read back.
     pub(crate) fn new(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel,

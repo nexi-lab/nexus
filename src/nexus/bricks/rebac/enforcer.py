@@ -1155,6 +1155,98 @@ class PermissionEnforcer:
             return None
         return self._hotspot_detector.get_hot_entries(limit=limit)
 
+    def filter_read_with_inheritance(
+        self,
+        paths: list[str],
+        context: OperationContext,
+    ) -> list[str]:
+        """Batch READ checks for paths, including parent-directory inheritance.
+
+        Search filtering first runs ``filter_list()`` to use the fast strategy
+        chain. If that chain denies candidates because a cache/index is stale or
+        incomplete, this method recovers readable paths in one bulk ReBAC call
+        rather than calling ``check()`` once per path.
+        """
+        if not paths:
+            return []
+
+        if (context.is_admin and self.allow_admin_bypass) or (
+            context.is_system and self.allow_system_bypass
+        ):
+            return paths
+
+        scope_allowed: set[str] = set()
+        candidate_paths = paths
+
+        effective_zone_perms = context.zone_perms or ()
+        has_real_zone_perms = any(z != ROOT_ZONE_ID for z, _ in effective_zone_perms)
+        if context.zone_id == ROOT_ZONE_ID and has_real_zone_perms:
+            allowed_zone_perms = dict(effective_zone_perms)
+            scoped_candidates: list[str] = []
+            for path in candidate_paths:
+                if path.startswith("/zone/"):
+                    zone_id = path[6:].split("/", 1)[0]
+                    if zone_id and zone_id != ROOT_ZONE_ID:
+                        perms = allowed_zone_perms.get(zone_id)
+                        if perms and ("r" in perms or "x" in perms):
+                            scope_allowed.add(path)
+                        continue
+                scoped_candidates.append(path)
+            candidate_paths = scoped_candidates
+
+        if self.namespace_manager is not None and candidate_paths:
+            subject = context.get_subject()
+            candidate_paths = self.namespace_manager.filter_visible(
+                subject, candidate_paths, context.zone_id
+            )
+
+        check_stale_session(self.agent_registry, context)
+
+        if self.rebac_manager is None or not hasattr(self.rebac_manager, "rebac_check_bulk"):
+            return [path for path in paths if path in scope_allowed]
+
+        from nexus.bricks.rebac._path_utils import get_ancestors
+        from nexus.core.path_utils import unscope_internal_path
+
+        zone_id = context.zone_id or ROOT_ZONE_ID
+        subject = context.get_subject()
+        checks_by_path: dict[str, list[tuple[tuple[str, str], str, tuple[str, str]]]] = {}
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
+        seen_checks: set[tuple[tuple[str, str], str, tuple[str, str]]] = set()
+
+        for path in candidate_paths:
+            object_id = unscope_internal_path(path)
+            candidate_ids = list(get_ancestors(object_id))
+            if "/" not in candidate_ids:
+                candidate_ids.append("/")
+            path_checks: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
+            for candidate_id in candidate_ids:
+                check = (subject, "read", ("file", candidate_id))
+                path_checks.append(check)
+                if check not in seen_checks:
+                    seen_checks.add(check)
+                    checks.append(check)
+            checks_by_path[path] = path_checks
+
+        if checks:
+            try:
+                results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
+            except Exception:
+                logger.warning(
+                    "filter_read_with_inheritance failed, denying fallback paths (fail-closed)",
+                    exc_info=True,
+                )
+                results = {}
+        else:
+            results = {}
+
+        bulk_allowed = {
+            path
+            for path in candidate_paths
+            if any(results.get(check, False) for check in checks_by_path[path])
+        }
+        return [path for path in paths if path in scope_allowed or path in bulk_allowed]
+
     def filter_list(
         self,
         paths: list[str],

@@ -342,6 +342,45 @@ class TestApplyRebacFilterBehaviour:
         assert enforcer.check.call_count == 2
         enforcer.filter_search_results.assert_not_called()
 
+    def test_operation_context_uses_bulk_inherited_read_fallback(self) -> None:
+        """Denied list fast-path hits should be recovered in one bulk pass."""
+        results = [
+            _StubResult("/workspace/demo/herb/customers/cust-001.md", marker="first"),
+            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="second"),
+            _StubResult("/workspace/private/secret.md", marker="denied"),
+        ]
+        op_context = object()
+        enforcer = MagicMock()
+        enforcer.filter_list = MagicMock(return_value=[])
+        enforcer.filter_read_with_inheritance = MagicMock(
+            return_value=[
+                "/workspace/demo/herb/customers/cust-001.md",
+                "/workspace/demo/herb/customers/cust-002.md",
+            ]
+        )
+        enforcer.filter_search_results = MagicMock(return_value=[])
+        enforcer.check = MagicMock(return_value=False)
+
+        filtered, _ = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(),
+            zone_id=ROOT_ZONE_ID,
+            operation_context=op_context,
+        )
+
+        assert [r.marker for r in filtered] == ["first", "second"]
+        enforcer.filter_read_with_inheritance.assert_called_once_with(
+            [
+                "/workspace/demo/herb/customers/cust-001.md",
+                "/workspace/demo/herb/customers/cust-002.md",
+                "/workspace/private/secret.md",
+            ],
+            op_context,
+        )
+        enforcer.check.assert_not_called()
+        enforcer.filter_search_results.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # _apply_rebac_filter — auth_result extraction

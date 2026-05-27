@@ -66,7 +66,7 @@ pub struct AuditRecord {
 
 /// VFS audit hook — implements `NativeInterceptHook` so it can be registered
 /// with `kernel.register_native_hook` and receive post-dispatch callbacks
-/// without crossing the PyO3 boundary.
+/// directly from the kernel dispatch path.
 ///
 /// Holds an `Arc<K>` to the kernel + the audit stream path; on each
 /// post-hook the record is serialised in a background thread and

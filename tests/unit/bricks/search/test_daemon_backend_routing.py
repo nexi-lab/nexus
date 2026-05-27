@@ -7,6 +7,16 @@ from typing import Any
 
 import pytest
 
+_BACKEND_TIMING_KEYS = {
+    "backend_ms",
+    "embed_ms",
+    "keyword_ms",
+    "page_keyword_ms",
+    "vector_ms",
+    "fusion_ms",
+    "rerank_ms",
+}
+
 
 def _daemon_with_backend_result(search_type_seen: list[str]):
     from nexus.bricks.search.daemon import SearchDaemon, SearchResult
@@ -26,6 +36,11 @@ def _daemon_with_backend_result(search_type_seen: list[str]):
 
     async def _search_via_backends(self, *args: Any, **kwargs: Any) -> list[SearchResult]:
         search_type_seen.append(kwargs["search_type"])
+        self.last_search_timing = {
+            "backend_ms": 8.0,
+            "keyword_ms": 3.0,
+            "rerank_ms": 0.0,
+        }
         return [
             SearchResult(
                 path="/backend.md",
@@ -82,6 +97,9 @@ async def test_keyword_search_prefers_new_fts_backend_before_legacy_keyword_stac
 
     assert seen == ["keyword"]
     assert [result.path for result in results] == ["/backend.md"]
+    assert daemon.last_search_timing["backend_ms"] >= 0.0
+    assert daemon.last_search_timing["keyword_ms"] == 3.0
+    assert daemon.last_search_timing["rerank_ms"] == 0.0
 
 
 @pytest.mark.asyncio
@@ -93,3 +111,124 @@ async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exis
 
     assert seen == ["hybrid"]
     assert [result.path for result in results] == ["/backend.md"]
+    assert daemon.last_search_timing["keyword_ms"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_keyword_backend_timing_records_keyword_and_total():
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    class FakeFtsBackend:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, int, str]] = []
+
+        async def keyword_search(
+            self, query: str, path: str, limit: int, zone_id: str
+        ) -> list[SearchResult]:
+            self.calls.append((query, path, limit, zone_id))
+            return [
+                SearchResult(
+                    path="/backend.md",
+                    chunk_text="backend result",
+                    score=10.0,
+                    chunk_index=0,
+                    search_type="keyword",
+                )
+            ]
+
+    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon._fts_backend = FakeFtsBackend()
+
+    results = await daemon._search_via_backends(
+        "Nexus Core",
+        search_type="keyword",
+        limit=1,
+        path_filter=None,
+        zone_id="root",
+    )
+
+    assert [result.path for result in results] == ["/backend.md"]
+    assert daemon._fts_backend.calls == [("Nexus Core", "/", 1, "root")]
+    assert daemon.last_search_timing.keys() >= _BACKEND_TIMING_KEYS
+    assert daemon.last_search_timing["backend_ms"] >= 0.0
+    assert daemon.last_search_timing["keyword_ms"] >= 0.0
+    assert daemon.last_search_timing["embed_ms"] == 0.0
+    assert daemon.last_search_timing["rerank_ms"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_pg_hybrid_backend_timing_records_each_leg():
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+
+    class FakePgFtsBackend(PgFtsBackend):
+        def __init__(self) -> None:
+            pass
+
+        async def keyword_search(
+            self, query: str, path: str, limit: int, zone_id: str
+        ) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    path="/chunk.md",
+                    chunk_text="chunk result",
+                    score=9.0,
+                    chunk_index=0,
+                    search_type="keyword",
+                )
+            ]
+
+        async def keyword_search_pages(
+            self, query: str, path: str, limit: int, zone_id: str
+        ) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    path="/page.md",
+                    chunk_text="page result",
+                    score=8.0,
+                    chunk_index=0,
+                    search_type="keyword",
+                )
+            ]
+
+    class FakeVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    path="/dense.md",
+                    chunk_text="dense result",
+                    score=7.0,
+                    chunk_index=0,
+                    search_type="semantic",
+                )
+            ]
+
+    async def _embed_query(self: SearchDaemon, query: str) -> list[float]:
+        return [0.1, 0.2]
+
+    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon._fts_backend = FakePgFtsBackend()
+    daemon._vector_backend = FakeVectorBackend()
+    daemon._embed_query = MethodType(_embed_query, daemon)
+
+    results = await daemon._search_via_backends(
+        "Nexus Core",
+        search_type="hybrid",
+        limit=3,
+        path_filter="/docs",
+        zone_id="root",
+    )
+
+    assert {result.path for result in results} == {"/chunk.md", "/page.md", "/dense.md"}
+    assert daemon.last_search_timing.keys() >= _BACKEND_TIMING_KEYS
+    assert daemon.last_search_timing["backend_ms"] >= 0.0
+    assert daemon.last_search_timing["embed_ms"] >= 0.0
+    assert daemon.last_search_timing["keyword_ms"] >= 0.0
+    assert daemon.last_search_timing["page_keyword_ms"] >= 0.0
+    assert daemon.last_search_timing["vector_ms"] >= 0.0
+    assert daemon.last_search_timing["fusion_ms"] >= 0.0
+    assert daemon.last_search_timing["rerank_ms"] == 0.0

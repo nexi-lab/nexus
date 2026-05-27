@@ -68,6 +68,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BACKEND_LEG_TIMING_KEYS = (
+    "embed_ms",
+    "keyword_ms",
+    "page_keyword_ms",
+    "vector_ms",
+    "fusion_ms",
+    "rerank_ms",
+)
+
 
 @dataclass
 class DaemonStats:
@@ -99,6 +108,26 @@ class SearchResult(BaseSearchResult):
     """
 
     search_type: str = "hybrid"
+
+
+def _empty_backend_timing() -> dict[str, float]:
+    return {
+        "backend_ms": 0.0,
+        "embed_ms": 0.0,
+        "keyword_ms": 0.0,
+        "page_keyword_ms": 0.0,
+        "vector_ms": 0.0,
+        "fusion_ms": 0.0,
+        "rerank_ms": 0.0,
+    }
+
+
+def _merge_backend_timing(total_ms: float, recorded: dict[str, float]) -> dict[str, float]:
+    timing = {"backend_ms": total_ms, "rerank_ms": recorded.get("rerank_ms", 0.0)}
+    for key in _BACKEND_LEG_TIMING_KEYS:
+        if key in recorded:
+            timing[key] = recorded[key]
+    return timing
 
 
 @dataclass
@@ -1587,10 +1616,9 @@ class SearchDaemon:
                     )
                     backend_ms = (time.perf_counter() - backend_start) * 1000
                     backend_attempted = True
-                    self.last_search_timing = {
-                        "backend_ms": backend_ms,
-                        "rerank_ms": 0.0,
-                    }
+                    self.last_search_timing = _merge_backend_timing(
+                        backend_ms, self.last_search_timing
+                    )
                     if backend_results:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
@@ -1642,10 +1670,7 @@ class SearchDaemon:
                     zone_id=effective_zone_id,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
-                self.last_search_timing = {
-                    "backend_ms": backend_ms,
-                    "rerank_ms": 0.0,
-                }
+                self.last_search_timing = _merge_backend_timing(backend_ms, self.last_search_timing)
                 if hybrid_keyword_ms:
                     self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
@@ -1712,45 +1737,88 @@ class SearchDaemon:
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
 
         path = path_filter or "/"
+        timing = _empty_backend_timing()
+        backend_start = time.perf_counter()
+
+        async def timed_leg(key: str, awaitable: Awaitable[T]) -> T:
+            leg_start = time.perf_counter()
+            result = await awaitable
+            timing[key] = (time.perf_counter() - leg_start) * 1000
+            return result
+
+        def record_total() -> None:
+            timing["backend_ms"] = (time.perf_counter() - backend_start) * 1000
+            self.last_search_timing = timing
 
         if search_type == "keyword":
-            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            results = await timed_leg(
+                "keyword_ms",
+                self._fts_backend.keyword_search(query, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         if search_type == "semantic":
-            qvec = await self._embed_query(query)
+            qvec = await timed_leg("embed_ms", self._embed_query(query))
             if qvec is None:
+                record_total()
                 return []
-            results = await self._vector_backend.semantic_search(qvec, path, limit, zone_id)
+            results = await timed_leg(
+                "vector_ms",
+                self._vector_backend.semantic_search(qvec, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         # Hybrid: 3-way RRF on PG, 2-way on SQLite.
-        qvec = await self._embed_query(query)
+        qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
-            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            results = await timed_leg(
+                "keyword_ms",
+                self._fts_backend.keyword_search(query, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         is_pg = isinstance(self._fts_backend, PgFtsBackend)
         if is_pg:
             chunk_kw, page_kw, dense = await asyncio.gather(
-                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
-                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                timed_leg(
+                    "keyword_ms",
+                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+                ),
+                timed_leg(
+                    "page_keyword_ms",
+                    self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
+                ),
+                timed_leg(
+                    "vector_ms",
+                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                ),
                 return_exceptions=False,
             )
         else:
             chunk_kw, dense = await asyncio.gather(
-                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                timed_leg(
+                    "keyword_ms",
+                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+                ),
+                timed_leg(
+                    "vector_ms",
+                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                ),
                 return_exceptions=False,
             )
             page_kw = []
 
         # Fuse keyword legs first (chunk + page), then RRF that with dense.
+        fusion_start = time.perf_counter()
         kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
         fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+        timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+        record_total()
         return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
 
     async def _embed_query(self, query: str) -> list[float] | None:

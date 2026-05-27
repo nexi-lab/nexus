@@ -13,9 +13,8 @@
 //!   * [`super::observer::AgentObserver`]   -- session/update accumulator
 //!
 //! AgentRegistry is reached through an injectable [`AgentRegistry`]
-//! trait. Today's PyO3-wired bridge lands in commit 21; commit 20
-//! provides the trait + a unit-test mock so the orchestration logic
-//! is testable without a Python runtime.
+//! trait so the orchestration logic in `call_agent` stays testable
+//! against a unit-test mock without standing up the real registry.
 
 #![allow(dead_code)]
 

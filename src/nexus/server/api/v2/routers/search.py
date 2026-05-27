@@ -417,8 +417,11 @@ async def _handle_single_zone_search(
             zone_id=zone_id,
         )
 
-        # Read sub-timings from daemon
-        daemon_timing = getattr(search_daemon, "last_search_timing", {})
+        # Prefer the request-local snapshot carried by SearchDaemon results.
+        # Fall back to the legacy daemon field for older/mocked search daemons.
+        daemon_timing = getattr(results, "search_timing", None)
+        if daemon_timing is None:
+            daemon_timing = getattr(search_daemon, "last_search_timing", {})
         backend_ms = daemon_timing.get("backend_ms", 0.0)
         rerank_ms = daemon_timing.get("rerank_ms", 0.0)
 

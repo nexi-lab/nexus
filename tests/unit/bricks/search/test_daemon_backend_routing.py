@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import MethodType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -114,6 +115,76 @@ async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exis
     assert seen == ["hybrid"]
     assert [result.path for result in results] == ["/backend.md"]
     assert daemon.last_search_timing["keyword_ms"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_searches_return_request_local_timing_snapshots() -> None:
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._fts_backend = object()
+    daemon._vector_backend = object()
+    daemon._permission_enforcer = None
+    daemon.last_search_timing = {}
+
+    first_recorded = asyncio.Event()
+    second_recorded = asyncio.Event()
+
+    def _track_latency(self: Any, latency_ms: float) -> None:
+        self._last_latency_ms = latency_ms
+
+    async def _attach_path_contexts(
+        self: Any, results: list[SearchResult], *, zone_id: str
+    ) -> None:
+        self._last_context_zone = zone_id
+
+    async def _search_via_backends(
+        self: Any, query: str, *args: Any, **kwargs: Any
+    ) -> list[SearchResult]:
+        if query == "first":
+            self.last_search_timing = {
+                "backend_ms": 1.0,
+                "keyword_ms": 1.0,
+                "rerank_ms": 0.0,
+            }
+            first_recorded.set()
+            await second_recorded.wait()
+        else:
+            await first_recorded.wait()
+            self.last_search_timing = {
+                "backend_ms": 2.0,
+                "keyword_ms": 2.0,
+                "rerank_ms": 0.0,
+            }
+            second_recorded.set()
+        return [
+            SearchResult(
+                path=f"/{query}.md",
+                chunk_text=query,
+                score=10.0,
+                chunk_index=0,
+                search_type=kwargs["search_type"],
+            )
+        ]
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
+        raise AssertionError("legacy keyword path should not run before new backends")
+
+    daemon._track_latency = MethodType(_track_latency, daemon)
+    daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
+    daemon._search_via_backends = MethodType(_search_via_backends, daemon)
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    first_results, second_results = await asyncio.gather(
+        daemon.search("first", search_type="keyword", limit=1, zone_id="root"),
+        daemon.search("second", search_type="keyword", limit=1, zone_id="root"),
+    )
+
+    assert [result.path for result in first_results] == ["/first.md"]
+    assert [result.path for result in second_results] == ["/second.md"]
+    assert cast(Any, first_results).search_timing["keyword_ms"] == 1.0
+    assert cast(Any, second_results).search_timing["keyword_ms"] == 2.0
 
 
 @pytest.mark.asyncio

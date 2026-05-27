@@ -36,7 +36,8 @@ import json
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -108,6 +109,19 @@ class SearchResult(BaseSearchResult):
     """
 
     search_type: str = "hybrid"
+
+
+class SearchResultList(list[SearchResult]):
+    """Search results plus a request-local timing snapshot."""
+
+    def __init__(
+        self,
+        results: Iterable[SearchResult] = (),
+        *,
+        search_timing: dict[str, float] | None = None,
+    ) -> None:
+        super().__init__(results)
+        self.search_timing = dict(search_timing or {})
 
 
 def _empty_backend_timing() -> dict[str, float]:
@@ -230,6 +244,31 @@ class SearchDaemon:
         await daemon.shutdown()
     """
 
+    def _search_timing_var(self) -> ContextVar[dict[str, float] | None]:
+        timing_var = self.__dict__.get("_last_search_timing_var")
+        if timing_var is None:
+            timing_var = ContextVar(
+                f"search_daemon_{id(self)}_last_search_timing",
+                default=None,
+            )
+            self.__dict__["_last_search_timing_var"] = timing_var
+        return timing_var
+
+    @property
+    def last_search_timing(self) -> dict[str, float]:
+        timing = self._search_timing_var().get()
+        if timing is None:
+            timing = {}
+            self._search_timing_var().set(timing)
+        return timing
+
+    @last_search_timing.setter
+    def last_search_timing(self, value: dict[str, float]) -> None:
+        self._search_timing_var().set(dict(value))
+
+    def _with_search_timing(self, results: Iterable[SearchResult]) -> SearchResultList:
+        return SearchResultList(results, search_timing=self.last_search_timing)
+
     def __init__(
         self,
         config: DaemonConfig | None = None,
@@ -333,6 +372,10 @@ class SearchDaemon:
         self._fts_backend: Any = None
         self._vector_backend: Any = None
         self._embedding_client: Any = None
+        self._last_search_timing_var: ContextVar[dict[str, float] | None] = ContextVar(
+            f"search_daemon_{id(self)}_last_search_timing",
+            default=None,
+        )
         self.last_search_timing: dict[str, float] = {}
 
         # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
@@ -1623,7 +1666,7 @@ class SearchDaemon:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
                         await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
-                        return backend_results
+                        return self._with_search_timing(backend_results)
 
                 # Keyword mode should use the daemon's keyword stack first.
                 # The new fts backend above is the canonical BM25/native-FTS
@@ -1642,7 +1685,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
-                    return keyword_results
+                    return self._with_search_timing(keyword_results)
             elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
                 # matches are not lost before backend semantic ranking.
@@ -1686,7 +1729,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(results, zone_id=effective_zone_id)
-                    return results
+                    return self._with_search_timing(results)
                 # Backend returned empty — fall through to the legacy stack
                 # so Zoekt / BM25S / inline FTS can still serve the query.
 
@@ -1712,11 +1755,11 @@ class SearchDaemon:
                 self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
             await self._attach_path_contexts(results, zone_id=effective_zone_id)
-            return results
+            return self._with_search_timing(results)
 
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
-            return []
+            return self._with_search_timing([])
 
     async def _search_via_backends(
         self,

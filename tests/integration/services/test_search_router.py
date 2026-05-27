@@ -149,3 +149,36 @@ class TestSearchQueryEndpoint:
         assert breakdown["vector_ms"] == 20.0
         assert breakdown["fusion_ms"] == 1.0
         assert breakdown["rerank_ms"] == 0.0
+
+    def test_latency_breakdown_prefers_result_timing_snapshot(self, client: "TestClient") -> None:
+        class _TimedResults(list[_MockResult]):
+            search_timing: dict[str, float]
+
+        timed_results = _TimedResults(
+            [_MockResult(path="snapshot.txt", chunk_text="snapshot", score=0.8)]
+        )
+        timed_results.search_timing = {
+            "backend_ms": 12.345,
+            "keyword_ms": 6.789,
+            "rerank_ms": 0.0,
+        }
+
+        app: Any = client.app
+        app.state.search_daemon.last_search_timing = {
+            "backend_ms": 999.0,
+            "keyword_ms": 999.0,
+            "rerank_ms": 999.0,
+        }
+
+        async def mock_search(**kwargs: Any) -> _TimedResults:
+            return timed_results
+
+        app.state.search_daemon.search = mock_search
+
+        resp = client.get("/api/v2/search/query?q=hello")
+
+        assert resp.status_code == 200
+        breakdown = resp.json()["latency_breakdown"]
+        assert breakdown["backend_ms"] == 12.35
+        assert breakdown["keyword_ms"] == 6.79
+        assert breakdown["rerank_ms"] == 0.0

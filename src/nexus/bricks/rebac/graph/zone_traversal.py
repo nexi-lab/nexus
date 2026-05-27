@@ -16,7 +16,6 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
@@ -25,6 +24,7 @@ from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.bricks.rebac.graph._operators import (
     dispatch_permission_operators,
     dispatch_relation_operators,
+    parent_path_of,
 )
 from nexus.contracts.rebac_types import (
     GraphLimitExceeded,
@@ -538,12 +538,12 @@ class ZoneAwareTraversal:
 
         # For parent relation on files, compute from path instead of querying DB
         if relation == "parent" and obj.entity_type == "file":
-            parent_path = str(PurePosixPath(obj.entity_id).parent)
-            if parent_path != obj.entity_id and parent_path != ".":
+            parent = parent_path_of(obj.entity_id)
+            if parent is not None:
                 logger.debug(
-                    f"find_related_objects: Computed parent from path: {obj.entity_id} -> {parent_path}"
+                    f"find_related_objects: Computed parent from path: {obj.entity_id} -> {parent}"
                 )
-                return [Entity("file", parent_path)]
+                return [Entity("file", parent)]
             return []
 
         now = datetime.now(UTC)

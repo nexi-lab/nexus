@@ -16,13 +16,13 @@ import threading
 import time as time_module
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import Entity
+from nexus.bricks.rebac.graph._operators import parent_path_of
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
@@ -667,8 +667,8 @@ class BulkPermissionChecker:
 
         computed_parent_count = 0
         for file_path in ancestor_paths:
-            parent_path = str(PurePosixPath(file_path).parent)
-            if parent_path != file_path and parent_path != ".":
+            parent = parent_path_of(file_path)
+            if parent is not None:
                 tuples_graph.append(
                     {
                         "subject_type": "file",
@@ -676,7 +676,7 @@ class BulkPermissionChecker:
                         "subject_relation": None,
                         "relation": "parent",
                         "object_type": "file",
-                        "object_id": parent_path,
+                        "object_id": parent,
                         "conditions": None,
                         "expires_at": None,
                     }

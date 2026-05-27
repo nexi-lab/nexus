@@ -226,10 +226,16 @@ def test_reindex_partial_enqueue_failure_surfaces_in_response() -> None:
     assert "/bad.md" in body["search_enqueue_failed_paths"], body
 
 
-def test_reindex_without_search_daemon_still_succeeds() -> None:
-    """A deployment without a search daemon (e.g., sandbox profile) must
-    not 500. The aspect-store rebuild is the primary contract; search
-    refresh is best-effort."""
+def test_reindex_without_search_daemon_reports_target_failure() -> None:
+    """Round-8 review (codex MEDIUM): when target=search/all and the
+    deployment has no search daemon, the response must explicitly
+    surface enqueue failure for every processed path so the CLI exits
+    non-zero. The aspect-store rebuild still ran (HTTP 200), but the
+    operator must NOT believe BM25/vector refresh succeeded.
+
+    Pre-round-8: search_paths_enqueued=0, search_enqueue_errors=0 →
+    CLI exit 0 → operator misled.
+    """
     rows = [_row("/x.md", seq=1)]
 
     import nexus.cli.commands.reindex as reindex_mod
@@ -243,5 +249,28 @@ def test_reindex_without_search_daemon_still_succeeds() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["processed"] == 1
+    # No daemon → enqueue did not happen for any path.
     assert body["search_paths_enqueued"] == 0
     assert body["search_refresh_enqueued_at"] is None
+    # Round-8 fix: explicit failure signal for every queued path.
+    assert body["search_enqueue_errors"] == 1, body
+    assert "/x.md" in body["search_enqueue_failed_paths"], body
+
+
+def test_reindex_without_search_daemon_versions_target_silent() -> None:
+    """target=versions has no search-refresh contract, so a missing
+    daemon stays silent (no false-positive enqueue error)."""
+    rows = [_row("/x.md", seq=1)]
+
+    import nexus.cli.commands.reindex as reindex_mod
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(reindex_mod._MCLProcessor, "process", lambda self, row: None)
+        app = _make_app(rows=rows, search_daemon=None)
+        with TestClient(app) as client:
+            resp = client.post("/api/v2/admin/reindex", json={"target": "versions"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["search_enqueue_errors"] == 0
+    assert body["search_paths_enqueued"] == 0

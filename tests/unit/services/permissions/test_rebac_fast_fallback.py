@@ -502,6 +502,68 @@ def test_python_fallback_grants_via_tupleToUserset_parent_inheritance() -> None:
     )
 
 
+def test_python_fallback_stale_parent_tuple_does_not_override_path() -> None:
+    """Round-8 review (codex HIGH): a stale stored ``file → parent``
+    tuple pointing at the wrong directory must NOT defeat the
+    path-derived parent. Synthesis wins.
+
+    Setup: admin has direct_viewer on /correct, NOT on /wrong. A
+    bogus tuple says /correct/file.md's parent is /wrong. Without the
+    round-8 fix, the fallback would walk to /wrong (denied) and miss
+    the /correct grant.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "parent": {},
+                "direct_viewer": {},
+                "parent_viewer": {
+                    "tupleToUserset": {
+                        "tupleset": "parent",
+                        "computedUserset": "viewer",
+                    }
+                },
+                "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+            },
+            "permissions": {"read": ["viewer"]},
+        }
+    }
+    tuples = [
+        # admin direct_viewer on the REAL parent.
+        {
+            "subject_type": "user",
+            "subject_id": "admin",
+            "subject_relation": None,
+            "relation": "direct_viewer",
+            "object_type": "file",
+            "object_id": "/correct",
+        },
+        # Stale/hand-edited row claiming parent is /wrong — would
+        # deny the lookup if the fallback trusted it over the path.
+        {
+            "subject_type": "file",
+            "subject_id": "/correct/file.md",
+            "subject_relation": None,
+            "relation": "parent",
+            "object_type": "file",
+            "object_id": "/wrong",
+        },
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "admin"), "read", ("file", "/correct/file.md"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "admin", "read", "file", "/correct/file.md")] is True, (
+        "stale parent tuple must NOT override path-derived parent "
+        "(codex round-8 HIGH); ZoneAwareTraversal + BulkPermissionChecker "
+        "both ignore stored parent rows for file objects."
+    )
+
+
 def test_python_fallback_deep_directory_grant_inheritance() -> None:
     """Round-7 review (codex HIGH): a grant on /a inherits to
     /a/b/c/d/file.md via the synthesized parent chain. No explicit

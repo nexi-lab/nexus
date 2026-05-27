@@ -191,7 +191,23 @@ async def trigger_reindex(
         search_enqueue_failed_paths: list[str] = []
         if body.target in ("all", "search") and paths_seen:
             search_daemon = getattr(request.app.state, "search_daemon", None)
-            if search_daemon is not None:
+            if search_daemon is None:
+                # Round-8 review (codex MEDIUM): missing search daemon
+                # is a target failure for search/all when there are
+                # paths to refresh. Previously returned errors=0,
+                # search_enqueue_errors=0 — the CLI accepted that as
+                # success even though no BM25/vector work was ever
+                # queued. Mark every path as a failed enqueue so the
+                # CLI exits non-zero.
+                search_enqueue_errors = len(paths_seen)
+                # Cap failed-paths list to keep response bounded.
+                search_enqueue_failed_paths = list(paths_seen.keys())[:25]
+                logger.warning(
+                    "Search refresh requested by reindex but no "
+                    "search_daemon on app.state — %d path(s) NOT queued.",
+                    len(paths_seen),
+                )
+            else:
                 for path, change in paths_seen.items():
                     try:
                         await search_daemon.notify_file_change(path, change)

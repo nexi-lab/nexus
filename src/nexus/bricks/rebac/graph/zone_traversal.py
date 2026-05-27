@@ -129,10 +129,19 @@ class ZoneAwareTraversal:
 
         stats.max_depth_reached = max(stats.max_depth_reached, depth)
 
-        # Check for cycles (within this traversal path only)
+        # Check for cycles (within this traversal path only).
+        # Round-8 review (codex HIGH): a cycle break returns False
+        # locally, but the caller's ``_store(False)`` would memoize
+        # that order-dependent False. A non-cyclic sibling path may
+        # legitimately resolve True on a fresh stack. Track
+        # ``cycle_observed`` via closure so _store can refuse to
+        # write cycle-tainted negatives. Mirrors the round-1/4
+        # bulk_evaluator fix.
+        cycle_observed: list[bool] = [False]
         visit_key = memo_key  # Same key format
         if visit_key in visited:
             logger.debug(f"{indent}← CYCLE DETECTED, returning False")
+            cycle_observed[0] = True
             return False
         visited.add(visit_key)
         stats.nodes_visited += 1
@@ -150,28 +159,43 @@ class ZoneAwareTraversal:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
             result = self.has_direct_relation(subject, permission, obj, zone_id, context)
             logger.debug(f"{indent}← RESULT: {result}")
+            # Direct lookups are acyclic by construction — always safe
+            # to memoize.
             memo[memo_key] = result
             return result
 
-        # Helper to store and return a memoized result
+        # Helper to store and return a memoized result.
+        # Round-8: only memoize positives + acyclic negatives. A
+        # cycle-tainted False is order-dependent.
         def _store(result: bool) -> bool:
-            memo[memo_key] = result
+            if result or not cycle_observed[0]:
+                memo[memo_key] = result
             return result
 
-        # Recurse helper
+        # Recurse helper. Round-8: detect cycles seen in any subtree
+        # by checking whether the recursion re-entered any key already
+        # in OUR visited frame; if so, propagate cycle_observed up so
+        # the parent's negative does not get memoized.
         def _recurse(subj: Entity, perm: str, target: Entity) -> bool:
-            return self.compute_permission(
+            sub_visited = visited.copy()
+            result = self.compute_permission(
                 subj,
                 perm,
                 target,
                 zone_id,
-                visited.copy(),
+                sub_visited,
                 depth + 1,
                 start_time,
                 stats,
                 context,
                 memo,
             )
+            if not result:
+                for key in sub_visited:
+                    if key in visited and key != memo_key:
+                        cycle_observed[0] = True
+                        break
+            return result
 
         # FIX: Check if permission is a mapped permission (e.g., "write" -> ["editor", "owner"])
         # Round-6 review (codex CRITICAL): the previous code called

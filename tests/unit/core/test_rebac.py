@@ -1210,6 +1210,49 @@ def test_zone_traversal_relation_exclusion_is_not(rebac_manager):
     )
 
 
+def test_zone_traversal_cyclic_union_order_independence(rebac_manager):
+    """Round-8 review (codex HIGH): ZoneAwareTraversal must NOT memoize
+    cycle-tainted negatives, otherwise bulk-style checks become
+    order-dependent. a=union(b,c), b=union(a), grant on c → both
+    a-then-b AND b-then-a must yield True.
+    """
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-cycle-zt",
+        object_type="file",
+        config={
+            "relations": {
+                "a": {"union": ["b", "c"]},
+                "b": {"union": ["a"]},
+                "c": {},
+            },
+            "permissions": {"read_a": ["a"], "read_b": ["b"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="c",
+        object=("file", "/doc.txt"),
+    )
+
+    a_first = rebac_manager.rebac_check(
+        subject=("user", "alice"),
+        permission="read_a",
+        object=("file", "/doc.txt"),
+    )
+    b_after_a = rebac_manager.rebac_check(
+        subject=("user", "alice"),
+        permission="read_b",
+        object=("file", "/doc.txt"),
+    )
+    assert a_first is True
+    assert b_after_a is True, (
+        "b must resolve True via a→c expansion — previous code memoized "
+        "a cycle-tainted False on b (codex round-8 HIGH)"
+    )
+
+
 def test_zone_traversal_relation_empty_intersection_fails_closed(rebac_manager):
     """Round-7 review: empty operand list must fail closed."""
     namespace = NamespaceConfig(

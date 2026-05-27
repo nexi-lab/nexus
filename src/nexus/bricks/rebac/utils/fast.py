@@ -191,9 +191,21 @@ def _augment_with_parent_tuples(
     Rust-free fallback honors directory grants (the #4239 wildcard
     fix) without requiring operators to materialize parent tuples.
 
-    Mutates ``eligible_tuples`` in place. Idempotent: skips file paths
-    that already have an explicit parent tuple, so operators who DID
-    persist parents aren't double-counted.
+    Round-8 review (codex HIGH): the path-derived parent edge ALWAYS
+    wins over a stored ``file → parent`` tuple. The previous version
+    suppressed synthesis whenever ANY stored parent existed on the
+    child, but stored rows can be stale / hand-edited / disagree with
+    the actual filesystem path. ZoneAwareTraversal computes parents
+    from ``PurePosixPath`` and ignores stored parent rows; the
+    BulkPermissionChecker appends path parents unconditionally. To
+    match those two production paths (and to avoid an edge-image-only
+    deny based on a stale tuple), we now:
+
+    - Strip stored ``file → parent`` rows for file paths we're about
+      to inject a path-derived parent for.
+    - Inject the canonical path-derived parent edge.
+
+    Mutates ``eligible_tuples`` in place.
     """
     from pathlib import PurePosixPath
 
@@ -219,19 +231,22 @@ def _augment_with_parent_tuples(
         if file_path != "/":
             ancestor_paths.add("/")
 
-    # Already-present parent links — don't double up.
-    existing_parents: set[str] = {
-        t["subject_id"]
-        for t in eligible_tuples
-        if t.get("subject_type") == "file"
-        and t.get("object_type") == "file"
-        and t.get("relation") == "parent"
-        and t.get("subject_relation") is None
-    }
+    # Round-8 fix: remove stale stored ``file → parent`` rows for any
+    # path we're about to inject a path-derived parent for. In place
+    # filter via slice assignment so the caller's list reference stays
+    # valid.
+    def _is_overridden_parent_tuple(t: dict[str, Any]) -> bool:
+        return (
+            t.get("subject_type") == "file"
+            and t.get("object_type") == "file"
+            and t.get("relation") == "parent"
+            and t.get("subject_relation") is None
+            and t.get("subject_id") in ancestor_paths
+        )
+
+    eligible_tuples[:] = [t for t in eligible_tuples if not _is_overridden_parent_tuple(t)]
 
     for file_path in ancestor_paths:
-        if file_path in existing_parents:
-            continue
         parent_path = str(PurePosixPath(file_path).parent)
         if parent_path == file_path or parent_path == ".":
             continue

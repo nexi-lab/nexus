@@ -1,4 +1,4 @@
-"""PermissionEnforcer filter_list inheritance regressions."""
+"""PermissionEnforcer bulk inheritance regressions."""
 
 from __future__ import annotations
 
@@ -56,5 +56,36 @@ def test_filter_list_batches_parent_grants_in_primary_chain() -> None:
     ctx = OperationContext(user_id="alice", groups=[])
 
     assert enforcer.filter_list(paths, ctx) == paths[:2]
+    assert rebac.rebac_check_bulk.call_count == 1
+    rebac.rebac_check.assert_not_called()
+
+
+def test_filter_search_results_batches_parent_grants_in_primary_bulk_path() -> None:
+    """Legacy search filtering should share inherited-read semantics."""
+    paths = [
+        "/workspace/demo/herb/customers/cust-001.md",
+        "/workspace/demo/herb/customers/cust-002.md",
+        "/workspace/private/secret.md",
+    ]
+    rebac = _make_mock_rebac(
+        {
+            (
+                ("user", "alice"),
+                "read",
+                ("file", "/workspace/demo/herb/customers"),
+                "root",
+            ): True,
+        }
+    )
+    enforcer = PermissionEnforcer(rebac_manager=rebac)
+
+    assert (
+        enforcer.filter_search_results(
+            paths,
+            user_id="alice",
+            zone_id="root",
+        )
+        == paths[:2]
+    )
     assert rebac.rebac_check_bulk.call_count == 1
     rebac.rebac_check.assert_not_called()

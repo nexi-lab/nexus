@@ -52,11 +52,10 @@ use std::time::Duration;
 
 // ── AgentRegistry trait ─────────────────────────────────────────────────
 
-/// Subset of the Python `AgentRegistry` surface AcpService depends on.
-/// Today AgentRegistry stays Python (commit 21 wires a PyO3 impl);
-/// commit 20 isolates the dependency behind this trait so the
-/// orchestration logic in [`AcpService::call_agent`] is testable
-/// without a live Python interpreter.
+/// Subset of the AgentRegistry surface AcpService depends on. The
+/// trait isolates the dependency so the orchestration logic in
+/// [`AcpService::call_agent`] is testable against a unit-test mock
+/// without instantiating the production registry.
 pub(crate) trait AgentRegistry: Send + Sync {
     /// Allocate a pid for an unmanaged agent. `name` follows the
     /// Python convention `acp:<config.name>`.

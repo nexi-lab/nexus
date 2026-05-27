@@ -39,6 +39,7 @@ def compute_permission(
     visited: set[tuple[str, str, str, str, str]] | None = None,
     bulk_memo_cache: dict[tuple[str, str, str, str, str], bool] | None = None,
     memo_stats: dict[str, int] | None = None,
+    direct_index: frozenset[tuple[str, str, str, str, str]] | None = None,
 ) -> bool:
     """Compute permission using pre-fetched tuples graph with full in-memory traversal.
 
@@ -116,10 +117,14 @@ def compute_permission(
         return False
     visited.add(memo_key)
 
+    # Build direct index on first call (depth 0) for O(1) lookups
+    if direct_index is None and depth == 0:
+        direct_index = build_direct_index(tuples_graph)
+
     # Get namespace config
     namespace = get_namespace(obj.entity_type)
     if not namespace:
-        return check_direct_relation(subject, permission, obj, tuples_graph)
+        return check_direct_relation(subject, permission, obj, tuples_graph, direct_index)
 
     # Helper to store and return a result.
     # Round-4 fix: only memoize negatives when no cycle was observed
@@ -148,6 +153,7 @@ def compute_permission(
             sub_visited,
             bulk_memo_cache,
             memo_stats,
+            direct_index,
         )
         # If the recursion just re-entered any key already in OUR
         # visited frame, mark cycle-observed so we don't memoize the
@@ -259,7 +265,32 @@ def compute_permission(
         return False
 
     # Direct relation check (base case)
-    return _store(check_direct_relation(subject, permission, obj, tuples_graph))
+    return _store(check_direct_relation(subject, permission, obj, tuples_graph, direct_index))
+
+
+def build_direct_index(
+    tuples_graph: list[dict[str, Any]],
+) -> frozenset[tuple[str, str, str, str, str]]:
+    """Build an O(1) lookup index for direct relation checks.
+
+    The index is a frozenset of (subject_type, subject_id, relation,
+    object_type, object_id) tuples for unconditional, direct relations.
+    Built once per bulk call, used O(1) per check_direct_relation().
+
+    Returns:
+        frozenset of 5-tuples for O(1) ``in`` membership tests.
+    """
+    return frozenset(
+        (
+            t["subject_type"],
+            t["subject_id"],
+            t["relation"],
+            t["object_type"],
+            t["object_id"],
+        )
+        for t in tuples_graph
+        if not t.get("conditions") and t.get("subject_relation") is None
+    )
 
 
 def check_direct_relation(
@@ -267,19 +298,29 @@ def check_direct_relation(
     permission: str,
     obj: "Entity",
     tuples_graph: list[dict[str, Any]],
+    direct_index: frozenset[tuple[str, str, str, str, str]] | None = None,
 ) -> bool:
     """Check if a direct relation tuple exists in the pre-fetched graph.
 
+    When ``direct_index`` is provided (built via ``build_direct_index``),
+    uses O(1) set lookup instead of O(T) linear scan.
+
     Round-10 review (codex HIGH): also accept the wildcard subject
-    ``("*", "*")`` for public grants. The single-check path
-    (``ZoneAwareTraversal.has_direct_relation``) honors this — so a
-    ``rebac_check`` granted but the prior bulk path denied, causing
-    single-vs-bulk divergence for any public file grant.
+    ``("*", "*")`` for public grants.
 
     Returns:
         True if a matching direct tuple exists (exact subject OR
         wildcard subject).
     """
+    if direct_index is not None:
+        key = (subject.entity_type, subject.entity_id, permission, obj.entity_type, obj.entity_id)
+        if key in direct_index:
+            return True
+        # Round-10: wildcard ``("*", "*")`` matches any subject.
+        wildcard_key = ("*", "*", permission, obj.entity_type, obj.entity_id)
+        return wildcard_key in direct_index
+
+    # Fallback: O(T) linear scan (for callers without an index).
     for tuple_data in tuples_graph:
         if _has_conditions(tuple_data):
             continue
@@ -290,13 +331,11 @@ def check_direct_relation(
             or tuple_data["subject_relation"] is not None
         ):
             continue
-        # Exact match.
         if (
             tuple_data["subject_type"] == subject.entity_type
             and tuple_data["subject_id"] == subject.entity_id
         ):
             return True
-        # Round-10: wildcard ``("*", "*")`` matches any subject.
         if tuple_data["subject_type"] == "*" and tuple_data["subject_id"] == "*":
             return True
     return False

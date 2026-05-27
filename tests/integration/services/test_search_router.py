@@ -50,6 +50,10 @@ class TestSearchQueryEndpoint:
         mock_daemon.is_initialized = True
         mock_daemon.get_health.return_value = {"status": "ok"}
         mock_daemon.get_stats.return_value = {"queries": 0}
+        mock_daemon.last_search_timing = {
+            "backend_ms": 12.34,
+            "rerank_ms": 0.0,
+        }
 
         async def mock_search(**kwargs):
             return [
@@ -120,3 +124,26 @@ class TestSearchQueryEndpoint:
         assert "path" in result
         assert "chunk_text" in result
         assert "score" in result
+
+    def test_latency_breakdown_includes_backend_leg_timings(self, client: "TestClient") -> None:
+        client.app.state.search_daemon.last_search_timing = {
+            "backend_ms": 42.567,
+            "embed_ms": 3.214,
+            "keyword_ms": 11.111,
+            "page_keyword_ms": 7.777,
+            "vector_ms": 19.999,
+            "fusion_ms": 1.005,
+            "rerank_ms": 0.0,
+        }
+
+        resp = client.get("/api/v2/search/query?q=hello")
+
+        assert resp.status_code == 200
+        breakdown = resp.json()["latency_breakdown"]
+        assert breakdown["backend_ms"] == 42.57
+        assert breakdown["embed_ms"] == 3.21
+        assert breakdown["keyword_ms"] == 11.11
+        assert breakdown["page_keyword_ms"] == 7.78
+        assert breakdown["vector_ms"] == 20.0
+        assert breakdown["fusion_ms"] == 1.0
+        assert breakdown["rerank_ms"] == 0.0

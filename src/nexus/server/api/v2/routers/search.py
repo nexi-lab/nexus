@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
 
+_BACKEND_LEG_TIMING_KEYS = (
+    "embed_ms",
+    "keyword_ms",
+    "page_keyword_ms",
+    "vector_ms",
+    "fusion_ms",
+)
+
 # =============================================================================
 # Constants (#3701 review — Issue 16A)
 # =============================================================================
@@ -77,6 +85,18 @@ def _get_record_store(request: Request) -> Any:
     if store is None:
         raise HTTPException(status_code=503, detail="Record store not available")
     return store
+
+
+def _add_backend_leg_timings(
+    latency_breakdown: dict[str, float],
+    daemon_timing: Any,
+) -> None:
+    if not isinstance(daemon_timing, dict):
+        return
+    for key in _BACKEND_LEG_TIMING_KEYS:
+        value = daemon_timing.get(key)
+        if isinstance(value, int | float):
+            latency_breakdown[key] = round(float(value), 2)
 
 
 def _get_optional_search_daemon(request: Request) -> Any:
@@ -416,6 +436,14 @@ async def _handle_single_zone_search(
 
         latency_ms = (time.perf_counter() - start_time) * 1000
 
+        latency_breakdown = {
+            "total_ms": round(latency_ms, 2),
+            "backend_ms": round(backend_ms, 2),
+            "rerank_ms": round(rerank_ms, 2),
+            "permission_filter_ms": round(filter_ms, 2),
+        }
+        _add_backend_leg_timings(latency_breakdown, daemon_timing)
+
         response = {
             "query": q,
             "search_type": search_type,
@@ -423,12 +451,7 @@ async def _handle_single_zone_search(
             "results": [_serialize_search_result(r) for r in results],
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
-            "latency_breakdown": {
-                "total_ms": round(latency_ms, 2),
-                "backend_ms": round(backend_ms, 2),
-                "rerank_ms": round(rerank_ms, 2),
-                "permission_filter_ms": round(filter_ms, 2),
-            },
+            "latency_breakdown": latency_breakdown,
             **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
         if routing_info:

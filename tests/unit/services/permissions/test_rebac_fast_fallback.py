@@ -508,3 +508,190 @@ def test_python_fallback_grants_via_tupleToUserset_parent_inheritance() -> None:
         "otherwise the round-2 wildcard fix (#4239) is dead in edge images "
         "(codex round-3 HIGH)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Round-4 review (codex CRITICAL/HIGH): bulk_evaluator semantic correctness
+# ---------------------------------------------------------------------------
+
+
+def test_python_fallback_intersection_requires_all() -> None:
+    """Codex round-4 CRITICAL: permission-level intersection must be
+    AND — granted only if every userset is granted. The pre-fix
+    bulk_evaluator flattened ``{"intersection": [...]}`` into a list
+    and applied OR semantics, so a single matching userset would grant
+    even when other required usersets denied.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": {}, "mfa": {}},
+            "permissions": {"read": {"intersection": ["viewer", "mfa"]}},
+        }
+    }
+    # alice has viewer but NOT mfa — must NOT pass intersection.
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "viewer",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        },
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False, (
+        "intersection AND must require BOTH viewer + mfa; viewer-only "
+        "must NOT grant read (codex round-4 CRITICAL)"
+    )
+
+    # Now grant both — should grant.
+    tuples.append(
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "mfa",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        }
+    )
+    results2 = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results2[("user", "alice", "read", "file", "/doc.txt")] is True
+
+
+def test_python_fallback_exclusion_is_not() -> None:
+    """Codex round-4 CRITICAL: permission-level exclusion must be NOT —
+    granted only when the excluded relation is NOT held."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"denied": {}},
+            "permissions": {"read": {"exclusion": "denied"}},
+        }
+    }
+    # alice is on the deny list — must NOT pass.
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "denied",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        },
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [
+            (("user", "alice"), "read", ("file", "/doc.txt")),
+            (("user", "bob"), "read", ("file", "/doc.txt")),
+        ],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False, (
+        "exclusion: alice on deny list must NOT grant (codex round-4 CRITICAL)"
+    )
+    assert results[("user", "bob", "read", "file", "/doc.txt")] is True, (
+        "exclusion: bob not on deny list must grant"
+    )
+
+
+def test_python_fallback_unknown_permission_operator_fails_closed() -> None:
+    """Codex round-4 CRITICAL: a permission defined with an unknown
+    dict operator (e.g. operator typo) must fail closed, not silently
+    fall through to a flattened-OR behavior."""
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": {}},
+            "permissions": {"read": {"unknown_op": ["viewer"]}},
+        }
+    }
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "viewer",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        },
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/doc.txt"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/doc.txt")] is False
+
+
+def test_python_fallback_cyclic_union_order_independence() -> None:
+    """Codex round-4 HIGH (restored from round-1): in a bulk call with
+    a cyclic union plus a real grant via another path, the bulk
+    ordering must NOT change the result. The pre-round-4 bulk_evaluator
+    memoized cycle-tainted False, making ``[a, b]`` deny ``b`` even
+    though ``b`` alone resolves True via the a→c path.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "a": {"union": ["b", "c"]},
+                "b": {"union": ["a"]},
+                "c": {},
+            },
+            "permissions": {"read": ["a", "b"]},
+        }
+    }
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "c",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        },
+    ]
+    forward = fast.check_permissions_bulk_with_fallback(
+        [
+            (("user", "alice"), "a", ("file", "/doc.txt")),
+            (("user", "alice"), "b", ("file", "/doc.txt")),
+        ],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    reverse = fast.check_permissions_bulk_with_fallback(
+        [
+            (("user", "alice"), "b", ("file", "/doc.txt")),
+            (("user", "alice"), "a", ("file", "/doc.txt")),
+        ],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert forward[("user", "alice", "a", "file", "/doc.txt")] is True
+    assert forward[("user", "alice", "b", "file", "/doc.txt")] is True, (
+        "b must resolve True via a→c expansion in either bulk order — "
+        "cycle-tainted False must NOT be memoized (codex round-4 HIGH)"
+    )
+    assert forward == reverse, "bulk results must be order-independent"

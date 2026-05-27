@@ -189,6 +189,43 @@ def test_reindex_dry_run_does_not_refresh() -> None:
     daemon.notify_file_change.assert_not_awaited()
 
 
+def test_reindex_partial_enqueue_failure_surfaces_in_response() -> None:
+    """Round-4 review (codex MEDIUM): when some notify_file_change calls
+    raise, the response must report search_enqueue_errors and list the
+    failed paths — otherwise operators see processed=N, errors=0 and a
+    lower enqueued count, and miss that part of the replay never
+    reached the search index.
+    """
+    rows = [
+        _row("/good1.md", seq=1),
+        _row("/bad.md", seq=2),
+        _row("/good2.md", seq=3),
+    ]
+
+    async def _flaky_notify(path: str, change: str) -> None:
+        if path == "/bad.md":
+            raise RuntimeError("backend down")
+
+    daemon = MagicMock()
+    daemon.notify_file_change = AsyncMock(side_effect=_flaky_notify)
+    daemon.stats = SimpleNamespace(last_index_refresh=None)
+
+    import nexus.cli.commands.reindex as reindex_mod
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(reindex_mod._MCLProcessor, "process", lambda self, row: None)
+        app = _make_app(rows=rows, search_daemon=daemon)
+        with TestClient(app) as client:
+            resp = client.post("/api/v2/admin/reindex", json={"target": "all"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # 2 succeeded, 1 failed at enqueue stage.
+    assert body["search_paths_enqueued"] == 2, body
+    assert body["search_enqueue_errors"] == 1, body
+    assert "/bad.md" in body["search_enqueue_failed_paths"], body
+
+
 def test_reindex_without_search_daemon_still_succeeds() -> None:
     """A deployment without a search daemon (e.g., sandbox profile) must
     not 500. The aspect-store rebuild is the primary contract; search

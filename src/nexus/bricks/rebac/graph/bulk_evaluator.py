@@ -98,8 +98,16 @@ def compute_permission(
         return False
 
     # Cycle detection
+    # Issue #4237 review round 4 (codex HIGH): a cycle-break returns
+    # False, but the caller's ``_store(False)`` would memoize it. A
+    # parallel non-cyclic sibling path could legitimately resolve True
+    # on a separate computation, so the cached False is order-dependent
+    # and wrong. Signal "cycle observed" up through nonlocal state so
+    # _store() can refuse to memoize when any descendant hit a cycle.
+    cycle_observed: list[bool] = [False]
     if memo_key in visited:
         logger.debug("compute_permission: Cycle detected at %s, denying", memo_key)
+        cycle_observed[0] = True
         return False
     visited.add(memo_key)
 
@@ -108,15 +116,23 @@ def compute_permission(
     if not namespace:
         return check_direct_relation(subject, permission, obj, tuples_graph)
 
-    # Helper to store and return a result
+    # Helper to store and return a result.
+    # Round-4 fix: only memoize negatives when no cycle was observed
+    # during the computation. Positives are always memoizable (the
+    # recursion proved a valid grant path independent of cycle breaks).
     def _store(result: bool) -> bool:
-        if bulk_memo_cache is not None:
+        if bulk_memo_cache is not None and (result or not cycle_observed[0]):
             bulk_memo_cache[memo_key] = result
         return result
 
-    # Recurse helper
+    # Recurse helper. Round-4: detect cycles seen in any subtree by
+    # comparing the visited set before/after — if the recursive call
+    # adds a key already in visited, a cycle break happened down there.
+    # We achieve this more simply by propagating via the shared
+    # ``cycle_observed`` list captured by closure.
     def _recurse(subj: "Entity", perm: str, target: "Entity") -> bool:
-        return compute_permission(
+        sub_visited = visited.copy()
+        result = compute_permission(
             subj,
             perm,
             target,
@@ -124,23 +140,90 @@ def compute_permission(
             tuples_graph,
             get_namespace,
             depth + 1,
-            visited.copy(),
+            sub_visited,
             bulk_memo_cache,
             memo_stats,
         )
+        # If the recursion just re-entered any key already in OUR
+        # visited frame, mark cycle-observed so we don't memoize the
+        # parent's negative.
+        if not result:
+            for key in sub_visited:
+                if key in visited and key != memo_key:
+                    cycle_observed[0] = True
+                    break
+        return result
 
-    # P0-1: Permission -> usersets (e.g., "read" -> ["viewer", "editor", "owner"])
+    # P0-1: Permission -> usersets (e.g., "read" -> ["viewer", "editor", "owner"]).
+    # Round-4 fix (codex CRITICAL): the previous code expanded all
+    # permission-level operators (union/intersection/exclusion) into a
+    # flat userset list and iterated with OR semantics — turning
+    # ``"read": {"intersection": ["viewer", "mfa"]}`` into an OR grant.
+    # Inspect the raw shape and apply correct AND / NOT semantics, and
+    # fail closed for unknown dict operators so custom namespaces can't
+    # silently over-authorize.
     if namespace.has_permission(permission):
-        usersets = namespace.get_permission_usersets(permission)
-        logger.debug(
-            "compute_permission [depth=%d]: Permission '%s' expands to usersets: %s",
-            depth,
-            permission,
-            usersets,
-        )
-        for userset in usersets:
-            if _recurse(subject, userset, obj):
+        perm_def = namespace.config.get("permissions", {}).get(permission)
+
+        if isinstance(perm_def, list):
+            logger.debug(
+                "compute_permission [depth=%d]: Permission '%s' (list-OR) -> %s",
+                depth,
+                permission,
+                perm_def,
+            )
+            for userset in perm_def:
+                if _recurse(subject, userset, obj):
+                    return _store(True)
+            return _store(False)
+
+        if isinstance(perm_def, dict):
+            if isinstance(perm_def.get("union"), list):
+                logger.debug(
+                    "compute_permission [depth=%d]: Permission '%s' (union) -> %s",
+                    depth,
+                    permission,
+                    perm_def["union"],
+                )
+                for userset in perm_def["union"]:
+                    if _recurse(subject, userset, obj):
+                        return _store(True)
+                return _store(False)
+
+            if isinstance(perm_def.get("intersection"), list):
+                logger.debug(
+                    "compute_permission [depth=%d]: Permission '%s' (intersection) -> %s",
+                    depth,
+                    permission,
+                    perm_def["intersection"],
+                )
+                for userset in perm_def["intersection"]:
+                    if not _recurse(subject, userset, obj):
+                        return _store(False)
                 return _store(True)
+
+            if isinstance(perm_def.get("exclusion"), str):
+                logger.debug(
+                    "compute_permission [depth=%d]: Permission '%s' (exclusion NOT %s)",
+                    depth,
+                    permission,
+                    perm_def["exclusion"],
+                )
+                return _store(not _recurse(subject, perm_def["exclusion"], obj))
+
+            # Unknown dict operator — fail closed, do NOT fall through
+            # to get_permission_usersets()'s flattened OR (security
+            # regression: this is the round-4 CRITICAL bug).
+            logger.warning(
+                "compute_permission: unknown permission operator for '%s' "
+                "in namespace %s; failing closed. Keys: %s",
+                permission,
+                obj.entity_type,
+                list(perm_def.keys()),
+            )
+            return _store(False)
+
+        # Permission defined but in an unrecognized shape — fail closed.
         return _store(False)
 
     # Union (OR of multiple relations)

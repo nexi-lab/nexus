@@ -182,6 +182,13 @@ async def trigger_reindex(
         # supposed to remove.
         search_paths_enqueued = 0
         enqueued_at: float | None = None
+        # Round-4 review (codex MEDIUM): track enqueue failures and
+        # surface them in the response so operators don't see
+        # processed=N, errors=0 and assume search refresh succeeded for
+        # every path. A partial queue failure (backend down, full queue,
+        # etc.) is now an explicit signal.
+        search_enqueue_errors = 0
+        search_enqueue_failed_paths: list[str] = []
         if body.target in ("all", "search") and paths_seen:
             search_daemon = getattr(request.app.state, "search_daemon", None)
             if search_daemon is not None:
@@ -190,6 +197,11 @@ async def trigger_reindex(
                         await search_daemon.notify_file_change(path, change)
                         search_paths_enqueued += 1
                     except Exception as e:
+                        search_enqueue_errors += 1
+                        # Cap the failed-path list to avoid an unbounded
+                        # response body on a fully-down backend.
+                        if len(search_enqueue_failed_paths) < 25:
+                            search_enqueue_failed_paths.append(path)
                         logger.warning(
                             "Search refresh enqueue failed for %s during reindex: %s",
                             path,
@@ -206,6 +218,8 @@ async def trigger_reindex(
             last_sequence=last_sequence,
             search_paths_enqueued=search_paths_enqueued,
             search_refresh_enqueued_at=enqueued_at,
+            search_enqueue_errors=search_enqueue_errors,
+            search_enqueue_failed_paths=search_enqueue_failed_paths,
         )
 
     except Exception as e:

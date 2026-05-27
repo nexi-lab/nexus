@@ -106,3 +106,11 @@ class ReindexResponse(ApiModel):
     # expected hits before declaring success.
     search_paths_enqueued: int = 0
     search_refresh_enqueued_at: float | None = None
+    # Round-4 review (codex MEDIUM): explicit signal when one or more
+    # enqueue calls failed (backend down, queue full, etc.). Without
+    # this, a partial failure returned processed=N, errors=0, and only
+    # a lower enqueued count — operators could miss that part of the
+    # replay never reached the search index. ``failed_paths`` is
+    # capped at 25 entries to bound response size.
+    search_enqueue_errors: int = 0
+    search_enqueue_failed_paths: list[str] = []

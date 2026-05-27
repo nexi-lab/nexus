@@ -1015,11 +1015,25 @@ def main(
                 # connect_config dict overrides $NEXUS_ALLOW_ADMIN_BYPASS in
                 # load_config precedence, so we only inject when the env
                 # didn't explicitly choose.
+                #
+                # Round-4 review fix (codex HIGH): pre-load the config
+                # so the sandbox profile's derived ``record_store_path``
+                # (data_dir/record_store.db) reaches the DB-chain gate.
+                # Without this, ``nexusd --profile sandbox --data-dir X
+                # --api-key sk`` would flip allow_admin_bypass=True and
+                # then the daemon auth chain would still admit
+                # DatabaseAPIKeyAuth via the SQLite store —
+                # exactly the global-bypass leak round-3 was meant to
+                # close for YAML configs.
+                from nexus.config import load_config as _load_config
+
+                _resolved_cfg = _load_config(dict(connect_config))
                 if _should_default_admin_bypass(
                     auth_type,
                     api_key,
                     already_set="allow_admin_bypass" in connect_config,
-                    database_url=database_url,
+                    database_url=database_url or getattr(_resolved_cfg, "database_url", None),
+                    record_store_path=getattr(_resolved_cfg, "record_store_path", None),
                 ):
                     connect_config["allow_admin_bypass"] = True
                     logger.info(

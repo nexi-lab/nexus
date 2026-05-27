@@ -1,11 +1,9 @@
 //! OpenAI streaming pipeline — SSE decode → DT_STREAM → CAS persist.
 //!
-//! Called from `PyKernel::llm_start_streaming` under `py.detach(...)`.
-//! Everything below runs without the GIL; the only Python round-trip is the
-//! return value of the containing syscall.
+//! Driven from the kernel `llm_start_streaming` syscall; runs entirely on
+//! the kernel-shared tokio runtime.
 //!
-//! The state machine mirrors the Python `CASOpenAIBackend._run_stream` that
-//! this replaces:
+//! The state machine:
 //!   1. HTTP POST `{base_url}/chat/completions` with `stream=true`.
 //!   2. SSE decode — accumulate `choices[].delta.content` into `token`
 //!      frames, append each to the DT_STREAM at `stream_path`. Tool-call

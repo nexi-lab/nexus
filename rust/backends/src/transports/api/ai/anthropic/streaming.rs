@@ -1,10 +1,10 @@
 //! Anthropic streaming pipeline — SSE event decode → DT_STREAM → CAS persist.
 //!
-//! Called from `PyKernel::llm_start_streaming` under `py.detach(...)`, same as
-//! the OpenAI path. Writes text deltas to the DT_STREAM, persists the session
-//! envelope via `CASEngine::write_content_tracked`, emits a terminal `done`
-//! control frame carrying the session hash. All under the shared tokio
-//! runtime — no per-backend worker pools.
+//! Driven from the kernel `llm_start_streaming` syscall, same as the OpenAI
+//! path. Writes text deltas to the DT_STREAM, persists the session envelope
+//! via `CASEngine::write_content_tracked`, emits a terminal `done` control
+//! frame carrying the session hash. All under the shared tokio runtime —
+//! no per-backend worker pools.
 //!
 //! Wire shape (Anthropic Messages API):
 //!   - POST `{base_url}/v1/messages` with `x-api-key`, `anthropic-version`.

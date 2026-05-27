@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
+from nexus.bricks.rebac.graph._operators import dispatch_relation_operators
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -164,50 +165,17 @@ class PermissionComputer:
                 )
             return self.has_direct_relation(subject, permission, obj, context, zone_id)
 
-        # Handle union (OR of multiple relations)
-        if namespace.has_union(permission):
-            return self._check_union(
-                subject, permission, obj, namespace, visited, depth, context, zone_id
-            )
-
-        # Handle intersection (AND of multiple relations)
-        # Round-7 review: empty operand list previously short-circuited
-        # True after zero iterations. Fail closed.
-        if namespace.has_intersection(permission):
-            intersection_relations = namespace.get_intersection_relations(permission)
-            if not (
-                isinstance(intersection_relations, list)
-                and len(intersection_relations) > 0
-                and all(isinstance(m, str) and m for m in intersection_relations)
-            ):
-                logger.warning(
-                    "compute_permission: empty/invalid relation-level intersection "
-                    "for '%s' in %s; failing closed",
-                    permission,
-                    obj.entity_type,
-                )
-                return False
-            for rel in intersection_relations:
-                if not self.compute_permission(
-                    subject, rel, obj, visited.copy(), depth + 1, context, zone_id
-                ):
-                    return False
-            return True
-
-        # Handle exclusion (NOT relation - this implements DENY semantics)
-        if namespace.has_exclusion(permission):
-            excluded_rel = namespace.get_exclusion_relation(permission)
-            if not isinstance(excluded_rel, str) or not excluded_rel:
-                logger.warning(
-                    "compute_permission: empty/invalid relation-level exclusion "
-                    "for '%s' in %s; failing closed",
-                    permission,
-                    obj.entity_type,
-                )
-                return False
-            return not self.compute_permission(
-                subject, excluded_rel, obj, visited.copy(), depth + 1, context, zone_id
-            )
+        # Handle union/intersection/exclusion via shared dispatch
+        rel_op_result = dispatch_relation_operators(
+            namespace,
+            permission,
+            obj.entity_type,
+            lambda rel: self.compute_permission(
+                subject, rel, obj, visited.copy(), depth + 1, context, zone_id
+            ),
+        )
+        if rel_op_result is not None:
+            return rel_op_result
 
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
@@ -353,62 +321,6 @@ class PermissionComputer:
         # Permission defined but in an unrecognized shape — fail closed.
         if perm_def is not None:
             return False
-        return False
-
-    def _check_union(
-        self,
-        subject: Entity,
-        permission: str,
-        obj: Entity,
-        namespace: "NamespaceConfig",
-        visited: set[tuple[str, str, str, str, str]],
-        depth: int,
-        context: dict[str, Any] | None,
-        zone_id: str | None,
-    ) -> bool:
-        """Check permission via union of relations."""
-        union_relations = namespace.get_union_relations(permission)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "  [depth=%d] Relation '%s' is UNION of: %s",
-                depth,
-                permission,
-                union_relations,
-            )
-
-        for i, rel in enumerate(union_relations):
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] Checking union relation '%s'...",
-                    depth,
-                    i + 1,
-                    len(union_relations),
-                    rel,
-                )
-            result = self.compute_permission(
-                subject, rel, obj, visited.copy(), depth + 1, context, zone_id
-            )
-            if result:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "  [depth=%d] [%d/%d] GRANTED via union relation '%s'",
-                        depth,
-                        i + 1,
-                        len(union_relations),
-                        rel,
-                    )
-                return True
-            elif logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] DENIED for union relation '%s'",
-                    depth,
-                    i + 1,
-                    len(union_relations),
-                    rel,
-                )
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("  [depth=%d] ALL union relations DENIED", depth)
         return False
 
     def _check_tuple_to_userset(

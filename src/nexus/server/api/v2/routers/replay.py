@@ -6,9 +6,10 @@ Provides endpoints for MCL replay and index rebuilding:
 """
 
 import logging
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from nexus.server.api.v2.dependencies import get_auth_result, get_operation_logger
 from nexus.server.api.v2.models.aspects import (
@@ -82,13 +83,18 @@ async def replay_changes(
 
 @router.post("/api/v2/admin/reindex")
 async def trigger_reindex(
+    request: Request,
     body: ReindexRequest,
     logger_and_zone: tuple[Any, str] = Depends(get_operation_logger),
     auth_result: dict[str, Any] = Depends(get_auth_result),
 ) -> ReindexResponse:
     """Trigger an index rebuild from MCL records.
 
-    Replays operation_log MCL entries to rebuild aspect store state.
+    Replays operation_log MCL entries to rebuild aspect store state, and
+    — for ``target`` in ``{"all", "search"}`` — drives a search-daemon
+    refresh on every processed path so the BM25/vector index sees the
+    rebuilt state too (Issue #4241).
+
     Use dry_run=true to see what would be processed without making changes.
     Requires admin privileges.
     """
@@ -141,6 +147,10 @@ async def trigger_reindex(
         processed = 0
         errors = 0
         last_sequence = body.from_sequence or 0
+        # Issue #4241: track distinct paths so we can drive a search-daemon
+        # refresh after the aspect-store rebuild. Preserve change_type so
+        # deletes propagate as deletes (not refreshes) to BM25.
+        paths_seen: dict[str, str] = {}
 
         for row in op_logger.replay_changes(
             from_sequence=body.from_sequence or 0,
@@ -151,11 +161,84 @@ async def trigger_reindex(
                 processor.process(row)
                 processed += 1
                 last_sequence = row.sequence_number
+                row_path = getattr(row, "path", None)
+                if row_path:
+                    row_change = getattr(row, "change_type", "") or ""
+                    paths_seen[row_path] = "delete" if row_change == "delete" else "update"
             except Exception as e:
                 errors += 1
                 logger.warning("Reindex error at seq %d: %s", row.sequence_number, e)
 
         session.commit()
+
+        # Issue #4241 + round-1 review (codex finding MEDIUM):
+        # ``search_daemon.notify_file_change`` only ENQUEUES a mutation
+        # for the async consumer loop — it does not synchronously index.
+        # Report a queue-side counter + the moment we enqueued it, NOT a
+        # completion timestamp. We intentionally do NOT stamp
+        # ``stats.last_index_refresh`` here: that field is the consumer's
+        # to write when indexing actually completes, and overwriting it
+        # would preserve the operator false-positive this endpoint is
+        # supposed to remove.
+        search_paths_enqueued = 0
+        enqueued_at: float | None = None
+        # Round-4 review (codex MEDIUM): track enqueue failures and
+        # surface them in the response so operators don't see
+        # processed=N, errors=0 and assume search refresh succeeded for
+        # every path. A partial queue failure (backend down, full queue,
+        # etc.) is now an explicit signal.
+        search_enqueue_errors = 0
+        search_enqueue_failed_paths: list[str] = []
+        if body.target in ("all", "search") and paths_seen:
+            search_daemon = getattr(request.app.state, "search_daemon", None)
+            # Round-10 review (codex MEDIUM): detect the refresh-
+            # disabled config too. ``notify_file_change`` silently
+            # no-ops when ``config.refresh_enabled`` is False — without
+            # this check, the response reports search_paths_enqueued=N
+            # and the CLI exits 0 even though no BM25/vector work was
+            # queued or will run.
+            refresh_disabled = False
+            if search_daemon is not None:
+                cfg = getattr(search_daemon, "config", None)
+                if cfg is not None and getattr(cfg, "refresh_enabled", True) is False:
+                    refresh_disabled = True
+
+            if search_daemon is None or refresh_disabled:
+                # Round-8 + Round-10 review (codex MEDIUM): missing /
+                # disabled search daemon is a target failure for
+                # search/all when there are paths to refresh.
+                search_enqueue_errors = len(paths_seen)
+                search_enqueue_failed_paths = list(paths_seen.keys())[:25]
+                if search_daemon is None:
+                    logger.warning(
+                        "Search refresh requested by reindex but no "
+                        "search_daemon on app.state — %d path(s) NOT queued.",
+                        len(paths_seen),
+                    )
+                else:
+                    logger.warning(
+                        "Search refresh requested by reindex but daemon's "
+                        "refresh_enabled=False — %d path(s) NOT queued.",
+                        len(paths_seen),
+                    )
+            else:
+                for path, change in paths_seen.items():
+                    try:
+                        await search_daemon.notify_file_change(path, change)
+                        search_paths_enqueued += 1
+                    except Exception as e:
+                        search_enqueue_errors += 1
+                        # Cap the failed-path list to avoid an unbounded
+                        # response body on a fully-down backend.
+                        if len(search_enqueue_failed_paths) < 25:
+                            search_enqueue_failed_paths.append(path)
+                        logger.warning(
+                            "Search refresh enqueue failed for %s during reindex: %s",
+                            path,
+                            e,
+                        )
+                if search_paths_enqueued > 0:
+                    enqueued_at = time.time()
 
         return ReindexResponse(
             target=body.target,
@@ -163,6 +246,10 @@ async def trigger_reindex(
             processed=processed,
             errors=errors,
             last_sequence=last_sequence,
+            search_paths_enqueued=search_paths_enqueued,
+            search_refresh_enqueued_at=enqueued_at,
+            search_enqueue_errors=search_enqueue_errors,
+            search_enqueue_failed_paths=search_enqueue_failed_paths,
         )
 
     except Exception as e:

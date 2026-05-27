@@ -96,6 +96,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# Round-10 review (codex HIGH): sentinel distinguishing "filter unset"
+# from the meaningful filter value ``None`` (= match only direct tuples
+# whose ``subject_relation IS NULL``). Used by ``rebac_list_tuples``.
+class _Unset:
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
+
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
 # ============================================================================
@@ -997,13 +1009,21 @@ class ReBACManager:
         """
         start_time = time.perf_counter()
 
-        # Try Rust acceleration first (has proper memoization, prevents timeout)
-        try:
-            from nexus.bricks.rebac.utils.fast import (
-                check_permission_single_rust,
-            )
+        # Try Rust acceleration first (has proper memoization, prevents timeout).
+        # Issue #4240: gate on `is_rust_available()` so we don't raise + catch +
+        # log WARNING on every permission decision when nexus_runtime is
+        # permanently absent (the kernel runs as a separate process now —
+        # `_rust_compat.py` ships None sentinels). The warning fired ~5x per
+        # /api/v2/search/query and pointed operators at a non-fix
+        # (`cargo build -p nexus-cluster` does not install a Python extension).
+        from nexus.bricks.rebac.utils.fast import is_rust_available
 
-            if context is None:
+        if is_rust_available() and context is None:
+            try:
+                from nexus.bricks.rebac.utils.fast import (
+                    check_permission_single_rust,
+                )
+
                 # Fetch tuples and namespace configs for Rust.
                 # CROSS-ZONE FIX: Pass subject to include cross-zone shares.
                 tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
@@ -1030,9 +1050,12 @@ class ReBACManager:
                     return result
                 logger.debug("Skipping Rust permission check for conditional ReBAC tuples")
 
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
-            # Fall through to Python implementation
+            except (RuntimeError, ValueError) as e:
+                # Reached only when Rust was advertised available but a
+                # runtime call failed — that IS exceptional, so keep the
+                # warning. The hot path (no Rust ever) is gated above.
+                logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
+                # Fall through to Python implementation
 
         # Fallback to Python implementation
         result = self._compute_permission_zone_aware_with_limits(
@@ -2244,25 +2267,32 @@ class ReBACManager:
             f"[LIST-OBJECTS] Namespace configs: file relations={len(namespace_configs.get('file', {}).get('relations', {}))} permissions={len(namespace_configs.get('file', {}).get('permissions', {}))}"
         )
 
-        # Try Rust implementation first (much faster)
-        try:
-            result = list_objects_for_subject_rust(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission=permission,
-                object_type=object_type,
-                tuples=tuples,
-                namespace_configs=namespace_configs,
-                path_prefix=path_prefix,
-                limit=limit,
-                offset=offset,
-            )
-            elapsed = (time.perf_counter() - start_time) * 1000
-            logger.debug(f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms")
-            return result
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
-            # Fall through to Python implementation
+        # Try Rust implementation first (much faster). Issue #4240: gate on
+        # `is_rust_available()` to avoid the per-call raise+log when the
+        # Rust extension is permanently unavailable (kernel-as-subprocess).
+        from nexus.bricks.rebac.utils.fast import is_rust_available
+
+        if is_rust_available():
+            try:
+                result = list_objects_for_subject_rust(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    object_type=object_type,
+                    tuples=tuples,
+                    namespace_configs=namespace_configs,
+                    path_prefix=path_prefix,
+                    limit=limit,
+                    offset=offset,
+                )
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.debug(
+                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
+                )
+                return result
+            except (RuntimeError, ValueError) as e:
+                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+                # Fall through to Python implementation
 
         # Python fallback implementation
         return self._rebac_list_objects_python(
@@ -2284,6 +2314,13 @@ class ReBACManager:
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
+        *,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        subject_relation: Any = _UNSET,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        zone_id: str | None = None,
         **_kw: Any,
     ) -> list[dict[str, Any]]:
         """List relationship tuples matching optional filters.
@@ -2293,22 +2330,55 @@ class ReBACManager:
         to find tuple IDs for targeted deletion.
 
         Args:
-            subject: Optional (type, id) filter.
+            subject: Optional (type, id) full-subject filter (shortcut for
+                both ``subject_type`` and ``subject_id``).
             relation: Optional single relation filter.
-            object: Optional (type, id) filter.
+            object: Optional (type, id) full-object filter (shortcut for
+                both ``object_type`` and ``object_id``).
             relation_in: Optional list of relations to match.
+            subject_type / subject_id: Optional individual subject filters
+                (Issue #4242 — operators want ``?subject_id=admin`` alone).
+            subject_relation: Optional userset-as-subject filter.
+                Round-10 review (codex HIGH): the default ``_UNSET``
+                means "don't filter on this column". Passing the
+                explicit value ``None`` means "match only direct
+                tuples whose ``subject_relation IS NULL``" — required
+                for DELETE to avoid accidentally removing a parallel
+                userset-as-subject tuple that shares (subject, relation,
+                object, zone). Passing a string filters to that exact
+                userset relation.
+            object_type / object_id: Optional individual object filters.
+            zone_id: Optional zone filter.
 
         Returns:
             List of tuple dicts with keys: tuple_id, subject_type,
-            subject_id, relation, object_type, object_id, zone_id.
+            subject_id, subject_relation, relation, object_type,
+            object_id, zone_id.
         """
         fix = self._fix_sql_placeholders
         clauses: list[str] = []
         params: list[Any] = []
 
+        # Tuple shortcuts override individual kwargs.
         if subject is not None:
-            clauses.append("subject_type = ? AND subject_id = ?")
-            params.extend(subject)
+            subject_type, subject_id = subject
+        if object is not None:
+            object_type, object_id = object
+
+        if subject_type is not None:
+            clauses.append("subject_type = ?")
+            params.append(subject_type)
+        if subject_id is not None:
+            clauses.append("subject_id = ?")
+            params.append(subject_id)
+        # Round-10 fix: explicit subject_relation filter — distinguishes
+        # ``None`` (filter to direct tuples) from ``_UNSET`` (no filter).
+        if subject_relation is not _UNSET:
+            if subject_relation is None:
+                clauses.append("subject_relation IS NULL")
+            else:
+                clauses.append("subject_relation = ?")
+                params.append(subject_relation)
         if relation is not None:
             clauses.append("relation = ?")
             params.append(relation)
@@ -2316,14 +2386,20 @@ class ReBACManager:
             placeholders = ", ".join("?" for _ in relation_in)
             clauses.append(f"relation IN ({placeholders})")
             params.extend(relation_in)
-        if object is not None:
-            clauses.append("object_type = ? AND object_id = ?")
-            params.extend(object)
+        if object_type is not None:
+            clauses.append("object_type = ?")
+            params.append(object_type)
+        if object_id is not None:
+            clauses.append("object_id = ?")
+            params.append(object_id)
+        if zone_id is not None:
+            clauses.append("zone_id = ?")
+            params.append(zone_id)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = fix(
-            f"SELECT tuple_id, subject_type, subject_id, relation, "
-            f"object_type, object_id, zone_id "
+            f"SELECT tuple_id, subject_type, subject_id, subject_relation, "
+            f"relation, object_type, object_id, zone_id "
             f"FROM rebac_tuples WHERE {where}"
         )
 
@@ -2335,6 +2411,11 @@ class ReBACManager:
                     "tuple_id": row["tuple_id"],
                     "subject_type": row["subject_type"],
                     "subject_id": row["subject_id"],
+                    "subject_relation": (
+                        row.get("subject_relation")
+                        if hasattr(row, "get")
+                        else row["subject_relation"]
+                    ),
                     "relation": row["relation"],
                     "object_type": row["object_type"],
                     "object_id": row["object_id"],

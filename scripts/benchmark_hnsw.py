@@ -264,6 +264,10 @@ def run_benchmark(
     output_file: str | None = None,
 ) -> list[BenchmarkResult]:
     """Run full HNSW benchmark suite."""
+    # Issue #4238: accept the canonical ``postgres://`` scheme.
+    from nexus.core.db_utils import normalize_database_url
+
+    database_url = normalize_database_url(database_url)
     engine = create_engine(database_url)
     Session = sessionmaker(bind=engine)
 

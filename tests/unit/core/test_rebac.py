@@ -1035,3 +1035,323 @@ def test_list_objects_sorted_by_path(enhanced_rebac_manager):
 
     object_ids = [obj_id for _, obj_id in objects]
     assert object_ids == sorted(object_ids), "Results should be sorted alphabetically"
+
+
+# ---------------------------------------------------------------------------
+# Issue #4242: rebac_list_tuples partial-filter support
+# ---------------------------------------------------------------------------
+
+
+def _seed_list_tuples_fixture(mgr: ReBACManager) -> None:
+    mgr.rebac_write(
+        subject=("user", "admin"),
+        relation="read",
+        object=("file", "/x/y.md"),
+        zone_id="default",
+    )
+    mgr.rebac_write(
+        subject=("user", "alice"),
+        relation="read",
+        object=("file", "/x/z.md"),
+        zone_id="default",
+    )
+    mgr.rebac_write(
+        subject=("agent", "admin"),
+        relation="read",
+        object=("file", "/x/y.md"),
+        zone_id="other",
+    )
+
+
+def test_list_tuples_subject_id_alone_matches_across_types(rebac_manager) -> None:
+    """Issue #4242: ``subject_id`` alone filters regardless of ``subject_type``.
+
+    Previously the router required both-or-neither; even at the manager
+    level only the 2-tuple ``subject=(type, id)`` was usable. Operators
+    debugging permission denials want to grep by id alone.
+    """
+    _seed_list_tuples_fixture(rebac_manager)
+
+    rows = rebac_manager.rebac_list_tuples(subject_id="admin")
+    subject_types = {(r["subject_type"], r["subject_id"]) for r in rows}
+    assert ("user", "admin") in subject_types
+    assert ("agent", "admin") in subject_types
+    # alice should not appear
+    assert ("user", "alice") not in subject_types
+
+
+def test_list_tuples_subject_type_alone_matches(rebac_manager) -> None:
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(subject_type="user")
+    subject_types = {r["subject_type"] for r in rows}
+    assert subject_types == {"user"}
+
+
+def test_list_tuples_object_id_alone_matches(rebac_manager) -> None:
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(object_id="/x/y.md")
+    paths = {r["object_id"] for r in rows}
+    assert paths == {"/x/y.md"}
+
+
+def test_list_tuples_zone_id_filter(rebac_manager) -> None:
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(zone_id="other")
+    zones = {r["zone_id"] for r in rows}
+    assert zones == {"other"}
+
+
+def test_list_tuples_legacy_tuple_shortcut_still_works(rebac_manager) -> None:
+    """Backward compat: passing the (type, id) 2-tuple still works."""
+    _seed_list_tuples_fixture(rebac_manager)
+    rows = rebac_manager.rebac_list_tuples(subject=("user", "alice"))
+    assert len(rows) == 1
+    assert rows[0]["subject_id"] == "alice"
+
+
+# ---------------------------------------------------------------------------
+# Round-7 review (codex HIGH): ZoneAwareTraversal relation-level operators
+# ---------------------------------------------------------------------------
+
+
+def test_zone_traversal_relation_intersection_requires_all(rebac_manager):
+    """A relation defined as AND must require every member.
+
+    Pre-round-7: ZoneAwareTraversal's single-check path skipped
+    intersection/exclusion entirely and fell through to direct-tuple
+    lookup, denying valid AND-grants. bulk_evaluator (post round-6)
+    granted them — single-vs-bulk divergence.
+    """
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-intersect",
+        object_type="file",
+        config={
+            "relations": {
+                "viewer": {},
+                "mfa": {},
+                # Relation-level intersection.
+                "viewer_with_mfa": {"intersection": ["viewer", "mfa"]},
+            },
+            "permissions": {"read": ["viewer_with_mfa"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    # alice has viewer but NOT mfa.
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="viewer",
+        object=("file", "/doc.txt"),
+    )
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is False
+    ), "intersection: viewer alone must not grant"
+
+    # Now grant mfa too.
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="mfa",
+        object=("file", "/doc.txt"),
+    )
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is True
+    )
+
+
+def test_zone_traversal_relation_exclusion_is_not(rebac_manager):
+    """A relation defined as exclusion must invert."""
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-exclude",
+        object_type="file",
+        config={
+            "relations": {
+                "denied": {},
+                # Relation-level exclusion: granted when NOT on deny list.
+                "allowed": {"exclusion": "denied"},
+            },
+            "permissions": {"read": ["allowed"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="denied",
+        object=("file", "/doc.txt"),
+    )
+    # alice on deny list → must NOT grant.
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is False
+    ), "exclusion: alice on deny list must not grant"
+
+    # bob not on deny list → grants.
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "bob"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is True
+    )
+
+
+def test_zone_traversal_cyclic_union_order_independence(rebac_manager):
+    """Round-8 review (codex HIGH): ZoneAwareTraversal must NOT memoize
+    cycle-tainted negatives, otherwise bulk-style checks become
+    order-dependent. a=union(b,c), b=union(a), grant on c → both
+    a-then-b AND b-then-a must yield True.
+    """
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-cycle-zt",
+        object_type="file",
+        config={
+            "relations": {
+                "a": {"union": ["b", "c"]},
+                "b": {"union": ["a"]},
+                "c": {},
+            },
+            "permissions": {"read_a": ["a"], "read_b": ["b"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="c",
+        object=("file", "/doc.txt"),
+    )
+
+    a_first = rebac_manager.rebac_check(
+        subject=("user", "alice"),
+        permission="read_a",
+        object=("file", "/doc.txt"),
+    )
+    b_after_a = rebac_manager.rebac_check(
+        subject=("user", "alice"),
+        permission="read_b",
+        object=("file", "/doc.txt"),
+    )
+    assert a_first is True
+    assert b_after_a is True, (
+        "b must resolve True via a→c expansion — previous code memoized "
+        "a cycle-tainted False on b (codex round-8 HIGH)"
+    )
+
+
+def test_zone_traversal_relation_empty_intersection_fails_closed(rebac_manager):
+    """Round-7 review: empty operand list must fail closed."""
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-empty-intersect",
+        object_type="file",
+        config={
+            "relations": {"everyone": {"intersection": []}},
+            "permissions": {"read": ["everyone"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is False
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round-9 review (codex HIGH): bulk path stale-parent stripping
+# ---------------------------------------------------------------------------
+
+
+def test_bulk_checker_stale_parent_does_not_override_path(rebac_manager):
+    """Round-9 review (codex HIGH): the production bulk checker
+    (``rebac_check_bulk``) must also strip stale stored ``file →
+    parent`` rows before evaluating, otherwise rebac_check_bulk
+    over-grants while a single rebac_check denies — the exact
+    single-vs-bulk divergence the round-8 fast.py fix closed in the
+    Rust-free fallback.
+
+    Setup mirrors the round-8 fast-fallback regression but exercises
+    the manager's bulk path. admin has direct_viewer on /correct,
+    NOT on /wrong. A bogus tuple claims /correct/file.md's parent is
+    /wrong → without the round-9 fix, bulk grants on /wrong's
+    (nonexistent) viewer.
+    """
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-stale-parent",
+        object_type="file",
+        config={
+            "relations": {
+                "parent": {},
+                "direct_viewer": {},
+                "parent_viewer": {
+                    "tupleToUserset": {
+                        "tupleset": "parent",
+                        "computedUserset": "viewer",
+                    }
+                },
+                "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+            },
+            "permissions": {"read": ["viewer"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    # admin direct_viewer on the REAL parent.
+    rebac_manager.rebac_write(
+        subject=("user", "admin"),
+        relation="direct_viewer",
+        object=("file", "/correct"),
+    )
+    # Stale/hand-edited parent row pointing at /wrong.
+    rebac_manager.rebac_write(
+        subject=("file", "/correct/file.md"),
+        relation="parent",
+        object=("file", "/wrong"),
+    )
+
+    # alice (not admin) must NOT gain read on /correct/file.md just
+    # because she happens to have viewer on /wrong (she doesn't, but
+    # this exercises the "stale parent steers traversal to wrong
+    # ancestor" failure mode).
+    bulk_result = rebac_manager.rebac_check_bulk(
+        [
+            (("user", "admin"), "read", ("file", "/correct/file.md")),
+        ],
+        zone_id="root",
+    )
+    granted = next(iter(bulk_result.values()))
+    assert granted is True, (
+        "admin viewer on /correct must reach /correct/file.md via "
+        "path-derived parent — stale /wrong row must not override "
+        "(codex round-9 HIGH)"
+    )
+
+    # Single-check should agree.
+    single = rebac_manager.rebac_check(
+        subject=("user", "admin"),
+        permission="read",
+        object=("file", "/correct/file.md"),
+    )
+    assert single is True
+    assert single == granted, (
+        "single-check and bulk-check must agree — round-9 closed the "
+        "remaining divergence on stale parent tuples"
+    )

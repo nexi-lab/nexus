@@ -481,6 +481,103 @@ def _resolve_effective_data_dir(
     return None
 
 
+def _will_use_static_admin_fallback(
+    auth_type: str | None,
+    api_key: str | None,
+) -> bool:
+    """Predict the "single trusted operator key" boot path (Issue #4237).
+
+    The daemon falls back to ``StaticAPIKeyAuth`` with an implicit
+    ``subject_id="admin", is_admin=True`` principal whenever ``auth_type``
+    is unset or ``"static"`` AND an API key is reachable — either via the
+    ``--api-key`` / ``$NEXUS_API_KEY`` value or via ``$NEXUS_API_KEY_FILE``.
+
+    In that mode the ReBAC filter on the search read path will deny 100%
+    of results unless ``allow_admin_bypass=True`` (the static admin has
+    no ReBAC tuples). This predicate gates the auto-default applied by
+    ``_should_default_admin_bypass``.
+    """
+    if auth_type not in (None, "static"):
+        return False
+    if api_key:
+        return True
+    key_file = os.environ.get("NEXUS_API_KEY_FILE", "")
+    return bool(key_file and Path(key_file).is_file())
+
+
+def _database_auth_can_chain(
+    auth_type: str | None,
+    database_url: str | None,
+    *,
+    record_store_path: str | None = None,
+) -> bool:
+    """True when DB-backed admin keys may be admitted alongside the static
+    fallback (Issue #4237 review rounds 1–3).
+
+    The daemon's auth resolution chains ``StaticAPIKeyAuth`` with
+    ``DatabaseAPIKeyAuth`` whenever a record store of any kind is
+    available — Postgres OR SQLite. Any of these sources can wire a
+    record store:
+
+    - explicit ``--database-url`` / ``$NEXUS_DATABASE_URL`` / ``$POSTGRES_URL``
+    - ``auth_type == "database"``
+    - ``record_store_path:`` in a YAML config (or ``$NEXUS_RECORD_STORE_PATH``)
+    - sandbox/default profile that derives ``record_store_path`` from
+      ``data_dir`` (caller must pass that resolved value in)
+
+    Auto-enabling a *global* ``allow_admin_bypass`` for any of these boot
+    shapes would let any DB-stored admin key bypass ReBAC, not just the
+    implicit static key — which is exactly the security invariant
+    #3063 introduced.
+    """
+    if auth_type == "database":
+        return True
+    if database_url:
+        return True
+    if record_store_path:
+        return True
+    return bool(
+        os.environ.get("NEXUS_DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
+        or os.environ.get("NEXUS_RECORD_STORE_PATH")
+    )
+
+
+def _should_default_admin_bypass(
+    auth_type: str | None,
+    api_key: str | None,
+    *,
+    already_set: bool,
+    database_url: str | None = None,
+    record_store_path: str | None = None,
+) -> bool:
+    """Decide whether to default ``allow_admin_bypass=True`` for static-auth
+    single-key deployments (Issue #4237).
+
+    Returns False when:
+    - The operator has explicitly chosen a value (``already_set=True`` from
+      the config file, or any ``$NEXUS_ALLOW_ADMIN_BYPASS`` env value).
+    - The static-auth fallback won't fire.
+    - A database-auth chain can also admit admins (round-1 + round-3 fix):
+      ``allow_admin_bypass`` is a *global* PermissionEnforcer flag, so
+      enabling it in a deployment that ALSO accepts DB-stored admin keys
+      would silently bypass ReBAC for those keys too. The chain fires
+      for both Postgres ``database_url`` AND SQLite ``record_store_path``
+      sources — round-3 review caught a leak where a YAML config with
+      ``record_store_path`` slipped past the round-1 ``database_url``-only
+      check.
+    """
+    if already_set:
+        return False
+    if os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS") is not None:
+        return False
+    if not _will_use_static_admin_fallback(auth_type, api_key):
+        return False
+    return not _database_auth_can_chain(
+        auth_type, database_url, record_store_path=record_store_path
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI group — bare ``nexusd`` starts the daemon, subcommands are node-local ops
 # ---------------------------------------------------------------------------
@@ -629,6 +726,16 @@ def main(
     host = host or "0.0.0.0"
     port = port or 2026
     log_level = log_level or "info"
+
+    # Issue #4238: normalize the canonical ``postgres://`` scheme that
+    # cloud providers (Railway, Render, Supabase, Heroku) emit by default.
+    # NexusConfig.database_url has the same validator for the
+    # ``--config`` branch, but the env/CLI branch passes ``database_url``
+    # straight into ``SQLAlchemyRecordStore`` / ``DatabaseAPIKeyAuth``.
+    from nexus.core.db_utils import normalize_database_url as _norm_db_url
+
+    if database_url:
+        database_url = _norm_db_url(database_url)
 
     # gRPC port resolution (Issue #3980 follow-up): shared with the
     # ``nexus up`` sandbox branch via ``derive_grpc_port`` so persisted
@@ -882,8 +989,58 @@ def main(
                 from nexus.config import load_config
 
                 config_obj = load_config(Path(config_path))
+                # Issue #4237: static-auth single-key deployments need
+                # allow_admin_bypass=True or the new ReBAC search filter
+                # denies 100% of results. Honor explicit config-file /
+                # env operator choices.
+                if _should_default_admin_bypass(
+                    auth_type,
+                    api_key,
+                    already_set="allow_admin_bypass" in config_obj.model_fields_set,
+                    database_url=database_url or getattr(config_obj, "database_url", None),
+                    # Round-3 review fix: a YAML record_store_path also
+                    # wires DatabaseAPIKeyAuth via the static-auth chain.
+                    record_store_path=getattr(config_obj, "record_store_path", None),
+                ):
+                    config_obj.allow_admin_bypass = True
+                    logger.info(
+                        "[#4237] static-auth single-key mode: defaulting "
+                        "allow_admin_bypass=True "
+                        "(override via allow_admin_bypass in config or "
+                        "NEXUS_ALLOW_ADMIN_BYPASS env)",
+                    )
                 nx = nexus.connect(config=config_obj)
             else:
+                # Issue #4237 (env-only branch): same auto-default. The
+                # connect_config dict overrides $NEXUS_ALLOW_ADMIN_BYPASS in
+                # load_config precedence, so we only inject when the env
+                # didn't explicitly choose.
+                #
+                # Round-4 review fix (codex HIGH): pre-load the config
+                # so the sandbox profile's derived ``record_store_path``
+                # (data_dir/record_store.db) reaches the DB-chain gate.
+                # Without this, ``nexusd --profile sandbox --data-dir X
+                # --api-key sk`` would flip allow_admin_bypass=True and
+                # then the daemon auth chain would still admit
+                # DatabaseAPIKeyAuth via the SQLite store —
+                # exactly the global-bypass leak round-3 was meant to
+                # close for YAML configs.
+                from nexus.config import load_config as _load_config
+
+                _resolved_cfg = _load_config(dict(connect_config))
+                if _should_default_admin_bypass(
+                    auth_type,
+                    api_key,
+                    already_set="allow_admin_bypass" in connect_config,
+                    database_url=database_url or getattr(_resolved_cfg, "database_url", None),
+                    record_store_path=getattr(_resolved_cfg, "record_store_path", None),
+                ):
+                    connect_config["allow_admin_bypass"] = True
+                    logger.info(
+                        "[#4237] static-auth single-key mode: defaulting "
+                        "allow_admin_bypass=True "
+                        "(override via NEXUS_ALLOW_ADMIN_BYPASS env)",
+                    )
                 nx = nexus.connect(config=connect_config)
 
         except Exception as e:
@@ -929,7 +1086,8 @@ def main(
         auth_provider: Any = None
         if auth_type == "database":
             if not database_url:
-                database_url = os.getenv("POSTGRES_URL")
+                # Issue #4238: POSTGRES_URL may also use ``postgres://``.
+                database_url = _norm_db_url(os.getenv("POSTGRES_URL"))
             if database_url:
                 try:
                     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth

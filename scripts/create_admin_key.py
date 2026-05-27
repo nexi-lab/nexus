@@ -29,6 +29,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 from nexus.bricks.rebac.entity_registry import EntityRegistry  # noqa: E402
+from nexus.core.db_utils import normalize_database_url  # noqa: E402
 from nexus.storage.models import APIKeyModel, APIKeyZoneModel  # noqa: E402
 from nexus.storage.zone_bootstrap import ensure_root_zone  # noqa: E402
 
@@ -54,6 +55,8 @@ def create_admin_key(
         Tuple of (api_key, success)
     """
     try:
+        # Issue #4238: accept the canonical ``postgres://`` scheme.
+        database_url = normalize_database_url(database_url)
         engine = create_engine(database_url)
         SessionFactory = sessionmaker(bind=engine)
         ensure_root_zone(SessionFactory)

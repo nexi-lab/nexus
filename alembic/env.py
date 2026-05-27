@@ -11,6 +11,7 @@ from alembic import context
 # Note: This must happen before importing our models
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from nexus.core.db_utils import normalize_database_url  # noqa: E402
 from nexus.storage.models import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
@@ -19,7 +20,12 @@ config = context.config
 
 # Override database URL from environment variables if present
 # Priority: NEXUS_DATABASE_URL > POSTGRES_URL > alembic.ini
-db_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+# Issue #4238: normalize the canonical ``postgres://`` scheme that
+# cloud providers (Railway, Render, Supabase, Heroku) emit — SQLAlchemy
+# only loads its ``postgresql`` dialect, so a raw ``postgres://`` URL
+# aborts every alembic command with NoSuchModuleError. Apply the same
+# rewrite the daemon does at every other ingestion point.
+db_url = normalize_database_url(os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL"))
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 

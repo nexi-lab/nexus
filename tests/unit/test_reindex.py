@@ -197,6 +197,69 @@ class TestMCLProcessorRebuildsAspectStore:
         result = svc.get_aspect("urn:nexus:file:z1:id1", "path")
         assert result is not None
 
+    def test_all_target_does_not_double_history(self, db_session) -> None:
+        """Round-6 review (codex HIGH): ``_rebuild_versions`` was
+        implemented as a delegate to ``_rebuild_search``, so the previous
+        ``target=all`` ran put_aspect TWICE per MCL row — producing 2x
+        history entries (and applying deletes twice). Replaying N
+        upserts under ``target=all`` must yield exactly N history rows,
+        not 2N.
+        """
+        proc = _make_processor(db_session, target="all")
+        svc = AspectService(db_session)
+
+        for i in range(3):
+            row = _make_mcl_row(
+                sequence_number=i + 1,
+                entity_urn="urn:nexus:file:z1:id1",
+                aspect_name="path",
+                change_type="upsert",
+                metadata_snapshot=json.dumps({"virtual_path": f"/data/v{i}.csv"}),
+                zone_id="z1",
+            )
+            proc.process(row)
+
+        db_session.commit()
+
+        history = svc.get_aspect_history("urn:nexus:file:z1:id1", "path")
+        assert len(history) == 3, (
+            f"target=all must not double-apply: 3 MCL rows should produce 3 history "
+            f"entries, got {len(history)} (codex round-6 HIGH)"
+        )
+
+    def test_all_target_does_not_double_apply_delete(self, db_session) -> None:
+        """Round-6 review companion: a delete row under target=all must
+        not be applied twice (would error or leak state)."""
+        proc_search_only = _make_processor(db_session, target="search")
+        svc = AspectService(db_session)
+        # Seed an aspect.
+        proc_search_only.process(
+            _make_mcl_row(
+                sequence_number=1,
+                entity_urn="urn:nexus:file:z1:id_del",
+                aspect_name="path",
+                change_type="upsert",
+                metadata_snapshot=json.dumps({"virtual_path": "/data/x.csv"}),
+                zone_id="z1",
+            )
+        )
+        db_session.commit()
+        assert svc.get_aspect("urn:nexus:file:z1:id_del", "path") is not None
+
+        # Now process a delete under target=all — must NOT raise.
+        proc_all = _make_processor(db_session, target="all")
+        proc_all.process(
+            _make_mcl_row(
+                sequence_number=2,
+                entity_urn="urn:nexus:file:z1:id_del",
+                aspect_name="path",
+                change_type="delete",
+                zone_id="z1",
+            )
+        )
+        db_session.commit()
+        assert svc.get_aspect("urn:nexus:file:z1:id_del", "path") is None
+
     def test_replay_does_not_generate_new_mcl_rows(self, db_session) -> None:
         """Reindex replay must not self-amplify by generating new MCL rows.
 
@@ -322,3 +385,163 @@ class TestMCLProcessorRebuildsAspectStore:
         result2 = svc.get_aspect("urn:nexus:file:z1:id2", "path")
         assert result2 is not None
         assert result2["virtual_path"] == "/b.csv"
+
+
+# ---------------------------------------------------------------------------
+# Round-2 review: remote CLI surfaces queued search-refresh fields (#4241)
+# ---------------------------------------------------------------------------
+
+
+def test_reindex_via_rest_renders_queued_fields(monkeypatch, capsys) -> None:
+    """``nexus reindex`` against the remote REST endpoint must render
+    ``search_paths_enqueued`` and ``search_refresh_enqueued_at`` (and
+    flag them as queued, not completed) so edge-image operators don't
+    mistake processed=N for completed indexing (codex round-2 MEDIUM).
+    """
+    from nexus.cli.commands import reindex as reindex_mod
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def post(self, path: str, json_body: dict) -> dict:
+            captured["path"] = path
+            captured["body"] = json_body
+            return {
+                "target": "all",
+                "total": 3,
+                "processed": 3,
+                "errors": 0,
+                "dry_run": False,
+                "search_paths_enqueued": 3,
+                "search_refresh_enqueued_at": 1700000000.0,
+                "last_sequence": 12,
+            }
+
+    monkeypatch.setattr(
+        "nexus.cli.api_client.get_api_client_from_options",
+        lambda url, key: _FakeClient(),
+    )
+
+    # Use a record-capable Console so we can inspect rendered text.
+    from rich.console import Console as _Console
+
+    from nexus.cli.theme import NEXUS_THEME
+
+    rec_console = _Console(record=True, force_terminal=False, theme=NEXUS_THEME)
+    monkeypatch.setattr(reindex_mod, "console", rec_console)
+
+    reindex_mod._reindex_via_rest(
+        remote_url="http://example.invalid",
+        remote_api_key="sk-test",
+        target="all",
+        dry_run=False,
+        from_sequence=None,
+        batch_size=500,
+    )
+
+    text = rec_console.export_text()
+    # Queued count must be rendered AND labeled as async / not completed.
+    assert "Search paths queued" in text, text
+    assert "3" in text
+    assert "Search refresh enqueued at" in text, text
+    assert "asynchronous" in text.lower(), (
+        "Operators must see the async caveat — otherwise round-2 MEDIUM is unfixed."
+    )
+    assert captured["path"] == "/api/v2/admin/reindex"
+
+
+def test_reindex_via_rest_surfaces_enqueue_errors(monkeypatch) -> None:
+    """Round-5 review (codex MEDIUM): the remote CLI must render
+    ``search_enqueue_errors`` and the failed-paths list, plus exit
+    non-zero so operator scripts can detect partial failure.
+    """
+    import click
+
+    from nexus.cli.commands import reindex as reindex_mod
+
+    class _FakeClient:
+        def post(self, path: str, json_body: dict) -> dict:
+            return {
+                "target": "all",
+                "total": 3,
+                "processed": 3,
+                "errors": 0,
+                "dry_run": False,
+                "search_paths_enqueued": 2,
+                "search_refresh_enqueued_at": 1700000000.0,
+                "search_enqueue_errors": 1,
+                "search_enqueue_failed_paths": ["/bad.md"],
+            }
+
+    monkeypatch.setattr(
+        "nexus.cli.api_client.get_api_client_from_options",
+        lambda url, key: _FakeClient(),
+    )
+
+    from rich.console import Console as _Console
+
+    from nexus.cli.theme import NEXUS_THEME
+
+    rec_console = _Console(record=True, force_terminal=False, theme=NEXUS_THEME)
+    monkeypatch.setattr(reindex_mod, "console", rec_console)
+
+    with pytest.raises(click.ClickException) as exc_info:
+        reindex_mod._reindex_via_rest(
+            remote_url="http://example.invalid",
+            remote_api_key="sk-test",
+            target="all",
+            dry_run=False,
+            from_sequence=None,
+            batch_size=500,
+        )
+
+    text = rec_console.export_text()
+    assert "Search refresh enqueue errors" in text, text
+    assert "/bad.md" in text, text
+    assert "failed to enqueue" in text.lower()
+    assert "1 search-refresh enqueue(s) failed" in str(exc_info.value.message), (
+        "CLI must exit non-zero so operator scripts detect partial enqueue failures"
+    )
+
+
+def test_reindex_via_rest_no_queued_when_zero(monkeypatch) -> None:
+    """When ``search_paths_enqueued=0`` (e.g. target=versions), the
+    async caveat banner should NOT print — nothing was actually queued
+    to wait for."""
+    from nexus.cli.commands import reindex as reindex_mod
+
+    class _FakeClient:
+        def post(self, path: str, json_body: dict) -> dict:
+            return {
+                "target": "versions",
+                "total": 5,
+                "processed": 5,
+                "errors": 0,
+                "dry_run": False,
+                "search_paths_enqueued": 0,
+                "search_refresh_enqueued_at": None,
+            }
+
+    monkeypatch.setattr(
+        "nexus.cli.api_client.get_api_client_from_options",
+        lambda url, key: _FakeClient(),
+    )
+
+    from rich.console import Console as _Console
+
+    from nexus.cli.theme import NEXUS_THEME
+
+    rec_console = _Console(record=True, force_terminal=False, theme=NEXUS_THEME)
+    monkeypatch.setattr(reindex_mod, "console", rec_console)
+
+    reindex_mod._reindex_via_rest(
+        remote_url="http://example.invalid",
+        remote_api_key="sk-test",
+        target="versions",
+        dry_run=False,
+        from_sequence=None,
+        batch_size=500,
+    )
+
+    text = rec_console.export_text()
+    assert "asynchronous" not in text.lower(), "no async caveat when nothing was queued"

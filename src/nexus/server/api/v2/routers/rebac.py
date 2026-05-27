@@ -94,6 +94,71 @@ def _subject_tuple(body: TupleBody) -> tuple[str, str] | tuple[str, str, str]:
     return (body.subject_namespace, body.subject_id)
 
 
+class _WildcardSemanticError(ValueError):
+    """Raised when an operator supplies a wildcard shape the API can't
+    enforce semantically (e.g. shell-style ``/*`` single-level glob —
+    ReBAC has no first-level-only enforcement, so collapsing it to a
+    directory tuple would silently broaden access to all descendants).
+    """
+
+
+def _normalize_file_object_id(object_namespace: str, object_id: str) -> str:
+    """Issue #4239 (round-5 hardened): collapse RECURSIVE wildcard-style
+    ``file`` object IDs to the directory path so existing ancestor-walk /
+    directory-grant machinery grants every descendant.
+
+    Accepted shapes:
+
+    - ``/workspaces/ws1/**`` → ``/workspaces/ws1``  (recursive subtree)
+    - ``/workspaces/ws1/``   → ``/workspaces/ws1``  (trailing slash)
+    - ``/**``                → ``/``                (root grant)
+
+    Rejected (round-5 review — codex HIGH):
+
+    - ``/workspaces/ws1/*``  — shell ``/*`` is one-level-only, but the
+      ReBAC enforcer inherits directory grants to ALL descendants. The
+      previous code collapsed this to the same directory tuple as
+      ``/workspaces/ws1/**``, silently broadening to the entire subtree
+      (an authorization overgrant). Reject with a clear error so the
+      operator picks ``/**`` (recursive) or lists exact paths.
+
+    Only applies to ``object_namespace == "file"``; other namespaces
+    (``approvals``, ``zone``, …) are passed through unchanged so a
+    capability id literally containing ``*`` isn't mangled.
+
+    Raises:
+        _WildcardSemanticError: when the input uses an unsupported
+        wildcard shape (currently any ``/*`` segment). Callers should
+        translate to a 400 with the error's message.
+    """
+    if object_namespace != "file" or not object_id:
+        return object_id
+
+    # Reject ``/*`` (single-level) anywhere in the path — collapsing
+    # it to a directory tuple would grant the whole subtree. Strip
+    # every ``/**`` first so we don't false-positive on the recursive
+    # form (``/**`` is fine: it IS recursive).
+    if "/*" in object_id.replace("/**", ""):
+        raise _WildcardSemanticError(
+            f"object_id contains unsupported single-level glob '/*' in {object_id!r}. "
+            "ReBAC has no first-level-only enforcement — use '/**' for a "
+            "recursive subtree grant, or list exact paths."
+        )
+
+    out = object_id
+    # Strip trailing ``/**`` suffixes (possibly repeated, e.g. ``/a/**``).
+    while out.endswith("/**"):
+        out = out[:-3]
+    # Strip a trailing slash unless we've collapsed all the way to root.
+    if len(out) > 1 and out.endswith("/"):
+        out = out.rstrip("/")
+    # An empty result means the user supplied ``/**`` at the root —
+    # collapse to the canonical root grant.
+    if not out:
+        out = "/"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -117,7 +182,23 @@ async def write_tuple(
     """
     rebac_manager = _resolve_rebac_manager(request)
     subject = _subject_tuple(body)
-    obj = (body.object_namespace, body.object_id)
+    # Issue #4239: normalize shell-style globs to a directory path so the
+    # tuple inherits to descendants via the existing ancestor walk.
+    # Round-5 review: ``/*`` (one-level-only) is rejected because the
+    # enforcer can't honor it — collapsing it to a directory tuple would
+    # silently broaden access to all descendants.
+    try:
+        normalized_object_id = _normalize_file_object_id(body.object_namespace, body.object_id)
+    except _WildcardSemanticError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if normalized_object_id != body.object_id:
+        logger.info(
+            "[#4239] rebac tuple object_id normalized: %r -> %r "
+            "(wildcard glob collapsed to directory grant)",
+            body.object_id,
+            normalized_object_id,
+        )
+    obj = (body.object_namespace, normalized_object_id)
 
     try:
         result = rebac_manager.rebac_write(
@@ -137,7 +218,8 @@ async def write_tuple(
         "subject_id": body.subject_id,
         "relation": body.relation,
         "object_namespace": body.object_namespace,
-        "object_id": body.object_id,
+        "object_id": normalized_object_id,
+        "object_id_input": body.object_id,
         "zone_id": body.zone_id,
     }
 
@@ -150,6 +232,7 @@ async def list_tuples(
     relation: str | None = None,
     object_namespace: str | None = None,
     object_id: str | None = None,
+    zone_id: str | None = None,
     _auth: dict[str, Any] = Depends(require_followup_admin),
 ) -> dict[str, Any]:
     """List ReBAC tuples matching optional filters (admin-only).
@@ -157,31 +240,31 @@ async def list_tuples(
     Diagnostic surface — production callers use the gRPC permission
     check, not this endpoint. Returns up to whatever the manager
     returns; we don't paginate.
+
+    Issue #4242: any subset of filters is honored — ``?subject_id=admin``
+    alone is valid (operators debugging a permission denial want to
+    grep by subject regardless of ``subject_type``).
     """
     rebac_manager = _resolve_rebac_manager(request)
 
-    subject: tuple[str, str] | None = None
-    if subject_namespace is not None and subject_id is not None:
-        subject = (subject_namespace, subject_id)
-    elif subject_namespace is not None or subject_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="subject_namespace and subject_id must be provided together",
-        )
-
-    obj: tuple[str, str] | None = None
-    if object_namespace is not None and object_id is not None:
-        obj = (object_namespace, object_id)
-    elif object_namespace is not None or object_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="object_namespace and object_id must be provided together",
-        )
+    # Issue #4239: canonicalize the lookup surface so
+    # ``?object_id=/workspaces/ws1/**`` finds tuples written via any of
+    # the equivalent glob spellings. Only meaningful when an object_id
+    # was actually provided. Round-5: ``/*`` is rejected with 400
+    # (mirrors POST/DELETE).
+    if object_id is not None and object_namespace is not None:
+        try:
+            object_id = _normalize_file_object_id(object_namespace, object_id)
+        except _WildcardSemanticError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     tuples: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
-        subject=subject,
         relation=relation,
-        object=obj,
+        subject_type=subject_namespace,
+        subject_id=subject_id,
+        object_type=object_namespace,
+        object_id=object_id,
+        zone_id=zone_id,
     )
     return {"tuples": tuples, "count": len(tuples)}
 
@@ -199,20 +282,29 @@ async def delete_tuple(
     the no-op case (tuple did not exist) without a separate GET.
     """
     rebac_manager = _resolve_rebac_manager(request)
-    # Subject lookup uses the 2-tuple form (rebac_list_tuples doesn't
-    # filter on subject_relation); the 3-tuple is only relevant for
-    # writes. The zone_id filter below disambiguates same-shape tuples
-    # across zones.
-    obj = (body.object_namespace, body.object_id)
+    # Issue #4239: canonicalize so DELETE matches what POST stored.
+    # Round-5: ``/*`` is rejected (mirrors POST/GET).
+    try:
+        normalized_object_id = _normalize_file_object_id(body.object_namespace, body.object_id)
+    except _WildcardSemanticError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    obj = (body.object_namespace, normalized_object_id)
 
+    # Round-10 review (codex HIGH): pass subject_relation through to
+    # the manager so we delete EXACTLY the tuple shape the operator
+    # asked for. Previously the manager collapsed subject to (type, id)
+    # and ignored subject_relation — meaning a parallel
+    # userset-as-subject tuple sharing (subject, relation, object,
+    # zone) would also be deleted. ``body.subject_relation`` is None
+    # for direct tuples (POST's default) and a string for usersets.
+    # Either value routes through the manager's _UNSET-aware filter.
     matches: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
         subject=(body.subject_namespace, body.subject_id),
         relation=body.relation,
         object=obj,
+        subject_relation=body.subject_relation,
+        zone_id=body.zone_id,
     )
-    # Filter to the requested zone — list_tuples doesn't zone-filter, so
-    # we do it here to avoid deleting a same-shape tuple in another zone.
-    matches = [t for t in matches if t.get("zone_id") == body.zone_id]
 
     deleted = 0
     for t in matches:
@@ -226,6 +318,7 @@ async def delete_tuple(
         "subject_id": body.subject_id,
         "relation": body.relation,
         "object_namespace": body.object_namespace,
-        "object_id": body.object_id,
+        "object_id": normalized_object_id,
+        "object_id_input": body.object_id,
         "zone_id": body.zone_id,
     }

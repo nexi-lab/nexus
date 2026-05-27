@@ -22,8 +22,13 @@ def get_session_factory() -> Callable[[], Session]:
 
     Hub CLI talks to the DB directly; it is expected to run on the same
     host as the nexus server (see spec §Token/admin model — bootstrap).
+
+    Issue #4238: rewrites the canonical ``postgres://`` scheme (Railway /
+    Render / Supabase / Heroku) to ``postgresql://``.
     """
-    db_url = os.environ.get("NEXUS_DATABASE_URL")
+    from nexus.core.db_utils import normalize_database_url
+
+    db_url = normalize_database_url(os.environ.get("NEXUS_DATABASE_URL"))
     if not db_url:
         raise RuntimeError(
             "NEXUS_DATABASE_URL is not set — `nexus hub` must run on the hub host "

@@ -22,6 +22,7 @@ from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
+from nexus.core.db_utils import normalize_database_url  # noqa: E402
 
 
 def check_api_key(database_url: str, api_key: str) -> str:
@@ -36,6 +37,8 @@ def check_api_key(database_url: str, api_key: str) -> str:
         "EXISTS" if key is found, "MISSING" otherwise
     """
     try:
+        # Issue #4238: accept the canonical ``postgres://`` scheme.
+        database_url = normalize_database_url(database_url)
         engine = create_engine(database_url)
         SessionFactory = sessionmaker(bind=engine)
         key_hash = DatabaseAPIKeyAuth._hash_key(api_key)

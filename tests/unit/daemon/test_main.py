@@ -24,6 +24,8 @@ from nexus.daemon.main import (
     _manage_pid_file,
     _print_lifecycle_summary,
     _redact_url,
+    _should_default_admin_bypass,
+    _will_use_static_admin_fallback,
     main,
 )
 
@@ -862,3 +864,159 @@ class TestConfigFileDataDirGate:
         assert scoped_a in cap_a, f"A scoped readiness not written: {cap_a}"
         assert scoped_b in cap_b, f"B scoped readiness not written: {cap_b}"
         assert scoped_b not in cap_a and scoped_a not in cap_b
+
+
+# ---------------------------------------------------------------------------
+# _will_use_static_admin_fallback (Issue #4237)
+# ---------------------------------------------------------------------------
+
+
+class TestWillUseStaticAdminFallback:
+    """Predicts the "single trusted operator key" boot path (Issue #4237).
+
+    The daemon falls back to ``StaticAPIKeyAuth`` with an implicit
+    ``is_admin=True`` principal whenever ``auth_type`` is unset or
+    ``"static"`` AND an API key is reachable. In that mode the ReBAC
+    filter on the search read path will deny 100% of results unless
+    ``allow_admin_bypass=True`` — so this predicate also drives the
+    auto-default in ``main()``.
+    """
+
+    def test_explicit_static_with_api_key(self, monkeypatch) -> None:
+        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        assert _will_use_static_admin_fallback("static", "sk-demo") is True
+
+    def test_unset_auth_type_with_api_key(self, monkeypatch) -> None:
+        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        assert _will_use_static_admin_fallback(None, "sk-demo") is True
+
+    def test_database_auth_does_not_fallback(self, monkeypatch) -> None:
+        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        assert _will_use_static_admin_fallback("database", "sk-demo") is False
+
+    def test_oidc_auth_does_not_fallback(self, monkeypatch) -> None:
+        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        assert _will_use_static_admin_fallback("oidc", "sk-demo") is False
+
+    def test_no_api_key_and_no_file(self, monkeypatch) -> None:
+        monkeypatch.delenv("NEXUS_API_KEY_FILE", raising=False)
+        assert _will_use_static_admin_fallback("static", None) is False
+
+    def test_api_key_file_present(self, tmp_path: Path, monkeypatch) -> None:
+        kf = tmp_path / "api.key"
+        kf.write_text("sk-from-file")
+        monkeypatch.setenv("NEXUS_API_KEY_FILE", str(kf))
+        assert _will_use_static_admin_fallback("static", None) is True
+
+    def test_api_key_file_missing(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("NEXUS_API_KEY_FILE", str(tmp_path / "absent.key"))
+        assert _will_use_static_admin_fallback("static", None) is False
+
+
+# ---------------------------------------------------------------------------
+# _should_default_admin_bypass (Issue #4237)
+# ---------------------------------------------------------------------------
+
+
+class TestShouldDefaultAdminBypass:
+    """``allow_admin_bypass`` auto-default decision for static-auth boots.
+
+    Wires the ``_will_use_static_admin_fallback`` predicate with the
+    operator-override rules: an explicit ``NEXUS_ALLOW_ADMIN_BYPASS`` env
+    or an ``already_set=True`` config-file value defeats the auto-default.
+    """
+
+    def _clean_env(self, monkeypatch) -> None:
+        """Strip all envs that influence the predicate so each test starts clean."""
+        for var in (
+            "NEXUS_ALLOW_ADMIN_BYPASS",
+            "NEXUS_API_KEY_FILE",
+            "NEXUS_DATABASE_URL",
+            "POSTGRES_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_static_auth_single_key_defaults_true(self, monkeypatch) -> None:
+        self._clean_env(monkeypatch)
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is True
+
+    def test_explicit_env_override_blocks_default(self, monkeypatch) -> None:
+        """Operator can disable via ``NEXUS_ALLOW_ADMIN_BYPASS=false``."""
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("NEXUS_ALLOW_ADMIN_BYPASS", "false")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
+
+    def test_env_true_does_not_re_apply(self, monkeypatch) -> None:
+        """Env explicitly set to *anything* defers to env precedence."""
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("NEXUS_ALLOW_ADMIN_BYPASS", "true")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
+
+    def test_config_file_set_blocks_default(self, monkeypatch) -> None:
+        """Operator-explicit ``allow_admin_bypass`` in the YAML wins."""
+        self._clean_env(monkeypatch)
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=True) is False
+
+    def test_database_auth_keeps_secure_default(self, monkeypatch) -> None:
+        self._clean_env(monkeypatch)
+        assert _should_default_admin_bypass("database", "sk-demo", already_set=False) is False
+
+    def test_no_api_key_no_default(self, monkeypatch) -> None:
+        self._clean_env(monkeypatch)
+        assert _should_default_admin_bypass("static", None, already_set=False) is False
+
+    def test_db_chain_via_database_url_param_blocks_default(self, monkeypatch) -> None:
+        """Round-1 review fix: DB auth chain present → refuse to flip global bypass.
+
+        ``--database-url`` (or ``NEXUS_DATABASE_URL`` / ``POSTGRES_URL`` env)
+        means ``_ChainedAPIKeyAuth(static, db)`` admits DB-stored admin keys
+        too. A global ``allow_admin_bypass`` would silently weaken ReBAC for
+        those keys, defeating #3063.
+        """
+        self._clean_env(monkeypatch)
+        assert (
+            _should_default_admin_bypass(
+                "static",
+                "sk-demo",
+                already_set=False,
+                database_url="postgresql://localhost/nexus",
+            )
+            is False
+        )
+
+    def test_db_chain_via_env_blocks_default(self, monkeypatch) -> None:
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://localhost/nexus")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
+
+    def test_postgres_url_env_blocks_default(self, monkeypatch) -> None:
+        """``POSTGRES_URL`` env is the legacy alias the daemon's auth path
+        also consumes — same chaining risk."""
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("POSTGRES_URL", "postgresql://localhost/nexus")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False
+
+    def test_record_store_path_param_blocks_default(self, monkeypatch) -> None:
+        """Round-3 review fix: a YAML config that supplies
+        ``record_store_path:`` also wires DatabaseAPIKeyAuth via the
+        static-auth chain (even when the store is SQLite). Without this
+        guard, a static-auth YAML with a SQLite record store would let
+        DB-stored admin keys silently bypass ReBAC.
+        """
+        self._clean_env(monkeypatch)
+        assert (
+            _should_default_admin_bypass(
+                "static",
+                "sk-demo",
+                already_set=False,
+                record_store_path="/var/lib/nexus/record_store.db",
+            )
+            is False
+        )
+
+    def test_record_store_path_env_blocks_default(self, monkeypatch) -> None:
+        """``NEXUS_RECORD_STORE_PATH`` env is the operator-set sibling
+        of the YAML option — same chaining risk."""
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("NEXUS_RECORD_STORE_PATH", "/var/lib/nexus/record_store.db")
+        assert _should_default_admin_bypass("static", "sk-demo", already_set=False) is False

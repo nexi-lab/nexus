@@ -458,6 +458,21 @@ class NexusConfig(BaseModel):
             raise ValueError(f"backend must be one of {allowed}, got {v}")
         return v
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str | None) -> str | None:
+        """Issue #4238: accept the canonical ``postgres://`` scheme.
+
+        SQLAlchemy only loads its ``postgresql`` dialect, but cloud
+        providers (Railway, Render, Supabase, Heroku) emit ``postgres://``
+        by default and operators rarely control the URL platforms inject
+        for them. Normalize at config-load so every downstream consumer
+        (record store, alembic, init script) sees ``postgresql://``.
+        """
+        from nexus.core.db_utils import normalize_database_url
+
+        return normalize_database_url(v)
+
     @field_validator("gcs_bucket_name")
     @classmethod
     def validate_gcs_bucket(cls, v: str | None, info: Any) -> str | None:

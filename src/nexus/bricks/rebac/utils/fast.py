@@ -96,7 +96,7 @@ def check_permissions_bulk_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     try:
@@ -175,104 +175,378 @@ def check_permissions_bulk_with_fallback(
     return _check_permissions_bulk_python(checks, tuples, namespace_configs)
 
 
+def _augment_with_parent_tuples(
+    checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    eligible_tuples: list[dict[str, Any]],
+) -> None:
+    """Round-7 review fix (codex HIGH): synthesize ``file → parent``
+    relationships for every file path in checks + its ancestors.
+
+    The bulk_evaluator's parent-style tupleToUserset (``parent_viewer``
+    etc. in the default file namespace) walks the path hierarchy by
+    looking up explicit ``(file:<child>, parent, file:<parent>)``
+    tuples. The production batch checker
+    (``BulkPermissionChecker._compute_parent_tuples``) synthesizes
+    these in-memory at evaluation time. Mirroring that here so the
+    Rust-free fallback honors directory grants (the #4239 wildcard
+    fix) without requiring operators to materialize parent tuples.
+
+    Round-8 review (codex HIGH): the path-derived parent edge ALWAYS
+    wins over a stored ``file → parent`` tuple. The previous version
+    suppressed synthesis whenever ANY stored parent existed on the
+    child, but stored rows can be stale / hand-edited / disagree with
+    the actual filesystem path. ZoneAwareTraversal computes parents
+    from ``PurePosixPath`` and ignores stored parent rows; the
+    BulkPermissionChecker appends path parents unconditionally. To
+    match those two production paths (and to avoid an edge-image-only
+    deny based on a stale tuple), we now:
+
+    - Strip stored ``file → parent`` rows for file paths we're about
+      to inject a path-derived parent for.
+    - Inject the canonical path-derived parent edge.
+
+    Mutates ``eligible_tuples`` in place.
+    """
+    from pathlib import PurePosixPath
+
+    # Collect every file path that appears as a check object OR check
+    # subject (less common, but ABAC subject_type=file could appear).
+    file_paths: set[str] = set()
+    for subject_tuple, _permission, object_tuple in checks:
+        if subject_tuple[0] == "file" and "/" in subject_tuple[1]:
+            file_paths.add(subject_tuple[1])
+        if object_tuple[0] == "file" and "/" in object_tuple[1]:
+            file_paths.add(object_tuple[1])
+
+    if not file_paths:
+        return
+
+    # Expand to every ancestor so a chain like /a/b/c.md → /a/b → /a
+    # → / can resolve in a single tupleToUserset walk.
+    ancestor_paths: set[str] = set()
+    for file_path in file_paths:
+        parts = file_path.strip("/").split("/")
+        for i in range(len(parts), 0, -1):
+            ancestor_paths.add("/" + "/".join(parts[:i]))
+        if file_path != "/":
+            ancestor_paths.add("/")
+
+    # Round-8 fix: remove stale stored ``file → parent`` rows for any
+    # path we're about to inject a path-derived parent for. In place
+    # filter via slice assignment so the caller's list reference stays
+    # valid.
+    def _is_overridden_parent_tuple(t: dict[str, Any]) -> bool:
+        return (
+            t.get("subject_type") == "file"
+            and t.get("object_type") == "file"
+            and t.get("relation") == "parent"
+            and t.get("subject_relation") is None
+            and t.get("subject_id") in ancestor_paths
+        )
+
+    eligible_tuples[:] = [t for t in eligible_tuples if not _is_overridden_parent_tuple(t)]
+
+    for file_path in ancestor_paths:
+        parent_path = str(PurePosixPath(file_path).parent)
+        if parent_path == file_path or parent_path == ".":
+            continue
+        eligible_tuples.append(
+            {
+                "subject_type": "file",
+                "subject_id": file_path,
+                "subject_relation": None,
+                "relation": "parent",
+                "object_type": "file",
+                "object_id": parent_path,
+                "conditions": None,
+                "expires_at": None,
+            }
+        )
+
+
 def _check_permissions_bulk_python(
     checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
     tuples: list[dict[str, Any]],
     namespace_configs: dict[str, Any],
 ) -> dict[tuple[str, str, str, str, str], bool]:
-    """
-    Pure Python implementation for fallback.
+    """Pure Python implementation for the Rust-fallback path.
 
-    This is a simplified implementation. For production, this should delegate
-    to the existing ReBACManager._compute_permission logic.
+    Round-3 review fix (codex HIGH): delegate to the full Zanzibar-style
+    in-memory traversal in ``nexus.bricks.rebac.graph.bulk_evaluator``
+    instead of the previous simplified expansion. The simplified path
+    silently returned False for ``tupleToUserset``, ``intersection``,
+    and ``exclusion`` shapes — which made the wildcard fix in #4239
+    (a tuple at ``/workspaces/ws1`` granting ``/workspaces/ws1/a.md``)
+    not work in Rust-free edge images, because the default file
+    namespace inherits via ``parent_viewer/parent_editor tupleToUserset``.
+
+    Round-2's ``_unwrap_userset`` helper + ``_compute_permission_simple``
+    are kept ONLY as a last-ditch backstop in case bulk_evaluator can't
+    be imported (e.g. partial install). The shared bulk_memo_cache gives
+    the same cross-check memoization benefit round-1 introduced.
     """
     from nexus.bricks.rebac.domain import Entity, NamespaceConfig
 
-    # Convert namespace configs to proper format
-    namespaces: dict[str, ReBACNamespaceConfig] = {}
+    # Convert namespace configs to NamespaceConfig instances so the
+    # bulk_evaluator's get_namespace callable returns the proper type.
+    namespaces: dict[str, NamespaceConfig] = {}
     for obj_type, config_dict in namespace_configs.items():
         if isinstance(config_dict, NamespaceConfig):
             namespaces[obj_type] = config_dict
         else:
-            # Convert dict to NamespaceConfig - config_dict should contain 'relations' and 'permissions'
             namespaces[obj_type] = NamespaceConfig(
-                namespace_id="",  # Will be auto-generated
+                namespace_id="",
                 object_type=obj_type,
-                config=config_dict,  # Pass the whole dict as config
+                config=config_dict,
             )
 
-    # Compute each check
+    def _get_namespace(obj_type: str) -> NamespaceConfig | None:
+        return namespaces.get(obj_type)
+
+    # Filter conditioned tuples — the bulk_evaluator can't evaluate
+    # ABAC predicates without a context, so they must fail-closed.
+    # Preserves the prior behavior covered by
+    # test_python_fallback_denies_conditioned_tuple_without_context.
+    eligible_tuples = [t for t in tuples if not t.get("conditions")]
+
+    # Round-7 review (codex HIGH): synthesize ``file → parent`` tuples
+    # for every file object appearing in checks + their ancestors, so
+    # bulk_evaluator's parent-style tupleToUserset can walk the path
+    # hierarchy without explicit parent tuples being stored in the DB.
+    # Mirrors BulkPermissionChecker._compute_parent_tuples — without
+    # this, the #4239 wildcard fix (directory grants inheriting to
+    # descendants) is dead in Rust-free edge images.
+    eligible_tuples = list(eligible_tuples)  # copy before mutating
+    _augment_with_parent_tuples(checks, eligible_tuples)
+
     results: dict[tuple[str, str, str, str, str], bool] = {}
+
+    try:
+        from nexus.bricks.rebac.graph import bulk_evaluator
+    except ImportError:
+        # Degraded path: bulk_evaluator unavailable. Use the
+        # round-2 simplified expansion as a backstop. This loses
+        # tupleToUserset/intersection/exclusion but at least handles
+        # direct + union, which is what the prior fallback did.
+        return _check_permissions_bulk_python_simple(checks, eligible_tuples, namespaces)
+
+    # Shared memo across all checks in this bulk call (round-1's
+    # cross-check positive memoization benefit, preserved).
+    bulk_memo: dict[tuple[str, str, str, str, str], bool] = {}
+
+    # Round-3 review fix: zone_id is required by bulk_evaluator for tuple
+    # zone filtering, but the simple-fallback callers don't carry zone
+    # context; pass "" so the evaluator's zone filter is a no-op (mirrors
+    # how compute_permission_zone_aware_with_limits treats missing zones).
+    zone_id = ""
 
     for subject_tuple, permission, object_tuple in checks:
         subject = Entity(subject_tuple[0], subject_tuple[1])
         obj = Entity(object_tuple[0], object_tuple[1])
 
-        # Simple implementation: check direct relations only
-        # For production, this should use full graph traversal
-        result = _compute_permission_simple(subject, permission, obj, tuples, namespaces)
-
-        key = (subject.entity_type, subject.entity_id, permission, obj.entity_type, obj.entity_id)
-        results[key] = result
+        granted = bulk_evaluator.compute_permission(
+            subject=subject,
+            permission=permission,
+            obj=obj,
+            zone_id=zone_id,
+            tuples_graph=eligible_tuples,
+            get_namespace=_get_namespace,
+            bulk_memo_cache=bulk_memo,
+        )
+        key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
+        results[key] = bool(granted)
 
     return results
+
+
+def _check_permissions_bulk_python_simple(
+    checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    eligible_tuples: list[dict[str, Any]],
+    namespaces: dict[str, Any],
+) -> dict[tuple[str, str, str, str, str], bool]:
+    """Round-2 simplified fallback — direct + union only.
+
+    Kept as a backstop for the degraded case where ``bulk_evaluator``
+    can't be imported. tupleToUserset/intersection/exclusion are not
+    supported here (Codex round-3 HIGH).
+    """
+    from nexus.bricks.rebac.domain import Entity
+
+    direct_index: set[tuple[str, str, str, str, str]] = set()
+    for t in eligible_tuples:
+        if t.get("subject_relation") is not None:
+            continue
+        direct_index.add(
+            (
+                t["subject_type"],
+                t["subject_id"],
+                t["relation"],
+                t["object_type"],
+                t["object_id"],
+            )
+        )
+
+    memo: dict[tuple[str, str, str, str, str], bool] = {}
+    results: dict[tuple[str, str, str, str, str], bool] = {}
+    for subject_tuple, permission, object_tuple in checks:
+        subject = Entity(subject_tuple[0], subject_tuple[1])
+        obj = Entity(object_tuple[0], object_tuple[1])
+        result, _ = _compute_permission_simple(
+            subject, permission, obj, direct_index, namespaces, memo
+        )
+        key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
+        results[key] = result
+    return results
+
+
+def _unwrap_userset(definition: Any) -> list[str]:
+    """Normalize a namespace permission/relation definition into a flat
+    list of userset names (Round-2 review fix for codex HIGH finding).
+
+    Accepts the three shapes that appear in namespace configs:
+
+    - ``None`` / ``"direct"`` / any non-iterable → ``[]`` (leaf).
+    - ``["viewer", "editor"]`` (list of strings) → unchanged.
+    - ``{"union": ["viewer", "editor"]}`` (dict-wrapped union) → the
+      ``"union"`` member list, NOT the dict's keys. Iterating the dict
+      directly yields ``"union"`` and silently denies valid access.
+
+    Other dict shapes (``tupleToUserset``, ``intersection``, etc.) are
+    not expanded in the simple fallback — they are returned as ``[]``
+    so the caller falls through to direct-tuple-only matching. The
+    Rust implementation handles them; this fallback is intentionally
+    conservative.
+    """
+    if definition is None:
+        return []
+    if isinstance(definition, str):
+        return []
+    if isinstance(definition, list):
+        return [m for m in definition if isinstance(m, str)]
+    if isinstance(definition, dict) and isinstance(definition.get("union"), list):
+        return [m for m in definition["union"] if isinstance(m, str)]
+    return []
 
 
 def _compute_permission_simple(
     subject: "Entity",
     permission: str,
     obj: "Entity",
-    tuples: list[dict[str, Any]],
+    direct_index: set[tuple[str, str, str, str, str]],
     namespaces: "dict[str, ReBACNamespaceConfig]",
-    _visited: set[str] | None = None,
-) -> bool:
-    """Permission computation for Python fallback.
+    memo: dict[tuple[str, str, str, str, str], bool] | None = None,
+    _visited: set[tuple[str, str, str, str, str]] | None = None,
+) -> tuple[bool, bool]:
+    """Permission computation for the Python fallback (Issue #4240 rewrite).
 
     Expands both ``permissions`` (permission → usersets) and ``relations``
     (relation → union members) from the namespace config, matching the
     Zanzibar expansion model used by the Rust implementation.
+
+    Returns ``(granted, cycle_observed_during_computation)``. The cycle
+    bit propagates so callers can decide whether to memoize a False —
+    round-1 review fix: a False produced under a cycle is order-dependent
+    and must not be memoized, since the same relation can be True via a
+    non-cyclic sibling path (cycle-break returns False locally, but a
+    fresh-stack recompute of the same relation may resolve True).
+
+    Args:
+        direct_index: O(1)-lookup set of (subject_type, subject_id, relation,
+            object_type, object_id) tuples derived once per bulk call.
+        memo: Optional cross-recursion cache shared by the bulk wrapper —
+            stores **positive answers and acyclic negatives** only. Built
+            fresh per top-level wrapper call.
+        _visited: in-progress (subject, perm, obj) keys to break cycles in
+            cyclic namespace configs.
     """
-    # Guard against infinite recursion from cyclic configs
+    memo_key = (
+        subject.entity_type,
+        subject.entity_id,
+        permission,
+        obj.entity_type,
+        obj.entity_id,
+    )
+
+    if memo is not None:
+        cached = memo.get(memo_key)
+        if cached is not None:
+            # Cached entries are acyclic by construction (see write
+            # rules below), so we can safely report cycle_observed=False.
+            return cached, False
+
+    # Guard against infinite recursion from cyclic configs.
     if _visited is None:
         _visited = set()
-    cache_key = f"{permission}:{obj.entity_type}:{obj.entity_id}"
-    if cache_key in _visited:
-        return False
-    _visited = {*_visited, cache_key}
+    if memo_key in _visited:
+        # Cycle: return False locally and SIGNAL the cycle so the caller
+        # does not memoize this False.
+        return False, True
+    _visited = {*_visited, memo_key}
 
-    # 1. Direct tuple match: does a tuple grant this exact relation?
-    for tuple_dict in tuples:
-        if (
-            tuple_dict["subject_type"] == subject.entity_type
-            and tuple_dict["subject_id"] == subject.entity_id
-            and tuple_dict.get("subject_relation") is None
-            and tuple_dict["relation"] == permission
-            and tuple_dict["object_type"] == obj.entity_type
-            and tuple_dict["object_id"] == obj.entity_id
-            and not tuple_dict.get("conditions")
-        ):
-            return True
+    # 1. Direct tuple match: O(1). Always acyclic.
+    if memo_key in direct_index:
+        if memo is not None:
+            memo[memo_key] = True
+        return True, False
 
     namespace = namespaces.get(obj.entity_type)
     if not namespace:
-        return False
+        # Acyclic terminal — safe to memoize negative.
+        if memo is not None:
+            memo[memo_key] = False
+        return False, False
 
-    # 2. Expand via permissions dict: permission → list of usersets
+    cycle_observed = False
+
+    # 2. Expand via permissions dict: permission → list of usersets.
+    # Round-2 review (codex finding HIGH): a permission may be defined as
+    # ``"read": ["viewer"]`` (list) OR ``"read": {"union": ["viewer"]}``
+    # (dict). Iterating the dict form directly yields the key "union"
+    # instead of "viewer" — the previous code recursed on "union" as a
+    # relation that doesn't exist and silently denied valid access.
     permissions_dict = namespace.config.get("permissions", {})
-    if permission in permissions_dict:
-        for userset in permissions_dict[permission]:
-            if _compute_permission_simple(subject, userset, obj, tuples, namespaces, _visited):
-                return True
+    perm_def = permissions_dict.get(permission)
+    for member in _unwrap_userset(perm_def):
+        sub_result, sub_cycle = _compute_permission_simple(
+            subject, member, obj, direct_index, namespaces, memo, _visited
+        )
+        if sub_result:
+            if memo is not None:
+                memo[memo_key] = True
+            return True, False
+        cycle_observed = cycle_observed or sub_cycle
 
-    # 3. Expand via relations dict: relation → union members
+    # 3. Expand via relations dict: relation → list/union members.
     relations_dict = namespace.config.get("relations", {})
     relation_def = relations_dict.get(permission)
-    if isinstance(relation_def, dict) and "union" in relation_def:
-        for member in relation_def["union"]:
-            if _compute_permission_simple(subject, member, obj, tuples, namespaces, _visited):
-                return True
+    for member in _unwrap_userset(relation_def):
+        sub_result, sub_cycle = _compute_permission_simple(
+            subject, member, obj, direct_index, namespaces, memo, _visited
+        )
+        if sub_result:
+            if memo is not None:
+                memo[memo_key] = True
+            return True, False
+        cycle_observed = cycle_observed or sub_cycle
 
-    return False
+    # Negative result: memoize only if no cycle was observed during
+    # computation. A cycle-tainted False is order-dependent and may
+    # become True on a fresh-stack recompute via a sibling path.
+    if memo is not None and not cycle_observed:
+        memo[memo_key] = False
+    return False, cycle_observed
 
 
 # Convenience functions for integration with existing code
@@ -329,13 +603,13 @@ def check_permission_single_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     if _compute_permission_single is None:
         raise RuntimeError(
             "Rust single permission check not available. "
-            "Install nexus_runtime: cargo build --release -p nexus-cluster"
+            "nexus_runtime not present (kernel runs as a separate process via gRPC; see _rust_compat.py)"
         )
 
     try:
@@ -466,13 +740,13 @@ def expand_subjects_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     if _expand_subjects is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
-            "Install nexus_runtime: cargo build --release -p nexus-cluster"
+            "nexus_runtime not present (kernel runs as a separate process via gRPC; see _rust_compat.py)"
         )
 
     try:
@@ -583,13 +857,13 @@ def list_objects_for_subject_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
+            "Rust acceleration not available (nexus_runtime extension not present in this build; the kernel runs as a separate process via gRPC — see _rust_compat.py)"
         )
 
     if _list_objects_for_subject is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
-            "Install nexus_runtime: cargo build --release -p nexus-cluster"
+            "nexus_runtime not present (kernel runs as a separate process via gRPC; see _rust_compat.py)"
         )
 
     try:

@@ -48,15 +48,16 @@ pub trait PeerBlobClient: Send + Sync {
 }
 
 /// No-op fallback used at `Kernel::new` so the `peer_client` field
-/// always carries an `Arc<dyn PeerBlobClient>` — non-cdylib Rust tests
-/// and WASM builds keep the same call shape. Each method errors out
-/// with "PeerBlobClient not installed"; the cdylib's transport-tier
-/// install hook replaces this with the real rpc-side impl.
+/// always carries an `Arc<dyn PeerBlobClient>` — Rust unit tests and
+/// WASM builds keep the same call shape. Each method errors out with
+/// "PeerBlobClient not installed"; the transport-tier install hook
+/// replaces this with the real rpc-side impl on the production boot
+/// path.
 pub struct NoopPeerBlobClient;
 
 impl PeerBlobClient for NoopPeerBlobClient {
     fn fetch(&self, _addr: &str, _content_id: &str) -> PeerBlobResult<Vec<u8>> {
-        Err("PeerBlobClient not installed (non-cdylib build)".into())
+        Err("PeerBlobClient not installed".into())
     }
 }
 

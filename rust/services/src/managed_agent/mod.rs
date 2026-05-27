@@ -1008,8 +1008,7 @@ mod tests {
 
     /// Procfs lifecycle tests — exercise start_session through a real
     /// `Kernel` and assert the metastore carries the dirents + DT_LINK
-    /// rows the integration doc §2.2 promises.  Pure-Rust setup, no
-    /// PyO3.
+    /// rows the integration doc §2.2 promises.
     mod procfs {
         use super::*;
         use kernel::core::agents::registry::AgentSignal;
@@ -1047,7 +1046,7 @@ mod tests {
         }
 
         /// Build a `ManagedAgentService` with a real Kernel inside —
-        /// the only setup needed is `Kernel::new` (no PyO3 boot).
+        /// the only setup needed is `Kernel::new`.
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService<Kernel>) {
             let k = Arc::new(Kernel::new());
             let svc = ManagedAgentService::new(Arc::clone(&k), Arc::clone(k.agent_registry()));

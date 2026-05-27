@@ -377,7 +377,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/admin/reindex
-      source: src/nexus/server/api/v2/routers/replay.py:83
+      source: src/nexus/server/api/v2/routers/replay.py:84
   profiles:
     lite: supported
     sandbox: supported
@@ -7145,7 +7145,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/ops/replay
-      source: src/nexus/server/api/v2/routers/replay.py:25
+      source: src/nexus/server/api/v2/routers/replay.py:26
   profiles:
     lite: supported
     sandbox: supported
@@ -8185,7 +8185,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/rebac/tuples
-      source: src/nexus/server/api/v2/routers/rebac.py:102
+      source: src/nexus/server/api/v2/routers/rebac.py:167
   profiles:
     lite: supported
     sandbox: supported

@@ -18,11 +18,15 @@ def get_database_url() -> str | None:
 
     Issue #4238: rewrites the canonical ``postgres://`` scheme (emitted
     by Railway, Render, Supabase, Heroku) to ``postgresql://``, which is
-    the only Postgres dialect SQLAlchemy loads since 1.4.
+    the only Postgres dialect SQLAlchemy loads since 1.4. Inlined
+    rather than importing from ``nexus.core.db_utils`` because the
+    LEGO 5-tier architecture forbids ``lib`` from importing ``core``
+    (import-linter contract).
     """
-    from nexus.core.db_utils import normalize_database_url
-
-    return normalize_database_url(os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL"))
+    raw = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+    if raw and raw.startswith("postgres://"):
+        return "postgresql://" + raw[len("postgres://") :]
+    return raw
 
 
 def get_redis_url() -> str | None:

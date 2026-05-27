@@ -421,20 +421,34 @@ def check_direct_relation(
 ) -> bool:
     """Check if a direct relation tuple exists in the pre-fetched graph.
 
+    Round-10 review (codex HIGH): also accept the wildcard subject
+    ``("*", "*")`` for public grants. The single-check path
+    (``ZoneAwareTraversal.has_direct_relation``) honors this — so a
+    ``rebac_check`` granted but the prior bulk path denied, causing
+    single-vs-bulk divergence for any public file grant.
+
     Returns:
-        True if direct tuple exists.
+        True if a matching direct tuple exists (exact subject OR
+        wildcard subject).
     """
     for tuple_data in tuples_graph:
         if _has_conditions(tuple_data):
             continue
         if (
+            tuple_data["relation"] != permission
+            or tuple_data["object_type"] != obj.entity_type
+            or tuple_data["object_id"] != obj.entity_id
+            or tuple_data["subject_relation"] is not None
+        ):
+            continue
+        # Exact match.
+        if (
             tuple_data["subject_type"] == subject.entity_type
             and tuple_data["subject_id"] == subject.entity_id
-            and tuple_data["relation"] == permission
-            and tuple_data["object_type"] == obj.entity_type
-            and tuple_data["object_id"] == obj.entity_id
-            and tuple_data["subject_relation"] is None  # Direct relation only
         ):
+            return True
+        # Round-10: wildcard ``("*", "*")`` matches any subject.
+        if tuple_data["subject_type"] == "*" and tuple_data["subject_id"] == "*":
             return True
     return False
 

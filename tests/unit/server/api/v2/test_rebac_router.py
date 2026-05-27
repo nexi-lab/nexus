@@ -400,21 +400,50 @@ def test_delete_tuple_admin(fake_rebac_manager: MagicMock) -> None:
     body = resp.json()
     assert body["deleted"] == 1
     fake_rebac_manager.rebac_delete.assert_called_once_with("tuple-abc")
+    # Round-10 review (codex HIGH): the lookup must pass
+    # subject_relation + zone_id to the manager so a parallel
+    # userset-as-subject tuple sharing the same (subject, relation,
+    # object, zone) is NOT incidentally deleted.
+    call_kwargs = fake_rebac_manager.rebac_list_tuples.call_args.kwargs
+    assert call_kwargs["subject_relation"] is None, (
+        "DELETE without subject_relation in body must request "
+        "direct-only deletion (codex round-10 HIGH)"
+    )
+    assert call_kwargs["zone_id"] == "root"
 
 
-def test_delete_tuple_zone_filter_skips_other_zone(fake_rebac_manager: MagicMock) -> None:
-    """If the matched tuple is in a different zone, don't delete it."""
-    fake_rebac_manager.rebac_list_tuples.return_value = [
-        {
-            "tuple_id": "tuple-other-zone",
-            "subject_type": "user",
-            "subject_id": "alice",
-            "relation": "read",
-            "object_type": "approvals",
-            "object_id": "global",
-            "zone_id": "other-zone",
-        },
-    ]
+def test_delete_tuple_with_subject_relation_targets_userset(
+    fake_rebac_manager: MagicMock,
+) -> None:
+    """Round-10 review: when body.subject_relation is set, the lookup
+    targets EXACTLY that userset-as-subject shape — a sibling direct
+    tuple sharing (subject, relation, object, zone) must NOT be
+    incidentally deleted."""
+    auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
+    app = _make_app(rebac_manager=fake_rebac_manager, auth_provider=auth)
+    body = {**_VALID_BODY, "subject_relation": "member"}
+    with _client(app) as client:
+        resp = client.request(
+            "DELETE",
+            "/api/v2/rebac/tuples",
+            json=body,
+            headers={"Authorization": "Bearer admin-tok"},
+        )
+    assert resp.status_code == 200, resp.text
+    call_kwargs = fake_rebac_manager.rebac_list_tuples.call_args.kwargs
+    assert call_kwargs["subject_relation"] == "member"
+    assert call_kwargs["zone_id"] == "root"
+
+
+def test_delete_tuple_zone_filter_at_manager(fake_rebac_manager: MagicMock) -> None:
+    """Round-10: zone filtering now happens at the manager via the
+    ``zone_id=`` kwarg, not as a post-filter on the router side. The
+    test verifies the router DOES pass zone_id through so the manager
+    can do its SQL-level filtering. Empty manager response → deleted=0.
+    """
+    # Manager returns empty (simulates SQL-level zone filter excluding
+    # the only candidate match).
+    fake_rebac_manager.rebac_list_tuples.return_value = []
     auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
     app = _make_app(rebac_manager=fake_rebac_manager, auth_provider=auth)
     with _client(app) as client:
@@ -428,6 +457,9 @@ def test_delete_tuple_zone_filter_skips_other_zone(fake_rebac_manager: MagicMock
     body = resp.json()
     assert body["deleted"] == 0
     fake_rebac_manager.rebac_delete.assert_not_called()
+    # Verify the manager was given the zone filter.
+    call_kwargs = fake_rebac_manager.rebac_list_tuples.call_args.kwargs
+    assert call_kwargs["zone_id"] == "root"
 
 
 def test_delete_tuple_no_auth_returns_401(fake_rebac_manager: MagicMock) -> None:
@@ -616,6 +648,8 @@ def test_delete_normalizes_to_match_post(fake_rebac_manager_file: MagicMock) -> 
         subject=("user", "admin"),
         relation="read",
         object=("file", "/workspaces/ws1"),
+        subject_relation=None,
+        zone_id="root",
     )
 
 

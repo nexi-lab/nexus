@@ -502,6 +502,56 @@ def test_python_fallback_grants_via_tupleToUserset_parent_inheritance() -> None:
     )
 
 
+def test_python_fallback_wildcard_subject_grants_in_bulk() -> None:
+    """Round-10 review (codex HIGH): the bulk evaluator must honor
+    wildcard subject grants (``("*", "*")``) the same way the single-
+    check path does. Otherwise rebac_check grants but bulk denies —
+    a public file becomes invisible to search.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {"viewer": {}},
+            "permissions": {"read": ["viewer"]},
+        }
+    }
+    tuples = [
+        # Public viewer grant — wildcard subject.
+        {
+            "subject_type": "*",
+            "subject_id": "*",
+            "subject_relation": None,
+            "relation": "viewer",
+            "object_type": "file",
+            "object_id": "/public.md",
+        },
+    ]
+    # alice and bob both must be able to read /public.md.
+    results = fast.check_permissions_bulk_with_fallback(
+        [
+            (("user", "alice"), "read", ("file", "/public.md")),
+            (("user", "bob"), "read", ("file", "/public.md")),
+        ],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "alice", "read", "file", "/public.md")] is True, (
+        "wildcard subject must grant in bulk (codex round-10 HIGH)"
+    )
+    assert results[("user", "bob", "read", "file", "/public.md")] is True
+
+    # Sanity: wildcard does NOT grant for a DIFFERENT object.
+    results2 = fast.check_permissions_bulk_with_fallback(
+        [(("user", "alice"), "read", ("file", "/private.md"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results2[("user", "alice", "read", "file", "/private.md")] is False
+
+
 def test_python_fallback_stale_parent_tuple_does_not_override_path() -> None:
     """Round-8 review (codex HIGH): a stale stored ``file → parent``
     tuple pointing at the wrong directory must NOT defeat the

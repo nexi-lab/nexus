@@ -257,6 +257,41 @@ def test_reindex_without_search_daemon_reports_target_failure() -> None:
     assert "/x.md" in body["search_enqueue_failed_paths"], body
 
 
+def test_reindex_with_refresh_disabled_reports_target_failure() -> None:
+    """Round-10 review (codex MEDIUM): ``SearchDaemon.notify_file_change``
+    silently no-ops when ``config.refresh_enabled=False``. The reindex
+    response previously reported queued paths anyway, and the CLI
+    exited 0 — the operator saw success but no BM25/vector refresh
+    was ever queued.
+
+    Fix: treat refresh-disabled the same way as missing daemon — every
+    path counts as a failed enqueue.
+    """
+    rows = [_row("/x.md", seq=1), _row("/y.md", seq=2)]
+
+    daemon = MagicMock()
+    daemon.notify_file_change = AsyncMock()  # would be no-op, but we should NOT call it
+    daemon.config = SimpleNamespace(refresh_enabled=False)
+    daemon.stats = SimpleNamespace(last_index_refresh=None)
+
+    import nexus.cli.commands.reindex as reindex_mod
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(reindex_mod._MCLProcessor, "process", lambda self, row: None)
+        app = _make_app(rows=rows, search_daemon=daemon)
+        with TestClient(app) as client:
+            resp = client.post("/api/v2/admin/reindex", json={"target": "all"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["processed"] == 2
+    assert body["search_paths_enqueued"] == 0, body
+    assert body["search_enqueue_errors"] == 2, body
+    # No call should have been made — refresh disabled means we
+    # short-circuit before notify_file_change.
+    daemon.notify_file_change.assert_not_awaited()
+
+
 def test_reindex_without_search_daemon_versions_target_silent() -> None:
     """target=versions has no search-refresh contract, so a missing
     daemon stays silent (no false-positive enqueue error)."""

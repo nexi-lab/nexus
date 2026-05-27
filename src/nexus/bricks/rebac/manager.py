@@ -96,6 +96,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# Round-10 review (codex HIGH): sentinel distinguishing "filter unset"
+# from the meaningful filter value ``None`` (= match only direct tuples
+# whose ``subject_relation IS NULL``). Used by ``rebac_list_tuples``.
+class _Unset:
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
+
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
 # ============================================================================
@@ -2305,6 +2317,7 @@ class ReBACManager:
         *,
         subject_type: str | None = None,
         subject_id: str | None = None,
+        subject_relation: Any = _UNSET,
         object_type: str | None = None,
         object_id: str | None = None,
         zone_id: str | None = None,
@@ -2325,12 +2338,22 @@ class ReBACManager:
             relation_in: Optional list of relations to match.
             subject_type / subject_id: Optional individual subject filters
                 (Issue #4242 — operators want ``?subject_id=admin`` alone).
+            subject_relation: Optional userset-as-subject filter.
+                Round-10 review (codex HIGH): the default ``_UNSET``
+                means "don't filter on this column". Passing the
+                explicit value ``None`` means "match only direct
+                tuples whose ``subject_relation IS NULL``" — required
+                for DELETE to avoid accidentally removing a parallel
+                userset-as-subject tuple that shares (subject, relation,
+                object, zone). Passing a string filters to that exact
+                userset relation.
             object_type / object_id: Optional individual object filters.
             zone_id: Optional zone filter.
 
         Returns:
             List of tuple dicts with keys: tuple_id, subject_type,
-            subject_id, relation, object_type, object_id, zone_id.
+            subject_id, subject_relation, relation, object_type,
+            object_id, zone_id.
         """
         fix = self._fix_sql_placeholders
         clauses: list[str] = []
@@ -2348,6 +2371,14 @@ class ReBACManager:
         if subject_id is not None:
             clauses.append("subject_id = ?")
             params.append(subject_id)
+        # Round-10 fix: explicit subject_relation filter — distinguishes
+        # ``None`` (filter to direct tuples) from ``_UNSET`` (no filter).
+        if subject_relation is not _UNSET:
+            if subject_relation is None:
+                clauses.append("subject_relation IS NULL")
+            else:
+                clauses.append("subject_relation = ?")
+                params.append(subject_relation)
         if relation is not None:
             clauses.append("relation = ?")
             params.append(relation)
@@ -2367,8 +2398,8 @@ class ReBACManager:
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = fix(
-            f"SELECT tuple_id, subject_type, subject_id, relation, "
-            f"object_type, object_id, zone_id "
+            f"SELECT tuple_id, subject_type, subject_id, subject_relation, "
+            f"relation, object_type, object_id, zone_id "
             f"FROM rebac_tuples WHERE {where}"
         )
 
@@ -2380,6 +2411,11 @@ class ReBACManager:
                     "tuple_id": row["tuple_id"],
                     "subject_type": row["subject_type"],
                     "subject_id": row["subject_id"],
+                    "subject_relation": (
+                        row.get("subject_relation")
+                        if hasattr(row, "get")
+                        else row["subject_relation"]
+                    ),
                     "relation": row["relation"],
                     "object_type": row["object_type"],
                     "object_id": row["object_id"],

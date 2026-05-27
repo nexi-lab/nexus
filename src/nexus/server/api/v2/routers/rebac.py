@@ -282,10 +282,6 @@ async def delete_tuple(
     the no-op case (tuple did not exist) without a separate GET.
     """
     rebac_manager = _resolve_rebac_manager(request)
-    # Subject lookup uses the 2-tuple form (rebac_list_tuples doesn't
-    # filter on subject_relation); the 3-tuple is only relevant for
-    # writes. The zone_id filter below disambiguates same-shape tuples
-    # across zones.
     # Issue #4239: canonicalize so DELETE matches what POST stored.
     # Round-5: ``/*`` is rejected (mirrors POST/GET).
     try:
@@ -294,14 +290,21 @@ async def delete_tuple(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     obj = (body.object_namespace, normalized_object_id)
 
+    # Round-10 review (codex HIGH): pass subject_relation through to
+    # the manager so we delete EXACTLY the tuple shape the operator
+    # asked for. Previously the manager collapsed subject to (type, id)
+    # and ignored subject_relation — meaning a parallel
+    # userset-as-subject tuple sharing (subject, relation, object,
+    # zone) would also be deleted. ``body.subject_relation`` is None
+    # for direct tuples (POST's default) and a string for usersets.
+    # Either value routes through the manager's _UNSET-aware filter.
     matches: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
         subject=(body.subject_namespace, body.subject_id),
         relation=body.relation,
         object=obj,
+        subject_relation=body.subject_relation,
+        zone_id=body.zone_id,
     )
-    # Filter to the requested zone — list_tuples doesn't zone-filter, so
-    # we do it here to avoid deleting a same-shape tuple in another zone.
-    matches = [t for t in matches if t.get("zone_id") == body.zone_id]
 
     deleted = 0
     for t in matches:

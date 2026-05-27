@@ -23,8 +23,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// Process-wide handle to the installed AcpService. Set by
-/// [`AcpService::install`] so the hand-written PyO3 surface can find
-/// the instance without downcasting through `Arc<dyn RustService>`.
+/// [`AcpService::install`] so cross-callsite reach (set_agent_registry,
+/// register_on_terminate, gRPC handler) lands on the same instance the
+/// kernel ServiceRegistry holds — without downcasting through
+/// `Arc<dyn RustService>`.
 static ACP_SVC_HANDLE: OnceLock<Arc<AcpService<Kernel>>> = OnceLock::new();
 
 use dashmap::DashMap;

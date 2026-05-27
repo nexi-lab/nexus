@@ -475,24 +475,16 @@ def test_python_fallback_grants_via_tupleToUserset_parent_inheritance() -> None:
         }
     }
     tuples = [
-        # admin gets direct_viewer on the directory.
+        # admin gets direct_viewer on the directory. No explicit
+        # ``parent`` tuple — round-7 review (codex HIGH): the bulk
+        # fallback must synthesize parent links from the path itself,
+        # otherwise the #4239 wildcard fix is dead in Rust-free edge
+        # images.
         {
             "subject_type": "user",
             "subject_id": "admin",
             "subject_relation": None,
             "relation": "direct_viewer",
-            "object_type": "file",
-            "object_id": "/workspaces/ws1",
-        },
-        # File's parent linkage — Zanzibar shape: child → "parent" →
-        # parent. tupleToUserset(parent, viewer) on the child then
-        # finds tuples where the CHILD is the subject of "parent"
-        # pointing to OBJECTS (its parents), and checks viewer on each.
-        {
-            "subject_type": "file",
-            "subject_id": "/workspaces/ws1/a.md",
-            "subject_relation": None,
-            "relation": "parent",
             "object_type": "file",
             "object_id": "/workspaces/ws1",
         },
@@ -507,6 +499,52 @@ def test_python_fallback_grants_via_tupleToUserset_parent_inheritance() -> None:
         "tupleToUserset parent inheritance must work in the Rust-free fallback — "
         "otherwise the round-2 wildcard fix (#4239) is dead in edge images "
         "(codex round-3 HIGH)."
+    )
+
+
+def test_python_fallback_deep_directory_grant_inheritance() -> None:
+    """Round-7 review (codex HIGH): a grant on /a inherits to
+    /a/b/c/d/file.md via the synthesized parent chain. No explicit
+    ``parent`` tuples needed.
+    """
+    from nexus.bricks.rebac.utils import fast
+
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "parent": {},
+                "direct_viewer": {},
+                "parent_viewer": {
+                    "tupleToUserset": {
+                        "tupleset": "parent",
+                        "computedUserset": "viewer",
+                    }
+                },
+                "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+            },
+            "permissions": {"read": ["viewer"]},
+        }
+    }
+    # Grant on /a — must reach /a/b/c/d/file.md without any explicit
+    # parent tuples.
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "admin",
+            "subject_relation": None,
+            "relation": "direct_viewer",
+            "object_type": "file",
+            "object_id": "/a",
+        },
+    ]
+    results = fast.check_permissions_bulk_with_fallback(
+        [(("user", "admin"), "read", ("file", "/a/b/c/d/file.md"))],
+        tuples,
+        namespace_configs,
+        force_python=True,
+    )
+    assert results[("user", "admin", "read", "file", "/a/b/c/d/file.md")] is True, (
+        "4-level deep grant must inherit via synthesized parent chain (codex round-7 HIGH)"
     )
 
 

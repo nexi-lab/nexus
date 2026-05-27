@@ -175,6 +175,80 @@ def check_permissions_bulk_with_fallback(
     return _check_permissions_bulk_python(checks, tuples, namespace_configs)
 
 
+def _augment_with_parent_tuples(
+    checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    eligible_tuples: list[dict[str, Any]],
+) -> None:
+    """Round-7 review fix (codex HIGH): synthesize ``file → parent``
+    relationships for every file path in checks + its ancestors.
+
+    The bulk_evaluator's parent-style tupleToUserset (``parent_viewer``
+    etc. in the default file namespace) walks the path hierarchy by
+    looking up explicit ``(file:<child>, parent, file:<parent>)``
+    tuples. The production batch checker
+    (``BulkPermissionChecker._compute_parent_tuples``) synthesizes
+    these in-memory at evaluation time. Mirroring that here so the
+    Rust-free fallback honors directory grants (the #4239 wildcard
+    fix) without requiring operators to materialize parent tuples.
+
+    Mutates ``eligible_tuples`` in place. Idempotent: skips file paths
+    that already have an explicit parent tuple, so operators who DID
+    persist parents aren't double-counted.
+    """
+    from pathlib import PurePosixPath
+
+    # Collect every file path that appears as a check object OR check
+    # subject (less common, but ABAC subject_type=file could appear).
+    file_paths: set[str] = set()
+    for subject_tuple, _permission, object_tuple in checks:
+        if subject_tuple[0] == "file" and "/" in subject_tuple[1]:
+            file_paths.add(subject_tuple[1])
+        if object_tuple[0] == "file" and "/" in object_tuple[1]:
+            file_paths.add(object_tuple[1])
+
+    if not file_paths:
+        return
+
+    # Expand to every ancestor so a chain like /a/b/c.md → /a/b → /a
+    # → / can resolve in a single tupleToUserset walk.
+    ancestor_paths: set[str] = set()
+    for file_path in file_paths:
+        parts = file_path.strip("/").split("/")
+        for i in range(len(parts), 0, -1):
+            ancestor_paths.add("/" + "/".join(parts[:i]))
+        if file_path != "/":
+            ancestor_paths.add("/")
+
+    # Already-present parent links — don't double up.
+    existing_parents: set[str] = {
+        t["subject_id"]
+        for t in eligible_tuples
+        if t.get("subject_type") == "file"
+        and t.get("object_type") == "file"
+        and t.get("relation") == "parent"
+        and t.get("subject_relation") is None
+    }
+
+    for file_path in ancestor_paths:
+        if file_path in existing_parents:
+            continue
+        parent_path = str(PurePosixPath(file_path).parent)
+        if parent_path == file_path or parent_path == ".":
+            continue
+        eligible_tuples.append(
+            {
+                "subject_type": "file",
+                "subject_id": file_path,
+                "subject_relation": None,
+                "relation": "parent",
+                "object_type": "file",
+                "object_id": parent_path,
+                "conditions": None,
+                "expires_at": None,
+            }
+        )
+
+
 def _check_permissions_bulk_python(
     checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
     tuples: list[dict[str, Any]],
@@ -219,6 +293,16 @@ def _check_permissions_bulk_python(
     # Preserves the prior behavior covered by
     # test_python_fallback_denies_conditioned_tuple_without_context.
     eligible_tuples = [t for t in tuples if not t.get("conditions")]
+
+    # Round-7 review (codex HIGH): synthesize ``file → parent`` tuples
+    # for every file object appearing in checks + their ancestors, so
+    # bulk_evaluator's parent-style tupleToUserset can walk the path
+    # hierarchy without explicit parent tuples being stored in the DB.
+    # Mirrors BulkPermissionChecker._compute_parent_tuples — without
+    # this, the #4239 wildcard fix (directory grants inheriting to
+    # descendants) is dead in Rust-free edge images.
+    eligible_tuples = list(eligible_tuples)  # copy before mutating
+    _augment_with_parent_tuples(checks, eligible_tuples)
 
     results: dict[tuple[str, str, str, str, str], bool] = {}
 

@@ -171,25 +171,43 @@ class PermissionComputer:
             )
 
         # Handle intersection (AND of multiple relations)
+        # Round-7 review: empty operand list previously short-circuited
+        # True after zero iterations. Fail closed.
         if namespace.has_intersection(permission):
             intersection_relations = namespace.get_intersection_relations(permission)
-            # ALL relations must be true
+            if not (
+                isinstance(intersection_relations, list)
+                and len(intersection_relations) > 0
+                and all(isinstance(m, str) and m for m in intersection_relations)
+            ):
+                logger.warning(
+                    "compute_permission: empty/invalid relation-level intersection "
+                    "for '%s' in %s; failing closed",
+                    permission,
+                    obj.entity_type,
+                )
+                return False
             for rel in intersection_relations:
                 if not self.compute_permission(
                     subject, rel, obj, visited.copy(), depth + 1, context, zone_id
                 ):
-                    return False  # If any relation is False, whole intersection is False
-            return True  # All relations were True
+                    return False
+            return True
 
         # Handle exclusion (NOT relation - this implements DENY semantics)
         if namespace.has_exclusion(permission):
             excluded_rel = namespace.get_exclusion_relation(permission)
-            if excluded_rel:
-                # Must NOT have the excluded relation
-                return not self.compute_permission(
-                    subject, excluded_rel, obj, visited.copy(), depth + 1, context, zone_id
+            if not isinstance(excluded_rel, str) or not excluded_rel:
+                logger.warning(
+                    "compute_permission: empty/invalid relation-level exclusion "
+                    "for '%s' in %s; failing closed",
+                    permission,
+                    obj.entity_type,
                 )
-            return False
+                return False
+            return not self.compute_permission(
+                subject, excluded_rel, obj, visited.copy(), depth + 1, context, zone_id
+            )
 
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
@@ -247,53 +265,94 @@ class PermissionComputer:
         context: dict[str, Any] | None,
         zone_id: str | None,
     ) -> bool:
-        """Check permission via usersets defined in namespace."""
-        usersets = namespace.get_permission_usersets(permission)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "  [depth=%d] Permission '%s' expands to usersets: %s",
-                depth,
-                permission,
-                usersets,
+        """Check permission via usersets defined in namespace.
+
+        Round-7 review (codex HIGH): inspect the raw permission def and
+        apply correct AND for intersection, NOT for exclusion, OR for
+        list/union, with fail-closed for empty operands and unknown
+        shapes. Previously routed everything through
+        ``get_permission_usersets()`` which flattens intersection/
+        exclusion to a list and iterated with OR — over-granted.
+        Mirrors bulk_evaluator + ZoneAwareTraversal round-4..6 fixes.
+        """
+        perm_def = namespace.config.get("permissions", {}).get(permission)
+
+        def _all_nonempty_strings(items: Any) -> bool:
+            return (
+                isinstance(items, list)
+                and len(items) > 0
+                and all(isinstance(m, str) and m for m in items)
             )
 
-        for i, userset in enumerate(usersets):
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] Checking userset '%s'...",
-                    depth,
-                    i + 1,
-                    len(usersets),
-                    userset,
+        def _try_or(members: list[str]) -> bool:
+            for member in members:
+                if self.compute_permission(
+                    subject, member, obj, visited.copy(), depth + 1, context, zone_id
+                ):
+                    return True
+            return False
+
+        if isinstance(perm_def, list):
+            if not _all_nonempty_strings(perm_def):
+                logger.warning(
+                    "compute_permission: empty/invalid list for '%s' in %s; failing closed",
+                    permission,
+                    obj.entity_type,
                 )
-            result = self.compute_permission(
-                subject, userset, obj, visited.copy(), depth + 1, context, zone_id
-            )
-            if result:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "  [depth=%d] [%d/%d] GRANTED via userset '%s'",
-                        depth,
-                        i + 1,
-                        len(usersets),
-                        userset,
+                return False
+            return _try_or(list(perm_def))
+
+        if isinstance(perm_def, dict):
+            if "union" in perm_def:
+                if not _all_nonempty_strings(perm_def["union"]):
+                    logger.warning(
+                        "compute_permission: empty/invalid union for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
                     )
+                    return False
+                return _try_or(list(perm_def["union"]))
+
+            if "intersection" in perm_def:
+                if not _all_nonempty_strings(perm_def["intersection"]):
+                    logger.warning(
+                        "compute_permission: empty/invalid intersection for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
+                    )
+                    return False
+                for member in perm_def["intersection"]:
+                    if not self.compute_permission(
+                        subject, member, obj, visited.copy(), depth + 1, context, zone_id
+                    ):
+                        return False
                 return True
-            elif logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] DENIED for userset '%s'",
-                    depth,
-                    i + 1,
-                    len(usersets),
-                    userset,
+
+            if "exclusion" in perm_def:
+                excluded = perm_def.get("exclusion")
+                if not isinstance(excluded, str) or not excluded:
+                    logger.warning(
+                        "compute_permission: empty/invalid exclusion for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
+                    )
+                    return False
+                return not self.compute_permission(
+                    subject, excluded, obj, visited.copy(), depth + 1, context, zone_id
                 )
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "  [depth=%d] ALL %d usersets DENIED - permission DENIED",
-                depth,
-                len(usersets),
+            # Unknown dict operator — fail closed.
+            logger.warning(
+                "compute_permission: unknown permission operator for '%s' in %s; failing closed (keys=%s)",
+                permission,
+                obj.entity_type,
+                list(perm_def.keys()),
             )
+            return False
+
+        # Permission defined but in an unrecognized shape — fail closed.
+        if perm_def is not None:
+            return False
         return False
 
     def _check_union(

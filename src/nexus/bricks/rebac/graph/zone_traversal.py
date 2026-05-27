@@ -316,6 +316,45 @@ class ZoneAwareTraversal:
             logger.debug(f"{indent}└─[❌ DENIED] - no union members granted access")
             return _store(False)
 
+        # Round-7 review (codex HIGH): relation-level intersection/
+        # exclusion were unhandled — flowed past to direct-tuple
+        # lookup and silently denied valid AND-grants while bulk
+        # path (post round-6) granted them. Apply correct AND/NOT
+        # with empty-operand fail-closed.
+        def _rel_nonempty_list(items: Any) -> bool:
+            return (
+                isinstance(items, list)
+                and len(items) > 0
+                and all(isinstance(m, str) and m for m in items)
+            )
+
+        if namespace.has_intersection(permission):
+            intersection_relations = namespace.get_intersection_relations(permission)
+            if not _rel_nonempty_list(intersection_relations):
+                logger.warning(
+                    f"{indent}└─[FAIL-CLOSED] empty/invalid relation-level intersection "
+                    f"for '{permission}'"
+                )
+                return _store(False)
+            logger.debug(
+                f"{indent}├─[INTERSECTION] Relation '{permission}' = AND({intersection_relations})"
+            )
+            for rel in intersection_relations:
+                if not _recurse(subject, rel, obj):
+                    return _store(False)
+            return _store(True)
+
+        if namespace.has_exclusion(permission):
+            excluded_rel = namespace.get_exclusion_relation(permission)
+            if not isinstance(excluded_rel, str) or not excluded_rel:
+                logger.warning(
+                    f"{indent}└─[FAIL-CLOSED] empty/invalid relation-level exclusion "
+                    f"for '{permission}'"
+                )
+                return _store(False)
+            logger.debug(f"{indent}├─[EXCLUSION] Relation '{permission}' = NOT '{excluded_rel}'")
+            return _store(not _recurse(subject, excluded_rel, obj))
+
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
             ttu = namespace.get_tuple_to_userset(permission)

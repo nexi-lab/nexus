@@ -1107,3 +1107,126 @@ def test_list_tuples_legacy_tuple_shortcut_still_works(rebac_manager) -> None:
     rows = rebac_manager.rebac_list_tuples(subject=("user", "alice"))
     assert len(rows) == 1
     assert rows[0]["subject_id"] == "alice"
+
+
+# ---------------------------------------------------------------------------
+# Round-7 review (codex HIGH): ZoneAwareTraversal relation-level operators
+# ---------------------------------------------------------------------------
+
+
+def test_zone_traversal_relation_intersection_requires_all(rebac_manager):
+    """A relation defined as AND must require every member.
+
+    Pre-round-7: ZoneAwareTraversal's single-check path skipped
+    intersection/exclusion entirely and fell through to direct-tuple
+    lookup, denying valid AND-grants. bulk_evaluator (post round-6)
+    granted them — single-vs-bulk divergence.
+    """
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-intersect",
+        object_type="file",
+        config={
+            "relations": {
+                "viewer": {},
+                "mfa": {},
+                # Relation-level intersection.
+                "viewer_with_mfa": {"intersection": ["viewer", "mfa"]},
+            },
+            "permissions": {"read": ["viewer_with_mfa"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    # alice has viewer but NOT mfa.
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="viewer",
+        object=("file", "/doc.txt"),
+    )
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is False
+    ), "intersection: viewer alone must not grant"
+
+    # Now grant mfa too.
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="mfa",
+        object=("file", "/doc.txt"),
+    )
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is True
+    )
+
+
+def test_zone_traversal_relation_exclusion_is_not(rebac_manager):
+    """A relation defined as exclusion must invert."""
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-exclude",
+        object_type="file",
+        config={
+            "relations": {
+                "denied": {},
+                # Relation-level exclusion: granted when NOT on deny list.
+                "allowed": {"exclusion": "denied"},
+            },
+            "permissions": {"read": ["allowed"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="denied",
+        object=("file", "/doc.txt"),
+    )
+    # alice on deny list → must NOT grant.
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is False
+    ), "exclusion: alice on deny list must not grant"
+
+    # bob not on deny list → grants.
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "bob"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is True
+    )
+
+
+def test_zone_traversal_relation_empty_intersection_fails_closed(rebac_manager):
+    """Round-7 review: empty operand list must fail closed."""
+    namespace = NamespaceConfig(
+        namespace_id="file-ns-empty-intersect",
+        object_type="file",
+        config={
+            "relations": {"everyone": {"intersection": []}},
+            "permissions": {"read": ["everyone"]},
+        },
+    )
+    rebac_manager.create_namespace(namespace)
+
+    assert (
+        rebac_manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+        )
+        is False
+    )

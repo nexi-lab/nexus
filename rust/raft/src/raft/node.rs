@@ -51,7 +51,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use raft::eraftpb::{
-    ConfChange, ConfChangeType, ConfChangeV2, ConfState, Entry, EntryType, Message, Snapshot,
+    ConfChange, ConfChangeType, ConfChangeV2, ConfState, Entry, EntryType, Message,
 };
 use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
@@ -1615,53 +1615,6 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     );
                     sm.apply(entry.index, &Command::Noop)?;
 
-                    // After AddNode: create snapshot and compact log so raft-rs
-                    // sends snapshot (not AppendEntries) to the new follower.
-                    // Per raft contract: the initial ConfState is only in the
-                    // snapshot — new followers MUST receive a snapshot to learn
-                    // about all voters. Without this, the joiner would only see
-                    // voters added via ConfChange entries, missing the bootstrap
-                    // voters.
-                    if matches!(
-                        cc.get_change_type(),
-                        ConfChangeType::AddNode | ConfChangeType::AddLearnerNode
-                    ) {
-                        let sm_data = sm.snapshot().map_err(|e| {
-                            RaftError::Storage(format!("snapshot for new voter: {e}"))
-                        })?;
-                        let mut snapshot = Snapshot::new();
-                        {
-                            let meta = snapshot.mut_metadata();
-                            meta.index = entry.index;
-                            meta.term = entry.term;
-                            *meta.mut_conf_state() = cs.clone();
-                        }
-                        snapshot.data = sm_data.into();
-
-                        // Store snapshot WITHOUT clearing entries (we are the
-                        // leader and need entries for other followers).
-                        self.raw_node
-                            .mut_store()
-                            .store_snapshot(&snapshot)
-                            .map_err(|e| RaftError::Storage(format!("store snapshot: {e}")))?;
-                        // Compact log up to this entry so raft-rs detects
-                        // Compacted when probing the new follower and falls
-                        // back to sending the snapshot.
-                        self.raw_node
-                            .mut_store()
-                            .compact(entry.index)
-                            .map_err(|e| {
-                                RaftError::Storage(format!("compact after AddNode: {e}"))
-                            })?;
-
-                        tracing::info!(
-                            index = entry.index,
-                            node_id = cc.node_id,
-                            voters = ?cs.voters,
-                            "Created snapshot and compacted log for new voter catch-up"
-                        );
-                    }
-
                     // Notify waiting JoinZone caller (if any)
                     if let Some(tx) = self.pending_conf_changes.remove(&cc.node_id) {
                         let _ = tx.send(Ok(cs));
@@ -1681,14 +1634,11 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         .set_conf_state(&cs)
                         .map_err(|e| RaftError::Storage(e.to_string()))?;
 
-                    let mut has_add = false;
-
                     #[cfg(all(feature = "grpc", has_protos))]
                     if let Some(ref peer_map) = self.peer_map {
                         for single in &cc.changes {
                             match single.get_change_type() {
                                 ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
-                                    has_add = true;
                                     if let Some(address) =
                                         node_address_from_conf_context(single.node_id, &cc.context)
                                     {
@@ -1702,20 +1652,6 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         }
                     }
 
-                    // Without grpc feature, still detect AddNode for snapshot creation
-                    #[cfg(not(all(feature = "grpc", has_protos)))]
-                    {
-                        for single in &cc.changes {
-                            if matches!(
-                                single.get_change_type(),
-                                ConfChangeType::AddNode | ConfChangeType::AddLearnerNode
-                            ) {
-                                has_add = true;
-                                break;
-                            }
-                        }
-                    }
-
                     tracing::info!(
                         index = entry.index,
                         num_changes = cc.changes.len(),
@@ -1723,31 +1659,6 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         "raft.conf_change_v2.applied",
                     );
                     sm.apply(entry.index, &Command::Noop)?;
-
-                    if has_add {
-                        let sm_data = sm.snapshot().map_err(|e| {
-                            RaftError::Storage(format!("snapshot for new voter: {e}"))
-                        })?;
-                        let mut snapshot = Snapshot::new();
-                        {
-                            let meta = snapshot.mut_metadata();
-                            meta.index = entry.index;
-                            meta.term = entry.term;
-                            *meta.mut_conf_state() = cs.clone();
-                        }
-                        snapshot.data = sm_data.into();
-
-                        self.raw_node
-                            .mut_store()
-                            .store_snapshot(&snapshot)
-                            .map_err(|e| RaftError::Storage(format!("store snapshot: {e}")))?;
-                        self.raw_node
-                            .mut_store()
-                            .compact(entry.index)
-                            .map_err(|e| {
-                                RaftError::Storage(format!("compact after AddNode v2: {e}"))
-                            })?;
-                    }
 
                     // Notify waiting JoinZone callers for each added node
                     for single in &cc.changes {

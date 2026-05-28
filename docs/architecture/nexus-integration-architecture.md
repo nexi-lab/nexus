@@ -14,60 +14,46 @@ Cross-references:
 ## 1. System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         sudowork (Electron)                          │
-│   Renderer (React UI)  ←IPC bridge→  Main process (Node/TS)         │
-│        │                                      │                      │
-│   chat UI, audit viewer,           starts nexusd, manages sessions  │
-│   messenger UI                     via gRPC                          │
-└───────────────────────────────────────┬─────────────────────────────┘
-                                        │ gRPC (localhost:2028)
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│              nexusd + sudo-code  (single process, always-on)         │
-│                                                                      │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  Rust Kernel  (nexus-cluster binary)                       │    │
-│  │  VFSRouter · DCache · Metastore(redb) · LockManager         │    │
-│  │  PipeManager(DT_PIPE) · StreamManager(DT_STREAM)            │    │
-│  │  FileWatchRegistry(sys_watch) · KernelDispatch(hooks)       │    │
-│  │  AuditHook · AgentStatusResolver                            │    │
-│  └────────────┬────────────────────────┬────────────────────────┘   │
-│               │                        │                             │
-│  ┌────────────▼─────────┐   ┌──────────▼──────────────────┐         │
-│  │  services rlib       │   │  sudo-code runtime          │         │
-│  │  AgentRegistry (state)  │   │  (linked Rust crate,        │         │
-│  │  mailbox stamping    │   │   spawned by                 │         │
-│  │                      │   │   ManagedAgentService via    │         │
-│  │                      │   │   sudo_code::spawn_task)     │         │
-│  └────────┬─────────────┘   │  one tokio task per pid     │         │
-│           │                 │  cwd = /proc/{pid}/workspace│         │
-│  ┌────────▼─────────────┐   │  direct in-process kernel   │         │
-│  │  Rust service tier   │   │  calls, plain Rust API      │         │
-│  │  ManagedAgentService │   └─────────────────────────────┘         │
-│  │  AcpService          │                                           │
-│  │   (claude/codex/…)   │   FastAPI bricks (mount, rebac, …)        │
-│  │  + AgentRegistry     │   AgentRegistry is a Rust SSOT; ACP and   │
-│  │    (Rust SSOT)       │   managed_agent reach it in-process,      │
-│  │                      │   other callers over the gRPC surface.    │
-│  └──────────────────────┘                                           │
-│                                                                      │
-│  AcpService spawns external ACP backends as subprocesses with        │
-│  StdioPipeBackend → /proc/{pid}/fd/{0,1,2}; managed-agent runtimes   │
-│  do NOT use that path because they share the process with nexusd.    │
-│                                                                      │
-│  gRPC port 2028: NexusVFSService.Call routes ACP +                  │
-│    ManagedAgent methods through Rust dispatch                        │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  sudowork (Electron)                       orchestrator                │
+│  Renderer (React UI) ←IPC→ Main            copilot-worker topology:    │
+│  chat UI · audit viewer · messenger        spawns / cancels workers   │
+└─────────────────┬───────────────────────────────────┬─────────────────┘
+                  │ gRPC (VFS port)                    │ gRPC (VFS port)
+                  ▼                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  sudocode-host  —  the nexus daemon on a host that runs sudocode      │
+│                    agents (one process per host)                      │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────┐     │
+│  │  embedded Rust Kernel  (one kernel::Kernel per host)         │     │
+│  │  VFSRouter · DCache · Metastore(redb) · LockManager          │     │
+│  │  PipeManager(DT_PIPE) · StreamManager(DT_STREAM)            │     │
+│  │  FileWatchRegistry(sys_watch) · KernelDispatch(hooks)      │     │
+│  │  AuditHook · AgentStatusResolver · AgentRegistry (state SSOT)│     │
+│  └───────┬─────────────────────────────────────┬───────────────┘     │
+│          │ in-process Rust syscalls (KernelAbi) │ in-process Rust      │
+│  ┌───────▼──────────────┐           ┌───────────▼────────────────┐    │
+│  │  services rlib       │   spawn    │  sudocode agent tasks       │    │
+│  │  ManagedAgentService │──────────► │  N tokio tasks              │    │
+│  │  AcpService          │  via DI    │  each: KernelFsBackend<K> + │    │
+│  │  SpawnTask<Kernel>   │  seam      │  ConversationRuntime loop,  │    │
+│  │   (1 vtable / spawn) │            │  cwd = /proc/{pid}/workspace │    │
+│  └──────────────────────┘           └─────────────────────────────┘   │
+│                                                                       │
+│  gRPC server (nexus `transport` crate, VFS port):                     │
+│    NexusVFSService.Call routes managed_agent + ACP methods and        │
+│    sys_* reads/writes for external clients (sudowork UI, orchestrator)│
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Constraints
 
-- **One nexusd per sudowork instance.** sudowork starts nexusd at launch and tears it down on quit.
-- **Pure-Rust kernel.** The kernel and the service-tier crates (`services`, `raft`, `lib`, `contracts`) compile into the `nexus-cluster` binary; out-of-process components reach nexus through gRPC.
-- **State SSOT.** Agent runtime state (`pid → AgentState`, condvar wakeup, signal semantics, parent/child links, transition validation) lives in `kernel::core::agents::registry::AgentRegistry`. In-process Rust callers (ACP, managed_agent) reach it directly; out-of-process callers reach it through the gRPC surface. There is no second state mirror or dual-write step. Profile config lives on disk under `/agents/{name}/`.
-- **gRPC is the integration surface.** sudowork (Node/TS) reaches nexusd through tonic-served gRPC at port 2028; HTTP is reserved for human-facing dashboards.
-- **Cluster profile.** sudowork uses Nexus's cluster profile — bricks: IPC, FEDERATION.
+- **One nexus per host.** A host that runs sudocode agents runs one `sudocode-host` process, and its embedded `kernel::Kernel` is that host's nexus. A host without sudocode agents runs the standalone `nexusd-cluster` binary. The `nexus-bootstrap` launcher protocol owns discover-or-launch, so both shapes converge on one kernel per host (§8).
+- **Pure-infra nexus.** The kernel and the service-tier crates (`services`, `raft`, `lib`, `contracts`) compile with zero knowledge of any agent runtime; the dependency edge runs `sudocode → nexus`. `sudocode-host` (sudocode repo) is the one binary that links both source trees and monomorphises `SpawnTask<Kernel>` (§2.3).
+- **State SSOT.** Agent runtime state (`pid → AgentState`, condvar wakeup, signal semantics, parent/child links, transition validation) lives in `kernel::core::agents::registry::AgentRegistry`. In-process Rust callers (ManagedAgentService, ACP) reach it directly; external callers reach it through the gRPC surface. Profile config and session history live on disk under `/agents/{name}/` (§2.1).
+- **gRPC is the external surface.** External clients (sudowork UI, orchestrator) reach the kernel over the VFS gRPC port; the agent↔kernel hot path stays in-process Rust. HTTP is reserved for human-facing dashboards.
+- **Cluster profile.** `sudocode-host` and `nexusd-cluster` both run Nexus's cluster profile — bricks: IPC, FEDERATION.
 - **Zone = VFS path mount point.** A zone's visibility boundary is its mount path. ReBAC governs sub-path access within a zone.
 
 ---
@@ -78,53 +64,32 @@ Two namespaces, the same Linux distinction between an executable on disk and a r
 
 | Namespace | Lifetime | Content | Backing store |
 |-----------|----------|---------|---------------|
-| `/agents/{name}/` | Persistent | Profile config: `config.toml`, `prompts/`, `skills/`, `chat-with-me` | Metastore (DT_FILE / DT_DIR) |
-| `/proc/{pid}/` | Ephemeral | Runtime: `status`, `agent` link, `chat-with-me`, `sessions/`, `tasks/`, `workspace/` | In-memory + WAL while pid alive |
+| `/agents/{name}/` | Persistent | Profile + history: `config.toml`, `prompts/`, `skills/`, `memory/`, `sessions/` | Metastore (DT_FILE / DT_DIR) |
+| `/proc/{pid}/` | Ephemeral | Runtime presence: `status`, `agent` link, `chat-with-me`, `workspace/` | In-memory + WAL while pid alive |
 
 `/agents/{name}/` is the stable identity an outsider addresses (other agents, humans on Element). One agent name can spawn many `pid`s — different worktrees, parallel work — and all of them share the same profile.
 
 ### 2.1 Agent-name namespace
 
 ```
-/agents/scode-standard/          ← profile (DT_DIR)
+/agents/scode-standard/          ← profile + history (DT_DIR)
    config.toml                   ← model selection, MCP endpoints, default workspace recipe
    prompts/                      ← system-prompt overrides, per-skill prompts
-   skills/                       ← which tool sets are loadable
+   skills/                       ← loadable tool sets
+   memory/                       ← long-lived agent memory
+   sessions/                     ← per-session jsonl transcripts (DT_DIR)
+      <session-id>.jsonl
 ```
 
-(`/agents/{name}/chat-with-me` exists only for **human** identities —
-e.g. `/agents/human-ethan/chat-with-me` is a real DT_STREAM. For agent
-names like `scode-standard` it is intentionally absent; addressing
-goes through the pid level. See §3.6.)
+`/agents/{name}/` is the persistent SSOT for everything an agent needs to
+boot: config, prompts, skills, memory, and session history. A worker boots
+by reading its profile and the requested `--session-id` transcript from
+here, works, and exits; resuming re-reads the same session-id.
 
-`chat-with-me` lives at the pid level — `/proc/{pid}/chat-with-me` is
-the canonical address, and `/proc/{pid}/workspace/chat-with-me` is a
-DT_LINK to it (stamped at start_session, followed transparently by
-VFSRouter on read/write — see §2.2). The agent-name level
-(`/agents/{name}/chat-with-me`) reaches the same stream for **human**
-identities (long-lived DT_STREAM owned by the user); for managed-agent
-names like `scode-standard` the agent-name level holds profile config
-only and addressing flows through the pid level. Callers always have a
-pid by the time they need to address a managed agent (sudowork gets it
-from `ManagedAgentService.start_session_v1`; in-process runtimes have
-their own `pid`); requiring the pid keeps the addressing model
-unambiguous and avoids the design questions around multi-instance
-fan-out / fan-in.
-
-Three kinds of recipient still share the same DT_STREAM-backed surface:
-
-- **Local agent pid** (e.g. `/proc/p_42/chat-with-me` for the active
-  scode-standard instance): real DT_STREAM. Writes append; `sys_watch`
-  wakes up readers.
-- **Remote identity** (e.g. `human-bob` on a stock Matrix client like
-  Element): same DT_STREAM under the hood; reach across instances goes
-  through the Matrix C-S adapter (§4) which translates Element's HTTP
-  REST traffic into nexus VFS reads / writes against this stream.
-- **Local persistent identity** (e.g. `/agents/human-ethan/chat-with-me`):
-  a long-lived DT_STREAM owned by the user, not a transient pid. The
-  sudowork UI reads it for inbox display, writes for outgoing messages.
-  This is the one place `/agents/{name}/...` resolves directly to a
-  stream, because the "user" agent has no spawn lifecycle.
+`/agents/{name}/chat-with-me` resolves to a DT_STREAM for **human**
+identities (e.g. `/agents/human-ethan/chat-with-me`, owned by the user).
+For managed-agent names the agent-name level holds profile + history, and
+addressing flows through the pid level (§3.6).
 
 ### 2.2 Runtime namespace
 
@@ -133,203 +98,131 @@ Three kinds of recipient still share the same DT_STREAM-backed surface:
    status                        ← virtual file: AgentStatusResolver renders descriptor JSON
    agent                         ← DT_LINK → /agents/{name}/   (Linux /proc/{pid}/exe analogue)
    chat-with-me                  ← DT_STREAM: this pid's conversation
-   sessions/                     ← DT_DIR; sudo-code writes per-session jsonls under here
-   tasks/                        ← DT_DIR; reserved for sudo-code task list persistence
    workspace/                    ← DT_DIR (agent cwd)
       chat-with-me               ← DT_LINK → /proc/{pid}/chat-with-me
       project-x/                 ← DT_LINK → host repo path from desc.repos
       project-y/                 ← DT_LINK → host repo path from desc.repos
 ```
 
-`/proc/{pid}/status` is served by `AgentStatusResolver`, a `PathResolver`
-that renders the live `AgentDescriptor` as JSON on each read — content
-is a function of the current AgentRegistry snapshot. The DT_LINK rows
-under `/proc/{pid}/workspace/` and `/proc/{pid}/agent` are static for
-the pid's lifetime, so they live in the metastore as plain DT_LINK
-entries stamped at start_session; VFSRouter follows them transparently
-on `sys_read` / `sys_write` (single-hop, ELOOP-detected), and the
-existing hooks (mailbox stamping, workspace boundary, audit) match on
-the link path's suffix so they fire correctly whether the caller writes
-to `chat-with-me` directly or through the workspace shortcut. The
-descriptor is the SSOT for state, exit code, agent name, parent pid,
-timestamps, model, and the workspace mount list (`AgentDescriptor.repos`,
-useful PCB metadata for inspection); the metastore's DT_LINK rows are
-the SSOT for routing.
-
-`/proc/{pid}/agent` is a kernel-resolved DT_LINK to the agent-name directory. `readlink` returns `/agents/{name}/`; `stat` follows. This is the single SSOT pointer from a runtime back to its profile — no metadata duplication.
+The whole `/proc/{pid}/` subtree is stamped at `start_session` and reaped
+when the task exits. `/proc/{pid}/status` is served by
+`AgentStatusResolver`, a `PathResolver` that renders the live
+`AgentDescriptor` as JSON each read — content is a function of the current
+AgentRegistry snapshot. The DT_LINK rows (`agent`, `workspace/*`) are
+static for the pid's lifetime, so they live in the metastore as plain
+DT_LINK entries; VFSRouter follows them transparently on `sys_read` /
+`sys_write` (single-hop, ELOOP-detected), and the mailbox-stamping /
+workspace-boundary / audit hooks match on the link path's suffix so they
+fire whether the caller writes `chat-with-me` directly or through the
+workspace shortcut. The descriptor is the SSOT for runtime state (exit
+code, agent name, parent pid, timestamps, model, workspace mount list);
+the metastore's DT_LINK rows are the SSOT for routing. `/proc/{pid}/agent`
+readlinks to `/agents/{name}/` — the single pointer from a runtime back to
+its persistent profile (§2.1).
 
 ### 2.3 Spawn lifecycle
 
-sudo-code is in-process: a Rust crate linked into nexusd, driven as a tokio
-task per pid. There is no subprocess and no stdio plumbing — that machinery
-exists in `AcpService` only because external ACP agents (claude / codex /
-codebuddy / nanobot) run in separate OS processes and the only protocol
-those binaries support is JSON-RPC over stdio. sudo-code is our own code in
-our own process, so it talks to the kernel through direct Rust syscalls
-(`kernel.sys_read`, `kernel.sys_write`, `kernel.sys_watch`, …) and to the
-dispatch hooks through the same in-process channel every kernel observer
-uses.
+A managed agent runs as one in-process tokio task inside `sudocode-host`,
+reaching the kernel through direct Rust syscalls (`kernel.sys_read`,
+`sys_write`, `sys_watch`) and the dispatch hooks through the same
+in-process channel every kernel observer uses. External ACP agents
+(claude / codex / codebuddy / nanobot) run as subprocesses over stdio,
+because JSON-RPC over stdio is the only protocol those binaries speak;
+that path lives in `AcpService` (§1).
 
-```
-sudowork (Electron, TS)
-   │ gRPC: NexusVFSService.Call(method="managed_agent.start_session_v1",
-   │       payload={agent_id:"scode-standard", repos:[…], model, owner_id, zone_id})
-   ▼
-nexusd:
-   tonic Call handler
-      │ resolve_rust_dispatch -> ("managed_agent", "start_session_v1")
-      │ Kernel::dispatch_rust_call -> ManagedAgentService::dispatch
-      │ ManagedAgentService::start_session
-      │   → AgentRegistry.register descriptor (model + repos in PCB)
-      │   → AgentRegistry.update_state(WARMING_UP)
-      │   → register_proc_entry: stamp /proc/{pid}/workspace/ dirent
-      ▼
-   {session_id=pid, workspace_path="/proc/{pid}/workspace/"} → sudowork
-```
+The session identifier IS the AgentRegistry pid. `ManagedAgentService`
+plants the per-pid `AgentDescriptor` — the spawn-time SSOT (`agent_id` →
+`desc.name`, `model` → `desc.labels["model"]`, workspace list →
+`desc.repos`) — stamps the `/proc/{pid}/` entries (§2.2), and returns
+`{session_id=pid, workspace_path}` to the caller.
 
-The session identifier IS the AgentRegistry pid — there is no second id.
-The descriptor (`AgentDescriptor`) is the per-pid SSOT for spawn-time
-surface info: `agent_id` (static profile name) lands in `desc.name`,
-`model` in `desc.labels["model"]`, workspace mount list in
-`desc.repos`.  ManagedAgentService plants the descriptor, stamps the
-per-pid procfs entries, and hands off to sudo-code:
+ManagedAgentService hands off to the runtime through the
+`SpawnTask<K: KernelAbi>` DI seam — one indirect call per session start.
+The binary edge, `sudocode-host` in the sudocode repo, constructs a
+concrete `SpawnTask<Kernel>` adapter wrapping `sudocode_runtime::spawn_task`
+and registers it via `install_managed_agent_with_spawn(kernel, adapter)`.
+`start_session` calls `provider.spawn(kernel, desc, observer)` through
+`Arc<dyn SpawnTask<K>>`: exactly one vtable dispatch per session, and the
+returned `Box<dyn SpawnHandle>` lands in the service's `spawn_handles`
+sidecar. Inside the spawn body the surface is plain monomorphic Rust:
+`spawn_task::<Kernel>` and its inner `run_loop` are generic over
+`K: KernelAbi`, specialised against the concrete `Kernel` at the binary
+edge, so every `sys_read` / `sys_write` / `sys_watch` in the mailbox loop
+is an inline direct call. The services rlib depends on the `SpawnTask`
+trait only; pure-Rust slim builds call `install_managed_agent` (no spawn
+provider, no per-pid task).
 
-  - `/proc/{pid}/` (DT_DIR) — process root.
-  - `/proc/{pid}/agent` (DT_LINK → `/agents/{desc.name}/`) — Linux
-    `/proc/{pid}/exe` analogue; readlink returns the static profile dir.
-  - `/proc/{pid}/chat-with-me` (DT_STREAM) — the canonical mailbox; A2A
-    writes append here, sudo-code's loop `sys_watch`es it for prompts.
-  - `/proc/{pid}/sessions/` (DT_DIR) — sudo-code writes per-session jsonl
-    transcripts under this prefix.
-  - `/proc/{pid}/tasks/` (DT_DIR) — reserved for sudo-code task list
-    persistence.
-  - `/proc/{pid}/workspace/` (DT_DIR) — agent cwd; per-repo mounts and
-    the chat-with-me shortcut hang under here.
-  - `/proc/{pid}/workspace/chat-with-me` (DT_LINK → `/proc/{pid}/chat-with-me`)
-    — workspace shortcut so the agent can write `chat-with-me` relative
-    to its cwd.  Resolved by VFSRouter's standard DT_LINK follow.
-  - `/proc/{pid}/workspace/{alias}` (DT_LINK → `desc.repos[alias].mount_path`)
-    — one per `WorkspaceRepo` in the spawn request.
+`sudocode-host` is the single binary-edge where the nexus and sudocode
+source trees link: it consumes `kernel` + `services` as git deps pinned to
+one nexus rev (so `SpawnTask<Kernel>` monomorphises), and the dependency
+edge stays `sudocode → nexus` (§8).
 
-Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through
-`AgentRegistry::on_terminate`, which reaps every entry under
-`/proc/{pid}/`.  `cancel(Session)` calls `AgentRegistry::kill(pid, 0)`
-for the same outcome — orphan auto-reap removes the descriptor, the
-observer reaps the procfs subtree.
+A worker boots by reading its profile + `--session-id` transcript from
+`/agents/{name}/` (§2.1), works (appending to the session jsonl and the
+mailbox), and exits; the `/proc/{pid}/` subtree is reaped. Resuming
+re-reads the same session-id — persistent state lives in `/agents/{name}/`,
+not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL /
+orphan reap) flows through `AgentRegistry::on_terminate`, which reaps
+`/proc/{pid}/` and aborts the worker via its `SpawnHandle`;
+`cancel(session)` calls `AgentRegistry::kill(pid, 0)` for the same outcome.
 
-After the procfs entries are in place, ManagedAgentService hands off
-to the runtime crate through the `SpawnTask<K: KernelAbi>` DI seam.
-The seam is one indirect call per session start — the binary edge
-(the `nexus-cluster` binary) constructs
-a concrete `SpawnTask<Kernel>` adapter wrapping
-`sudocode_runtime::spawn_task` and registers it via
-`install_managed_agent_with_spawn(kernel, Arc::new(adapter))`.
-`start_session` then calls `provider.spawn(kernel, desc, observer)`
-through `Arc<dyn SpawnTask<K>>`: exactly one vtable dispatch per
-session. The returned `Box<dyn SpawnHandle>` lands in the service's
-`spawn_handles` sidecar so the on_terminate observer can abort the
-worker on session reap.
+After spawn, prompts and responses flow over the chat-with-me VFS surface —
+the same A2A primitive every agent uses (§3). sudowork writes prompts to
+`/proc/{pid}/chat-with-me`; the worker `sys_watch`es it and writes responses
+to `/agents/{user}/chat-with-me`, which sudowork's UI watches in turn.
 
-Inside the spawn body the call surface is plain monomorphic Rust.
-`sudocode_runtime::spawn_task::spawn_task::<K: KernelAbi + Send +
-Sync + 'static>` (and its inner `run_loop<K, C, T, F>` at
-`rust/crates/runtime/src/spawn_task.rs` in the
-[sudocode repo](https://github.com/sudoprivacy/sudocode)) is generic
-over `K`; binary-edge
-monomorphisation specialises it against the concrete `Kernel`. Every
-`kernel.sys_read`, `kernel.sys_write`, and `kernel.sys_watch` in the
-mailbox poll loop is an inline direct call — no per-syscall vtable
-cost. Tokio supplies the I/O-concurrency model (LLM HTTP round-trips
-run seconds; many pids share a small worker pool) on the kernel's
-shared runtime.
+**ManagedAgentService surface** (over `NexusVFSService.Call`):
 
-The services rlib stays runtime-agnostic: it depends on the
-`SpawnTask` trait only, not on `sudocode_runtime` or any other
-concrete runtime crate. Pure-Rust slim builds that ship managed-agent
-without a runtime body call `install_managed_agent` instead of
-`install_managed_agent_with_spawn`; `start_session` then leaves
-`spawn_provider == None` and no per-pid task is launched.
-
-After spawn, prompts and responses flow through the chat-with-me VFS
-surface — same A2A primitive every other agent uses (§3). sudowork
-writes prompts to `/proc/{pid}/chat-with-me`; the kernel rewrites the
-envelope's `from` field to sudowork's caller identity (§3.3). The
-sudo-code task in nexusd `sys_watch`es its own `/proc/{pid}/chat-with-me`
-for incoming prompts and writes responses to `/agents/{user}/chat-with-me`.
-sudowork's UI `sys_watch`es the user's chat-with-me for those responses.
-
-**ManagedAgentService surface is intentionally narrow** — only spawn /
-cancel / liveness, exposed over `NexusVFSService.Call`:
-
-- `start_session_v1` — payload `{agent_id, repos, model, owner_id, zone_id}` →
-  `{session_id, workspace_path}`. `agent_id` names the static profile
+- `start_session_v1` — `{agent_id, repos, model, owner_id, zone_id}` →
+  `{session_id, workspace_path}`. `agent_id` names the profile
   (`/agents/{agent_id}/`); `session_id` is the runtime pid.
-- `cancel_v1` — payload `{session_id, mode}` → `{cancelled}`.
-  `mode ∈ {turn, session}` — turn aborts the current generation,
-  session reaps the pid.
-- `get_session_v1` — payload `{session_id}` →
-  `{session_id, agent_id, workspace_path, model, state}`. `agent_id`
-  echoes the static profile; `state` mirrors `AgentDescriptor.state`.
+- `cancel_v1` — `{session_id, mode}` → `{cancelled}`; `mode ∈ {turn,
+  session}` (turn aborts the current generation, session reaps the pid).
+- `get_session_v1` — `{session_id}` →
+  `{session_id, agent_id, workspace_path, model, state}`.
 
-The dotted form (`managed_agent.start_session_v1`) is canonical;
-flat-name fallback (`managed_agent_start_session_v1`) is wired for
-backward compat in the gRPC `Call` handler (KERNEL-ARCHITECTURE §8.1).
-Prompt / event flow uses the existing `NexusVFSService` gRPC
-(`sys_write`, `sys_watch`, `sys_read`) over the chat-with-me paths.
-There is no `SendPrompt` or `SubscribeEvents` gRPC — those would
-duplicate the A2A surface the rest of the system uses.
+Prompt / event flow reuses `sys_write` / `sys_watch` / `sys_read` over the
+chat-with-me paths; the A2A surface carries it without a bespoke SendPrompt
+or SubscribeEvents gRPC.
 
-`AgentState` lifecycle: `REGISTERED → WARMING_UP → READY ↔ BUSY → SUSPENDED → TERMINATED`.
-`kernel.agent_wait(pid, target_state, timeout_ms)` parks the calling
-thread on the per-pid condvar — supervisors get an event-driven
-blocking wait instead of polling.
-
-`AgentRegistry` is the SSOT for `AgentState`.
-`AgentRegistry::update_state(&pid, new_state)` at
-`rust/kernel/src/core/agents/registry.rs:579` is the only writer in
-the runtime path — it enforces the FSM via `can_transition_to`
-(`registry.rs:177`), updates `updated_at_ms`, and fires the
-`on_terminate` observers when a session transitions to `TERMINATED`.
-
-The runtime-path callsite is a state-observer closure constructed by
-`ManagedAgentService::start_session`. The closure captures
-`Arc<AgentRegistry>` and the new session's pid, maps the runtime
-crate's `AgentLoopState` (`WarmingUp` / `Ready` / `Busy`) onto
-`AgentState`, and calls `registry.update_state(&pid, target)` — any
-`AgentError::InvalidTransition` is logged so a runtime FSM bug is
-visible without aborting the worker. The `SpawnTask<K>::spawn` DI
-seam takes this observer as a parameter; the binary-edge adapter
-forwards it through to
-the runtime crate's `state_callback` parameter and never touches
-`AgentRegistry` itself. The adapter is a pure runtime-wrapper; the
-service owns the SSOT writes.
+`AgentState` FSM: `REGISTERED → WARMING_UP → READY ↔ BUSY → SUSPENDED →
+TERMINATED`. `AgentRegistry` is the SSOT: `update_state(&pid, new_state)`
+(`kernel/src/core/agents/registry.rs`) is the only runtime-path writer — it
+enforces the FSM via `can_transition_to`, updates `updated_at_ms`, and fires
+`on_terminate` on TERMINATED. The writer is a state-observer closure that
+`ManagedAgentService::start_session` constructs (capturing
+`Arc<AgentRegistry>` + pid, mapping the runtime's `AgentLoopState` onto
+`AgentState`) and passes through the `SpawnTask::spawn` seam; the adapter
+forwards it to the runtime's `state_callback` and never touches
+`AgentRegistry`. `kernel.agent_wait(pid, target_state, timeout_ms)` parks on
+the per-pid condvar for event-driven waits.
 
 ### 2.4 sudo-code state placement
 
-sudo-code's `runtime` crate already organises persistence around two
-configurable surfaces — `SessionStore` (which builds session jsonl
-paths) and `ConfigLoader` (which discovers config files via env +
-project-local lookup). The integration redirects those surfaces at
-nexus VFS paths and lets `file_ops.rs` workspace-bounded helpers
-(`read_file_in_workspace` / `write_file_in_workspace` / etc.) issue
-kernel syscalls instead of `std::fs`. sudo-code's static prompt
-sections + AGENTS.md scan stay as-is on the read path.
+sudo-code routes all filesystem access through one `FsBackend` trait with
+three impls, selected by deployment:
 
-| sudo-code surface | Current on-disk shape | nexus VFS path | Adaptation |
-|---|---|---|---|
-| `SessionStore::from_data_dir(data_dir, workspace_root)` — conversation jsonls | `<data_dir>/sessions/<workspace_hash>/<session_id>.jsonl` (FNV-1a 64-bit hex of canonical workspace path) | `/proc/{pid}/sessions/<workspace_hash>/<session_id>.jsonl` | **READS UNCHANGED** — call `from_data_dir(data_dir="/proc/{pid}/sessions", workspace_root="/proc/{pid}/workspace")`; replace `std::fs` usage in `session.rs` with kernel syscalls |
-| `task_registry` — sub-agent task lifecycle | In-memory only (no disk) today | `/proc/{pid}/tasks/<task_list_name>.json` once persistence lands in sudo-code | **NEEDS PATCH** in upstream sudo-code (forked) — `tasks/` dirent is reserved by nexus; persistence is a sudo-code-side change driven by sudo-code's own roadmap, not by this integration |
-| `prompt.rs` — static prompt sections | Embedded `&'static str` constants returned by `get_simple_*_section()` | n/a (no IO) | **READS UNCHANGED** — embedded strings pass through |
-| `prompt.rs` — project AGENTS.md scan | Walks parent dirs from cwd looking for `AGENTS.md` and `.nexus/sudocode/AGENTS.md` | walks `/proc/{pid}/workspace/{repo}/...AGENTS.md` and `.nexus/sudocode/AGENTS.md` (DT_FILE under the repo's mount) | **READS UNCHANGED** — sudo-code already takes cwd as input; cwd = `/proc/{pid}/workspace/`; replace `std::fs` with kernel syscalls in the scanner |
-| `ConfigLoader` — runtime settings | `$SUDO_CODE_CONFIG_HOME` (default `$HOME/.nexus/sudocode/`) for user-level; `./.scode.json` or `./.nexus/sudocode/settings.json` for project-level | `/agents/{name}/config/` for user-level; `/proc/{pid}/workspace/{repo}/.nexus/sudocode/settings.json` for project-level | **READS UNCHANGED** — set `SUDO_CODE_CONFIG_HOME` to a VFS-mapped path; replace `std::fs` with kernel syscalls in the loader |
-| Agent profile config | (no equivalent on disk today) | `/agents/{name}/config.toml` (DT_FILE) | **NEW** — user-global agent settings written by sudowork's profile UI; sudo-code reads it through ConfigLoader's user-level slot |
+| Backend | Used by | Reaches files via |
+|---|---|---|
+| `KernelFsBackend<Kernel>` | `sudocode-host` (production) | in-process kernel syscalls |
+| `StdFsBackend` | standalone CLI | host `std::fs` |
+| `NexusVfsFsBackend` | edge / dev CLI | gRPC to a remote kernel |
 
-`workspace_hash` matches sudo-code's existing FNV-1a 64-bit fingerprint
-of the canonical workspace path (16-char hex), so a single profile
-talking to multiple repos still partitions sessions per-repo on disk.
+Inside `sudocode-host` the agent task runs on `KernelFsBackend<Kernel>`, so
+`SessionStore`, `ConfigLoader`, and the workspace-bounded `file_ops` helpers
+all issue kernel syscalls against nexus VFS paths:
 
-User-global agent settings live at `/agents/{name}/config.toml` inside
-nexus VFS, sharing the same SSOT as the rest of agent identity.
+| sudo-code surface | nexus VFS path |
+|---|---|
+| session jsonl transcripts | `/agents/{name}/sessions/<workspace_hash>/<session-id>.jsonl` |
+| user-level config | `/agents/{name}/config.toml` (ConfigLoader user slot) |
+| project-level config | `/proc/{pid}/workspace/{repo}/.nexus/sudocode/settings.json` |
+| AGENTS.md scan | walks the repo mount under `/proc/{pid}/workspace/{repo}/` (cwd) |
+
+`workspace_hash` is sudo-code's FNV-1a 64-bit fingerprint (16-char hex) of
+the canonical workspace path, so one profile talking to multiple repos
+partitions sessions per-repo. Static prompt sections embed as `&'static
+str` and need no IO.
 
 ---
 
@@ -649,7 +542,7 @@ fired event maps to a per-zone `install_for_zone(zone_id)` call,
 guarded by a `Mutex<HashSet<String>>` so a re-mount is a harmless
 no-op. New zones therefore wire their AuditHook + DT_STREAM the
 moment they mount on this kernel, with no zone-creation API
-duplication; the install path is purely syscall-driven. See §8 for
+duplication; the install path is purely syscall-driven. See §9 for
 the dispatch lifecycle the observer hooks into.
 
 ### 5.4 Central audit zone
@@ -740,8 +633,9 @@ Three clients sit over the same chat-with-me DT_STREAMs:
   the Matrix C-S adapter (§4.2) over HTTP. Each Matrix room id maps
   1:1 to a chat-with-me path; `m.room.message` events serialize into
   the same envelope schema sudowork's UI emits.
-- **In-process agent runtimes** — read / write `chat-with-me` directly
-  through the kernel like any other VFS surface; no gateway involved.
+- **sudocode agent tasks** — the in-process tokio tasks inside
+  `sudocode-host` read / write `chat-with-me` through direct kernel
+  syscalls, sharing one address space with the kernel.
 
 The chat-with-me DT_STREAM is the SSOT. None of the three clients
 maintain a parallel inbox; identity, ordering, and audit all derive
@@ -749,7 +643,47 @@ from the kernel.
 
 ---
 
-## 8. Appendix A: Kernel Dispatch Hook Lifecycle
+## 8. Orchestration & Isolation Boundary
+
+### 8.1 Orchestration lives outside nexus
+
+nexus is passive VFS infrastructure: it stores state, routes syscalls, and
+fires hooks. Deciding *which* workers exist — the copilot-worker topology,
+when to spawn, when to cancel — is an orchestrator concern. The orchestrator
+drives workers through the ManagedAgentService surface (§2.3); the kernel
+serves those syscalls like any other caller's.
+
+### 8.2 Isolation
+
+Agent loops share `sudocode-host`'s address space as tokio tasks. The
+isolation floor is `catch_unwind` per task plus `SpawnHandle::abort` on
+reap; a SIGSEGV or OOM takes the whole host with every agent on it. Workers
+are cattle: persistent state lives in `/agents/{name}/` (§2.1), so a host
+that dies is restarted and each worker resumes from its `--session-id`
+transcript.
+
+### 8.3 One nexus per host
+
+A host runs exactly one kernel — `sudocode-host`'s embedded `kernel::Kernel`
+on hosts that run sudocode agents, the standalone `nexusd-cluster` binary on
+pure-infra hosts. The `nexus-bootstrap` launcher protocol owns
+discover-or-launch (PID file, ready file, socket path, health check,
+`--profile=cluster`), so both sudowork (shelling out) and `sudocode-host`
+(as a Rust lib) converge on one kernel through one code path.
+
+### 8.4 sudocode-host placement
+
+`sudocode-host` lives in the sudocode repo, peer to the standalone
+`rusty-sudocode-cli`. Keeping it there holds the dependency edge at
+`sudocode → nexus`: the binary that links both source trees sits on the
+sudocode side, and nexus stays runtime-agnostic. `sudocode-host` consumes
+`sudocode_runtime` as a library and the nexus `kernel` / `services` crates
+as git deps, adding only additive `pub` exports to sudocode so the CLI's
+standalone `StdFsBackend` and `NexusVfsFsBackend` modes are untouched.
+
+---
+
+## 9. Appendix A: Kernel Dispatch Hook Lifecycle
 
 ```
 syscall (sys_write, sys_read, …)
@@ -792,7 +726,7 @@ last-write-wins on `HookOutcome::Replace`.
 
 ---
 
-## 9. Appendix B: Raft Command Taxonomy
+## 10. Appendix B: Raft Command Taxonomy
 
 All commands in a zone's Raft cluster share a single `Command` enum (`state_machine.rs`):
 

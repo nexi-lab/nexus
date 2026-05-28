@@ -1313,6 +1313,10 @@ class PermissionEnforcer:
 
         subject = ("user", user_id)
         checks_by_path, checks = _dedupe_checks_by_path(subject, paths)
+        # rebac_check_bulk is graph-fresh on its own: BulkPermissionChecker
+        # forces a fresh Rust graph per call (tuple_version = time_ns()), so
+        # the process-global GRAPH_CACHE cannot leak stale results across call
+        # sites. A separate freshness workaround here would be redundant.
         results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
 
         return [

@@ -109,10 +109,11 @@ jobs:
           cache-from: type=gha,scope=federation-e2e
           cache-to: type=gha,scope=federation-e2e,mode=max
 
-      - name: Build witness + sse-mock images
+      - name: Build cluster + sidecar + witness + sse-mock images
         if: steps.federation_changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml build witness sse-mock
+          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml build \
+            nexus-1 nexus-cli witness sse-mock
 
       - name: Start federation cluster
         if: steps.federation_changes.outputs.run == 'true'
@@ -147,7 +148,7 @@ jobs:
       - name: Dump container logs on failure
         if: failure() && steps.federation_changes.outputs.run == 'true'
         run: |
-          for c in nexus-dyn-node-1 nexus-dyn-node-2 nexus-dyn-witness nexus-dyn-dragonfly nexus-dyn-sse-mock; do
+          for c in nexus-dyn-node-1 nexus-dyn-node-2 nexus-dyn-witness nexus-dyn-cli nexus-dyn-dragonfly nexus-dyn-sse-mock; do
             echo "::group::$c"
             docker logs $c --tail=400 2>&1 || echo "(no logs)"
             echo "::endgroup::"

@@ -199,30 +199,30 @@ the per-pid condvar for event-driven waits.
 
 ### 2.4 sudo-code state placement
 
-sudo-code's `runtime` crate already organises persistence around two
-configurable surfaces — `SessionStore` (which builds session jsonl
-paths) and `ConfigLoader` (which discovers config files via env +
-project-local lookup). The integration redirects those surfaces at
-nexus VFS paths and lets `file_ops.rs` workspace-bounded helpers
-(`read_file_in_workspace` / `write_file_in_workspace` / etc.) issue
-kernel syscalls instead of `std::fs`. sudo-code's static prompt
-sections + AGENTS.md scan stay as-is on the read path.
+sudo-code routes all filesystem access through one `FsBackend` trait with
+three impls, selected by deployment:
 
-| sudo-code surface | Current on-disk shape | nexus VFS path | Adaptation |
-|---|---|---|---|
-| `SessionStore::from_data_dir(data_dir, workspace_root)` — conversation jsonls | `<data_dir>/sessions/<workspace_hash>/<session_id>.jsonl` (FNV-1a 64-bit hex of canonical workspace path) | `/proc/{pid}/sessions/<workspace_hash>/<session_id>.jsonl` | **READS UNCHANGED** — call `from_data_dir(data_dir="/proc/{pid}/sessions", workspace_root="/proc/{pid}/workspace")`; replace `std::fs` usage in `session.rs` with kernel syscalls |
-| `task_registry` — sub-agent task lifecycle | In-memory only (no disk) today | `/proc/{pid}/tasks/<task_list_name>.json` once persistence lands in sudo-code | **NEEDS PATCH** in upstream sudo-code (forked) — `tasks/` dirent is reserved by nexus; persistence is a sudo-code-side change driven by sudo-code's own roadmap, not by this integration |
-| `prompt.rs` — static prompt sections | Embedded `&'static str` constants returned by `get_simple_*_section()` | n/a (no IO) | **READS UNCHANGED** — embedded strings pass through |
-| `prompt.rs` — project AGENTS.md scan | Walks parent dirs from cwd looking for `AGENTS.md` and `.nexus/sudocode/AGENTS.md` | walks `/proc/{pid}/workspace/{repo}/...AGENTS.md` and `.nexus/sudocode/AGENTS.md` (DT_FILE under the repo's mount) | **READS UNCHANGED** — sudo-code already takes cwd as input; cwd = `/proc/{pid}/workspace/`; replace `std::fs` with kernel syscalls in the scanner |
-| `ConfigLoader` — runtime settings | `$SUDO_CODE_CONFIG_HOME` (default `$HOME/.nexus/sudocode/`) for user-level; `./.scode.json` or `./.nexus/sudocode/settings.json` for project-level | `/agents/{name}/config/` for user-level; `/proc/{pid}/workspace/{repo}/.nexus/sudocode/settings.json` for project-level | **READS UNCHANGED** — set `SUDO_CODE_CONFIG_HOME` to a VFS-mapped path; replace `std::fs` with kernel syscalls in the loader |
-| Agent profile config | (no equivalent on disk today) | `/agents/{name}/config.toml` (DT_FILE) | **NEW** — user-global agent settings written by sudowork's profile UI; sudo-code reads it through ConfigLoader's user-level slot |
+| Backend | Used by | Reaches files via |
+|---|---|---|
+| `KernelFsBackend<Kernel>` | `sudocode-host` (production) | in-process kernel syscalls |
+| `StdFsBackend` | standalone CLI | host `std::fs` |
+| `NexusVfsFsBackend` | edge / dev CLI | gRPC to a remote kernel |
 
-`workspace_hash` matches sudo-code's existing FNV-1a 64-bit fingerprint
-of the canonical workspace path (16-char hex), so a single profile
-talking to multiple repos still partitions sessions per-repo on disk.
+Inside `sudocode-host` the agent task runs on `KernelFsBackend<Kernel>`, so
+`SessionStore`, `ConfigLoader`, and the workspace-bounded `file_ops` helpers
+all issue kernel syscalls against nexus VFS paths:
 
-User-global agent settings live at `/agents/{name}/config.toml` inside
-nexus VFS, sharing the same SSOT as the rest of agent identity.
+| sudo-code surface | nexus VFS path |
+|---|---|
+| session jsonl transcripts | `/agents/{name}/sessions/<workspace_hash>/<session-id>.jsonl` |
+| user-level config | `/agents/{name}/config.toml` (ConfigLoader user slot) |
+| project-level config | `/proc/{pid}/workspace/{repo}/.nexus/sudocode/settings.json` |
+| AGENTS.md scan | walks the repo mount under `/proc/{pid}/workspace/{repo}/` (cwd) |
+
+`workspace_hash` is sudo-code's FNV-1a 64-bit fingerprint (16-char hex) of
+the canonical workspace path, so one profile talking to multiple repos
+partitions sessions per-repo. Static prompt sections embed as `&'static
+str` and need no IO.
 
 ---
 

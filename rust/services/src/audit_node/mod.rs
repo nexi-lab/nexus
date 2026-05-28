@@ -332,3 +332,57 @@ impl<K: KernelAbi> AuditNode<K> {
 struct OffsetRecord {
     offset: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel::kernel::Kernel;
+
+    fn node() -> AuditNode<Kernel> {
+        AuditNode::new(Arc::new(Kernel::new()), "audit")
+    }
+
+    #[test]
+    fn source_stream_path_trims_trailing_slash() {
+        // stream_path default is "/audit/traces/"; the joined source path
+        // must not carry the trailing slash (matches the Python rstrip).
+        let n = node();
+        assert_eq!(n.source_stream_path("zone-1"), "/zone-1/audit/traces");
+    }
+
+    #[test]
+    fn local_collect_paths() {
+        let n = node();
+        assert_eq!(n.collect_traces_path("zone-1"), "/audit/collect/zone-1/traces");
+        assert_eq!(n.offset_path("zone-1"), "/audit/collect/zone-1/offset");
+    }
+
+    #[test]
+    fn register_and_count_zones() {
+        let n = node();
+        assert_eq!(n.zone_count(), 0);
+        n.register_zone("zone-1", 0);
+        n.register_zone("zone-2", 42);
+        assert_eq!(n.zone_count(), 2);
+        // Re-registering the same zone replaces, not duplicates.
+        n.register_zone("zone-1", 99);
+        assert_eq!(n.zone_count(), 2);
+    }
+
+    #[test]
+    fn offset_record_roundtrips() {
+        let bytes = serde_json::to_vec(&OffsetRecord { offset: 7 }).unwrap();
+        assert_eq!(bytes, br#"{"offset":7}"#);
+        let parsed: OffsetRecord = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.offset, 7);
+    }
+
+    #[test]
+    fn sys_ctx_is_system_service() {
+        let n = node();
+        let ctx = n.sys_ctx();
+        assert!(ctx.is_system);
+        assert_eq!(ctx.zone_id, "audit");
+        assert_eq!(ctx.subject_type, "service");
+    }
+}

@@ -633,8 +633,9 @@ Three clients sit over the same chat-with-me DT_STREAMs:
   the Matrix C-S adapter (§4.2) over HTTP. Each Matrix room id maps
   1:1 to a chat-with-me path; `m.room.message` events serialize into
   the same envelope schema sudowork's UI emits.
-- **In-process agent runtimes** — read / write `chat-with-me` directly
-  through the kernel like any other VFS surface; no gateway involved.
+- **sudocode agent tasks** — the in-process tokio tasks inside
+  `sudocode-host` read / write `chat-with-me` through direct kernel
+  syscalls, sharing one address space with the kernel.
 
 The chat-with-me DT_STREAM is the SSOT. None of the three clients
 maintain a parallel inbox; identity, ordering, and audit all derive

@@ -38,6 +38,8 @@ use parking_lot::{Condvar, Mutex};
 
 use kernel::abi::KernelAbi;
 
+mod bootstrap;
+
 /// Default audit-trace DT_STREAM path on each production zone.
 pub const DEFAULT_STREAM_PATH: &str = "/audit/traces/";
 /// Default max records drained per zone per poll iteration.

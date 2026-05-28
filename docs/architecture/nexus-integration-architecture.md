@@ -14,60 +14,46 @@ Cross-references:
 ## 1. System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         sudowork (Electron)                          │
-│   Renderer (React UI)  ←IPC bridge→  Main process (Node/TS)         │
-│        │                                      │                      │
-│   chat UI, audit viewer,           starts nexusd, manages sessions  │
-│   messenger UI                     via gRPC                          │
-└───────────────────────────────────────┬─────────────────────────────┘
-                                        │ gRPC (localhost:2028)
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│              nexusd + sudo-code  (single process, always-on)         │
-│                                                                      │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  Rust Kernel  (nexus-cluster binary)                       │    │
-│  │  VFSRouter · DCache · Metastore(redb) · LockManager         │    │
-│  │  PipeManager(DT_PIPE) · StreamManager(DT_STREAM)            │    │
-│  │  FileWatchRegistry(sys_watch) · KernelDispatch(hooks)       │    │
-│  │  AuditHook · AgentStatusResolver                            │    │
-│  └────────────┬────────────────────────┬────────────────────────┘   │
-│               │                        │                             │
-│  ┌────────────▼─────────┐   ┌──────────▼──────────────────┐         │
-│  │  services rlib       │   │  sudo-code runtime          │         │
-│  │  AgentRegistry (state)  │   │  (linked Rust crate,        │         │
-│  │  mailbox stamping    │   │   spawned by                 │         │
-│  │                      │   │   ManagedAgentService via    │         │
-│  │                      │   │   sudo_code::spawn_task)     │         │
-│  └────────┬─────────────┘   │  one tokio task per pid     │         │
-│           │                 │  cwd = /proc/{pid}/workspace│         │
-│  ┌────────▼─────────────┐   │  direct in-process kernel   │         │
-│  │  Rust service tier   │   │  calls, plain Rust API      │         │
-│  │  ManagedAgentService │   └─────────────────────────────┘         │
-│  │  AcpService          │                                           │
-│  │   (claude/codex/…)   │   FastAPI bricks (mount, rebac, …)        │
-│  │  + AgentRegistry     │   AgentRegistry is a Rust SSOT; ACP and   │
-│  │    (Rust SSOT)       │   managed_agent reach it in-process,      │
-│  │                      │   other callers over the gRPC surface.    │
-│  └──────────────────────┘                                           │
-│                                                                      │
-│  AcpService spawns external ACP backends as subprocesses with        │
-│  StdioPipeBackend → /proc/{pid}/fd/{0,1,2}; managed-agent runtimes   │
-│  do NOT use that path because they share the process with nexusd.    │
-│                                                                      │
-│  gRPC port 2028: NexusVFSService.Call routes ACP +                  │
-│    ManagedAgent methods through Rust dispatch                        │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  sudowork (Electron)                       orchestrator                │
+│  Renderer (React UI) ←IPC→ Main            copilot-worker topology:    │
+│  chat UI · audit viewer · messenger        spawns / cancels workers   │
+└─────────────────┬───────────────────────────────────┬─────────────────┘
+                  │ gRPC (VFS port)                    │ gRPC (VFS port)
+                  ▼                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  sudocode-host  —  the nexus daemon on a host that runs sudocode      │
+│                    agents (one process per host)                      │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────┐     │
+│  │  embedded Rust Kernel  (one kernel::Kernel per host)         │     │
+│  │  VFSRouter · DCache · Metastore(redb) · LockManager          │     │
+│  │  PipeManager(DT_PIPE) · StreamManager(DT_STREAM)            │     │
+│  │  FileWatchRegistry(sys_watch) · KernelDispatch(hooks)      │     │
+│  │  AuditHook · AgentStatusResolver · AgentRegistry (state SSOT)│     │
+│  └───────┬─────────────────────────────────────┬───────────────┘     │
+│          │ in-process Rust syscalls (KernelAbi) │ in-process Rust      │
+│  ┌───────▼──────────────┐           ┌───────────▼────────────────┐    │
+│  │  services rlib       │   spawn    │  sudocode agent tasks       │    │
+│  │  ManagedAgentService │──────────► │  N tokio tasks              │    │
+│  │  AcpService          │  via DI    │  each: KernelFsBackend<K> + │    │
+│  │  SpawnTask<Kernel>   │  seam      │  ConversationRuntime loop,  │    │
+│  │   (1 vtable / spawn) │            │  cwd = /proc/{pid}/workspace │    │
+│  └──────────────────────┘           └─────────────────────────────┘   │
+│                                                                       │
+│  gRPC server (nexus `transport` crate, VFS port):                     │
+│    NexusVFSService.Call routes managed_agent + ACP methods and        │
+│    sys_* reads/writes for external clients (sudowork UI, orchestrator)│
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Constraints
 
-- **One nexusd per sudowork instance.** sudowork starts nexusd at launch and tears it down on quit.
-- **Pure-Rust kernel.** The kernel and the service-tier crates (`services`, `raft`, `lib`, `contracts`) compile into the `nexus-cluster` binary; out-of-process components reach nexus through gRPC.
-- **State SSOT.** Agent runtime state (`pid → AgentState`, condvar wakeup, signal semantics, parent/child links, transition validation) lives in `kernel::core::agents::registry::AgentRegistry`. In-process Rust callers (ACP, managed_agent) reach it directly; out-of-process callers reach it through the gRPC surface. There is no second state mirror or dual-write step. Profile config lives on disk under `/agents/{name}/`.
-- **gRPC is the integration surface.** sudowork (Node/TS) reaches nexusd through tonic-served gRPC at port 2028; HTTP is reserved for human-facing dashboards.
-- **Cluster profile.** sudowork uses Nexus's cluster profile — bricks: IPC, FEDERATION.
+- **One nexus per host.** A host that runs sudocode agents runs one `sudocode-host` process, and its embedded `kernel::Kernel` is that host's nexus. A host without sudocode agents runs the standalone `nexusd-cluster` binary. The `nexus-bootstrap` launcher protocol owns discover-or-launch, so both shapes converge on one kernel per host (§8).
+- **Pure-infra nexus.** The kernel and the service-tier crates (`services`, `raft`, `lib`, `contracts`) compile with zero knowledge of any agent runtime; the dependency edge runs `sudocode → nexus`. `sudocode-host` (sudocode repo) is the one binary that links both source trees and monomorphises `SpawnTask<Kernel>` (§2.3).
+- **State SSOT.** Agent runtime state (`pid → AgentState`, condvar wakeup, signal semantics, parent/child links, transition validation) lives in `kernel::core::agents::registry::AgentRegistry`. In-process Rust callers (ManagedAgentService, ACP) reach it directly; external callers reach it through the gRPC surface. Profile config and session history live on disk under `/agents/{name}/` (§2.1).
+- **gRPC is the external surface.** External clients (sudowork UI, orchestrator) reach the kernel over the VFS gRPC port; the agent↔kernel hot path stays in-process Rust. HTTP is reserved for human-facing dashboards.
+- **Cluster profile.** `sudocode-host` and `nexusd-cluster` both run Nexus's cluster profile — bricks: IPC, FEDERATION.
 - **Zone = VFS path mount point.** A zone's visibility boundary is its mount path. ReBAC governs sub-path access within a zone.
 
 ---

@@ -349,8 +349,20 @@ impl ZoneManager {
             RaftError::Config(format!("Invalid bind address '{}': {}", bind_addr, e))
         })?;
 
+        // This runtime hosts BOTH the tonic gRPC server (accept loop +
+        // per-connection HTTP/2 handshakes for raft and VFS) and every
+        // zone's `transport_loop` (which does synchronous redb disk I/O
+        // in `advance`). A hardcoded 2-worker pool starves the
+        // accept/handshake path under load — new connections finish the
+        // TCP handshake but never get an HTTP/2 SETTINGS frame, so peers
+        // see most join/replication dials time out while heartbeats on
+        // established connections survive. Size to the host like the
+        // outer daemon runtime, with a floor that keeps the accept path
+        // live even on small multi-zone hosts.
+        let worker_threads =
+            contracts::recommended_worker_threads(contracts::MIN_SERVER_RUNTIME_WORKERS);
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(worker_threads)
             .enable_all()
             .thread_name("nexus-zone-mgr")
             .build()

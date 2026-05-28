@@ -145,3 +145,37 @@ pub const GRPC_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 10;
 /// layer can't reach (e.g. when the peer process disappears
 /// silently without RST). 60s aligns with common Linux defaults.
 pub const GRPC_TCP_KEEPALIVE_SECS: u64 = 60;
+
+// ── tokio runtime sizing ───────────────────────────────────────────
+
+/// Floor on worker threads for a runtime that hosts a tonic gRPC
+/// server alongside the raft transport loops.
+///
+/// The federation server multiplexes latency-sensitive work (the
+/// accept loop + per-connection HTTP/2 handshakes) with blocking work
+/// (each zone's `transport_loop` performs synchronous redb disk I/O in
+/// `advance`). If the worker pool is too small, a burst of blocking
+/// loop work — or a flood of inbound connection attempts — can starve
+/// the accept/handshake path: new connections complete the TCP
+/// handshake (kernel backlog) but never receive an HTTP/2 SETTINGS
+/// frame, so clients time out while existing connections limp along.
+/// Four workers keep the accept path live even on a 2-core host
+/// running multiple zones.
+pub const MIN_SERVER_RUNTIME_WORKERS: usize = 4;
+
+/// Worker-thread count for a multi-threaded tokio runtime, sized to the
+/// host's available parallelism with a floor of `min_workers`.
+///
+/// SSOT for "how many workers should this runtime get?" — every
+/// `Builder::new_multi_thread()` site shares it so the daemon's outer
+/// runtime and the federation server's inner runtime scale identically
+/// instead of drifting to ad-hoc hardcoded counts. IO-bound gRPC + raft
+/// work wants roughly one worker per logical core (cgroup / affinity
+/// constrained), which `available_parallelism` reports.
+#[must_use]
+pub fn recommended_worker_threads(min_workers: usize) -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(min_workers)
+        .max(min_workers)
+}

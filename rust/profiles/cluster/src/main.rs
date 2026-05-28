@@ -144,7 +144,9 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
-    install_tracing();
+    // Held until `main` returns so the non-blocking log writer thread stays
+    // alive and flushes on shutdown.
+    let _tracing_guard = install_tracing();
     let args = Args::parse();
     // Size the multi-thread runtime against the host: federation
     // gRPC + raft IO is IO-bound, so the kernel `available_parallelism`
@@ -153,9 +155,7 @@ fn main() -> Result<()> {
     // worker count — when the platform can't report a value (e.g.
     // bare-metal probes that aren't WASI-style sandboxed but lack
     // `_SC_NPROCESSORS_ONLN`).
-    let workers = std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(2);
+    let workers = contracts::recommended_worker_threads(2);
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
         .enable_all()
@@ -407,7 +407,8 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
                 &peer_addrs_for_bootstrap,
                 bootstrap_new,
                 /* max_attempts */ None, // daemon boot — retry forever
-                /* as_learner   */ false, // root cluster votes; learners are for share/join
+                /* as_learner   */
+                false, // root cluster votes; learners are for share/join
             )
         })
         .await
@@ -620,14 +621,28 @@ async fn run_join(
     Ok(())
 }
 
-fn install_tracing() {
+/// Install the global tracing subscriber with a non-blocking stdout
+/// writer. The returned [`WorkerGuard`] MUST be held for the lifetime of
+/// the process — dropping it flushes buffered lines and stops the writer
+/// thread, so logs emitted after the drop are lost.
+///
+/// The non-blocking writer hands every log line to a dedicated thread
+/// instead of writing stdout inline. Under a slow or stalled stdout sink
+/// the default `fmt()` writer blocks the calling tokio worker in a
+/// `write()` syscall; at high log frequency that can stall enough workers
+/// to starve the gRPC server's accept/handshake path. Decoupling the I/O
+/// keeps the runtime responsive regardless of log volume.
+fn install_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
                 tracing_subscriber::EnvFilter::new("nexusd_cluster=info,nexus_raft=info")
             }),
         )
+        .with_writer(non_blocking)
         .init();
+    guard
 }
 
 fn resolve_hostname(cli: Option<&str>) -> String {

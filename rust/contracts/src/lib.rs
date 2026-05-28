@@ -10,8 +10,9 @@ pub mod lock_state;
 pub mod operation_context;
 pub mod rust_service;
 pub use constants::{
-    env, is_system_path, BLAKE3_EMPTY, LOCKS_PATH_PREFIX, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID,
-    SHARE_REGISTRY_PREFIX, SYSTEM_PATH_PREFIX, VFS_ROOT,
+    env, is_system_path, recommended_worker_threads, BLAKE3_EMPTY, LOCKS_PATH_PREFIX,
+    MAX_GRPC_MESSAGE_BYTES, MIN_SERVER_RUNTIME_WORKERS, ROOT_ZONE_ID, SHARE_REGISTRY_PREFIX,
+    SYSTEM_PATH_PREFIX, VFS_ROOT,
 };
 pub use lock_state::{HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockState, Locks};
 pub use operation_context::OperationContext;

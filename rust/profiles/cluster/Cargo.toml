@@ -34,6 +34,10 @@ clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Non-blocking log writer: a dedicated thread owns stdout so high-frequency
+# logging can never block tokio worker threads (which would starve the gRPC
+# server's accept/handshake path on the shared runtime).
+tracing-appender = "0.2"
 gethostname = "1.1"
 
 # C3 will add a workspace [profile.release.package."nexus-cluster"]

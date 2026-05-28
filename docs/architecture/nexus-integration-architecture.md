@@ -542,7 +542,7 @@ fired event maps to a per-zone `install_for_zone(zone_id)` call,
 guarded by a `Mutex<HashSet<String>>` so a re-mount is a harmless
 no-op. New zones therefore wire their AuditHook + DT_STREAM the
 moment they mount on this kernel, with no zone-creation API
-duplication; the install path is purely syscall-driven. See §8 for
+duplication; the install path is purely syscall-driven. See §9 for
 the dispatch lifecycle the observer hooks into.
 
 ### 5.4 Central audit zone
@@ -643,7 +643,47 @@ from the kernel.
 
 ---
 
-## 8. Appendix A: Kernel Dispatch Hook Lifecycle
+## 8. Orchestration & Isolation Boundary
+
+### 8.1 Orchestration lives outside nexus
+
+nexus is passive VFS infrastructure: it stores state, routes syscalls, and
+fires hooks. Deciding *which* workers exist — the copilot-worker topology,
+when to spawn, when to cancel — is an orchestrator concern. The orchestrator
+drives workers through the ManagedAgentService surface (§2.3); the kernel
+serves those syscalls like any other caller's.
+
+### 8.2 Isolation
+
+Agent loops share `sudocode-host`'s address space as tokio tasks. The
+isolation floor is `catch_unwind` per task plus `SpawnHandle::abort` on
+reap; a SIGSEGV or OOM takes the whole host with every agent on it. Workers
+are cattle: persistent state lives in `/agents/{name}/` (§2.1), so a host
+that dies is restarted and each worker resumes from its `--session-id`
+transcript.
+
+### 8.3 One nexus per host
+
+A host runs exactly one kernel — `sudocode-host`'s embedded `kernel::Kernel`
+on hosts that run sudocode agents, the standalone `nexusd-cluster` binary on
+pure-infra hosts. The `nexus-bootstrap` launcher protocol owns
+discover-or-launch (PID file, ready file, socket path, health check,
+`--profile=cluster`), so both sudowork (shelling out) and `sudocode-host`
+(as a Rust lib) converge on one kernel through one code path.
+
+### 8.4 sudocode-host placement
+
+`sudocode-host` lives in the sudocode repo, peer to the standalone
+`rusty-sudocode-cli`. Keeping it there holds the dependency edge at
+`sudocode → nexus`: the binary that links both source trees sits on the
+sudocode side, and nexus stays runtime-agnostic. `sudocode-host` consumes
+`sudocode_runtime` as a library and the nexus `kernel` / `services` crates
+as git deps, adding only additive `pub` exports to sudocode so the CLI's
+standalone `StdFsBackend` and `NexusVfsFsBackend` modes are untouched.
+
+---
+
+## 9. Appendix A: Kernel Dispatch Hook Lifecycle
 
 ```
 syscall (sys_write, sys_read, …)
@@ -686,7 +726,7 @@ last-write-wins on `HookOutcome::Replace`.
 
 ---
 
-## 9. Appendix B: Raft Command Taxonomy
+## 10. Appendix B: Raft Command Taxonomy
 
 All commands in a zone's Raft cluster share a single `Command` enum (`state_machine.rs`):
 

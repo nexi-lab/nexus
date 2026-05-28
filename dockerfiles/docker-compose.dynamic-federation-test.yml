@@ -182,6 +182,34 @@ services:
       start_period: 10s
 
   # ==========================================================================
+  # Nexus CLI sidecar — host for `docker exec nexus-cli nexus ...` calls
+  #
+  # The slim nexusd-cluster image carries only the Rust binary, no Python
+  # CLI. Tests that need to drive `nexus zone export`/`zone list`/
+  # `federation status` etc. exec into this sidecar instead. The image
+  # is the same `nexus-remote:latest` slim Python client that ships to
+  # end users — its `nexus` CLI proxies every command over gRPC, so the
+  # test surface stays identical to what a sysadmin would run.
+  # ==========================================================================
+  nexus-cli:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.remote
+    image: nexus-remote:latest
+    container_name: nexus-dyn-cli
+    hostname: nexus-cli
+    # Keep the container running so `docker exec ... nexus <cmd>` works.
+    # The image's default ENTRYPOINT runs `nexus --help` and exits.
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    environment:
+      NEXUS_URL: "grpc://nexus-1:2126"
+    networks:
+      - dyn-nexus-network
+
+  # ==========================================================================
   # SSE mock sidecar — OpenAI + Anthropic streaming responses for the
   # Rust OpenAIBackend / AnthropicBackend E2E tests.
   # ==========================================================================

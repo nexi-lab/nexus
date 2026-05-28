@@ -98,30 +98,27 @@ addressing flows through the pid level (§3.6).
    status                        ← virtual file: AgentStatusResolver renders descriptor JSON
    agent                         ← DT_LINK → /agents/{name}/   (Linux /proc/{pid}/exe analogue)
    chat-with-me                  ← DT_STREAM: this pid's conversation
-   sessions/                     ← DT_DIR; sudo-code writes per-session jsonls under here
-   tasks/                        ← DT_DIR; reserved for sudo-code task list persistence
    workspace/                    ← DT_DIR (agent cwd)
       chat-with-me               ← DT_LINK → /proc/{pid}/chat-with-me
       project-x/                 ← DT_LINK → host repo path from desc.repos
       project-y/                 ← DT_LINK → host repo path from desc.repos
 ```
 
-`/proc/{pid}/status` is served by `AgentStatusResolver`, a `PathResolver`
-that renders the live `AgentDescriptor` as JSON on each read — content
-is a function of the current AgentRegistry snapshot. The DT_LINK rows
-under `/proc/{pid}/workspace/` and `/proc/{pid}/agent` are static for
-the pid's lifetime, so they live in the metastore as plain DT_LINK
-entries stamped at start_session; VFSRouter follows them transparently
-on `sys_read` / `sys_write` (single-hop, ELOOP-detected), and the
-existing hooks (mailbox stamping, workspace boundary, audit) match on
-the link path's suffix so they fire correctly whether the caller writes
-to `chat-with-me` directly or through the workspace shortcut. The
-descriptor is the SSOT for state, exit code, agent name, parent pid,
-timestamps, model, and the workspace mount list (`AgentDescriptor.repos`,
-useful PCB metadata for inspection); the metastore's DT_LINK rows are
-the SSOT for routing.
-
-`/proc/{pid}/agent` is a kernel-resolved DT_LINK to the agent-name directory. `readlink` returns `/agents/{name}/`; `stat` follows. This is the single SSOT pointer from a runtime back to its profile — no metadata duplication.
+The whole `/proc/{pid}/` subtree is stamped at `start_session` and reaped
+when the task exits. `/proc/{pid}/status` is served by
+`AgentStatusResolver`, a `PathResolver` that renders the live
+`AgentDescriptor` as JSON each read — content is a function of the current
+AgentRegistry snapshot. The DT_LINK rows (`agent`, `workspace/*`) are
+static for the pid's lifetime, so they live in the metastore as plain
+DT_LINK entries; VFSRouter follows them transparently on `sys_read` /
+`sys_write` (single-hop, ELOOP-detected), and the mailbox-stamping /
+workspace-boundary / audit hooks match on the link path's suffix so they
+fire whether the caller writes `chat-with-me` directly or through the
+workspace shortcut. The descriptor is the SSOT for runtime state (exit
+code, agent name, parent pid, timestamps, model, workspace mount list);
+the metastore's DT_LINK rows are the SSOT for routing. `/proc/{pid}/agent`
+readlinks to `/agents/{name}/` — the single pointer from a runtime back to
+its persistent profile (§2.1).
 
 ### 2.3 Spawn lifecycle
 

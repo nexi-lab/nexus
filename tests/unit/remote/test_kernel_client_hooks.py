@@ -670,6 +670,141 @@ def test_eviction_cycle_runs_against_proxy_wired_qos_manager() -> None:
     assert sorted(transport.signalled) == ["spot-1", "std-1"]
 
 
+def test_eviction_cycle_over_cap_path_drives_count_by_state_through_proxy() -> None:
+    """Reproduce issue #4268's EXACT traceback: count_by_state at eviction_manager.py:157.
+
+    That call lives inside `if pressure is PressureLevel.NORMAL:`, so it only runs on
+    a NORMAL-pressure / over-agent-cap cycle. The CRITICAL-pressure regression tests
+    skip it entirely. This drives the over-cap branch end-to-end through run_cycle with
+    the production-wired QoSEvictionPolicy + real proxy, so the count_by_state crash
+    path the issue reported is covered through the manager, not just in isolation.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from nexus.contracts.agent_types import EvictionReason
+    from nexus.lib.performance_tuning import EvictionTuning
+    from nexus.services.agents.eviction_manager import EvictionManager
+    from nexus.services.agents.eviction_policy import QoSEvictionPolicy
+    from nexus.services.agents.resource_monitor import PressureLevel
+
+    agents = {
+        "spot-1": {
+            "pid": "spot-1",
+            "state": "busy",
+            "kind": "unmanaged",
+            "labels": {"eviction_class": "spot"},
+            "generation": 1,
+            "updated_at_ms": 1000,
+            "external_info": {"connection_id": "spot-1", "last_heartbeat_ms": 1000},
+        },
+        "std-1": {
+            "pid": "std-1",
+            "state": "busy",
+            "kind": "unmanaged",
+            "labels": {"eviction_class": "standard"},
+            "generation": 1,
+            "updated_at_ms": 2000,
+            "external_info": {"connection_id": "std-1", "last_heartbeat_ms": 2000},
+        },
+    }
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.signalled: list[str] = []
+            self.methods: list[str] = []
+
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            self.methods.append(method)
+            if method == "agent_list":
+                return list(agents.values())
+            if method == "agent_get":
+                return agents.get(params["pid"])
+            if method == "agent_signal":
+                self.signalled.append(str(params["pid"]))
+                return agents.get(params["pid"])
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    transport = FakeTransport()
+    client._transport = transport
+
+    monitor = AsyncMock()
+    # NORMAL pressure → the over-cap branch (count_by_state at :157) runs.
+    monitor.check_pressure.return_value = PressureLevel.NORMAL
+
+    manager = EvictionManager(
+        agent_registry=client.agent_registry,
+        monitor=monitor,
+        policy=QoSEvictionPolicy(),
+        tuning=EvictionTuning(
+            memory_high_watermark_pct=85,
+            memory_low_watermark_pct=75,
+            max_active_agents=1,  # 2 BUSY agents > cap 1 → over_cap triggers
+            eviction_batch_size=5,
+            checkpoint_timeout_seconds=5.0,
+            eviction_cooldown_seconds=60,
+            max_concurrent_transitions=10,
+        ),
+    )
+
+    result = asyncio.run(manager.run_cycle())
+
+    # count_by_state was actually exercised through run_cycle (the #4268 crash line).
+    assert "agent_list" in transport.methods
+    assert result.reason is EvictionReason.OVER_AGENT_CAP
+    assert result.evicted == 2
+    assert sorted(transport.signalled) == ["spot-1", "std-1"]
+
+
+def test_agent_registry_proxy_list_by_priority_handles_missing_updated_at_ms() -> None:
+    """Agents with absent or None updated_at_ms sort as 0 (front) and never raise —
+    guards the `getattr(a, 'updated_at_ms', 0) or 0` fallback in list_by_priority."""
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return [
+                    {
+                        "pid": "has",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},
+                        "updated_at_ms": 500,
+                    },
+                    {
+                        "pid": "none",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},
+                        "updated_at_ms": None,
+                    },
+                    # 'missing' omits updated_at_ms entirely.
+                    {"pid": "missing", "state": "busy", "kind": "unmanaged", "labels": {}},
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    result = client.agent_registry.list_by_priority()
+
+    pids = [a.pid for a in result]
+    # None/missing treated as 0 → both sort ahead of has (500); no TypeError raised.
+    assert pids[-1] == "has"
+    assert set(pids[:2]) == {"none", "missing"}
+
+
 def test_metastore_list_paginated_preserves_directory_entries() -> None:
     class FakeClient(KernelClient):
         entry_types = {

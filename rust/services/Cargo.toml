@@ -18,6 +18,12 @@ service-agents = []
 service-managed-agent = []
 service-acp = []
 service-tasks = []
+# AuditNode — consumer-side audit collect/gather service for an
+# audit-only federation node. Pulls `service-audit` to reuse
+# `audit::prepare_stream_only` for local DT_STREAM registration on
+# joined learner zones (the audit-node consumes traces, it does not
+# install the producing AuditHook).
+service-audit-node = ["service-audit"]
 # Matrix Client-Server v3 adapter — exposes nexus chat-with-me
 # DT_STREAMs as Matrix rooms so stock chat clients (Element /
 # FluffyChat / Cinny) can join conversations without a bespoke

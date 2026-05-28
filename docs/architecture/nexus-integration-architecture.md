@@ -64,53 +64,32 @@ Two namespaces, the same Linux distinction between an executable on disk and a r
 
 | Namespace | Lifetime | Content | Backing store |
 |-----------|----------|---------|---------------|
-| `/agents/{name}/` | Persistent | Profile config: `config.toml`, `prompts/`, `skills/`, `chat-with-me` | Metastore (DT_FILE / DT_DIR) |
-| `/proc/{pid}/` | Ephemeral | Runtime: `status`, `agent` link, `chat-with-me`, `sessions/`, `tasks/`, `workspace/` | In-memory + WAL while pid alive |
+| `/agents/{name}/` | Persistent | Profile + history: `config.toml`, `prompts/`, `skills/`, `memory/`, `sessions/` | Metastore (DT_FILE / DT_DIR) |
+| `/proc/{pid}/` | Ephemeral | Runtime presence: `status`, `agent` link, `chat-with-me`, `workspace/` | In-memory + WAL while pid alive |
 
 `/agents/{name}/` is the stable identity an outsider addresses (other agents, humans on Element). One agent name can spawn many `pid`s — different worktrees, parallel work — and all of them share the same profile.
 
 ### 2.1 Agent-name namespace
 
 ```
-/agents/scode-standard/          ← profile (DT_DIR)
+/agents/scode-standard/          ← profile + history (DT_DIR)
    config.toml                   ← model selection, MCP endpoints, default workspace recipe
    prompts/                      ← system-prompt overrides, per-skill prompts
-   skills/                       ← which tool sets are loadable
+   skills/                       ← loadable tool sets
+   memory/                       ← long-lived agent memory
+   sessions/                     ← per-session jsonl transcripts (DT_DIR)
+      <session-id>.jsonl
 ```
 
-(`/agents/{name}/chat-with-me` exists only for **human** identities —
-e.g. `/agents/human-ethan/chat-with-me` is a real DT_STREAM. For agent
-names like `scode-standard` it is intentionally absent; addressing
-goes through the pid level. See §3.6.)
+`/agents/{name}/` is the persistent SSOT for everything an agent needs to
+boot: config, prompts, skills, memory, and session history. A worker boots
+by reading its profile and the requested `--session-id` transcript from
+here, works, and exits; resuming re-reads the same session-id.
 
-`chat-with-me` lives at the pid level — `/proc/{pid}/chat-with-me` is
-the canonical address, and `/proc/{pid}/workspace/chat-with-me` is a
-DT_LINK to it (stamped at start_session, followed transparently by
-VFSRouter on read/write — see §2.2). The agent-name level
-(`/agents/{name}/chat-with-me`) reaches the same stream for **human**
-identities (long-lived DT_STREAM owned by the user); for managed-agent
-names like `scode-standard` the agent-name level holds profile config
-only and addressing flows through the pid level. Callers always have a
-pid by the time they need to address a managed agent (sudowork gets it
-from `ManagedAgentService.start_session_v1`; in-process runtimes have
-their own `pid`); requiring the pid keeps the addressing model
-unambiguous and avoids the design questions around multi-instance
-fan-out / fan-in.
-
-Three kinds of recipient still share the same DT_STREAM-backed surface:
-
-- **Local agent pid** (e.g. `/proc/p_42/chat-with-me` for the active
-  scode-standard instance): real DT_STREAM. Writes append; `sys_watch`
-  wakes up readers.
-- **Remote identity** (e.g. `human-bob` on a stock Matrix client like
-  Element): same DT_STREAM under the hood; reach across instances goes
-  through the Matrix C-S adapter (§4) which translates Element's HTTP
-  REST traffic into nexus VFS reads / writes against this stream.
-- **Local persistent identity** (e.g. `/agents/human-ethan/chat-with-me`):
-  a long-lived DT_STREAM owned by the user, not a transient pid. The
-  sudowork UI reads it for inbox display, writes for outgoing messages.
-  This is the one place `/agents/{name}/...` resolves directly to a
-  stream, because the "user" agent has no spawn lifecycle.
+`/agents/{name}/chat-with-me` resolves to a DT_STREAM for **human**
+identities (e.g. `/agents/human-ethan/chat-with-me`, owned by the user).
+For managed-agent names the agent-name level holds profile + history, and
+addressing flows through the pid level (§3.6).
 
 ### 2.2 Runtime namespace
 

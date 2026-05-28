@@ -1293,14 +1293,14 @@ class TestFederationCLIWorkflow:
 
     def test_status_zones_info_consistent_view(self, cluster, api_key, federation_zones):
         # Step 1: federation status — reports the cluster topology.
-        rc, out, err = _cli_exec("nexus-dyn-node-1", ["federation", "status"], timeout=30)
+        rc, out, err = _cli_exec(CLI_SIDECAR_CONTAINER, ["federation", "status"], timeout=30)
         if rc != 0:
             pytest.skip(f"federation status CLI failed: rc={rc} err={err[:200]}")
         assert len(out) > 0, f"federation status returned empty: stderr={err[:200]}"
 
         # Step 2: federation zones — must list our canonical fixture
         # zones (corp / corp-eng / corp-sales / family).
-        rc, zones_out, err = _cli_exec("nexus-dyn-node-1", ["federation", "zones"], timeout=30)
+        rc, zones_out, err = _cli_exec(CLI_SIDECAR_CONTAINER, ["federation", "zones"], timeout=30)
         if rc != 0:
             pytest.skip(f"federation zones CLI failed: rc={rc} err={err[:200]}")
         for z in ["corp", "corp-eng", "corp-sales", "family"]:
@@ -1310,7 +1310,7 @@ class TestFederationCLIWorkflow:
         # The output must reference the zone id and the topology
         # numbers visible from the cluster_info RPC.
         rc, info_out, err = _cli_exec(
-            "nexus-dyn-node-1", ["federation", "info", "corp"], timeout=30
+            CLI_SIDECAR_CONTAINER, ["federation", "info", "corp"], timeout=30
         )
         if rc != 0:
             pytest.skip(f"federation info CLI failed: rc={rc} err={err[:200]}")
@@ -1319,7 +1319,7 @@ class TestFederationCLIWorkflow:
         # Step 4: zone list — different CLI subtree, same underlying
         # data. Must contain the same zone names so operator's two
         # entry points stay consistent.
-        rc, zone_list_out, err = _cli_exec("nexus-dyn-node-1", ["zone", "list"], timeout=30)
+        rc, zone_list_out, err = _cli_exec(CLI_SIDECAR_CONTAINER, ["zone", "list"], timeout=30)
         if rc != 0:
             pytest.skip(f"zone list CLI failed: rc={rc} err={err[:200]}")
         for z in ["corp", "corp-eng", "family"]:
@@ -1705,6 +1705,13 @@ def _docker_client_or_skip():
         pytest.skip(f"Docker SDK not available: {exc}")
 
 
+# Sidecar container that hosts the Python `nexus` CLI. The cluster nodes
+# themselves run the slim nexusd-cluster image which carries only the
+# Rust binary, so CLI-driven tests exec into this sidecar instead. The
+# sidecar's compose env already points NEXUS_URL at nexus-1:2126.
+CLI_SIDECAR_CONTAINER = "nexus-dyn-cli"
+
+
 def _cli_exec(container_name: str, argv: list[str], timeout: int = 30) -> tuple[int, str, str]:
     """Run ``nexus <argv...>`` inside a compose container via docker exec.
 
@@ -1718,11 +1725,11 @@ def _cli_exec(container_name: str, argv: list[str], timeout: int = 30) -> tuple[
         pytest.skip(f"Container {container_name} not found: {exc}")
 
     cmd = ["nexus", *argv]
-    # CLI connects to the local RPC server over the container's loopback —
-    # matches what a sysadmin SSH'd into a node would do.
+    # NEXUS_URL is set by the sidecar service definition in
+    # docker-compose.dynamic-federation-test.yml; only override the API
+    # key here so the admin surface is reachable.
     env_overrides = {
         "NEXUS_API_KEY": E2E_ADMIN_API_KEY,
-        "NEXUS_URL": "grpc://localhost:2126",
     }
     result = container.exec_run(
         cmd,
@@ -2049,7 +2056,7 @@ class TestZoneSnapshotExportImport:
 
         export_dest = f"/tmp/zone-export-{uid}.tar"
         rc, out, err = _cli_exec(
-            "nexus-dyn-node-1",
+            CLI_SIDECAR_CONTAINER,
             ["zone", "export", zone_id, "--output", export_dest],
             timeout=60,
         )
@@ -2058,7 +2065,7 @@ class TestZoneSnapshotExportImport:
 
         new_zone_id = f"snap-reimport-{uid}"
         rc2, out2, err2 = _cli_exec(
-            "nexus-dyn-node-1",
+            CLI_SIDECAR_CONTAINER,
             ["zone", "import", export_dest, "--zone-id", new_zone_id],
             timeout=60,
         )

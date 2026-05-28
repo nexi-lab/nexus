@@ -551,7 +551,7 @@ Each production node shares a 1:1 zone with the audit-node. `AuditHook` writes f
 
 ```
 Production nexusd (node A)
-    │  AuditHook → /__sys__/audit/traces/  (auto-wired by zone_create(audit=true))
+    │  AuditHook → /__sys__/audit/traces/  (auto-wired by the Mount observer, §5.3)
     │
     └──► Shared zone: zone-A-audit
               Raft cluster: [node-A voter, audit-node learner]
@@ -568,7 +568,7 @@ Audit nexusd (audit-node)
     └── local collect/gather: reads all /__sys__/audit/traces/ streams, aggregates
 ```
 
-The 1:1 zone holds `AuditRecord` only — formatted by `AuditHook`, with no production-zone metadata or lock commands. audit-node joins via `zone_join(zone_id, as_learner=true, audit=true)` so the production zone's voter quorum is unaffected; audit loss is preferable to blocking production writes.
+The 1:1 zone holds `AuditRecord` only — formatted by `AuditHook`, with no production-zone metadata or lock commands. The audit-node joins the shared zone as a learner, so the production zone's voter quorum is unaffected; audit loss is preferable to blocking production writes.
 
 ### 5.5 AuditRecord schema
 

@@ -6,13 +6,8 @@ Provides background cleanup tasks for session management and expired resources.
 import asyncio
 import contextlib
 import logging
-from datetime import timedelta
 from typing import Any
 
-from nexus.services.lifecycle.sessions import (
-    cleanup_expired_sessions,
-    cleanup_inactive_sessions,
-)
 from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
 
 logger = logging.getLogger(__name__)
@@ -44,79 +39,6 @@ async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300
 
         except Exception as e:
             logger.error(f"Sandbox cleanup failed: {e}", exc_info=True)
-
-        await asyncio.sleep(interval_seconds)
-
-
-async def session_cleanup_task(
-    cache_session_store: Any,
-    session_factory: Any,
-    interval_seconds: int = 3600,
-) -> None:
-    """Background task: Clean up expired sessions.
-
-    Runs periodically to delete expired sessions (CacheStore) and their
-    associated resources (PathRegistration, Memory in RecordStore).
-
-    Args:
-        cache_session_store: CacheSessionStore instance
-        session_factory: SQLAlchemy session factory (for resource cleanup)
-        interval_seconds: How often to run cleanup (default: 3600 = 1 hour)
-    """
-    logger.info(f"Starting session cleanup task (interval: {interval_seconds}s)")
-
-    while True:
-        try:
-            with session_factory() as db:
-                result = await cleanup_expired_sessions(cache_session_store, db)
-                db.commit()
-
-                sessions_count = result["sessions"]
-                if isinstance(sessions_count, int) and sessions_count > 0:
-                    logger.info(
-                        f"Cleaned up {sessions_count} expired sessions, "
-                        f"{result['resources']} resources"
-                    )
-
-        except Exception as e:
-            logger.error(f"Session cleanup failed: {e}", exc_info=True)
-
-        await asyncio.sleep(interval_seconds)
-
-
-async def inactive_session_cleanup_task(
-    cache_session_store: Any,
-    session_factory: Any,
-    inactive_threshold: timedelta = timedelta(days=30),
-    interval_seconds: int = 86400,  # 24 hours
-) -> None:
-    """Background task: Clean up inactive sessions.
-
-    Removes sessions that haven't been used in N days,
-    even if they haven't expired.
-
-    Args:
-        cache_session_store: CacheSessionStore instance
-        session_factory: SQLAlchemy session factory (for resource cleanup)
-        inactive_threshold: Inactivity period (default: 30 days)
-        interval_seconds: How often to run (default: 86400 = 24 hours)
-    """
-    logger.info(
-        f"Starting inactive session cleanup task "
-        f"(threshold: {inactive_threshold.days} days, interval: {interval_seconds}s)"
-    )
-
-    while True:
-        try:
-            with session_factory() as db:
-                count = await cleanup_inactive_sessions(cache_session_store, db, inactive_threshold)
-                db.commit()
-
-                if count > 0:
-                    logger.info(f"Cleaned up {count} inactive sessions")
-
-        except Exception as e:
-            logger.error(f"Inactive session cleanup failed: {e}", exc_info=True)
 
         await asyncio.sleep(interval_seconds)
 
@@ -348,7 +270,6 @@ def start_background_tasks(
     sandbox_manager: Any | None = None,
     *,
     is_postgresql: bool = False,
-    cache_session_store: Any | None = None,
 ) -> list:
     """Start all background tasks.
 
@@ -356,19 +277,11 @@ def start_background_tasks(
         record_store: RecordStoreABC instance for database access.
         sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
         is_postgresql: Whether the database is PostgreSQL (config-time flag).
-        cache_session_store: Optional CacheSessionStore for session cleanup.
 
     Returns:
         List of asyncio tasks
     """
     tasks = []
-
-    if cache_session_store is not None:
-        tasks.append(
-            asyncio.create_task(
-                session_cleanup_task(cache_session_store, record_store.session_factory)
-            )
-        )
 
     # Add sandbox cleanup if manager provided (Issue #372)
     if sandbox_manager is not None:

@@ -1492,12 +1492,25 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         }
 
         // 3. Apply committed entries — NO lock drop needed, we own raw_node
+        //
+        // raft-rs ready contract: the `Ready` taken above MUST be
+        // acknowledged via `advance(ready)` + `advance_apply()` exactly
+        // once. Returning early on an apply error would leak the `Ready`,
+        // so raft-rs re-delivers the SAME committed entries on every
+        // subsequent tick — an infinite apply-error loop whose log spam
+        // and worker churn can starve the shared tokio runtime (the gRPC
+        // server then stops completing new HTTP/2 handshakes). So we
+        // capture any apply error, finish the ready lifecycle, and only
+        // surface the error afterwards — it fires once, not every tick.
         let committed = ready.take_committed_entries();
+        let mut apply_err = None;
         if !committed.is_empty() {
             tracing::debug!(count = committed.len(), "raft.apply");
-            self.apply_entries(committed).await?;
-            // Fresh apply pointer may unblock linearizable reads.
-            self.resolve_ready_reads().await;
+            match self.apply_entries(committed).await {
+                // Fresh apply pointer may unblock linearizable reads.
+                Ok(()) => self.resolve_ready_reads().await,
+                Err(e) => apply_err = Some(e),
+            }
         }
 
         // Advance the ready — NO TOCTOU: we never dropped ownership
@@ -1510,14 +1523,21 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
 
         if !light_rd.committed_entries().is_empty() {
             let committed = light_rd.take_committed_entries();
-            self.apply_entries(committed).await?;
-            self.resolve_ready_reads().await;
+            match self.apply_entries(committed).await {
+                Ok(()) => self.resolve_ready_reads().await,
+                Err(e) => apply_err = apply_err.or(Some(e)),
+            }
         }
 
         self.raw_node.advance_apply();
 
         // Update cached status for handle reads
         self.update_cached_status();
+
+        // Surface any apply error now that the ready lifecycle is closed.
+        if let Some(e) = apply_err {
+            return Err(e);
+        }
 
         // Layer 2: Witness campaign suppression (TiKV pattern).
         if self.config.is_witness {
@@ -1579,10 +1599,30 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     let cc: ConfChange = protobuf::Message::parse_from_bytes(&entry.data)
                         .map_err(|e| RaftError::Serialization(e.to_string()))?;
 
-                    let cs = self
-                        .raw_node
-                        .apply_conf_change(&cc)
-                        .map_err(|e| RaftError::Raft(e.to_string()))?;
+                    // raft-rs contract (RawNode::apply_conf_change): a
+                    // ConfChange may be rejected, in which case
+                    // apply_conf_change must NOT be retried. On rejection
+                    // mark the committed entry applied (Noop) so
+                    // applied_index advances past it — otherwise raft-rs
+                    // re-delivers the same entry every tick, wedging the
+                    // zone in an apply-error loop. The common rejection is
+                    // "removed all voters" on a wipe-rejoined zone.
+                    let cs = match self.raw_node.apply_conf_change(&cc) {
+                        Ok(cs) => cs,
+                        Err(e) => {
+                            tracing::warn!(
+                                index = entry.index,
+                                node_id = cc.node_id,
+                                error = %e,
+                                "raft.conf_change.rejected — advancing past rejected change",
+                            );
+                            if let Some(tx) = self.pending_conf_changes.remove(&cc.node_id) {
+                                let _ = tx.send(Err(RaftError::Raft(e.to_string())));
+                            }
+                            sm.apply(entry.index, &Command::Noop)?;
+                            continue;
+                        }
+                    };
 
                     self.raw_node
                         .mut_store()
@@ -1624,10 +1664,27 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     let cc: ConfChangeV2 = protobuf::Message::parse_from_bytes(&entry.data)
                         .map_err(|e| RaftError::Serialization(e.to_string()))?;
 
-                    let cs = self
-                        .raw_node
-                        .apply_conf_change(&cc)
-                        .map_err(|e| RaftError::Raft(e.to_string()))?;
+                    // See EntryConfChange above — same raft-rs rejection
+                    // contract. Notify every pending caller in the batch.
+                    let cs = match self.raw_node.apply_conf_change(&cc) {
+                        Ok(cs) => cs,
+                        Err(e) => {
+                            tracing::warn!(
+                                index = entry.index,
+                                num_changes = cc.changes.len(),
+                                error = %e,
+                                "raft.conf_change_v2.rejected — advancing past rejected change",
+                            );
+                            for single in &cc.changes {
+                                if let Some(tx) = self.pending_conf_changes.remove(&single.node_id)
+                                {
+                                    let _ = tx.send(Err(RaftError::Raft(e.to_string())));
+                                }
+                            }
+                            sm.apply(entry.index, &Command::Noop)?;
+                            continue;
+                        }
+                    };
 
                     self.raw_node
                         .mut_store()
@@ -1924,6 +1981,91 @@ mod tests {
             .with_state_machine(|sm| sm.get_metadata("/nonexistent"))
             .await;
         assert!(result.unwrap().is_none());
+    }
+
+    /// Regression: a committed ConfChange that empties the voter set makes
+    /// raft-rs `apply_conf_change` return "removed all voters". The driver
+    /// must treat it as a *rejected* change — advance `applied_index` past
+    /// it and keep returning `Ok` — rather than propagating the error and
+    /// leaking the `Ready`, which previously re-delivered the same entry
+    /// every tick (an infinite apply-error loop that starved the shared
+    /// tokio runtime and stalled the gRPC server's new-connection path).
+    #[tokio::test]
+    async fn test_advance_recovers_from_rejected_conf_change() {
+        let dir = TempDir::new().unwrap();
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let cs = ConfState {
+            voters: vec![1],
+            ..Default::default()
+        };
+        storage.set_conf_state(&cs).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
+        let state_machine = FullStateMachine::new(&store).unwrap();
+
+        let config = RaftConfig {
+            id: 1,
+            peers: vec![],
+            skip_bootstrap: true,
+            tick_interval: Duration::from_millis(10),
+            ..Default::default()
+        };
+        let (handle, mut driver) =
+            ZoneConsensus::new(config, storage, state_machine, None).unwrap();
+
+        // Drive the single voter to self-elect.
+        for _ in 0..100 {
+            driver.process_messages();
+            driver
+                .advance()
+                .await
+                .expect("advance before conf change must be Ok");
+            if handle.is_leader() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(handle.is_leader(), "single voter must self-elect to leader");
+
+        // Propose removing the only voter. On a single-voter group this
+        // commits via self-ack, then fails at apply with "removed all
+        // voters" — exactly the wipe-rejoin failure mode.
+        let mut cc = ConfChange::default();
+        cc.set_change_type(ConfChangeType::RemoveNode);
+        cc.node_id = 1;
+        driver
+            .raw_node
+            .propose_conf_change(vec![], cc)
+            .expect("propose RemoveNode");
+
+        let applied_before = handle.applied_index();
+
+        // Every advance() must stay Ok and applied_index must move past the
+        // rejected entry. On the pre-fix code advance() returned Err here
+        // forever and applied_index never advanced.
+        for _ in 0..50 {
+            driver.process_messages();
+            driver
+                .advance()
+                .await
+                .expect("advance must stay Ok after a rejected conf change");
+            if handle.applied_index() > applied_before {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        assert!(
+            handle.applied_index() > applied_before,
+            "applied_index must advance past the rejected conf change \
+             (was {applied_before}, now {})",
+            handle.applied_index(),
+        );
+        // The rejected self-removal left membership unchanged, so the node
+        // is still a working leader.
+        assert!(
+            handle.is_leader(),
+            "leader must survive a rejected self-removal",
+        );
     }
 
     /// Mini transport loop for tests — mirrors production TransportLoop.

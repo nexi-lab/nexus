@@ -575,10 +575,6 @@ def create_app(
                 webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
             )
             set_subscription_manager(app.state.subscription_manager)
-            # Issue #625: Forward subscription_manager to workflow dispatch service
-            wds = getattr(app.state, "workflow_dispatch", None)
-            if wds is not None and hasattr(wds, "set_subscription_manager"):
-                wds.set_subscription_manager(app.state.subscription_manager)
             # Issue #914: Inject getter into delivery worker (fixes services→server import)
             from nexus.server.subscriptions import get_subscription_manager
 

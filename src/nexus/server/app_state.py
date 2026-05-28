@@ -79,7 +79,6 @@ class NexusAppState:
     task_write_hook: Any = None
     task_dispatch_consumer: Any = None
     workflow_engine: Any = None
-    workflow_dispatch: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None

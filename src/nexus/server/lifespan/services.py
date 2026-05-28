@@ -56,15 +56,6 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     # Issue #809/#810: Stop DT_PIPE consumers
     await _shutdown_pipe_consumers(app)
 
-    # Issue #625: Stop workflow dispatch consumer
-    wds = app.state.workflow_dispatch
-    if wds is not None:
-        try:
-            await wds.stop()
-            logger.info("Workflow dispatch service stopped")
-        except Exception as e:
-            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
-
     # Stop Task Queue runner (Issue #574)
     task_runner = app.state.task_runner
     if task_runner:
@@ -592,15 +583,6 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
     # Expose on app.state so routers can access without reaching into NexusFS
     app.state.workflow_engine = engine
-
-    # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
-    wds = app.state.workflow_dispatch
-    if wds is not None:
-        try:
-            await wds.start()
-            logger.info("Workflow dispatch service started")
-        except Exception as e:
-            logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:

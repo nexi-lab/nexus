@@ -78,7 +78,6 @@ async def test_shutdown_services_awaits_async_directory_grant_expander_stop() ->
             zoekt_write_observer=None,
             task_dispatch_consumer=None,
             skeleton_pipe_consumer=None,
-            workflow_dispatch=None,
             task_runner=None,
             scheduler_service=None,
             _eviction_task=None,

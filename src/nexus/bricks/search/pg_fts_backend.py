@@ -404,6 +404,14 @@ class PgFtsBackend:
         preserves the #3980 rare-phrase behavior without a corpus-wide page
         aggregation CTE on the query hot path.
 
+        Recall bound: only the top ``page_candidate_limit(k)`` chunk matches
+        (``max(k * 8, 64)``) are considered. A page surfaces iff at least one
+        of its chunks ranks within that candidate window. For pathologically
+        long documents whose only match is a low-BM25 chunk ranked beyond the
+        window, the page can be missed — the retired CTE path scored the whole
+        page_text and had no such bound. Widen the multiplier if recall on
+        very long documents regresses.
+
         Args:
             query: BM25 search query string.
             path: Path prefix filter (e.g. "/zone/subdir/").

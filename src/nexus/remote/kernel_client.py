@@ -1152,6 +1152,25 @@ class _BatchWriteItemResult:
         self.version = d.get("version", 1)
 
 
+class _AttrDict(dict):
+    """A dict that also exposes its keys as attributes.
+
+    Proxy ``external_info`` is consumed two ways: as a mapping
+    (``ext["last_heartbeat_ms"]`` / ``ext.get(...)`` in AgentRPCService) and as
+    an object (``ext.last_heartbeat`` in QoSEvictionPolicy, mirroring the
+    ExternalProcessInfo dataclass). Supporting both avoids forcing every caller
+    onto one shape.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
 class _AgentRegistryProxy:
     """Proxy for kernel AgentRegistry operations via gRPC."""
 
@@ -1162,6 +1181,16 @@ class _AgentRegistryProxy:
     def _descriptor(raw: Any) -> Any:
         if raw is None or not isinstance(raw, dict):
             return raw
+
+        from datetime import UTC, datetime
+
+        def _dt(ms: Any) -> datetime | None:
+            if ms is None:
+                return None
+            try:
+                return datetime.fromtimestamp(int(ms) / 1000.0, UTC)
+            except (TypeError, ValueError, OSError):
+                return None
 
         data = dict(raw)
         state = data.get("state")
@@ -1180,6 +1209,7 @@ class _AgentRegistryProxy:
 
         raw_labels = data.get("labels")
         labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
+        data["labels"] = labels  # Guarantee .labels is always a dict.
         raw_capabilities = labels.get("capabilities", "")
         if isinstance(raw_capabilities, str):
             data["capabilities"] = [
@@ -1189,6 +1219,25 @@ class _AgentRegistryProxy:
             data["capabilities"] = raw_capabilities
         else:
             data["capabilities"] = []
+
+        # Duck-type as AgentDescriptor: the wire carries epoch-ms (`*_ms`), but
+        # consumers (e.g. QoSEvictionPolicy) read `.updated_at` / `.created_at`
+        # datetimes and `.external_info.last_heartbeat`. Without this the eviction
+        # cycle raises AttributeError once a candidate is selected (Issue #4268).
+        data["updated_at"] = _dt(data.get("updated_at_ms"))
+        data["created_at"] = _dt(data.get("created_at_ms"))
+
+        ext = data.get("external_info")
+        if isinstance(ext, dict):
+            # _AttrDict exposes BOTH attribute access (`ext.last_heartbeat`, used by
+            # QoSEvictionPolicy) AND dict access (`ext["last_heartbeat_ms"]`/`.get()`,
+            # used by AgentRPCService.agent_list_by_zone) so no consumer breaks.
+            ext_data = _AttrDict(ext)
+            ext_data["last_heartbeat"] = _dt(ext_data.get("last_heartbeat_ms"))
+            data["external_info"] = ext_data
+        else:
+            # Absent → None (not a missing attribute) so `if p.external_info` is safe.
+            data["external_info"] = None
 
         return SimpleNamespace(**data)
 
@@ -1283,6 +1332,37 @@ class _AgentRegistryProxy:
         if not isinstance(raw, list):
             return []
         return [self._descriptor(item) for item in raw]
+
+    def count_by_state(self, state: Any, zone_id: str | None = None) -> int:
+        """Count agents in a given state (kernel SSOT: registry.rs count_by_state)."""
+        return len(self.list_processes(zone_id=zone_id, state=state))
+
+    def list_by_priority(
+        self, *, batch_size: int | None = None, zone_id: str | None = None
+    ) -> list[Any]:
+        """Return BUSY eviction candidates ordered by eviction priority.
+
+        Mirrors the kernel SSOT (registry.rs ``list_by_priority``): filter to
+        BUSY, sort by ``(eviction_priority ASC, updated_at_ms ASC)`` — lowest
+        priority and least-recently-updated (LRU) first — then cap to
+        ``batch_size``. Sorting before the cap is what makes the batch the
+        *right* candidates; the downstream EvictionPolicy only refines within
+        it (LRUEvictionPolicy in particular trusts this pre-sort verbatim).
+        """
+        from nexus.contracts.process_types import AgentState
+
+        def _priority(agent: Any) -> int:
+            labels = getattr(agent, "labels", None) or {}
+            try:
+                return int(labels.get("eviction_priority"))
+            except (TypeError, ValueError):
+                return 50  # Matches Rust unwrap_or(50).
+
+        agents = self.list_processes(zone_id=zone_id, state=AgentState.BUSY)
+        agents.sort(key=lambda a: (_priority(a), getattr(a, "updated_at_ms", 0) or 0))
+        if batch_size is not None:
+            return agents[:batch_size]
+        return agents
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

@@ -255,6 +255,421 @@ def test_kernel_client_sys_read_threads_timeout_and_offset_through_typed_read() 
     ]
 
 
+def test_agent_registry_proxy_count_by_state_delegates_to_agent_list() -> None:
+    """_AgentRegistryProxy.count_by_state() counts agents returned by agent_list with state filter."""
+    from nexus.contracts.process_types import AgentState
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                assert params["state"] == "busy"
+                return [
+                    {"pid": "a1", "state": "busy", "kind": "unmanaged", "labels": {}},
+                    {"pid": "a2", "state": "busy", "kind": "unmanaged", "labels": {}},
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    count = client.agent_registry.count_by_state(AgentState.BUSY)
+
+    assert count == 2
+
+
+def test_agent_registry_proxy_list_by_priority_returns_busy_agents_up_to_batch_size() -> None:
+    """_AgentRegistryProxy.list_by_priority() returns BUSY agents limited to batch_size."""
+    from nexus.contracts.process_types import AgentState
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                assert params["state"] == "busy"
+                return [
+                    {"pid": f"a{i}", "state": "busy", "kind": "unmanaged", "labels": {}}
+                    for i in range(5)
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    result = client.agent_registry.list_by_priority(batch_size=3)
+
+    assert len(result) == 3
+    assert all(hasattr(a, "state") for a in result)
+    assert all(a.state is AgentState.BUSY for a in result)
+
+
+def test_agent_registry_proxy_list_by_priority_orders_by_lru_updated_at() -> None:
+    """list_by_priority returns oldest-updated BUSY agents first (LRU), matching the
+    Rust kernel SSOT (registry.rs: sort_by_key(updated_at_ms))."""
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                # Returned out of LRU order on purpose.
+                return [
+                    {
+                        "pid": "newest",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},
+                        "updated_at_ms": 3000,
+                    },
+                    {
+                        "pid": "oldest",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},
+                        "updated_at_ms": 1000,
+                    },
+                    {
+                        "pid": "middle",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},
+                        "updated_at_ms": 2000,
+                    },
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    result = client.agent_registry.list_by_priority(batch_size=2)
+
+    # Oldest-updated first, capped to batch_size → drops the newest.
+    assert [a.pid for a in result] == ["oldest", "middle"]
+
+
+def test_agent_registry_proxy_list_by_priority_orders_by_eviction_priority_then_lru() -> None:
+    """list_by_priority sorts by (eviction_priority ASC, updated_at_ms ASC), exactly
+    mirroring the Rust kernel SSOT (registry.rs list_by_priority test, prio 10/30/20)."""
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return [
+                    {
+                        "pid": "p30",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "30"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "p10",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "10"},
+                        "updated_at_ms": 999,
+                    },
+                    {
+                        "pid": "p20",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "20"},
+                        "updated_at_ms": 100,
+                    },
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    result = client.agent_registry.list_by_priority(batch_size=2)
+
+    # Lowest eviction_priority first (10, 20) — NOT by updated_at_ms, which would
+    # have put the newest-updated p10 last.
+    assert [a.pid for a in result] == ["p10", "p20"]
+
+
+def test_agent_registry_proxy_list_by_priority_defaults_missing_priority_to_50() -> None:
+    """Agents without an eviction_priority label default to 50 (Rust SSOT unwrap_or(50)),
+    so an explicit lower priority is evicted before an unlabelled one."""
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return [
+                    {
+                        "pid": "unlabelled",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},
+                        "updated_at_ms": 1,
+                    },
+                    {
+                        "pid": "low",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "10"},
+                        "updated_at_ms": 999,
+                    },
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    result = client.agent_registry.list_by_priority(batch_size=2)
+
+    # low (10) sorts before unlabelled (default 50) despite being newer-updated.
+    assert [a.pid for a in result] == ["low", "unlabelled"]
+
+
+def test_eviction_cycle_runs_against_proxy_wired_manager() -> None:
+    """One full EvictionManager.run_cycle() against a real _AgentRegistryProxy.
+
+    Regression for issue #4268: the proxy must expose count_by_state +
+    list_by_priority so the background eviction task does not crash. Drives
+    the whole pipeline (count → list_by_priority → get/CAS → signal) through
+    the gRPC proxy surface, not a MagicMock.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from nexus.contracts.agent_types import EvictionReason
+    from nexus.contracts.process_types import AgentState
+    from nexus.lib.performance_tuning import EvictionTuning
+    from nexus.services.agents.eviction_manager import EvictionManager
+    from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+    from nexus.services.agents.resource_monitor import PressureLevel
+
+    agents = {
+        "a1": {
+            "pid": "a1",
+            "state": "busy",
+            "kind": "unmanaged",
+            "labels": {},
+            "generation": 1,
+            "updated_at_ms": 1000,
+        },
+        "a2": {
+            "pid": "a2",
+            "state": "busy",
+            "kind": "unmanaged",
+            "labels": {},
+            "generation": 1,
+            "updated_at_ms": 2000,
+        },
+    }
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.signalled: list[str] = []
+
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return list(agents.values())
+            if method == "agent_get":
+                return agents.get(params["pid"])
+            if method == "agent_signal":
+                self.signalled.append(str(params["pid"]))
+                return agents.get(params["pid"])
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    transport = FakeTransport()
+    client._transport = transport
+
+    monitor = AsyncMock()
+    monitor.check_pressure.return_value = PressureLevel.CRITICAL
+
+    manager = EvictionManager(
+        agent_registry=client.agent_registry,
+        monitor=monitor,
+        policy=LRUEvictionPolicy(),
+        tuning=EvictionTuning(
+            memory_high_watermark_pct=85,
+            memory_low_watermark_pct=75,
+            max_active_agents=100,
+            eviction_batch_size=5,
+            checkpoint_timeout_seconds=5.0,
+            eviction_cooldown_seconds=60,
+            max_concurrent_transitions=10,
+        ),
+    )
+
+    result = asyncio.run(manager.run_cycle())
+
+    assert result.reason is EvictionReason.PRESSURE_CRITICAL
+    assert result.evicted == 2
+    assert sorted(transport.signalled) == ["a1", "a2"]
+    # count_by_state delegates through the proxy without raising.
+    assert client.agent_registry.count_by_state(AgentState.BUSY) == 2
+
+
+def test_agent_registry_proxy_descriptor_exposes_datetimes_and_external_info() -> None:
+    """Proxy descriptors must duck-type as AgentDescriptor for the eviction policy:
+    .updated_at/.created_at datetimes, .external_info.last_heartbeat datetime, .labels dict."""
+    from datetime import datetime
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_get":
+                return {
+                    "pid": "a1",
+                    "state": "busy",
+                    "kind": "unmanaged",
+                    "owner_id": "u",
+                    "zone_id": "z",
+                    "generation": 1,
+                    "created_at_ms": 1_700_000_000_000,
+                    "updated_at_ms": 1_700_000_005_000,
+                    "labels": {"eviction_class": "spot"},
+                    "external_info": {
+                        "connection_id": "c1",
+                        "last_heartbeat_ms": 1_700_000_009_000,
+                    },
+                }
+            if method == "agent_heartbeat":
+                # No external_info / timestamps on the wire → must not raise on access.
+                return {"pid": "a2", "state": "busy", "kind": "unmanaged", "labels": {}}
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    desc = client.agent_registry.get("a1")
+    assert isinstance(desc.updated_at, datetime)
+    assert isinstance(desc.created_at, datetime)
+    assert isinstance(desc.labels, dict)
+    assert desc.external_info is not None
+    assert isinstance(desc.external_info.last_heartbeat, datetime)
+    assert desc.external_info.connection_id == "c1"
+
+    # Missing external_info / timestamps degrade to None, never AttributeError.
+    sparse = client.agent_registry.heartbeat("a2")
+    assert sparse.external_info is None
+    assert sparse.updated_at is None
+    assert isinstance(sparse.labels, dict)
+
+
+def test_eviction_cycle_runs_against_proxy_wired_qos_manager() -> None:
+    """Full EvictionManager.run_cycle() with the PRODUCTION-wired QoSEvictionPolicy
+    against a real _AgentRegistryProxy.
+
+    Regression for issue #4268: app_state wires QoSEvictionPolicy unconditionally,
+    whose select_candidates reads p.external_info.last_heartbeat / p.updated_at /
+    p.labels. Proxy descriptors must expose those or the eviction cycle still
+    crashes (the second AttributeError after count_by_state/list_by_priority).
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from nexus.contracts.agent_types import EvictionReason
+    from nexus.lib.performance_tuning import EvictionTuning
+    from nexus.services.agents.eviction_manager import EvictionManager
+    from nexus.services.agents.eviction_policy import QoSEvictionPolicy
+    from nexus.services.agents.resource_monitor import PressureLevel
+
+    agents = {
+        "spot-1": {
+            "pid": "spot-1",
+            "state": "busy",
+            "kind": "unmanaged",
+            "labels": {"eviction_class": "spot"},
+            "generation": 1,
+            "updated_at_ms": 1000,
+            "external_info": {"connection_id": "spot-1", "last_heartbeat_ms": 1000},
+        },
+        "std-1": {
+            "pid": "std-1",
+            "state": "busy",
+            "kind": "unmanaged",
+            "labels": {"eviction_class": "standard"},
+            "generation": 1,
+            "updated_at_ms": 2000,
+            "external_info": {"connection_id": "std-1", "last_heartbeat_ms": 2000},
+        },
+    }
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.signalled: list[str] = []
+
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return list(agents.values())
+            if method == "agent_get":
+                return agents.get(params["pid"])
+            if method == "agent_signal":
+                self.signalled.append(str(params["pid"]))
+                return agents.get(params["pid"])
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    transport = FakeTransport()
+    client._transport = transport
+
+    monitor = AsyncMock()
+    monitor.check_pressure.return_value = PressureLevel.CRITICAL
+
+    manager = EvictionManager(
+        agent_registry=client.agent_registry,
+        monitor=monitor,
+        policy=QoSEvictionPolicy(),
+        tuning=EvictionTuning(
+            memory_high_watermark_pct=85,
+            memory_low_watermark_pct=75,
+            max_active_agents=100,
+            eviction_batch_size=5,
+            checkpoint_timeout_seconds=5.0,
+            eviction_cooldown_seconds=60,
+            max_concurrent_transitions=10,
+        ),
+    )
+
+    result = asyncio.run(manager.run_cycle())
+
+    assert result.reason is EvictionReason.PRESSURE_CRITICAL
+    assert result.evicted == 2
+    # spot evicted before standard (QoS ordering) — both signalled.
+    assert sorted(transport.signalled) == ["spot-1", "std-1"]
+
+
 def test_metastore_list_paginated_preserves_directory_entries() -> None:
     class FakeClient(KernelClient):
         entry_types = {

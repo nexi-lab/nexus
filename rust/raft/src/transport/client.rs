@@ -84,6 +84,29 @@ impl Default for ClientConfig {
     }
 }
 
+/// Translate the raft [`ClientConfig`] (+ a TLS snapshot) into the shared
+/// [`lib::transport_primitives::ClientConfig`] so every raft gRPC client goes
+/// through the one [`lib::transport_primitives::create_channel`] Endpoint
+/// builder instead of hand-rolling its own.
+///
+/// Deliberately does NOT set `keep_alive_while_idle`: raft already keeps the
+/// connection busy with heartbeats, and idle H2 PINGs risk tripping a peer's
+/// ping-strike policy (GOAWAY / BrokenPipe). Matches the config the rest of
+/// nexus's gRPC clients use.
+fn channel_config(
+    config: &ClientConfig,
+    tls: Option<super::TlsConfig>,
+) -> lib::transport_primitives::ClientConfig {
+    lib::transport_primitives::ClientConfig {
+        connect_timeout: config.connect_timeout,
+        request_timeout: config.request_timeout,
+        tcp_keepalive: None,
+        http2_keepalive_interval: Some(config.keep_alive_interval),
+        http2_keepalive_timeout: Some(config.keep_alive_timeout),
+        tls,
+    }
+}
+
 /// A cached client entry with its creation timestamp for TTL eviction.
 struct CachedClient {
     client: RaftClient,
@@ -207,30 +230,11 @@ impl RaftClient {
             tls_snapshot.is_some()
         );
 
-        let mut ep = Endpoint::from_shared(endpoint.to_string())
-            .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
-            .connect_timeout(config.connect_timeout)
-            .timeout(config.request_timeout)
-            .http2_keep_alive_interval(config.keep_alive_interval)
-            .keep_alive_timeout(config.keep_alive_timeout)
-            // Ping even when the connection is idle — raft heartbeats are
-            // frequent enough that this rarely matters in steady state, but
-            // when a peer is temporarily down and no outbound messages queue
-            // to it, this is what keeps detection latency bounded.
-            .keep_alive_while_idle(true);
-
-        if let Some(ref tls) = tls_snapshot {
-            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-            let tls_config = tonic::transport::ClientTlsConfig::new()
-                .identity(identity)
-                .ca_certificate(ca);
-            ep = ep
-                .tls_config(tls_config)
-                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
-        }
-
-        let channel = ep.connect().await?;
+        let channel = lib::transport_primitives::create_channel(
+            endpoint,
+            &channel_config(&config, tls_snapshot),
+        )
+        .await?;
         let inner = ZoneTransportServiceClient::new(channel);
 
         tracing::info!("Connected to Raft node at {}", endpoint);
@@ -342,25 +346,11 @@ impl RaftApiClient {
             tls_snapshot.is_some()
         );
 
-        let mut ep = Endpoint::from_shared(endpoint.to_string())
-            .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
-            .connect_timeout(config.connect_timeout)
-            .timeout(config.request_timeout)
-            .http2_keep_alive_interval(config.keep_alive_interval)
-            .keep_alive_timeout(config.keep_alive_timeout);
-
-        if let Some(ref tls) = tls_snapshot {
-            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-            let tls_config = tonic::transport::ClientTlsConfig::new()
-                .identity(identity)
-                .ca_certificate(ca);
-            ep = ep
-                .tls_config(tls_config)
-                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
-        }
-
-        let channel = ep.connect().await?;
+        let channel = lib::transport_primitives::create_channel(
+            endpoint,
+            &channel_config(&config, tls_snapshot),
+        )
+        .await?;
         let inner = ZoneApiServiceClient::new(channel);
 
         tracing::info!("Connected to Raft API at {}", endpoint);

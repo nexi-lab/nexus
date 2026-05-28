@@ -184,12 +184,17 @@ services:
   # ==========================================================================
   # Nexus CLI sidecar — host for `docker exec nexus-cli nexus ...` calls
   #
-  # The slim nexusd-cluster image carries only the Rust binary, no Python
-  # CLI. Tests that need to drive `nexus zone export`/`zone list`/
-  # `federation status` etc. exec into this sidecar instead. The image
-  # is the same `nexus-remote:latest` slim Python client that ships to
-  # end users — its `nexus` CLI proxies every command over gRPC, so the
-  # test surface stays identical to what a sysadmin would run.
+  # Architecturally: cluster nodes are *servers* — they own PathLocalBackend
+  # as their SSOT and answer gRPC. CLI work belongs in a *client* image.
+  # The two roles cleanly separate, and this sidecar realises the client
+  # half inside the compose network.
+  #
+  # Mechanism: nexus-remote is the CLI client image (RemoteBackend +
+  # RemoteService = syscall forward to a server over gRPC). Running
+  # `nexus zone export`/`zone list`/`federation status` in here exercises
+  # exactly the same path as an external SDK user — no node-local CLI
+  # shortcut. Sidecar is effectively a "docker-resident sysadmin pod"
+  # pointed at the in-compose cluster.
   # ==========================================================================
   nexus-cli:
     build:

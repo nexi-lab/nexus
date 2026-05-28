@@ -51,13 +51,13 @@ services:
   nexus-1:
     build:
       context: ..
-      dockerfile: Dockerfile
-    image: nexus-fullnode:latest
+      dockerfile: dockerfiles/Dockerfile.nexusd-cluster
+    image: nexusd-cluster:latest
     container_name: nexus-dyn-node-1
     hostname: nexus-1
     restart: unless-stopped
-    # Pure Rust binary — skip Python docker-entrypoint.sh.
-    entrypoint: ["nexusd-cluster"]
+    # Slim image already has nexusd-cluster as ENTRYPOINT; override-
+    # to-empty would re-introduce a shell wrapper. Leave as default.
     depends_on:
       dragonfly:
         condition: service_healthy
@@ -104,12 +104,11 @@ services:
   # No depends_on nexus-1 — CockroachDB pattern: start independently
   # ==========================================================================
   nexus-2:
-    image: nexus-fullnode:latest
+    image: nexusd-cluster:latest
     container_name: nexus-dyn-node-2
     hostname: nexus-2
     restart: unless-stopped
-    # Pure Rust binary — skip Python docker-entrypoint.sh.
-    entrypoint: ["nexusd-cluster"]
+    # Slim image already has nexusd-cluster as ENTRYPOINT.
     depends_on:
       dragonfly:
         condition: service_healthy
@@ -213,6 +212,14 @@ services:
   # cluster; tests are opt-in via `run --rm test` or `--profile run up`.
   # ==========================================================================
   test:
+    # The pytest runner needs the full Python env (gRPC client, docker
+    # SDK, federation surface helpers) — keep it on nexus-fullnode while
+    # the cluster nodes themselves run the slim nexusd-cluster image.
+    # Build directive lives here (previously on nexus-1) so local users
+    # running `docker compose build` still get nexus-fullnode built.
+    build:
+      context: ..
+      dockerfile: Dockerfile
     image: nexus-fullnode:latest
     container_name: nexus-dyn-test
     profiles:

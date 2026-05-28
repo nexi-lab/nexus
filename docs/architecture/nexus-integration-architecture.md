@@ -122,149 +122,80 @@ its persistent profile (§2.1).
 
 ### 2.3 Spawn lifecycle
 
-sudo-code is in-process: a Rust crate linked into nexusd, driven as a tokio
-task per pid. There is no subprocess and no stdio plumbing — that machinery
-exists in `AcpService` only because external ACP agents (claude / codex /
-codebuddy / nanobot) run in separate OS processes and the only protocol
-those binaries support is JSON-RPC over stdio. sudo-code is our own code in
-our own process, so it talks to the kernel through direct Rust syscalls
-(`kernel.sys_read`, `kernel.sys_write`, `kernel.sys_watch`, …) and to the
-dispatch hooks through the same in-process channel every kernel observer
-uses.
+A managed agent runs as one in-process tokio task inside `sudocode-host`,
+reaching the kernel through direct Rust syscalls (`kernel.sys_read`,
+`sys_write`, `sys_watch`) and the dispatch hooks through the same
+in-process channel every kernel observer uses. External ACP agents
+(claude / codex / codebuddy / nanobot) run as subprocesses over stdio,
+because JSON-RPC over stdio is the only protocol those binaries speak;
+that path lives in `AcpService` (§1).
 
-```
-sudowork (Electron, TS)
-   │ gRPC: NexusVFSService.Call(method="managed_agent.start_session_v1",
-   │       payload={agent_id:"scode-standard", repos:[…], model, owner_id, zone_id})
-   ▼
-nexusd:
-   tonic Call handler
-      │ resolve_rust_dispatch -> ("managed_agent", "start_session_v1")
-      │ Kernel::dispatch_rust_call -> ManagedAgentService::dispatch
-      │ ManagedAgentService::start_session
-      │   → AgentRegistry.register descriptor (model + repos in PCB)
-      │   → AgentRegistry.update_state(WARMING_UP)
-      │   → register_proc_entry: stamp /proc/{pid}/workspace/ dirent
-      ▼
-   {session_id=pid, workspace_path="/proc/{pid}/workspace/"} → sudowork
-```
+The session identifier IS the AgentRegistry pid. `ManagedAgentService`
+plants the per-pid `AgentDescriptor` — the spawn-time SSOT (`agent_id` →
+`desc.name`, `model` → `desc.labels["model"]`, workspace list →
+`desc.repos`) — stamps the `/proc/{pid}/` entries (§2.2), and returns
+`{session_id=pid, workspace_path}` to the caller.
 
-The session identifier IS the AgentRegistry pid — there is no second id.
-The descriptor (`AgentDescriptor`) is the per-pid SSOT for spawn-time
-surface info: `agent_id` (static profile name) lands in `desc.name`,
-`model` in `desc.labels["model"]`, workspace mount list in
-`desc.repos`.  ManagedAgentService plants the descriptor, stamps the
-per-pid procfs entries, and hands off to sudo-code:
+ManagedAgentService hands off to the runtime through the
+`SpawnTask<K: KernelAbi>` DI seam — one indirect call per session start.
+The binary edge, `sudocode-host` in the sudocode repo, constructs a
+concrete `SpawnTask<Kernel>` adapter wrapping `sudocode_runtime::spawn_task`
+and registers it via `install_managed_agent_with_spawn(kernel, adapter)`.
+`start_session` calls `provider.spawn(kernel, desc, observer)` through
+`Arc<dyn SpawnTask<K>>`: exactly one vtable dispatch per session, and the
+returned `Box<dyn SpawnHandle>` lands in the service's `spawn_handles`
+sidecar. Inside the spawn body the surface is plain monomorphic Rust:
+`spawn_task::<Kernel>` and its inner `run_loop` are generic over
+`K: KernelAbi`, specialised against the concrete `Kernel` at the binary
+edge, so every `sys_read` / `sys_write` / `sys_watch` in the mailbox loop
+is an inline direct call. The services rlib depends on the `SpawnTask`
+trait only; pure-Rust slim builds call `install_managed_agent` (no spawn
+provider, no per-pid task).
 
-  - `/proc/{pid}/` (DT_DIR) — process root.
-  - `/proc/{pid}/agent` (DT_LINK → `/agents/{desc.name}/`) — Linux
-    `/proc/{pid}/exe` analogue; readlink returns the static profile dir.
-  - `/proc/{pid}/chat-with-me` (DT_STREAM) — the canonical mailbox; A2A
-    writes append here, sudo-code's loop `sys_watch`es it for prompts.
-  - `/proc/{pid}/sessions/` (DT_DIR) — sudo-code writes per-session jsonl
-    transcripts under this prefix.
-  - `/proc/{pid}/tasks/` (DT_DIR) — reserved for sudo-code task list
-    persistence.
-  - `/proc/{pid}/workspace/` (DT_DIR) — agent cwd; per-repo mounts and
-    the chat-with-me shortcut hang under here.
-  - `/proc/{pid}/workspace/chat-with-me` (DT_LINK → `/proc/{pid}/chat-with-me`)
-    — workspace shortcut so the agent can write `chat-with-me` relative
-    to its cwd.  Resolved by VFSRouter's standard DT_LINK follow.
-  - `/proc/{pid}/workspace/{alias}` (DT_LINK → `desc.repos[alias].mount_path`)
-    — one per `WorkspaceRepo` in the spawn request.
+`sudocode-host` is the single binary-edge where the nexus and sudocode
+source trees link: it consumes `kernel` + `services` as git deps pinned to
+one nexus rev (so `SpawnTask<Kernel>` monomorphises), and the dependency
+edge stays `sudocode → nexus` (§8).
 
-Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through
-`AgentRegistry::on_terminate`, which reaps every entry under
-`/proc/{pid}/`.  `cancel(Session)` calls `AgentRegistry::kill(pid, 0)`
-for the same outcome — orphan auto-reap removes the descriptor, the
-observer reaps the procfs subtree.
+A worker boots by reading its profile + `--session-id` transcript from
+`/agents/{name}/` (§2.1), works (appending to the session jsonl and the
+mailbox), and exits; the `/proc/{pid}/` subtree is reaped. Resuming
+re-reads the same session-id — persistent state lives in `/agents/{name}/`,
+not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL /
+orphan reap) flows through `AgentRegistry::on_terminate`, which reaps
+`/proc/{pid}/` and aborts the worker via its `SpawnHandle`;
+`cancel(session)` calls `AgentRegistry::kill(pid, 0)` for the same outcome.
 
-After the procfs entries are in place, ManagedAgentService hands off
-to the runtime crate through the `SpawnTask<K: KernelAbi>` DI seam.
-The seam is one indirect call per session start — the binary edge
-(the `nexus-cluster` binary) constructs
-a concrete `SpawnTask<Kernel>` adapter wrapping
-`sudocode_runtime::spawn_task` and registers it via
-`install_managed_agent_with_spawn(kernel, Arc::new(adapter))`.
-`start_session` then calls `provider.spawn(kernel, desc, observer)`
-through `Arc<dyn SpawnTask<K>>`: exactly one vtable dispatch per
-session. The returned `Box<dyn SpawnHandle>` lands in the service's
-`spawn_handles` sidecar so the on_terminate observer can abort the
-worker on session reap.
+After spawn, prompts and responses flow over the chat-with-me VFS surface —
+the same A2A primitive every agent uses (§3). sudowork writes prompts to
+`/proc/{pid}/chat-with-me`; the worker `sys_watch`es it and writes responses
+to `/agents/{user}/chat-with-me`, which sudowork's UI watches in turn.
 
-Inside the spawn body the call surface is plain monomorphic Rust.
-`sudocode_runtime::spawn_task::spawn_task::<K: KernelAbi + Send +
-Sync + 'static>` (and its inner `run_loop<K, C, T, F>` at
-`rust/crates/runtime/src/spawn_task.rs` in the
-[sudocode repo](https://github.com/sudoprivacy/sudocode)) is generic
-over `K`; binary-edge
-monomorphisation specialises it against the concrete `Kernel`. Every
-`kernel.sys_read`, `kernel.sys_write`, and `kernel.sys_watch` in the
-mailbox poll loop is an inline direct call — no per-syscall vtable
-cost. Tokio supplies the I/O-concurrency model (LLM HTTP round-trips
-run seconds; many pids share a small worker pool) on the kernel's
-shared runtime.
+**ManagedAgentService surface** (over `NexusVFSService.Call`):
 
-The services rlib stays runtime-agnostic: it depends on the
-`SpawnTask` trait only, not on `sudocode_runtime` or any other
-concrete runtime crate. Pure-Rust slim builds that ship managed-agent
-without a runtime body call `install_managed_agent` instead of
-`install_managed_agent_with_spawn`; `start_session` then leaves
-`spawn_provider == None` and no per-pid task is launched.
-
-After spawn, prompts and responses flow through the chat-with-me VFS
-surface — same A2A primitive every other agent uses (§3). sudowork
-writes prompts to `/proc/{pid}/chat-with-me`; the kernel rewrites the
-envelope's `from` field to sudowork's caller identity (§3.3). The
-sudo-code task in nexusd `sys_watch`es its own `/proc/{pid}/chat-with-me`
-for incoming prompts and writes responses to `/agents/{user}/chat-with-me`.
-sudowork's UI `sys_watch`es the user's chat-with-me for those responses.
-
-**ManagedAgentService surface is intentionally narrow** — only spawn /
-cancel / liveness, exposed over `NexusVFSService.Call`:
-
-- `start_session_v1` — payload `{agent_id, repos, model, owner_id, zone_id}` →
-  `{session_id, workspace_path}`. `agent_id` names the static profile
+- `start_session_v1` — `{agent_id, repos, model, owner_id, zone_id}` →
+  `{session_id, workspace_path}`. `agent_id` names the profile
   (`/agents/{agent_id}/`); `session_id` is the runtime pid.
-- `cancel_v1` — payload `{session_id, mode}` → `{cancelled}`.
-  `mode ∈ {turn, session}` — turn aborts the current generation,
-  session reaps the pid.
-- `get_session_v1` — payload `{session_id}` →
-  `{session_id, agent_id, workspace_path, model, state}`. `agent_id`
-  echoes the static profile; `state` mirrors `AgentDescriptor.state`.
+- `cancel_v1` — `{session_id, mode}` → `{cancelled}`; `mode ∈ {turn,
+  session}` (turn aborts the current generation, session reaps the pid).
+- `get_session_v1` — `{session_id}` →
+  `{session_id, agent_id, workspace_path, model, state}`.
 
-The dotted form (`managed_agent.start_session_v1`) is canonical;
-flat-name fallback (`managed_agent_start_session_v1`) is wired for
-backward compat in the gRPC `Call` handler (KERNEL-ARCHITECTURE §8.1).
-Prompt / event flow uses the existing `NexusVFSService` gRPC
-(`sys_write`, `sys_watch`, `sys_read`) over the chat-with-me paths.
-There is no `SendPrompt` or `SubscribeEvents` gRPC — those would
-duplicate the A2A surface the rest of the system uses.
+Prompt / event flow reuses `sys_write` / `sys_watch` / `sys_read` over the
+chat-with-me paths; the A2A surface carries it without a bespoke SendPrompt
+or SubscribeEvents gRPC.
 
-`AgentState` lifecycle: `REGISTERED → WARMING_UP → READY ↔ BUSY → SUSPENDED → TERMINATED`.
-`kernel.agent_wait(pid, target_state, timeout_ms)` parks the calling
-thread on the per-pid condvar — supervisors get an event-driven
-blocking wait instead of polling.
-
-`AgentRegistry` is the SSOT for `AgentState`.
-`AgentRegistry::update_state(&pid, new_state)` at
-`rust/kernel/src/core/agents/registry.rs:579` is the only writer in
-the runtime path — it enforces the FSM via `can_transition_to`
-(`registry.rs:177`), updates `updated_at_ms`, and fires the
-`on_terminate` observers when a session transitions to `TERMINATED`.
-
-The runtime-path callsite is a state-observer closure constructed by
-`ManagedAgentService::start_session`. The closure captures
-`Arc<AgentRegistry>` and the new session's pid, maps the runtime
-crate's `AgentLoopState` (`WarmingUp` / `Ready` / `Busy`) onto
-`AgentState`, and calls `registry.update_state(&pid, target)` — any
-`AgentError::InvalidTransition` is logged so a runtime FSM bug is
-visible without aborting the worker. The `SpawnTask<K>::spawn` DI
-seam takes this observer as a parameter; the binary-edge adapter
-forwards it through to
-the runtime crate's `state_callback` parameter and never touches
-`AgentRegistry` itself. The adapter is a pure runtime-wrapper; the
-service owns the SSOT writes.
+`AgentState` FSM: `REGISTERED → WARMING_UP → READY ↔ BUSY → SUSPENDED →
+TERMINATED`. `AgentRegistry` is the SSOT: `update_state(&pid, new_state)`
+(`kernel/src/core/agents/registry.rs`) is the only runtime-path writer — it
+enforces the FSM via `can_transition_to`, updates `updated_at_ms`, and fires
+`on_terminate` on TERMINATED. The writer is a state-observer closure that
+`ManagedAgentService::start_session` constructs (capturing
+`Arc<AgentRegistry>` + pid, mapping the runtime's `AgentLoopState` onto
+`AgentState`) and passes through the `SpawnTask::spawn` seam; the adapter
+forwards it to the runtime's `state_callback` and never touches
+`AgentRegistry`. `kernel.agent_wait(pid, target_state, timeout_ms)` parks on
+the per-pid condvar for event-driven waits.
 
 ### 2.4 sudo-code state placement
 

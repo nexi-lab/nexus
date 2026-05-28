@@ -245,6 +245,11 @@ class SearchDaemon:
     """
 
     def _search_timing_var(self) -> ContextVar[dict[str, float] | None]:
+        """Per-instance ContextVar holding the request-local timing snapshot.
+
+        Created lazily on first access — the sole creation path, so instances
+        that skip ``__init__`` (test doubles, subclasses) still work.
+        """
         timing_var = self.__dict__.get("_last_search_timing_var")
         if timing_var is None:
             timing_var = ContextVar(
@@ -372,11 +377,9 @@ class SearchDaemon:
         self._fts_backend: Any = None
         self._vector_backend: Any = None
         self._embedding_client: Any = None
-        self._last_search_timing_var: ContextVar[dict[str, float] | None] = ContextVar(
-            f"search_daemon_{id(self)}_last_search_timing",
-            default=None,
-        )
-        self.last_search_timing: dict[str, float] = {}
+        # ContextVar is created lazily by _search_timing_var(); the setter
+        # below routes through it, so no separate eager construction here.
+        self.last_search_timing = {}
 
         # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
         # Bootstrapped from document_skeleton DB rows; no file reads on restart (13B).

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -10,7 +9,6 @@ from click.testing import CliRunner
 
 from nexus.cli.commands.agent import agent
 from nexus.cli.commands.snapshots import snapshot
-from nexus.cli.commands.workspace import workspace_group
 
 
 class _FakeFS:
@@ -111,71 +109,6 @@ class TestAgentLifecycleCli:
         assert result.exit_code == 0, result.output
         assert calls["heartbeat"] == "alice"
         assert "Recorded heartbeat: alice" in result.output
-
-
-class TestWorkspaceLifecycleCli:
-    def test_update_calls_update_workspace(self, monkeypatch) -> None:
-        import nexus.cli.commands.workspace as workspace_module
-
-        calls: dict[str, Any] = {}
-
-        class WorkspaceRPC:
-            def update_workspace(self, **kwargs: Any) -> dict[str, Any]:
-                calls["update"] = kwargs
-                return {
-                    "path": kwargs["path"],
-                    "name": kwargs["name"],
-                    "description": kwargs["description"],
-                    "metadata": kwargs["metadata"],
-                }
-
-        _patch_open_filesystem(monkeypatch, workspace_module, {"workspace_rpc": WorkspaceRPC()})
-
-        result = CliRunner().invoke(
-            workspace_group,
-            [
-                "update",
-                "/workspace/project",
-                "--name",
-                "Project",
-                "--description",
-                "Main workspace",
-                "--metadata",
-                "owner=alice",
-            ],
-        )
-
-        assert result.exit_code == 0, result.output
-        assert calls["update"] == {
-            "path": "/workspace/project",
-            "name": "Project",
-            "description": "Main workspace",
-            "metadata": {"owner": "alice"},
-        }
-        assert "Updated workspace: /workspace/project" in result.output
-
-    def test_config_load_calls_load_workspace_config(self, monkeypatch, tmp_path) -> None:
-        import nexus.cli.commands.workspace as workspace_module
-
-        calls: dict[str, Any] = {}
-
-        class WorkspaceRPC:
-            def load_workspace_config(self, **kwargs: Any) -> dict[str, int]:
-                calls["load"] = kwargs
-                return {"workspaces_registered": 1, "workspaces_skipped": 0}
-
-        _patch_open_filesystem(monkeypatch, workspace_module, {"workspace_rpc": WorkspaceRPC()})
-        config_path = tmp_path / "workspaces.json"
-        config_path.write_text(
-            json.dumps({"workspaces": [{"path": "/workspace/project", "name": "Project"}]}),
-            encoding="utf-8",
-        )
-
-        result = CliRunner().invoke(workspace_group, ["config", "load", str(config_path)])
-
-        assert result.exit_code == 0, result.output
-        assert calls["load"] == {"workspaces": [{"path": "/workspace/project", "name": "Project"}]}
-        assert "Loaded workspace config" in result.output
 
 
 class TestSnapshotLifecycleCli:

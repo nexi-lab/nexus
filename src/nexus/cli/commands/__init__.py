@@ -36,7 +36,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "search": ("glob", "grep", "search"),
     "rebac": ("rebac",),
     "versions": ("versions",),
-    "workspace": ("workspace",),
     "inspect": ("info", "version", "size"),
     "plugins": ("plugins",),
     "operations": ("ops", "undo"),
@@ -47,7 +46,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "mcp": ("mcp",),
     "cache": ("cache",),
     "migrate": ("migrate",),
-    "context": ("context",),
     "network": ("network",),
     "tls": ("tls",),
     "status": ("status",),  # status [--watch] [--json]

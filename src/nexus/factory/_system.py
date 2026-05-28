@@ -362,8 +362,6 @@ def _boot_pre_kernel_services(
             zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
 
             # Register session-based finalizers (available at boot).
-            # Cache + Mount finalizers are registered later in service_wiring
-            # when their dependencies (file_cache, mount_service) exist.
             try:
                 from nexus.services.lifecycle.zone_finalizers import (
                     ReBACZoneFinalizer,

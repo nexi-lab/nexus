@@ -18,8 +18,6 @@ from nexus.contracts.protocols.zone_lifecycle import (
     ZoneLifecycleStatus,
     ZonePhase,
 )
-from nexus.services.lifecycle.zone_finalizers.cache_finalizer import CacheZoneFinalizer
-from nexus.services.lifecycle.zone_finalizers.mount_finalizer import MountZoneFinalizer
 from nexus.services.lifecycle.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
 from nexus.services.lifecycle.zone_finalizers.search_finalizer import SearchZoneFinalizer
 
@@ -50,16 +48,8 @@ class TestZoneFinalizerProtocol:
             ZoneFinalizerProtocol, "__abstractmethods__"
         )
 
-    def test_cache_finalizer_satisfies_protocol(self):
-        f = CacheZoneFinalizer(file_cache=MagicMock())
-        assert isinstance(f, ZoneFinalizerProtocol)
-
     def test_search_finalizer_satisfies_protocol(self):
         f = SearchZoneFinalizer(session_factory=MagicMock())
-        assert isinstance(f, ZoneFinalizerProtocol)
-
-    def test_mount_finalizer_satisfies_protocol(self):
-        f = MountZoneFinalizer(mount_service=MagicMock())
         assert isinstance(f, ZoneFinalizerProtocol)
 
     def test_rebac_finalizer_satisfies_protocol(self):

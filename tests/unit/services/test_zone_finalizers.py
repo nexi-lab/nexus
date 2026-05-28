@@ -1,73 +1,17 @@
 """Per-finalizer unit tests (Issue #2061).
 
 Tests each concrete zone finalizer in isolation:
-- CacheZoneFinalizer: L1 + L2 cache delegation
 - SearchZoneFinalizer: bulk entity/relationship deletion
-- MountZoneFinalizer: mount iteration + removal
 - ReBACZoneFinalizer: bulk tuple deletion
 """
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.lifecycle.zone_finalizers.cache_finalizer import CacheZoneFinalizer
-from nexus.services.lifecycle.zone_finalizers.mount_finalizer import MountZoneFinalizer
 from nexus.services.lifecycle.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
 from nexus.services.lifecycle.zone_finalizers.search_finalizer import SearchZoneFinalizer
-
-# ---------------------------------------------------------------------------
-# CacheZoneFinalizer
-# ---------------------------------------------------------------------------
-
-
-class TestCacheZoneFinalizer:
-    def test_finalizer_key(self):
-        f = CacheZoneFinalizer(file_cache=MagicMock())
-        assert f.finalizer_key == "nexus.core/cache"
-
-    @pytest.mark.asyncio
-    async def test_delegates_to_file_cache_delete_zone(self):
-        file_cache = MagicMock()
-        file_cache.delete_zone.return_value = 42
-        f = CacheZoneFinalizer(file_cache=file_cache)
-
-        await f.finalize_zone("zone-1")
-
-        file_cache.delete_zone.assert_called_once_with("zone-1")
-
-    @pytest.mark.asyncio
-    async def test_l2_cache_cleanup(self):
-        file_cache = MagicMock()
-        file_cache.delete_zone.return_value = 0
-        l2_cache = AsyncMock()
-        l2_cache.delete_by_pattern.return_value = 10
-        f = CacheZoneFinalizer(file_cache=file_cache, l2_cache=l2_cache)
-
-        await f.finalize_zone("zone-1")
-
-        l2_cache.delete_by_pattern.assert_awaited_once_with("zone:zone-1:*")
-
-    @pytest.mark.asyncio
-    async def test_no_l2_cache(self):
-        """When L2 cache is None, no error."""
-        file_cache = MagicMock()
-        file_cache.delete_zone.return_value = 0
-        f = CacheZoneFinalizer(file_cache=file_cache, l2_cache=None)
-
-        await f.finalize_zone("zone-1")  # Should not raise
-
-    @pytest.mark.asyncio
-    async def test_empty_zone_no_error(self):
-        """Deleting from empty zone: zero entries, no error."""
-        file_cache = MagicMock()
-        file_cache.delete_zone.return_value = 0
-        f = CacheZoneFinalizer(file_cache=file_cache)
-
-        await f.finalize_zone("empty-zone")
-        file_cache.delete_zone.assert_called_once_with("empty-zone")
-
 
 # ---------------------------------------------------------------------------
 # SearchZoneFinalizer
@@ -112,69 +56,6 @@ class TestSearchZoneFinalizer:
 
         f = SearchZoneFinalizer(session_factory=factory)
         await f.finalize_zone("empty-zone")  # Should not raise
-
-
-# ---------------------------------------------------------------------------
-# MountZoneFinalizer
-# ---------------------------------------------------------------------------
-
-
-class TestMountZoneFinalizer:
-    def test_finalizer_key(self):
-        f = MountZoneFinalizer(mount_service=MagicMock())
-        assert f.finalizer_key == "nexus.core/mount"
-
-    @pytest.mark.asyncio
-    async def test_removes_zone_mounts_by_path_prefix(self):
-        mount_svc = MagicMock()
-        mount_svc.list_mounts.return_value = [
-            {"mount_point": "/zone-1/data"},
-            {"mount_point": "/zone-2/data"},
-        ]
-        f = MountZoneFinalizer(mount_service=mount_svc)
-
-        await f.finalize_zone("zone-1")
-
-        mount_svc.remove_mount.assert_called_once_with("/zone-1/data")
-
-    @pytest.mark.asyncio
-    async def test_no_mounts_for_zone(self):
-        mount_svc = MagicMock()
-        mount_svc.list_mounts.return_value = [
-            {"mount_point": "/other/data"},
-        ]
-        f = MountZoneFinalizer(mount_service=mount_svc)
-
-        await f.finalize_zone("zone-1")  # No mounts to remove
-
-        mount_svc.remove_mount.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_mount_removal_failure_raises(self):
-        mount_svc = MagicMock()
-        mount_svc.list_mounts.return_value = [
-            {"mount_point": "/zone-1/data"},
-        ]
-        mount_svc.remove_mount.side_effect = RuntimeError("mount busy")
-        f = MountZoneFinalizer(mount_service=mount_svc)
-
-        with pytest.raises(RuntimeError, match="mount busy"):
-            await f.finalize_zone("zone-1")
-
-    @pytest.mark.asyncio
-    async def test_multiple_zone_mounts(self):
-        """Multiple mounts for same zone all get removed."""
-        mount_svc = MagicMock()
-        mount_svc.list_mounts.return_value = [
-            {"mount_point": "/zone-1/uploads"},
-            {"mount_point": "/zone-1/cache"},
-            {"mount_point": "/zone-2/uploads"},
-        ]
-        f = MountZoneFinalizer(mount_service=mount_svc)
-
-        await f.finalize_zone("zone-1")
-
-        assert mount_svc.remove_mount.call_count == 2
 
 
 # ---------------------------------------------------------------------------

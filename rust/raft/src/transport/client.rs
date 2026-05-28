@@ -632,7 +632,7 @@ pub struct ClusterInfoResult {
 }
 
 // =============================================================================
-// JoinCluster client — shared by fullnodes (via PyO3) and witness binary
+// JoinCluster client — shared by cluster nodes and witness binary
 // =============================================================================
 
 /// Result of a successful JoinCluster call.

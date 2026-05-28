@@ -497,8 +497,8 @@ mod tests {
     /// a metastore mount at `/{zone}/proc/...`, so `unregister_pipes`
     /// can't reach the kernel-side StdioPipeBackend to close its
     /// dup'd fd, the subprocess never sees EOF on stdin, and `wait`
-    /// hangs. Run this test against a fully-wired kernel (boot via
-    /// PyKernel + factory) where the proc-tree mount is present:
+    /// hangs. Run this test against a fully-wired kernel (the boot
+    /// path that mounts the proc-tree):
     ///   `cargo test acp::subprocess::tests::cat_roundtrip -- --ignored`
     /// The roundtrip portion of the test (write -> read -> assert
     /// echoed bytes) does pass; only the EOF / wait teardown trips on

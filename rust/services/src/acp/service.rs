@@ -13,9 +13,8 @@
 //!   * [`super::observer::AgentObserver`]   -- session/update accumulator
 //!
 //! AgentRegistry is reached through an injectable [`AgentRegistry`]
-//! trait. Today's PyO3-wired bridge lands in commit 21; commit 20
-//! provides the trait + a unit-test mock so the orchestration logic
-//! is testable without a Python runtime.
+//! trait so the orchestration logic in `call_agent` stays testable
+//! against a unit-test mock without standing up the real registry.
 
 #![allow(dead_code)]
 
@@ -24,8 +23,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// Process-wide handle to the installed AcpService. Set by
-/// [`AcpService::install`] so the hand-written PyO3 surface can find
-/// the instance without downcasting through `Arc<dyn RustService>`.
+/// [`AcpService::install`] so cross-callsite reach (set_agent_registry,
+/// register_on_terminate, gRPC handler) lands on the same instance the
+/// kernel ServiceRegistry holds — without downcasting through
+/// `Arc<dyn RustService>`.
 static ACP_SVC_HANDLE: OnceLock<Arc<AcpService<Kernel>>> = OnceLock::new();
 
 use dashmap::DashMap;
@@ -51,11 +52,10 @@ use std::time::Duration;
 
 // ── AgentRegistry trait ─────────────────────────────────────────────────
 
-/// Subset of the Python `AgentRegistry` surface AcpService depends on.
-/// Today AgentRegistry stays Python (commit 21 wires a PyO3 impl);
-/// commit 20 isolates the dependency behind this trait so the
-/// orchestration logic in [`AcpService::call_agent`] is testable
-/// without a live Python interpreter.
+/// Subset of the AgentRegistry surface AcpService depends on. The
+/// trait isolates the dependency so the orchestration logic in
+/// [`AcpService::call_agent`] is testable against a unit-test mock
+/// without instantiating the production registry.
 pub(crate) trait AgentRegistry: Send + Sync {
     /// Allocate a pid for an unmanaged agent. `name` follows the
     /// Python convention `acp:<config.name>`.
@@ -386,18 +386,16 @@ impl<K: KernelAbi> AcpService<K> {
 // `install` + `handle` live in a `K = Kernel` specific impl because
 // the global `ACP_SVC_HANDLE` is concretely typed
 // `OnceLock<Arc<AcpService<Kernel>>>` — production has a single
-// kernel instance per process and this matches the cdylib boot
-// path.  A future `K = MockKernel` test fixture builds an
-// `AcpService` via `new` directly and bypasses this lookup table.
+// kernel instance per process and this matches the boot path. A
+// future `K = MockKernel` test fixture builds an `AcpService` via
+// `new` directly and bypasses this lookup table.
 impl AcpService<Kernel> {
-    /// Install the AcpService into a kernel's `ServiceRegistry`.
-    /// Called from the cdylib post-construction (PyKernel boot)
-    /// because `Arc<Kernel>` is only available after the wrapping
-    /// step.
+    /// Install the AcpService into a kernel's `ServiceRegistry`. Called
+    /// from the boot path once `Arc<Kernel>` is available.
     ///
     /// Stores the concrete Arc<AcpService> in [`ACP_SVC_HANDLE`] so
-    /// the PyO3 wiring (set_agent_registry, register_on_terminate)
-    /// can reach the same instance the registry holds without
+    /// cross-callsite reach (set_agent_registry, register_on_terminate)
+    /// can land on the same instance the registry holds without
     /// downcasting `Arc<dyn RustService>`. The handle is process-wide;
     /// a second `install` against a different kernel instance is
     /// rejected by the underlying ServiceRegistry duplicate check.
@@ -409,7 +407,7 @@ impl AcpService<Kernel> {
 
     /// Look up the installed AcpService instance. `None` when
     /// install hasn't been called yet (e.g. tests that bypass the
-    /// PyKernel boot path).
+    /// production boot path).
     pub(crate) fn handle() -> Option<Arc<Self>> {
         ACP_SVC_HANDLE.get().cloned()
     }

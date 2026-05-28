@@ -29,8 +29,7 @@ pub(crate) struct OpenAIBackend {
     pub(crate) api_key: String,
     pub(crate) default_model: String,
     /// CAS engine rooted at the per-mount spool dir. `as_cas()` exposes this
-    /// to the `PyKernel::cas_*` surface so Python callers can read/write on
-    /// LLM mounts without the legacy `CASOpenAIBackend` Python wrapper.
+    /// to the kernel `cas_*` surface so callers can read/write on LLM mounts.
     pub(crate) engine: CASEngine,
     /// Shared reqwest HTTP client — one TCP/H2 pool is reused across every
     /// chat completion + streaming call on this mount.
@@ -72,7 +71,7 @@ impl OpenAIBackend {
         })
     }
 
-    /// Expose the CASEngine to the `PyKernel::cas_*` surface.
+    /// Expose the CASEngine to the kernel `cas_*` surface.
     pub(crate) fn engine(&self) -> &CASEngine {
         &self.engine
     }

@@ -61,11 +61,11 @@ fn to_server_path(zone_path: &str, backend_path: &str) -> String {
     } else {
         format!("/{backend_path}")
     };
-    if zone_path.is_empty() || zone_path == "/" {
-        bp
-    } else if bp
-        .trim_start_matches('/')
-        .starts_with(zone_path.trim_start_matches('/'))
+    if zone_path.is_empty()
+        || zone_path == "/"
+        || bp
+            .trim_start_matches('/')
+            .starts_with(zone_path.trim_start_matches('/'))
     {
         bp
     } else {

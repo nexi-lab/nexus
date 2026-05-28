@@ -77,9 +77,8 @@ pub fn install_managed_agent_with_spawn(
 }
 
 /// Install ManagedAgentService on `kernel` without a runtime body
-/// (procfs + AgentRegistry only). Mirrors the existing pyo3 path
-/// `services::python::nx_managed_agent_install` for callers that
-/// don't ship a runtime.
+/// (procfs + AgentRegistry only) — for callers that do not ship a
+/// runtime spawn provider.
 pub fn install_managed_agent(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
     ManagedAgentService::<kernel::kernel::Kernel>::install(kernel)
 }
@@ -284,11 +283,10 @@ impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
     /// Service constructor.  Production callers reach this through
-    /// [`ManagedAgentService::<Kernel>::install`] which wraps the
-    /// cdylib's freshly-built `Kernel`; tests instantiate directly
-    /// with a `Kernel::new()` (cheap in-memory construction) so the
-    /// per-pid procfs entries land in the same metastore the
-    /// assertion helpers read back.
+    /// [`ManagedAgentService::<Kernel>::install`] against the boot-time
+    /// `Arc<Kernel>`; tests instantiate directly with a `Kernel::new()`
+    /// (cheap in-memory construction) so the per-pid procfs entries
+    /// land in the same metastore the assertion helpers read back.
     pub(crate) fn new(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel,
@@ -1010,8 +1008,7 @@ mod tests {
 
     /// Procfs lifecycle tests — exercise start_session through a real
     /// `Kernel` and assert the metastore carries the dirents + DT_LINK
-    /// rows the integration doc §2.2 promises.  Pure-Rust setup, no
-    /// PyO3.
+    /// rows the integration doc §2.2 promises.
     mod procfs {
         use super::*;
         use kernel::core::agents::registry::AgentSignal;
@@ -1049,7 +1046,7 @@ mod tests {
         }
 
         /// Build a `ManagedAgentService` with a real Kernel inside —
-        /// the only setup needed is `Kernel::new` (no PyO3 boot).
+        /// the only setup needed is `Kernel::new`.
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService<Kernel>) {
             let k = Arc::new(Kernel::new());
             let svc = ManagedAgentService::new(Arc::clone(&k), Arc::clone(k.agent_registry()));

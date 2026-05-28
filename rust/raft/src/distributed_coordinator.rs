@@ -3,9 +3,9 @@
 //! `RaftDistributedCoordinator` is the raft-crate impl of the
 //! `DistributedCoordinator` trait the kernel exposes. The Cargo edge
 //! runs `raft → kernel`; the kernel installs an
-//! `Arc<dyn DistributedCoordinator>` into its `federation` slot via the
-//! cdylib boot path, and federation-aware syscalls dispatch through the
-//! trait.
+//! `Arc<dyn DistributedCoordinator>` into its `federation` slot from
+//! the binary boot path, and federation-aware syscalls dispatch through
+//! the trait.
 //!
 //! ## Provider shape
 //!

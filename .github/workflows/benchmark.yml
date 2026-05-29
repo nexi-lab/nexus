@@ -82,7 +82,6 @@ jobs:
           fi
 
       - name: Clean working tree for branch switch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: git checkout -- .
 
       - name: Store benchmark results

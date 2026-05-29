@@ -72,15 +72,15 @@ graph TD
         CA[custom apps]
     end
 
-    subgraph Agent Harness — open ecosystem
+    subgraph Agent_Harness ["Agent Harness (open ecosystem)"]
         SC[sudocode / sudocode-host]
         GC[Gemini CLI]
         CX[Codex CLI]
         AH[any harness]
     end
 
-    subgraph Infra Layer — one per node
-        NX["NEXUS (profile-based: embedded│lite│sandbox│full│cluster│cloud│remote)"]
+    subgraph Infra ["Infra Layer (one per node)"]
+        NX["NEXUS (profile-based: embedded / lite / sandbox / full / cluster / cloud / remote)"]
         SR["SUDOROUTER (unified LLM access: Claude, GPT, Gemini, local models)"]
     end
 
@@ -100,15 +100,15 @@ Agents talk to **Nexus** via syscalls — they get federation, A2A, collaboratio
 
 ```mermaid
 graph TD
-    subgraph Bricks — runtime-loadable, 35+
+    subgraph Bricks ["Bricks (runtime-loadable, 35+)"]
         B[ReBAC · Auth · Agents · Search · MCP · Pay · Governance · 25+ more]
     end
 
-    subgraph Kernel — pure Rust, ~5 MB binary
+    subgraph Kernel ["Kernel (pure Rust, ~5 MB binary)"]
         K[VFS · Syscall dispatch · CAS · Pipes · Streams · Locks · FileWatcher · Permission gate · Raft]
     end
 
-    subgraph Drivers — hot-swappable
+    subgraph Drivers ["Drivers (hot-swappable)"]
         D[redb · PostgreSQL · S3 · GCS · Dragonfly · BM25S · SudoRouter · gRPC]
     end
 

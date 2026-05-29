@@ -76,7 +76,25 @@ _BACKEND_LEG_TIMING_KEYS = (
     "vector_ms",
     "fusion_ms",
     "rerank_ms",
+    # Issue #4269: time spent inside the index-touching DB query itself
+    # (the BM25 scan / index page fault-in), isolated from the surrounding
+    # Python coercion and fusion work. On a cold network-attached volume this
+    # is where the read-stall shows up.
+    "index_load_ms",
+    # Issue #4269 (Codex R2): time spent in the legacy fallback stack
+    # (Zoekt / BM25S / inline FTS / _hybrid_search) when the indexed backend
+    # returned empty but the fallback produced the results. Kept distinct from
+    # the indexed legs so a degraded-path response doesn't misattribute that
+    # work to keyword_ms / vector_ms / fusion_ms.
+    "fallback_ms",
 )
+
+# Per-backend ceiling for boot-time index preload (Issue #4269). Preload
+# targets slow/flaky network volumes — exactly where a cold index read can
+# hang — so each backend warm is bounded to keep a stalled volume from
+# blocking server startup indefinitely. A fired timeout is fail-soft: the
+# first real query just pays the cold cost it would have paid anyway.
+_PRELOAD_TIMEOUT_SECONDS: float = 30.0
 
 
 @dataclass
@@ -87,6 +105,11 @@ class DaemonStats:
     db_pool_size: int = 0
     db_pool_warmup_time_ms: float = 0.0
     vector_warmup_time_ms: float = 0.0
+    index_preload_time_ms: float = 0.0  # Issue #4269: boot-time index warm
+    # Issue #4269 (Codex R4): None = preload not attempted; True = every
+    # attempted backend warmed successfully; False = at least one warm failed
+    # or timed out (index may still be cold — telemetry must not imply success).
+    index_preload_ok: bool | None = None
     total_queries: int = 0
     avg_latency_ms: float = 0.0
     p99_latency_ms: float = 0.0
@@ -133,6 +156,8 @@ def _empty_backend_timing() -> dict[str, float]:
         "vector_ms": 0.0,
         "fusion_ms": 0.0,
         "rerank_ms": 0.0,
+        "index_load_ms": 0.0,
+        "fallback_ms": 0.0,
     }
 
 
@@ -157,6 +182,18 @@ class DaemonConfig:
     # Vector search settings
     vector_warmup_enabled: bool = True
     vector_ef_search: int = 100  # HNSW recall parameter
+
+    # Index preload (Issue #4269). When the search index lives on a slow
+    # network-attached volume, the first query per process pays a cold
+    # mmap fault-in cost (1.6-2.7s observed) that the kernel does not retain
+    # in page cache under that storage. Enabling this issues a representative
+    # index-touching query against the keyword/BM25 index at startup so those
+    # pages are faulted into RAM before the first real request, trading idle
+    # boot time for a warm first query. (The dense-vector HNSW index is warmed
+    # separately by ``_warm_vector_index`` under ``vector_warmup_enabled``.)
+    # Default off — only worth it on network volumes; on local NVMe the cold
+    # cost is small and preload just wastes boot time.
+    index_preload_enabled: bool = False
 
     # Index refresh settings
     refresh_debounce_seconds: float = 5.0
@@ -826,6 +863,12 @@ class SearchDaemon:
             self._fts_backend = None
             self._vector_backend = None
 
+        # Preload index pages into RAM if requested (Issue #4269). Runs
+        # synchronously so the first real query lands on a warm index. Only
+        # worth enabling on slow network-attached volumes; default off.
+        if self.config.index_preload_enabled:
+            await self._preload_search_index()
+
         # Embedding client for query-time vectors. Also wired as the
         # ``_embedding_provider`` so the durable mutation consumer +
         # IndexingPipeline can run their batched calls (which use
@@ -1222,6 +1265,86 @@ class SearchDaemon:
         except Exception as e:
             # Non-fatal - vector search will still work, just slower first time
             logger.debug(f"Vector index warmup skipped: {e}")
+
+    async def _preload_search_index(self) -> None:
+        """Fault the search index pages into RAM at boot (Issue #4269).
+
+        Calls ``preload()`` on any backend that exposes it (the FTS/keyword
+        backends do; the dense-vector HNSW index is warmed separately and
+        earlier by :meth:`_warm_vector_index`). Each backend issues a
+        representative index-touching query so the kernel faults the keyword
+        index pages into the process address space before the first real
+        request — turning the ~1.6-2.7s cold-load I/O stall on a
+        network-attached volume into idle boot time instead.
+
+        Fail-soft: a backend that lacks ``preload()`` is skipped, a
+        ``preload()`` that raises is logged and swallowed, and each warm is
+        bounded by ``_PRELOAD_TIMEOUT_SECONDS`` so a hung volume cannot block
+        startup forever. Any of these only means the first query pays the cold
+        cost it would have paid anyway.
+        """
+        start = time.perf_counter()
+        total_ms = 0.0
+        any_attempted = False
+        all_ok = True
+        # Only warm backends the query path will actually use. Searches route
+        # through the new backend path only when BOTH fts and vector backends
+        # exist (see _search_on_current_loop ``has_new_backends``); when vector
+        # is absent (e.g. SQLite without sqlite_vec) queries fall back to the
+        # legacy stack and the warmed FTS backend is bypassed — warming it would
+        # be wasted work and a misleading index_preload_ok (Codex R7). Report
+        # not-attempted in that case so telemetry stays honest.
+        backends_active = self._fts_backend is not None and self._vector_backend is not None
+        if not backends_active:
+            self.stats.index_preload_time_ms = 0.0
+            self.stats.index_preload_ok = None
+            logger.info(
+                "search index preload skipped: backend query path inactive (fts=%s vector=%s)",
+                type(self._fts_backend).__name__ if self._fts_backend else None,
+                type(self._vector_backend).__name__ if self._vector_backend else None,
+            )
+            return
+        for label, backend in (("fts", self._fts_backend), ("vector", self._vector_backend)):
+            if backend is None:
+                continue
+            preload = getattr(backend, "preload", None)
+            if preload is None:
+                continue
+            any_attempted = True
+            try:
+                elapsed = await asyncio.wait_for(preload(), timeout=_PRELOAD_TIMEOUT_SECONDS)
+                if isinstance(elapsed, int | float):
+                    total_ms += float(elapsed)
+                logger.info(
+                    "search %s index preloaded in %.1fms",
+                    label,
+                    float(elapsed) if isinstance(elapsed, int | float) else -1.0,
+                )
+            except TimeoutError:
+                all_ok = False
+                logger.warning(
+                    "search %s index preload timed out after %.0fs; first query will pay cold cost",
+                    label,
+                    _PRELOAD_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                all_ok = False
+                logger.warning(
+                    "search %s index preload failed; first query will pay cold cost",
+                    label,
+                    exc_info=True,
+                )
+        self.stats.index_preload_time_ms = (time.perf_counter() - start) * 1000
+        # None when nothing was attempted; otherwise reflect whether every
+        # attempted warm actually succeeded — so /search/stats never implies a
+        # successful preload over a still-cold index (Codex R4).
+        self.stats.index_preload_ok = all_ok if any_attempted else None
+        logger.info(
+            "search index preload complete in %.1fms (backend-reported %.1fms, ok=%s)",
+            self.stats.index_preload_time_ms,
+            total_ms,
+            self.stats.index_preload_ok,
+        )
 
     # ==========================================================================
     # Skeleton index — Issue #3725
@@ -1674,7 +1797,11 @@ class SearchDaemon:
                 # Keyword mode should use the daemon's keyword stack first.
                 # The new fts backend above is the canonical BM25/native-FTS
                 # path. Fall back to `_keyword_search` only if the backend is
-                # unavailable or returned no hits.
+                # unavailable or returned no hits. This is the SOLE legacy
+                # keyword call — the branch returns unconditionally below rather
+                # than falling through to the generic fallback, which would
+                # re-run _keyword_search a second time (doubling cold-volume I/O
+                # on exactly the 0-result query the issue measures — Codex R5).
                 keyword_start = time.perf_counter()
                 keyword_results = await self._keyword_search(
                     query,
@@ -1683,12 +1810,29 @@ class SearchDaemon:
                     zone_id=effective_zone_id,
                 )
                 keyword_ms = (time.perf_counter() - keyword_start) * 1000
-                self.last_search_timing = {"backend_ms": keyword_ms, "rerank_ms": 0.0}
-                if keyword_results:
-                    latency_ms = (time.perf_counter() - start) * 1000
-                    self._track_latency(latency_ms)
-                    await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
-                    return self._with_search_timing(keyword_results)
+                if not backend_attempted:
+                    # No indexed backend ran (none configured) — the legacy
+                    # keyword path is the only timing source.
+                    self.last_search_timing = {"backend_ms": keyword_ms, "rerank_ms": 0.0}
+                else:
+                    # Indexed backend ran (and recorded index_load_ms) but
+                    # returned empty. Record the legacy fallback work as a
+                    # distinct fallback_ms leg and fold it into the backend
+                    # total — ALWAYS, even on 0 results, so a cold zero-hit
+                    # query's fallback latency is visible rather than an
+                    # unexplained gap in total_ms (Codex R5). The indexed legs
+                    # (index_load_ms / keyword_ms) are preserved as-is, without
+                    # conflation (Codex R1/R2).
+                    self.last_search_timing["fallback_ms"] = (
+                        self.last_search_timing.get("fallback_ms", 0.0) + keyword_ms
+                    )
+                    self.last_search_timing["backend_ms"] = (
+                        self.last_search_timing.get("backend_ms", 0.0) + keyword_ms
+                    )
+                latency_ms = (time.perf_counter() - start) * 1000
+                self._track_latency(latency_ms)
+                await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
+                return self._with_search_timing(keyword_results)
             elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
                 # matches are not lost before backend semantic ranking.
@@ -1736,10 +1880,11 @@ class SearchDaemon:
                 # Backend returned empty — fall through to the legacy stack
                 # so Zoekt / BM25S / inline FTS can still serve the query.
 
-            # Legacy fallback (no search backends available, or empty result)
-            if search_type == "keyword":
-                results = await self._keyword_search(query, limit, path_filter, zone_id=zone_id)
-            elif search_type == "semantic":
+            # Legacy fallback (no search backends available, or empty indexed
+            # result). Keyword mode already returned above — it owns its single
+            # legacy keyword call — so only semantic and hybrid reach here.
+            fallback_start = time.perf_counter()
+            if search_type == "semantic":
                 results = await self._semantic_search(query, limit, path_filter, zone_id=zone_id)
             else:  # hybrid
                 results = await self._hybrid_search(
@@ -1750,12 +1895,28 @@ class SearchDaemon:
                     fusion_method,
                     zone_id=zone_id,
                 )
+            fallback_ms = (time.perf_counter() - fallback_start) * 1000
 
             # Track latency
             latency_ms = (time.perf_counter() - start) * 1000
             self._track_latency(latency_ms)
             if hybrid_keyword_ms and "backend_ms" in self.last_search_timing:
                 self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
+            # When an indexed backend was attempted but returned empty, this
+            # legacy fallback (semantic / hybrid) ran. Record its time as a
+            # distinct fallback_ms leg and fold it into backend_ms — ALWAYS,
+            # regardless of result count, so even a cold 0-result degraded query
+            # shows where the time went rather than leaving an unexplained gap
+            # in total_ms (Codex R5). The indexed legs (index_load_ms, vector_ms,
+            # keyword_ms, fusion_ms) are preserved as-is, without misattributing
+            # fallback time to them (Codex R1/R2).
+            if has_new_backends and "backend_ms" in self.last_search_timing:
+                self.last_search_timing["fallback_ms"] = (
+                    self.last_search_timing.get("fallback_ms", 0.0) + fallback_ms
+                )
+                self.last_search_timing["backend_ms"] = (
+                    self.last_search_timing.get("backend_ms", 0.0) + fallback_ms
+                )
 
             await self._attach_path_contexts(results, zone_id=effective_zone_id)
             return self._with_search_timing(results)
@@ -1799,7 +1960,7 @@ class SearchDaemon:
         if search_type == "keyword":
             results = await timed_leg(
                 "keyword_ms",
-                self._fts_backend.keyword_search(query, path, limit, zone_id),
+                self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
             )
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
@@ -1823,7 +1984,7 @@ class SearchDaemon:
             # to keyword-only and let the caller decide if that's enough.
             results = await timed_leg(
                 "keyword_ms",
-                self._fts_backend.keyword_search(query, path, limit, zone_id),
+                self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
             )
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
@@ -1841,6 +2002,7 @@ class SearchDaemon:
                     path,
                     pg_fts_backend.page_candidate_limit(keyword_limit),
                     zone_id,
+                    timing=timing,
                 )
                 timing["keyword_ms"] = (time.perf_counter() - keyword_start) * 1000
 
@@ -1865,7 +2027,9 @@ class SearchDaemon:
             chunk_kw, dense = await asyncio.gather(
                 timed_leg(
                     "keyword_ms",
-                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+                    self._fts_backend.keyword_search(
+                        query, path, limit * 2, zone_id, timing=timing
+                    ),
                 ),
                 timed_leg(
                     "vector_ms",
@@ -3803,6 +3967,13 @@ class SearchDaemon:
             "db_pool_size": self.stats.db_pool_size,
             "db_pool_warmup_time_ms": self.stats.db_pool_warmup_time_ms,
             "vector_warmup_time_ms": self.stats.vector_warmup_time_ms,
+            # Issue #4269: boot-time keyword-index preload telemetry so
+            # operators can confirm via /search/stats whether preload is on
+            # and how long the warm took.
+            "index_preload_enabled": self.config.index_preload_enabled,
+            "index_preload_time_ms": self.stats.index_preload_time_ms,
+            # None = not attempted; True/False = whether the warm succeeded.
+            "index_preload_ok": self.stats.index_preload_ok,
             "total_queries": self.stats.total_queries,
             "avg_latency_ms": round(self.stats.avg_latency_ms, 2),
             "p99_latency_ms": round(self.stats.p99_latency_ms, 2),

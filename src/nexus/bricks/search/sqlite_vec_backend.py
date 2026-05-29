@@ -854,8 +854,14 @@ class SqliteVecBackend:
         path: str,  # noqa: ARG002
         k: int,  # noqa: ARG002
         zone_id: str,  # noqa: ARG002
+        *,
+        timing: dict[str, float] | None = None,  # noqa: ARG002
     ) -> list[BaseSearchResult]:
-        """Not implemented — this backend is semantic-only; keyword search lives in SqliteFtsBackend."""
+        """Not implemented — semantic-only; keyword search lives in SqliteFtsBackend.
+
+        Accepts ``timing`` (Issue #4269) for SearchBackend-protocol parity; this
+        semantic-only backend records nothing into it.
+        """
         return []
 
     async def semantic_search(

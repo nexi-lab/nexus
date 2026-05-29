@@ -150,9 +150,20 @@ impl NexusVfsService for VfsServiceImpl {
         // the permission gate (kernel::dispatch.rs:101). The same SSOT runs
         // whether the call entered via typed Read or generic Call.
         //
-        // `timeout_ms == 0` keeps file-read semantics (the kernel resolves the
-        // entry and returns immediately). Non-zero blocks pipe/stream reads.
-        let timeout_ms = if req.timeout_ms == 0 { 5000 } else { req.timeout_ms };
+        // Honor the kernel's read-timeout contract verbatim: `timeout_ms == 0`
+        // is O_NONBLOCK (resolve entry / return immediately; empty pipe yields
+        // b""), and a non-zero value blocks DT_PIPE/DT_STREAM reads up to N ms.
+        // Regular-file reads ignore this value entirely — the VFS read lock uses
+        // `vfs_lock_timeout_ms()` (kernel/io.rs), not this parameter.
+        //
+        // The previous `if req.timeout_ms == 0 { 5000 }` override silently turned
+        // every consumer's intended non-blocking pipe poll (all internal pipe/
+        // stream consumers pass timeout_ms=0 and pace themselves with their own
+        // asyncio.sleep) into a 5s BLOCKING read. That read runs synchronously on
+        // a zone-mgr tokio worker, so a handful of polling consumers parked all
+        // workers for ~5s at a time, starving the runtime shared by raft + every
+        // VFS RPC and stalling unrelated requests ~5s. Pass the value through.
+        let timeout_ms = req.timeout_ms;
         match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, timeout_ms, req.offset) {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
@@ -1401,7 +1412,7 @@ mod tests {
     use kernel::kernel::convenience::{KernelConvenience, MountOptions};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
-        BatchWriteItemRequest, BatchWriteRequest, StatRequest,
+        BatchWriteItemRequest, BatchWriteRequest, ReadRequest, SetattrRequest, StatRequest,
     };
     use kernel::kernel::Kernel;
 
@@ -1504,6 +1515,58 @@ mod tests {
         assert!(resp.results[1].is_error);
         assert!(!resp.results[2].is_error);
         assert_eq!(resp.results[2].content, b"ell");
+    }
+
+    /// Regression: a pipe read with `timeout_ms == 0` must be O_NONBLOCK —
+    /// return immediately with empty content, never block. A prior bug in this
+    /// handler overrode `timeout_ms == 0` to 5000ms, so every internal pipe
+    /// consumer's non-blocking poll (skeleton/zoekt/task-dispatch/audit all
+    /// pass timeout_ms=0) became a 5s BLOCKING read running synchronously on a
+    /// zone-mgr tokio worker. A handful of concurrent pollers then parked all
+    /// workers ~5s at a time, starving the runtime shared by raft + every VFS
+    /// RPC and stalling unrelated requests ~5s.
+    #[tokio::test]
+    async fn read_empty_pipe_with_zero_timeout_is_nonblocking() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        // Create an empty DT_PIPE (entry_type 3) through the service API.
+        let created = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/nexus/pipes/regression-test".into(),
+                auth_token: "test-key".into(),
+                entry_type: 3,
+                capacity: 65_536,
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(!created.is_error, "pipe create failed: {created:?}");
+
+        // Non-blocking (timeout_ms == 0) read of the empty pipe must return
+        // promptly. The starvation bug made this block ~5s.
+        let start = std::time::Instant::now();
+        let resp = svc
+            .read(tonic::Request::new(ReadRequest {
+                path: "/nexus/pipes/regression-test".into(),
+                auth_token: "test-key".into(),
+                timeout_ms: 0,
+                ..Default::default()
+            }))
+            .await
+            .expect("read rpc ok")
+            .into_inner();
+        let elapsed = start.elapsed();
+
+        assert!(!resp.is_error, "non-blocking pipe read should not error");
+        assert!(resp.content.is_empty(), "empty pipe should yield no bytes");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timeout_ms=0 pipe read must be non-blocking; took {elapsed:?} \
+             (regression: handler overrode 0 -> 5000ms, blocking a worker and \
+             starving the raft+VFS runtime)"
+        );
     }
 
     #[tokio::test]

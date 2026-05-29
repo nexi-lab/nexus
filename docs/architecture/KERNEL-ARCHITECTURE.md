@@ -578,7 +578,9 @@ Manager).
 
 #### 3.B.2 `ObjectStoreProvider`
 
-Single method: `construct(args: ObjectStoreProviderArgs) -> Arc<dyn ObjectStore>`.
+Single method: `build(args: &ObjectStoreProviderArgs) -> Result<ObjectStoreBuildResult, String>`.
+`ObjectStoreBuildResult` bundles `Option<Arc<dyn ObjectStore>>` (the backend)
+and `Option<Arc<dyn MetaStore>>` (remote metastore, for `"remote"` backends).
 
 `Kernel::sys_setattr("backend", …)` and the mount path use this to instantiate
 backends through trait dispatch. Cycle break is identical to the §3.A pattern:

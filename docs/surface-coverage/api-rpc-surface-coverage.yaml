@@ -2244,7 +2244,7 @@ operations:
   owning_issue: 4138
 - id: count.by_state
   module: filesystem
-  summary: ''
+  summary: Count agents in a given state; used by the background eviction loop's over-agent-cap trigger.
   transports:
     sdk:
       name: _AgentRegistryProxy.count_by_state
@@ -2254,11 +2254,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_kernel_client_hooks.py:258
+  perf_class: control
+  perf_link: invoked by the agent-eviction background task (~every 2 min), not on a request hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4268
 - id: create.key
   module: auth
   summary: ''
@@ -5519,7 +5519,8 @@ operations:
   owning_issue: 4137
 - id: list.by_priority
   module: filesystem
-  summary: ''
+  summary: List BUSY eviction candidates ordered by (eviction_priority, updated_at_ms); used by the background eviction loop
+    to pick victims.
   transports:
     sdk:
       name: _AgentRegistryProxy.list_by_priority
@@ -5529,11 +5530,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/unit/remote/test_kernel_client_hooks.py:808
+  perf_class: control
+  perf_link: invoked by the agent-eviction background task (~every 2 min), not on a request hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4268
 - id: list.connectors
   module: mount
   summary: List connector backend types available for dynamic mounts, optionally filtered by category.

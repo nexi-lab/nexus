@@ -2242,6 +2242,23 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
+- id: count.by_state
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.count_by_state
+      source: src/nexus/remote/kernel_client.py:1401
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: create.key
   module: auth
   summary: ''
@@ -4290,7 +4307,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.get
-      source: src/nexus/remote/kernel_client.py:1234
+      source: src/nexus/remote/kernel_client.py:1348
   profiles:
     lite: supported
     sandbox: supported
@@ -4307,7 +4324,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.heartbeat
-      source: src/nexus/remote/kernel_client.py:1260
+      source: src/nexus/remote/kernel_client.py:1374
   profiles:
     lite: supported
     sandbox: supported
@@ -4392,7 +4409,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:1195
+      source: src/nexus/remote/kernel_client.py:1309
   profiles:
     lite: supported
     sandbox: supported
@@ -4460,7 +4477,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.signal
-      source: src/nexus/remote/kernel_client.py:1237
+      source: src/nexus/remote/kernel_client.py:1351
   profiles:
     lite: supported
     sandbox: supported
@@ -4545,7 +4562,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:1228
+      source: src/nexus/remote/kernel_client.py:1342
   profiles:
     lite: supported
     sandbox: supported
@@ -5489,7 +5506,7 @@ operations:
       source: src/nexus/services/agents/agent_rpc_service.py:584
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:1263
+      source: src/nexus/remote/kernel_client.py:1377
   profiles:
     lite: supported
     sandbox: supported
@@ -5500,6 +5517,23 @@ operations:
   perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:92
   gap_issue: null
   owning_issue: 4137
+- id: list.by_priority
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.list_by_priority
+      source: src/nexus/remote/kernel_client.py:1405
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: list.connectors
   module: mount
   summary: List connector backend types available for dynamic mounts, optionally filtered by category.
@@ -5634,7 +5668,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_processes
-      source: src/nexus/remote/kernel_client.py:1266
+      source: src/nexus/remote/kernel_client.py:1380
   profiles:
     lite: supported
     sandbox: supported
@@ -8220,7 +8254,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register_external
-      source: src/nexus/remote/kernel_client.py:1198
+      source: src/nexus/remote/kernel_client.py:1312
   profiles:
     lite: supported
     sandbox: supported
@@ -10728,7 +10762,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister_external
-      source: src/nexus/remote/kernel_client.py:1231
+      source: src/nexus/remote/kernel_client.py:1345
   profiles:
     lite: supported
     sandbox: supported
@@ -10834,7 +10868,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.update_state
-      source: src/nexus/remote/kernel_client.py:1249
+      source: src/nexus/remote/kernel_client.py:1363
   profiles:
     lite: supported
     sandbox: supported
@@ -12311,6 +12345,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: count.by_state
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: create.key
   has:
   - sdk
@@ -13392,6 +13434,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: list.agents
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: list.by_priority
   has:
   - sdk
   missing:

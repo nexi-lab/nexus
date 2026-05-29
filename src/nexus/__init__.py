@@ -48,7 +48,7 @@ import os as _os
 import threading as _threading
 from typing import TYPE_CHECKING, Any, cast
 
-__version__ = "0.10.0"  # release version
+__version__ = "0.10.1"  # release version
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 

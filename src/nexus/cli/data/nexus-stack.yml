@@ -4,8 +4,8 @@
 # Pulls the prebuilt Nexus image from GHCR — no local Docker build required.
 # Services are activated via Docker Compose profiles:
 #
-#   Preset "shared":  --profile core --profile cache --profile search
-#   Preset "demo":    --profile core --profile cache --profile search
+#   Preset "shared":  --profile core --profile cache
+#   Preset "demo":    --profile core --profile cache
 #   Add-on "nats":    --profile events
 #   Add-on "mcp":     --profile mcp
 #

@@ -1470,7 +1470,7 @@ mod tests {
     use kernel::kernel::convenience::{KernelConvenience, MountOptions};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
-        BatchWriteItemRequest, BatchWriteRequest, StatRequest,
+        BatchWriteItemRequest, BatchWriteRequest, ReadRequest, SetattrRequest, StatRequest,
     };
     use kernel::kernel::Kernel;
 
@@ -1587,6 +1587,48 @@ mod tests {
 
         let resp = svc.batch_read(req).await.expect("rpc ok").into_inner();
         assert_eq!(resp.results.len(), 0);
+    }
+
+    /// Regression: a pipe read with `timeout_ms == 0` must be O_NONBLOCK —
+    /// return immediately, never block. A prior bug overrode 0 to 5000ms.
+    #[tokio::test]
+    async fn read_empty_pipe_with_zero_timeout_is_nonblocking() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        // Create an empty DT_PIPE (entry_type 3).
+        let created = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/nexus/pipes/regression-test".into(),
+                auth_token: "test-key".into(),
+                entry_type: 3,
+                capacity: 65_536,
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(!created.is_error, "pipe create failed: {created:?}");
+
+        let start = std::time::Instant::now();
+        let resp = svc
+            .read(tonic::Request::new(ReadRequest {
+                path: "/nexus/pipes/regression-test".into(),
+                auth_token: "test-key".into(),
+                timeout_ms: 0,
+                ..Default::default()
+            }))
+            .await
+            .expect("read rpc ok")
+            .into_inner();
+        let elapsed = start.elapsed();
+
+        assert!(!resp.is_error, "non-blocking pipe read should not error");
+        assert!(resp.content.is_empty(), "empty pipe should yield no bytes");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timeout_ms=0 pipe read must be non-blocking; took {elapsed:?}"
+        );
     }
 
     #[tokio::test]

@@ -275,7 +275,13 @@ impl NexusVfsService for VfsServiceImpl {
         };
         // No federation guard: ctx.zone_perms is enforced inside sys_unlink's
         // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
-        match KernelAbi::sys_unlink(&*self.kernel, &req.path, &ctx, req.recursive) {
+        // Offload: sys_unlink takes the VFS write lock (raft-shared runtime).
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let recursive = req.recursive;
+        let del_res =
+            run_blocking(move || KernelAbi::sys_unlink(&*kernel, &path, &ctx, recursive)).await?;
+        match del_res {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
                 is_error: false,
@@ -484,7 +490,13 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_rename(s))),
         };
-        match KernelAbi::sys_rename(&*self.kernel, &req.path, &req.new_path, &ctx) {
+        // Offload: sys_rename takes VFS write locks on both paths.
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let new_path = req.new_path;
+        let rename_res =
+            run_blocking(move || KernelAbi::sys_rename(&*kernel, &path, &new_path, &ctx)).await?;
+        match rename_res {
             Ok(r) => Ok(Response::new(RenameResponse {
                 hit: r.hit,
                 success: r.success,
@@ -519,7 +531,12 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_copy(s))),
         };
-        match KernelAbi::sys_copy(&*self.kernel, &req.src, &req.dst, &ctx) {
+        // Offload: sys_copy takes the VFS write lock on the destination.
+        let kernel = self.kernel.clone();
+        let src = req.src;
+        let dst = req.dst;
+        let copy_res = run_blocking(move || KernelAbi::sys_copy(&*kernel, &src, &dst, &ctx)).await?;
+        match copy_res {
             Ok(r) => Ok(Response::new(CopyResponse {
                 hit: r.hit,
                 dst_path: r.dst_path,
@@ -556,7 +573,13 @@ impl NexusVfsService for VfsServiceImpl {
         // hardcoded on the JSON path; expose only when there's a caller
         // that needs to vary them).
         let ttl_secs = req.timeout_ms / 1000 + 1;
-        match self.kernel.sys_lock(&req.path, &req.lock_id, 1, ttl_secs, "") {
+        // Offload: sys_lock blocks acquiring the advisory lock (raft-shared runtime).
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let lock_id_req = req.lock_id;
+        let lock_res =
+            run_blocking(move || kernel.sys_lock(&path, &lock_id_req, 1, ttl_secs, "")).await?;
+        match lock_res {
             Ok(Some(id)) => Ok(Response::new(LockResponse {
                 acquired: true,
                 lock_id: id,
@@ -992,7 +1015,9 @@ impl NexusVfsService for VfsServiceImpl {
             })
             .collect();
 
-        let results = self.kernel.sys_read(&rust_reqs, &ctx);
+        // Offload: batched sys_read composes per-item blocking reads.
+        let kernel = self.kernel.clone();
+        let results = run_blocking(move || kernel.sys_read(&rust_reqs, &ctx)).await?;
 
         let max_agg = self.kernel.read_batch_max_aggregate_bytes();
         let mut total = 0usize;
@@ -1110,7 +1135,9 @@ impl NexusVfsService for VfsServiceImpl {
             .map(|it| (it.path, it.content))
             .collect();
 
-        let results = KernelConvenience::write_batch(&*self.kernel, &items, &ctx);
+        // Offload: write_batch composes per-item blocking writes (VFS write lock).
+        let kernel = self.kernel.clone();
+        let results = run_blocking(move || KernelConvenience::write_batch(&*kernel, &items, &ctx)).await?;
 
         let mapped: Vec<BatchWriteItemResponse> = results
             .into_iter()

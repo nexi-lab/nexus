@@ -40,5 +40,6 @@
 #![allow(dead_code)]
 
 pub mod addressing;
+pub mod provider;
 pub mod storage;
 pub mod transports;

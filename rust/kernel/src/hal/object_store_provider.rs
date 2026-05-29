@@ -35,6 +35,14 @@ use crate::meta_store::MetaStore;
 pub struct ObjectStoreProviderArgs<'a> {
     pub backend_type: &'a str,
     pub backend_name: &'a str,
+    /// Local mount point for this backend — `sys_setattr`'s `path`
+    /// (e.g. `/` for a root mount, `/zone/acme` for a sub-path mount).
+    /// The `remote` backend uses it to fail closed on sub-path mounts,
+    /// which `RemoteBackend` cannot yet reconstruct correctly (Issue
+    /// #4273). `None` / `"/"` means root-mount semantics. Populated by
+    /// the DT_MOUNT caller (bridge-2); `None` in the current bridge-1
+    /// tree (root mounts only).
+    pub mount_path: Option<&'a str>,
     pub local_root: Option<&'a str>,
     pub fsync: bool,
     pub follow_symlinks: bool,
@@ -100,10 +108,13 @@ pub struct ObjectStoreProviderArgs<'a> {
 /// store goes on the mount entry, optional metastore goes on the
 /// kernel's pending slot for the next `add_mount`).
 pub struct ObjectStoreBuildResult {
-    /// Backend instance, or `None` when no `args.local_root` is
-    /// provided and `args.backend_type` matched no dispatch arm —
-    /// caller treats `None` as "no backend installed for this
-    /// mount" (e.g. a `sys_setattr` setting metadata only).
+    /// Backend instance. `Option` so a provider impl *may* signal "no
+    /// backend installed for this mount" (e.g. a `sys_setattr` setting
+    /// metadata only) by returning `Ok` with `None`; callers must treat
+    /// `None` as that case. The in-tree `DefaultObjectStoreProvider`
+    /// (backends crate) does not use that path — it always returns
+    /// `Some` on `Ok`, and surfaces an unknown `backend_type` or a
+    /// missing required arg as `Err` rather than `Ok(None)`.
     pub backend: Option<Arc<dyn ObjectStore>>,
     /// `Some` only for `backend_type = "remote"`: the
     /// `RemoteMetaStore` wrapping the same `RpcTransport` as the

@@ -21,9 +21,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use backends::provider::DefaultObjectStoreProvider;
 use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
+use kernel::hal::object_store_provider::{set_enabled_drivers, set_provider};
 use kernel::kernel::convenience::{KernelConvenience, MountOptions};
 use kernel::kernel::Kernel;
 
@@ -341,6 +343,16 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         data_dir_has_root,
         "bootstrap mode validated",
     );
+
+    // ── ObjectStoreProvider + driver gate ─────────────────────────
+    // Registered before the first DT_MOUNT so that any future mount
+    // that goes through the provider (bridge-2 and later) can call
+    // get_provider() and is_driver_enabled() at construction time.
+    // Only path_local and remote are compiled into this binary
+    // (see Cargo.toml features).
+    set_provider(Arc::new(DefaultObjectStoreProvider))
+        .unwrap_or_else(|_| tracing::warn!("ObjectStoreProvider already registered"));
+    set_enabled_drivers(["path_local", "remote"]);
 
     // ── Data plane: mount host-fs at "/" via PathLocalBackend ──
     // Created BEFORE ZoneManager so the VFS gRPC service can be

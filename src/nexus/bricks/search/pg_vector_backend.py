@@ -121,8 +121,14 @@ class PgVectorBackend:
         path: str,  # noqa: ARG002
         k: int,  # noqa: ARG002
         zone_id: str,  # noqa: ARG002
+        *,
+        timing: dict[str, float] | None = None,  # noqa: ARG002
     ) -> list[BaseSearchResult]:
-        """Not implemented in this backend — keyword search lives in PgFtsBackend (T5)."""
+        """Not implemented in this backend — keyword search lives in PgFtsBackend (T5).
+
+        Accepts ``timing`` (Issue #4269) for SearchBackend-protocol parity; this
+        semantic-only backend records nothing into it.
+        """
         return []
 
     # -------------------------------------------------------------------------

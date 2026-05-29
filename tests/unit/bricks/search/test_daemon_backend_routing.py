@@ -16,6 +16,7 @@ _BACKEND_TIMING_KEYS = {
     "vector_ms",
     "fusion_ms",
     "rerank_ms",
+    "index_load_ms",
 }
 
 
@@ -196,7 +197,13 @@ async def test_keyword_backend_timing_records_keyword_and_total() -> None:
             self.calls: list[tuple[str, str, int, str]] = []
 
         async def keyword_search(
-            self, query: str, path: str, limit: int, zone_id: str
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
         ) -> list[SearchResult]:
             self.calls.append((query, path, limit, zone_id))
             return [
@@ -241,7 +248,13 @@ async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
             self.keyword_limits: list[int] = []
 
         async def keyword_search(
-            self, query: str, path: str, limit: int, zone_id: str
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
         ) -> list[BaseSearchResult]:
             self.keyword_limits.append(limit)
             return [

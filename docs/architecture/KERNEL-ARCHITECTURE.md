@@ -578,7 +578,9 @@ Manager).
 
 #### 3.B.2 `ObjectStoreProvider`
 
-Single method: `construct(args: ObjectStoreProviderArgs) -> Arc<dyn ObjectStore>`.
+Single method: `build(args: &ObjectStoreProviderArgs) -> Result<ObjectStoreBuildResult, String>`.
+`ObjectStoreBuildResult` bundles `Option<Arc<dyn ObjectStore>>` (the backend)
+and `Option<Arc<dyn MetaStore>>` (remote metastore, for `"remote"` backends).
 
 `Kernel::sys_setattr("backend", …)` and the mount path use this to instantiate
 backends through trait dispatch. Cycle break is identical to the §3.A pattern:
@@ -896,7 +898,7 @@ Boot wiring:
 Coordinator methods all take `kernel: &Kernel` so the unit-struct impl
 forwards into kernel-side primitives without holding back-references.
 The §3.B.2 `ObjectStoreProvider` slot uses the same pattern: trait in
-`kernel::hal::object_store_provider`, impl in `backends::factory`,
+`kernel::hal::object_store_provider`, impl in `backends::provider`,
 boot hook in `nexus-cluster` main.
 
 #### Kernel boundary — gRPC (not FFI)

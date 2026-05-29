@@ -26,6 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.fusion import rrf_multi_fusion
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 
@@ -120,21 +121,6 @@ def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
     if not response.zones_searched and not response.zones_failed:
         return True
     return bool(not response.results and len(response.zones_failed) >= len(response.zones_searched))
-
-
-# Issue #4269 (Codex R6): per-leg timing keys aggregated across local zones.
-# Defined locally to avoid a federated_search → daemon import dependency.
-_TIMING_LEG_KEYS = (
-    "backend_ms",
-    "embed_ms",
-    "keyword_ms",
-    "page_keyword_ms",
-    "vector_ms",
-    "fusion_ms",
-    "rerank_ms",
-    "index_load_ms",
-    "fallback_ms",
-)
 
 
 def _aggregate_zone_timing(timings: list[dict[str, float]]) -> dict[str, float]:

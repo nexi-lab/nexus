@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BACKEND_LEG_TIMING_KEYS = (
+    "backend_ms",
     "embed_ms",
     "keyword_ms",
     "page_keyword_ms",

@@ -32,6 +32,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
@@ -43,20 +44,6 @@ from nexus.server.zone_execution import run_zone_scoped
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
-
-_BACKEND_LEG_TIMING_KEYS = (
-    "embed_ms",
-    "keyword_ms",
-    "page_keyword_ms",
-    "vector_ms",
-    "fusion_ms",
-    # Issue #4269: time spent inside the index-touching DB query (BM25 scan /
-    # index page fault-in) — the leg that stalls on a cold network volume.
-    "index_load_ms",
-    # Issue #4269 (Codex R2): legacy fallback-stack time when the indexed
-    # backend returned empty but the fallback produced the results.
-    "fallback_ms",
-)
 
 # =============================================================================
 # Constants (#3701 review — Issue 16A)

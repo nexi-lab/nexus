@@ -150,9 +150,11 @@ impl NexusVfsService for VfsServiceImpl {
         // the permission gate (kernel::dispatch.rs:101). The same SSOT runs
         // whether the call entered via typed Read or generic Call.
         //
-        // `timeout_ms == 0` keeps file-read semantics (the kernel resolves the
-        // entry and returns immediately). Non-zero blocks pipe/stream reads.
-        let timeout_ms = if req.timeout_ms == 0 { 5000 } else { req.timeout_ms };
+        // Honor the kernel's read-timeout contract: `timeout_ms == 0` is
+        // O_NONBLOCK (return immediately; empty pipe yields b""), non-zero
+        // blocks DT_PIPE/DT_STREAM reads up to N ms. Regular-file reads
+        // ignore this — the VFS read lock uses `vfs_lock_timeout_ms()`.
+        let timeout_ms = req.timeout_ms;
         match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, timeout_ms, req.offset) {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();

@@ -32,25 +32,28 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nexusd-cluster-linux-x86_64
             binary: nexusd-cluster
-            # Real measured size after the data-plane work (~12.6 MiB
-            # baseline on develop) + the gRPC typed-RPC surface this PR
-            # adds on top. Budget set to leave ~400 KiB headroom for the
-            # remaining typed-RPC additions; still a finite 2x-regression
-            # tripwire. TODO: cut back via release-profile LTO +
-            # panic=abort + strip; sudowork target is 5 MiB.
-            max_size_bytes: 13631488  # 13 MiB
+            # Real measured size after the data-plane work + the gRPC
+            # typed-RPC surface, plus the ObjectStoreProvider wiring in
+            # #4261 (registering the provider makes its build() — and the
+            # path_local + remote construction it reaches — non-eliminable):
+            # 13.82 MiB. Budget leaves ~330 KiB headroom; still a finite
+            # 2x-regression tripwire. TODO: cut back via release-profile
+            # LTO + panic=abort + strip; sudowork target is 5 MiB.
+            max_size_bytes: 14155776  # 13.5 MiB
           - os: macos-14
             artifact_name: nexusd-cluster-macos-arm64
             binary: nexusd-cluster
-            # Real measured size on this PR: 9.06 MiB.  TODO: same
-            # release-profile optimisation work as the Linux entry.
-            max_size_bytes: 11534336  # 11 MiB (mach-O arm64 overhead)
+            # Real measured size after the #4261 ObjectStoreProvider
+            # wiring: 11.72 MiB. Budget leaves ~330 KiB headroom. TODO:
+            # same release-profile optimisation work as the Linux entry.
+            max_size_bytes: 12058624  # 11.5 MiB (mach-O arm64 overhead)
           - os: windows-latest
             artifact_name: nexusd-cluster-windows-x86_64
             binary: nexusd-cluster.exe
-            # Real measured size after lifecycle RPC dispatch support:
-            # 11.07 MiB. Keep ~183 KiB headroom without masking regressions.
-            max_size_bytes: 11796480  # 11.25 MiB (PE+import-table overhead)
+            # Real measured size after the #4261 ObjectStoreProvider
+            # wiring: 12.18 MiB. Budget leaves ~400 KiB headroom without
+            # masking regressions.
+            max_size_bytes: 12582912  # 12 MiB (PE+import-table overhead)
 
     steps:
       - name: Checkout code

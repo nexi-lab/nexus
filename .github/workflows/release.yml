@@ -517,14 +517,15 @@ jobs:
   # GitHub Release is created ONLY after both PyPI and Docker succeed.
   # This is the user-visible "released" signal — without it, the version
   # doesn't appear on the releases page or trigger notifications.
+  # Note: publish-ts-packages is optional; npm publish failures don't block the release.
   create-release:
     name: Create GitHub Release
     needs:
       - publish-pypi
       - publish-nexus-fs
-      - publish-ts-packages
       - merge-docker-manifests
       - build-cluster-binary
+    if: ${{ !failure() }}
     runs-on: ubuntu-latest
 
     steps:

@@ -1479,8 +1479,17 @@ impl Kernel {
                 }
                 // Install remote metastore on the VFS route entry if the
                 // backend provider produced one (remote backends only).
+                //
+                // Key it with the SAME canonicalization the route itself
+                // uses (`canonicalize_mount_path`), not a raw `format!`.
+                // For a root mount (`path == "/"`) the raw form produced
+                // `/{zone}/` while the route is keyed `/{zone}`, so the
+                // metastore landed on a dead placeholder entry and a
+                // remote root mount silently fell back to the local
+                // metastore. Non-root paths already matched; this only
+                // corrects the root case.
                 if let Some(rms) = remote_metastore {
-                    let canonical_key = format!("/{zone_id}{path}");
+                    let canonical_key = crate::vfs_router::canonicalize_mount_path(path, zone_id);
                     self.vfs_router.install_metastore(&canonical_key, rms);
                 }
                 // Dispatch FileEventType::Mount to MutationObservers so

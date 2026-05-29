@@ -1416,12 +1416,41 @@ class _AgentRegistryProxy:
         """
         from nexus.contracts.process_types import AgentState
 
+        # i64 bounds — the kernel parses eviction_priority as a Rust i64.
+        _I64_MIN = -(2**63)
+        _I64_MAX = 2**63 - 1
+
         def _priority(agent: Any) -> int:
+            """Parse eviction_priority with Rust ``parse::<i64>().unwrap_or(50)``
+            semantics. Python ``int()`` is too lenient — it accepts whitespace
+            (" 10"), underscores ("1_000"), Unicode digits, and arbitrary-size
+            integers that Rust's i64 parse rejects — which would order agents
+            differently in subprocess-kernel mode than the in-process kernel.
+            Require a plain ASCII signed decimal within i64 range; default 50 on
+            anything else. (No ``re`` dependency — a manual ASCII-digit check
+            avoids ``str.isdigit()``'s acceptance of Unicode digit forms.)
+            """
             labels = getattr(agent, "labels", None) or {}
-            try:
-                return int(labels.get("eviction_priority"))
-            except (TypeError, ValueError):
-                return 50  # Matches Rust unwrap_or(50).
+            raw = labels.get("eviction_priority")
+            if not isinstance(raw, str):
+                return 50
+            negative = raw[:1] == "-"
+            digits = raw[1:] if raw[:1] in ("+", "-") else raw
+            if not digits or not all("0" <= ch <= "9" for ch in digits):
+                return 50
+            # Normalize away leading zeros so "000…001" parses like Rust (→ 1),
+            # then bound the SIGNIFICANT-digit count. A signed i64 has at most 19
+            # significant digits (max 9223372036854775807); 20+ always exceeds
+            # i64, so Rust parse::<i64> would default to 50 too. Checking the
+            # stripped length before int() also avoids CPython's int-string digit
+            # limit (4300) raising ValueError mid-eviction-cycle on a long label.
+            significant = digits.lstrip("0")
+            if len(significant) > 19:
+                return 50
+            value = -int(significant) if (negative and significant) else int(significant or "0")
+            if value < _I64_MIN or value > _I64_MAX:
+                return 50
+            return value
 
         agents = self.list_processes(zone_id=zone_id, state=AgentState.BUSY)
         agents.sort(key=lambda a: (_priority(a), getattr(a, "updated_at_ms", 0) or 0))

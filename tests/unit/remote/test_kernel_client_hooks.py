@@ -805,6 +805,167 @@ def test_agent_registry_proxy_list_by_priority_handles_missing_updated_at_ms() -
     assert set(pids[:2]) == {"none", "missing"}
 
 
+def test_agent_registry_proxy_list_by_priority_parses_eviction_priority_like_rust() -> None:
+    """eviction_priority is parsed with Rust parse::<i64>().unwrap_or(50) semantics.
+
+    Python int() is too lenient (accepts " 5", "1_000", >i64 bignums) and would
+    order agents differently than the in-process kernel. Only a plain ASCII signed
+    decimal within i64 range counts; everything else defaults to 50.
+    """
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                # All share updated_at_ms so ordering is decided purely by priority.
+                return [
+                    {
+                        "pid": "neg",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "-3"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "plus7",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "+7"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "plain10",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "10"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "spacey",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": " 5"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "under",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "1_000"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "bignum",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "9223372036854775808"},
+                        "updated_at_ms": 100,
+                    },
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    order = [a.pid for a in client.agent_registry.list_by_priority()]
+
+    # Valid decimals sort by value: neg(-3) < plus7(7) < plain10(10).
+    assert order[0] == "neg"
+    assert order[1] == "plus7"
+    assert order[2] == "plain10"
+    # " 5", "1_000", and the >i64 bignum all default to 50 (Rust would reject them).
+    assert set(order[3:]) == {"spacey", "under", "bignum"}
+
+
+def test_agent_registry_proxy_list_by_priority_overlong_priority_does_not_crash() -> None:
+    """An all-digit eviction_priority longer than i64 must default to 50, never crash.
+
+    CPython caps int(str) at 4300 digits and raises ValueError beyond it; a
+    malformed multi-thousand-digit label must not take down the eviction cycle.
+    Any 20+ digit value also exceeds i64, so Rust parse::<i64> defaults it to 50.
+    """
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return [
+                    {
+                        "pid": "overlong",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "9" * 5000},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "low",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {"eviction_priority": "1"},
+                        "updated_at_ms": 100,
+                    },
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    # Must not raise (default 5000-digit -> 50, below 'low' which is priority 1).
+    order = [a.pid for a in client.agent_registry.list_by_priority()]
+    assert order == ["low", "overlong"]
+
+
+def test_agent_registry_proxy_list_by_priority_zero_padded_priority_parses_like_rust() -> None:
+    """Leading-zero eviction_priority parses by value, matching Rust parse::<i64>().
+
+    A zero-padded label longer than 19 chars (e.g. "0000000000000000000001")
+    is still 1 to Rust; it must NOT be rejected as overlong/default-50. The
+    proxy normalizes leading zeros before the significant-digit length check.
+    """
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_list":
+                return [
+                    {
+                        "pid": "zpad_one",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        # 21 chars total, significant value 1.
+                        "labels": {"eviction_priority": "0" * 20 + "1"},
+                        "updated_at_ms": 100,
+                    },
+                    {
+                        "pid": "default50",
+                        "state": "busy",
+                        "kind": "unmanaged",
+                        "labels": {},  # no label -> 50
+                        "updated_at_ms": 100,
+                    },
+                ]
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    order = [a.pid for a in client.agent_registry.list_by_priority()]
+    # zpad_one parses to 1 (< default 50), so it is the first eviction candidate.
+    assert order == ["zpad_one", "default50"]
+
+
 def test_agent_registry_proxy_descriptor_to_dict_matches_agentdescriptor_shape() -> None:
     """Proxy descriptors expose a to_dict() compatible with AgentDescriptor.to_dict().
 

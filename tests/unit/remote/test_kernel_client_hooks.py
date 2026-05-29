@@ -805,6 +805,139 @@ def test_agent_registry_proxy_list_by_priority_handles_missing_updated_at_ms() -
     assert set(pids[:2]) == {"none", "missing"}
 
 
+def test_agent_registry_proxy_descriptor_to_dict_matches_agentdescriptor_shape() -> None:
+    """Proxy descriptors expose a to_dict() compatible with AgentDescriptor.to_dict().
+
+    Regression for issue #4268: the proc/status VFS resolvers serialize agents
+    via desc.to_dict(); a bare SimpleNamespace lacked the method and raised
+    AttributeError in subprocess-kernel mode.
+    """
+    from datetime import UTC, datetime
+
+    from nexus.contracts.process_types import AgentDescriptor, AgentKind, AgentState
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],  # noqa: ARG002
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_get":
+                return {
+                    "pid": "a1",
+                    "ppid": None,
+                    "name": "agent",
+                    "state": "busy",
+                    "kind": "unmanaged",
+                    "owner_id": "u",
+                    "zone_id": "z",
+                    "generation": 3,
+                    "created_at_ms": 1_700_000_000_000,
+                    "updated_at_ms": 1_700_000_005_000,
+                    "labels": {"capabilities": "search,cache", "eviction_class": "spot"},
+                    "external_info": {
+                        "connection_id": "c1",
+                        "host_pid": 42,
+                        "remote_addr": "10.0.0.1",
+                        "protocol": "grpc",
+                        "last_heartbeat_ms": 1_700_000_009_000,
+                    },
+                }
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    desc = client.agent_registry.get("a1")
+    d = desc.to_dict()
+
+    # Key set must match the real AgentDescriptor.to_dict() output exactly.
+    now = datetime.now(UTC)
+    real_keys = set(
+        AgentDescriptor(
+            pid="a1",
+            ppid=None,
+            name="agent",
+            kind=AgentKind.UNMANAGED,
+            state=AgentState.BUSY,
+            owner_id="u",
+            zone_id="z",
+            generation=3,
+            created_at=now,
+            updated_at=now,
+            labels={},
+        ).to_dict()
+    )
+    assert set(d) == real_keys
+    assert d["pid"] == "a1"
+    assert d["state"] == "busy"
+    assert d["kind"] == "unmanaged"
+    assert d["generation"] == 3
+    assert d["labels"]["eviction_class"] == "spot"
+    # capabilities is a proxy-only convenience attribute, NOT a to_dict() key
+    # (matching AgentDescriptor.to_dict(), which has no capabilities key).
+    assert "capabilities" not in d
+    assert desc.capabilities == ["search", "cache"]
+    # Timestamps serialized as ISO-8601 strings, not epoch-ms.
+    assert isinstance(d["created_at"], str) and "T" in d["created_at"]
+    assert isinstance(d["updated_at"], str) and "T" in d["updated_at"]
+    assert d["external_info"]["connection_id"] == "c1"
+    assert d["external_info"]["host_pid"] == 42
+    assert isinstance(d["external_info"]["last_heartbeat"], str)
+    # Must be JSON-serializable (the resolver does json.dumps(desc.to_dict())).
+    import json as _json
+
+    _json.dumps(d)
+
+
+def test_agent_status_resolver_reads_proc_status_via_proxy_registry() -> None:
+    """AgentStatusResolver.try_read serves /{zone}/proc/{pid}/status against the
+    real _AgentRegistryProxy without raising — the exact consumer codex flagged."""
+    import json as _json
+
+    from nexus.services.agents.agent_status_resolver import AgentStatusResolver
+
+    class FakeTransport:
+        def call_rpc(
+            self,
+            method: str,
+            params: dict[str, object],
+            auth_token: str | None = None,  # noqa: ARG002
+        ) -> object:
+            if method == "agent_get" and params.get("pid") == "pid-1":
+                return {
+                    "pid": "pid-1",
+                    "name": "agent",
+                    "state": "busy",
+                    "kind": "unmanaged",
+                    "owner_id": "u",
+                    "zone_id": "z",
+                    "generation": 1,
+                    "created_at_ms": 1_700_000_000_000,
+                    "updated_at_ms": 1_700_000_001_000,
+                    "labels": {},
+                    "external_info": {
+                        "connection_id": "pid-1",
+                        "last_heartbeat_ms": 1_700_000_001_000,
+                    },
+                }
+            return None
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client._transport = FakeTransport()
+
+    resolver = AgentStatusResolver(client.agent_registry)
+    out = resolver.try_read("/z/proc/pid-1/status")
+
+    assert out is not None
+    parsed = _json.loads(out.decode())
+    assert parsed["pid"] == "pid-1"
+    assert parsed["state"] == "busy"
+    # Unknown pid → None (not a crash).
+    assert resolver.try_read("/z/proc/missing/status") is None
+
+
 def test_metastore_list_paginated_preserves_directory_entries() -> None:
     class FakeClient(KernelClient):
         entry_types = {

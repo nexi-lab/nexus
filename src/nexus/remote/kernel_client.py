@@ -1171,6 +1171,71 @@ class _AttrDict(dict):
             raise AttributeError(name) from exc
 
 
+class _ProxyAgentDescriptor(SimpleNamespace):
+    """SimpleNamespace descriptor that also serializes like ``AgentDescriptor``.
+
+    The proc/status VFS resolvers (``AgentStatusResolver`` at
+    ``/{zone}/proc/{pid}/status`` and ``TaskAgentResolver``) call
+    ``desc.to_dict()`` on whatever ``agent_registry.get()`` returns. In
+    subprocess-kernel mode that object is this proxy, so it must provide a
+    ``to_dict()`` matching ``AgentDescriptor.to_dict()`` or those reads raise
+    ``AttributeError`` — the same proxy/dataclass drift class as the
+    ``count_by_state`` crash (Issue #4268). Subclassing SimpleNamespace keeps
+    every existing attribute access (``.pid``, ``.state``, ``.updated_at``,
+    ``.external_info.last_heartbeat`` …) unchanged; this only adds the method.
+    """
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the EXACT dict shape of ``AgentDescriptor.to_dict()``.
+
+        Same 16 keys in the same order (process_types.py): no ``capabilities``
+        key (that is a proxy-only attribute, not part of the dataclass
+        serialization), ``external_info`` always present (``None`` when absent).
+        The wire row carries ``parent_pid`` (Rust ``agent_descriptor_to_json``)
+        whereas the dataclass field is ``ppid`` — map it so the proc/status JSON
+        is identical across in-process and subprocess-kernel deployments.
+        Timestamps are ISO-8601 strings, or ``None`` when the row omitted the
+        ``*_ms`` field.
+        """
+
+        def _iso(value: Any) -> Any:
+            return value.isoformat() if value is not None and hasattr(value, "isoformat") else None
+
+        ppid = getattr(self, "ppid", None)
+        if ppid is None:
+            ppid = getattr(self, "parent_pid", None)
+
+        d: dict[str, Any] = {
+            "pid": getattr(self, "pid", None),
+            "ppid": ppid,
+            "name": getattr(self, "name", ""),
+            "owner_id": getattr(self, "owner_id", None),
+            "zone_id": getattr(self, "zone_id", None),
+            "kind": str(getattr(self, "kind", "")),
+            "state": str(getattr(self, "state", "")),
+            "exit_code": getattr(self, "exit_code", None),
+            "generation": getattr(self, "generation", 0),
+            "cwd": getattr(self, "cwd", "/"),
+            "root": getattr(self, "root", "/"),
+            "children": list(getattr(self, "children", ()) or ()),
+            "created_at": _iso(getattr(self, "created_at", None)),
+            "updated_at": _iso(getattr(self, "updated_at", None)),
+            "labels": dict(getattr(self, "labels", {}) or {}),
+        }
+        ext = getattr(self, "external_info", None)
+        if ext is not None:
+            d["external_info"] = {
+                "connection_id": ext.get("connection_id", ""),
+                "host_pid": ext.get("host_pid"),
+                "remote_addr": ext.get("remote_addr"),
+                "protocol": ext.get("protocol", "grpc"),
+                "last_heartbeat": _iso(ext.get("last_heartbeat")),
+            }
+        else:
+            d["external_info"] = None
+        return d
+
+
 class _AgentRegistryProxy:
     """Proxy for kernel AgentRegistry operations via gRPC."""
 
@@ -1239,7 +1304,7 @@ class _AgentRegistryProxy:
             # Absent → None (not a missing attribute) so `if p.external_info` is safe.
             data["external_info"] = None
 
-        return SimpleNamespace(**data)
+        return _ProxyAgentDescriptor(**data)
 
     def register(self, **kwargs: Any) -> Any:
         return self._descriptor(self._client._call("agent_register", kwargs))

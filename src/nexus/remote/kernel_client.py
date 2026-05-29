@@ -1152,6 +1152,90 @@ class _BatchWriteItemResult:
         self.version = d.get("version", 1)
 
 
+class _AttrDict(dict):
+    """A dict that also exposes its keys as attributes.
+
+    Proxy ``external_info`` is consumed two ways: as a mapping
+    (``ext["last_heartbeat_ms"]`` / ``ext.get(...)`` in AgentRPCService) and as
+    an object (``ext.last_heartbeat`` in QoSEvictionPolicy, mirroring the
+    ExternalProcessInfo dataclass). Supporting both avoids forcing every caller
+    onto one shape.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+class _ProxyAgentDescriptor(SimpleNamespace):
+    """SimpleNamespace descriptor that also serializes like ``AgentDescriptor``.
+
+    The proc/status VFS resolvers (``AgentStatusResolver`` at
+    ``/{zone}/proc/{pid}/status`` and ``TaskAgentResolver``) call
+    ``desc.to_dict()`` on whatever ``agent_registry.get()`` returns. In
+    subprocess-kernel mode that object is this proxy, so it must provide a
+    ``to_dict()`` matching ``AgentDescriptor.to_dict()`` or those reads raise
+    ``AttributeError`` — the same proxy/dataclass drift class as the
+    ``count_by_state`` crash (Issue #4268). Subclassing SimpleNamespace keeps
+    every existing attribute access (``.pid``, ``.state``, ``.updated_at``,
+    ``.external_info.last_heartbeat`` …) unchanged; this only adds the method.
+    """
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the EXACT dict shape of ``AgentDescriptor.to_dict()``.
+
+        Same 16 keys in the same order (process_types.py): no ``capabilities``
+        key (that is a proxy-only attribute, not part of the dataclass
+        serialization), ``external_info`` always present (``None`` when absent).
+        The wire row carries ``parent_pid`` (Rust ``agent_descriptor_to_json``)
+        whereas the dataclass field is ``ppid`` — map it so the proc/status JSON
+        is identical across in-process and subprocess-kernel deployments.
+        Timestamps are ISO-8601 strings, or ``None`` when the row omitted the
+        ``*_ms`` field.
+        """
+
+        def _iso(value: Any) -> Any:
+            return value.isoformat() if value is not None and hasattr(value, "isoformat") else None
+
+        ppid = getattr(self, "ppid", None)
+        if ppid is None:
+            ppid = getattr(self, "parent_pid", None)
+
+        d: dict[str, Any] = {
+            "pid": getattr(self, "pid", None),
+            "ppid": ppid,
+            "name": getattr(self, "name", ""),
+            "owner_id": getattr(self, "owner_id", None),
+            "zone_id": getattr(self, "zone_id", None),
+            "kind": str(getattr(self, "kind", "")),
+            "state": str(getattr(self, "state", "")),
+            "exit_code": getattr(self, "exit_code", None),
+            "generation": getattr(self, "generation", 0),
+            "cwd": getattr(self, "cwd", "/"),
+            "root": getattr(self, "root", "/"),
+            "children": list(getattr(self, "children", ()) or ()),
+            "created_at": _iso(getattr(self, "created_at", None)),
+            "updated_at": _iso(getattr(self, "updated_at", None)),
+            "labels": dict(getattr(self, "labels", {}) or {}),
+        }
+        ext = getattr(self, "external_info", None)
+        if ext is not None:
+            d["external_info"] = {
+                "connection_id": ext.get("connection_id", ""),
+                "host_pid": ext.get("host_pid"),
+                "remote_addr": ext.get("remote_addr"),
+                "protocol": ext.get("protocol", "grpc"),
+                "last_heartbeat": _iso(ext.get("last_heartbeat")),
+            }
+        else:
+            d["external_info"] = None
+        return d
+
+
 class _AgentRegistryProxy:
     """Proxy for kernel AgentRegistry operations via gRPC."""
 
@@ -1162,6 +1246,16 @@ class _AgentRegistryProxy:
     def _descriptor(raw: Any) -> Any:
         if raw is None or not isinstance(raw, dict):
             return raw
+
+        from datetime import UTC, datetime
+
+        def _dt(ms: Any) -> datetime | None:
+            if ms is None:
+                return None
+            try:
+                return datetime.fromtimestamp(int(ms) / 1000.0, UTC)
+            except (TypeError, ValueError, OSError):
+                return None
 
         data = dict(raw)
         state = data.get("state")
@@ -1180,6 +1274,7 @@ class _AgentRegistryProxy:
 
         raw_labels = data.get("labels")
         labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
+        data["labels"] = labels  # Guarantee .labels is always a dict.
         raw_capabilities = labels.get("capabilities", "")
         if isinstance(raw_capabilities, str):
             data["capabilities"] = [
@@ -1190,7 +1285,26 @@ class _AgentRegistryProxy:
         else:
             data["capabilities"] = []
 
-        return SimpleNamespace(**data)
+        # Duck-type as AgentDescriptor: the wire carries epoch-ms (`*_ms`), but
+        # consumers (e.g. QoSEvictionPolicy) read `.updated_at` / `.created_at`
+        # datetimes and `.external_info.last_heartbeat`. Without this the eviction
+        # cycle raises AttributeError once a candidate is selected (Issue #4268).
+        data["updated_at"] = _dt(data.get("updated_at_ms"))
+        data["created_at"] = _dt(data.get("created_at_ms"))
+
+        ext = data.get("external_info")
+        if isinstance(ext, dict):
+            # _AttrDict exposes BOTH attribute access (`ext.last_heartbeat`, used by
+            # QoSEvictionPolicy) AND dict access (`ext["last_heartbeat_ms"]`/`.get()`,
+            # used by AgentRPCService.agent_list_by_zone) so no consumer breaks.
+            ext_data = _AttrDict(ext)
+            ext_data["last_heartbeat"] = _dt(ext_data.get("last_heartbeat_ms"))
+            data["external_info"] = ext_data
+        else:
+            # Absent → None (not a missing attribute) so `if p.external_info` is safe.
+            data["external_info"] = None
+
+        return _ProxyAgentDescriptor(**data)
 
     def register(self, **kwargs: Any) -> Any:
         return self._descriptor(self._client._call("agent_register", kwargs))
@@ -1283,6 +1397,66 @@ class _AgentRegistryProxy:
         if not isinstance(raw, list):
             return []
         return [self._descriptor(item) for item in raw]
+
+    def count_by_state(self, state: Any, zone_id: str | None = None) -> int:
+        """Count agents in a given state (kernel SSOT: registry.rs count_by_state)."""
+        return len(self.list_processes(zone_id=zone_id, state=state))
+
+    def list_by_priority(
+        self, *, batch_size: int | None = None, zone_id: str | None = None
+    ) -> list[Any]:
+        """Return BUSY eviction candidates ordered by eviction priority.
+
+        Mirrors the kernel SSOT (registry.rs ``list_by_priority``): filter to
+        BUSY, sort by ``(eviction_priority ASC, updated_at_ms ASC)`` — lowest
+        priority and least-recently-updated (LRU) first — then cap to
+        ``batch_size``. Sorting before the cap is what makes the batch the
+        *right* candidates; the downstream EvictionPolicy only refines within
+        it (LRUEvictionPolicy in particular trusts this pre-sort verbatim).
+        """
+        from nexus.contracts.process_types import AgentState
+
+        # i64 bounds — the kernel parses eviction_priority as a Rust i64.
+        _I64_MIN = -(2**63)
+        _I64_MAX = 2**63 - 1
+
+        def _priority(agent: Any) -> int:
+            """Parse eviction_priority with Rust ``parse::<i64>().unwrap_or(50)``
+            semantics. Python ``int()`` is too lenient — it accepts whitespace
+            (" 10"), underscores ("1_000"), Unicode digits, and arbitrary-size
+            integers that Rust's i64 parse rejects — which would order agents
+            differently in subprocess-kernel mode than the in-process kernel.
+            Require a plain ASCII signed decimal within i64 range; default 50 on
+            anything else. (No ``re`` dependency — a manual ASCII-digit check
+            avoids ``str.isdigit()``'s acceptance of Unicode digit forms.)
+            """
+            labels = getattr(agent, "labels", None) or {}
+            raw = labels.get("eviction_priority")
+            if not isinstance(raw, str):
+                return 50
+            negative = raw[:1] == "-"
+            digits = raw[1:] if raw[:1] in ("+", "-") else raw
+            if not digits or not all("0" <= ch <= "9" for ch in digits):
+                return 50
+            # Normalize away leading zeros so "000…001" parses like Rust (→ 1),
+            # then bound the SIGNIFICANT-digit count. A signed i64 has at most 19
+            # significant digits (max 9223372036854775807); 20+ always exceeds
+            # i64, so Rust parse::<i64> would default to 50 too. Checking the
+            # stripped length before int() also avoids CPython's int-string digit
+            # limit (4300) raising ValueError mid-eviction-cycle on a long label.
+            significant = digits.lstrip("0")
+            if len(significant) > 19:
+                return 50
+            value = -int(significant) if (negative and significant) else int(significant or "0")
+            if value < _I64_MIN or value > _I64_MAX:
+                return 50
+            return value
+
+        agents = self.list_processes(zone_id=zone_id, state=AgentState.BUSY)
+        agents.sort(key=lambda a: (_priority(a), getattr(a, "updated_at_ms", 0) or 0))
+        if batch_size is not None:
+            return agents[:batch_size]
+        return agents
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

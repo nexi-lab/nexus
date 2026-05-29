@@ -63,28 +63,62 @@ One interface. Start embedded in a single Python process, scale to a federated c
 
 ## Architecture
 
-```
-+-----------------------------------------------------------------------+
-|  BRICKS (runtime-loadable, 35+)                                       |
-|  ReBAC . Auth . Agents . Delegation . Search . Memory . Governance    |
-|  Workflows . Pay . MCP . Sandbox . Catalog . Identity . 25+ more      |
-+-----------------------------------------------------------------------+
-                              | protocol interface
-+-----------------------------------------------------------------------+
-|  KERNEL (pure Rust, ~5 MB binary)                                     |
-|  VFS . Syscall dispatch . Metastore . CAS . Pipes . Streams .        |
-|  Lock manager . FileWatcher . Permission gate . Federation (Raft)     |
-+-----------------------------------------------------------------------+
-                              | dependency injection
-+-----------------------------------------------------------------------+
-|  DRIVERS (hot-swappable)                                              |
-|  redb . PostgreSQL (pgvector) . S3 . GCS . Dragonfly . BM25S . gRPC  |
-+-----------------------------------------------------------------------+
+### Deployment stack
+
+```mermaid
+graph TD
+    subgraph Applications
+        SW[sudowork]
+        CA[custom apps]
+    end
+
+    subgraph Agent Harness — open ecosystem
+        SC[sudocode / sudocode-host]
+        GC[Gemini CLI]
+        CX[Codex CLI]
+        AH[any harness]
+    end
+
+    subgraph Infra Layer — one per node
+        NX["NEXUS (profile-based: embedded│lite│sandbox│full│cluster│cloud│remote)"]
+        SR["SUDOROUTER (unified LLM access: Claude, GPT, Gemini, local models)"]
+    end
+
+    SW --> SC
+    CA --> AH
+    SC --> NX
+    GC --> NX
+    CX --> NX
+    AH --> NX
+    SC -.->|direct| SR
+    NX -->|as backend| SR
 ```
 
-**Kernel** is pure Rust — a ~5 MB static binary (`nexusd-cluster`) that runs VFS + Raft + IPC + ReBAC + 4-pillar storage with zero Python dependency. It exposes 14 syscalls and never changes.
+Agents talk to **Nexus** via syscalls — they get federation, A2A, collaboration, hooks (approval), and security for free regardless of which harness drives them. **SudoRouter** provides unified model access (any agent, any model, no provider lock-in); agents reach it either through Nexus (as a mounted backend) or directly.
 
-**Drivers** swap at mount time via `sys_setattr`. Hot-plug any storage backend without restart.
+### Nexus internals
+
+```mermaid
+graph TD
+    subgraph Bricks — runtime-loadable, 35+
+        B[ReBAC · Auth · Agents · Search · MCP · Pay · Governance · 25+ more]
+    end
+
+    subgraph Kernel — pure Rust, ~5 MB binary
+        K[VFS · Syscall dispatch · CAS · Pipes · Streams · Locks · FileWatcher · Permission gate · Raft]
+    end
+
+    subgraph Drivers — hot-swappable
+        D[redb · PostgreSQL · S3 · GCS · Dragonfly · BM25S · SudoRouter · gRPC]
+    end
+
+    B -->|protocol interface| K
+    K -->|dependency injection| D
+```
+
+**Kernel** is pure Rust — a ~5 MB static binary (`nexusd-cluster`) with 14 syscalls and zero Python dependency. Never changes.
+
+**Drivers** swap at mount time via `sys_setattr`. Hot-plug any storage or LLM backend without restart.
 
 **Bricks** mount and unmount at runtime via `service_enlist` / `service_swap` — like `insmod`/`rmmod` for an AI filesystem.
 

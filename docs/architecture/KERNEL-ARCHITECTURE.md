@@ -898,7 +898,7 @@ Boot wiring:
 Coordinator methods all take `kernel: &Kernel` so the unit-struct impl
 forwards into kernel-side primitives without holding back-references.
 The §3.B.2 `ObjectStoreProvider` slot uses the same pattern: trait in
-`kernel::hal::object_store_provider`, impl in `backends::factory`,
+`kernel::hal::object_store_provider`, impl in `backends::provider`,
 boot hook in `nexus-cluster` main.
 
 #### Kernel boundary — gRPC (not FFI)

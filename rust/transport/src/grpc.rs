@@ -901,11 +901,17 @@ impl NexusVfsService for VfsServiceImpl {
             Err(s) => return Ok(Response::new(error_stream_read(s))),
         };
         if req.blocking {
-            match self.kernel.stream_read_at_blocking(
-                &req.path,
-                req.offset as usize,
-                req.timeout_ms,
-            ) {
+            // Offload: stream_read_at_blocking parks on a StreamManager condvar
+            // up to timeout_ms — must not run inline on the raft-shared worker.
+            let kernel = self.kernel.clone();
+            let path = req.path;
+            let offset = req.offset as usize;
+            let timeout_ms = req.timeout_ms;
+            let blk_res = run_blocking(move || {
+                kernel.stream_read_at_blocking(&path, offset, timeout_ms)
+            })
+            .await?;
+            match blk_res {
                 Ok((data, next)) => Ok(Response::new(StreamReadAtResponse {
                     data,
                     next_offset: next as u64,

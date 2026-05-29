@@ -26,6 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.fusion import rrf_multi_fusion
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 
@@ -93,6 +94,12 @@ class FederatedSearchResponse:
     zones_skipped: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     cached: bool = False
+    # Issue #4269 (Codex R6): per-leg backend phase timings (index_load_ms,
+    # keyword_ms, vector_ms, fusion_ms, ...) SUMMED across the LOCAL zones that
+    # served this query, so a cold federated search exposes the same index-load
+    # phase split as a single-zone one. Remote zones (gRPC peers) do not return
+    # per-leg timing through the delegation path, so they don't contribute here.
+    search_timing: dict[str, float] = field(default_factory=dict)
 
 
 class FederationUnreachableError(Exception):
@@ -114,6 +121,22 @@ def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
     if not response.zones_searched and not response.zones_failed:
         return True
     return bool(not response.results and len(response.zones_failed) >= len(response.zones_searched))
+
+
+def _aggregate_zone_timing(timings: list[dict[str, float]]) -> dict[str, float]:
+    """Sum per-leg backend phase timings across the local zones that served a
+    federated query (Issue #4269 Codex R6). Legs represent cumulative backend
+    work, so summing gives the total per-leg cost across zones; the dispatcher's
+    wall-clock ``latency_ms`` remains the end-to-end total."""
+    agg: dict[str, float] = {}
+    for timing in timings:
+        if not isinstance(timing, dict):
+            continue
+        for key in _TIMING_LEG_KEYS:
+            val = timing.get(key)
+            if isinstance(val, int | float):
+                agg[key] = agg.get(key, 0.0) + float(val)
+    return agg
 
 
 class FederatedSearchDispatcher:
@@ -304,11 +327,17 @@ class FederatedSearchDispatcher:
             zone_id=zone_id,
         )
 
-        # Tag results with zone provenance
-        for r in results:
+        # Tag results with zone provenance. Return the SearchResultList as-is
+        # (it is a list subclass) rather than collapsing via list(), so its
+        # ``.search_timing`` per-leg snapshot survives for federated phase-timing
+        # aggregation (Issue #4269 Codex R6). Remote zones return a plain list.
+        # Bind to a typed local so the SearchResultList object (and its timing)
+        # is preserved at runtime without returning ``Any``.
+        tagged_results: list[Any] = results
+        for r in tagged_results:
             r.zone_id = zone_id
 
-        return list(results)
+        return tagged_results
 
     async def _search_remote_zone(
         self,
@@ -403,8 +432,16 @@ class FederatedSearchDispatcher:
         raw = f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
-    def _get_cached_result(self, cache_key: str) -> FederatedSearchResponse | None:
-        """Phase 3: Check result cache."""
+    def _get_cached_result(
+        self, cache_key: str, start: float | None = None
+    ) -> FederatedSearchResponse | None:
+        """Phase 3: Check result cache.
+
+        ``start`` is the current request's perf_counter() origin; when provided,
+        the cache hit reports the ACTUAL cache-lookup elapsed rather than
+        replaying the original miss's wall time (Codex R9) — so a cache hit that
+        executed no backend work does not masquerade as a slow cold query.
+        """
         if not self._config.result_cache_enabled:
             return None
         cached = self._result_cache.get(cache_key)
@@ -414,13 +451,19 @@ class FederatedSearchDispatcher:
         if time.monotonic() > expiry:
             del self._result_cache[cache_key]
             return None
+        hit_latency_ms = (time.perf_counter() - start) * 1000 if start is not None else 0.0
         return FederatedSearchResponse(
             results=response.results,
             zones_searched=response.zones_searched,
             zones_failed=response.zones_failed,
             zones_skipped=response.zones_skipped,
-            latency_ms=response.latency_ms,
+            latency_ms=hit_latency_ms,
             cached=True,
+            # A cache hit executes no BM25/vector/index work, so it must NOT
+            # replay the original query's per-leg phase timings — that would
+            # report backend work that did not happen (Codex R8). Leave empty;
+            # the ``cached=True`` flag marks the response.
+            search_timing={},
         )
 
     def _cache_result(self, cache_key: str, response: FederatedSearchResponse) -> None:
@@ -521,7 +564,7 @@ class FederatedSearchDispatcher:
 
         # Phase 3: Check result cache
         cache_key = self._make_cache_key(query, subject, search_type, limit, path_filter)
-        cached = self._get_cached_result(cache_key)
+        cached = self._get_cached_result(cache_key, start=start)
         if cached is not None:
             return cached
 
@@ -575,6 +618,11 @@ class FederatedSearchDispatcher:
                     ),
                     timeout=self._config.zone_timeout_seconds,
                 )
+                # Capture the local zone's per-leg timing BEFORE ReBAC filtering
+                # (which returns a plain list, dropping search_timing) — #4269 R6.
+                zone_timing = _aggregate_zone_timing(
+                    [dict(getattr(results, "search_timing", {}) or {})]
+                )
                 # Per-file ReBAC post-filter (Phase 2+)
                 if self._enable_per_file_rebac:
                     results = await filter_federated_results(
@@ -589,6 +637,7 @@ class FederatedSearchDispatcher:
                     zones_failed=[],
                     zones_skipped=zones_skipped,
                     latency_ms=(time.perf_counter() - start) * 1000,
+                    search_timing=zone_timing,
                 )
                 self._cache_result(cache_key, resp)
                 return resp
@@ -636,6 +685,10 @@ class FederatedSearchDispatcher:
         zones_searched: list[str] = []
         zones_failed: list[ZoneFailure] = []
         zone_result_lists: list[tuple[str, list[Any]]] = []
+        # Issue #4269 (Codex R6): collect each local zone's per-leg timing
+        # snapshot (carried on the SearchResultList) so the aggregate phase
+        # split survives fan-out, even for zones that returned no results.
+        zone_timings: list[dict[str, float]] = []
 
         for zone_id, outcome in zone_outcomes:
             if isinstance(outcome, BaseException):
@@ -643,6 +696,9 @@ class FederatedSearchDispatcher:
                 zones_failed.append(ZoneFailure(zone_id=zone_id, error=str(outcome)))
             else:
                 zones_searched.append(zone_id)
+                timing = getattr(outcome, "search_timing", None)
+                if isinstance(timing, dict):
+                    zone_timings.append(timing)
                 if outcome:  # non-empty results
                     zone_result_lists.append((zone_id, outcome))
 
@@ -692,6 +748,7 @@ class FederatedSearchDispatcher:
             zones_failed=zones_failed,
             zones_skipped=zones_skipped,
             latency_ms=(time.perf_counter() - start) * 1000,
+            search_timing=_aggregate_zone_timing(zone_timings),
         )
         self._cache_result(cache_key, resp)
         return resp

@@ -138,6 +138,29 @@ impl VfsServiceImpl {
     }
 }
 
+/// Run a blocking kernel operation off the async runtime.
+///
+/// These VFS handlers are co-hosted (via `with_extra_services`) on the
+/// `ZoneManager` tokio runtime that also drives raft consensus, and that
+/// runtime is intentionally small (`recommended_worker_threads(
+/// MIN_SERVER_RUNTIME_WORKERS)`). Several kernel syscalls block for a long
+/// time — `sys_read` on a DT_PIPE/DT_STREAM blocks up to the caller timeout,
+/// `sys_write` waits on the VFS write lock up to `vfs_lock_timeout_ms`, and
+/// `sys_watch` blocks up to its (default 30s) timeout. Running those inline
+/// on a worker parks it, and enough concurrent blocking calls starve the
+/// runtime shared by raft + every VFS RPC. Offloading to the blocking pool
+/// keeps the async workers free to poll raft, accept connections, and serve
+/// other requests.
+async fn run_blocking<F, T>(f: F) -> Result<T, Status>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| Status::internal(format!("kernel blocking task join error: {e}")))
+}
+
 #[tonic::async_trait]
 impl NexusVfsService for VfsServiceImpl {
     async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>, Status> {
@@ -150,10 +173,30 @@ impl NexusVfsService for VfsServiceImpl {
         // the permission gate (kernel::dispatch.rs:101). The same SSOT runs
         // whether the call entered via typed Read or generic Call.
         //
-        // `timeout_ms == 0` keeps file-read semantics (the kernel resolves the
-        // entry and returns immediately). Non-zero blocks pipe/stream reads.
-        let timeout_ms = if req.timeout_ms == 0 { 5000 } else { req.timeout_ms };
-        match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, timeout_ms, req.offset) {
+        // Honor the kernel's read-timeout contract verbatim: `timeout_ms == 0`
+        // is O_NONBLOCK (resolve entry / return immediately; empty pipe yields
+        // b""), and a non-zero value blocks DT_PIPE/DT_STREAM reads up to N ms.
+        // Regular-file reads ignore this value entirely — the VFS read lock uses
+        // `vfs_lock_timeout_ms()` (kernel/io.rs), not this parameter.
+        //
+        // The previous `if req.timeout_ms == 0 { 5000 }` override silently turned
+        // every consumer's intended non-blocking pipe poll (all internal pipe/
+        // stream consumers pass timeout_ms=0 and pace themselves with their own
+        // asyncio.sleep) into a 5s BLOCKING read. That read runs synchronously on
+        // a zone-mgr tokio worker, so a handful of polling consumers parked all
+        // workers for ~5s at a time, starving the runtime shared by raft + every
+        // VFS RPC and stalling unrelated requests ~5s. Pass the value through.
+        let timeout_ms = req.timeout_ms;
+        // Offload to the blocking pool: a DT_PIPE/DT_STREAM read can block up to
+        // `timeout_ms`, and a contended regular-file read waits on the VFS lock —
+        // neither must run on the raft-shared async worker.
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let offset = req.offset;
+        let read_res =
+            run_blocking(move || KernelAbi::sys_read(&*kernel, &path, &ctx, timeout_ms, offset))
+                .await?;
+        match read_res {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
                 Ok(Response::new(ReadResponse {
@@ -193,7 +236,14 @@ impl NexusVfsService for VfsServiceImpl {
         };
         // No federation guard: ctx.zone_perms is enforced inside sys_write's
         // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
-        match KernelAbi::sys_write(&*self.kernel, &req.path, &ctx, &req.content, 0) {
+        // Offload: sys_write waits on the VFS write lock (up to
+        // vfs_lock_timeout_ms), which must not block a raft-shared worker.
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let content = req.content;
+        let write_res =
+            run_blocking(move || KernelAbi::sys_write(&*kernel, &path, &ctx, &content, 0)).await?;
+        match write_res {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
                 size: result.size as i64,
@@ -225,7 +275,13 @@ impl NexusVfsService for VfsServiceImpl {
         };
         // No federation guard: ctx.zone_perms is enforced inside sys_unlink's
         // permission gate (kernel::dispatch.rs:101) — same SSOT as Call.
-        match KernelAbi::sys_unlink(&*self.kernel, &req.path, &ctx, req.recursive) {
+        // Offload: sys_unlink takes the VFS write lock (raft-shared runtime).
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let recursive = req.recursive;
+        let del_res =
+            run_blocking(move || KernelAbi::sys_unlink(&*kernel, &path, &ctx, recursive)).await?;
+        match del_res {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
                 is_error: false,
@@ -434,7 +490,13 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_rename(s))),
         };
-        match KernelAbi::sys_rename(&*self.kernel, &req.path, &req.new_path, &ctx) {
+        // Offload: sys_rename takes VFS write locks on both paths.
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let new_path = req.new_path;
+        let rename_res =
+            run_blocking(move || KernelAbi::sys_rename(&*kernel, &path, &new_path, &ctx)).await?;
+        match rename_res {
             Ok(r) => Ok(Response::new(RenameResponse {
                 hit: r.hit,
                 success: r.success,
@@ -469,7 +531,12 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_copy(s))),
         };
-        match KernelAbi::sys_copy(&*self.kernel, &req.src, &req.dst, &ctx) {
+        // Offload: sys_copy takes the VFS write lock on the destination.
+        let kernel = self.kernel.clone();
+        let src = req.src;
+        let dst = req.dst;
+        let copy_res = run_blocking(move || KernelAbi::sys_copy(&*kernel, &src, &dst, &ctx)).await?;
+        match copy_res {
             Ok(r) => Ok(Response::new(CopyResponse {
                 hit: r.hit,
                 dst_path: r.dst_path,
@@ -506,7 +573,13 @@ impl NexusVfsService for VfsServiceImpl {
         // hardcoded on the JSON path; expose only when there's a caller
         // that needs to vary them).
         let ttl_secs = req.timeout_ms / 1000 + 1;
-        match self.kernel.sys_lock(&req.path, &req.lock_id, 1, ttl_secs, "") {
+        // Offload: sys_lock blocks acquiring the advisory lock (raft-shared runtime).
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let lock_id_req = req.lock_id;
+        let lock_res =
+            run_blocking(move || kernel.sys_lock(&path, &lock_id_req, 1, ttl_secs, "")).await?;
+        match lock_res {
             Ok(Some(id)) => Ok(Response::new(LockResponse {
                 acquired: true,
                 lock_id: id,
@@ -563,11 +636,23 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_watch(s))),
         };
-        match self.kernel.sys_watch(&req.path, req.timeout_ms) {
-            Some(evt) => Ok(Response::new(WatchResponse {
+        // sys_watch blocks up to `timeout_ms` (default 30s) waiting for a file
+        // event — never run that on a raft-shared async worker. Offload and
+        // project the event into owned Strings inside the blocking closure.
+        let kernel = self.kernel.clone();
+        let path = req.path;
+        let timeout_ms = req.timeout_ms;
+        let matched = run_blocking(move || {
+            kernel
+                .sys_watch(&path, timeout_ms)
+                .map(|evt| (evt.path().to_string(), format!("{:?}", evt.event_type)))
+        })
+        .await?;
+        match matched {
+            Some((path, event_type)) => Ok(Response::new(WatchResponse {
                 matched: true,
-                path: evt.path().to_string(),
-                event_type: format!("{:?}", evt.event_type),
+                path,
+                event_type,
                 is_error: false,
                 error_payload: Vec::new(),
             })),
@@ -816,11 +901,17 @@ impl NexusVfsService for VfsServiceImpl {
             Err(s) => return Ok(Response::new(error_stream_read(s))),
         };
         if req.blocking {
-            match self.kernel.stream_read_at_blocking(
-                &req.path,
-                req.offset as usize,
-                req.timeout_ms,
-            ) {
+            // Offload: stream_read_at_blocking parks on a StreamManager condvar
+            // up to timeout_ms — must not run inline on the raft-shared worker.
+            let kernel = self.kernel.clone();
+            let path = req.path;
+            let offset = req.offset as usize;
+            let timeout_ms = req.timeout_ms;
+            let blk_res = run_blocking(move || {
+                kernel.stream_read_at_blocking(&path, offset, timeout_ms)
+            })
+            .await?;
+            match blk_res {
                 Ok((data, next)) => Ok(Response::new(StreamReadAtResponse {
                     data,
                     next_offset: next as u64,
@@ -930,7 +1021,9 @@ impl NexusVfsService for VfsServiceImpl {
             })
             .collect();
 
-        let results = self.kernel.sys_read(&rust_reqs, &ctx);
+        // Offload: batched sys_read composes per-item blocking reads.
+        let kernel = self.kernel.clone();
+        let results = run_blocking(move || kernel.sys_read(&rust_reqs, &ctx)).await?;
 
         let max_agg = self.kernel.read_batch_max_aggregate_bytes();
         let mut total = 0usize;
@@ -1048,7 +1141,9 @@ impl NexusVfsService for VfsServiceImpl {
             .map(|it| (it.path, it.content))
             .collect();
 
-        let results = KernelConvenience::write_batch(&*self.kernel, &items, &ctx);
+        // Offload: write_batch composes per-item blocking writes (VFS write lock).
+        let kernel = self.kernel.clone();
+        let results = run_blocking(move || KernelConvenience::write_batch(&*kernel, &items, &ctx)).await?;
 
         let mapped: Vec<BatchWriteItemResponse> = results
             .into_iter()
@@ -1081,7 +1176,12 @@ impl NexusVfsService for VfsServiceImpl {
     async fn call(&self, req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
         let req = req.into_inner();
         let ctx = self.resolve_context(&req.auth_token)?;
-        crate::call_dispatch::dispatch(&self.kernel, &ctx, &req.method, &req.payload)
+        // Generic dispatch runs arbitrary (possibly blocking) kernel work
+        // synchronously — offload it off the raft-shared async runtime.
+        let kernel = self.kernel.clone();
+        let method = req.method;
+        let payload = req.payload;
+        run_blocking(move || crate::call_dispatch::dispatch(&kernel, &ctx, &method, &payload)).await?
     }
 }
 
@@ -1401,7 +1501,7 @@ mod tests {
     use kernel::kernel::convenience::{KernelConvenience, MountOptions};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
-        BatchWriteItemRequest, BatchWriteRequest, StatRequest,
+        BatchWriteItemRequest, BatchWriteRequest, ReadRequest, SetattrRequest, StatRequest,
     };
     use kernel::kernel::Kernel;
 
@@ -1504,6 +1604,58 @@ mod tests {
         assert!(resp.results[1].is_error);
         assert!(!resp.results[2].is_error);
         assert_eq!(resp.results[2].content, b"ell");
+    }
+
+    /// Regression: a pipe read with `timeout_ms == 0` must be O_NONBLOCK —
+    /// return immediately with empty content, never block. A prior bug in this
+    /// handler overrode `timeout_ms == 0` to 5000ms, so every internal pipe
+    /// consumer's non-blocking poll (skeleton/zoekt/task-dispatch/audit all
+    /// pass timeout_ms=0) became a 5s BLOCKING read running synchronously on a
+    /// zone-mgr tokio worker. A handful of concurrent pollers then parked all
+    /// workers ~5s at a time, starving the runtime shared by raft + every VFS
+    /// RPC and stalling unrelated requests ~5s.
+    #[tokio::test]
+    async fn read_empty_pipe_with_zero_timeout_is_nonblocking() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        // Create an empty DT_PIPE (entry_type 3) through the service API.
+        let created = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/nexus/pipes/regression-test".into(),
+                auth_token: "test-key".into(),
+                entry_type: 3,
+                capacity: 65_536,
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(!created.is_error, "pipe create failed: {created:?}");
+
+        // Non-blocking (timeout_ms == 0) read of the empty pipe must return
+        // promptly. The starvation bug made this block ~5s.
+        let start = std::time::Instant::now();
+        let resp = svc
+            .read(tonic::Request::new(ReadRequest {
+                path: "/nexus/pipes/regression-test".into(),
+                auth_token: "test-key".into(),
+                timeout_ms: 0,
+                ..Default::default()
+            }))
+            .await
+            .expect("read rpc ok")
+            .into_inner();
+        let elapsed = start.elapsed();
+
+        assert!(!resp.is_error, "non-blocking pipe read should not error");
+        assert!(resp.content.is_empty(), "empty pipe should yield no bytes");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timeout_ms=0 pipe read must be non-blocking; took {elapsed:?} \
+             (regression: handler overrode 0 -> 5000ms, blocking a worker and \
+             starving the raft+VFS runtime)"
+        );
     }
 
     #[tokio::test]

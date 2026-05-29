@@ -29,8 +29,10 @@ import logging
 import time
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
@@ -42,14 +44,6 @@ from nexus.server.zone_execution import run_zone_scoped
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
-
-_BACKEND_LEG_TIMING_KEYS = (
-    "embed_ms",
-    "keyword_ms",
-    "page_keyword_ms",
-    "vector_ms",
-    "fusion_ms",
-)
 
 # =============================================================================
 # Constants (#3701 review — Issue 16A)
@@ -97,6 +91,24 @@ def _add_backend_leg_timings(
         value = daemon_timing.get(key)
         if isinstance(value, int | float):
             latency_breakdown[key] = round(float(value), 2)
+
+
+def _bind_search_phase_timings(latency_breakdown: dict[str, float]) -> None:
+    """Bind per-query phase timings onto the structlog request context (#4269).
+
+    The CorrelationMiddleware emits ``request_completed`` with every bound
+    contextvar, so prefixing each ``latency_breakdown`` leg with ``search_``
+    and binding it here makes the phase split (backend / keyword / page /
+    vector / fusion / index-load / permission-filter) queryable per request
+    in log aggregators — the evidence the issue asks for to pin I/O vs compute.
+    """
+    bound = {
+        f"search_{key}": round(float(value), 2)
+        for key, value in latency_breakdown.items()
+        if isinstance(value, int | float)
+    }
+    if bound:
+        structlog.contextvars.bind_contextvars(**bound)
 
 
 def _get_optional_search_daemon(request: Request) -> Any:
@@ -390,6 +402,12 @@ async def _handle_single_zone_search(
 
             latency_ms = (time.perf_counter() - start_time) * 1000
 
+            graph_latency_breakdown = {
+                "total_ms": round(latency_ms, 2),
+                "permission_filter_ms": round(filter_ms, 2),
+            }
+            _bind_search_phase_timings(graph_latency_breakdown)
+
             response: dict[str, Any] = {
                 "query": q,
                 "search_type": search_type,
@@ -397,10 +415,7 @@ async def _handle_single_zone_search(
                 "results": [_serialize_search_result(r) for r in results],
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
-                "latency_breakdown": {
-                    "total_ms": round(latency_ms, 2),
-                    "permission_filter_ms": round(filter_ms, 2),
-                },
+                "latency_breakdown": graph_latency_breakdown,
                 **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
             }
             if routing_info:
@@ -446,6 +461,7 @@ async def _handle_single_zone_search(
             "permission_filter_ms": round(filter_ms, 2),
         }
         _add_backend_leg_timings(latency_breakdown, daemon_timing)
+        _bind_search_phase_timings(latency_breakdown)
 
         response = {
             "query": q,
@@ -493,6 +509,11 @@ async def _handle_federated_search(
         FederatedSearchDispatcher,
         is_all_peers_failed,
     )
+
+    # Issue #4269 (Codex R3): the SANDBOX BM25S fallback below runs AFTER the
+    # dispatcher returns and is not in fed_response.latency_ms, so track its
+    # time separately and fold it into the reported total.
+    fed_fallback_ms = 0.0
 
     # Resolve ReBAC service
     rebac = getattr(request.app.state, "rebac_service", None)
@@ -552,6 +573,7 @@ async def _handle_federated_search(
             from nexus.server.dependencies import get_operation_context
 
             op_context = get_operation_context(auth_result)
+            fallback_start = time.perf_counter()
             bm25s_results = await search_service.semantic_search(
                 query=q,
                 path=path_filter or "/",
@@ -559,6 +581,9 @@ async def _handle_federated_search(
                 search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
                 context=op_context,
             )
+            # Record the degraded-path BM25S fallback work so the bound
+            # total_ms / fallback_ms reflect it (Codex R3).
+            fed_fallback_ms = (time.perf_counter() - fallback_start) * 1000
             # semantic_search stamped semantic_degraded=True on each dict
             # AND sets LAST_SEMANTIC_DEGRADED for this task — we prefer the
             # contextvar so an empty BM25S result still surfaces degradation
@@ -570,6 +595,27 @@ async def _handle_federated_search(
                 isinstance(r, dict) and r.get("semantic_degraded") is True for r in bm25s_results
             )
 
+    # Issue #4269 (Codex R2): /search/query auto-promotes multi-zone tokens
+    # into this federated path, so without binding here those request_completed
+    # logs would omit even search_total_ms — an observability blind spot for
+    # cross-zone searches. total_ms = dispatcher latency + the SANDBOX BM25S
+    # fallback (Codex R3), which runs after the dispatcher returns and is not in
+    # fed_response.latency_ms. (Per-leg backend timings are not aggregated
+    # across zones by the dispatcher.)
+    fed_total_ms = fed_response.latency_ms + fed_fallback_ms
+    fed_latency_breakdown = {"total_ms": round(fed_total_ms, 2)}
+    # Per-leg backend timings aggregated across local zones (Codex R6): surface
+    # index_load_ms / keyword_ms / vector_ms / fusion_ms so a cold federated
+    # query exposes the same phase split as a single-zone one.
+    for key, value in (getattr(fed_response, "search_timing", None) or {}).items():
+        if isinstance(value, int | float):
+            fed_latency_breakdown[key] = round(float(value), 2)
+    if fed_fallback_ms:
+        fed_latency_breakdown["fallback_ms"] = round(
+            fed_latency_breakdown.get("fallback_ms", 0.0) + fed_fallback_ms, 2
+        )
+    _bind_search_phase_timings(fed_latency_breakdown)
+
     response_dict: dict[str, Any] = {
         "query": q,
         "search_type": search_type,
@@ -577,7 +623,8 @@ async def _handle_federated_search(
         "federated": True,
         "results": fed_response.results,
         "total": len(fed_response.results),
-        "latency_ms": round(fed_response.latency_ms, 2),
+        "latency_ms": round(fed_total_ms, 2),
+        "latency_breakdown": fed_latency_breakdown,
         "zones_searched": fed_response.zones_searched,
         "zones_failed": [
             {"zone_id": zf.zone_id, "error": zf.error} for zf in fed_response.zones_failed

@@ -188,6 +188,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Page-level BM25 leg (Issue #3980 follow-up). Default on.
         _page_bm25_env = os.environ.get("NEXUS_SEARCH_PAGE_BM25", "true")
         _page_bm25 = _page_bm25_env.strip().lower() not in ("false", "0", "no")
+        # Boot-time index preload (Issue #4269). Default off — only worth it on
+        # slow network-attached volumes where the first query pays a cold
+        # mmap fault-in cost the kernel does not retain in page cache.
+        _index_preload_env = os.environ.get("NEXUS_SEARCH_INDEX_PRELOAD", "false")
+        _index_preload = _index_preload_env.strip().lower() in ("true", "1", "yes")
         _page_bm25_rrf_k_env = os.environ.get("NEXUS_SEARCH_PAGE_BM25_RRF_K", "")
         _page_bm25_rrf_k = 60
         if _page_bm25_rrf_k_env:
@@ -218,6 +223,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             chunks_per_page=_chunks_per_page,
             page_bm25=_page_bm25,
             page_bm25_rrf_k=_page_bm25_rrf_k,
+            index_preload_enabled=_index_preload,
         )
 
         # Inject async_session_factory from RecordStoreABC when available

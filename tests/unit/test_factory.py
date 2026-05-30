@@ -182,8 +182,6 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
-            "context_branch_service",
-            "zone_lifecycle",
             # (PipeManager + AgentRegistry are kernel-internal §4.2)
             "scheduler_service",
             # Issue #3193: shared notification signal
@@ -470,27 +468,6 @@ class TestStartBackgroundServices:
         }
         # Should not raise
         _start_background_services(system)
-
-    def test_zone_lifecycle_loads_terminating_zones(self) -> None:
-        """Issue #2061: load_terminating_zones called on startup."""
-        from nexus.factory import _start_background_services
-
-        session_mock = MagicMock()
-        sf = MagicMock()
-        sf.__enter__ = MagicMock(return_value=session_mock)
-        sf.__exit__ = MagicMock(return_value=False)
-
-        zl = MagicMock()
-        zl._session_factory = MagicMock(return_value=sf)
-
-        system = {
-            "deferred_permission_buffer": None,
-            "write_observer": None,
-            "delivery_worker": None,
-            "zone_lifecycle": zl,
-        }
-        _start_background_services(system)
-        zl.load_terminating_zones.assert_called_once_with(session_mock)
 
 
 # ---------------------------------------------------------------------------

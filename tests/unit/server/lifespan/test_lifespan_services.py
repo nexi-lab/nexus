@@ -139,7 +139,6 @@ class TestFromAppSystemServices:
             _service_map={
                 "eviction_manager": "em",
                 "write_observer": "write_obs",
-                "zone_lifecycle": "zl",
             },
         )
         app = _make_app(nexus_fs=nx)
@@ -147,7 +146,6 @@ class TestFromAppSystemServices:
 
         assert svc.eviction_manager == "em"
         assert svc.write_observer == "write_obs"
-        assert svc.zone_lifecycle == "zl"
 
     def test_empty_service_registry_yields_none(self) -> None:
         """When no services registered, all system service fields are None."""

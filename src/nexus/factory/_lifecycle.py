@@ -252,10 +252,10 @@ def _initialize_services(
         backend=ctx.backend,
     )
 
-    # Background services (DeferredPermissionBuffer, EventDeliveryWorker,
-    # ZoneLifecycleService) implement BackgroundService and are auto-started
-    # by the coordinator's start_background_services() at bootstrap.
-    # No manual _bootstrap_callbacks needed.
+    # Background services (DeferredPermissionBuffer, EventDeliveryWorker)
+    # implement BackgroundService and are auto-started by the coordinator's
+    # start_background_services() at bootstrap.  No manual
+    # _bootstrap_callbacks needed.
 
 
 # Backward compatibility aliases

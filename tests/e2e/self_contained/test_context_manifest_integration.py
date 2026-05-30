@@ -21,7 +21,6 @@ from nexus.bricks.context_manifest.models import (
     MCPToolSource,
     MemoryQuerySource,
     SourceResult,
-    WorkspaceSnapshotSource,
 )
 from nexus.bricks.context_manifest.resolver import ManifestResolver
 
@@ -75,7 +74,6 @@ class TestFullPipeline:
         sources = [
             FileGlobSource(pattern="src/**/*.py"),
             MemoryQuerySource(query="relevant to auth"),
-            WorkspaceSnapshotSource(snapshot_id="latest"),
             MCPToolSource(tool_name="search_codebase", required=False),
         ]
         variables: dict[str, str] = {}

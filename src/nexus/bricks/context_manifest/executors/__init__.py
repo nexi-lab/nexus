@@ -3,7 +3,6 @@
 from nexus.bricks.context_manifest.executors.executor_utils import (
     FileGlobSourceProtocol,
     MemoryQuerySourceProtocol,
-    WorkspaceSnapshotSourceProtocol,
     resolve_source_template,
 )
 from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
@@ -14,6 +13,5 @@ __all__ = [
     "FileGlobSourceProtocol",
     "MemoryQueryExecutor",
     "MemoryQuerySourceProtocol",
-    "WorkspaceSnapshotSourceProtocol",
     "resolve_source_template",
 ]

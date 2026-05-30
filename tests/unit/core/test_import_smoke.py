@@ -18,7 +18,6 @@ _CORE_MODULES = [
     "nexus.contracts.protocols.rebac",
     "nexus.contracts.protocols.permission_enforcer",
     "nexus.contracts.protocols.entity_registry",
-    "nexus.contracts.protocols.workspace_manager",
     # Moved to contracts/ per #2359:
     "nexus.contracts.describable",
     "nexus.contracts.wirable_fs",

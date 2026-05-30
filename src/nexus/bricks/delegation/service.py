@@ -64,21 +64,19 @@ MAX_CHAIN_DEPTH = 5
 class DelegationService:
     """Service for managing agent identity delegation.
 
-    Coordinates between ReBAC, entity registry, namespace manager,
-    and API key auth to provision delegated worker agents.
+    Coordinates between ReBAC, entity registry, and API key auth to
+    provision delegated worker agents.
     """
 
     def __init__(
         self,
         record_store: "RecordStoreABC",
         rebac_manager: Any,
-        namespace_manager: Any = None,
         entity_registry: "EntityRegistryProtocol | None" = None,
         agent_registry: Any = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
-        self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
         self._agent_registry: Any = agent_registry
         logger.info("[DelegationService] Initialized")
@@ -239,8 +237,7 @@ class DelegationService:
                 expires_at=lease_expires_at,
             )
 
-            # 10. Get mount table for response
-            mount_table = self._get_worker_mount_table(worker_id, zone_id)
+            mount_table: list[str] = []
 
         except Exception:
             # Cleanup: unregister agent on failure (no key exists yet)
@@ -597,10 +594,6 @@ class DelegationService:
             self._restore_tuples_from_snapshot(old_tuples)
             raise
 
-        # 5. Invalidate namespace cache so mount_table reflects new state
-        if self._namespace_manager is not None:
-            self._namespace_manager.invalidate(("agent", record.agent_id))
-
         logger.info(
             "[Delegation] Updated namespace config for delegation=%s grants=%d",
             delegation_id,
@@ -804,24 +797,6 @@ class DelegationService:
                 expires_at=expires_at,
             )
             return str(raw_key)
-
-    def _get_worker_mount_table(
-        self,
-        worker_id: str,
-        zone_id: str | None,
-    ) -> list[str]:
-        """Get mount table for the worker agent (fail-soft -- informational)."""
-        if self._namespace_manager is None:
-            return []
-        try:
-            entries = self._namespace_manager.get_mount_table(
-                subject=("agent", worker_id),
-                zone_id=zone_id,
-            )
-            return [entry.virtual_path for entry in entries]
-        except Exception as e:
-            logger.warning("[Delegation] Failed to get mount table: %s", e)
-            return []
 
     def _delete_worker_tuples(self, worker_id: str, zone_id: str | None) -> None:
         """Delete all ReBAC tuples for a worker agent.

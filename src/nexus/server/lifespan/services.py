@@ -291,8 +291,6 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
     if app.state.delegation_service is not None:
         # Wire system-tier dependencies that weren't available during factory boot
         deleg = app.state.delegation_service
-        if getattr(deleg, "_namespace_manager", None) is None:
-            deleg._namespace_manager = svc.namespace_manager
         if getattr(deleg, "_agent_registry", None) is None:
             deleg._agent_registry = app.state.agent_registry
         logger.info("[DELEGATION] DelegationService wired from brick_dict")

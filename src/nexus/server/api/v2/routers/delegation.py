@@ -536,21 +536,7 @@ async def get_delegation_namespace(
                 detail="Only the parent agent can view a delegation's namespace config.",
             )
 
-    # Get current mount table for the worker agent
     mount_table: list[str] = []
-    ns_manager = getattr(service, "_namespace_manager", None)
-    if ns_manager is not None:
-        try:
-            entries = ns_manager.get_mount_table(
-                subject=("agent", record.agent_id),
-                zone_id=record.zone_id,
-            )
-            mount_table = [entry.virtual_path for entry in entries]
-        except Exception:
-            logger.warning(
-                "[Delegation] Failed to get mount table for namespace detail: %s",
-                delegation_id,
-            )
 
     return NamespaceDetailResponse(
         delegation_id=record.delegation_id,
@@ -634,21 +620,7 @@ async def update_delegation_namespace(
         _handle_delegation_error(e)
         raise  # unreachable
 
-    # Get current mount table
     mount_table: list[str] = []
-    ns_manager = getattr(service, "_namespace_manager", None)
-    if ns_manager is not None:
-        try:
-            entries = ns_manager.get_mount_table(
-                subject=("agent", updated.agent_id),
-                zone_id=updated.zone_id,
-            )
-            mount_table = [entry.virtual_path for entry in entries]
-        except Exception:
-            logger.warning(
-                "[Delegation] Failed to get mount table after namespace update: %s",
-                delegation_id,
-            )
 
     return NamespaceDetailResponse(
         delegation_id=updated.delegation_id,

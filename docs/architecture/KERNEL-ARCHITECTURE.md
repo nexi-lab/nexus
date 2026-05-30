@@ -1107,13 +1107,16 @@ cases.
 
 | Service name | Source | Methods |
 |--------------|--------|---------|
-| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `kernel::core::agents::registry::AgentRegistry` directly. |
-| `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. The AgentRegistry trait bridge wired by `nx_acp_set_agent_registry` is satisfied by `kernel.agent_registry` (the Rust SSOT itself), so spawn / kill / list calls go straight to `kernel::core::agents::registry::AgentRegistry`. |
+| `managed_agent` | `rust/services/src/managed_agent/` (feature `service-managed-agent`) | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `kernel::core::agents::registry::AgentRegistry` directly. |
+| `acp` | `rust/services/src/acp/` (feature `service-acp`) | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. The AgentRegistry trait bridge wired by `nx_acp_set_agent_registry` is satisfied by `kernel.agent_registry` (the Rust SSOT itself), so spawn / kill / list calls go straight to `kernel::core::agents::registry::AgentRegistry`. |
 
-Python callers reach any Rust service through the gRPC `Call(method,
-payload)` RPC on the `nexus-cluster` process. One dispatch path — no
-per-service shortcuts — so audit / permission hooks added to the
-dispatch path land in one place.
+Services compose into a profile binary the same way drivers do (§7.2):
+each `service-*` feature gates a `pub mod` line in
+`rust/services/src/lib.rs`, and each profile's `Cargo.toml` (§7.1)
+declares the features it enables. Python callers reach a Rust service
+through the gRPC `Call(method, payload)` RPC on the profile binary that
+links it. One dispatch path — no per-service shortcuts — so audit /
+permission hooks added to the dispatch path land in one place.
 
 ---
 

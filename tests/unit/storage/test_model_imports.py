@@ -18,7 +18,6 @@ EXPECTED_MODELS = [
     # Filesystem
     "DirectoryEntryModel",
     "FileMetadataModel",
-    "WorkspaceSnapshotModel",
     "DocumentChunkModel",
     # Permissions
     "ReBACTupleModel",
@@ -60,8 +59,6 @@ EXPECTED_MODELS = [
     "SystemSettingsModel",
     "SubscriptionModel",
     "MigrationHistoryModel",
-    # Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
-    "PathRegistrationModel",
     # Agents
     "AgentEventModel",
     # Delegation (Issue #1271)
@@ -88,8 +85,6 @@ EXPECTED_MODELS = [
     # Transactional Snapshots (Issue #1752)
     "TransactionSnapshotModel",
     "SnapshotEntryModel",
-    # Context Branching (Issue #1315)
-    "ContextBranchModel",
     # Credentials & Access Manifests (Issues #1753, #1754)
     "AgentCredentialModel",
     "AccessManifestModel",

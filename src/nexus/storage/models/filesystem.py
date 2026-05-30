@@ -7,14 +7,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    BigInteger,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -123,50 +121,6 @@ class FileMetadataModel(Base):
             raise ValidationError(
                 f"metadata key must be 255 characters or less, got {len(self.key)}"
             )
-
-
-class WorkspaceSnapshotModel(Base):
-    """Workspace snapshot tracking for registered workspaces.
-
-    Enables time-travel debugging and workspace rollback by capturing
-    complete workspace state at specific points in time.
-    """
-
-    __tablename__ = "workspace_snapshots"
-
-    snapshot_id: Mapped[str] = uuid_pk()
-
-    workspace_path: Mapped[str] = mapped_column(Text, nullable=False)
-
-    snapshot_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-
-    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    tags: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__ = (
-        UniqueConstraint("workspace_path", "snapshot_number", name="uq_workspace_snapshot"),
-        Index("idx_workspace_snapshots_workspace_path", "workspace_path"),
-        Index("idx_workspace_snapshots_manifest", "manifest_hash"),
-        Index("idx_workspace_snapshots_created_at", "created_at"),
-        # Composite index for get_latest_snapshot (Issue #1428: 4A)
-        Index(
-            "idx_workspace_snapshots_ws_path_created",
-            "workspace_path",
-            created_at.desc(),
-        ),
-    )
-
-    def __repr__(self) -> str:
-        return f"<WorkspaceSnapshotModel(snapshot_id={self.snapshot_id}, workspace={self.workspace_path}, version={self.snapshot_number})>"
 
 
 class DocumentChunkModel(Base):

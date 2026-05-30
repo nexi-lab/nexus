@@ -171,8 +171,8 @@ class TestBootSystemServices:
             "permission_enforcer",
             "write_observer",
             # Former-kernel degradable
-            # dir_visibility_cache, hierarchy_manager, namespace_manager
-            # now internalized into ReBACManager — not in result dict.
+            # dir_visibility_cache + hierarchy_manager now internalized into
+            # ReBACManager — not in result dict.
             "deferred_permission_buffer",
             "mount_manager",
             # Original services

@@ -183,13 +183,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.snapshot.service.TransactionalSnapshotService",
         True,
     ),
-    # ── Async adapter protocols (Issue #1440) ─────────────────────────
-    (
-        "NamespaceManagerProtocol",
-        "nexus.contracts.protocols.namespace_manager",
-        "nexus.bricks.rebac.namespace_manager.AsyncNamespaceManager",
-        True,
-    ),
     # ── Service-layer protocols ───────────────────────────────────────
     (
         "MCPProtocol",
@@ -323,7 +316,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("lock", "nexus/contracts/protocols/lock.py"),
     ("mcp", "nexus/contracts/protocols/mcp.py"),
     ("mount", "nexus/contracts/protocols/mount.py"),
-    ("namespace_manager", "nexus/contracts/protocols/namespace_manager.py"),
     ("oauth", "nexus/contracts/protocols/oauth.py"),
     ("operation_log", "nexus/contracts/protocols/operation_log.py"),
     ("parse", "nexus/contracts/protocols/parse.py"),

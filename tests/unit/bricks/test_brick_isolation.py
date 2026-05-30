@@ -25,7 +25,6 @@ _BRICK_MODULES = [
     "nexus.bricks.rebac.memory_permission_enforcer",
     "nexus.bricks.rebac.permission_cache",
     "nexus.bricks.rebac.hotspot_detector",
-    "nexus.bricks.rebac.namespace_manager",
     "nexus.bricks.rebac._path_utils",
 ]
 

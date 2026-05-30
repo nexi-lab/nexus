@@ -199,7 +199,6 @@ class NexusFUSE:
 
         # Issue #1305: Build OperationContext for namespace-scoped mounts
         context = None
-        namespace_manager = None
         if self._agent_id is not None:
             from nexus.contracts.types import OperationContext
 
@@ -220,9 +219,6 @@ class NexusFUSE:
                 f"subject_type={subject_type}, zone_id={self._zone_id}"
             )
 
-            # A2-B: Try to obtain NamespaceManager for direct visibility checks
-            namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
-
         if self._should_use_rust_passthrough(context):
             self._start_rust_passthrough_mount()
             return
@@ -236,7 +232,6 @@ class NexusFUSE:
             self.mode,
             self.cache_config,
             context=context,
-            namespace_manager=namespace_manager,
             use_rust=self._use_rust,
             event_bus=event_bus,
             subscription_manager=subscription_manager,

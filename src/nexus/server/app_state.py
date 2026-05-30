@@ -49,7 +49,6 @@ class NexusAppState:
     # === Flattened from NexusFS (replaces private attr access) ===
     rebac_manager: Any = None
     entity_registry: Any = None
-    namespace_manager: Any = None
     event_bus: Any = None
     write_observer: Any = None
     permission_enforcer: Any = None

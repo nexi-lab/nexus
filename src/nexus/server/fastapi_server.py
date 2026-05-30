@@ -430,7 +430,6 @@ def create_app(
 
     app.state.rebac_manager = _resolve_service("rebac_manager", "_rebac_manager")
     app.state.entity_registry = _resolve_service("entity_registry", "_entity_registry")
-    app.state.namespace_manager = _resolve_service("namespace_manager", "_namespace_manager")
 
     # Thread pool and timeout settings (Issue #932, #2071)
     _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)

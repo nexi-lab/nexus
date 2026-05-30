@@ -97,7 +97,6 @@ class TestFromAppExtraction:
                 "entity_registry": "entity_reg",
                 "permission_enforcer": "perm_enf",
                 "rebac_manager": "rebac_mgr",
-                "async_namespace_manager": "ns_mgr",
                 "snapshot_service": "snap_svc",
             },
         )
@@ -114,7 +113,6 @@ class TestFromAppExtraction:
         assert svc.coordination_client is None  # sentinel deleted from NexusFS
         assert svc.workflow_engine == "wf_engine"
         assert svc.snapshot_service == "snap_svc"
-        assert svc.namespace_manager == "ns_mgr"
         assert svc.nexus_config == "nexus_cfg"
 
 

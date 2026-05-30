@@ -80,7 +80,6 @@ class LifespanServices:
     coordination_client: Any = None
     workflow_engine: Any = None
     snapshot_service: Any = None
-    namespace_manager: Any = None
     nexus_config: Any = None
     observability_subsystem: Any = None
 
@@ -150,7 +149,6 @@ class LifespanServices:
                 else None
             ),
             snapshot_service=_svc("snapshot_service"),
-            namespace_manager=_svc("async_namespace_manager"),
             nexus_config=getattr(nx, "config", None) if nx else None,
             observability_subsystem=_svc("observability_subsystem"),
             # From app.state (set by server init)

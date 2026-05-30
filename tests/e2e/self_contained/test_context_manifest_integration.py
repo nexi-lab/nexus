@@ -276,62 +276,6 @@ class TestFullPipelineWithFileGlob:
 
 
 # ===========================================================================
-# Test 8: WorkspaceSnapshotExecutor with StubSnapshotLookup (Issue #1428)
-# ===========================================================================
-
-
-class StubSnapshotLookup:
-    """Stub SnapshotLookup for integration testing."""
-
-    def __init__(self, snapshots: dict[str, dict[str, Any]] | None = None) -> None:
-        self._snapshots = snapshots or {}
-
-    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
-        return self._snapshots.get(snapshot_id)
-
-    def get_latest_snapshot(self, workspace_path: str) -> dict[str, Any] | None:
-        return None
-
-
-class TestWorkspaceSnapshotExecutorInPipeline:
-    @pytest.mark.asyncio
-    async def test_workspace_snapshot_in_full_pipeline(self, tmp_path: Path) -> None:
-        """WorkspaceSnapshotExecutor wired into full resolver pipeline."""
-        from nexus.bricks.context_manifest.executors.workspace_snapshot import (
-            WorkspaceSnapshotExecutor,
-        )
-
-        snapshot_data = {
-            "snapshot_id": "snap-int-001",
-            "workspace_path": "/ws",
-            "snapshot_number": 1,
-            "manifest_hash": "abc",
-            "file_count": 5,
-            "total_size_bytes": 1000,
-            "description": "test",
-            "created_by": "user",
-            "tags": [],
-            "created_at": "2025-01-15T10:00:00",
-        }
-        lookup = StubSnapshotLookup(snapshots={"snap-int-001": snapshot_data})
-        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup)
-
-        resolver = ManifestResolver(
-            executors={"workspace_snapshot": executor},
-            max_resolve_seconds=10.0,
-        )
-        sources = [WorkspaceSnapshotSource(snapshot_id="snap-int-001")]
-
-        result = await resolver.resolve(sources, {}, tmp_path)
-
-        assert isinstance(result, ManifestResult)
-        assert len(result.sources) == 1
-        assert result.sources[0].status == "ok"
-        assert result.sources[0].data["snapshot_id"] == "snap-int-001"
-        assert result.sources[0].data["file_count"] == 5
-
-
-# ===========================================================================
 # Test 9: MemoryQueryExecutor with StubMemorySearch (Issue #1428)
 # ===========================================================================
 

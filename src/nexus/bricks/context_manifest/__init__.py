@@ -29,9 +29,6 @@ References:
 
 from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
 from nexus.bricks.context_manifest.executors.memory_query import MemoryQueryExecutor
-from nexus.bricks.context_manifest.executors.workspace_snapshot import (
-    WorkspaceSnapshotExecutor,
-)
 from nexus.bricks.context_manifest.metrics import ManifestMetricsConfig, ManifestMetricsObserver
 from nexus.bricks.context_manifest.models import (
     ContextSource,
@@ -72,7 +69,6 @@ __all__ = [
     # Executors (Issue #1427, #1428)
     "FileGlobExecutor",
     "MemoryQueryExecutor",
-    "WorkspaceSnapshotExecutor",
     # Metrics (Issue #1428)
     "ManifestMetricsConfig",
     "ManifestMetricsObserver",

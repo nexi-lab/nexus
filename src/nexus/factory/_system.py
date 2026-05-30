@@ -244,11 +244,6 @@ def _boot_pre_kernel_services(
     mount_manager: Any = None
 
     # --- Workspace Manager ---
-    # Deferred to post-kernel tier (factory/_wired.py) — workspace listing
-    # now goes through NexusFS.sys_readdir (§2.5 mediation), so the manager
-    # needs a live NexusFS handle which isn't constructed yet.
-    workspace_manager: Any = None
-
     # =====================================================================
     # ORIGINAL SYSTEM SERVICES (all degradable)
     # =====================================================================
@@ -399,7 +394,6 @@ def _boot_pre_kernel_services(
         # Former-kernel degradable
         "deferred_permission_buffer": deferred_permission_buffer,
         "mount_manager": mount_manager,
-        "workspace_manager": workspace_manager,
         # Original services
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,

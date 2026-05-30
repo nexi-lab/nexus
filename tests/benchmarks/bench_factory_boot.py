@@ -304,9 +304,7 @@ class TestPerTierBreakdown:
             "dir_visibility_cache",
             "hierarchy_manager",
             "deferred_permission_buffer",
-            "workspace_registry",
             "mount_manager",
-            "workspace_manager",
             # Original system services
             "eviction_manager",
             "namespace_manager",

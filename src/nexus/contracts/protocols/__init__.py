@@ -11,7 +11,6 @@ because they are tier-neutral interface definitions consumed by bricks,
 services, and the kernel alike.
 
 Storage Affinity (per data-storage-matrix.md):
-    - NamespaceManagerProtocol -> RecordStore + CacheStore (ReBAC views)
     - SchedulerProtocol      -> CacheStore or RecordStore (work queue)
 
 References:
@@ -27,7 +26,6 @@ from nexus.contracts.protocols.lease import LeaseManagerProtocol, LeaseState
 from nexus.contracts.protocols.mcp import MCPProtocol
 from nexus.contracts.protocols.mount import MountProtocol
 from nexus.contracts.protocols.mount_persist import MountPersistProtocol
-from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.contracts.protocols.oauth import OAuthProtocol
 from nexus.contracts.protocols.operation_log import OperationLogProtocol
 from nexus.contracts.protocols.parse import ParseProtocol
@@ -56,7 +54,6 @@ __all__ = [
     "MCPProtocol",
     "MountPersistProtocol",
     "MountProtocol",
-    "NamespaceManagerProtocol",
     "OAuthProtocol",
     "OperationLogProtocol",
     "ParseProtocol",

@@ -49,9 +49,6 @@ class IntegrationOkExecutor:
 def _make_all_ok_executors() -> dict[str, Any]:
     return {
         "mcp_tool": IntegrationOkExecutor(),
-        "workspace_snapshot": IntegrationOkExecutor(
-            data_factory=lambda s, v: {"snapshot_id": s.snapshot_id, "files": 42}
-        ),
         "file_glob": IntegrationOkExecutor(
             data_factory=lambda s, v: {"pattern": s.pattern, "matches": ["a.py", "b.py"]}
         ),
@@ -69,7 +66,7 @@ def _make_all_ok_executors() -> dict[str, Any]:
 class TestFullPipeline:
     @pytest.mark.asyncio
     async def test_multi_source_resolve_writes_files(self, tmp_path: Path) -> None:
-        """Full pipeline: 4 sources → resolve → verify files on disk."""
+        """Full pipeline: 3 sources → resolve → verify files on disk."""
         resolver = ManifestResolver(executors=_make_all_ok_executors(), max_resolve_seconds=10.0)
         sources = [
             FileGlobSource(pattern="src/**/*.py"),
@@ -82,7 +79,7 @@ class TestFullPipeline:
 
         # Result structure
         assert isinstance(result, ManifestResult)
-        assert len(result.sources) == 4
+        assert len(result.sources) == 3
         assert all(r.status == "ok" for r in result.sources)
         assert result.total_ms > 0
         assert result.resolved_at  # non-empty
@@ -90,7 +87,7 @@ class TestFullPipeline:
         # Files on disk
         assert (tmp_path / "_index.json").exists()
         result_files = [f for f in tmp_path.iterdir() if f.name != "_index.json"]
-        assert len(result_files) == 4
+        assert len(result_files) == 3
 
         # Each result file is valid JSON
         for f in result_files:

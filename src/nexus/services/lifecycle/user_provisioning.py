@@ -40,7 +40,6 @@ class UserProvisioningService:
         rmdir_fn: Any | None = None,
         rebac_create_fn: Any | None = None,
         rebac_delete_fn: Any | None = None,
-        register_workspace_fn: Any | None = None,
         register_agent_fn: Any | None = None,
         # Cache references for invalidation during directory deletion
         list_cache: Any | None = None,
@@ -55,7 +54,6 @@ class UserProvisioningService:
         self._rmdir_fn = rmdir_fn
         self._rebac_create_fn = rebac_create_fn
         self._rebac_delete_fn = rebac_delete_fn
-        self._register_workspace_fn = register_workspace_fn
         self._register_agent_fn = register_agent_fn
         self._list_cache = list_cache
         self._exists_cache = exists_cache
@@ -253,13 +251,6 @@ class UserProvisioningService:
 
             if not self._vfs.access(workspace_path, context=admin_context):
                 self._vfs.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
-                if self._register_workspace_fn:
-                    self._register_workspace_fn(
-                        workspace_path,
-                        name="Personal Workspace",
-                        description="Default personal workspace",
-                        context=admin_context,
-                    )
                 logger.info("Created workspace: %s", workspace_path)
             created_resources["workspace"] = workspace_path
         except Exception as e:

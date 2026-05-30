@@ -457,10 +457,6 @@ def create_app(
         _agent_rpc = nexus_fs.service("agent_rpc")
         if _agent_rpc is not None:
             _rpc_sources.append(_agent_rpc)
-        # WorkspaceRPCService
-        _workspace_rpc = nexus_fs.service("workspace_rpc")
-        if _workspace_rpc is not None:
-            _rpc_sources.append(_workspace_rpc)
         # AcpRPCService is owned by the Rust kernel (commit 22 cutover);
         # the gRPC Call handler routes acp_* methods through Rust dispatch.
         # Issue #841: MetadataExportService lives outside kernel

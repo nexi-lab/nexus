@@ -1202,18 +1202,20 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     message="OAuth linked to existing account",
                 )
 
-        # New user - create zone, user, and OAuth account
+        # New user - create user + OAuth account
         user_id = str(uuid.uuid4())
 
-        # Generate zone_id based on email type (same logic as existing users)
-        # For personal emails: use username, for work emails: use full domain
+        # Derive a zone_id for the JWT claim (no zone row is created — that
+        # work lived in user_provisioning, which was deleted).  Personal-
+        # domain emails use the local part; org-domain emails use the
+        # domain; missing email falls back to a user-id-derived slug.
         if registration.provider_email:
             email_username, email_domain = (
                 registration.provider_email.split("@")
                 if "@" in registration.provider_email
                 else (registration.provider_email, "")
             )
-            personal_domains = [
+            personal_domains = {
                 "gmail.com",
                 "outlook.com",
                 "hotmail.com",
@@ -1221,31 +1223,14 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 "icloud.com",
                 "proton.me",
                 "protonmail.com",
-            ]
-            # Use email username for personal domains, domain for org domains
+            }
             default_zone_id = (
                 email_username if email_domain.lower() in personal_domains else email_domain
             )
-
-            # Calculate smart zone name based on email type
-            if email_domain.lower() in personal_domains:
-                # Personal: extract first name from display_name
-                first_name = (
-                    registration.name.split()[0]
-                    if registration.name
-                    else email_username.capitalize()
-                )
-                default_zone_name = f"{first_name}'s Org"
-            else:
-                # Work: use domain
-                default_zone_name = email_domain
         else:
             default_zone_id = f"user_{user_id[:8]}"
-            default_zone_name = f"User {user_id[:8]} Organization"
 
-        # Use custom zone_slug and zone_name from frontend if provided, otherwise use defaults
         zone_id = request.zone_slug if request.zone_slug else default_zone_id
-        zone_name = request.zone_name if request.zone_name else default_zone_name
 
         # Ensure provider email exists for new user creation
         if not registration.provider_email:
@@ -1288,69 +1273,6 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
-        # Provision full user resources (workspace, agents, permissions)
-        # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
-        # This is done outside the session to avoid conflicts
-        api_key_value = None
-        key_id = None
-        try:
-            from nexus.contracts.types import OperationContext
-
-            nx = get_nexus_instance()
-            if nx:
-                admin_context = OperationContext(
-                    user_id="system",
-                    groups=[],
-                    zone_id=zone_id,
-                    is_admin=True,
-                )
-
-                # Provision user resources with OAuth-specific API key (90 days expiry)
-                provision_result = await nx.service("user_provisioning").provision_user(
-                    user_id=user_id,
-                    email=user.email,
-                    display_name=user.display_name,
-                    zone_id=zone_id,
-                    zone_name=zone_name,
-                    create_api_key=True,
-                    api_key_name="OAuth Auto-generated Key",
-                    api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
-                    create_agents=True,
-                    import_skills=False,
-                    context=admin_context,
-                )
-                logger.info(f"Provisioned OAuth user resources: {provision_result}")
-
-                # Extract API key and key_id for OAuth encryption
-                api_key_value = provision_result.get("api_key")
-                key_id = provision_result.get("key_id")
-
-        except Exception as e:
-            logger.error(f"Failed to provision OAuth user resources: {e}")
-            # Continue - user can be provisioned later via retry
-
-        # Encrypt and store the raw API key in oauth_api_keys table
-        # This allows OAuth users to retrieve their API key on subsequent logins
-        if api_key_value and key_id:
-            try:
-                from nexus.storage.models import OAuthAPIKeyModel
-
-                # Use the OAuth crypto instance from the provider
-                crypto = oauth_provider.oauth_crypto
-                encrypted_key_value = crypto.encrypt_token(api_key_value)
-
-                # Store encrypted key in a new session
-                with oauth_provider.session_factory() as oauth_session, oauth_session.begin():
-                    oauth_api_key = OAuthAPIKeyModel(
-                        key_id=key_id,
-                        user_id=user_id,
-                        encrypted_key_value=encrypted_key_value,
-                    )
-                    oauth_session.add(oauth_api_key)
-                    logger.info(f"Stored encrypted API key for OAuth user: {user_id}")
-            except Exception as e:
-                logger.error(f"Failed to encrypt and store OAuth API key: {e}")
-
         # Type guard: email is required for OAuth users
         assert user.email is not None, "OAuth user must have email"
 
@@ -1380,7 +1302,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 primary_auth_method="oauth",
             ),
             is_new_user=True,
-            api_key=api_key_value,
+            api_key=None,
             zone_id=zone_id,
             message="OAuth authentication confirmed and account created",
         )

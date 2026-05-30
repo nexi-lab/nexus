@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.bricks.auth.zone_helpers import (
@@ -74,6 +74,30 @@ class ZoneListResponse(BaseModel):
 
     zones: list[ZoneResponse]
     total: int
+
+
+def _inline_zone_finalizer_deletes(session: Any, zone_id: str) -> None:
+    """Run the three zone-scoped DELETEs that previously lived in the K8s-
+    finalizer-pattern services (SearchZoneFinalizer for entities +
+    relationships, ReBACZoneFinalizer for rebac_tuples).
+
+    Inlined here as part of the K8s-finalizer abstraction simplification
+    (PR 7b).  No FK constraints exist between these tables and ``zones``;
+    orphan rows only waste storage.  Idempotent — running this twice for
+    the same zone is harmless.
+    """
+    session.execute(
+        text("DELETE FROM entities WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    )
+    session.execute(
+        text("DELETE FROM relationships WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    )
+    session.execute(
+        text("DELETE FROM rebac_tuples WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    )
 
 
 def _zone_to_response(zone: ZoneModel) -> ZoneResponse:

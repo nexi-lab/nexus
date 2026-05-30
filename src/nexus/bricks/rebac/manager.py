@@ -429,10 +429,6 @@ class ReBACManager:
             lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(path, zone_id),
         )
 
-        # NamespaceManager: optional (profile-gated), created on demand via
-        # create_namespace_manager() when namespace brick is enabled.
-        self._namespace_manager: "Any | None" = None
-
     # ── Public property accessors for internalized sub-components ────
 
     @property
@@ -444,27 +440,6 @@ class ReBACManager:
     def dir_visibility_cache(self) -> Any:
         """DirectoryVisibilityCache — O(1) directory permission lookups."""
         return self._dir_visibility_cache
-
-    @property
-    def namespace_manager(self) -> Any:
-        """NamespaceManager — per-subject namespace visibility (may be None if not created)."""
-        return self._namespace_manager
-
-    def create_namespace_manager(self, record_store: Any = None) -> Any:
-        """Create and attach the NamespaceManager (profile-gated, call when namespace brick is enabled).
-
-        Args:
-            record_store: RecordStoreABC for L3 persistent view store. If None, L3 is disabled.
-
-        Returns:
-            The newly created NamespaceManager instance.
-        """
-        from nexus.bricks.rebac.namespace_factory import (
-            create_namespace_manager as _create_ns_manager,
-        )
-
-        self._namespace_manager = _create_ns_manager(self, record_store)
-        return self._namespace_manager
 
     def _create_invalidation_stream(self) -> Any:
         """Create the DT_STREAM for ordered intra-zone invalidation."""
@@ -1221,33 +1196,6 @@ class ReBACManager:
                 return True
         return False
 
-    def register_namespace_invalidator(
-        self,
-        callback_id: str,
-        callback: Any,
-    ) -> None:
-        """Register a namespace cache invalidation callback (Issue #1244).
-
-        Delegates to CacheCoordinator. Called on every rebac_write/rebac_delete
-        to immediately invalidate the affected subject's dcache entries.
-
-        Args:
-            callback_id: Unique identifier for this callback
-            callback: Function(subject_type, subject_id, zone_id)
-        """
-        self._cache_coordinator.register_namespace_invalidator(callback_id, callback)
-
-    def unregister_namespace_invalidator(self, callback_id: str) -> bool:
-        """Unregister a namespace cache invalidation callback.
-
-        Args:
-            callback_id: ID of callback to remove
-
-        Returns:
-            True if callback was found and removed, False otherwise
-        """
-        return self._cache_coordinator.unregister_namespace_invalidator(callback_id)
-
     def _notify_dir_visibility_invalidators(
         self,
         zone_id: str,
@@ -1387,11 +1335,6 @@ class ReBACManager:
 
         # Issue #919: Notify directory visibility cache invalidators
         self._notify_dir_visibility_invalidators(effective_zone, object)
-
-        # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
-        self._cache_coordinator.notify_namespace_invalidators(
-            effective_zone, subject[0], subject[1]
-        )
 
         # Invalidate L1 permission cache for affected subject and object
         # This ensures subsequent rebac_check_bulk calls see the new permission
@@ -1799,13 +1742,6 @@ class ReBACManager:
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
             self._notify_dir_visibility_invalidators(normalize_zone_id(zone_id), object_tuple)
-
-            # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
-            self._cache_coordinator.notify_namespace_invalidators(
-                normalize_zone_id(zone_id),
-                tuple_info["subject_type"],
-                tuple_info["subject_id"],
-            )
 
             # Invalidate L1 permission cache for affected subject and object
             if self._l1_cache is not None:

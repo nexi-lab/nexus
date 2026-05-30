@@ -2309,10 +2309,8 @@ nexusd --profile full --auth-type database --database-url "$NEXUS_DATABASE_URL"
 Admin account lifecycle:
 
 ```bash
-nexus admin provision-user alice alice@example.com --display-name "Alice"
 nexus admin create-user bot1 --name "Bot Agent" --subject-type agent --expires-days 7
 nexus admin list-users --is-admin
-nexus admin deprovision-user alice --zone-id alice --delete-user-record
 ```
 
 Equivalent generic gRPC calls use the same method names that the CLI calls:
@@ -2321,13 +2319,8 @@ Equivalent generic gRPC calls use the same method names that the CLI calls:
 from nexus.remote.rpc_transport import RPCTransport
 
 rpc = RPCTransport("localhost:2028", auth_token="<admin-api-key>")
-created = rpc.call_rpc(
-    "provision_user",
-    {"user_id": "alice", "email": "alice@example.com", "display_name": "Alice"},
-)
 audit = rpc.call_rpc("audit_list", {"since": "1h", "limit": 50})
 
-print(created["user_id"], created["zone_id"])
 print(len(audit.get("transactions", [])))
 ```
 
@@ -2364,7 +2357,6 @@ surfaces, auth expectations, tests, and benchmark classification.
 | Group | RPC methods | CLI | Admin-only | Correctness coverage | Performance status |
 | --- | --- | --- | --- | --- | --- |
 | Admin keys | `admin_create_key`, `admin_list_keys`, `admin_get_key`, `admin_revoke_key`, `admin_update_key`, `admin_write_permission` | `nexus admin create-user`, `create-key`, `create-agent-key`, `list-users`, `get-user`, `revoke-key`, `update-key` | Yes | `tests/unit/server/test_admin_handlers.py`, `tests/unit/server/test_rpc_admin_only.py`, `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Key RPCs benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
-| User provisioning | `provision_user`, `deprovision_user` | `nexus admin provision-user`, `deprovision-user` | Yes | `tests/unit/core/test_nexus_fs_provision_user.py` and the #4138 surface test | Setup path, not performance-sensitive |
 | Audit | `audit_list`, `audit_export` | `nexus audit list`, `export` | Yes | OpenAPI conformance, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
 | Events | `events_replay` | `nexus events replay` | Yes | event replay/E2E coverage, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
 | Governance | `governance_status`, `governance_alerts`, `governance_rings` | `nexus governance status`, `alerts`, `rings` | Yes | security hardening, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |

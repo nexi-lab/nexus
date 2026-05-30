@@ -446,14 +446,6 @@ class NexusFS(  # type: ignore[misc]
         _register_hooks_for_spec(self, self._hook_specs.get(name))
 
     @property
-    def namespace_manager(self) -> Any | None:
-        """Public accessor for the NamespaceManager (via ServiceRegistry)."""
-        _pe = self.service("permission_enforcer")
-        if _pe is not None:
-            return getattr(_pe, "namespace_manager", None)
-        return None
-
-    @property
     def config(self) -> Any | None:
         """Public accessor for the runtime configuration object."""
         return self._config

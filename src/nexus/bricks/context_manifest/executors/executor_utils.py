@@ -41,14 +41,6 @@ class MemoryQuerySourceProtocol(ContextSourceProtocol, Protocol):
     def top_k(self) -> int: ...
 
 
-@runtime_checkable
-class WorkspaceSnapshotSourceProtocol(ContextSourceProtocol, Protocol):
-    """Typed protocol for workspace_snapshot sources."""
-
-    @property
-    def snapshot_id(self) -> str: ...
-
-
 # ---------------------------------------------------------------------------
 # DRY template resolution helper (5A)
 # ---------------------------------------------------------------------------

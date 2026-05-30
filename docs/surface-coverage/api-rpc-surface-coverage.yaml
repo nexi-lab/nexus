@@ -568,7 +568,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/agents/delegate
-      source: src/nexus/server/api/v2/routers/delegation.py:238
+      source: src/nexus/server/api/v2/routers/delegation.py:237
   profiles:
     lite: supported
     sandbox: supported
@@ -585,7 +585,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/agents/delegate/{delegation_id}
-      source: src/nexus/server/api/v2/routers/delegation.py:724
+      source: src/nexus/server/api/v2/routers/delegation.py:695
   profiles:
     lite: supported
     sandbox: supported
@@ -602,7 +602,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/agents/delegate/{delegation_id}/chain
-      source: src/nexus/server/api/v2/routers/delegation.py:456
+      source: src/nexus/server/api/v2/routers/delegation.py:455
   profiles:
     lite: supported
     sandbox: supported
@@ -619,7 +619,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/agents/delegate/{delegation_id}/complete
-      source: src/nexus/server/api/v2/routers/delegation.py:666
+      source: src/nexus/server/api/v2/routers/delegation.py:637
   profiles:
     lite: supported
     sandbox: supported
@@ -636,7 +636,7 @@ operations:
   transports:
     http:
       name: PATCH /api/v2/agents/delegate/{delegation_id}/namespace
-      source: src/nexus/server/api/v2/routers/delegation.py:589
+      source: src/nexus/server/api/v2/routers/delegation.py:574
   profiles:
     lite: supported
     sandbox: supported
@@ -1653,7 +1653,7 @@ operations:
   transports:
     http:
       name: POST /auth/change-password
-      source: src/nexus/server/auth/auth_routes.py:765
+      source: src/nexus/server/auth/auth_routes.py:562
   profiles:
     lite: supported
     sandbox: supported
@@ -1670,7 +1670,7 @@ operations:
   transports:
     http:
       name: POST /auth/login
-      source: src/nexus/server/auth/auth_routes.py:395
+      source: src/nexus/server/auth/auth_routes.py:379
   profiles:
     lite: supported
     sandbox: supported
@@ -1687,7 +1687,7 @@ operations:
   transports:
     http:
       name: PATCH /auth/me
-      source: src/nexus/server/auth/auth_routes.py:713
+      source: src/nexus/server/auth/auth_routes.py:510
   profiles:
     lite: supported
     sandbox: supported
@@ -1704,7 +1704,7 @@ operations:
   transports:
     http:
       name: GET /auth/oauth/google/authorize
-      source: src/nexus/server/auth/auth_routes.py:906
+      source: src/nexus/server/auth/auth_routes.py:703
   profiles:
     lite: supported
     sandbox: supported
@@ -1721,7 +1721,7 @@ operations:
   transports:
     http:
       name: POST /auth/register
-      source: src/nexus/server/auth/auth_routes.py:351
+      source: src/nexus/server/auth/auth_routes.py:335
   profiles:
     lite: supported
     sandbox: supported
@@ -1738,24 +1738,7 @@ operations:
   transports:
     http:
       name: POST /auth/request-verification
-      source: src/nexus/server/auth/auth_routes.py:828
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: auth_routes.auth_setup_zone
-  module: auth
-  summary: ''
-  transports:
-    http:
-      name: POST /auth/setup-zone
-      source: src/nexus/server/auth/auth_routes.py:484
+      source: src/nexus/server/auth/auth_routes.py:625
   profiles:
     lite: supported
     sandbox: supported
@@ -1772,7 +1755,7 @@ operations:
   transports:
     http:
       name: POST /auth/verify-email
-      source: src/nexus/server/auth/auth_routes.py:873
+      source: src/nexus/server/auth/auth_routes.py:670
   profiles:
     lite: supported
     sandbox: supported
@@ -2225,23 +2208,6 @@ operations:
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
   gap_issue: null
   owning_issue: 4136
-- id: context_manifest.context
-  module: context_manifest
-  summary: ''
-  transports:
-    cli:
-      name: nexus context
-      source: src/nexus/cli/commands/context.py:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: count.by_state
   module: filesystem
   summary: Count agents in a given state; used by the background eviction loop's over-agent-cap trigger.
@@ -2623,23 +2589,6 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
-- id: deprovision.user
-  module: identity
-  summary: ''
-  transports:
-    grpc_expose:
-      name: deprovision_user
-      source: src/nexus/services/lifecycle/user_provisioning.py:311
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_identity_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: destroy.pipe
   module: uncategorized
   summary: ''
@@ -4898,23 +4847,6 @@ operations:
   perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: 4137
   owning_issue: 4137
-- id: get.workspace_info
-  module: workspace
-  summary: Return one registered workspace configuration or null.
-  transports:
-    grpc_expose:
-      name: get_workspace_info
-      source: src/nexus/services/workspace/workspace_rpc_service.py:360
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace info /workspace/project; RPC: get_workspace_info("/workspace/project")'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:183
-  perf_class: control
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
 - id: get.xattr
   module: filesystem
   summary: ''
@@ -5784,23 +5716,6 @@ operations:
   perf_link: control-plane inspection; workflow listing is not on the per-tool-call data hot path
   gap_issue: null
   owning_issue: 4131
-- id: list.workspaces
-  module: workspace
-  summary: List workspaces visible to the authenticated user and zone.
-  transports:
-    grpc_expose:
-      name: list_workspaces
-      source: src/nexus/services/workspace/workspace_rpc_service.py:341
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace list; RPC: list_workspaces(context=OperationContext(user_id="alice", zone_id="root"))'
-  correctness_test: tests/unit/core/test_nexus_fs_list_workspaces.py:65
-  perf_class: hot
-  perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
 - id: load.mount
   module: mount
   summary: Load a saved mount configuration and activate it through the normal add_mount path.
@@ -5820,23 +5735,6 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
-- id: load.workspace_config
-  module: workspace
-  summary: Bulk-load workspace registrations from configuration.
-  transports:
-    grpc_expose:
-      name: load_workspace_config
-      source: src/nexus/services/workspace/workspace_rpc_service.py:260
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace config load ./workspaces.json; RPC: load_workspace_config(workspaces=[{"path":"/workspace/project"}])'
-  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:157
-  perf_class: setup
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
 - id: locks.api_v2
   module: filesystem
   summary: ''
@@ -7869,23 +7767,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
-- id: provision.user
-  module: identity
-  summary: ''
-  transports:
-    grpc_expose:
-      name: provision_user
-      source: src/nexus/services/lifecycle/user_provisioning.py:71
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_identity_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: raft.cluster_status
   module: raft
   summary: 'Inspect raft cluster: leader, members, term, replication lag.'
@@ -8317,92 +8198,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: register.workspace
-  module: workspace
-  summary: Register a path as a workspace and create the path if needed.
-  transports:
-    grpc_expose:
-      name: register_workspace
-      source: src/nexus/services/workspace/workspace_rpc_service.py:290
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace register /workspace/project --name project; RPC: await register_workspace(path="/workspace/project",
-    name="project")'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:165
-  perf_class: setup
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
-- id: registry.memories
-  module: uncategorized
-  summary: HTTP memory registry create/list endpoint.
-  transports:
-    http:
-      name: POST /api/v2/registry/memories
-      source: src/nexus/server/api/v2/routers/workspace.py:418
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'HTTP: POST /api/v2/registry/memories {"path":"/memory/project"}; GET /api/v2/registry/memories'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:280
-  perf_class: control
-  perf_link: setup/control-plane memory registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: null
-  owning_issue: 4137
-- id: registry.memories_{path:path}
-  module: filesystem
-  summary: HTTP memory registry update endpoint for one path.
-  transports:
-    http:
-      name: PATCH /api/v2/registry/memories/{path:path}
-      source: src/nexus/server/api/v2/routers/workspace.py:500
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'HTTP: PATCH /api/v2/registry/memories/memory/project {"name":"Project memory"}'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:318
-  perf_class: control
-  perf_link: setup/control-plane memory registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: null
-  owning_issue: 4137
-- id: registry.workspaces
-  module: workspace
-  summary: HTTP workspace registry create/list endpoint.
-  transports:
-    http:
-      name: POST /api/v2/registry/workspaces
-      source: src/nexus/server/api/v2/routers/workspace.py:253
-  profiles:
-    lite: unavailable
-    sandbox: unavailable
-    full: supported
-  usage_example: 'HTTP: POST /api/v2/registry/workspaces {"path":"/workspace/project"}; GET /api/v2/registry/workspaces'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:165
-  perf_class: control
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
-- id: registry.workspaces_{path:path}
-  module: workspace
-  summary: HTTP workspace registry update endpoint for one path.
-  transports:
-    http:
-      name: PATCH /api/v2/registry/workspaces/{path:path}
-      source: src/nexus/server/api/v2/routers/workspace.py:324
-  profiles:
-    lite: unavailable
-    sandbox: unavailable
-    full: supported
-  usage_example: 'HTTP: PATCH /api/v2/registry/workspaces/workspace/project {"name":"Project"}'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:205
-  perf_class: control
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
 - id: remove.mount
   module: mount
   summary: Deactivate a backend mount and clean up routing, metadata, and permission tuples.
@@ -9623,24 +9418,6 @@ operations:
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
   owning_issue: 4134
-- id: snapshot.begin
-  module: snapshot
-  summary: Begin a transactional snapshot through the workspace RPC service facade.
-  transports:
-    grpc_expose:
-      name: snapshot_begin
-      source: src/nexus/services/workspace/workspace_rpc_service.py:196
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'RPC: snapshot_begin(agent_id="alice", zone_id="root", description="Before migration")'
-  correctness_test: tests/unit/services/snapshot/test_service.py:86
-  perf_class: hot
-  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
-    in tests/benchmarks/test_lifecycle_surface_latency.py:153
-  gap_issue: 4137
-  owning_issue: 4137
 - id: snapshot.cli
   module: snapshot
   summary: CLI group for transactional snapshot create/list/info/entries/commit/restore.
@@ -9665,7 +9442,7 @@ operations:
   transports:
     grpc_expose:
       name: snapshot_commit
-      source: src/nexus/services/workspace/workspace_rpc_service.py:223
+      source: src/nexus/server/rpc/services/snapshots_rpc.py:71
   profiles:
     lite: unavailable
     sandbox: supported
@@ -9759,24 +9536,6 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus snapshot restore TXN; RPC: await snapshot_restore(txn_id="TXN")'
-  correctness_test: tests/unit/services/snapshot/test_service.py:367
-  perf_class: hot
-  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
-    in tests/benchmarks/test_lifecycle_surface_latency.py:153
-  gap_issue: 4137
-  owning_issue: 4137
-- id: snapshot.rollback
-  module: snapshot
-  summary: Rollback a transactional snapshot through the workspace RPC service facade.
-  transports:
-    grpc_expose:
-      name: snapshot_rollback
-      source: src/nexus/services/workspace/workspace_rpc_service.py:237
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'RPC: snapshot_rollback(snapshot_id="TXN")'
   correctness_test: tests/unit/services/snapshot/test_service.py:367
   perf_class: hot
   perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
@@ -10791,23 +10550,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: unregister.workspace
-  module: workspace
-  summary: Remove workspace registry entry without deleting files.
-  transports:
-    grpc_expose:
-      name: unregister_workspace
-      source: src/nexus/services/workspace/workspace_rpc_service.py:324
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace unregister /workspace/project --yes; RPC: unregister_workspace("/workspace/project")'
-  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:238
-  perf_class: control
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
 - id: update.agent
   module: agent_log
   summary: Update stored agent configuration fields and metadata.
@@ -10880,24 +10622,6 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
   owning_issue: 4133
-- id: update.workspace
-  module: workspace
-  summary: Update workspace name, description, or metadata.
-  transports:
-    grpc_expose:
-      name: update_workspace
-      source: src/nexus/services/workspace/workspace_rpc_service.py:329
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace update /workspace/project --metadata owner=alice; RPC: update_workspace("/workspace/project",
-    metadata={"owner":"alice"})'
-  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:117
-  perf_class: control
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
 - id: upload.cancel
   module: upload
   summary: Cancel an in-flight TUS upload.
@@ -11118,98 +10842,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: workspace.cli
-  module: workspace
-  summary: CLI group for workspace registry, config loading, snapshots, restore, diff, and log.
-  transports:
-    cli:
-      name: nexus workspace
-      source: src/nexus/cli/commands/workspace.py:1
-  profiles:
-    lite: unavailable
-    sandbox: unavailable
-    full: supported
-  usage_example: 'CLI: nexus workspace register /workspace/project --name project; nexus workspace update /workspace/project
-    --metadata owner=alice; nexus workspace config load ./workspaces.json'
-  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:117
-  perf_class: control
-  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
-  gap_issue: 4137
-  owning_issue: 4137
-- id: workspace.diff
-  module: workspace
-  summary: Compare two workspace snapshots.
-  transports:
-    grpc_expose:
-      name: workspace_diff
-      source: src/nexus/services/workspace/workspace_rpc_service.py:141
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace diff /workspace/project --snapshot1 1 --snapshot2 2; RPC: workspace_diff(workspace_path="/workspace/project",
-    snapshot_1=1, snapshot_2=2)'
-  correctness_test: tests/unit/services/snapshot/test_service.py:310
-  perf_class: hot
-  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
-    and snapshot guardrail at :153
-  gap_issue: 4137
-  owning_issue: 4137
-- id: workspace.log
-  module: workspace
-  summary: List snapshot history for a registered workspace.
-  transports:
-    grpc_expose:
-      name: workspace_log
-      source: src/nexus/services/workspace/workspace_rpc_service.py:119
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace log /workspace/project; RPC: workspace_log(workspace_path="/workspace/project")'
-  correctness_test: tests/unit/services/snapshot/test_service.py:523
-  perf_class: hot
-  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
-    and snapshot guardrail at :153
-  gap_issue: 4137
-  owning_issue: 4137
-- id: workspace.restore
-  module: workspace
-  summary: Restore a registered workspace to a numbered snapshot.
-  transports:
-    grpc_expose:
-      name: workspace_restore
-      source: src/nexus/services/workspace/workspace_rpc_service.py:98
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace restore /workspace/project --snapshot 1 --yes; RPC: workspace_restore(workspace_path="/workspace/project",
-    snapshot_number=1)'
-  correctness_test: tests/unit/services/snapshot/test_service.py:367
-  perf_class: hot
-  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
-    and snapshot guardrail at :153
-  gap_issue: 4137
-  owning_issue: 4137
-- id: workspace.snapshot
-  module: workspace
-  summary: Create a numbered snapshot for a registered workspace.
-  transports:
-    grpc_expose:
-      name: workspace_snapshot
-      source: src/nexus/services/workspace/workspace_rpc_service.py:71
-  profiles:
-    lite: unavailable
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workspace snapshot /workspace/project --description "Before refactor"; RPC: workspace_snapshot(workspace_path="/workspace/project")'
-  correctness_test: tests/unit/services/snapshot/test_service.py:86
-  perf_class: hot
-  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
-    and snapshot guardrail at :153
-  gap_issue: 4137
-  owning_issue: 4137
 - id: write.batch
   module: filesystem
   summary: ''
@@ -11476,7 +11108,7 @@ operations:
   transports:
     http:
       name: GET /api/zones/{zone_id}
-      source: src/nexus/server/auth/zone_routes.py:195
+      source: src/nexus/server/auth/zone_routes.py:248
   profiles:
     lite: supported
     sandbox: supported
@@ -12122,14 +11754,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.auth_setup_zone
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: auth_routes.auth_verify_email
   has:
   - http
@@ -12336,14 +11960,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: context_manifest.context
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: count.by_state
@@ -14242,38 +13858,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: registry.memories
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: registry.memories_{path:path}
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: registry.workspaces
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: registry.workspaces_{path:path}
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: rename.file
   has:
   - mcp
@@ -15288,14 +14872,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: workspace.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: write.batch

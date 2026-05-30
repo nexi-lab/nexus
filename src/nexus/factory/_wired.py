@@ -3,7 +3,7 @@
 import logging
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -381,45 +381,6 @@ def _boot_post_kernel_services(
     _nx_init_cred: Any = nx._init_cred
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
 
-    # --- Workspace Manager (moved from _system.py — needs sys_readdir §2.5) ---
-    workspace_manager: Any = None
-    try:
-        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace.workspace_manager import WorkspaceManager
-
-        _ws_zone_id = getattr(_nx_init_cred, "zone_id", None)
-        _ws_agent_id = getattr(_nx_init_cred, "agent_id", None)
-        workspace_manager = WorkspaceManager(
-            nexus_fs=nx,
-            rebac_manager=cast(ReBACBrickProtocol, services.get("rebac_manager")),
-            zone_id=_ws_zone_id,
-            agent_id=_ws_agent_id,
-            record_store=getattr(nx, "_record_store", None),
-        )
-        services["workspace_manager"] = workspace_manager
-        logger.debug("[BOOT:WIRED] WorkspaceManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] WorkspaceManager unavailable: %s", exc)
-
-    # --- Context Branch Service (moved from _system.py — depends on
-    #     workspace_manager which is now wired here) ---
-    context_branch_service: Any = None
-    try:
-        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace.context_branch import ContextBranchService
-
-        context_branch_service = ContextBranchService(
-            workspace_manager=workspace_manager,
-            record_store=nx._record_store,
-            rebac_manager=cast(ReBACBrickProtocol, services.get("rebac_manager")),
-            default_zone_id=getattr(_nx_init_cred, "zone_id", None),
-            default_agent_id=getattr(_nx_init_cred, "agent_id", None),
-        )
-        services["context_branch_service"] = context_branch_service
-        logger.debug("[BOOT:WIRED] ContextBranchService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] ContextBranchService unavailable: %s", exc)
-
     # --- Tiger Cache Manager (moved from _system.py — initialize()'s
     #     resource-map sync lists via NexusFS.sys_readdir) ---
     try:
@@ -435,21 +396,6 @@ def _boot_post_kernel_services(
         logger.debug("[BOOT:WIRED] TigerCacheManager created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] TigerCacheManager unavailable: %s", exc)
-
-    workspace_rpc_service: Any = None
-    try:
-        from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
-
-        workspace_rpc_service = WorkspaceRPCService(
-            workspace_manager=services["workspace_manager"],
-            workspace_registry=services["workspace_registry"],
-            vfs=nx,
-            default_context=_nx_init_cred,
-            snapshot_service=services.get("snapshot_service"),
-        )
-        logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] WorkspaceRPCService unavailable: %s", exc)
 
     agent_rpc_service: Any = None
     try:
@@ -468,7 +414,6 @@ def _boot_post_kernel_services(
 
                 agent_warmup_service = AgentWarmupService(
                     agent_registry=_agent_registry,
-                    namespace_manager=services.get("async_namespace_manager"),
                     enabled_bricks=services.get("enabled_bricks", frozenset()),
                     cache_store=getattr(services.get("cache_brick"), "cache_store", None),
                     mcp_config=None,
@@ -524,7 +469,6 @@ def _boot_post_kernel_services(
 
                 agent_warmup_service = AgentWarmupService(
                     agent_registry=_agent_reg,
-                    namespace_manager=services.get("async_namespace_manager"),
                     enabled_bricks=services.get("enabled_bricks", frozenset()),
                     cache_store=getattr(services.get("cache_brick"), "cache_store", None),
                     mcp_config=None,
@@ -563,31 +507,6 @@ def _boot_post_kernel_services(
         logger.debug(
             "[BOOT:WIRED] AcpService + ManagedAgentService managed internally by nexus-cluster"
         )
-
-    user_provisioning_service: Any = None
-    try:
-        from nexus.services.lifecycle.user_provisioning import UserProvisioningService
-
-        user_provisioning_service = UserProvisioningService(
-            vfs=nx,
-            session_factory=_nx_session_factory,
-            entity_registry=services.get("entity_registry"),
-            api_key_creator=services.get("api_key_creator"),
-            backend=_root_backend,
-            rebac_manager=services.get("rebac_manager"),
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
-            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
-            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
-            register_workspace_fn=(
-                workspace_rpc_service.register_workspace if workspace_rpc_service else None
-            ),
-            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
-            list_cache=getattr(nx, "_list_cache", None),
-            exists_cache=getattr(nx, "_exists_cache", None),
-        )
-        logger.debug("[BOOT:WIRED] UserProvisioningService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)
 
     sandbox_rpc_service: Any = None
     if _on("sandbox"):
@@ -679,9 +598,7 @@ def _boot_post_kernel_services(
         "share_link_service": share_link_service,
         "time_travel_service": time_travel_service,
         "operations_service": operations_service,
-        "workspace_rpc_service": workspace_rpc_service,
         "agent_rpc_service": agent_rpc_service,
-        "user_provisioning_service": user_provisioning_service,
         "sandbox_rpc_service": sandbox_rpc_service,
         "metadata_export_service": metadata_export_service,
         "descendant_checker": descendant_checker,

@@ -59,22 +59,6 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
     ),
     ControlPlaneSurface(
         profile="full",
-        module_group="auth",
-        surface="User provisioning and deprovisioning",
-        rpc_methods=("provision_user", "deprovision_user"),
-        cli_commands=("nexus admin provision-user", "nexus admin deprovision-user"),
-        transports=("CLI", "generic gRPC Call", "OAuth/auth server internals"),
-        how_to_use="Use for operator-managed account lifecycle when a database-backed server should create or clean up user resources.",
-        admin_only=True,
-        profile_gate="full/cloud server with user_provisioning service registered",
-        correctness_tests=(
-            "tests/unit/core/test_nexus_fs_provision_user.py",
-            "tests/unit/server/test_full_profile_control_plane_surface.py",
-        ),
-        performance_classification="setup path; not performance-sensitive",
-    ),
-    ControlPlaneSurface(
-        profile="full",
         module_group="audit",
         surface="Audit list and export",
         rpc_methods=("audit_list", "audit_export"),

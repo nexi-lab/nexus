@@ -1,8 +1,7 @@
 """Shared utilities for identity layer (Decision #5B — DRY JSON metadata helpers).
 
 Centralizes JSON metadata serialization/deserialization with consistent error handling
-and immutable return types. Used by identity models and services, and available for
-backfill into existing code (workspace_registry.py) in future PRs.
+and immutable return types. Used by identity models and services.
 """
 
 import json

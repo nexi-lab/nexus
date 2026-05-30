@@ -78,7 +78,6 @@ DISCOVERABLE_RPC_SERVICE_NAMES: tuple[str, ...] = (
     "search",
     "share_link",
     "rebac",
-    "user_provisioning",
 )
 
 
@@ -431,7 +430,6 @@ def create_app(
 
     app.state.rebac_manager = _resolve_service("rebac_manager", "_rebac_manager")
     app.state.entity_registry = _resolve_service("entity_registry", "_entity_registry")
-    app.state.namespace_manager = _resolve_service("namespace_manager", "_namespace_manager")
 
     # Thread pool and timeout settings (Issue #932, #2071)
     _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)
@@ -457,10 +455,6 @@ def create_app(
         _agent_rpc = nexus_fs.service("agent_rpc")
         if _agent_rpc is not None:
             _rpc_sources.append(_agent_rpc)
-        # WorkspaceRPCService
-        _workspace_rpc = nexus_fs.service("workspace_rpc")
-        if _workspace_rpc is not None:
-            _rpc_sources.append(_workspace_rpc)
         # AcpRPCService is owned by the Rust kernel (commit 22 cutover);
         # the gRPC Call handler routes acp_* methods through Rust dispatch.
         # Issue #841: MetadataExportService lives outside kernel
@@ -575,10 +569,6 @@ def create_app(
                 webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
             )
             set_subscription_manager(app.state.subscription_manager)
-            # Issue #625: Forward subscription_manager to workflow dispatch service
-            wds = getattr(app.state, "workflow_dispatch", None)
-            if wds is not None and hasattr(wds, "set_subscription_manager"):
-                wds.set_subscription_manager(app.state.subscription_manager)
             # Issue #914: Inject getter into delivery worker (fixes services→server import)
             from nexus.server.subscriptions import get_subscription_manager
 

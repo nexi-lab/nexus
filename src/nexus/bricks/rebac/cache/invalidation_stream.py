@@ -29,7 +29,6 @@ class InvalidationEventType(Enum):
 
     BOUNDARY = "boundary"
     VISIBILITY = "visibility"
-    NAMESPACE = "namespace"
     ZONE_GRAPH = "zone_graph"
     L1_CACHE = "l1_cache"
     ITERATOR = "iterator"

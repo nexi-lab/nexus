@@ -249,28 +249,6 @@ def _boot_independent_bricks(
                 except TypeError:
                     logger.debug("Cannot create FileGlobExecutor: root_path=%r", root_path)
 
-            # WorkspaceSnapshotExecutor (Issue #1428)
-            try:
-                from nexus.bricks.context_manifest.executors.snapshot_lookup_db import (
-                    SyscallManifestReader,
-                )
-                from nexus.bricks.context_manifest.executors.workspace_snapshot import (
-                    WorkspaceSnapshotExecutor,
-                )
-                from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
-
-                snapshot_lookup = DatabaseSnapshotLookup(record_store=ctx.record_store)
-                # The reader resolves manifests through sys_read; its NexusFS
-                # handle is attached post-kernel-boot via
-                # ManifestResolver.attach_filesystem (see factory/_lifecycle.py).
-                manifest_reader = SyscallManifestReader()
-                executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
-                    snapshot_lookup=snapshot_lookup,
-                    manifest_reader=manifest_reader,
-                )
-            except ImportError as _snap_e:
-                logger.debug("WorkspaceSnapshotExecutor unavailable: %s", _snap_e)
-
             import importlib.util
 
             if importlib.util.find_spec("nexus.bricks.context_manifest.executors.memory_query"):

@@ -171,19 +171,14 @@ class TestBootSystemServices:
             "permission_enforcer",
             "write_observer",
             # Former-kernel degradable
-            # dir_visibility_cache, hierarchy_manager, namespace_manager
-            # now internalized into ReBACManager — not in result dict.
+            # dir_visibility_cache + hierarchy_manager now internalized into
+            # ReBACManager — not in result dict.
             "deferred_permission_buffer",
-            "workspace_registry",
             "mount_manager",
-            "workspace_manager",
             # Original services
-            "async_namespace_manager",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
-            "context_branch_service",
-            "zone_lifecycle",
             # (PipeManager + AgentRegistry are kernel-internal §4.2)
             "scheduler_service",
             # Issue #3193: shared notification signal
@@ -212,15 +207,13 @@ class TestBootSystemServices:
 
         with (
             patch(
-                "nexus.bricks.rebac.manager.ReBACManager.create_namespace_manager",
-                side_effect=RuntimeError("namespace db error"),
+                "nexus.services.event_log.delivery.EventDeliveryWorker",
+                side_effect=RuntimeError("delivery worker boom"),
             ),
         ):
             result = _boot_system_services(ctx)
 
-        # Namespace manager failed (internalized into rebac), async wrapper is None
-        assert result["async_namespace_manager"] is None
-        # Critical services should still be created
+        # Degradable service failed, but critical services still come up.
         assert result["rebac_manager"] is not None
         assert result["permission_enforcer"] is not None
 
@@ -470,27 +463,6 @@ class TestStartBackgroundServices:
         }
         # Should not raise
         _start_background_services(system)
-
-    def test_zone_lifecycle_loads_terminating_zones(self) -> None:
-        """Issue #2061: load_terminating_zones called on startup."""
-        from nexus.factory import _start_background_services
-
-        session_mock = MagicMock()
-        sf = MagicMock()
-        sf.__enter__ = MagicMock(return_value=session_mock)
-        sf.__exit__ = MagicMock(return_value=False)
-
-        zl = MagicMock()
-        zl._session_factory = MagicMock(return_value=sf)
-
-        system = {
-            "deferred_permission_buffer": None,
-            "write_observer": None,
-            "delivery_worker": None,
-            "zone_lifecycle": zl,
-        }
-        _start_background_services(system)
-        zl.load_terminating_zones.assert_called_once_with(session_mock)
 
 
 # ---------------------------------------------------------------------------

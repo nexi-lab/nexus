@@ -6,7 +6,6 @@ sources and inject results into the agent's context BEFORE reasoning starts.
 Public API:
     Models:
         - ``MCPToolSource`` — MCP tool pre-execution source
-        - ``WorkspaceSnapshotSource`` — workspace snapshot source
         - ``FileGlobSource`` — file glob pattern source
         - ``MemoryQuerySource`` — memory/embedding query source
         - ``ContextSource`` — discriminated union of all source types
@@ -29,9 +28,6 @@ References:
 
 from nexus.bricks.context_manifest.executors.file_glob import FileGlobExecutor
 from nexus.bricks.context_manifest.executors.memory_query import MemoryQueryExecutor
-from nexus.bricks.context_manifest.executors.workspace_snapshot import (
-    WorkspaceSnapshotExecutor,
-)
 from nexus.bricks.context_manifest.metrics import ManifestMetricsConfig, ManifestMetricsObserver
 from nexus.bricks.context_manifest.models import (
     ContextSource,
@@ -42,7 +38,6 @@ from nexus.bricks.context_manifest.models import (
     MCPToolSource,
     MemoryQuerySource,
     SourceResult,
-    WorkspaceSnapshotSource,
 )
 from nexus.bricks.context_manifest.resolver import (
     ManifestResolver,
@@ -61,7 +56,6 @@ __all__ = [
     "MCPToolSource",
     "MemoryQuerySource",
     "SourceResult",
-    "WorkspaceSnapshotSource",
     # Resolver
     "ManifestResolver",
     "MetricsObserver",
@@ -72,7 +66,6 @@ __all__ = [
     # Executors (Issue #1427, #1428)
     "FileGlobExecutor",
     "MemoryQueryExecutor",
-    "WorkspaceSnapshotExecutor",
     # Metrics (Issue #1428)
     "ManifestMetricsConfig",
     "ManifestMetricsObserver",

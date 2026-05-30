@@ -111,7 +111,6 @@ MODULES_TO_SCAN: list[str] = [
     # post-refactor canonical locations (was nexus.system_services.*)
     "nexus.services.workspace.workspace_rpc_service",
     "nexus.services.agents.agent_rpc_service",
-    "nexus.services.lifecycle.user_provisioning",
     "nexus.services.metadata_export",
     # Brick services with @rpc_expose
     "nexus.bricks.mcp.mcp_service",

@@ -24,7 +24,7 @@ class WarmupStep:
     """A single initialization step in the agent warmup sequence.
 
     Attributes:
-        name: Step identifier (e.g. "load_credentials", "mount_namespace").
+        name: Step identifier (e.g. "load_credentials", "verify_bricks").
         timeout: Maximum time allowed for this step. Exceeding triggers
             asyncio.TimeoutError.
         required: If True, step failure aborts warmup and agent stays
@@ -79,7 +79,6 @@ class WarmupContext:
         agent_id: The agent being warmed up.
         agent_record: Immutable snapshot of the agent at warmup start.
         agent_registry: AgentRegistry for state queries.
-        namespace_manager: NamespaceManager for mount resolution (optional).
         enabled_bricks: Set of brick names enabled in this deployment.
         cache_store: CacheStoreABC for cache warming (optional).
         mcp_config: MCP server configuration (optional).
@@ -88,7 +87,6 @@ class WarmupContext:
     agent_id: str
     agent_record: Any  # AgentRecord (TYPE_CHECKING import avoided for zero-dep)
     agent_registry: Any  # AgentRegistry
-    namespace_manager: Any | None = None
     enabled_bricks: frozenset[str] = field(default_factory=frozenset)
     cache_store: Any | None = None
     mcp_config: dict[str, Any] | None = None
@@ -100,7 +98,6 @@ class WarmupContext:
 # Standard warmup sequence for common agent types (Issue #2172).
 STANDARD_WARMUP: tuple[WarmupStep, ...] = (
     WarmupStep("load_credentials", timeout=timedelta(seconds=5)),
-    WarmupStep("mount_namespace", timeout=timedelta(seconds=10)),
     WarmupStep("verify_bricks", timeout=timedelta(seconds=10)),
     WarmupStep("warm_caches", timeout=timedelta(seconds=15), required=False),
     WarmupStep("connect_mcp", timeout=timedelta(seconds=10), required=False),

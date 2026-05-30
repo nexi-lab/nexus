@@ -1,0 +1,92 @@
+# Nexus Cluster Binary — Slim Federation Runtime
+#
+# Builds the nexusd-cluster binary — a pure-Rust runtime that mounts
+# host-fs via PathLocalBackend at boot and runs the Raft + federation
+# gRPC server on port 2126. Used as the runtime image for federation
+# E2E nodes; replaces the 5 GB nexus-fullnode image for cluster nodes
+# (the fullnode image stays in use for the pytest runner that drives
+# the suite).
+#
+# Build:
+#   docker build -f dockerfiles/Dockerfile.nexusd-cluster -t nexusd-cluster:latest .
+#
+# Run:
+#   docker run -e NEXUS_BIND_ADDR=0.0.0.0:2126 \
+#     -e NEXUS_PEERS=node1:2126,node2:2126,witness:2126 \
+#     -e NEXUS_BOOTSTRAP_NEW=1 \
+#     -p 2126:2126 nexusd-cluster:latest
+
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler: raft-proto v0.7.0 uses protobuf-build which shells
+# out to system ``protoc`` on PATH (separate from the vendored protoc
+# the workspace's own build.rs wires up for tonic).
+#
+# python3: kernel + lib build scripts pull pyo3-build-config which
+# probes for an interpreter at compile time even though no workspace
+# crate exposes a pyo3 surface — installing python3 keeps the slim
+# image build resolving without turning pyo3 into a runtime dependency
+# of the cluster binary.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Workspace root + lockfile so Cargo can resolve `workspace = true`
+# deps for the cluster profile.
+COPY Cargo.toml Cargo.lock ./
+
+# Proto files (build.rs expects ../../proto relative to rust/profiles/cluster/)
+COPY proto/ ./proto/
+
+# Source for the crates the cluster binary links against. cluster pulls
+# raft (federation), kernel, lib, backends (with driver-path-local +
+# driver-remote features), transport, contracts.
+COPY rust/profiles/cluster/ ./rust/profiles/cluster/
+COPY rust/raft/ ./rust/raft/
+COPY rust/kernel/ ./rust/kernel/
+COPY rust/lib/ ./rust/lib/
+COPY rust/backends/ ./rust/backends/
+COPY rust/transport/ ./rust/transport/
+COPY rust/contracts/ ./rust/contracts/
+# Stub out workspace members the cluster binary does not depend on so
+# the workspace manifest resolves without dragging in their full deps.
+RUN mkdir -p rust/services/src && \
+    printf '[package]\nname = "services"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\ncrate-type = ["rlib"]\n\n[features]\ndefault = []\n' > rust/services/Cargo.toml && \
+    echo '' > rust/services/src/lib.rs && \
+    mkdir -p rust/profiles/vault/src && \
+    printf '[package]\nname = "nexus-vault"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-vault"\npath = "src/main.rs"\n' > rust/profiles/vault/Cargo.toml && \
+    echo 'fn main() {}' > rust/profiles/vault/src/main.rs
+
+WORKDIR /build/rust/profiles/cluster
+RUN cargo build --release --bin nexusd-cluster
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+# bash: the compose healthcheck uses `bash -c '</dev/tcp/localhost/2126'`
+# ca-certificates: outbound TLS for any remote backend driver calls
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends bash ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/nexusd-cluster /usr/local/bin/
+
+# Non-root runtime user
+RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
+    mkdir -p /app/data && \
+    chown -R nexus:nexus /app
+
+USER nexus
+WORKDIR /app
+
+ENV NEXUS_BIND_ADDR=0.0.0.0:2126 \
+    NEXUS_DATA_DIR=/app/data \
+    RUST_LOG=info,nexus_raft=debug
+
+EXPOSE 2126
+
+ENTRYPOINT ["nexusd-cluster"]

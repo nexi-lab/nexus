@@ -47,6 +47,12 @@ pub mod acp;
 pub mod agents;
 #[cfg(feature = "service-audit")]
 pub mod audit;
+// AuditNode — consumer-side collect/gather service for an audit-only
+// federation node. Bootstraps its own zone + joins production zones as
+// raft learners, then polls each zone's /audit/traces/ stream and
+// appends copies into its local zone. Reuses audit::prepare_stream_only.
+#[cfg(feature = "service-audit-node")]
+pub mod audit_node;
 // ManagedAgentService — first Rust-flavoured service. Owns the
 // chat-with-me mailbox stamping hook, the workspace-boundary
 // teaching hook, and the `start_session_v1` / `cancel_v1` /

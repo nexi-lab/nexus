@@ -68,7 +68,6 @@ except ImportError:
     FileEventType = None  # type: ignore[misc,assignment]
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.namespace_manager import NamespaceManager
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
     from nexus.fuse.mount import MountMode
@@ -89,7 +88,6 @@ class NexusFUSEOperations(Operations):
         mode: "MountMode",
         cache_config: dict[str, Any] | None = None,
         context: "OperationContext | None" = None,
-        namespace_manager: "NamespaceManager | None" = None,
         use_rust: bool = False,
         event_bus: Any | None = None,
         subscription_manager: Any | None = None,
@@ -202,7 +200,6 @@ class NexusFUSEOperations(Operations):
             nexus_fs=nexus_fs,
             mode=mode,
             context=context,
-            namespace_manager=namespace_manager,
             cache=cache,
             local_disk_cache=local_disk_cache,
             readahead=None,  # set below

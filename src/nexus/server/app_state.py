@@ -49,7 +49,6 @@ class NexusAppState:
     # === Flattened from NexusFS (replaces private attr access) ===
     rebac_manager: Any = None
     entity_registry: Any = None
-    namespace_manager: Any = None
     event_bus: Any = None
     write_observer: Any = None
     permission_enforcer: Any = None
@@ -79,7 +78,6 @@ class NexusAppState:
     task_write_hook: Any = None
     task_dispatch_consumer: Any = None
     workflow_engine: Any = None
-    workflow_dispatch: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None

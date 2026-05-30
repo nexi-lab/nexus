@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.bricks.auth.zone_helpers import (
@@ -20,6 +20,7 @@ from nexus.bricks.auth.zone_helpers import (
     suggest_zone_id,
     validate_zone_id,
 )
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.lib.zone_helpers import (
     add_user_to_zone,
     get_user_zones,
@@ -74,6 +75,58 @@ class ZoneListResponse(BaseModel):
 
     zones: list[ZoneResponse]
     total: int
+
+
+def _trigger_federation_remove_zone(nx: Any, zone_id: str) -> bool:
+    """Best-effort raft-side zone removal — mirrors the federation_remove_zone
+    RPC by reaching through the kernel ``_call`` channel that
+    ``FederationRPCService.federation_remove_zone`` uses
+    (federation_rpc.py:338).
+
+    Returns True on success, False if the kernel handle is missing or the
+    call raised; the failure is logged but never re-raised because the
+    caller has already run the SQL deletes by the time this fires and we
+    don't want a transient raft hiccup to surface as a 5xx.
+    """
+    if nx is None:
+        return False
+    kernel = getattr(nx, "_kernel", None)
+    if kernel is None:
+        logger.warning(
+            "zone %s: federation_remove_zone skipped — kernel handle unavailable",
+            zone_id,
+        )
+        return False
+    try:
+        kernel._call("federation_remove_zone", {"zone_id": zone_id, "force": False})
+    except Exception as exc:
+        logger.warning("zone %s: federation_remove_zone failed: %s", zone_id, exc)
+        return False
+    return True
+
+
+def _inline_zone_finalizer_deletes(session: Any, zone_id: str) -> None:
+    """Run the three zone-scoped DELETEs that previously lived in the K8s-
+    finalizer-pattern services (SearchZoneFinalizer for entities +
+    relationships, ReBACZoneFinalizer for rebac_tuples).
+
+    Inlined here as part of the K8s-finalizer abstraction simplification
+    (PR 7b).  No FK constraints exist between these tables and ``zones``;
+    orphan rows only waste storage.  Idempotent — running this twice for
+    the same zone is harmless.
+    """
+    session.execute(
+        text("DELETE FROM entities WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    )
+    session.execute(
+        text("DELETE FROM relationships WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    )
+    session.execute(
+        text("DELETE FROM rebac_tuples WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    )
 
 
 def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
@@ -439,7 +492,7 @@ async def list_zones(
                     select(func.count())
                     .select_from(ZoneModel)
                     .where(
-                        ZoneModel.phase != "Terminated",
+                        ZoneModel.phase != ZonePhase.TERMINATED,
                         ZoneModel.zone_id.in_(user_zone_ids),
                     )
                 )
@@ -474,15 +527,20 @@ async def delete_zone_endpoint(
 ) -> ZoneDeprovisionResponse:
     """Delete (deprovision) a zone.
 
-    Initiates ordered zone teardown using the finalizer protocol.
-    The zone enters ``Terminating`` phase, registered finalizers run
-    cleanup, and the zone transitions to ``Terminated`` when complete.
+    Synchronously tears down the zone in three steps:
 
-    Idempotent: retrying on a ``Terminating`` zone retries pending finalizers.
+    1. ``DELETE FROM entities`` / ``relationships`` / ``rebac_tuples`` for
+       this ``zone_id`` (previously the SearchZoneFinalizer +
+       ReBACZoneFinalizer SQL).
+    2. ``federation_remove_zone`` via the kernel call channel (best-effort
+       raft-side teardown — logged-not-raised on failure since the SQL
+       has already committed).
+    3. Mark ``ZoneModel`` row as ``phase="Terminated"`` + set
+       ``deleted_at`` (soft-delete so the row is gone from operator views
+       but FK references from audit / api-key history rows remain valid).
 
-    - Active → 202 Accepted (finalization started)
-    - Terminating → 202 Accepted (retry pending finalizers)
-    - Terminated → 404 Not Found
+    - Active → 202 Accepted (teardown completed)
+    - Terminated → 404 Not Found (idempotent retry surfaces this)
 
     Args:
         zone_id: Zone identifier
@@ -490,9 +548,11 @@ async def delete_zone_endpoint(
         auth: Authentication provider for DB session access
 
     Raises:
-        403: User is not zone owner or global admin
+        403: User is not zone owner or global admin, or zone is ROOT_ZONE_ID
         404: Zone not found or already terminated
     """
+    from datetime import UTC, datetime
+
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     # Issue #3897: the default ROOT_ZONE_ID row is required by the
@@ -510,9 +570,7 @@ async def delete_zone_endpoint(
     user_id = auth_result["subject_id"]
     is_admin = auth_result.get("is_admin", False)
 
-    # Get zone lifecycle service
     nx = get_nexus_instance()
-    zone_lifecycle = getattr(nx, "_zone_lifecycle", None) if nx else None
 
     with auth.session_factory() as session:
         if not is_admin:
@@ -544,25 +602,24 @@ async def delete_zone_endpoint(
                 detail="Only the zone owner can delete a zone",
             )
 
-        if zone.phase == "Terminated":
+        if zone.phase == ZonePhase.TERMINATED:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Zone '{zone_id}' is already terminated",
             )
 
-        if zone_lifecycle is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Zone lifecycle service is not available",
-            )
+        _inline_zone_finalizer_deletes(session, zone_id)
+        _trigger_federation_remove_zone(nx, zone_id)
 
-        # Active → start finalization; Terminating → retry pending finalizers
-        result = await zone_lifecycle.deprovision_zone(zone_id, session)
+        zone.phase = ZonePhase.TERMINATED
+        zone.finalizers = "[]"
+        zone.deleted_at = datetime.now(UTC)
+        session.commit()
 
         return ZoneDeprovisionResponse(
-            zone_id=result.zone_id,
-            phase=result.phase,
-            finalizers_completed=list(result.finalizers_completed),
-            finalizers_pending=list(result.finalizers_pending),
-            finalizers_failed=dict(result.finalizers_failed),
+            zone_id=zone_id,
+            phase=ZonePhase.TERMINATED,
+            finalizers_completed=[],
+            finalizers_pending=[],
+            finalizers_failed={},
         )

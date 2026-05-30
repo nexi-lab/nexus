@@ -142,8 +142,7 @@ def _wire_services(
         _upload_svc.attach_filesystem(nx)
 
     # ManifestResolver executors that resolve sources via the §2.5 syscall
-    # surface (WorkspaceSnapshotExecutor reads manifests through sys_read)
-    # receive the NexusFS handle now that the kernel tier exists.
+    # surface receive the NexusFS handle now that the kernel tier exists.
     _manifest_resolver = _svc.get("manifest_resolver")
     if _manifest_resolver is not None and hasattr(_manifest_resolver, "attach_filesystem"):
         _manifest_resolver.attach_filesystem(nx)
@@ -253,10 +252,10 @@ def _initialize_services(
         backend=ctx.backend,
     )
 
-    # Background services (DeferredPermissionBuffer, EventDeliveryWorker,
-    # ZoneLifecycleService) implement BackgroundService and are auto-started
-    # by the coordinator's start_background_services() at bootstrap.
-    # No manual _bootstrap_callbacks needed.
+    # Background services (DeferredPermissionBuffer, EventDeliveryWorker)
+    # implement BackgroundService and are auto-started by the coordinator's
+    # start_background_services() at bootstrap.  No manual
+    # _bootstrap_callbacks needed.
 
 
 # Backward compatibility aliases

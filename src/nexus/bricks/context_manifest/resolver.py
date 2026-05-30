@@ -143,9 +143,8 @@ class ManifestResolver:
         """Forward the post-boot NexusFS handle to executors that need it.
 
         Bricks are constructed before NexusFS exists; executors that resolve
-        sources through the §2.5 syscall surface (e.g. WorkspaceSnapshotExecutor
-        reading manifests via sys_read) receive the handle here once the
-        kernel tier is up. Generic — any executor exposing attach_filesystem
+        sources through the §2.5 syscall surface receive the handle here once
+        the kernel tier is up. Generic — any executor exposing attach_filesystem
         is wired.
         """
         for executor in self._executors.values():

@@ -58,7 +58,6 @@ class LifespanServices:
     # --- System services (from ServiceRegistry) ----------------
     eviction_manager: Any = None
     write_observer: Any = None
-    zone_lifecycle: Any = None
 
     # --- Scheduler (from ServiceRegistry) ----
     scheduler_service: "SchedulerProtocol | None" = None
@@ -81,7 +80,6 @@ class LifespanServices:
     coordination_client: Any = None
     workflow_engine: Any = None
     snapshot_service: Any = None
-    namespace_manager: Any = None
     nexus_config: Any = None
     observability_subsystem: Any = None
 
@@ -133,7 +131,6 @@ class LifespanServices:
             event_signal=None,
             eviction_manager=_svc("eviction_manager"),
             write_observer=_svc("write_observer"),
-            zone_lifecycle=_svc("zone_lifecycle"),
             zoekt_write_observer=_svc("zoekt_write_observer"),
             task_dispatch_consumer=_svc("task_dispatch_consumer"),
             scheduler_service=_svc("scheduler_service"),
@@ -152,7 +149,6 @@ class LifespanServices:
                 else None
             ),
             snapshot_service=_svc("snapshot_service"),
-            namespace_manager=_svc("async_namespace_manager"),
             nexus_config=getattr(nx, "config", None) if nx else None,
             observability_subsystem=_svc("observability_subsystem"),
             # From app.state (set by server init)

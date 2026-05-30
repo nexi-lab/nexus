@@ -446,14 +446,6 @@ class NexusFS(  # type: ignore[misc]
         _register_hooks_for_spec(self, self._hook_specs.get(name))
 
     @property
-    def namespace_manager(self) -> Any | None:
-        """Public accessor for the NamespaceManager (via ServiceRegistry)."""
-        _pe = self.service("permission_enforcer")
-        if _pe is not None:
-            return getattr(_pe, "namespace_manager", None)
-        return None
-
-    @property
     def config(self) -> Any | None:
         """Public accessor for the runtime configuration object."""
         return self._config
@@ -574,83 +566,6 @@ class NexusFS(  # type: ignore[misc]
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
     # sys_watch is in nexus_fs_watch.py (WatchMixin)
-
-    def workspace_snapshot(
-        self,
-        workspace_path: str | None = None,
-        description: str | None = None,
-        tags: builtins.list[str] | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_snapshot(
-            workspace_path=workspace_path,
-            description=description,
-            tags=tags,
-        )
-
-    def workspace_restore(
-        self,
-        snapshot_number: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_restore(
-            snapshot_number=snapshot_number,
-            workspace_path=workspace_path,
-        )
-
-    def workspace_log(
-        self,
-        workspace_path: str | None = None,
-        limit: int = 100,
-    ) -> builtins.list[dict[str, Any]]:
-        return self._workspace_rpc_service.workspace_log(
-            workspace_path=workspace_path,
-            limit=limit,
-        )
-
-    def workspace_diff(
-        self,
-        snapshot_1: int,
-        snapshot_2: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_diff(
-            snapshot_1=snapshot_1,
-            snapshot_2=snapshot_2,
-            workspace_path=workspace_path,
-        )
-
-    # --- Workspace Registry (→ _workspace_rpc_service) ---
-
-    def register_workspace(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: Any | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.register_workspace(
-            path=path,
-            name=name,
-            description=description,
-            created_by=created_by,
-            tags=tags,
-            metadata=metadata,
-            session_id=session_id,
-            ttl=ttl,
-        )
-
-    def unregister_workspace(self, path: str) -> bool:
-        return self._workspace_rpc_service.unregister_workspace(path=path)
-
-    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
-        return self._workspace_rpc_service.list_workspaces(context=context)
-
-    def get_workspace_info(self, path: str) -> dict | None:
-        return self._workspace_rpc_service.get_workspace_info(path=path)
 
     # --- Sandbox Operations (→ _sandbox_rpc_service) ---
 

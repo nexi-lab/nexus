@@ -34,7 +34,6 @@ from nexus.contracts.exceptions import (
 from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.namespace_manager import NamespaceManager
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
     from nexus.fuse.mount import MountMode
@@ -201,7 +200,6 @@ class FUSESharedContext:
     nexus_fs: "NexusFS"
     mode: "MountMode"
     context: "OperationContext | None"
-    namespace_manager: "NamespaceManager | None"
     cache: FUSECacheCoordinator
     local_disk_cache: Any | None  # LocalDiskCache | None
     readahead: Any | None  # ReadaheadManager | None
@@ -392,13 +390,6 @@ async def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
         FuseOSError(ENOENT): If the path is invisible to this agent
     """
     if ctx.context is None:
-        return
-
-    if ctx.namespace_manager is not None:
-        subject = ctx.context.get_subject()
-        zone_id = getattr(ctx.context, "zone_id", None)
-        if not ctx.namespace_manager.is_visible(subject, path, zone_id):
-            raise FuseOSError(errno.ENOENT)
         return
 
     parent = path.rsplit("/", 1)[0] or "/"

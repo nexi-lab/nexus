@@ -51,13 +51,13 @@ services:
   nexus-1:
     build:
       context: ..
-      dockerfile: Dockerfile
-    image: nexus-fullnode:latest
+      dockerfile: dockerfiles/Dockerfile.nexusd-cluster
+    image: nexusd-cluster:latest
     container_name: nexus-dyn-node-1
     hostname: nexus-1
     restart: unless-stopped
-    # Pure Rust binary — skip Python docker-entrypoint.sh.
-    entrypoint: ["nexusd-cluster"]
+    # Slim image already has nexusd-cluster as ENTRYPOINT; override-
+    # to-empty would re-introduce a shell wrapper. Leave as default.
     depends_on:
       dragonfly:
         condition: service_healthy
@@ -104,12 +104,11 @@ services:
   # No depends_on nexus-1 — CockroachDB pattern: start independently
   # ==========================================================================
   nexus-2:
-    image: nexus-fullnode:latest
+    image: nexusd-cluster:latest
     container_name: nexus-dyn-node-2
     hostname: nexus-2
     restart: unless-stopped
-    # Pure Rust binary — skip Python docker-entrypoint.sh.
-    entrypoint: ["nexusd-cluster"]
+    # Slim image already has nexusd-cluster as ENTRYPOINT.
     depends_on:
       dragonfly:
         condition: service_healthy
@@ -183,6 +182,39 @@ services:
       start_period: 10s
 
   # ==========================================================================
+  # Nexus CLI sidecar — host for `docker exec nexus-cli nexus ...` calls
+  #
+  # Architecturally: cluster nodes are *servers* — they own PathLocalBackend
+  # as their SSOT and answer gRPC. CLI work belongs in a *client* image.
+  # The two roles cleanly separate, and this sidecar realises the client
+  # half inside the compose network.
+  #
+  # Mechanism: nexus-remote is the CLI client image (RemoteBackend +
+  # RemoteService = syscall forward to a server over gRPC). Running
+  # `nexus zone export`/`zone list`/`federation status` in here exercises
+  # exactly the same path as an external SDK user — no node-local CLI
+  # shortcut. Sidecar is effectively a "docker-resident sysadmin pod"
+  # pointed at the in-compose cluster.
+  # ==========================================================================
+  nexus-cli:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.remote
+    image: nexus-remote:latest
+    container_name: nexus-dyn-cli
+    hostname: nexus-cli
+    # Keep the container running so `docker exec ... nexus <cmd>` works.
+    # The image's default ENTRYPOINT runs `nexus --help` and exits.
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    environment:
+      NEXUS_URL: "grpc://nexus-1:2126"
+    networks:
+      - dyn-nexus-network
+
+  # ==========================================================================
   # SSE mock sidecar — OpenAI + Anthropic streaming responses for the
   # Rust OpenAIBackend / AnthropicBackend E2E tests.
   # ==========================================================================
@@ -213,6 +245,14 @@ services:
   # cluster; tests are opt-in via `run --rm test` or `--profile run up`.
   # ==========================================================================
   test:
+    # The pytest runner needs the full Python env (gRPC client, docker
+    # SDK, federation surface helpers) — keep it on nexus-fullnode while
+    # the cluster nodes themselves run the slim nexusd-cluster image.
+    # Build directive lives here (previously on nexus-1) so local users
+    # running `docker compose build` still get nexus-fullnode built.
+    build:
+      context: ..
+      dockerfile: Dockerfile
     image: nexus-fullnode:latest
     container_name: nexus-dyn-test
     profiles:

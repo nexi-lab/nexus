@@ -21,7 +21,6 @@ from nexus.bricks.context_manifest.models import (
     MCPToolSource,
     MemoryQuerySource,
     SourceResult,
-    WorkspaceSnapshotSource,
 )
 from nexus.bricks.context_manifest.resolver import ManifestResolver
 
@@ -50,9 +49,6 @@ class IntegrationOkExecutor:
 def _make_all_ok_executors() -> dict[str, Any]:
     return {
         "mcp_tool": IntegrationOkExecutor(),
-        "workspace_snapshot": IntegrationOkExecutor(
-            data_factory=lambda s, v: {"snapshot_id": s.snapshot_id, "files": 42}
-        ),
         "file_glob": IntegrationOkExecutor(
             data_factory=lambda s, v: {"pattern": s.pattern, "matches": ["a.py", "b.py"]}
         ),
@@ -70,12 +66,11 @@ def _make_all_ok_executors() -> dict[str, Any]:
 class TestFullPipeline:
     @pytest.mark.asyncio
     async def test_multi_source_resolve_writes_files(self, tmp_path: Path) -> None:
-        """Full pipeline: 4 sources → resolve → verify files on disk."""
+        """Full pipeline: 3 sources → resolve → verify files on disk."""
         resolver = ManifestResolver(executors=_make_all_ok_executors(), max_resolve_seconds=10.0)
         sources = [
             FileGlobSource(pattern="src/**/*.py"),
             MemoryQuerySource(query="relevant to auth"),
-            WorkspaceSnapshotSource(snapshot_id="latest"),
             MCPToolSource(tool_name="search_codebase", required=False),
         ]
         variables: dict[str, str] = {}
@@ -84,7 +79,7 @@ class TestFullPipeline:
 
         # Result structure
         assert isinstance(result, ManifestResult)
-        assert len(result.sources) == 4
+        assert len(result.sources) == 3
         assert all(r.status == "ok" for r in result.sources)
         assert result.total_ms > 0
         assert result.resolved_at  # non-empty
@@ -92,7 +87,7 @@ class TestFullPipeline:
         # Files on disk
         assert (tmp_path / "_index.json").exists()
         result_files = [f for f in tmp_path.iterdir() if f.name != "_index.json"]
-        assert len(result_files) == 4
+        assert len(result_files) == 3
 
         # Each result file is valid JSON
         for f in result_files:
@@ -273,62 +268,6 @@ class TestFullPipelineWithFileGlob:
         assert (output_dir / "_index.json").exists()
         index = json.loads((output_dir / "_index.json").read_text())
         assert index["source_count"] == 2
-
-
-# ===========================================================================
-# Test 8: WorkspaceSnapshotExecutor with StubSnapshotLookup (Issue #1428)
-# ===========================================================================
-
-
-class StubSnapshotLookup:
-    """Stub SnapshotLookup for integration testing."""
-
-    def __init__(self, snapshots: dict[str, dict[str, Any]] | None = None) -> None:
-        self._snapshots = snapshots or {}
-
-    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
-        return self._snapshots.get(snapshot_id)
-
-    def get_latest_snapshot(self, workspace_path: str) -> dict[str, Any] | None:
-        return None
-
-
-class TestWorkspaceSnapshotExecutorInPipeline:
-    @pytest.mark.asyncio
-    async def test_workspace_snapshot_in_full_pipeline(self, tmp_path: Path) -> None:
-        """WorkspaceSnapshotExecutor wired into full resolver pipeline."""
-        from nexus.bricks.context_manifest.executors.workspace_snapshot import (
-            WorkspaceSnapshotExecutor,
-        )
-
-        snapshot_data = {
-            "snapshot_id": "snap-int-001",
-            "workspace_path": "/ws",
-            "snapshot_number": 1,
-            "manifest_hash": "abc",
-            "file_count": 5,
-            "total_size_bytes": 1000,
-            "description": "test",
-            "created_by": "user",
-            "tags": [],
-            "created_at": "2025-01-15T10:00:00",
-        }
-        lookup = StubSnapshotLookup(snapshots={"snap-int-001": snapshot_data})
-        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup)
-
-        resolver = ManifestResolver(
-            executors={"workspace_snapshot": executor},
-            max_resolve_seconds=10.0,
-        )
-        sources = [WorkspaceSnapshotSource(snapshot_id="snap-int-001")]
-
-        result = await resolver.resolve(sources, {}, tmp_path)
-
-        assert isinstance(result, ManifestResult)
-        assert len(result.sources) == 1
-        assert result.sources[0].status == "ok"
-        assert result.sources[0].data["snapshot_id"] == "snap-int-001"
-        assert result.sources[0].data["file_count"] == 5
 
 
 # ===========================================================================

@@ -18,7 +18,6 @@ from nexus.contracts.protocols.lease import (
     LeaseState,
 )
 from nexus.lib.lease import LocalLeaseManager, ManualClock, SystemClock
-from nexus.services.lifecycle.lease_service import LeaseService
 
 READ = LeaseState.SHARED_READ
 WRITE = LeaseState.EXCLUSIVE_WRITE
@@ -674,84 +673,6 @@ class TestProtocolConformance:
     def test_local_lease_manager_is_protocol(self) -> None:
         mgr = LocalLeaseManager()
         assert isinstance(mgr, LeaseManagerProtocol)
-
-
-# ---------------------------------------------------------------------------
-# LeaseService wrapper
-# ---------------------------------------------------------------------------
-
-
-class TestLeaseService:
-    @pytest.mark.asyncio()
-    async def test_service_delegates_to_manager(self, clock: ManualClock) -> None:
-        svc = LeaseService(zone_id="test", clock=clock)
-        lease = await svc.acquire("r1", "h1", READ)
-        assert lease is not None
-
-        valid = await svc.validate("r1", "h1")
-        assert valid is not None
-
-        extended = await svc.extend("r1", "h1", ttl=60.0)
-        assert extended is not None
-
-        leases = await svc.leases_for_resource("r1")
-        assert len(leases) == 1
-
-        s = await svc.stats()
-        assert s["acquire_count"] == 1
-
-        revoked = await svc.revoke("r1", holder_id="h1")
-        assert len(revoked) == 1
-
-        await svc.close()
-
-    @pytest.mark.asyncio()
-    async def test_service_upgrade_manager(self, clock: ManualClock) -> None:
-        svc = LeaseService(zone_id="test", clock=clock)
-        new_mgr = LocalLeaseManager(zone_id="new-zone", clock=clock)
-        svc.upgrade_manager(new_mgr)
-        assert svc.manager is new_mgr
-        await svc.close()
-
-    @pytest.mark.asyncio()
-    async def test_service_callback_delegation(self, clock: ManualClock) -> None:
-        svc = LeaseService(zone_id="test", clock=clock)
-        events: list[str] = []
-
-        async def cb(lease: Lease, reason: str) -> None:
-            events.append(reason)
-
-        svc.register_revocation_callback("test", cb)
-        await svc.acquire("r1", "h1", READ)
-        await svc.revoke("r1")
-        assert events == ["explicit"]
-
-        assert svc.unregister_revocation_callback("test")
-        await svc.close()
-
-    @pytest.mark.asyncio()
-    async def test_service_with_custom_manager(self, clock: ManualClock) -> None:
-        custom = LocalLeaseManager(zone_id="custom", clock=clock)
-        svc = LeaseService(zone_id="test", manager=custom)
-        assert svc.manager is custom
-        await svc.close()
-
-    @pytest.mark.asyncio()
-    async def test_service_force_revoke(self, clock: ManualClock) -> None:
-        svc = LeaseService(zone_id="test", clock=clock)
-        await svc.acquire("r1", "h1", READ)
-        revoked = await svc.force_revoke("r1")
-        assert len(revoked) == 1
-        await svc.close()
-
-    @pytest.mark.asyncio()
-    async def test_service_revoke_holder(self, clock: ManualClock) -> None:
-        svc = LeaseService(zone_id="test", clock=clock)
-        await svc.acquire("r1", "h1", READ)
-        await svc.acquire("r2", "h1", WRITE)
-        revoked = await svc.revoke_holder("h1")
-        assert len(revoked) == 2
-        await svc.close()
 
 
 # ---------------------------------------------------------------------------

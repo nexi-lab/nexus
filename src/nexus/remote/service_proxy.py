@@ -5,10 +5,10 @@ filling VFS inode_operations with RPC stubs. Any method call is forwarded
 to the server via the transport-agnostic ``call_rpc`` callback.
 
 Works with NexusFS.__getattr__ dispatch (Issue #2033):
-    nx.workspace_snapshot(...)
-      → self._workspace_rpc_service.workspace_snapshot(...)
-      → proxy.__getattr__("workspace_snapshot")
-      → proxy._call_rpc("workspace_snapshot", kwargs)
+    nx.snapshot_commit(...)
+      → self._snapshot_rpc_service.snapshot_commit(...)
+      → proxy.__getattr__("snapshot_commit")
+      → proxy._call_rpc("snapshot_commit", kwargs)
 
 Issue #1171: Service-layer RPC proxy for REMOTE profile.
 Issue #844:  Part of NexusFS(profile=REMOTE) convergence.

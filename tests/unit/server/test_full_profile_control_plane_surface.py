@@ -8,8 +8,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from click.testing import CliRunner
-
 REQUIRED_RPC_METHODS = {
     "admin_write_permission",
     "admin_create_key",
@@ -17,8 +15,6 @@ REQUIRED_RPC_METHODS = {
     "admin_get_key",
     "admin_revoke_key",
     "admin_update_key",
-    "provision_user",
-    "deprovision_user",
     "audit_list",
     "audit_export",
     "events_replay",
@@ -49,8 +45,6 @@ ADMIN_ONLY_RPC_METHODS = {
     "admin_get_key",
     "admin_revoke_key",
     "admin_update_key",
-    "provision_user",
-    "deprovision_user",
     "audit_list",
     "audit_export",
     "events_replay",
@@ -101,12 +95,6 @@ def test_control_plane_matrix_tracks_profile_gate_and_gap_status() -> None:
         assert surface.gap_issue is None or surface.gap_issue.startswith("#")
 
 
-def test_server_discovers_user_provisioning_service_for_rpc() -> None:
-    from nexus.server.fastapi_server import DISCOVERABLE_RPC_SERVICE_NAMES
-
-    assert "user_provisioning" in DISCOVERABLE_RPC_SERVICE_NAMES
-
-
 def test_cli_surface_contains_required_operator_commands() -> None:
     from nexus.cli.commands.admin import admin
     from nexus.cli.commands.audit import audit
@@ -123,8 +111,6 @@ def test_cli_surface_contains_required_operator_commands() -> None:
         "get-user",
         "revoke-key",
         "update-key",
-        "provision-user",
-        "deprovision-user",
     } <= set(admin.commands)
     assert {"list", "export"} <= set(audit.commands)
     assert {"replay"} <= set(events.commands)
@@ -139,7 +125,6 @@ def test_sensitive_rpc_services_mark_admin_only() -> None:
     from nexus.server.rpc.services.federation_rpc import FederationRPCMixin, FederationRPCService
     from nexus.server.rpc.services.governance_rpc import GovernanceRPCService
     from nexus.server.rpc.services.pay_rpc import PayRPCService
-    from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
     service_classes = (
         AuditRPCService,
@@ -148,7 +133,6 @@ def test_sensitive_rpc_services_mark_admin_only() -> None:
         FederationRPCService,
         GovernanceRPCService,
         PayRPCService,
-        UserProvisioningService,
     )
     exposed: dict[str, Any] = {}
     for cls in service_classes:
@@ -412,123 +396,3 @@ def test_governance_rpc_degrades_when_optional_storage_is_unavailable() -> None:
         "recent_alerts": {"alerts": [], "count": 0},
         "fraud_rings": {"rings": [], "count": 0},
     }
-
-
-def test_admin_provision_user_cli_calls_rpc(monkeypatch) -> None:
-    from nexus.cli.commands.admin import admin
-
-    calls: list[tuple[str, dict[str, Any] | None]] = []
-
-    def fake_get_admin_rpc(url: str | None, api_key: str | None):
-        assert url == "http://server"
-        assert api_key == "adminkey"
-
-        def call_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-            calls.append((method, params))
-            return {
-                "user_id": "alice",
-                "zone_id": "team",
-                "key_id": "kid_1",
-                "workspace_path": "/zone/team/user/alice/workspace/ws_1",
-                "agent_paths": [],
-                "created_resources": {"user": True},
-            }
-
-        return call_rpc
-
-    monkeypatch.setattr("nexus.cli.commands.admin.get_admin_rpc", fake_get_admin_rpc)
-
-    result = CliRunner().invoke(
-        admin,
-        [
-            "provision-user",
-            "alice",
-            "alice@example.com",
-            "--display-name",
-            "Alice",
-            "--zone-id",
-            "team",
-            "--api-key-name",
-            "Alice laptop",
-            "--no-agents",
-            "--json",
-            "--remote-url",
-            "http://server",
-            "--remote-api-key",
-            "adminkey",
-        ],
-        catch_exceptions=False,
-    )
-
-    assert result.exit_code == 0
-    assert calls == [
-        (
-            "provision_user",
-            {
-                "user_id": "alice",
-                "email": "alice@example.com",
-                "create_api_key": True,
-                "create_agents": False,
-                "import_skills": False,
-                "display_name": "Alice",
-                "zone_id": "team",
-                "api_key_name": "Alice laptop",
-            },
-        )
-    ]
-
-
-def test_admin_deprovision_user_cli_calls_rpc(monkeypatch) -> None:
-    from nexus.cli.commands.admin import admin
-
-    calls: list[tuple[str, dict[str, Any] | None]] = []
-
-    def fake_get_admin_rpc(url: str | None, api_key: str | None):
-        assert url == "http://server"
-        assert api_key == "adminkey"
-
-        def call_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-            calls.append((method, params))
-            return {
-                "user_id": "alice",
-                "zone_id": "team",
-                "deleted_directories": ["/zone/team/user/alice/workspace"],
-                "deleted_api_keys": 1,
-                "deleted_permissions": 2,
-                "user_record_deleted": True,
-            }
-
-        return call_rpc
-
-    monkeypatch.setattr("nexus.cli.commands.admin.get_admin_rpc", fake_get_admin_rpc)
-
-    result = CliRunner().invoke(
-        admin,
-        [
-            "deprovision-user",
-            "alice",
-            "--zone-id",
-            "team",
-            "--delete-user-record",
-            "--force",
-            "--json",
-            "--remote-url",
-            "http://server",
-            "--remote-api-key",
-            "adminkey",
-        ],
-        catch_exceptions=False,
-    )
-
-    assert result.exit_code == 0
-    assert calls == [
-        (
-            "deprovision_user",
-            {
-                "user_id": "alice",
-                "delete_user_record": True,
-                "force": True,
-                "zone_id": "team",
-            },
-        )
-    ]

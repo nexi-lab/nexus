@@ -59,7 +59,7 @@ These compose like corporate IT: gateway nodes front the traffic, hubs serve the
 
 One interface. Start embedded in a single Python process, scale to a federated cluster across data centers. No code changes.
 
-> *Built by [SudoClaw](https://github.com/nexi-lab) — we focus on making agents deliver quality work, with token economy.*
+> *Built by [SudoWork](https://github.com/sudoprivacy/sudowork) — we focus on making agents deliver quality work, with token economy.*
 
 ## Architecture
 
@@ -123,6 +123,35 @@ graph TD
 **Drivers** swap at mount time via `sys_setattr`. Hot-plug any storage or LLM backend without restart.
 
 **Bricks** mount and unmount at runtime via `service_enlist` / `service_swap` — like `insmod`/`rmmod` for an AI filesystem.
+
+<details>
+<summary><strong>Services (bricks) — 30 runtime-loadable capabilities</strong></summary>
+
+| Category | Services |
+|---|---|
+| **Security** | ReBAC (Zanzibar-style permissions), Auth (API key, OAuth, mTLS), Delegation (SSH-style scoped access), Identity (DID + verifiable credentials) |
+| **Search & Context** | Keyword search (BM25S), Semantic search (pgvector), Section-aware grep, Content parsing (50+ formats via pdf-inspector), Catalog (schema extraction) |
+| **Agent Runtime** | Agent Registry, Agent Runtime (subprocess + managed), IPC (DT_PIPE + DT_STREAM), Sandbox (Docker isolation), Task Manager |
+| **Collaboration** | Share Links (capability URLs), Workspace boundaries, A2A Protocol, MCP (30+ tools, mount external MCP servers) |
+| **Data Management** | Versioning, Snapshots (atomic multi-file), Portability (import/export), Memory (persistent + consolidation), Access Manifests |
+| **Operations** | Pay (credit ledger + policies), Governance (fraud detection, trust scores), Workflows (trigger/condition/action), Observability, Scheduler (fair-share + priority) |
+| **Integration** | Discovery (dynamic tool selection), Upload (TUS resumable), Federation (cross-zone Raft) |
+
+</details>
+
+<details>
+<summary><strong>Drivers — 15 hot-swappable backends</strong></summary>
+
+| Category | Drivers |
+|---|---|
+| **Storage** | PathLocal (filesystem), CAS-Local (content-addressed), S3, GCS, Remote (gRPC proxy) |
+| **Database** | PostgreSQL (pgvector), redb (embedded ordered KV) |
+| **Cache** | Dragonfly / Redis |
+| **Search** | BM25S (keyword), Zoekt (code search, optional) |
+| **Connectors** | Gmail, Google Drive, Slack, X/Twitter, Hacker News, Nostr, CLI |
+| **LLM** | SudoRouter (unified: Claude, GPT, Gemini, local models) |
+
+</details>
 
 ## Get started in 30 seconds
 

@@ -1489,25 +1489,6 @@ Packages behind this:
 - Delegation: `nexus.bricks.delegation`
 - A2A support: `nexus.bricks.a2a`
 
-## 8. Workspaces And Context Branching
-
-This is where Nexus starts feeling like long-lived agent infrastructure instead
-of a normal filesystem.
-
-### 8.2 Create context branches
-
-```bash
-nexus context branch /workspace/project --name try-new-approach
-nexus context checkout /workspace/project --target try-new-approach
-nexus context commit /workspace/project --message "Experiment 1"
-nexus context merge /workspace/project --source try-new-approach
-```
-
-Packages behind this:
-
-- Workspace and branching: `nexus.bricks.workspace`, `nexus.bricks.context_manifest`
-- Registry and lifecycle plumbing: `nexus.system_services.workspace`
-
 ## 9. Workflows, Sandbox, LLM, And MCP
 
 These are the main "do useful work with agents" feature families.

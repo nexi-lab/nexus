@@ -6,7 +6,7 @@
   <img alt="Nexus" src="assets/logo.png" width="180">
 </picture>
 
-### Distributed VFS kernel for multi-agent systems
+### Distributed VFS for multi-agent systems
 
 The infrastructure layer that decides how agents coexist — storage, communication, permissions, coordination.
 
@@ -28,9 +28,7 @@ The infrastructure layer that decides how agents coexist — storage, communicat
 
 The hard problem isn't making one agent work. It's making many agents work together reliably across nodes.
 
-Agent harnesses (LangGraph, CrewAI, AutoGen) decide **what** agents do — tool calls, chains, memory loops. But when agents collaborate, every harness re-invents the same unsolved problems: shared storage, permission boundaries, inter-agent messaging, distributed coordination. And every time, the answers are different, fragile, and non-composable.
-
-Nexus is the layer underneath. A distributed VFS kernel — like Linux for AI agents — that provides the primitives any harness needs but none should build:
+Agent harnesses (LangGraph, CrewAI, AutoGen) decide **what** agents do — tool calls, chains, memory loops. Nexus is the layer underneath that handles **how** agents coexist: shared storage, permission boundaries, inter-agent messaging, distributed coordination. A distributed VFS kernel — like Linux for AI agents — providing the primitives every harness needs:
 
 **Steering engineering** — infrastructure that sets boundaries and rules so agents operate safely at scale:
 - Permission boundaries (ReBAC) — agents only touch what they're allowed to
@@ -44,7 +42,7 @@ Nexus is the layer underneath. A distributed VFS kernel — like Linux for AI ag
 - CAS dedup + content chunking — efficient storage and retrieval at scale
 - Federation reads — transparent cross-node data access, agents don't need to know where data lives
 
-**Production distributed topology** — not a single-node toy; a full IT infrastructure for agent organizations:
+**Production distributed topology** — a full IT infrastructure for agent organizations:
 
 | Node role | Profile | What it does |
 |---|---|---|
@@ -59,7 +57,7 @@ These compose like corporate IT: gateway nodes front the traffic, hubs serve the
 
 One interface. Start embedded in a single Python process, scale to a federated cluster across data centers. No code changes.
 
-> *Built by [SudoClaw](https://github.com/nexi-lab) — we focus on making agents deliver quality work, with token economy.*
+> *Built by [SudoWork](https://github.com/sudoprivacy/sudowork) — we focus on making agents deliver quality work, with token economy.*
 
 ## Architecture
 
@@ -81,7 +79,7 @@ graph TD
     end
 
     subgraph Infra ["Infra Layer (one per node)"]
-        NX["NEXUS (distributed VFS kernel: storage, IPC, permissions, coordination)"]
+        NX["NEXUS (distributed VFS: storage, IPC, permissions, coordination)"]
         SR["SUDOROUTER (unified LLM access: Claude, GPT, Gemini, local models)"]
     end
 
@@ -123,6 +121,35 @@ graph TD
 **Drivers** swap at mount time via `sys_setattr`. Hot-plug any storage or LLM backend without restart.
 
 **Bricks** mount and unmount at runtime via `service_enlist` / `service_swap` — like `insmod`/`rmmod` for an AI filesystem.
+
+<details>
+<summary><strong>Services (bricks) — 30 runtime-loadable capabilities</strong></summary>
+
+| Category | Services |
+|---|---|
+| **Security** | ReBAC (Zanzibar-style permissions), Auth (API key, OAuth, mTLS), Delegation (SSH-style scoped access), Identity (DID + verifiable credentials) |
+| **Search & Context** | Keyword search (BM25S), Semantic search (pgvector), Section-aware grep, Content parsing (50+ formats via pdf-inspector), Catalog (schema extraction) |
+| **Agent Runtime** | Agent Registry, Agent Runtime (subprocess + managed), IPC (DT_PIPE + DT_STREAM), Sandbox (Docker isolation), Task Manager |
+| **Collaboration** | Share Links (capability URLs), Workspace boundaries, A2A Protocol, MCP (30+ tools, mount external MCP servers) |
+| **Data Management** | Versioning, Snapshots (atomic multi-file), Portability (import/export), Memory (persistent + consolidation), Access Manifests |
+| **Operations** | Pay (credit ledger + policies), Governance (fraud detection, trust scores), Workflows (trigger/condition/action), Observability, Scheduler (fair-share + priority) |
+| **Integration** | Discovery (dynamic tool selection), Upload (TUS resumable), Federation (cross-zone Raft) |
+
+</details>
+
+<details>
+<summary><strong>Drivers — 15 hot-swappable backends</strong></summary>
+
+| Category | Drivers |
+|---|---|
+| **Storage** | PathLocal (filesystem), CAS-Local (content-addressed), S3, GCS, Remote (gRPC proxy) |
+| **Database** | PostgreSQL (pgvector), redb (embedded ordered KV) |
+| **Cache** | Dragonfly / Redis |
+| **Search** | BM25S (keyword), Zoekt (code search, optional) |
+| **Connectors** | Gmail, Google Drive, Slack, X/Twitter, Hacker News, Nostr, CLI |
+| **LLM** | SudoRouter (unified: Claude, GPT, Gemini, local models) |
+
+</details>
 
 ## Get started in 30 seconds
 
@@ -195,14 +222,7 @@ File explorer, API inspector, monitoring dashboard, agent lifecycle management, 
 | **Federation** | Multi-zone Raft consensus with mTLS TOFU | Span data centers without a central coordinator |
 | **Sandbox** | Docker-backed execution environments | Isolated code execution per agent |
 
-<details>
-<summary><strong>All bricks and system services</strong></summary>
-
-**Bricks (runtime-loadable):** A2A Protocol . Access Manifests . Agent Log . Approvals . Archive . Artifact Index . Auth (API key, OAuth, mTLS) . Catalog (schema extraction) . Context Manifests . Delegation . Discovery . Filesystem . Governance . Identity (DID + credentials) . IPC (pipes + streams) . MCP . Mount . Parsers (50+ formats) . Pay . Portability (import/export) . ReBAC . Reputation . Sandbox (Docker) . Secrets . Search . Share Links (capability URLs) . Snapshots . Task Manager . Tools . Upload (TUS resumable) . Versioning . Watch . Workflows . Workspace
-
-**System services:** Agent Registry . Agent Runtime . Event Bus . Namespace . Scheduler (fair-share, priority tiers)
-
-</details>
+See [Services and Drivers](#nexus-internals) for the full categorized list.
 
 ## Framework integrations
 
@@ -345,4 +365,4 @@ Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
-Built by [Nexi Labs](https://github.com/nexi-lab).
+Built by [SudoWork](https://github.com/sudoprivacy/sudowork).

@@ -327,32 +327,6 @@ def _boot_pre_kernel_services(
     # resource-map sync now lists via NexusFS.sys_readdir (§2.5 mediation),
     # so the manager needs a live NexusFS handle.
 
-    # --- Zone Lifecycle Service (Issue #2061) ---
-    zone_lifecycle: Any = None
-    session_factory = getattr(ctx.record_store, "session_factory", None)
-    if session_factory is not None:
-        try:
-            from nexus.services.lifecycle.zone_lifecycle import ZoneLifecycleService
-
-            zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
-
-            # Register session-based finalizers (available at boot).
-            try:
-                from nexus.services.lifecycle.zone_finalizers import (
-                    ReBACZoneFinalizer,
-                    SearchZoneFinalizer,
-                )
-
-                zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
-                # ReBAC finalizer (MUST be last — Decision #13A)
-                zone_lifecycle.register_finalizer(ReBACZoneFinalizer(session_factory))
-            except Exception as exc:
-                logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
-
-            logger.debug("[BOOT:SYSTEM] ZoneLifecycleService created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
-
     # --- Scheduler Service (Issue #2195, #2360) ---
     scheduler_service: Any = None
     if not _on("scheduler"):
@@ -400,7 +374,6 @@ def _boot_pre_kernel_services(
         "event_signal": ctx.event_signal,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
-        "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
     }
 

@@ -441,7 +441,7 @@ async def list_zones(
             # Global admins see all active zones
             stmt = (
                 select(ZoneModel)
-                .where(ZoneModel.phase != "Terminated")
+                .where(ZoneModel.phase != ZonePhase.TERMINATED)
                 .order_by(ZoneModel.created_at.desc())
                 .limit(limit)
                 .offset(offset)
@@ -453,7 +453,7 @@ async def list_zones(
                 session.scalar(
                     select(func.count())
                     .select_from(ZoneModel)
-                    .where(ZoneModel.phase != "Terminated")
+                    .where(ZoneModel.phase != ZonePhase.TERMINATED)
                 )
                 or 0
             )
@@ -478,7 +478,7 @@ async def list_zones(
             stmt = (
                 select(ZoneModel)
                 .where(
-                    ZoneModel.phase != "Terminated",
+                    ZoneModel.phase != ZonePhase.TERMINATED,
                     ZoneModel.zone_id.in_(user_zone_ids),
                 )
                 .order_by(ZoneModel.created_at.desc())

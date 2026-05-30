@@ -10,6 +10,8 @@ Issue #2436: Move auth/ to bricks/auth/ with Protocol DI.
 from dataclasses import dataclass
 from datetime import datetime
 
+from nexus.contracts.zone_phase import ZonePhase
+
 
 @dataclass(frozen=True)
 class UserDTO:
@@ -94,7 +96,7 @@ class ZoneDTO:
     name: str
     domain: str | None = None
     description: str | None = None
-    phase: str = "Active"
+    phase: str = ZonePhase.ACTIVE
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

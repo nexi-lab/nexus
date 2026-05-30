@@ -3,18 +3,12 @@
 Phase 1: Validates that concrete implementations satisfy the Protocol contracts.
 Covers:
 - UserLookupProtocol (via SQLAlchemyUserLookup)
-- UserProvisionerProtocol (via NexusFSUserProvisioner)
 - In-memory fakes for testing downstream consumers
 """
-
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.bricks.auth.protocols.user_lookup import UserLookupProtocol
-from nexus.bricks.auth.protocols.user_provisioner import UserProvisionerProtocol
-from nexus.bricks.auth.stores.nexusfs_provisioner import NexusFSUserProvisioner
 from nexus.bricks.auth.types import UserInfo
 
 # ---------------------------------------------------------------------------
@@ -60,32 +54,6 @@ class InMemoryUserLookup:
             raise ValueError(f"Username {username} already exists")
 
 
-class InMemoryUserProvisioner:
-    """In-memory UserProvisionerProtocol for testing."""
-
-    def __init__(self) -> None:
-        self.provisioned: list[dict[str, Any]] = []
-
-    async def provision_user(
-        self,
-        *,
-        user_id: str,
-        email: str,
-        display_name: str | None = None,
-        zone_id: str | None = None,
-        create_api_key: bool = True,
-        create_agents: bool = True,
-        import_skills: bool = True,
-    ) -> dict[str, Any]:
-        result = {
-            "user_id": user_id,
-            "email": email,
-            "zone_id": zone_id or email.split("@")[0],
-        }
-        self.provisioned.append(result)
-        return result
-
-
 # ===========================================================================
 # Protocol conformance tests (runtime_checkable isinstance checks)
 # ===========================================================================
@@ -97,15 +65,6 @@ class TestProtocolConformance:
     def test_in_memory_lookup_satisfies_protocol(self):
         lookup = InMemoryUserLookup()
         assert isinstance(lookup, UserLookupProtocol)
-
-    def test_in_memory_provisioner_satisfies_protocol(self):
-        provisioner = InMemoryUserProvisioner()
-        assert isinstance(provisioner, UserProvisionerProtocol)
-
-    def test_nexusfs_provisioner_satisfies_protocol(self):
-        mock_nx = MagicMock()
-        provisioner = NexusFSUserProvisioner(mock_nx)
-        assert isinstance(provisioner, UserProvisionerProtocol)
 
 
 # ===========================================================================
@@ -192,123 +151,6 @@ class TestUserLookupContract:
     def test_validate_uniqueness_raises_for_existing_username(self, lookup: InMemoryUserLookup):
         with pytest.raises(ValueError, match="Username bob already exists"):
             lookup.validate_user_uniqueness(username="bob")
-
-
-# ===========================================================================
-# UserProvisionerProtocol contract tests
-# ===========================================================================
-
-
-class TestUserProvisionerContract:
-    """Contract: any UserProvisionerProtocol implementation must pass these."""
-
-    @pytest.fixture
-    def provisioner(self) -> InMemoryUserProvisioner:
-        return InMemoryUserProvisioner()
-
-    @pytest.mark.asyncio
-    async def test_provision_returns_zone_id(self, provisioner: InMemoryUserProvisioner):
-        result = await provisioner.provision_user(
-            user_id="u1",
-            email="alice@example.com",
-            display_name="Alice",
-        )
-        assert "zone_id" in result
-        assert result["zone_id"] == "alice"
-
-    @pytest.mark.asyncio
-    async def test_provision_with_explicit_zone(self, provisioner: InMemoryUserProvisioner):
-        result = await provisioner.provision_user(
-            user_id="u1",
-            email="alice@example.com",
-            zone_id="custom-zone",
-        )
-        assert result["zone_id"] == "custom-zone"
-
-    @pytest.mark.asyncio
-    async def test_provision_records_call(self, provisioner: InMemoryUserProvisioner):
-        await provisioner.provision_user(user_id="u1", email="a@b.com")
-        await provisioner.provision_user(user_id="u2", email="c@d.com")
-        assert len(provisioner.provisioned) == 2
-
-
-# ===========================================================================
-# NexusFSUserProvisioner tests (integration with mock NexusFS)
-# ===========================================================================
-
-
-class TestNexusFSUserProvisioner:
-    """Tests for the NexusFSUserProvisioner adapter."""
-
-    @pytest.mark.asyncio
-    async def test_delegates_to_nexusfs(self):
-        mock_nx = MagicMock()
-        mock_nx.service("user_provisioning").provision_user = AsyncMock(
-            return_value={
-                "zone_id": "alice",
-                "api_key": "sk-123",
-            }
-        )
-        provisioner = NexusFSUserProvisioner(mock_nx)
-
-        result = await provisioner.provision_user(
-            user_id="u1",
-            email="alice@example.com",
-            display_name="Alice",
-        )
-
-        assert result["zone_id"] == "alice"
-        mock_nx.service("user_provisioning").provision_user.assert_called_once()
-        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
-        assert call_kwargs["user_id"] == "u1"
-        assert call_kwargs["email"] == "alice@example.com"
-        assert call_kwargs["create_api_key"] is True
-
-    @pytest.mark.asyncio
-    async def test_creates_operation_context(self):
-        mock_nx = MagicMock()
-        mock_nx.service("user_provisioning").provision_user = AsyncMock(
-            return_value={"zone_id": "alice"}
-        )
-        provisioner = NexusFSUserProvisioner(mock_nx)
-
-        await provisioner.provision_user(user_id="u1", email="alice@example.com")
-
-        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
-        context = call_kwargs["context"]
-        assert context.user_id == "system"
-        assert context.is_admin is True
-        assert context.zone_id == "alice"
-
-    @pytest.mark.asyncio
-    async def test_zone_id_derived_from_email(self):
-        mock_nx = MagicMock()
-        mock_nx.service("user_provisioning").provision_user = AsyncMock(
-            return_value={"zone_id": "bob"}
-        )
-        provisioner = NexusFSUserProvisioner(mock_nx)
-
-        await provisioner.provision_user(user_id="u2", email="bob@corp.com")
-
-        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
-        assert call_kwargs["zone_id"] == "bob"
-
-    @pytest.mark.asyncio
-    async def test_zone_id_override(self):
-        mock_nx = MagicMock()
-        mock_nx.service("user_provisioning").provision_user = AsyncMock(
-            return_value={"zone_id": "custom"}
-        )
-        provisioner = NexusFSUserProvisioner(mock_nx)
-
-        await provisioner.provision_user(
-            user_id="u1",
-            email="alice@example.com",
-            zone_id="custom",
-        )
-
-        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
-        assert call_kwargs["zone_id"] == "custom"
 
 
 # ===========================================================================

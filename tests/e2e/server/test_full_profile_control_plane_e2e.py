@@ -112,34 +112,6 @@ def test_full_profile_control_plane_rpc_correctness_and_latency(nexus_server) ->
             timings[method] = elapsed
             assert "result" in body
 
-        provisioned_user = f"e2e-provision-{suffix}"
-        elapsed, body = _call_rpc(
-            stub,
-            "provision_user",
-            {
-                "user_id": provisioned_user,
-                "email": f"{provisioned_user}@example.com",
-                "zone_id": f"e2e-zone-{suffix}",
-                "create_api_key": False,
-                "create_agents": False,
-            },
-        )
-        timings["provision_user"] = elapsed
-        assert body["result"]["user_id"] == provisioned_user
-
-        elapsed, body = _call_rpc(
-            stub,
-            "deprovision_user",
-            {
-                "user_id": provisioned_user,
-                "zone_id": f"e2e-zone-{suffix}",
-                "delete_user_record": True,
-                "force": True,
-            },
-        )
-        timings["deprovision_user"] = elapsed
-        assert body["result"]["user_id"] == provisioned_user
-
     finally:
         channel.close()
 

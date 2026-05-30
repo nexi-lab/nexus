@@ -376,9 +376,8 @@ def test_oauth_callback_race_condition():
     The double-check pattern with proper locking should prevent duplicate keys.
 
     Note: This test uses a threading.Lock to simulate the database-level locking
-    that would be provided by PostgreSQL's SELECT ... FOR UPDATE. In production,
-    the provision_user() method uses with_for_update() for PostgreSQL, while
-    SQLite relies on its file-level locking with appropriate transaction modes.
+    that would be provided by PostgreSQL's SELECT ... FOR UPDATE.  SQLite relies
+    on its file-level locking with appropriate transaction modes.
     """
     import os
     import tempfile

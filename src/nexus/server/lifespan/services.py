@@ -363,36 +363,10 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
         # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
         sandbox_mgr.wire_router()
 
-        # Get NamespaceManager if available (best-effort)
-        namespace_manager = None
-        sync_rebac = svc.rebac_manager
-        if sync_rebac:
-            try:
-                from nexus.bricks.rebac.namespace_factory import (
-                    create_namespace_manager,
-                )
-
-                ns_record_store = svc.record_store
-                namespace_manager = create_namespace_manager(
-                    rebac_manager=sync_rebac,
-                    record_store=ns_record_store,
-                )
-                # Wire event-driven invalidation for sandbox namespace (Issue #1244)
-                sync_rebac.register_namespace_invalidator(
-                    "sandbox_namespace_dcache",
-                    lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
-                )
-            except Exception as e:
-                logger.info(
-                    "[SANDBOX-AUTH] NamespaceManager not available (%s), "
-                    "sandbox mount tables will be empty",
-                    e,
-                )
-
         app.state.sandbox_auth_service = SandboxAuthService(
             agent_registry=app.state.agent_registry,
             sandbox_manager=sandbox_mgr,
-            namespace_manager=namespace_manager,
+            rebac_manager=svc.rebac_manager,
             event_log=app.state.agent_event_log,
             budget_enforcement=False,
         )

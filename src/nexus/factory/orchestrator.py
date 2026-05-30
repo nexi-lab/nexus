@@ -60,13 +60,13 @@ def create_nexus_services(
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
         metadata_store: Any instance (for PermissionEnforcer).
-        backend: Backend instance (for WorkspaceManager).
+        backend: Backend instance.
         dlc: DriverLifecycleCoordinator for routing + backend refs.
         permissions: Permission config (defaults from PermissionConfig()).
         cache: Cache config (for TTL values, defaults from CacheConfig()).
         distributed: Distributed config (for event bus/locks).
-        zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
-        agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
+        zone_id: Default zone ID (embedded mode only).
+        agent_id: Default agent ID (embedded mode only).
         enable_write_buffer: Use async DT_PIPE observer for PG sync (Issue #809).
         resiliency_raw: Raw resiliency policy dict from YAML config.
         enabled_bricks: Set of brick names to enable. When None, all bricks
@@ -236,8 +236,8 @@ def create_nexus_fs(
             provided, create_nexus_services() is called automatically.
         enable_write_buffer: Use async DT_PIPE observer for PG sync.
         enabled_bricks: Set of brick names to enable.
-        zone_id: Default zone ID (for WorkspaceManager, embedded mode).
-        agent_id: Default agent ID (for WorkspaceManager, embedded mode).
+        zone_id: Default zone ID (embedded mode).
+        agent_id: Default agent ID (embedded mode).
         workflow_engine: Pre-built workflow engine override.
         init_cred: Override kernel process identity (default: system user with is_admin flag).
 

@@ -92,7 +92,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "sandbox_rpc_service": "sandbox_rpc",
     "metadata_export_service": "metadata_export",
     # Dict-keyed services (pre-kernel + brick tier)
-    "context_branch_service": "context_branch",
 }
 
 

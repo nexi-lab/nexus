@@ -342,11 +342,6 @@ def _boot_pre_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
-    # --- Context Branch Service (Issue #1315) ---
-    # Deferred to post-kernel tier (factory/_wired.py) — depends on the
-    # workspace_manager which is itself deferred to that tier.
-    context_branch_service: Any = None
-
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
     # Deferred to post-kernel tier (factory/_wired.py) — initialize()'s
     # resource-map sync now lists via NexusFS.sys_readdir (§2.5 mediation),
@@ -427,7 +422,6 @@ def _boot_pre_kernel_services(
         "event_signal": ctx.event_signal,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
-        "context_branch_service": context_branch_service,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
     }

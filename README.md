@@ -77,7 +77,7 @@ graph TD
         SC[sudocode / sudocode-host]
         GC[Gemini CLI]
         CX[Codex CLI]
-        AH[any Node.js / Python agent]
+        AH[any agent]
     end
 
     subgraph Infra ["Infra Layer (one per node)"]

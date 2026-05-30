@@ -3,10 +3,8 @@
 Canonical location for runtime lifecycle services.
 """
 
-from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 from nexus.services.lifecycle.zone_lifecycle import ZoneLifecycleService
 
 __all__ = [
-    "UserProvisioningService",
     "ZoneLifecycleService",
 ]

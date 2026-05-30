@@ -78,7 +78,6 @@ DISCOVERABLE_RPC_SERVICE_NAMES: tuple[str, ...] = (
     "search",
     "share_link",
     "rebac",
-    "user_provisioning",
 )
 
 

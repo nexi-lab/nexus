@@ -27,7 +27,6 @@ __all__ = [
     "DeleteBatchParams",
     "DeleteConnectorParams",
     "DeleteSavedMountParams",
-    "DeprovisionUserParams",
     "DiffVersionsParams",
     "EditParams",
     "EventsReplayParams",
@@ -86,7 +85,6 @@ __all__ = [
     "PayBalanceParams",
     "PayHistoryParams",
     "PayTransferParams",
-    "ProvisionUserParams",
     "ReadBatchParams",
     "ReadBulkParams",
     "ReauthMountParams",
@@ -249,16 +247,6 @@ class DeleteSavedMountParams:
     """Parameters for delete_saved_mount(): Delete a saved mount configuration from the database."""
 
     mount_point: str
-
-
-@dataclass
-class DeprovisionUserParams:
-    """Parameters for deprovision_user(): Deprovision a user and remove all their resources."""
-
-    user_id: str
-    zone_id: str | None = None
-    delete_user_record: bool = False
-    force: bool = False
 
 
 @dataclass
@@ -787,22 +775,6 @@ class PayTransferParams:
 
 
 @dataclass
-class ProvisionUserParams:
-    """Parameters for provision_user(): Provision a new user with all default resources (Issue #820)."""
-
-    user_id: str
-    email: str
-    display_name: str | None = None
-    zone_id: str | None = None
-    zone_name: str | None = None
-    create_api_key: bool = True
-    api_key_name: str | None = None
-    api_key_expires_at: str | None = None
-    create_agents: bool = True
-    import_skills: bool = False
-
-
-@dataclass
 class ReadBatchParams:
     """Parameters for read_batch(): Read multiple files in a single round-trip for improved performance."""
 
@@ -1161,7 +1133,6 @@ METHOD_PARAMS: dict[str, type] = {
     "delete_batch": DeleteBatchParams,
     "delete_connector": DeleteConnectorParams,
     "delete_saved_mount": DeleteSavedMountParams,
-    "deprovision_user": DeprovisionUserParams,
     "diff_versions": DiffVersionsParams,
     "edit": EditParams,
     "events_replay": EventsReplayParams,
@@ -1220,7 +1191,6 @@ METHOD_PARAMS: dict[str, type] = {
     "pay_balance": PayBalanceParams,
     "pay_history": PayHistoryParams,
     "pay_transfer": PayTransferParams,
-    "provision_user": ProvisionUserParams,
     "read_batch": ReadBatchParams,
     "read_bulk": ReadBulkParams,
     "reauth_mount": ReauthMountParams,

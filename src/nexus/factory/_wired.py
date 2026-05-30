@@ -510,28 +510,6 @@ def _boot_post_kernel_services(
             "[BOOT:WIRED] AcpService + ManagedAgentService managed internally by nexus-cluster"
         )
 
-    user_provisioning_service: Any = None
-    try:
-        from nexus.services.lifecycle.user_provisioning import UserProvisioningService
-
-        user_provisioning_service = UserProvisioningService(
-            vfs=nx,
-            session_factory=_nx_session_factory,
-            entity_registry=services.get("entity_registry"),
-            api_key_creator=services.get("api_key_creator"),
-            backend=_root_backend,
-            rebac_manager=services.get("rebac_manager"),
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
-            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
-            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
-            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
-            list_cache=getattr(nx, "_list_cache", None),
-            exists_cache=getattr(nx, "_exists_cache", None),
-        )
-        logger.debug("[BOOT:WIRED] UserProvisioningService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)
-
     sandbox_rpc_service: Any = None
     if _on("sandbox"):
         try:
@@ -623,7 +601,6 @@ def _boot_post_kernel_services(
         "time_travel_service": time_travel_service,
         "operations_service": operations_service,
         "agent_rpc_service": agent_rpc_service,
-        "user_provisioning_service": user_provisioning_service,
         "sandbox_rpc_service": sandbox_rpc_service,
         "metadata_export_service": metadata_export_service,
         "descendant_checker": descendant_checker,

@@ -52,7 +52,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "acp_get_enabled_skills",
         "acp_history",
     ),
-    "user_provisioning": ("provision_user", "deprovision_user"),
     "sandbox_rpc": (
         "sandbox_create",
         "sandbox_get_or_create",
@@ -88,7 +87,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "operations_service": "operations",
     "agent_rpc_service": "agent_rpc",
     "acp_rpc_service": "acp_rpc",
-    "user_provisioning_service": "user_provisioning",
     "sandbox_rpc_service": "sandbox_rpc",
     "metadata_export_service": "metadata_export",
     # Dict-keyed services (pre-kernel + brick tier)

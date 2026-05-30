@@ -2623,23 +2623,6 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
-- id: deprovision.user
-  module: identity
-  summary: ''
-  transports:
-    grpc_expose:
-      name: deprovision_user
-      source: src/nexus/services/lifecycle/user_provisioning.py:311
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_identity_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: destroy.pipe
   module: uncategorized
   summary: ''
@@ -7867,23 +7850,6 @@ operations:
   correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
   perf_class: not_perf_sensitive
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: provision.user
-  module: identity
-  summary: ''
-  transports:
-    grpc_expose:
-      name: provision_user
-      source: src/nexus/services/lifecycle/user_provisioning.py:71
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_identity_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
 - id: raft.cluster_status

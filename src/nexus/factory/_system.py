@@ -12,8 +12,7 @@ Two severity classes:
 
 **Degradable** (per-service try/except → WARNING + None):
     dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
-    workspace_registry, mount_manager, workspace_manager, plus all
-    original services (namespace, etc.).
+    mount_manager, plus all original services (namespace, etc.).
 """
 
 import logging
@@ -239,20 +238,6 @@ def _boot_pre_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] DeferredPermissionBuffer unavailable: %s", exc)
 
-    # --- Workspace Registry ---
-    workspace_registry: Any = None
-    try:
-        from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
-
-        workspace_registry = WorkspaceRegistry(
-            metadata=ctx.metadata_store,
-            rebac_manager=rebac_manager,
-            record_store=ctx.record_store,
-        )
-        logger.debug("[BOOT:SYSTEM] WorkspaceRegistry created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] WorkspaceRegistry unavailable: %s", exc)
-
     # --- Mount Manager ---
     # Deferred to post-kernel tier (factory/_wired.py) — the VFS-backed
     # MountStore needs a live NexusFS handle, which isn't constructed yet.
@@ -413,7 +398,6 @@ def _boot_pre_kernel_services(
         "write_observer": write_observer,
         # Former-kernel degradable
         "deferred_permission_buffer": deferred_permission_buffer,
-        "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
         # Original services

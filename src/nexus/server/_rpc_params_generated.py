@@ -51,7 +51,6 @@ __all__ = [
     "GetShareLinkParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
-    "GetWorkspaceInfoParams",
     "GlobBatchParams",
     "GlobParams",
     "GovernanceAlertsParams",
@@ -68,9 +67,7 @@ __all__ = [
     "ListSavedMountsParams",
     "ListShareLinksParams",
     "ListVersionsParams",
-    "ListWorkspacesParams",
     "LoadMountParams",
-    "LoadWorkspaceConfigParams",
     "MCPConnectParams",
     "MCPListMountsParams",
     "MCPListToolsParams",
@@ -101,7 +98,6 @@ __all__ = [
     "RebacListObjectsParams",
     "RebacListTuplesParams",
     "RegisterAgentParams",
-    "RegisterWorkspaceParams",
     "RemoveMountParams",
     "RenameBatchParams",
     "RevokeShareLinkParams",
@@ -121,14 +117,8 @@ __all__ = [
     "StatBulkParams",
     "StatParams",
     "SysWatchParams",
-    "UnregisterWorkspaceParams",
     "UpdateAgentParams",
     "UpdateMountParams",
-    "UpdateWorkspaceParams",
-    "WorkspaceDiffParams",
-    "WorkspaceLogParams",
-    "WorkspaceRestoreParams",
-    "WorkspaceSnapshotParams",
     "WriteBatchParams",
 ]
 
@@ -480,13 +470,6 @@ class GetVersionParams:
 
 
 @dataclass
-class GetWorkspaceInfoParams:
-    """Parameters for get_workspace_info(): Get information about a registered workspace."""
-
-    path: str
-
-
-@dataclass
 class GlobParams:
     """Parameters for glob(): Find files matching a glob pattern."""
 
@@ -639,24 +622,10 @@ class ListVersionsParams:
 
 
 @dataclass
-class ListWorkspacesParams:
-    """Parameters for list_workspaces(): List all registered workspaces for the current user."""
-
-    context: Any | None = None
-
-
-@dataclass
 class LoadMountParams:
     """Parameters for load_mount(): Load a saved mount configuration and activate it."""
 
     mount_point: str
-
-
-@dataclass
-class LoadWorkspaceConfigParams:
-    """Parameters for load_workspace_config(): Load workspaces from configuration."""
-
-    workspaces: list[dict] | None = None
 
 
 @dataclass
@@ -982,21 +951,6 @@ class RegisterAgentParams:
 
 
 @dataclass
-class RegisterWorkspaceParams:
-    """Parameters for register_workspace(): Register a directory as a workspace."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    created_by: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
-    session_id: str | None = None
-    ttl: str | None = None
-    context: Any | None = None
-
-
-@dataclass
 class RemoveMountParams:
     """Parameters for remove_mount(): Remove a backend mount from the filesystem."""
 
@@ -1162,13 +1116,6 @@ class SysWatchParams:
 
 
 @dataclass
-class UnregisterWorkspaceParams:
-    """Parameters for unregister_workspace(): Unregister a workspace (does NOT delete files)."""
-
-    path: str
-
-
-@dataclass
 class UpdateAgentParams:
     """Parameters for update_agent(): Update an existing agent's configuration."""
 
@@ -1185,52 +1132,6 @@ class UpdateMountParams:
 
     mount_point: str
     backend_config: dict[str, Any]
-
-
-@dataclass
-class UpdateWorkspaceParams:
-    """Parameters for update_workspace(): Update an existing workspace configuration."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    metadata: dict | None = None
-
-
-@dataclass
-class WorkspaceDiffParams:
-    """Parameters for workspace_diff(): Compare two workspace snapshots."""
-
-    snapshot_1: int
-    snapshot_2: int
-    workspace_path: str | None = None
-
-
-@dataclass
-class WorkspaceLogParams:
-    """Parameters for workspace_log(): List snapshot history for workspace."""
-
-    workspace_path: str | None = None
-    limit: int = 100
-
-
-@dataclass
-class WorkspaceRestoreParams:
-    """Parameters for workspace_restore(): Restore workspace to a previous snapshot."""
-
-    snapshot_number: int
-    workspace_path: str | None = None
-
-
-@dataclass
-class WorkspaceSnapshotParams:
-    """Parameters for workspace_snapshot(): Create a snapshot of a registered workspace."""
-
-    workspace_path: str | None = None
-    description: str | None = None
-    tags: list[str] | None = None
-    created_by: str | None = None
-    context: dict | None = None
 
 
 @dataclass
@@ -1284,7 +1185,6 @@ METHOD_PARAMS: dict[str, type] = {
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
-    "get_workspace_info": GetWorkspaceInfoParams,
     "glob": GlobParams,
     "glob_batch": GlobBatchParams,
     "governance_alerts": GovernanceAlertsParams,
@@ -1301,9 +1201,7 @@ METHOD_PARAMS: dict[str, type] = {
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
     "list_versions": ListVersionsParams,
-    "list_workspaces": ListWorkspacesParams,
     "load_mount": LoadMountParams,
-    "load_workspace_config": LoadWorkspaceConfigParams,
     "make_private": MakePrivateParams,
     "make_public": MakePublicParams,
     "mcp_connect": MCPConnectParams,
@@ -1334,7 +1232,6 @@ METHOD_PARAMS: dict[str, type] = {
     "rebac_list_objects": RebacListObjectsParams,
     "rebac_list_tuples": RebacListTuplesParams,
     "register_agent": RegisterAgentParams,
-    "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
     "rename_batch": RenameBatchParams,
     "revoke_share_link": RevokeShareLinkParams,
@@ -1354,13 +1251,7 @@ METHOD_PARAMS: dict[str, type] = {
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
     "sys_watch": SysWatchParams,
-    "unregister_workspace": UnregisterWorkspaceParams,
     "update_agent": UpdateAgentParams,
     "update_mount": UpdateMountParams,
-    "update_workspace": UpdateWorkspaceParams,
-    "workspace_diff": WorkspaceDiffParams,
-    "workspace_log": WorkspaceLogParams,
-    "workspace_restore": WorkspaceRestoreParams,
-    "workspace_snapshot": WorkspaceSnapshotParams,
     "write_batch": WriteBatchParams,
 }

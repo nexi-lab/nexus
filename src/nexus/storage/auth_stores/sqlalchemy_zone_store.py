@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from nexus.contracts.auth_store_types import ZoneDTO
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.models import ZoneModel
 
 
@@ -46,7 +47,7 @@ class SQLAlchemyZoneStore:
             domain=domain,
             description=description,
             settings=settings,
-            phase="Active",
+            phase=ZonePhase.ACTIVE,
             finalizers="[]",
             created_at=now,
             updated_at=now,

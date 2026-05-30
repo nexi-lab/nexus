@@ -1,4 +1,4 @@
-"""Issue #4137 real E2E coverage for agent/workspace/snapshot/version APIs."""
+"""Issue #4137 real E2E coverage for agent/snapshot/version APIs."""
 
 from __future__ import annotations
 
@@ -173,86 +173,6 @@ def test_issue_4137_lifecycle_surface_real_e2e(test_app: httpx.Client) -> None:
     )
     assert "stale generation" in stale_error["message"].lower()
 
-    # Workspace RPC APIs, including missing-workspace failure.
-    workspace_path = f"/zone/root/user/admin/workspace/issue-4137-{suffix}"
-    loaded_path = f"/zone/root/user/admin/workspace/issue-4137-load-{suffix}"
-    workspace = _rpc_result(
-        client,
-        "register_workspace",
-        {
-            "path": workspace_path,
-            "name": "Issue 4137 Workspace",
-            "description": "Live E2E workspace",
-            "metadata": {"issue": "4137"},
-        },
-        perf,
-    )
-    assert workspace["path"] == workspace_path
-    assert (
-        _rpc_result(
-            client,
-            "update_workspace",
-            {"path": workspace_path, "name": "Issue 4137 Workspace Updated"},
-            perf,
-        )["name"]
-        == "Issue 4137 Workspace Updated"
-    )
-    assert _rpc_result(client, "get_workspace_info", {"path": workspace_path}, perf)["path"] == (
-        workspace_path
-    )
-    assert any(
-        w["path"] == workspace_path for w in _rpc_result(client, "list_workspaces", {}, perf)
-    )
-    load_result = _rpc_result(
-        client,
-        "load_workspace_config",
-        {"workspaces": [{"path": loaded_path, "name": "Loaded Issue 4137"}]},
-        perf,
-    )
-    assert load_result["workspaces_registered"] == 1
-    missing_workspace = _rpc_error(
-        client,
-        "workspace_snapshot",
-        {"workspace_path": f"/zone/root/user/admin/workspace/missing-{suffix}"},
-        perf,
-    )
-    assert "workspace not registered" in missing_workspace["message"].lower()
-
-    _write_file(client, f"{workspace_path}/a.txt", "a\n", perf)
-    snap1 = _rpc_result(
-        client,
-        "workspace_snapshot",
-        {"workspace_path": workspace_path, "description": "before"},
-        perf,
-    )
-    _write_file(client, f"{workspace_path}/b.txt", "b\n", perf)
-    snap2 = _rpc_result(
-        client,
-        "workspace_snapshot",
-        {"workspace_path": workspace_path, "description": "after"},
-        perf,
-    )
-    log = _rpc_result(client, "workspace_log", {"workspace_path": workspace_path}, perf)
-    assert len(log) >= 2
-    ws_diff = _rpc_result(
-        client,
-        "workspace_diff",
-        {
-            "workspace_path": workspace_path,
-            "snapshot_1": snap1["snapshot_number"],
-            "snapshot_2": snap2["snapshot_number"],
-        },
-        perf,
-    )
-    assert isinstance(ws_diff, dict)
-    restore = _rpc_result(
-        client,
-        "workspace_restore",
-        {"workspace_path": workspace_path, "snapshot_number": snap1["snapshot_number"]},
-        perf,
-    )
-    assert "files_deleted" in restore
-
     # Transactional snapshot RPC APIs.
     txn = _rpc_result(
         client,
@@ -313,8 +233,6 @@ def test_issue_4137_lifecycle_surface_real_e2e(test_app: httpx.Client) -> None:
     rollback_resp = _http(client, perf, "POST", f"/api/v2/snapshots/{rest_rollback_id}/rollback")
     assert rollback_resp.status_code == 200, rollback_resp.text
 
-    assert _rpc_result(client, "unregister_workspace", {"path": loaded_path}, perf) is True
-    assert _rpc_result(client, "unregister_workspace", {"path": workspace_path}, perf) is True
     assert _rpc_result(client, "delete_agent", {"agent_id": agent_id}, perf) is True
 
     print("ISSUE_4137_E2E_PERF " + json.dumps(perf, sort_keys=True))

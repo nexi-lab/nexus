@@ -151,57 +151,70 @@ graph TD
 
 </details>
 
-## Get started in 30 seconds
+## Get started
 
-### Option A: Docker (recommended)
+### Run Nexus
 
-```bash
-pip install nexus-ai-fs                       # CLI + SDK
-nexus init --preset demo                       # writes nexus.yaml + nexus-stack.yml
-nexus up                                       # pulls image, starts Nexus + Postgres + Dragonfly
-eval $(nexus env)                              # load connection vars into your shell
-```
-
-Open `http://localhost:2026`. That's it.
-
-### Option B: Embedded (no Docker)
+Two ways to start a Nexus node — `nexus` (managed Docker stack) or `nexusd` (direct daemon):
 
 ```bash
+# Managed stack (Nexus + Postgres + Dragonfly via Docker)
 pip install nexus-ai-fs
+nexus init --preset shared
+nexus up
+eval $(nexus env)
+
+# Direct daemon (single process, no Docker)
+nexusd --port 2026 --data-dir ./nexus-data
 ```
+
+### Use Nexus
+
+Once running, interact via SDK, CLI, or TUI:
+
+```python
+# SDK
+import asyncio, nexus
+
+async def main():
+    nx = await nexus.connect()                    # connects to running nexusd
+    await nx.write("/hello.txt", b"hello world")
+    print((await nx.read("/hello.txt")).decode())
+    nx.close()
+
+asyncio.run(main())
+```
+
+```bash
+# CLI (RPC client — talks to running nexusd via gRPC)
+nexus write /hello.txt "hello world"
+nexus cat /hello.txt
+nexus ls /
+nexus grep "TODO" -f "**/*.py"
+nexus search query "hello" --mode hybrid
+```
+
+```bash
+# TUI
+bunx @nexus-ai-fs/tui                                        # connects to localhost:2026
+bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key KEY # connect to remote
+```
+
+### Embedded (no daemon)
+
+For scripts and notebooks — in-process, zero infrastructure:
 
 ```python
 import asyncio, nexus
 
 async def main():
     nx = await nexus.connect(config={"data_dir": "./my-data"})
-
     await nx.write("/notes/meeting.md", b"# Q3 Planning\n- Ship Nexus 1.0")
     print((await nx.read("/notes/meeting.md")).decode())
-
     nx.close()
 
 asyncio.run(main())
 ```
-
-### Option C: CLI
-
-```bash
-nexus write /hello.txt "hello world"
-nexus cat /hello.txt
-nexus ls /
-nexus search query "hello" --mode hybrid
-nexus grep "TODO" -f "**/*.py"
-```
-
-### Terminal UI
-
-```bash
-bunx @nexus-ai-fs/tui                                        # connects to localhost:2026
-bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key KEY # connect to remote
-```
-
-File explorer, API inspector, monitoring dashboard, agent lifecycle management, and more.
 
 ## What you get
 

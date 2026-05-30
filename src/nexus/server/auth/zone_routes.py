@@ -20,6 +20,7 @@ from nexus.bricks.auth.zone_helpers import (
     suggest_zone_id,
     validate_zone_id,
 )
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.lib.zone_helpers import (
     add_user_to_zone,
     get_user_zones,
@@ -491,7 +492,7 @@ async def list_zones(
                     select(func.count())
                     .select_from(ZoneModel)
                     .where(
-                        ZoneModel.phase != "Terminated",
+                        ZoneModel.phase != ZonePhase.TERMINATED,
                         ZoneModel.zone_id.in_(user_zone_ids),
                     )
                 )
@@ -601,7 +602,7 @@ async def delete_zone_endpoint(
                 detail="Only the zone owner can delete a zone",
             )
 
-        if zone.phase == "Terminated":
+        if zone.phase == ZonePhase.TERMINATED:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Zone '{zone_id}' is already terminated",
@@ -610,14 +611,14 @@ async def delete_zone_endpoint(
         _inline_zone_finalizer_deletes(session, zone_id)
         _trigger_federation_remove_zone(nx, zone_id)
 
-        zone.phase = "Terminated"
+        zone.phase = ZonePhase.TERMINATED
         zone.finalizers = "[]"
         zone.deleted_at = datetime.now(UTC)
         session.commit()
 
         return ZoneDeprovisionResponse(
             zone_id=zone_id,
-            phase="Terminated",
+            phase=ZonePhase.TERMINATED,
             finalizers_completed=[],
             finalizers_pending=[],
             finalizers_failed={},

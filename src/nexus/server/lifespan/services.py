@@ -153,7 +153,6 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
 
         app.state.agent_warmup_service = AgentWarmupService(
             agent_registry=agent_registry,
-            namespace_manager=svc.namespace_manager,
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             cache_store=getattr(app.state, "cache_brick", None),
             mcp_config=None,

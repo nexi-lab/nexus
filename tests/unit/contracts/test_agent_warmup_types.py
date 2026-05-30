@@ -63,12 +63,12 @@ class TestWarmupResult:
         result = WarmupResult(
             success=True,
             agent_id="agent-1",
-            steps_completed=("load_credentials", "mount_namespace"),
+            steps_completed=("load_credentials", "verify_bricks"),
             duration_ms=42.5,
         )
         assert result.success is True
         assert result.agent_id == "agent-1"
-        assert result.steps_completed == ("load_credentials", "mount_namespace")
+        assert result.steps_completed == ("load_credentials", "verify_bricks")
         assert result.steps_skipped == ()
         assert result.failed_step is None
         assert result.error is None
@@ -80,14 +80,14 @@ class TestWarmupResult:
             agent_id="agent-2",
             steps_completed=("load_credentials",),
             steps_skipped=("warm_caches",),
-            failed_step="mount_namespace",
-            error="Required step 'mount_namespace' failed",
+            failed_step="verify_bricks",
+            error="Required step 'verify_bricks' failed",
             duration_ms=100.0,
         )
         assert result.success is False
-        assert result.failed_step == "mount_namespace"
+        assert result.failed_step == "verify_bricks"
         assert result.error is not None
-        assert "mount_namespace" in result.error
+        assert "verify_bricks" in result.error
 
     def test_frozen(self) -> None:
         result = WarmupResult(success=True, agent_id="agent-1")
@@ -116,7 +116,6 @@ class TestWarmupContext:
             agent_registry={"fake": "registry"},
         )
         assert ctx.agent_id == "agent-1"
-        assert ctx.namespace_manager is None
         assert ctx.enabled_bricks == frozenset()
         assert ctx.cache_store is None
         assert ctx.mcp_config is None
@@ -126,12 +125,10 @@ class TestWarmupContext:
             agent_id="agent-1",
             agent_record={"fake": "record"},
             agent_registry={"fake": "registry"},
-            namespace_manager="ns_mgr",
             enabled_bricks=frozenset({"search", "pay"}),
             cache_store="cache",
             mcp_config={"servers": []},
         )
-        assert ctx.namespace_manager == "ns_mgr"
         assert "search" in ctx.enabled_bricks
         assert ctx.cache_store == "cache"
         assert ctx.mcp_config == {"servers": []}
@@ -155,14 +152,13 @@ class TestStandardWarmup:
     def test_is_tuple(self) -> None:
         assert isinstance(STANDARD_WARMUP, tuple)
 
-    def test_has_five_steps(self) -> None:
-        assert len(STANDARD_WARMUP) == 5
+    def test_has_four_steps(self) -> None:
+        assert len(STANDARD_WARMUP) == 4
 
     def test_step_names(self) -> None:
         names = [s.name for s in STANDARD_WARMUP]
         assert names == [
             "load_credentials",
-            "mount_namespace",
             "verify_bricks",
             "warm_caches",
             "connect_mcp",
@@ -176,7 +172,6 @@ class TestStandardWarmup:
         required = [s.name for s in STANDARD_WARMUP if s.required]
         assert set(required) == {
             "load_credentials",
-            "mount_namespace",
             "verify_bricks",
         }
 

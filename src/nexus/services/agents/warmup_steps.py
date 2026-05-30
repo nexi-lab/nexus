@@ -6,7 +6,6 @@ step registry by ``register_standard_steps()``.
 
 Steps:
     load_credentials   — Verify agent has valid credentials/API key
-    mount_namespace    — Resolve agent's namespace mount table
     verify_bricks      — Check required bricks are enabled
     warm_caches        — Pre-populate cache for agent's zone (optional)
     connect_mcp        — Validate MCP server configuration (optional)
@@ -51,41 +50,6 @@ async def load_credentials(ctx: "WarmupContext") -> bool:
 
     logger.debug("[WARMUP:credentials] Agent %s credentials verified", ctx.agent_id)
     return True
-
-
-async def mount_namespace(ctx: "WarmupContext") -> bool:
-    """Resolve the agent's namespace mount table.
-
-    Validates that the namespace manager can resolve mounts for this agent.
-    Skips gracefully if namespace_manager is not available.
-    """
-    ns_mgr = ctx.namespace_manager
-    if ns_mgr is None:
-        logger.debug("[WARMUP:namespace] No namespace_manager, skipping mount resolution")
-        return True  # Not a failure — just not configured
-    get_mount_entries = getattr(ns_mgr, "get_mount_entries", None)
-    if get_mount_entries is None:
-        logger.debug("[WARMUP:namespace] namespace_manager has no get_mount_entries, skipping")
-        return True
-
-    try:
-        # Attempt to resolve mounts for the agent's zone
-        zone_id = ctx.agent_record.zone_id
-        if zone_id is not None:
-            subject = ("agent", ctx.agent_id)
-            mounts = get_mount_entries(subject, zone_id=zone_id)
-            logger.debug(
-                "[WARMUP:namespace] Resolved %d mounts for agent %s in zone %s",
-                len(mounts),
-                ctx.agent_id,
-                zone_id,
-            )
-        return True
-    except Exception:
-        logger.exception(
-            "[WARMUP:namespace] Failed to resolve namespace for agent %s", ctx.agent_id
-        )
-        return False
 
 
 async def verify_bricks(ctx: "WarmupContext") -> bool:
@@ -177,7 +141,6 @@ def register_standard_steps(service: "AgentWarmupService") -> None:
         service: The AgentWarmupService to register steps into.
     """
     service.register_step("load_credentials", load_credentials)
-    service.register_step("mount_namespace", mount_namespace)
     service.register_step("verify_bricks", verify_bricks)
     service.register_step("warm_caches", warm_caches)
     service.register_step("connect_mcp", connect_mcp)

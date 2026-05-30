@@ -76,6 +76,34 @@ class ZoneListResponse(BaseModel):
     total: int
 
 
+def _trigger_federation_remove_zone(nx: Any, zone_id: str) -> bool:
+    """Best-effort raft-side zone removal — mirrors the federation_remove_zone
+    RPC by reaching through the kernel ``_call`` channel that
+    ``FederationRPCService.federation_remove_zone`` uses
+    (federation_rpc.py:338).
+
+    Returns True on success, False if the kernel handle is missing or the
+    call raised; the failure is logged but never re-raised because the
+    caller has already run the SQL deletes by the time this fires and we
+    don't want a transient raft hiccup to surface as a 5xx.
+    """
+    if nx is None:
+        return False
+    kernel = getattr(nx, "_kernel", None)
+    if kernel is None:
+        logger.warning(
+            "zone %s: federation_remove_zone skipped — kernel handle unavailable",
+            zone_id,
+        )
+        return False
+    try:
+        kernel._call("federation_remove_zone", {"zone_id": zone_id, "force": False})
+    except Exception as exc:
+        logger.warning("zone %s: federation_remove_zone failed: %s", zone_id, exc)
+        return False
+    return True
+
+
 def _inline_zone_finalizer_deletes(session: Any, zone_id: str) -> None:
     """Run the three zone-scoped DELETEs that previously lived in the K8s-
     finalizer-pattern services (SearchZoneFinalizer for entities +

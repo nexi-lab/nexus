@@ -378,15 +378,7 @@ def _register_vfs_hooks(
         """Enlist hook via sys_setattr — factory is the first user."""
         nx.sys_setattr(f"/__sys__/services/{name}", service=hook)
 
-    # ── Zone write guard hook (Issue #1790) ────────────────────────
-    # Rejects writes to zones being deprovisioned (Issue #2061).
-    # Replaces _check_zone_writable() in nexus_fs.
     _ss = services or {}
-    _zl = _ss.get("zone_lifecycle")
-    if _zl is not None:
-        from nexus.services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
-
-        _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
     # ── Permission — RebacPermissionCheckHook as NativeInterceptHook ──
     if permission_checker is not None:

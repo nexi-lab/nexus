@@ -370,13 +370,20 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     );
 
     // ── ObjectStoreProvider + driver gate ─────────────────────────
-    // Registered before the first DT_MOUNT so that any future mount
-    // that goes through the provider (bridge-2 and later) can call
-    // get_provider() and is_driver_enabled() at construction time.
-    // Only path_local and remote are compiled into this binary
-    // (see Cargo.toml features).
+    // Registered before the first DT_MOUNT so that any mount going
+    // through the provider (bridge-2, #4262) can call get_provider()
+    // and is_driver_enabled() at construction time.
+    //
+    // The default build compiles only path_local + remote (see
+    // Cargo.toml). Building with `--features driver-s3` additionally
+    // compiles the provider's S3 arm and enables the "s3" gate, so an
+    // S3 / S3-compatible (Cloudflare R2, MinIO) DT_MOUNT arriving over
+    // gRPC is constructed instead of rejected by the gate.
     set_provider(Arc::new(DefaultObjectStoreProvider))
         .unwrap_or_else(|_| tracing::warn!("ObjectStoreProvider already registered"));
+    #[cfg(feature = "driver-s3")]
+    set_enabled_drivers(["path_local", "remote", "s3"]);
+    #[cfg(not(feature = "driver-s3"))]
     set_enabled_drivers(["path_local", "remote"]);
 
     // ── Data plane: mount host-fs at "/" via PathLocalBackend ──

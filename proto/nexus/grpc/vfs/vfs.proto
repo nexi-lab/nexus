@@ -348,6 +348,44 @@ message SetattrRequest {
   string io_profile = 12;
   bool is_external = 13;
   uint64 capacity = 14;
+
+  // ── DT_MOUNT backend-construction params (entry_type == 2) ──────────
+  //
+  // Bridge-2 (#4262): carries the typed params
+  // `nexus_fs_metadata._extract_rust_backend_params` produces so the Rust
+  // gRPC `Setattr` handler can construct a live `ObjectStore` via
+  // `ObjectStoreProvider::build(...)` instead of synthetically acking the
+  // mount. `backend_type` is the dispatch key (matches
+  // `deployment_profile.py` DRIVER_* values: "s3", "gcs", "remote", …).
+  // Empty `backend_type` ⇒ metadata-only / local re-mount ⇒ the handler
+  // keeps the synthetic ack (the boot "/" mount and local backends are
+  // unaffected). Credential fields are presence-tracked so None (absent)
+  // is distinct from "" (explicitly empty) across the wire.
+  string backend_type = 15;
+
+  // S3 / S3-compatible (MinIO, Cloudflare R2): `s3_endpoint` carries the
+  // R2/MinIO endpoint; `aws_region` is "auto" for R2.
+  optional string s3_bucket = 16;
+  optional string s3_prefix = 17;
+  optional string aws_region = 18;
+  optional string aws_access_key = 19;
+  optional string aws_secret_key = 20;
+  optional string s3_endpoint = 21;
+
+  // GCS (forward-compat — the provider's gcs arm).
+  optional string gcs_bucket = 22;
+  optional string gcs_prefix = 23;
+  optional string access_token = 24;
+
+  // RemoteBackend (forward-compat — the provider's remote arm). The
+  // handler threads `path` into `ObjectStoreProviderArgs.mount_path`, so
+  // the remote arm fails closed on sub-path mounts (#4273).
+  optional string server_address = 25;
+  optional string remote_auth_token = 26;
+  optional bytes remote_ca_pem = 27;
+  optional bytes remote_cert_pem = 28;
+  optional bytes remote_key_pem = 29;
+  optional double remote_timeout = 30;
 }
 
 message SetattrResponse {

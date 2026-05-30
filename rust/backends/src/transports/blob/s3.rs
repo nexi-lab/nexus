@@ -67,6 +67,43 @@ impl S3Backend {
             .unwrap_or_else(|| format!("https://{}.s3.{}.amazonaws.com", self.bucket, self.region))
     }
 
+    /// Request path (also the SigV4 canonical URI) for `key`.
+    ///
+    /// - **Path-style** (`/{bucket}/{key}`) for an *account-style* custom
+    ///   endpoint (S3-compatible Cloudflare R2 / MinIO / Tencent COS:
+    ///   `acct.r2.cloudflarestorage.com`, `minio.local:9000`) whose host has
+    ///   no bucket — else the request hits the account root and R2/MinIO
+    ///   return 404 / `NoSuchBucket` / a SigV4 signature mismatch.
+    /// - **Virtual-hosted** (`/{key}`) when the bucket is already in the host:
+    ///   AWS (no endpoint, `{bucket}.s3…`) and bucket-scoped custom endpoints
+    ///   (`{bucket}.cos…`). Prepending the bucket there would address
+    ///   `/{bucket}/{bucket}/…`, the wrong object.
+    ///
+    /// The URL and the signed canonical path MUST use this same value or the
+    /// signature is invalid.
+    fn request_path(&self, key: &str) -> String {
+        // Percent-encode each `/`-delimited segment (RFC 3986) and use the
+        // SAME string for the request URL and the SigV4 canonical URI.
+        // `content_id` keys are hex (already safe), but an operator-set
+        // `prefix` — or any non-hex key — may carry bytes the HTTP client and
+        // the signer would otherwise encode differently, breaking the
+        // signature or addressing the wrong object. `/` stays a separator.
+        let enc_key = encode_s3_path(key);
+        // Path-style ONLY when the bucket is not already in the endpoint
+        // host. R2 / MinIO account endpoints (`acct.r2.cloudflarestorage.com`,
+        // `minio.local:9000`) carry no bucket → prepend `/{bucket}/`. A
+        // bucket-scoped (virtual-hosted) custom endpoint already has the
+        // bucket in the host (`mybucket.cos…`, matched by `host()`), and AWS
+        // (no endpoint) is virtual-hosted too — prepending the bucket there
+        // would address `/{bucket}/{bucket}/…`, the wrong object.
+        let bucket_in_host = self.host().starts_with(&format!("{}.", self.bucket));
+        if self.endpoint.is_some() && !bucket_in_host {
+            format!("/{}/{}", s3_uri_encode(&self.bucket), enc_key)
+        } else {
+            format!("/{enc_key}")
+        }
+    }
+
     /// Canonical host for SigV4 signing (must match the ``Host`` header of
     /// the actual request, otherwise the signature is invalid).
     ///
@@ -182,10 +219,11 @@ impl ObjectStore for S3Backend {
             ));
         }
         let key = self.object_key(content_id);
-        let url = format!("{}/{}", self.base_url(), key);
+        let path = self.request_path(&key);
+        let url = format!("{}{}", self.base_url().trim_end_matches('/'), path);
         let content_sha256 = hex::encode(Sha256::digest(content));
         let now = chrono::Utc::now();
-        let headers = self.sign_request("PUT", &format!("/{key}"), &content_sha256, &now);
+        let headers = self.sign_request("PUT", &path, &content_sha256, &now);
         let content_owned = content.to_vec();
         let size = content.len() as u64;
 
@@ -220,9 +258,10 @@ impl ObjectStore for S3Backend {
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         let key = self.object_key(content_id);
-        let url = format!("{}/{}", self.base_url(), key);
+        let path = self.request_path(&key);
+        let url = format!("{}{}", self.base_url().trim_end_matches('/'), path);
         let now = chrono::Utc::now();
-        let headers = self.sign_request("GET", &format!("/{key}"), "UNSIGNED-PAYLOAD", &now);
+        let headers = self.sign_request("GET", &path, "UNSIGNED-PAYLOAD", &now);
 
         self.runtime.block_on(async {
             let client = reqwest::Client::new();
@@ -253,9 +292,10 @@ impl ObjectStore for S3Backend {
 
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
         let key = self.object_key(content_id);
-        let url = format!("{}/{}", self.base_url(), key);
+        let path = self.request_path(&key);
+        let url = format!("{}{}", self.base_url().trim_end_matches('/'), path);
         let now = chrono::Utc::now();
-        let headers = self.sign_request("DELETE", &format!("/{key}"), "UNSIGNED-PAYLOAD", &now);
+        let headers = self.sign_request("DELETE", &path, "UNSIGNED-PAYLOAD", &now);
 
         self.runtime.block_on(async {
             let client = reqwest::Client::new();
@@ -291,6 +331,17 @@ impl ObjectStore for S3Backend {
         // S3 has no real directories
         Ok(())
     }
+}
+
+/// Percent-encode an S3 object-key path: encode each `/`-delimited segment
+/// with [`s3_uri_encode`], preserving `/` as the separator. The result is
+/// used verbatim as both the request URL path and the SigV4 canonical URI,
+/// so the two always agree.
+fn encode_s3_path(key: &str) -> String {
+    key.split('/')
+        .map(s3_uri_encode)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// S3-safe URI encoding (RFC 3986 unreserved chars only).
@@ -392,5 +443,109 @@ mod tests {
                 .unwrap()
         };
         assert_ne!(sig(&auth.1), sig(&auth_aws.1));
+    }
+
+    #[test]
+    fn request_path_custom_endpoint_is_path_style_with_bucket() {
+        // R2 / MinIO: the endpoint host carries no bucket, so the bucket MUST
+        // appear in the request path (and the SigV4 canonical path), else the
+        // request hits the account root → 404 / NoSuchBucket / bad signature.
+        let b = mk(Some("https://acct.r2.cloudflarestorage.com"));
+        assert_eq!(b.request_path("blob123"), "/mybucket/blob123");
+        let url = format!(
+            "{}{}",
+            b.base_url().trim_end_matches('/'),
+            b.request_path("blob123")
+        );
+        assert_eq!(
+            url,
+            "https://acct.r2.cloudflarestorage.com/mybucket/blob123"
+        );
+    }
+
+    #[test]
+    fn request_path_bucket_scoped_endpoint_stays_virtual_hosted() {
+        // A virtual-hosted custom endpoint already carries the bucket in the
+        // host (`host()` == "mybucket.cos…"), so the path must NOT prepend the
+        // bucket again — that would address `/mybucket/mybucket/key`.
+        let b = mk(Some("https://mybucket.cos.ap-beijing.myqcloud.com"));
+        assert_eq!(b.request_path("blob123"), "/blob123");
+        let url = format!(
+            "{}{}",
+            b.base_url().trim_end_matches('/'),
+            b.request_path("blob123")
+        );
+        assert_eq!(url, "https://mybucket.cos.ap-beijing.myqcloud.com/blob123");
+    }
+
+    #[test]
+    fn request_path_aws_is_virtual_hosted_no_bucket_in_path() {
+        // AWS virtual-hosted style carries the bucket in the host, so the
+        // path is just the key.
+        let b = mk(None);
+        assert_eq!(b.request_path("blob123"), "/blob123");
+        let url = format!(
+            "{}{}",
+            b.base_url().trim_end_matches('/'),
+            b.request_path("blob123")
+        );
+        assert_eq!(url, "https://mybucket.s3.us-east-1.amazonaws.com/blob123");
+    }
+
+    #[test]
+    fn request_path_percent_encodes_segments_preserving_slash() {
+        // Reserved / non-unreserved bytes in a key segment must be
+        // percent-encoded in BOTH the URL and the SigV4 canonical path (they
+        // come from one string), while `/` stays a separator. Real keys are
+        // hex content-ids, but a prefix or non-hex key must still sign.
+        let b = mk(Some("https://acct.r2.cloudflarestorage.com"));
+        assert_eq!(b.request_path("a b/c#d%e"), "/mybucket/a%20b/c%23d%25e");
+        let b_aws = mk(None);
+        assert_eq!(b_aws.request_path("a b/c#d%e"), "/a%20b/c%23d%25e");
+        // Unreserved chars (hex content-id) pass through unchanged.
+        assert_eq!(b_aws.request_path("deadBEEF09-_.~"), "/deadBEEF09-_.~");
+    }
+
+    /// Live round-trip against real S3-compatible storage (Cloudflare R2).
+    /// Skipped unless `NEXUS_R2_*` env creds are set, so CI / dev without
+    /// creds is unaffected. Exercises the actual `S3Backend` SigV4 signing +
+    /// path-style `request_path` against the configured endpoint — the
+    /// end-to-end proof that the bridge-2 (#4262) S3 path works against R2.
+    #[test]
+    fn live_r2_round_trip() {
+        let (Ok(endpoint), Ok(bucket), Ok(ak), Ok(sk)) = (
+            std::env::var("NEXUS_R2_ENDPOINT"),
+            std::env::var("NEXUS_R2_BUCKET"),
+            std::env::var("NEXUS_R2_ACCESS_KEY_ID"),
+            std::env::var("NEXUS_R2_SECRET_ACCESS_KEY"),
+        ) else {
+            eprintln!("live_r2_round_trip: NEXUS_R2_* not set — skipping");
+            return;
+        };
+        let region = std::env::var("NEXUS_R2_REGION").unwrap_or_else(|_| "auto".into());
+        let backend = S3Backend::new(
+            "r2-live",
+            &bucket,
+            "bridge2-e2e",
+            &region,
+            &ak,
+            &sk,
+            Some(&endpoint),
+        )
+        .expect("S3Backend::new against R2");
+        let ctx = kernel::kernel::OperationContext::new("test", "root", true, None, true);
+        let content_id = format!("bridge2e2e{}", std::process::id());
+        let body = b"cloudflare-r2-through-rust-s3backend";
+
+        let w = backend
+            .write_content(body, &content_id, &ctx, 0)
+            .expect("PUT to R2");
+        assert_eq!(w.size, body.len() as u64);
+        let got = backend
+            .read_content(&content_id, &ctx)
+            .expect("GET from R2");
+        assert_eq!(got, body, "R2 round-trip bytes differ");
+        backend.delete_content(&content_id).expect("DELETE from R2");
+        eprintln!("live_r2_round_trip: OK — PUT/GET/DELETE {content_id} in {bucket}");
     }
 }

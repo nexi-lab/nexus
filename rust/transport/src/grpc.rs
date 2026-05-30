@@ -22,20 +22,20 @@ use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
 use kernel::abi::KernelAbi;
+use kernel::hal::object_store_provider::{get_provider, ObjectStoreProviderArgs};
 use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchStatItem, BatchStatRequest,
     BatchStatResponse, BatchWriteItemResponse, BatchWriteRequest, BatchWriteResponse, CallRequest,
     CallResponse, CopyRequest, CopyResponse, DeleteRequest, DeleteResponse, GetXattrBulkItem,
-    GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, IpcAck,
-    IpcEmpty, IpcHasResponse, IpcPathRequest, LockRequest, LockResponse, MkdirRequest,
-    MkdirResponse, PingRequest, PingResponse,
-    ReaddirEntry, ReaddirRequest, ReaddirResponse, ReadRequest, ReadResponse, RenameRequest,
-    RenameResponse, SetXattrRequest, SetXattrResponse, SetattrRequest, SetattrResponse,
-    StatRequest, StatResponse, StreamCollectAllResponse, StreamReadAtRequest, StreamReadAtResponse,
-    StreamWriteRequest, StreamWriteResponse, UnlockRequest, UnlockResponse, WatchRequest,
-    WatchResponse, WriteRequest, WriteResponse,
+    GetXattrBulkRequest, GetXattrBulkResponse, GetXattrRequest, GetXattrResponse, IpcAck, IpcEmpty,
+    IpcHasResponse, IpcPathRequest, LockRequest, LockResponse, MkdirRequest, MkdirResponse,
+    PingRequest, PingResponse, ReadRequest, ReadResponse, ReaddirEntry, ReaddirRequest,
+    ReaddirResponse, RenameRequest, RenameResponse, SetXattrRequest, SetXattrResponse,
+    SetattrRequest, SetattrResponse, StatRequest, StatResponse, StreamCollectAllResponse,
+    StreamReadAtRequest, StreamReadAtResponse, StreamWriteRequest, StreamWriteResponse,
+    UnlockRequest, UnlockResponse, WatchRequest, WatchResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -125,6 +125,251 @@ impl VfsServiceImpl {
         }
     }
 
+    /// DT_MOUNT (`entry_type == 2`) handler — bridge-2 (#4262).
+    ///
+    /// Builds a live `ObjectStore` from the wire-carried backend params via
+    /// the registered [`ObjectStoreProvider`] and mounts it through
+    /// `Kernel::sys_setattr`, replacing the old blanket synthetic ack — but
+    /// only for the *networked* object-store drivers the provider
+    /// constructs from those params: `s3` (the epic's focus, and the path
+    /// S3-compatible Cloudflare R2 / MinIO ride via `s3_endpoint` +
+    /// `aws_region = "auto"`) plus the forward-compat `gcs` / `remote` arms.
+    ///
+    /// Three-way on the `backend_type`, fail-closed:
+    ///   * `{s3, gcs, remote}` → build via the provider and mount.
+    ///   * **synthetic ack** (no provider build, as before): the empty
+    ///     `backend_type` (metadata-only / federation), and the local-host
+    ///     backends (`path_local` / `cas-local` / `local_connector`) at ANY
+    ///     path — they carry no `local_root` on the wire, but the host binary
+    ///     serves every local path through its root `/` mount (host-fs), so a
+    ///     write to e.g. `/files/…` falls through and lands on disk. (The boot
+    ///     `sys_setattr(DT_MOUNT, "/")` remount is the same case.)
+    ///   * anything else (a connector / LLM type this server can't build, a
+    ///     typo, a legacy name like `path_s3`, a version-skewed client, a
+    ///     future driver) → **error, never a silent ack**: those have no
+    ///     host-fs fall-through, so a bare `created=false` ack would let the
+    ///     caller write into a phantom mount — a silent data-placement failure.
+    ///
+    /// Requires an admin or system context, mirroring the Python
+    /// `sys_setattr(DT_MOUNT)` gate: this path is now stateful (creates /
+    /// overwrites mounts), so a non-privileged token must not reach
+    /// `provider.build` / `Kernel::sys_setattr`.
+    fn setattr_mount(&self, req: SetattrRequest, ctx: &OperationContext) -> SetattrResponse {
+        // DT_MOUNT mutates mount/zone state — gate it admin-only like the
+        // Python primitive. The cluster's NoAuth resolves to an admin+system
+        // context so this is transparent there; a real AuthProvider issuing a
+        // non-privileged context is rejected before any state change.
+        if !(ctx.is_admin || ctx.is_system) {
+            return error_setattr(Status::permission_denied(
+                "DT_MOUNT requires an admin or system context",
+            ));
+        }
+
+        // Networked object-store drivers the provider builds from the wire
+        // params, and the local-host drivers the host binary owns.
+        const PROVIDER_BUILT: [&str; 3] = ["s3", "gcs", "remote"];
+        const LOCAL_HOST: [&str; 3] = ["path_local", "cas-local", "local_connector"];
+
+        // Local-host backends (path_local / cas-local / local_connector) keep
+        // the pre-#4262 synthetic ack at ANY path. They carry no `local_root`
+        // on the wire so they can't be built here, but the host binary serves
+        // every local path through its root `/` mount (host-fs): acking lets a
+        // write to e.g. `/files/…` fall through to that root mount and land on
+        // disk — the established behavior the self-contained e2e suite relies
+        // on (it mounts `cas-local` at `/files` over gRPC). The boot-time
+        // DT_MOUNT("/") remount is the same case. (Connector / LLM / unknown
+        // types below have NO such fall-through, so they fail closed instead.)
+        if LOCAL_HOST.contains(&req.backend_type.as_str()) {
+            return synthetic_setattr_ack(&req);
+        }
+        // Empty backend_type — federation / metadata-only DT_MOUNT. This is a
+        // no-op ack over gRPC (the pre-#4262 behavior, deliberately retained).
+        // Federation zone mounts are created via `share --mount-at` / `join`
+        // (a raft-replicated DT_MOUNT through the parent zone's state machine),
+        // NOT via a client's gRPC `sys_setattr`. Routing this zoned mount into
+        // `Kernel::sys_setattr` would, with a join `source` (which the proto
+        // does not carry), install a successful-looking route without actually
+        // joining — risking a split-brain zone; and the raft JoinZone path
+        // `block_on`s, which must not run inline on a tonic worker. So bridging
+        // federation over gRPC is a separate effort, out of scope for #4262.
+        // Acking installs nothing and is safe.
+        if req.backend_type.is_empty() {
+            // Fail closed if construction params were supplied without the
+            // dispatch key. A malformed / partially-upgraded client that set
+            // s3_bucket/aws_region/etc. but dropped `backend_type` would
+            // otherwise get a phantom-mount ack — and the client-side
+            // version-skew guard only fires for known provider-built
+            // backend_types, so it can't catch this. A genuine metadata-only /
+            // federation mount carries none of these fields.
+            let has_backend_params = req.s3_bucket.is_some()
+                || req.s3_prefix.is_some()
+                || req.aws_region.is_some()
+                || req.aws_access_key.is_some()
+                || req.aws_secret_key.is_some()
+                || req.s3_endpoint.is_some()
+                || req.gcs_bucket.is_some()
+                || req.gcs_prefix.is_some()
+                || req.access_token.is_some()
+                || req.server_address.is_some()
+                || req.remote_auth_token.is_some()
+                || req.remote_ca_pem.is_some()
+                || req.remote_cert_pem.is_some()
+                || req.remote_key_pem.is_some()
+                || req.remote_timeout.is_some();
+            if has_backend_params {
+                return error_setattr(Status::invalid_argument(
+                    "DT_MOUNT carries backend-construction params but no \
+                     backend_type; refusing to install a phantom mount",
+                ));
+            }
+            return synthetic_setattr_ack(&req);
+        }
+        // Anything else that isn't a provider-built networked driver fails
+        // closed (connector / LLM / typo / version-skewed / future driver).
+        if !PROVIDER_BUILT.contains(&req.backend_type.as_str()) {
+            return error_setattr(Status::unimplemented(format!(
+                "DT_MOUNT backend_type {:?} is not supported by this server; \
+                 no mount was installed",
+                req.backend_type
+            )));
+        }
+
+        let Some(provider) = get_provider() else {
+            return error_setattr(Status::failed_precondition(
+                "no ObjectStoreProvider registered; cannot build DT_MOUNT backend",
+            ));
+        };
+
+        // `peer_client` / `self_address` are owned locals the args borrow
+        // from; `runtime()` already returns a borrow.
+        let peer_client = self.kernel.peer_client_arc();
+        let self_address = self.kernel.self_address_string();
+        let args = ObjectStoreProviderArgs {
+            backend_type: req.backend_type.as_str(),
+            backend_name: req.backend_name.as_str(),
+            // Thread the mount point so the `remote` arm fails closed on
+            // sub-path mounts (RemoteBackend path reconstruction — #4273).
+            mount_path: Some(req.path.as_str()),
+            local_root: None,
+            fsync: false,
+            follow_symlinks: false,
+            openai_base_url: None,
+            openai_api_key: None,
+            openai_model: None,
+            openai_blob_root: None,
+            anthropic_base_url: None,
+            anthropic_api_key: None,
+            anthropic_model: None,
+            anthropic_blob_root: None,
+            // `nonempty` coerces a present-but-empty wire value to `None` so
+            // the provider's required-arg checks reject it (a `Some("")`
+            // bucket / region / key would otherwise build a degenerate
+            // backend and report created=true — defeating the version-skew
+            // guard), and so an empty `s3_endpoint` falls back to AWS
+            // addressing instead of a malformed host.
+            s3_bucket: nonempty(req.s3_bucket.as_deref()),
+            s3_prefix: nonempty(req.s3_prefix.as_deref()),
+            aws_region: nonempty(req.aws_region.as_deref()),
+            aws_access_key: nonempty(req.aws_access_key.as_deref()),
+            aws_secret_key: nonempty(req.aws_secret_key.as_deref()),
+            s3_endpoint: nonempty(req.s3_endpoint.as_deref()),
+            gcs_bucket: nonempty(req.gcs_bucket.as_deref()),
+            gcs_prefix: nonempty(req.gcs_prefix.as_deref()),
+            access_token: nonempty(req.access_token.as_deref()),
+            root_folder_id: None,
+            bot_token: None,
+            default_channel: None,
+            hn_stories_per_feed: None,
+            hn_include_comments: None,
+            cli_command: None,
+            cli_service: None,
+            cli_auth_env_json: None,
+            x_bearer_token: None,
+            server_address: nonempty(req.server_address.as_deref()),
+            remote_auth_token: nonempty(req.remote_auth_token.as_deref()),
+            remote_ca_pem: req.remote_ca_pem.as_deref().filter(|b| !b.is_empty()),
+            remote_cert_pem: req.remote_cert_pem.as_deref().filter(|b| !b.is_empty()),
+            remote_key_pem: req.remote_key_pem.as_deref().filter(|b| !b.is_empty()),
+            // proto `optional double`; 0.0 / unset → provider default (30s).
+            remote_timeout: req.remote_timeout.unwrap_or(0.0),
+            peer_client: &peer_client,
+            self_address: self_address.as_deref(),
+            runtime: self.kernel.runtime(),
+        };
+        let built = match provider.build(&args) {
+            Ok(b) => b,
+            Err(e) => {
+                return error_setattr(Status::internal(format!(
+                    "ObjectStoreProvider failed to build '{}' backend for {}: {e}",
+                    req.backend_type, req.path,
+                )));
+            }
+        };
+
+        // Mount the freshly-built backend (and any remote metastore the
+        // provider produced) through the kernel.
+        self.mount_via_kernel(&req, built.backend, built.pending_remote_meta_store)
+    }
+
+    /// Issue the DT_MOUNT `Kernel::sys_setattr` from a `SetattrRequest` with a
+    /// caller-supplied backend: `Some(_)` from the provider for networked
+    /// object stores, or `None` for a federation / zoned mount where the
+    /// kernel creates the raft zone + route itself. Maps the kernel result
+    /// onto the typed `SetattrResponse`.
+    fn mount_via_kernel(
+        &self,
+        req: &SetattrRequest,
+        backend: Option<Arc<dyn kernel::abc::object_store::ObjectStore>>,
+        remote_metastore: Option<Arc<dyn kernel::meta_store::MetaStore>>,
+    ) -> SetattrResponse {
+        let zone_id = if req.zone_id.is_empty() {
+            kernel::ROOT_ZONE_ID
+        } else {
+            req.zone_id.as_str()
+        };
+        match self.kernel.sys_setattr(
+            &req.path,
+            req.entry_type,
+            &req.backend_name,
+            backend,
+            None, // metastore
+            None, // raft_backend
+            &req.io_profile,
+            zone_id,
+            req.is_external,
+            req.capacity as usize,
+            None, // read_fd
+            None, // write_fd
+            req.mime_type.as_deref(),
+            req.modified_at_ms,
+            req.content_id.as_deref(),
+            req.size,
+            req.version,
+            req.created_at_ms,
+            None,             // link_target
+            None, // source — federation joins are not bridged over gRPC (see setattr_mount)
+            remote_metastore, // remote arm installs a metastore
+        ) {
+            Ok(r) => SetattrResponse {
+                path: r.path,
+                created: r.created,
+                entry_type: r.entry_type,
+                is_error: false,
+                error_payload: Vec::new(),
+            },
+            Err(err) => {
+                let (code, msg) = self.map_kernel_err(err);
+                SetattrResponse {
+                    path: String::new(),
+                    created: false,
+                    entry_type: 0,
+                    is_error: true,
+                    error_payload: encode_rpc_error(code, &msg),
+                }
+            }
+        }
+    }
+
     /// Test-only constructor.
     #[cfg(test)]
     pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
@@ -176,7 +421,9 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let path = req.path;
         let offset = req.offset;
-        let read_res = run_blocking(move || KernelAbi::sys_read(&*kernel, &path, &ctx, timeout_ms, offset)).await?;
+        let read_res =
+            run_blocking(move || KernelAbi::sys_read(&*kernel, &path, &ctx, timeout_ms, offset))
+                .await?;
         match read_res {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
@@ -221,7 +468,8 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let path = req.path;
         let content = req.content;
-        let write_res = run_blocking(move || KernelAbi::sys_write(&*kernel, &path, &ctx, &content, 0)).await?;
+        let write_res =
+            run_blocking(move || KernelAbi::sys_write(&*kernel, &path, &ctx, &content, 0)).await?;
         match write_res {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
@@ -258,7 +506,8 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let path = req.path;
         let recursive = req.recursive;
-        let del_res = run_blocking(move || KernelAbi::sys_unlink(&*kernel, &path, &ctx, recursive)).await?;
+        let del_res =
+            run_blocking(move || KernelAbi::sys_unlink(&*kernel, &path, &ctx, recursive)).await?;
         match del_res {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
@@ -284,10 +533,7 @@ impl NexusVfsService for VfsServiceImpl {
         }
     }
 
-    async fn mkdir(
-        &self,
-        req: Request<MkdirRequest>,
-    ) -> Result<Response<MkdirResponse>, Status> {
+    async fn mkdir(&self, req: Request<MkdirRequest>) -> Result<Response<MkdirResponse>, Status> {
         let req = req.into_inner();
         let ctx = match self.resolve_context(&req.auth_token) {
             Ok(c) => c,
@@ -391,7 +637,19 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_setattr(s))),
         };
-        let _ = ctx; // resolve auth for permissions / future use
+        // DT_MOUNT (entry_type == 2) — bridge-2 (#4262): build a live
+        // backend via the registered `ObjectStoreProvider` for the
+        // networked object-store drivers it constructs from wire params
+        // (`s3` — including S3-compatible Cloudflare R2 / MinIO — plus the
+        // forward-compat `gcs` / `remote` arms), then mount it through
+        // `Kernel::sys_setattr`. `setattr_mount` owns the admin gate, the
+        // build-vs-ack-vs-error discriminator, and the rationale. Dispatched
+        // with the auth context and before `zone_id` is moved out of `req`,
+        // so the helper gets an intact request.
+        if req.entry_type == 2 {
+            return Ok(Response::new(self.setattr_mount(req, &ctx)));
+        }
+        let _ = ctx; // non-mount typed setattr does not gate on ctx today
 
         let zone_id_str = req.zone_id;
         let zone_id = if zone_id_str.is_empty() {
@@ -399,22 +657,6 @@ impl NexusVfsService for VfsServiceImpl {
         } else {
             &zone_id_str
         };
-
-        // DT_MOUNT special case — the subprocess kernel already owns its
-        // mount table (auto-created from NEXUS_DATA_DIR at startup) and
-        // Python can't pass a Rust ObjectStore Arc through the wire. The
-        // Python factory still emits sys_setattr(DT_MOUNT) during boot,
-        // so we ack synthetically rather than overwrite the live mount
-        // with backend=None (which would break all I/O).
-        if req.entry_type == 2 {
-            return Ok(Response::new(SetattrResponse {
-                path: req.path,
-                created: false,
-                entry_type: req.entry_type,
-                is_error: false,
-                error_payload: Vec::new(),
-            }));
-        }
 
         match self.kernel.sys_setattr(
             &req.path,
@@ -472,7 +714,8 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let path = req.path;
         let new_path = req.new_path;
-        let rename_res = run_blocking(move || KernelAbi::sys_rename(&*kernel, &path, &new_path, &ctx)).await?;
+        let rename_res =
+            run_blocking(move || KernelAbi::sys_rename(&*kernel, &path, &new_path, &ctx)).await?;
         match rename_res {
             Ok(r) => Ok(Response::new(RenameResponse {
                 hit: r.hit,
@@ -512,7 +755,8 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let src = req.src;
         let dst = req.dst;
-        let copy_res = run_blocking(move || KernelAbi::sys_copy(&*kernel, &src, &dst, &ctx)).await?;
+        let copy_res =
+            run_blocking(move || KernelAbi::sys_copy(&*kernel, &src, &dst, &ctx)).await?;
         match copy_res {
             Ok(r) => Ok(Response::new(CopyResponse {
                 hit: r.hit,
@@ -554,7 +798,8 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let path = req.path;
         let lock_id_req = req.lock_id;
-        let lock_res = run_blocking(move || kernel.sys_lock(&path, &lock_id_req, 1, ttl_secs, "")).await?;
+        let lock_res =
+            run_blocking(move || kernel.sys_lock(&path, &lock_id_req, 1, ttl_secs, "")).await?;
         match lock_res {
             Ok(Some(id)) => Ok(Response::new(LockResponse {
                 acquired: true,
@@ -617,9 +862,11 @@ impl NexusVfsService for VfsServiceImpl {
         let path = req.path;
         let timeout_ms = req.timeout_ms;
         let matched = run_blocking(move || {
-            kernel.sys_watch(&path, timeout_ms)
+            kernel
+                .sys_watch(&path, timeout_ms)
                 .map(|evt| (evt.path().to_string(), format!("{:?}", evt.event_type)))
-        }).await?;
+        })
+        .await?;
         match matched {
             Some((path, event_type)) => Ok(Response::new(WatchResponse {
                 matched: true,
@@ -741,10 +988,7 @@ impl NexusVfsService for VfsServiceImpl {
         }
     }
 
-    async fn close_pipe(
-        &self,
-        req: Request<IpcPathRequest>,
-    ) -> Result<Response<IpcAck>, Status> {
+    async fn close_pipe(&self, req: Request<IpcPathRequest>) -> Result<Response<IpcAck>, Status> {
         let req = req.into_inner();
         let _ctx = match self.resolve_context(&req.auth_token) {
             Ok(c) => c,
@@ -781,10 +1025,7 @@ impl NexusVfsService for VfsServiceImpl {
         }))
     }
 
-    async fn close_all_pipes(
-        &self,
-        req: Request<IpcEmpty>,
-    ) -> Result<Response<IpcAck>, Status> {
+    async fn close_all_pipes(&self, req: Request<IpcEmpty>) -> Result<Response<IpcAck>, Status> {
         let req = req.into_inner();
         let _ctx = match self.resolve_context(&req.auth_token) {
             Ok(c) => c,
@@ -797,10 +1038,7 @@ impl NexusVfsService for VfsServiceImpl {
         }))
     }
 
-    async fn close_stream(
-        &self,
-        req: Request<IpcPathRequest>,
-    ) -> Result<Response<IpcAck>, Status> {
+    async fn close_stream(&self, req: Request<IpcPathRequest>) -> Result<Response<IpcAck>, Status> {
         let req = req.into_inner();
         let _ctx = match self.resolve_context(&req.auth_token) {
             Ok(c) => c,
@@ -878,9 +1116,9 @@ impl NexusVfsService for VfsServiceImpl {
             let path = req.path;
             let offset = req.offset as usize;
             let timeout_ms = req.timeout_ms;
-            let blk_res = run_blocking(move || {
-                kernel.stream_read_at_blocking(&path, offset, timeout_ms)
-            }).await?;
+            let blk_res =
+                run_blocking(move || kernel.stream_read_at_blocking(&path, offset, timeout_ms))
+                    .await?;
             match blk_res {
                 Ok((data, next)) => Ok(Response::new(StreamReadAtResponse {
                     data,
@@ -1113,7 +1351,8 @@ impl NexusVfsService for VfsServiceImpl {
 
         // Offload: batch write waits on VFS write lock per item
         let kernel = self.kernel.clone();
-        let results = run_blocking(move || KernelConvenience::write_batch(&*kernel, &items, &ctx)).await?;
+        let results =
+            run_blocking(move || KernelConvenience::write_batch(&*kernel, &items, &ctx)).await?;
 
         let mapped: Vec<BatchWriteItemResponse> = results
             .into_iter()
@@ -1150,7 +1389,8 @@ impl NexusVfsService for VfsServiceImpl {
         let kernel = self.kernel.clone();
         let method = req.method;
         let payload = req.payload;
-        run_blocking(move || crate::call_dispatch::dispatch(&kernel, &ctx, &method, &payload)).await?
+        run_blocking(move || crate::call_dispatch::dispatch(&kernel, &ctx, &method, &payload))
+            .await?
     }
 }
 
@@ -1429,6 +1669,29 @@ fn error_copy(status: Status) -> CopyResponse {
     }
 }
 
+/// Treat a present-but-empty wire string as absent. Proto3 `optional` fields
+/// arrive as `Some("")` when a client — or the Python extractor's `... or ""`
+/// defaults — sends an empty value, but the `ObjectStoreProvider`'s
+/// required-arg checks only reject `None`. Normalizing empty to `None` keeps
+/// the provider failing the build loudly on a missing bucket/region/key
+/// instead of constructing an unusable backend.
+fn nonempty(s: Option<&str>) -> Option<&str> {
+    s.filter(|v| !v.is_empty())
+}
+
+/// Historical synthetic ack for a DT_MOUNT the server intentionally does not
+/// build (metadata-only / federation no-op, or the boot-owned root remount):
+/// `created=false`, no error, no state change.
+fn synthetic_setattr_ack(req: &SetattrRequest) -> SetattrResponse {
+    SetattrResponse {
+        path: req.path.clone(),
+        created: false,
+        entry_type: req.entry_type,
+        is_error: false,
+        error_payload: Vec::new(),
+    }
+}
+
 fn error_setattr(status: Status) -> SetattrResponse {
     SetattrResponse {
         path: String::new(),
@@ -1535,6 +1798,374 @@ mod tests {
         )
         .expect("kernel_with_mem_backend: mount DT_MOUNT");
         k
+    }
+
+    // ── bridge-2 (#4262): DT_MOUNT builds a live backend via the provider ──
+
+    use kernel::hal::object_store_provider::{
+        set_provider, ObjectStoreBuildResult, ObjectStoreProviderArgs,
+    };
+
+    /// A minimal `ObjectStoreProvider` that hands back an in-memory backend
+    /// for `backend_type == "s3"`. Stands in for `DefaultObjectStoreProvider`
+    /// (whose real `s3` arm needs the aws-sdk that the `transport` crate
+    /// deliberately does not compile), so the DT_MOUNT→provider→kernel→
+    /// read/write bridge can be exercised in-process. It requires the S3
+    /// params, proving the handler actually threads them off the wire.
+    struct FakeS3Provider;
+
+    impl kernel::hal::object_store_provider::ObjectStoreProvider for FakeS3Provider {
+        fn build(
+            &self,
+            args: &ObjectStoreProviderArgs<'_>,
+        ) -> Result<ObjectStoreBuildResult, String> {
+            match args.backend_type {
+                "s3" => {
+                    // The handler must thread the request's S3 params through.
+                    let _bucket = args.s3_bucket.ok_or("fake s3: missing s3_bucket")?;
+                    let _region = args.aws_region.ok_or("fake s3: missing aws_region")?;
+                    Ok(ObjectStoreBuildResult {
+                        backend: Some(std::sync::Arc::new(MemBackend::default())),
+                        pending_remote_meta_store: None,
+                    })
+                }
+                other => Err(format!("fake provider: unsupported backend_type '{other}'")),
+            }
+        }
+    }
+
+    /// S3 DT_MOUNT over the wire builds a live backend via the provider and a
+    /// subsequent read/write through the new mount round-trips. (S3-compatible
+    /// Cloudflare R2 / MinIO ride the same arm via `s3_endpoint`.)
+    #[tokio::test]
+    async fn setattr_dt_mount_s3_builds_backend_and_serves_io() {
+        // Provider slot is process-global + set-once; tolerate a prior set.
+        let _ = set_provider(std::sync::Arc::new(FakeS3Provider));
+
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel.clone());
+
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/r2".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                backend_name: "r2".into(),
+                backend_type: "s3".into(),
+                s3_bucket: Some("nexus-test".into()),
+                aws_region: Some("auto".into()),
+                aws_access_key: Some("AKID".into()),
+                aws_secret_key: Some("SECRET".into()),
+                s3_endpoint: Some("https://acct.r2.cloudflarestorage.com".into()),
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(!resp.is_error, "s3 mount should not error: {resp:?}");
+        assert!(
+            resp.created,
+            "s3 mount must report a live build (created=true), not a synthetic ack"
+        );
+
+        // I/O through the freshly-built mount must round-trip.
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        KernelAbi::sys_write(&*kernel, "/r2/hello.txt", &ctx, b"r2 bytes", 0)
+            .expect("write into s3 mount");
+        let read = svc
+            .read(tonic::Request::new(ReadRequest {
+                path: "/r2/hello.txt".into(),
+                auth_token: "test-key".into(),
+                timeout_ms: 0,
+                ..Default::default()
+            }))
+            .await
+            .expect("read rpc ok")
+            .into_inner();
+        assert!(!read.is_error, "read through s3 mount errored: {read:?}");
+        assert_eq!(read.content, b"r2 bytes");
+    }
+
+    /// A provider-built DT_MOUNT with a present-but-EMPTY required param
+    /// (`s3_bucket = ""`) must fail the build (fail-loud), not coerce to a
+    /// degenerate backend that reports created=true and breaks later at I/O.
+    /// The handler normalizes empty wire strings to absent so the provider's
+    /// required-arg check rejects them.
+    #[tokio::test]
+    async fn setattr_dt_mount_s3_empty_required_param_errors() {
+        let _ = set_provider(std::sync::Arc::new(FakeS3Provider));
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/r2".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                backend_type: "s3".into(),
+                s3_bucket: Some(String::new()), // present-but-empty → treated as absent
+                aws_region: Some("auto".into()),
+                aws_access_key: Some("k".into()),
+                aws_secret_key: Some("s".into()),
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(
+            resp.is_error,
+            "empty required s3 param must fail the build, not create a degenerate mount: {resp:?}"
+        );
+        assert!(!resp.created);
+    }
+
+    /// A local-host `backend_type` at the ROOT path keeps the historical
+    /// synthetic ack — it must NOT rebuild/clobber the live boot mount the
+    /// host binary owns.
+    #[tokio::test]
+    async fn setattr_dt_mount_root_local_backend_type_synthetic_acks() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel.clone());
+
+        // Seed a file through the live "/" mount.
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        KernelAbi::sys_write(&*kernel, "/seed.txt", &ctx, b"alive", 0).expect("seed write");
+
+        // Re-emit DT_MOUNT for "/" with a local backend_type (as the Python
+        // factory does at boot). Must ack synthetically, not rebuild.
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                backend_name: "local".into(),
+                backend_type: "cas-local".into(),
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(!resp.is_error, "local DT_MOUNT must not error: {resp:?}");
+        assert!(
+            !resp.created,
+            "local DT_MOUNT must be a synthetic ack (created=false)"
+        );
+
+        // The live "/" mount is intact — the seeded file still reads back.
+        let read = svc
+            .read(tonic::Request::new(ReadRequest {
+                path: "/seed.txt".into(),
+                auth_token: "test-key".into(),
+                timeout_ms: 0,
+                ..Default::default()
+            }))
+            .await
+            .expect("read rpc ok")
+            .into_inner();
+        assert!(!read.is_error, "boot mount was clobbered: {read:?}");
+        assert_eq!(read.content, b"alive");
+    }
+
+    /// A local-host `backend_type` at a NON-root path synthetic-acks (like the
+    /// root remount): the host binary serves the path through its `/` host-fs
+    /// mount, so the write falls through and lands on disk. This is the
+    /// established behavior the self-contained e2e suite relies on — it mounts
+    /// `cas-local` at `/files` over gRPC, then writes/reads it.
+    #[tokio::test]
+    async fn setattr_dt_mount_non_root_local_backend_acks() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        for bt in ["path_local", "cas-local", "local_connector"] {
+            let resp = svc
+                .setattr(tonic::Request::new(SetattrRequest {
+                    path: "/files".into(),
+                    auth_token: "test-key".into(),
+                    entry_type: 2,
+                    backend_name: "local".into(),
+                    backend_type: bt.into(),
+                    ..Default::default()
+                }))
+                .await
+                .expect("setattr rpc ok")
+                .into_inner();
+            assert!(
+                !resp.is_error,
+                "non-root local DT_MOUNT {bt:?} must ack, not error: {resp:?}"
+            );
+            assert!(!resp.created, "local DT_MOUNT is a synthetic ack: {resp:?}");
+        }
+    }
+
+    /// metadata-only / federation DT_MOUNTs (empty `backend_type`) keep the
+    /// synthetic ack and never consult the provider.
+    #[tokio::test]
+    async fn setattr_dt_mount_empty_backend_type_synthetic_acks() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/__fed_zones__/z".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                // backend_type defaults to "" → synthetic ack.
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(
+            !resp.is_error,
+            "empty-backend DT_MOUNT must not error: {resp:?}"
+        );
+        assert!(
+            !resp.created,
+            "empty backend_type DT_MOUNT (no zone) must synthetic-ack (created=false)"
+        );
+    }
+
+    /// Empty backend_type WITH backend-construction params (a malformed /
+    /// partially-upgraded client that dropped the dispatch key) must fail
+    /// closed, not phantom-ack a mount that installs nothing. The client-side
+    /// version-skew guard can't catch this (it only fires for known
+    /// backend_types), so the server must.
+    #[tokio::test]
+    async fn setattr_dt_mount_empty_backend_type_with_params_errors() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/mnt".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                // backend_type omitted (empty) but S3 params present → malformed.
+                s3_bucket: Some("b".into()),
+                aws_region: Some("auto".into()),
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(
+            resp.is_error,
+            "empty backend_type WITH backend params must fail closed: {resp:?}"
+        );
+        assert!(!resp.created);
+    }
+
+    /// A zoned empty-backend DT_MOUNT (federation: empty backend_type + a
+    /// zone_id) is a no-op ack over gRPC for now — federation zone create/join
+    /// is not bridged through a Python gRPC DT_MOUNT (the cluster Kernel isn't
+    /// wired to the raft coordinator, and JoinZone must not run inline on the
+    /// tonic runtime — see `setattr_mount`). It acks (created=false, no error)
+    /// installing nothing, rather than routing and risking a split-brain zone.
+    #[tokio::test]
+    async fn setattr_dt_mount_federation_zoned_is_noop_ack() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/data".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                zone_id: "shared-zone".into(),
+                // empty backend_type + zone_id → federation; deferred → ack.
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(
+            !resp.is_error,
+            "zoned empty-backend DT_MOUNT must not error: {resp:?}"
+        );
+        assert!(
+            !resp.created,
+            "zoned empty-backend DT_MOUNT is a deferred-federation no-op ack: {resp:?}"
+        );
+    }
+
+    /// An unrecognized non-empty backend_type fails closed (error), never a
+    /// silent ack — so a typo / legacy name can't masquerade as a mount that
+    /// was never installed (writes would otherwise land on the parent mount).
+    #[tokio::test]
+    async fn setattr_dt_mount_unknown_backend_type_errors() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let resp = svc
+            .setattr(tonic::Request::new(SetattrRequest {
+                path: "/typo".into(),
+                auth_token: "test-key".into(),
+                entry_type: 2,
+                backend_type: "path_s3".into(), // typo / unknown driver
+                ..Default::default()
+            }))
+            .await
+            .expect("setattr rpc ok")
+            .into_inner();
+        assert!(
+            resp.is_error,
+            "unknown backend_type must fail closed, not synthetic-ack: {resp:?}"
+        );
+        assert!(!resp.created);
+    }
+
+    /// A connector / LLM backend_type this server cannot build also fails
+    /// closed (it is NOT in the synthetic-ack set), rather than acking a
+    /// mount that was never installed.
+    #[tokio::test]
+    async fn setattr_dt_mount_connector_backend_type_errors() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        for bt in ["gdrive", "cli", "openai"] {
+            let resp = svc
+                .setattr(tonic::Request::new(SetattrRequest {
+                    path: format!("/conn/{bt}"),
+                    auth_token: "test-key".into(),
+                    entry_type: 2,
+                    backend_type: bt.into(),
+                    ..Default::default()
+                }))
+                .await
+                .expect("setattr rpc ok")
+                .into_inner();
+            assert!(
+                resp.is_error,
+                "connector backend_type {bt:?} must fail closed, not ack: {resp:?}"
+            );
+            assert!(!resp.created);
+        }
+    }
+
+    /// DT_MOUNT is admin-gated: a non-privileged context is rejected before
+    /// any provider build / mount state change. (Called directly with a
+    /// non-admin context — the gRPC `for_test` path uses NoAuth, which is
+    /// admin+system.)
+    #[test]
+    fn setattr_mount_requires_admin_context() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+        // Non-admin, non-system context.
+        let ctx = OperationContext::new("intruder", "root", false, None, false);
+
+        let resp = svc.setattr_mount(
+            SetattrRequest {
+                path: "/r2".into(),
+                entry_type: 2,
+                backend_type: "s3".into(),
+                s3_bucket: Some("b".into()),
+                aws_region: Some("auto".into()),
+                ..Default::default()
+            },
+            &ctx,
+        );
+        assert!(resp.is_error, "non-admin DT_MOUNT must be rejected");
+        assert!(!resp.created);
     }
 
     #[tokio::test]

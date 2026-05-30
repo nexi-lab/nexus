@@ -10,6 +10,15 @@ publish = false
 name = "nexusd-cluster"
 path = "src/main.rs"
 
+[features]
+# Default build stays slim — path_local + remote only, no aws-sdk — so the
+# shipped binary is byte-identical and the cluster-binary size budget is
+# unaffected. Build with `--features driver-s3` to compile the provider's
+# S3 arm (aws-sdk) and enable the "s3" driver gate, so bridge-2 (#4262) can
+# serve S3 / S3-compatible (Cloudflare R2, MinIO) DT_MOUNTs over gRPC.
+default = []
+driver-s3 = ["backends/driver-s3"]
+
 [dependencies]
 # raft owns federation orchestration (ZoneManager, bootstrap_tls, etc.).
 # Only the grpc feature — that is all this binary needs and dropping the

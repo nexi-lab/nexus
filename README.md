@@ -81,7 +81,7 @@ graph TD
     end
 
     subgraph Infra ["Infra Layer (one per node)"]
-        NX["NEXUS (profile-based: embedded / lite / sandbox / full / cluster / cloud / remote)"]
+        NX["NEXUS (distributed VFS kernel: storage, IPC, permissions, coordination)"]
         SR["SUDOROUTER (unified LLM access: Claude, GPT, Gemini, local models)"]
     end
 

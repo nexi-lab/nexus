@@ -251,13 +251,27 @@ Every major agent framework works out of the box:
 | **E2B** | Cloud sandbox execution | [examples/e2b/](examples/e2b/) |
 | **CLI** | 40+ shell demos covering every feature | [examples/cli/](examples/cli/) |
 
-## Deployment options
+## Deployment
 
-| Mode | What | Who it's for |
+Two binaries, inspired by the `docker`/`dockerd` convention:
+
+| Binary | What | Lifecycle |
 |---|---|---|
-| **Embedded** | `nexus.connect()` — in-process, zero infrastructure | Scripts, notebooks, single-agent apps |
-| **Shared daemon** | `nexus init --preset shared && nexus up` | Teams, multi-agent systems, staging |
-| **Federation** | Multi-zone Raft consensus across data centers | Production fleets, edge deployments |
+| **`nexusd`** | Node daemon — manages storage, serves gRPC/HTTP, participates in federation | Long-running (SIGTERM to stop) |
+| **`nexus`** | CLI client — file ops, search, admin, status via gRPC to a running `nexusd` | Invocation-style (exits when done) |
+
+### Running `nexusd`
+
+```bash
+# Direct daemon
+nexusd --port 2026 --data-dir /var/lib/nexus
+
+# With explicit profile + federation
+nexusd --profile full --host 0.0.0.0 --join peer1:2026 --zone us-west
+
+# Managed Docker stack (Nexus + Postgres + Dragonfly)
+nexus init --preset shared && nexus up
+```
 
 ### `nexus init` presets
 
@@ -267,32 +281,9 @@ Every major agent framework works out of the box:
 | `shared` | Nexus + Postgres + Dragonfly | Static API key | Team dev, multi-agent staging |
 | `demo` | Same as shared | Database-backed | Demos, seed data, evaluation |
 
-```bash
-# Embedded (no Docker)
-nexus init                                    # writes nexus.yaml for local embedded mode
+### Embedded mode (no daemon)
 
-# Shared daemon
-nexus init --preset shared                    # writes nexus.yaml + nexus-stack.yml
-nexus up                                      # pulls image, starts stack, waits for health
-eval $(nexus env)                             # load NEXUS_URL, NEXUS_API_KEY, etc.
-
-# Demo with seed data
-nexus init --preset demo && nexus up
-
-# Add optional services
-nexus init --preset shared --with nats --with mcp --with frontend
-
-# GPU acceleration
-nexus init --preset shared --accelerator cuda
-
-# Stack lifecycle
-nexus stop                                    # pause containers
-nexus start                                   # resume
-nexus down                                    # stop and remove
-nexus logs                                    # tail logs
-nexus restart                                 # down + up
-nexus upgrade                                 # pull latest image
-```
+For scripts and notebooks, `nexus.connect(config={"data_dir": ...})` runs an in-process instance with zero infrastructure. See [Get started](#get-started).
 
 ### Docker image
 

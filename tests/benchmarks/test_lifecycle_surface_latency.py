@@ -2,7 +2,7 @@
 
 These tests are intentionally lightweight and run without pytest-benchmark.
 They time representative service-layer hot/control paths so the surface map can
-link benchmark evidence for agents, workspaces, snapshots, and versions.
+link benchmark evidence for agents, snapshots, and versions.
 """
 
 from __future__ import annotations
@@ -10,21 +10,17 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.bricks.workspace.workspace_registry import WorkspaceConfig
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import AgentState
-from nexus.contracts.types import OperationContext
 from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
 from nexus.services.agents.agent_rpc_service import AgentRPCService
-from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
 from nexus.storage.models import Base, FilePathModel, VersionHistoryModel
 from nexus.storage.version_manager import VersionManager
 
@@ -102,40 +98,6 @@ def test_agent_list_by_zone_1000_latency_metric(record_property: Any) -> None:
 
     assert len(result) == 1000
     record_property("agent_list_by_zone_1000_ms", round(elapsed_ms, 3))
-
-
-class _WorkspaceRegistry:
-    def __init__(self, workspaces: list[WorkspaceConfig]) -> None:
-        self._workspaces = workspaces
-
-    def list_workspaces(self) -> list[WorkspaceConfig]:
-        return self._workspaces
-
-
-def test_workspace_list_1000_entries_latency_metric(record_property: Any) -> None:
-    workspaces = [
-        WorkspaceConfig(
-            path=f"/zone/{ROOT_ZONE_ID}/user/alice/workspace/project-{i}",
-            name=f"project-{i}",
-            created_at=datetime.now(UTC),
-            created_by="alice",
-        )
-        for i in range(1000)
-    ]
-    service = WorkspaceRPCService(
-        workspace_manager=MagicMock(),
-        workspace_registry=cast(Any, _WorkspaceRegistry(workspaces)),
-        vfs=MagicMock(),
-        default_context=OperationContext(user_id="alice", groups=[], zone_id=ROOT_ZONE_ID),
-    )
-
-    result, elapsed_ms = _elapsed_ms(
-        service.list_workspaces,
-        context=OperationContext(user_id="alice", groups=[], zone_id=ROOT_ZONE_ID),
-    )
-
-    assert len(result) == 1000
-    record_property("workspace_list_1000_ms", round(elapsed_ms, 3))
 
 
 @dataclass

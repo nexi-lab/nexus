@@ -236,12 +236,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.rebac.entity_registry.EntityRegistry",
         True,
     ),
-    (
-        "WorkspaceManagerProtocol",
-        "nexus.contracts.protocols.workspace_manager",
-        "nexus.services.workspace.workspace_manager.WorkspaceManager",
-        True,
-    ),
 ]
 
 
@@ -350,7 +344,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("wirable_fs", "nexus/contracts/wirable_fs.py"),
     ("permission_enforcer", "nexus/contracts/protocols/permission_enforcer.py"),
     ("entity_registry", "nexus/contracts/protocols/entity_registry.py"),
-    ("workspace_manager", "nexus/contracts/protocols/workspace_manager.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

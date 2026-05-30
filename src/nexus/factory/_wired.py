@@ -436,21 +436,6 @@ def _boot_post_kernel_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] TigerCacheManager unavailable: %s", exc)
 
-    workspace_rpc_service: Any = None
-    try:
-        from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
-
-        workspace_rpc_service = WorkspaceRPCService(
-            workspace_manager=services["workspace_manager"],
-            workspace_registry=services["workspace_registry"],
-            vfs=nx,
-            default_context=_nx_init_cred,
-            snapshot_service=services.get("snapshot_service"),
-        )
-        logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] WorkspaceRPCService unavailable: %s", exc)
-
     agent_rpc_service: Any = None
     try:
         agent_warmup_service: Any = None
@@ -578,9 +563,6 @@ def _boot_post_kernel_services(
             rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
-            register_workspace_fn=(
-                workspace_rpc_service.register_workspace if workspace_rpc_service else None
-            ),
             register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
             list_cache=getattr(nx, "_list_cache", None),
             exists_cache=getattr(nx, "_exists_cache", None),
@@ -679,7 +661,6 @@ def _boot_post_kernel_services(
         "share_link_service": share_link_service,
         "time_travel_service": time_travel_service,
         "operations_service": operations_service,
-        "workspace_rpc_service": workspace_rpc_service,
         "agent_rpc_service": agent_rpc_service,
         "user_provisioning_service": user_provisioning_service,
         "sandbox_rpc_service": sandbox_rpc_service,

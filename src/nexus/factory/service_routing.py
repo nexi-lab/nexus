@@ -40,14 +40,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "share_link": ("create_share_link", "get_share_link", "list_share_links", "revoke_share_link"),
     "time_travel": ("get_file_at_operation", "list_files_at_operation"),
     "operations": ("list_operations", "get_last_operation", "undo_by_id"),
-    "workspace_rpc": (
-        "workspace_snapshot",
-        "workspace_restore",
-        "workspace_log",
-        "register_workspace",
-        "unregister_workspace",
-        "list_workspaces",
-    ),
     "agent_rpc": ("register_agent", "update_agent", "list_agents", "get_agent", "delete_agent"),
     "acp_rpc": (
         "acp_call",
@@ -94,7 +86,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "share_link_service": "share_link",
     "time_travel_service": "time_travel",
     "operations_service": "operations",
-    "workspace_rpc_service": "workspace_rpc",
     "agent_rpc_service": "agent_rpc",
     "acp_rpc_service": "acp_rpc",
     "user_provisioning_service": "user_provisioning",

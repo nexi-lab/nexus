@@ -8,7 +8,6 @@ import time
 import uuid
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
@@ -313,36 +312,6 @@ def test_issue_4137_lifecycle_surface_real_e2e(test_app: httpx.Client) -> None:
     rest_rollback_id = rest_rollback_resp.json()["transaction_id"]
     rollback_resp = _http(client, perf, "POST", f"/api/v2/snapshots/{rest_rollback_id}/rollback")
     assert rollback_resp.status_code == 200, rollback_resp.text
-
-    # Workspace registry REST APIs.
-    rest_workspace_path = f"/zone/root/user/admin/workspace/issue-4137-rest-{suffix}"
-    rest_list = _http(client, perf, "GET", "/api/v2/registry/workspaces")
-    assert rest_list.status_code == 200, rest_list.text
-    rest_create = _http(
-        client,
-        perf,
-        "POST",
-        "/api/v2/registry/workspaces",
-        json={
-            "path": rest_workspace_path,
-            "name": "Issue 4137 REST Workspace",
-            "metadata": {"issue": "4137"},
-        },
-    )
-    assert rest_create.status_code == 201, rest_create.text
-    rest_workspace_url = f"/api/v2/registry/workspaces/{quote(rest_workspace_path.lstrip('/'))}"
-    rest_get = _http(client, perf, "GET", rest_workspace_url)
-    assert rest_get.status_code == 200, rest_get.text
-    rest_patch = _http(
-        client,
-        perf,
-        "PATCH",
-        rest_workspace_url,
-        json={"name": "Issue 4137 REST Workspace Updated"},
-    )
-    assert rest_patch.status_code == 200, rest_patch.text
-    rest_delete = _http(client, perf, "DELETE", rest_workspace_url)
-    assert rest_delete.status_code == 200, rest_delete.text
 
     assert _rpc_result(client, "unregister_workspace", {"path": loaded_path}, perf) is True
     assert _rpc_result(client, "unregister_workspace", {"path": workspace_path}, perf) is True

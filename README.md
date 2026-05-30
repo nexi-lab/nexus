@@ -28,9 +28,7 @@ The infrastructure layer that decides how agents coexist — storage, communicat
 
 The hard problem isn't making one agent work. It's making many agents work together reliably across nodes.
 
-Agent harnesses (LangGraph, CrewAI, AutoGen) decide **what** agents do — tool calls, chains, memory loops. But when agents collaborate, every harness re-invents the same unsolved problems: shared storage, permission boundaries, inter-agent messaging, distributed coordination. And every time, the answers are different, fragile, and non-composable.
-
-Nexus is the layer underneath. A distributed VFS kernel — like Linux for AI agents — that provides the primitives any harness needs but none should build:
+Agent harnesses (LangGraph, CrewAI, AutoGen) decide **what** agents do — tool calls, chains, memory loops. Nexus is the layer underneath that handles **how** agents coexist: shared storage, permission boundaries, inter-agent messaging, distributed coordination. A distributed VFS kernel — like Linux for AI agents — providing the primitives every harness needs:
 
 **Steering engineering** — infrastructure that sets boundaries and rules so agents operate safely at scale:
 - Permission boundaries (ReBAC) — agents only touch what they're allowed to
@@ -44,7 +42,7 @@ Nexus is the layer underneath. A distributed VFS kernel — like Linux for AI ag
 - CAS dedup + content chunking — efficient storage and retrieval at scale
 - Federation reads — transparent cross-node data access, agents don't need to know where data lives
 
-**Production distributed topology** — not a single-node toy; a full IT infrastructure for agent organizations:
+**Production distributed topology** — a full IT infrastructure for agent organizations:
 
 | Node role | Profile | What it does |
 |---|---|---|
@@ -224,14 +222,7 @@ File explorer, API inspector, monitoring dashboard, agent lifecycle management, 
 | **Federation** | Multi-zone Raft consensus with mTLS TOFU | Span data centers without a central coordinator |
 | **Sandbox** | Docker-backed execution environments | Isolated code execution per agent |
 
-<details>
-<summary><strong>All bricks and system services</strong></summary>
-
-**Bricks (runtime-loadable):** A2A Protocol . Access Manifests . Agent Log . Approvals . Archive . Artifact Index . Auth (API key, OAuth, mTLS) . Catalog (schema extraction) . Context Manifests . Delegation . Discovery . Filesystem . Governance . Identity (DID + credentials) . IPC (pipes + streams) . MCP . Mount . Parsers (50+ formats) . Pay . Portability (import/export) . ReBAC . Reputation . Sandbox (Docker) . Secrets . Search . Share Links (capability URLs) . Snapshots . Task Manager . Tools . Upload (TUS resumable) . Versioning . Watch . Workflows . Workspace
-
-**System services:** Agent Registry . Agent Runtime . Event Bus . Namespace . Scheduler (fair-share, priority tiers)
-
-</details>
+See [Services and Drivers](#nexus-internals) for the full categorized list.
 
 ## Framework integrations
 
@@ -374,4 +365,4 @@ Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
-Built by [Nexi Labs](https://github.com/nexi-lab).
+Built by [SudoWork](https://github.com/sudoprivacy/sudowork).

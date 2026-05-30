@@ -6,7 +6,7 @@
   <img alt="Nexus" src="assets/logo.png" width="180">
 </picture>
 
-### Distributed VFS kernel for multi-agent systems
+### Distributed VFS for multi-agent systems
 
 The infrastructure layer that decides how agents coexist — storage, communication, permissions, coordination.
 
@@ -79,7 +79,7 @@ graph TD
     end
 
     subgraph Infra ["Infra Layer (one per node)"]
-        NX["NEXUS (distributed VFS kernel: storage, IPC, permissions, coordination)"]
+        NX["NEXUS (distributed VFS: storage, IPC, permissions, coordination)"]
         SR["SUDOROUTER (unified LLM access: Claude, GPT, Gemini, local models)"]
     end
 

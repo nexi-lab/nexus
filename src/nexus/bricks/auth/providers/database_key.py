@@ -17,6 +17,7 @@ from nexus.bricks.auth.constants import (
     get_hmac_secret,
 )
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
+from nexus.contracts.zone_phase import ZonePhase
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
@@ -152,7 +153,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             # unmigrated row) — treat it as inactive.
             for zid in [z for z, _ in zone_perm_rows]:
                 zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid))
-                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+                if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
                     logger.warning(
                         "UNAUTHORIZED: API key %s zone %r is not active "
                         "(zone_row=%r, phase=%s, deleted_at=%s)",
@@ -318,7 +319,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             from nexus.storage.models import ZoneModel
 
             zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
-            if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+            if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
                 raise ValueError(
                     f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
                     "(missing, Terminating, or soft-deleted); create or restore "

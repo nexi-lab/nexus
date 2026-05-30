@@ -9,6 +9,7 @@ import re
 from sqlalchemy.orm import Session
 
 from nexus.bricks.auth.constants import RESERVED_ZONE_IDS
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.models import ZoneModel
 
 
@@ -106,7 +107,7 @@ def create_zone(
         domain=domain,
         description=description,
         settings=settings,
-        phase="Active",
+        phase=ZonePhase.ACTIVE,
         finalizers="[]",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),

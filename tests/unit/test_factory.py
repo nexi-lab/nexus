@@ -174,11 +174,8 @@ class TestBootSystemServices:
             # dir_visibility_cache, hierarchy_manager, namespace_manager
             # now internalized into ReBACManager — not in result dict.
             "deferred_permission_buffer",
-            "workspace_registry",
             "mount_manager",
-            "workspace_manager",
             # Original services
-            "async_namespace_manager",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
@@ -210,15 +207,13 @@ class TestBootSystemServices:
 
         with (
             patch(
-                "nexus.bricks.rebac.manager.ReBACManager.create_namespace_manager",
-                side_effect=RuntimeError("namespace db error"),
+                "nexus.services.event_log.delivery.EventDeliveryWorker",
+                side_effect=RuntimeError("delivery worker boom"),
             ),
         ):
             result = _boot_system_services(ctx)
 
-        # Namespace manager failed (internalized into rebac), async wrapper is None
-        assert result["async_namespace_manager"] is None
-        # Critical services should still be created
+        # Degradable service failed, but critical services still come up.
         assert result["rebac_manager"] is not None
         assert result["permission_enforcer"] is not None
 

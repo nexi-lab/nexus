@@ -243,30 +243,9 @@ def _boot_pre_kernel_services(
     # MountStore needs a live NexusFS handle, which isn't constructed yet.
     mount_manager: Any = None
 
-    # --- Workspace Manager ---
     # =====================================================================
     # ORIGINAL SYSTEM SERVICES (all degradable)
     # =====================================================================
-
-    # --- Namespace Manager (Issue #1502) ---
-    # Now created via rebac_manager.create_namespace_manager() (rebac-internal).
-    namespace_manager: Any = None
-    async_namespace_manager: Any = None
-    if not _on("namespace"):
-        logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
-    elif rebac_manager is not None:
-        try:
-            from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
-
-            namespace_manager = rebac_manager.create_namespace_manager(
-                record_store=ctx.record_store,
-            )
-            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-            logger.debug(
-                "[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created (rebac-internal)"
-            )
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
     # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
     delivery_worker = None
@@ -369,7 +348,6 @@ def _boot_pre_kernel_services(
         "deferred_permission_buffer": deferred_permission_buffer,
         "mount_manager": mount_manager,
         # Original services
-        "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
         "event_signal": ctx.event_signal,
         "observability_subsystem": observability_subsystem,

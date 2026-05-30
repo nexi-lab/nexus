@@ -974,7 +974,6 @@ modules = [
     "nexus.bricks.upload",
     "nexus.bricks.versioning",
     "nexus.bricks.workflows",
-    "nexus.bricks.workspace",
 ]
 # Known violations — ratchet baseline. Remove entries as fixes land.
 ignore_imports = [
@@ -1049,19 +1048,11 @@ ignore_imports = [
     # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
     "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
     # --- contracts importing lib (upward — legacy, to be fixed) ---
-    "nexus.contracts.agent_utils -> nexus.storage.models",
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-    # --- lib importing services (upward — legacy, to be fixed) ---
-    "nexus.lib.permission_utils -> nexus.services.gateway",
-    # --- kernel (core) importing bricks ---
-    "nexus.core.config -> nexus.bricks.workflows.protocol",
-    # --- services importing bricks ---
-    "nexus.services.workspace.workspace_rpc_service -> nexus.bricks.workspace.workspace_registry",
-    "nexus.services.lifecycle.workflow_dispatch_service -> nexus.bricks.workflows.protocol",
     # search_semantic → factory._semantic_search → bricks (transitive chain)
     "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing",

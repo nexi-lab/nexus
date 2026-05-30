@@ -69,14 +69,15 @@ One interface. Start embedded in a single Python process, scale to a federated c
 graph TD
     subgraph Applications
         SW[sudowork]
+        CD[Codex Desktop]
         CA[custom apps]
     end
 
-    subgraph Agent_Harness ["Agent Harness (open ecosystem)"]
+    subgraph Agent_Harness ["Agent Harness (open ecosystem, hook-compatible)"]
         SC[sudocode / sudocode-host]
         GC[Gemini CLI]
         CX[Codex CLI]
-        AH[any harness]
+        AH[any Node.js / Python agent]
     end
 
     subgraph Infra ["Infra Layer (one per node)"]
@@ -85,6 +86,7 @@ graph TD
     end
 
     SW --> SC
+    CD --> CX
     CA --> AH
     SC --> NX
     GC --> NX
@@ -94,7 +96,7 @@ graph TD
     NX -->|as backend| SR
 ```
 
-Agents talk to **Nexus** via syscalls — they get federation, A2A, collaboration, hooks (approval), and security for free regardless of which harness drives them. **SudoRouter** provides unified model access (any agent, any model, no provider lock-in); agents reach it either through Nexus (as a mounted backend) or directly.
+Agents don't need to integrate Nexus directly. The **hook layer** (Node.js `fs` interception / Python `open` patching) transparently routes any agent's file I/O through Nexus syscalls — the agent gets federation, A2A, collaboration, approval hooks, and security for free without changing a line of code. **SudoRouter** provides unified model access (any agent, any model, no provider lock-in); agents reach it either through Nexus (as a mounted backend) or directly.
 
 ### Nexus internals
 

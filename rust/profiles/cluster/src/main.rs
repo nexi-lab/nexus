@@ -98,6 +98,44 @@ struct CommonArgs {
     /// validator since they always operate on existing state.
     #[arg(long, env = "NEXUS_BOOTSTRAP_MODE", global = true)]
     bootstrap_mode: Option<String>,
+
+    /// S3-compatible bucket to mount (AWS S3 / Cloudflare R2 / MinIO).
+    /// Presence of this var DECLARES an S3 mount; when unset the daemon
+    /// boots with only the local `/` root mount, exactly as before.
+    #[arg(long, env = "NEXUS_S3_BUCKET", global = true)]
+    s3_bucket: Option<String>,
+
+    /// AWS region for the S3 mount. Required when `NEXUS_S3_BUCKET` is
+    /// set. Cloudflare R2 uses `auto`.
+    #[arg(long, env = "NEXUS_S3_REGION", global = true)]
+    s3_region: Option<String>,
+
+    /// Access key id for the S3 mount. Required when `NEXUS_S3_BUCKET`
+    /// is set. Prefer the env var over the flag so the secret does not
+    /// land in `argv` (visible via `ps`).
+    #[arg(long, env = "NEXUS_S3_ACCESS_KEY_ID", global = true)]
+    s3_access_key_id: Option<String>,
+
+    /// Secret access key for the S3 mount. Required when
+    /// `NEXUS_S3_BUCKET` is set. Prefer the env var over the flag.
+    #[arg(long, env = "NEXUS_S3_SECRET_ACCESS_KEY", global = true)]
+    s3_secret_access_key: Option<String>,
+
+    /// Custom S3-compatible endpoint (Cloudflare R2 / MinIO). Omit for
+    /// AWS S3 (virtual-hosted addressing is derived from bucket+region).
+    #[arg(long, env = "NEXUS_S3_ENDPOINT", global = true)]
+    s3_endpoint: Option<String>,
+
+    /// Key prefix within the bucket. Optional; defaults to empty (bucket
+    /// root).
+    #[arg(long, env = "NEXUS_S3_PREFIX", global = true)]
+    s3_prefix: Option<String>,
+
+    /// VFS mount point for the S3 backend. Must be a non-root absolute
+    /// path; defaults to `/s3`. `/` is reserved for the local host-fs
+    /// root mount.
+    #[arg(long, env = "NEXUS_S3_MOUNT", global = true)]
+    s3_mount: Option<String>,
 }
 
 impl CommonArgs {

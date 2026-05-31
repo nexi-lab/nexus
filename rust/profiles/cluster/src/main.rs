@@ -823,8 +823,8 @@ fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
         return Ok(()); // no S3 mount declared
     };
 
-    let provider = get_provider()
-        .ok_or_else(|| anyhow::anyhow!("no ObjectStoreProvider registered"))?;
+    let provider =
+        get_provider().ok_or_else(|| anyhow::anyhow!("no ObjectStoreProvider registered"))?;
 
     // Locals the args borrow from must outlive `args`.
     let peer_client = kernel.peer_client_arc();
@@ -995,7 +995,9 @@ mod tests {
 
     #[test]
     fn full_config_resolves_with_default_mount_point() {
-        let cfg = resolve_s3_mount_config(&s3_args()).expect("ok").expect("some");
+        let cfg = resolve_s3_mount_config(&s3_args())
+            .expect("ok")
+            .expect("some");
         assert_eq!(cfg.bucket, "my-bucket");
         assert_eq!(cfg.region, "auto");
         assert_eq!(cfg.access_key, "AKID");
@@ -1024,35 +1026,50 @@ mod tests {
 
     #[test]
     fn missing_region_errors_naming_the_env_var() {
-        let args = CommonArgs { s3_region: None, ..s3_args() };
+        let args = CommonArgs {
+            s3_region: None,
+            ..s3_args()
+        };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("NEXUS_S3_REGION"), "err was: {err}");
     }
 
     #[test]
     fn missing_access_key_errors_naming_the_env_var() {
-        let args = CommonArgs { s3_access_key_id: None, ..s3_args() };
+        let args = CommonArgs {
+            s3_access_key_id: None,
+            ..s3_args()
+        };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("NEXUS_S3_ACCESS_KEY_ID"), "err was: {err}");
     }
 
     #[test]
     fn missing_secret_key_errors_naming_the_env_var() {
-        let args = CommonArgs { s3_secret_access_key: None, ..s3_args() };
+        let args = CommonArgs {
+            s3_secret_access_key: None,
+            ..s3_args()
+        };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("NEXUS_S3_SECRET_ACCESS_KEY"), "err was: {err}");
     }
 
     #[test]
     fn root_mount_point_is_rejected() {
-        let args = CommonArgs { s3_mount: Some("/".into()), ..s3_args() };
+        let args = CommonArgs {
+            s3_mount: Some("/".into()),
+            ..s3_args()
+        };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("sub-path"), "err was: {err}");
     }
 
     #[test]
     fn trailing_slash_only_mount_point_is_rejected() {
-        let args = CommonArgs { s3_mount: Some("///".into()), ..s3_args() };
+        let args = CommonArgs {
+            s3_mount: Some("///".into()),
+            ..s3_args()
+        };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("sub-path"), "err was: {err}");
     }
@@ -1061,7 +1078,10 @@ mod tests {
     fn empty_string_required_field_is_treated_as_missing() {
         // An exported-but-empty env var arrives as Some(""); it must not
         // build a degenerate backend.
-        let args = CommonArgs { s3_region: Some(String::new()), ..s3_args() };
+        let args = CommonArgs {
+            s3_region: Some(String::new()),
+            ..s3_args()
+        };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("NEXUS_S3_REGION"), "err was: {err}");
     }

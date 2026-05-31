@@ -171,6 +171,15 @@ impl RaftDistributedCoordinator {
         // server's slot so peer ReadBlob RPCs route through this
         // node's VFSRouter.
         crate::blob_fetcher_handler::install(kernel);
+
+        // Mark the coordinator initialised — `is_initialized()` reads
+        // this flag, and `Kernel::setattr_mount` gates the operator-
+        // driven joiner branch (`mount source-addr:/zone /path`) on it.
+        // Without this store the cluster binary's coordinator never
+        // reports ready and that branch silently falls through to
+        // self-bootstrap semantics — same failure class as the
+        // `last_writer_address` gap closed above.
+        self.bootstrap_done.store(true, Ordering::Release);
     }
 
     fn zm(&self) -> Option<&Arc<ZoneManager>> {

@@ -183,8 +183,8 @@ pub trait KernelAbi: Send + Sync + 'static {
 
     // ── High-level federation probe ─────────────────────────────────
 
-    /// True once `init_federation_from_env` has completed — the same
-    /// readiness probe `setattr_mount` uses. Wraps
+    /// True once the coordinator's boot wiring has completed — the
+    /// same readiness probe `setattr_mount` uses.  Wraps
     /// `distributed_coordinator().is_initialized(self)` so service
     /// callers don't need to reach the coordinator handle.
     fn is_federation_initialized(&self) -> bool;

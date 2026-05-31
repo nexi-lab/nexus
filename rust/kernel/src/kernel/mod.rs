@@ -716,13 +716,16 @@ impl Kernel {
             has_permission_provider: AtomicBool::new(false),
         };
         // Distributed-coordinator bootstrap is driven by
-        // `nexus_raft::distributed_coordinator::install`. The host
-        // binary constructs `Kernel`, then calls `install(kernel)`
-        // which wires the `RaftDistributedCoordinator` and dispatches
-        // `init_from_env` through the trait. Kernel construction stays
-        // raft-free at this seam, so callers that don't run federation
-        // (tests, embedders) skip federation init unless they
-        // explicitly install the coordinator.
+        // `RaftDistributedCoordinator::install_with_kernel`. The host
+        // binary constructs `Kernel`, builds a `ZoneManager`, then
+        // calls `install_with_kernel(zm, runtime, self_address,
+        // kernel)` which sets the slot to `RaftDistributedCoordinator`,
+        // publishes the self-address, stashes the blob-fetcher slot,
+        // installs the DT_MOUNT apply-cb on every loaded zone, replays
+        // restored DT_MOUNT entries, and drains the blob-fetcher slot.
+        // Kernel construction stays raft-free at this seam, so callers
+        // that don't run federation (tests, embedders) skip federation
+        // init unless they explicitly install the coordinator.
         // ManagedAgentService lives in a peer crate; kernel does NOT
         // depend on services. The host binary calls
         // `services::managed_agent::ManagedAgentService::install(&k)`
@@ -1395,10 +1398,11 @@ impl Kernel {
                 // zone share one callback.
                 let coordinator = self.distributed_coordinator();
                 // Federation readiness via the trait's is_initialized — true
-                // once init_from_env completes regardless of whether any
-                // zones are loaded.  This matters for dynamic-bootstrap
-                // mode (NEXUS_PEERS empty), where zones are zero at boot
-                // but the coordinator is fully ready to accept create_zone
+                // once the coordinator's boot wiring (install_with_kernel)
+                // completes regardless of whether any zones are loaded.
+                // This matters for dynamic-bootstrap mode (NEXUS_PEERS
+                // empty), where zones are zero at boot but the
+                // coordinator is fully ready to accept create_zone
                 // / join_cluster calls.  Using list_zones as a readiness
                 // shadow misclassified that state.
                 let federation_active = coordinator.is_initialized(self);
@@ -2260,9 +2264,10 @@ impl Kernel {
     /// the kernel half owns only the stream-lifecycle work (kernel
     /// concern).
     ///
-    /// Safe to call after `init_federation_from_env` has loaded the
-    /// zone.  The `stream_manager.register` step is idempotent — a
-    /// second call with the same path is silently ignored.
+    /// Safe to call after coordinator boot wiring has loaded the zone
+    /// (`install_with_kernel` on cluster binaries).  The
+    /// `stream_manager.register` step is idempotent — a second call
+    /// with the same path is silently ignored.
     pub fn prepare_audit_stream(
         &self,
         zone_id: &str,

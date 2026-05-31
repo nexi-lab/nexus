@@ -121,6 +121,14 @@ def cluster_grpc(tmp_path: Path) -> Iterator[str]:
                 [
                     nexus_cluster,
                     "--no-tls",
+                    # Self-address must match the loopback bind, else the
+                    # single-node raft leader resolves its self-address to the
+                    # machine hostname (gethostname) — which doesn't map to
+                    # 127.0.0.1 — and "Forward to leader failed (unreachable)"
+                    # keeps the zone from going healthy, so the typed VFS gRPC
+                    # service never becomes usable.
+                    "--hostname",
+                    "127.0.0.1",
                     "--bind-addr",
                     candidate_addr,
                     "--data-dir",
@@ -128,6 +136,13 @@ def cluster_grpc(tmp_path: Path) -> Iterator[str]:
                     "--bootstrap-mode",
                     "static",
                 ],
+                # Capture the daemon's own logs into cluster.log so a boot
+                # failure is diagnosable (the bin crate target is
+                # `nexusd_cluster`).
+                env={
+                    **os.environ,
+                    "RUST_LOG": os.environ.get("RUST_LOG") or "info,nexus_raft=info",
+                },
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
             )
@@ -230,3 +245,106 @@ def test_typed_grpc_ping_write_read_delete_batch(cluster_grpc):
     # ---- Read after Delete returns is_error=True ---------------------------
     r2 = stub.Read(vfs_pb2.ReadRequest(path="/g/a.txt"), timeout=10)
     assert r2.is_error, "Read of deleted path must return is_error"
+
+
+# ── bridge-2 (#4262): S3 / Cloudflare R2 DT_MOUNT over gRPC ──────────────────
+
+
+def _r2_env() -> dict[str, str] | None:
+    """Collect R2 / S3-compatible creds from the environment, or None.
+
+    The Rust ``S3Backend`` is S3-compatible — Cloudflare R2 (and MinIO) are
+    reached via a custom endpoint + region ``"auto"``. Set::
+
+        NEXUS_R2_ENDPOINT           https://<acct>.r2.cloudflarestorage.com
+        NEXUS_R2_ACCESS_KEY_ID
+        NEXUS_R2_SECRET_ACCESS_KEY
+        NEXUS_R2_BUCKET
+        NEXUS_R2_REGION             (optional; defaults to "auto")
+    """
+    required = (
+        "NEXUS_R2_ENDPOINT",
+        "NEXUS_R2_ACCESS_KEY_ID",
+        "NEXUS_R2_SECRET_ACCESS_KEY",
+        "NEXUS_R2_BUCKET",
+    )
+    vals = {k: os.environ.get(k, "") for k in required}
+    if not all(vals.values()):
+        return None
+    vals["NEXUS_R2_REGION"] = os.environ.get("NEXUS_R2_REGION", "auto")
+    return vals
+
+
+requires_r2 = pytest.mark.skipif(
+    _r2_env() is None,
+    reason=(
+        "R2 E2E requires NEXUS_R2_ENDPOINT / NEXUS_R2_ACCESS_KEY_ID / "
+        "NEXUS_R2_SECRET_ACCESS_KEY / NEXUS_R2_BUCKET"
+    ),
+)
+
+
+@requires_e2e
+@requires_r2
+def test_s3_r2_dt_mount_builds_backend_and_round_trips(cluster_grpc):
+    """bridge-2 (#4262) E2E — a Python S3 (Cloudflare R2) DT_MOUNT over gRPC
+    reaches Rust, builds a live backend via ``ObjectStoreProvider``, and a
+    subsequent write/read through Rust round-trips against real R2.
+
+    Requires the cluster binary built with ``--features driver-s3`` (else the
+    "s3" driver gate rejects the mount — surfaced here as a clear skip rather
+    than a confusing failure).
+    """
+    import grpc
+
+    from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+
+    env = _r2_env()
+    assert env is not None  # guarded by @requires_r2
+
+    ch = grpc.insecure_channel(cluster_grpc)
+    stub = vfs_pb2_grpc.NexusVFSServiceStub(ch)
+
+    mount = "/r2mnt"
+    obj_path = f"{mount}/bridge2-e2e-{os.getpid()}.txt"
+    body = b"cloudflare-r2-through-rust-" + str(os.getpid()).encode()
+
+    # ---- DT_MOUNT (entry_type=2) S3/R2 → built via the provider ------------
+    setattr_resp = stub.Setattr(
+        vfs_pb2.SetattrRequest(
+            path=mount,
+            entry_type=2,
+            backend_name="r2-e2e",
+            backend_type="s3",
+            s3_bucket=env["NEXUS_R2_BUCKET"],
+            aws_region=env["NEXUS_R2_REGION"],
+            aws_access_key=env["NEXUS_R2_ACCESS_KEY_ID"],
+            aws_secret_key=env["NEXUS_R2_SECRET_ACCESS_KEY"],
+            s3_endpoint=env["NEXUS_R2_ENDPOINT"],
+        ),
+        timeout=30,
+    )
+    if setattr_resp.is_error:
+        payload = setattr_resp.error_payload.decode("utf-8", "replace")
+        if "not enabled" in payload:
+            pytest.skip(
+                "cluster binary lacks the s3 driver — rebuild with "
+                "`cargo build -p nexus-cluster --features driver-s3`"
+            )
+        pytest.fail(f"S3 DT_MOUNT failed: {payload}")
+    assert setattr_resp.created, "S3 mount must build a live backend (created=true)"
+
+    try:
+        # ---- Write through Rust → R2 ---------------------------------------
+        w = stub.Write(vfs_pb2.WriteRequest(path=obj_path, content=body), timeout=30)
+        assert not w.is_error, w.error_payload
+        assert w.size == len(body)
+
+        # ---- Read back from R2 (byte-identical) ----------------------------
+        r = stub.Read(vfs_pb2.ReadRequest(path=obj_path), timeout=30)
+        assert not r.is_error, r.error_payload
+        assert r.content == body, "read-back bytes differ — R2 round-trip broken"
+    finally:
+        # Best-effort cleanup of the test object.
+        with contextlib.suppress(Exception):
+            stub.Delete(vfs_pb2.DeleteRequest(path=obj_path), timeout=30)

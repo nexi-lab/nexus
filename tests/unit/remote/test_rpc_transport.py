@@ -427,6 +427,118 @@ class TestRPCTransportTypedMethods:
         assert not request.HasField("content_id")
         assert not request.HasField("version")
 
+    def test_setattr_forwards_s3_backend_params(self, transport) -> None:
+        """DT_MOUNT S3 params (#4262) are forwarded onto SetattrRequest.
+
+        Bridge-2: ``_extract_rust_backend_params`` produces these so the Rust
+        gRPC handler can build the backend via ``ObjectStoreProvider`` instead
+        of synthetically acking. S3-compatible stores (Cloudflare R2, MinIO)
+        ride the same fields via ``s3_endpoint`` + ``aws_region="auto"``.
+        """
+        mock_response = MagicMock(is_error=False, path="/mnt/r2", created=True, entry_type=2)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        transport.setattr(
+            "/mnt/r2",
+            entry_type=2,
+            backend_name="r2",
+            backend_type="s3",
+            s3_bucket="nexus-test",
+            s3_prefix="p/",
+            aws_region="auto",
+            aws_access_key="AKID",
+            aws_secret_key="SECRET",
+            s3_endpoint="https://acct.r2.cloudflarestorage.com",
+        )
+
+        request = transport._mock_stub.Setattr.call_args[0][0]
+        assert request.backend_type == "s3"
+        assert request.HasField("s3_bucket") and request.s3_bucket == "nexus-test"
+        assert request.HasField("s3_prefix") and request.s3_prefix == "p/"
+        assert request.HasField("aws_region") and request.aws_region == "auto"
+        assert request.HasField("aws_access_key") and request.aws_access_key == "AKID"
+        assert request.HasField("aws_secret_key") and request.aws_secret_key == "SECRET"
+        assert request.HasField("s3_endpoint")
+        assert request.s3_endpoint == "https://acct.r2.cloudflarestorage.com"
+        # Unrelated backend-family params stay unset across the wire.
+        assert not request.HasField("gcs_bucket")
+        assert not request.HasField("server_address")
+
+    def test_setattr_forwards_remote_backend_params(self, transport) -> None:
+        """DT_MOUNT remote params forward; str PEM material is encoded to bytes."""
+        mock_response = MagicMock(is_error=False, path="/zone/x", created=True, entry_type=2)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        transport.setattr(
+            "/zone/x",
+            entry_type=2,
+            backend_type="remote",
+            server_address="grpcs://hub:443",
+            remote_auth_token="tok",
+            remote_ca_pem="-----BEGIN CERT-----",  # str → encoded to bytes on the wire
+            remote_timeout=12.5,
+        )
+
+        request = transport._mock_stub.Setattr.call_args[0][0]
+        assert request.backend_type == "remote"
+        assert request.server_address == "grpcs://hub:443"
+        assert request.remote_auth_token == "tok"
+        assert request.HasField("remote_ca_pem")
+        assert request.remote_ca_pem == b"-----BEGIN CERT-----"
+        assert request.HasField("remote_timeout") and request.remote_timeout == 12.5
+        assert not request.HasField("s3_bucket")
+
+    def test_setattr_local_backend_type_forwarded_verbatim(self, transport) -> None:
+        """A local backend_type rides ``backend_type`` (the handler acks it)."""
+        mock_response = MagicMock(is_error=False, path="/", created=False, entry_type=2)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        transport.setattr("/", entry_type=2, backend_type="cas-local")
+
+        request = transport._mock_stub.Setattr.call_args[0][0]
+        assert request.backend_type == "cas-local"
+        assert not request.HasField("s3_bucket")
+
+    def test_setattr_provider_built_uninstalled_raises(self, transport) -> None:
+        """Version-skew (#4262): a provider-built DT_MOUNT acked without being
+        installed (created=false, no error — e.g. an old server ignoring the
+        new fields) fails closed instead of reporting phantom success."""
+        from nexus.contracts.exceptions import BackendError
+
+        mock_response = MagicMock(is_error=False, created=False, path="/r2", entry_type=2)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        with pytest.raises(BackendError, match="not installed"):
+            transport.setattr(
+                "/r2",
+                entry_type=2,
+                backend_type="s3",
+                s3_bucket="b",
+                aws_region="auto",
+                aws_access_key="k",
+                aws_secret_key="s",
+            )
+
+    def test_setattr_provider_built_created_ok(self, transport) -> None:
+        """A provider-built DT_MOUNT with created=true is accepted (the server
+        built the backend)."""
+        mock_response = MagicMock(is_error=False, created=True, path="/r2", entry_type=2)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        result = transport.setattr(
+            "/r2", entry_type=2, backend_type="s3", s3_bucket="b", aws_region="auto"
+        )
+        assert result is mock_response
+
+    def test_setattr_local_created_false_not_rejected(self, transport) -> None:
+        """A non-provider-built type (local/empty) with created=false is the
+        normal synthetic ack — it must NOT trip the version-skew guard."""
+        mock_response = MagicMock(is_error=False, created=False, path="/", entry_type=2)
+        transport._mock_stub.Setattr.return_value = mock_response
+
+        result = transport.setattr("/", entry_type=2, backend_type="cas-local")
+        assert result is mock_response
+
     def test_setattr_error_raises(self, transport) -> None:
         """setattr raises on is_error."""
         mock_response = MagicMock(

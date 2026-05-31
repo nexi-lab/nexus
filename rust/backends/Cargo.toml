@@ -52,7 +52,12 @@ connectors = [
 # binaries that want, say, only `driver-cli` without the full HTTP stack.
 driver-openai = []
 driver-anthropic = []
-driver-s3 = []
+# S3 / S3-compatible (Cloudflare R2, MinIO) speaks HTTP + AWS SigV4, so it
+# pulls the HTTP/crypto stack itself. This lets a slim binary enable just
+# `driver-s3` (bridge-2 #4262 — `nexus-cluster --features driver-s3`)
+# without the whole `connectors` umbrella; the umbrella still re-lists these
+# deps, which is a harmless no-op once driver-s3 owns them.
+driver-s3 = ["dep:reqwest", "dep:hmac", "dep:sha2"]
 driver-gcs = []
 driver-gdrive = []
 driver-gmail = []

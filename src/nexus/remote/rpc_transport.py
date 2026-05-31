@@ -31,6 +31,7 @@ from tenacity import (
 )
 
 from nexus.contracts.exceptions import (
+    BackendError,
     RemoteConnectionError,
     RemoteTimeoutError,
 )
@@ -601,10 +602,16 @@ class RPCTransport:
         Accepts the JSON-Call kwargs (``entry_type``, ``zone_id``,
         ``mime_type``, ``content_id``, ``modified_at_ms``,
         ``created_at_ms``, ``size``, ``version``, ``backend_name``,
-        ``io_profile``, ``is_external``, ``capacity``); unknown kwargs
-        are silently dropped, matching the Call path's pick-known-keys
-        behaviour. Returns the ``SetattrResponse`` message; raises on
-        auth or transport failure.
+        ``io_profile``, ``is_external``, ``capacity``) plus the DT_MOUNT
+        backend-construction params (#4262): ``backend_type`` and the
+        S3 (``s3_bucket`` / ``s3_prefix`` / ``aws_region`` /
+        ``aws_access_key`` / ``aws_secret_key`` / ``s3_endpoint`` — also
+        covers S3-compatible Cloudflare R2 + MinIO), GCS (``gcs_bucket`` /
+        ``gcs_prefix`` / ``access_token``), and remote (``server_address`` /
+        ``remote_auth_token`` / ``remote_*_pem`` / ``remote_timeout``)
+        analogues. Unknown kwargs are silently dropped, matching the Call
+        path's pick-known-keys behaviour. Returns the ``SetattrResponse``
+        message; raises on auth or transport failure.
         """
         request = vfs_pb2.SetattrRequest(
             path=path,
@@ -612,12 +619,18 @@ class RPCTransport:
             entry_type=int(kwargs.get("entry_type", 0) or 0),
             zone_id=kwargs.get("zone_id", "") or "",
             backend_name=kwargs.get("backend_name", "") or "",
+            backend_type=kwargs.get("backend_type", "") or "",
             io_profile=kwargs.get("io_profile", "") or "",
             is_external=bool(kwargs.get("is_external", False)),
             capacity=int(kwargs.get("capacity", 0) or 0),
         )
-        # Optional fields — only set when the caller actually supplied a
-        # non-None value so `HasField` round-trips correctly.
+        # Optional scalar fields — only set when the caller actually supplied
+        # a non-None value so `HasField` round-trips correctly. Bridge-2
+        # (#4262) forwards the DT_MOUNT backend-construction params produced by
+        # ``nexus_fs_metadata._extract_rust_backend_params`` (S3 / S3-compatible
+        # Cloudflare R2 + MinIO, GCS) plus the remote analogues, so the Rust
+        # gRPC handler can build a live backend via ``ObjectStoreProvider``
+        # instead of synthetically acking the mount.
         for opt_field in (
             "mime_type",
             "content_id",
@@ -625,10 +638,31 @@ class RPCTransport:
             "created_at_ms",
             "size",
             "version",
+            # DT_MOUNT — S3 / S3-compatible (Cloudflare R2, MinIO)
+            "s3_bucket",
+            "s3_prefix",
+            "aws_region",
+            "aws_access_key",
+            "aws_secret_key",
+            "s3_endpoint",
+            # DT_MOUNT — GCS
+            "gcs_bucket",
+            "gcs_prefix",
+            "access_token",
+            # DT_MOUNT — RemoteBackend
+            "server_address",
+            "remote_auth_token",
+            "remote_timeout",
         ):
             val = kwargs.get(opt_field)
             if val is not None:
                 setattr(request, opt_field, val)
+        # DT_MOUNT remote TLS material is ``bytes`` on the wire; accept str
+        # (PEM text) from mount config and encode it.
+        for pem_field in ("remote_ca_pem", "remote_cert_pem", "remote_key_pem"):
+            val = kwargs.get(pem_field)
+            if val is not None:
+                setattr(request, pem_field, val.encode() if isinstance(val, str) else val)
 
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -637,6 +671,25 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Setattr")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
+        # Version-skew guard (#4262): a provider-built DT_MOUNT (s3/gcs/remote)
+        # is constructed server-side and must report ``created=true``. A
+        # non-error response with ``created=false`` means an older server
+        # ignored the backend params (SetattrRequest fields 15-30) and took
+        # the legacy synthetic-ack path — installing no backend. Fail closed
+        # so the caller can't write into a phantom mount whose writes silently
+        # fall through to the parent mount.
+        _bt = kwargs.get("backend_type") or ""
+        if (
+            int(kwargs.get("entry_type", 0) or 0) == 2
+            and _bt in ("s3", "gcs", "remote")
+            and not response.created
+        ):
+            raise BackendError(
+                f"DT_MOUNT backend_type={_bt!r} was acknowledged but not installed "
+                f"(created=false); the gRPC server likely predates the #4262 "
+                f"backend-params bridge.",
+                path=path,
+            )
         return response
 
     @retry(

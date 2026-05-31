@@ -1489,105 +1489,6 @@ Packages behind this:
 - Delegation: `nexus.bricks.delegation`
 - A2A support: `nexus.bricks.a2a`
 
-## 8. Workspaces And Context Branching
-
-This is where Nexus starts feeling like long-lived agent infrastructure instead
-of a normal filesystem.
-
-### 8.1 Register a workspace and snapshot it
-
-```bash
-nexus mkdir /workspace/project
-nexus workspace register /workspace/project --name project --description "Main project workspace"
-nexus workspace update /workspace/project --metadata owner=alice
-nexus workspace snapshot /workspace/project --description "Before refactor"
-nexus workspace log /workspace/project
-nexus workspace restore /workspace/project --snapshot 1 --yes
-nexus workspace diff /workspace/project --snapshot1 1 --snapshot2 2
-```
-
-Load the same registration from config when bootstrapping a repeatable
-environment:
-
-```json
-{
-  "workspaces": [
-    {
-      "path": "/workspace/project",
-      "name": "project",
-      "description": "Main project workspace"
-    }
-  ]
-}
-```
-
-```bash
-nexus workspace config load ./workspaces.json
-```
-
-Equivalent RPC / SDK shape:
-
-```python
-workspace_rpc = nx.service("workspace_rpc")
-
-await workspace_rpc.register_workspace(
-    path="/workspace/project",
-    name="project",
-    description="Main project workspace",
-    context={"user_id": "alice", "zone_id": "root"},
-)
-workspace_rpc.update_workspace("/workspace/project", metadata={"owner": "alice"})
-snap = workspace_rpc.workspace_snapshot(
-    workspace_path="/workspace/project",
-    description="Before refactor",
-    context={"user_id": "alice", "zone_id": "root"},
-)
-log = workspace_rpc.workspace_log(
-    workspace_path="/workspace/project",
-    context={"user_id": "alice", "zone_id": "root"},
-)
-assert log[0]["snapshot_id"] == snap["snapshot_id"]
-```
-
-Expected behavior:
-
-- **Success:** registered workspaces are visible to the creating user, and
-  snapshots/log/diff/restore operate only after the workspace exists.
-- **Denied:** `list_workspaces` requires authenticated context with `user_id`
-  and `zone_id`; missing context is rejected.
-- **Unavailable:** `workspace_snapshot`, `workspace_restore`, `workspace_log`,
-  and `workspace_diff` raise `Workspace not registered: ...` until the path is
-  registered.
-- **Restore conflict:** restoring a workspace overwrites current workspace
-  state; the CLI asks for confirmation unless `--yes` is supplied.
-
-**Correctness assertion:** after snapshot and restore, `nexus workspace log
-/workspace/project` contains the restored snapshot number, and
-`nexus workspace diff` reports added/removed/modified paths. CLI wrapper
-coverage lives in `tests/unit/cli/test_lifecycle_surface_cli.py`; workspace
-filtering and auth failure coverage lives in
-`tests/unit/core/test_nexus_fs_list_workspaces.py`; HTTP registry behavior is
-covered by `tests/e2e/server/test_workspace_registry_api_e2e.py`.
-
-**Performance classification:** workspace register/update/config load are setup
-or control-plane paths. Workspace list is a control-plane listing path with the
-issue #4137 benchmark expectation in the surface map; snapshot/diff/restore are
-size-dependent and treated as hot where they touch file content.
-
-### 8.2 Create context branches
-
-```bash
-nexus context branch /workspace/project --name try-new-approach
-nexus context checkout /workspace/project --target try-new-approach
-nexus context commit /workspace/project --message "Experiment 1"
-nexus context merge /workspace/project --source try-new-approach
-```
-
-Packages behind this:
-
-- Workspace and branching: `nexus.bricks.workspace`, `nexus.bricks.context_manifest`
-- Registry and lifecycle plumbing: `nexus.system_services.workspace`
-
 ## 9. Workflows, Sandbox, LLM, And MCP
 
 These are the main "do useful work with agents" feature families.
@@ -2309,10 +2210,8 @@ nexusd --profile full --auth-type database --database-url "$NEXUS_DATABASE_URL"
 Admin account lifecycle:
 
 ```bash
-nexus admin provision-user alice alice@example.com --display-name "Alice"
 nexus admin create-user bot1 --name "Bot Agent" --subject-type agent --expires-days 7
 nexus admin list-users --is-admin
-nexus admin deprovision-user alice --zone-id alice --delete-user-record
 ```
 
 Equivalent generic gRPC calls use the same method names that the CLI calls:
@@ -2321,13 +2220,8 @@ Equivalent generic gRPC calls use the same method names that the CLI calls:
 from nexus.remote.rpc_transport import RPCTransport
 
 rpc = RPCTransport("localhost:2028", auth_token="<admin-api-key>")
-created = rpc.call_rpc(
-    "provision_user",
-    {"user_id": "alice", "email": "alice@example.com", "display_name": "Alice"},
-)
 audit = rpc.call_rpc("audit_list", {"since": "1h", "limit": 50})
 
-print(created["user_id"], created["zone_id"])
 print(len(audit.get("transactions", [])))
 ```
 
@@ -2364,7 +2258,6 @@ surfaces, auth expectations, tests, and benchmark classification.
 | Group | RPC methods | CLI | Admin-only | Correctness coverage | Performance status |
 | --- | --- | --- | --- | --- | --- |
 | Admin keys | `admin_create_key`, `admin_list_keys`, `admin_get_key`, `admin_revoke_key`, `admin_update_key`, `admin_write_permission` | `nexus admin create-user`, `create-key`, `create-agent-key`, `list-users`, `get-user`, `revoke-key`, `update-key` | Yes | `tests/unit/server/test_admin_handlers.py`, `tests/unit/server/test_rpc_admin_only.py`, `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Key RPCs benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
-| User provisioning | `provision_user`, `deprovision_user` | `nexus admin provision-user`, `deprovision-user` | Yes | `tests/unit/core/test_nexus_fs_provision_user.py` and the #4138 surface test | Setup path, not performance-sensitive |
 | Audit | `audit_list`, `audit_export` | `nexus audit list`, `export` | Yes | OpenAPI conformance, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
 | Events | `events_replay` | `nexus events replay` | Yes | event replay/E2E coverage, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
 | Governance | `governance_status`, `governance_alerts`, `governance_rings` | `nexus governance status`, `alerts`, `rings` | Yes | security hardening, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
@@ -2430,7 +2323,7 @@ useful map.
 | `nexus.bricks.auth`, `rebac`, `identity`, `delegation`, `access_manifest` | auth, permissions, identity, delegation, tool scoping |
 | `nexus.bricks.ipc`, `a2a` | agent messaging and agent-to-agent protocols |
 | `nexus.bricks.search`, `parsers`, `llm`, `mcp`, `discovery` | retrieval, parsing, LLM reading, MCP serving, tool discovery |
-| `nexus.bricks.workspace`, `context_manifest` | workspace management and context packaging |
+| `nexus.bricks.context_manifest` | context packaging |
 | `nexus.bricks.workflows`, `sandbox` | automation and isolated execution |
 | `nexus.bricks.snapshot`, `versioning`, `upload`, `mount` | durability, transfer, rollback, external mount flows |
 | `nexus.bricks.governance`, `reputation`, `pay`, `exchange` | marketplace and governance features |

@@ -151,7 +151,7 @@ Creates a **new independent zone**. All participants are **equal Voters** (not L
 
 **Why not redirect + cache?** Redirect = gRPC every read (~200ms). Client cache = re-inventing weaker Raft. Raft already solves consistent multi-party views.
 
-**Implicit share**: `nexus share /path --with user` auto-creates zone + DT_MOUNT + invite + Raft join. **Explicit**: `nexus zone create`, `nexus mount` for admin operations. Decision logic: contributes new metadata → create zone; only consumes → join existing zone.
+**Sharer side**: `nexusd-cluster share <path> --zone-id <id> [--mount-at <local-path>]` creates the new zone's raft group + copies the subtree's metadata in; with `--mount-at` it also writes the DT_MOUNT entry under the parent zone in the same operation. **Joiner side**: `nexusd-cluster join <peer> <zone> <local-path>` subscribes to the zone's raft replica set + writes the same DT_MOUNT entry. The mount entry lives in the parent zone's raft state, so every member converges to the same mount table without separate coordination — symmetric semantics either side. Decision logic: contributes new metadata → share (create zone); only consumes → join existing zone.
 
 ### 6.3 Peer Discovery: No Custom DNS
 

@@ -776,8 +776,8 @@ fn nonempty_owned(v: &Option<String>) -> Option<&str> {
 ///   * `Ok(None)`        — no `NEXUS_S3_BUCKET`; no S3 mount declared.
 ///   * `Ok(Some(cfg))`   — a fully-validated mount.
 ///   * `Err(_)`          — bucket set but a required field is missing /
-///                         empty, or the mount point is illegal. The
-///                         message names the offending env var.
+///     empty, or the mount point is illegal. The
+///     message names the offending env var.
 fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>> {
     let Some(bucket) = nonempty_owned(&common.s3_bucket) else {
         return Ok(None); // not declared

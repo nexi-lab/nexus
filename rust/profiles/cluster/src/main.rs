@@ -479,6 +479,22 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("bootstrap_static: {}", e))?;
     }
 
+    // Wire the DT_MOUNT apply-cb on every loaded zone (root + any
+    // federation zones from env / disk) and replay DT_MOUNT entries
+    // already present in those zones' state machines.  Without this,
+    // DT_MOUNT entries proposed via `share --mount-at` / `join` /
+    // `apply_topology` land in raft state but never make it into
+    // VFSRouter, and mounted paths silently fall through to the
+    // parent backend (the `nexus-cluster` profile equivalent of
+    // `init_from_env`'s boot wiring for the Python runtime).
+    // Held until shutdown so the apply-cb closures + their Arc clones
+    // see a stable provider lifetime.
+    let _dist_coord = {
+        let coord = nexus_raft::distributed_coordinator::RaftDistributedCoordinator::new();
+        coord.install_with_kernel(zm.clone(), zm.runtime_handle(), kernel.as_ref());
+        coord
+    };
+
     let zm_for_loop = zm.clone();
     let topology_handle = tokio::spawn(async move {
         loop {
@@ -589,9 +605,7 @@ async fn run_share(
     if let Some(mount_path) = mount_at {
         zm.mount(parent_zone, mount_path, new_zone_id, true)
             .map_err(|e| anyhow::anyhow!("mount({mount_path}): {e}"))?;
-        println!(
-            "Mounted zone '{new_zone_id}' at '{mount_path}' in parent zone '{parent_zone}'"
-        );
+        println!("Mounted zone '{new_zone_id}' at '{mount_path}' in parent zone '{parent_zone}'");
     }
     Ok(())
 }

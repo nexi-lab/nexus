@@ -488,14 +488,8 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // parent backend (the `nexus-cluster` profile equivalent of
     // `init_from_env`'s boot wiring for the Python runtime).
     // Held until shutdown so the apply-cb closures + their Arc clones
-    // see a stable provider lifetime.  Dropped on the blocking pool at
-    // shutdown (alongside `kernel` / `zm` below); the coordinator
-    // transitively owns a `ZoneManager` Arc clone whose
-    // `blob_fetcher_slot` reaches the `KernelBlobFetcher`'s capture of
-    // `Arc<PeerBlobClient>` → `Arc<Runtime>` — dropping any of that
-    // chain on an async worker thread panics with "Cannot drop a
-    // runtime in a context where blocking is not allowed".
-    let dist_coord = {
+    // see a stable provider lifetime.
+    let _dist_coord = {
         let coord = nexus_raft::distributed_coordinator::RaftDistributedCoordinator::new();
         coord.install_with_kernel(zm.clone(), zm.runtime_handle(), &self_address, &kernel);
         coord
@@ -565,13 +559,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // Drop Kernel (which owns a nested tokio Runtime) on a blocking
     // thread — dropping it inside the current async context panics with
     // "Cannot drop a runtime in a context where blocking is not allowed".
-    // `dist_coord` holds its own `Arc<ZoneManager>` clone whose
-    // blob-fetcher slot transitively owns the kernel's `Arc<Runtime>`
-    // through `KernelBlobFetcher` → `Arc<PeerBlobClient>` →
-    // `Arc<Runtime>`, so it has to drop on the blocking pool too — if
-    // it dropped at function exit (post-block_on) the same panic fires.
     tokio::task::spawn_blocking(move || {
-        drop(dist_coord);
         drop(kernel);
         drop(zm);
     })

@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
+from nexus.contracts.zone_phase import ZonePhase
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -82,7 +84,7 @@ def ensure_root_zone(session_factory: _SessionFactory) -> None:
             ZoneModel(
                 zone_id=ROOT_ZONE_ID,
                 name="Root",
-                phase="Active",
+                phase=ZonePhase.ACTIVE,
                 finalizers="[]",
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
@@ -116,7 +118,7 @@ def _assert_root_zone_active(zone: "ZoneModel") -> None:
     bootstrap look healthy while every default agent registration /
     root-token call still failed at request time.
     """
-    if zone.phase != "Active" or zone.deleted_at is not None:
+    if zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
         raise RuntimeError(
             f"default zone {zone.zone_id!r} is not usable: "
             f"phase={zone.phase!r} deleted_at={zone.deleted_at!r}. "

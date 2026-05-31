@@ -94,18 +94,32 @@ impl RaftDistributedCoordinator {
     }
 
     /// Wire this provider against an already-built kernel, zone
-    /// manager, and tokio runtime; then activate every DT_MOUNT entry
-    /// already present on disk.  Idempotent.
+    /// manager, and tokio runtime; activate every DT_MOUNT entry
+    /// already present on disk; publish the kernel's federation
+    /// self-address; and hand the blob-fetcher slot to the raft gRPC
+    /// server.  Idempotent.
     ///
     /// This is the subset of [`init_from_env`]'s boot work that cluster-
     /// profile binaries (`nexusd-cluster`) also need: those binaries
     /// build their own [`Kernel`] and [`ZoneManager`] directly rather
-    /// than going through `init_from_env`, so without this method the
-    /// DT_MOUNT apply-cb is never installed on `root` (or any other
-    /// loaded zone) — DT_MOUNT entries committed via `share --mount-at`
-    /// / `join` / `apply_topology` would write into the raft state
-    /// machine but never make it into [`VFSRouter`], and routing for
-    /// the mounted path silently falls through to the parent backend.
+    /// than going through `init_from_env`, so without this method:
+    ///   * the DT_MOUNT apply-cb is never installed on `root` (or any
+    ///     other loaded zone) — DT_MOUNT entries committed via
+    ///     `share --mount-at` / `join` / `apply_topology` write into
+    ///     raft state but never make it into [`VFSRouter`];
+    ///   * the kernel's `self_address` slot stays `None`, so every
+    ///     write records `last_writer_address = None` and federation
+    ///     reads on other nodes fail the `try_remote_fetch` origin
+    ///     check before any RPC fires;
+    ///   * the raft gRPC server's `BlobFetcherSlot` stays empty, so
+    ///     ZoneApi/ReadBlob can't serve content even when peers know
+    ///     where to fetch from.
+    ///
+    /// The outbound side (`Kernel::peer_client`, i.e. the
+    /// `PeerBlobClient` impl Mac uses to actually pull bytes) is wired
+    /// separately by the caller via `transport::peer_blob::install`,
+    /// kept out of this method because the `transport` crate sits
+    /// above `raft` in the dep graph.
     ///
     /// Caller invariants:
     ///   * `zm.list_zones()` already includes every zone whose mounts
@@ -113,17 +127,32 @@ impl RaftDistributedCoordinator {
     ///     restart/bootstrap dispatch that loads zones from disk.
     ///   * `runtime` is the tokio runtime that owns the zone manager's
     ///     transport loops (typically `zm.runtime_handle()`).
+    ///   * `self_address` matches the address other nodes will use to
+    ///     reach this node's raft / blob-fetch RPCs (typically
+    ///     `<hostname>:<bind_port>`).
     pub fn install_with_kernel(
         &self,
         zm: Arc<ZoneManager>,
         runtime: tokio::runtime::Handle,
-        kernel: &Kernel,
+        self_address: &str,
+        kernel: &Arc<Kernel>,
     ) {
         // Slots are `OnceLock`; second-set silently drops, so calling
         // this twice with the same wiring is a no-op rather than an
         // error.
         let _ = self.zone_manager.set(zm.clone());
         let _ = self.runtime.set(runtime);
+
+        // Federation self-identity — every subsequent write records
+        // `last_writer_address`, the origin pointer that powers
+        // `Kernel::try_remote_fetch` on peers.
+        kernel.set_self_address(self_address);
+
+        // Hand the raft gRPC server's `BlobFetcherSlot` up to the
+        // kernel; `blob_fetcher_handler::install` below drains it and
+        // wires the kernel-backed `KernelBlobFetcher` that serves
+        // ZoneApi/ReadBlob.
+        kernel.stash_blob_fetcher_slot(Box::new(zm.blob_fetcher_slot()));
 
         // Apply-cb install on every loaded zone — root, federation
         // zones from `NEXUS_FEDERATION_ZONES`, zones restored from
@@ -136,6 +165,12 @@ impl RaftDistributedCoordinator {
         // without this a restart leaves restored DT_MOUNTs unwired in
         // VFSRouter / DCache.
         self.replay_existing_mounts(kernel);
+
+        // Drain the pending blob-fetcher slot stashed above and bind
+        // the kernel-backed `KernelBlobFetcher` to the raft gRPC
+        // server's slot so peer ReadBlob RPCs route through this
+        // node's VFSRouter.
+        crate::blob_fetcher_handler::install(kernel);
     }
 
     fn zm(&self) -> Option<&Arc<ZoneManager>> {

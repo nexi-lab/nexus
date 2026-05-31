@@ -491,9 +491,16 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // see a stable provider lifetime.
     let _dist_coord = {
         let coord = nexus_raft::distributed_coordinator::RaftDistributedCoordinator::new();
-        coord.install_with_kernel(zm.clone(), zm.runtime_handle(), kernel.as_ref());
+        coord.install_with_kernel(zm.clone(), zm.runtime_handle(), &self_address, &kernel);
         coord
     };
+
+    // Outbound peer-blob client — installs a `PeerBlobClient` over
+    // the kernel-shared tokio runtime, replacing the `NoopPeerBlobClient`
+    // default so `Kernel::try_remote_fetch` can actually fetch bytes
+    // from origin nodes on local-backend misses.  Sits above raft in
+    // the dep graph; kept out of `install_with_kernel` for that reason.
+    transport::peer_blob::install(kernel.as_ref());
 
     let zm_for_loop = zm.clone();
     let topology_handle = tokio::spawn(async move {

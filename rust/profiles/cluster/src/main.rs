@@ -25,7 +25,9 @@ use backends::provider::DefaultObjectStoreProvider;
 use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
-use kernel::hal::object_store_provider::{set_enabled_drivers, set_provider};
+use kernel::hal::object_store_provider::{
+    get_provider, set_enabled_drivers, set_provider, ObjectStoreProviderArgs,
+};
 use kernel::kernel::convenience::{KernelConvenience, MountOptions};
 use kernel::kernel::Kernel;
 
@@ -443,6 +445,12 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         "mounted host-fs at \"/\" via PathLocalBackend",
     );
 
+    // ── Optional S3-compatible mount declared via NEXUS_S3_* ──
+    // Built through the same provider the gRPC bridge uses, so the
+    // driver gate fails fast on a slim binary without `driver-s3`.
+    // Runs before the VFS gRPC server serves so the mount is live.
+    mount_declared_s3(&kernel, &common)?;
+
     // Build VFS gRPC service as tonic Routes — co-hosted on the raft
     // port via ZoneManager. Uses NoAuth (mTLS is the boundary).
     let vfs_auth: Arc<dyn transport::auth::AuthProvider> = Arc::new(transport::auth::NoAuth);
@@ -802,6 +810,95 @@ fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>>
         prefix: nonempty_owned(&common.s3_prefix).map(str::to_string),
         mount_point: mount_point.to_string(),
     }))
+}
+
+/// Construct + mount the declared S3 backend at boot, if any.
+///
+/// No-op when `NEXUS_S3_BUCKET` is unset. Builds through the registered
+/// `ObjectStoreProvider` (the same path the gRPC bridge uses), so the
+/// driver gate is honored: on a slim binary without `--features
+/// driver-s3`, `build` returns the gate error and this fails fast.
+fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
+    let Some(cfg) = resolve_s3_mount_config(common)? else {
+        return Ok(()); // no S3 mount declared
+    };
+
+    let provider = get_provider()
+        .ok_or_else(|| anyhow::anyhow!("no ObjectStoreProvider registered"))?;
+
+    // Locals the args borrow from must outlive `args`.
+    let peer_client = kernel.peer_client_arc();
+    let self_address = kernel.self_address_string();
+
+    let args = ObjectStoreProviderArgs {
+        backend_type: "s3",
+        backend_name: "s3",
+        mount_path: Some(cfg.mount_point.as_str()),
+        local_root: None,
+        fsync: false,
+        follow_symlinks: false,
+        openai_base_url: None,
+        openai_api_key: None,
+        openai_model: None,
+        openai_blob_root: None,
+        anthropic_base_url: None,
+        anthropic_api_key: None,
+        anthropic_model: None,
+        anthropic_blob_root: None,
+        s3_bucket: Some(cfg.bucket.as_str()),
+        s3_prefix: cfg.prefix.as_deref(),
+        aws_region: Some(cfg.region.as_str()),
+        aws_access_key: Some(cfg.access_key.as_str()),
+        aws_secret_key: Some(cfg.secret_key.as_str()),
+        s3_endpoint: cfg.endpoint.as_deref(),
+        gcs_bucket: None,
+        gcs_prefix: None,
+        access_token: None,
+        root_folder_id: None,
+        bot_token: None,
+        default_channel: None,
+        hn_stories_per_feed: None,
+        hn_include_comments: None,
+        cli_command: None,
+        cli_service: None,
+        cli_auth_env_json: None,
+        x_bearer_token: None,
+        server_address: None,
+        remote_auth_token: None,
+        remote_ca_pem: None,
+        remote_cert_pem: None,
+        remote_key_pem: None,
+        remote_timeout: 0.0,
+        peer_client: &peer_client,
+        self_address: self_address.as_deref(),
+        runtime: kernel.runtime(),
+    };
+
+    let built = provider.build(&args).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to build S3 backend for mount '{}' (bucket '{}'): {e}",
+            cfg.mount_point,
+            cfg.bucket,
+        )
+    })?;
+    let backend = built
+        .backend
+        .ok_or_else(|| anyhow::anyhow!("ObjectStoreProvider returned no backend for S3 mount"))?;
+
+    kernel
+        .mount(
+            &cfg.mount_point,
+            MountOptions::new("s3").with_backend(backend),
+        )
+        .map_err(|e| anyhow::anyhow!("mount S3 at '{}': {e:?}", cfg.mount_point))?;
+
+    tracing::info!(
+        bucket = %cfg.bucket,
+        mount_point = %cfg.mount_point,
+        endpoint = ?cfg.endpoint,
+        "mounted S3-compatible backend",
+    );
+    Ok(())
 }
 
 /// Install the global tracing subscriber with a non-blocking stdout

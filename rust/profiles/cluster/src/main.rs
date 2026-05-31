@@ -881,6 +881,8 @@ fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
             cfg.bucket,
         )
     })?;
+    // DefaultObjectStoreProvider always returns Some for s3 on Ok; this
+    // guard covers a custom provider that signals "no backend" via None.
     let backend = built
         .backend
         .ok_or_else(|| anyhow::anyhow!("ObjectStoreProvider returned no backend for S3 mount"))?;
@@ -895,7 +897,8 @@ fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
     tracing::info!(
         bucket = %cfg.bucket,
         mount_point = %cfg.mount_point,
-        endpoint = ?cfg.endpoint,
+        prefix = cfg.prefix.as_deref().unwrap_or(""),
+        endpoint = cfg.endpoint.as_deref().unwrap_or("default (AWS)"),
         "mounted S3-compatible backend",
     );
     Ok(())

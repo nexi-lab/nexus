@@ -740,6 +740,70 @@ async fn run_join(
     Ok(())
 }
 
+/// Validated S3-compatible mount declaration, resolved from `CommonArgs`.
+///
+/// Produced by [`resolve_s3_mount_config`]; consumed by
+/// [`mount_declared_s3`]. Owns its strings so it outlives the borrowed
+/// `ObjectStoreProviderArgs` built from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct S3MountConfig {
+    bucket: String,
+    region: String,
+    access_key: String,
+    secret_key: String,
+    endpoint: Option<String>,
+    prefix: Option<String>,
+    mount_point: String,
+}
+
+/// Treat a present-but-empty string (e.g. an exported-but-empty env
+/// var) as absent, so it triggers the required-field error instead of
+/// building a degenerate backend.
+fn nonempty_owned(v: &Option<String>) -> Option<&str> {
+    v.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Parse + validate the `NEXUS_S3_*` declaration.
+///
+///   * `Ok(None)`        — no `NEXUS_S3_BUCKET`; no S3 mount declared.
+///   * `Ok(Some(cfg))`   — a fully-validated mount.
+///   * `Err(_)`          — bucket set but a required field is missing /
+///                         empty, or the mount point is illegal. The
+///                         message names the offending env var.
+fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>> {
+    let Some(bucket) = nonempty_owned(&common.s3_bucket) else {
+        return Ok(None); // not declared
+    };
+
+    let region = nonempty_owned(&common.s3_region).ok_or_else(|| {
+        anyhow::anyhow!("NEXUS_S3_REGION is required when NEXUS_S3_BUCKET is set")
+    })?;
+    let access_key = nonempty_owned(&common.s3_access_key_id).ok_or_else(|| {
+        anyhow::anyhow!("NEXUS_S3_ACCESS_KEY_ID is required when NEXUS_S3_BUCKET is set")
+    })?;
+    let secret_key = nonempty_owned(&common.s3_secret_access_key).ok_or_else(|| {
+        anyhow::anyhow!("NEXUS_S3_SECRET_ACCESS_KEY is required when NEXUS_S3_BUCKET is set")
+    })?;
+
+    let mount_point = nonempty_owned(&common.s3_mount).unwrap_or("/s3");
+    if mount_point.trim_end_matches('/').is_empty() {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT must be a sub-path (e.g. \"/s3\"); \"/\" is \
+             reserved for the local host-fs root mount"
+        );
+    }
+
+    Ok(Some(S3MountConfig {
+        bucket: bucket.to_string(),
+        region: region.to_string(),
+        access_key: access_key.to_string(),
+        secret_key: secret_key.to_string(),
+        endpoint: nonempty_owned(&common.s3_endpoint).map(str::to_string),
+        prefix: nonempty_owned(&common.s3_prefix).map(str::to_string),
+        mount_point: mount_point.to_string(),
+    }))
+}
+
 /// Install the global tracing subscriber with a non-blocking stdout
 /// writer. The returned [`WorkerGuard`] MUST be held for the lifetime of
 /// the process — dropping it flushes buffered lines and stops the writer
@@ -785,4 +849,120 @@ async fn wait_for_shutdown() {
 async fn wait_for_shutdown() {
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("Received Ctrl+C");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a `CommonArgs` with all non-S3 fields at their inert
+    /// defaults, so each test sets only the S3 fields it exercises.
+    fn base_args() -> CommonArgs {
+        CommonArgs {
+            hostname: None,
+            bind_addr: DEFAULT_BIND.to_string(),
+            data_dir: PathBuf::from("./nexus-cluster-data"),
+            peers: String::new(),
+            no_tls: false,
+            root_path: None,
+            bootstrap_mode: None,
+            s3_bucket: None,
+            s3_region: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
+            s3_endpoint: None,
+            s3_prefix: None,
+            s3_mount: None,
+        }
+    }
+
+    /// Fully-populated S3 args for the happy-path tests.
+    fn s3_args() -> CommonArgs {
+        CommonArgs {
+            s3_bucket: Some("my-bucket".into()),
+            s3_region: Some("auto".into()),
+            s3_access_key_id: Some("AKID".into()),
+            s3_secret_access_key: Some("SECRET".into()),
+            ..base_args()
+        }
+    }
+
+    #[test]
+    fn no_bucket_is_no_mount() {
+        let cfg = resolve_s3_mount_config(&base_args()).expect("ok");
+        assert!(cfg.is_none(), "no NEXUS_S3_BUCKET → no mount declared");
+    }
+
+    #[test]
+    fn full_config_resolves_with_default_mount_point() {
+        let cfg = resolve_s3_mount_config(&s3_args()).expect("ok").expect("some");
+        assert_eq!(cfg.bucket, "my-bucket");
+        assert_eq!(cfg.region, "auto");
+        assert_eq!(cfg.access_key, "AKID");
+        assert_eq!(cfg.secret_key, "SECRET");
+        assert_eq!(cfg.mount_point, "/s3", "defaults to /s3");
+        assert_eq!(cfg.prefix, None);
+        assert_eq!(cfg.endpoint, None);
+    }
+
+    #[test]
+    fn custom_mount_point_and_optional_fields_pass_through() {
+        let args = CommonArgs {
+            s3_mount: Some("/cloud".into()),
+            s3_prefix: Some("team/data".into()),
+            s3_endpoint: Some("https://acct.r2.cloudflarestorage.com".into()),
+            ..s3_args()
+        };
+        let cfg = resolve_s3_mount_config(&args).expect("ok").expect("some");
+        assert_eq!(cfg.mount_point, "/cloud");
+        assert_eq!(cfg.prefix.as_deref(), Some("team/data"));
+        assert_eq!(
+            cfg.endpoint.as_deref(),
+            Some("https://acct.r2.cloudflarestorage.com")
+        );
+    }
+
+    #[test]
+    fn missing_region_errors_naming_the_env_var() {
+        let args = CommonArgs { s3_region: None, ..s3_args() };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_REGION"), "err was: {err}");
+    }
+
+    #[test]
+    fn missing_access_key_errors_naming_the_env_var() {
+        let args = CommonArgs { s3_access_key_id: None, ..s3_args() };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_ACCESS_KEY_ID"), "err was: {err}");
+    }
+
+    #[test]
+    fn missing_secret_key_errors_naming_the_env_var() {
+        let args = CommonArgs { s3_secret_access_key: None, ..s3_args() };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_SECRET_ACCESS_KEY"), "err was: {err}");
+    }
+
+    #[test]
+    fn root_mount_point_is_rejected() {
+        let args = CommonArgs { s3_mount: Some("/".into()), ..s3_args() };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("sub-path"), "err was: {err}");
+    }
+
+    #[test]
+    fn trailing_slash_only_mount_point_is_rejected() {
+        let args = CommonArgs { s3_mount: Some("///".into()), ..s3_args() };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("sub-path"), "err was: {err}");
+    }
+
+    #[test]
+    fn empty_string_required_field_is_treated_as_missing() {
+        // An exported-but-empty env var arrives as Some(""); it must not
+        // build a degenerate backend.
+        let args = CommonArgs { s3_region: Some(String::new()), ..s3_args() };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_REGION"), "err was: {err}");
+    }
 }

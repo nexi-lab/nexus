@@ -34,9 +34,9 @@ pub(crate) struct OpenAIBackend {
     /// Shared reqwest HTTP client — one TCP/H2 pool is reused across every
     /// chat completion + streaming call on this mount.
     pub(crate) http: reqwest::Client,
-    /// Kernel-owned tokio runtime. Cloned from `Kernel::peer_client.runtime()`
-    /// so scatter-gather fetches and LLM calls share workers instead of each
-    /// backend spawning its own pool.
+    /// Kernel-owned tokio runtime. Cloned from `Kernel::runtime()` so
+    /// scatter-gather fetches and LLM calls share workers instead of
+    /// each backend spawning its own pool.
     pub(crate) runtime: Arc<tokio::runtime::Runtime>,
 }
 

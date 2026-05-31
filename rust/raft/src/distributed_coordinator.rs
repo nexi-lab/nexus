@@ -93,6 +93,51 @@ impl RaftDistributedCoordinator {
         }
     }
 
+    /// Wire this provider against an already-built kernel, zone
+    /// manager, and tokio runtime; then activate every DT_MOUNT entry
+    /// already present on disk.  Idempotent.
+    ///
+    /// This is the subset of [`init_from_env`]'s boot work that cluster-
+    /// profile binaries (`nexusd-cluster`) also need: those binaries
+    /// build their own [`Kernel`] and [`ZoneManager`] directly rather
+    /// than going through `init_from_env`, so without this method the
+    /// DT_MOUNT apply-cb is never installed on `root` (or any other
+    /// loaded zone) — DT_MOUNT entries committed via `share --mount-at`
+    /// / `join` / `apply_topology` would write into the raft state
+    /// machine but never make it into [`VFSRouter`], and routing for
+    /// the mounted path silently falls through to the parent backend.
+    ///
+    /// Caller invariants:
+    ///   * `zm.list_zones()` already includes every zone whose mounts
+    ///     should be replayed — call this **after** the
+    ///     restart/bootstrap dispatch that loads zones from disk.
+    ///   * `runtime` is the tokio runtime that owns the zone manager's
+    ///     transport loops (typically `zm.runtime_handle()`).
+    pub fn install_with_kernel(
+        &self,
+        zm: Arc<ZoneManager>,
+        runtime: tokio::runtime::Handle,
+        kernel: &Kernel,
+    ) {
+        // Slots are `OnceLock`; second-set silently drops, so calling
+        // this twice with the same wiring is a no-op rather than an
+        // error.
+        let _ = self.zone_manager.set(zm.clone());
+        let _ = self.runtime.set(runtime);
+
+        // Apply-cb install on every loaded zone — root, federation
+        // zones from `NEXUS_FEDERATION_ZONES`, zones restored from
+        // disk after restart.  Mirrors `init_from_env` lines 1191-1199.
+        for zone_id in zm.list_zones() {
+            self.install_apply_cb_for_zone(kernel, &zone_id);
+        }
+
+        // Replay scan — apply-cb only fires on NEW raft applies, so
+        // without this a restart leaves restored DT_MOUNTs unwired in
+        // VFSRouter / DCache.
+        self.replay_existing_mounts(kernel);
+    }
+
     fn zm(&self) -> Option<&Arc<ZoneManager>> {
         self.zone_manager.get()
     }

@@ -112,11 +112,20 @@ impl CommonArgs {
 enum Cmd {
     /// Detach a local subtree into a new federation zone.
     ///
-    /// The subtree under `<path>` (in the parent zone) is copied into
-    /// a new raft group identified by `--zone-id`, with paths rebased
-    /// so that what was at `<parent>/<path>/foo` becomes `/foo` inside
-    /// the new zone. After share, peers can join the new zone via
+    /// The subtree under `<path>` (in the parent zone) is copied into a
+    /// new raft group identified by `--zone-id`, with paths rebased so
+    /// that what was at `<parent>/<path>/foo` becomes `/foo` inside the
+    /// new zone. After share, peers can join the new zone via
     /// `nexusd-cluster join`.
+    ///
+    /// Pass `--mount-at <path>` to also write a DT_MOUNT entry in the
+    /// parent zone's metastore that routes that path to the new zone.
+    /// The mount entry is raft-replicated, so every member of the parent
+    /// zone (including future joiners) sees the same mount automatically
+    /// — symmetric to what `join` does on the joiner side. Without
+    /// `--mount-at` the new zone exists as a raft group but the sharer's
+    /// own writes to `<path>` keep routing to the original (local)
+    /// mount, which is the historical pitfall.
     Share {
         /// Subtree path in the parent zone (e.g. `/data/shared`).
         path: String,
@@ -126,6 +135,12 @@ enum Cmd {
         /// Parent zone id; defaults to root.
         #[arg(long, default_value = "root")]
         parent_zone: String,
+        /// Optional VFS path to mount the new zone at on this node (the
+        /// sharer). Writes a DT_MOUNT entry via the parent zone's raft
+        /// state machine, so the mount is visible on every member of
+        /// the parent zone. Idempotent.
+        #[arg(long)]
+        mount_at: Option<String>,
     },
     /// Mount a remote zone at a local path.
     ///
@@ -171,7 +186,17 @@ fn main() -> Result<()> {
                     path,
                     zone_id,
                     parent_zone,
-                }) => run_share(args.common, &parent_zone, &path, &zone_id).await,
+                    mount_at,
+                }) => {
+                    run_share(
+                        args.common,
+                        &parent_zone,
+                        &path,
+                        &zone_id,
+                        mount_at.as_deref(),
+                    )
+                    .await
+                }
                 Some(Cmd::Join {
                     peer_addr,
                     remote_zone_id,
@@ -454,6 +479,22 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("bootstrap_static: {}", e))?;
     }
 
+    // Wire the DT_MOUNT apply-cb on every loaded zone (root + any
+    // federation zones from env / disk) and replay DT_MOUNT entries
+    // already present in those zones' state machines.  Without this,
+    // DT_MOUNT entries proposed via `share --mount-at` / `join` /
+    // `apply_topology` land in raft state but never make it into
+    // VFSRouter, and mounted paths silently fall through to the
+    // parent backend (the `nexus-cluster` profile equivalent of
+    // `init_from_env`'s boot wiring for the Python runtime).
+    // Held until shutdown so the apply-cb closures + their Arc clones
+    // see a stable provider lifetime.
+    let _dist_coord = {
+        let coord = nexus_raft::distributed_coordinator::RaftDistributedCoordinator::new();
+        coord.install_with_kernel(zm.clone(), zm.runtime_handle(), kernel.as_ref());
+        coord
+    };
+
     let zm_for_loop = zm.clone();
     let topology_handle = tokio::spawn(async move {
         loop {
@@ -526,6 +567,7 @@ async fn run_share(
     parent_zone: &str,
     path: &str,
     new_zone_id: &str,
+    mount_at: Option<&str>,
 ) -> Result<()> {
     let ZoneManagerBundle { zm, peer_addrs, .. } = open_zone_manager(&common, None)?;
     let peers_str: Vec<String> = peer_addrs
@@ -550,6 +592,21 @@ async fn run_share(
         "Shared '{}' from zone '{}' as new zone '{}' ({} entries copied)",
         path, parent_zone, new_zone_id, copied
     );
+
+    // Optional self-mount in the same operation. zm.mount writes a
+    // DT_MOUNT entry via the parent zone's raft state machine, so the
+    // entry replicates to every member — both the sharer's later writes
+    // to `mount_path` and any future joiner see the same mount with no
+    // extra coordination. Without this step `share` only creates the
+    // raft group; the sharer's own writes keep routing to the original
+    // (local) mount until some peer's `join` happens to add the entry.
+    // Idempotent re-mount to the same target is a no-op (see
+    // `zm.mount`).
+    if let Some(mount_path) = mount_at {
+        zm.mount(parent_zone, mount_path, new_zone_id, true)
+            .map_err(|e| anyhow::anyhow!("mount({mount_path}): {e}"))?;
+        println!("Mounted zone '{new_zone_id}' at '{mount_path}' in parent zone '{parent_zone}'");
+    }
     Ok(())
 }
 

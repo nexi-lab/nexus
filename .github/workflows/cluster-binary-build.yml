@@ -32,28 +32,36 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nexusd-cluster-linux-x86_64
             binary: nexusd-cluster
-            # Real measured size after the data-plane work + the gRPC
-            # typed-RPC surface, plus the ObjectStoreProvider wiring in
-            # #4261 (registering the provider makes its build() — and the
-            # path_local + remote construction it reaches — non-eliminable):
-            # 13.82 MiB. Budget leaves ~330 KiB headroom; still a finite
-            # 2x-regression tripwire. TODO: cut back via release-profile
-            # LTO + panic=abort + strip; sudowork target is 5 MiB.
-            max_size_bytes: 14155776  # 13.5 MiB
+            # Real measured size after the federation boot-wiring
+            # completion (kernel.set_self_address + blob-fetcher-slot
+            # stash + transport::peer_blob::install — same set
+            # init_from_env already wires for the Python runtime):
+            # ~13.95 MiB.  The PeerBlobClient is now reachable from
+            # cluster main, so LTO no longer strips its channel-pool
+            # / semaphore / fetch path — that delta vs the prior
+            # 13.82 MiB measurement is the size cost of the missing
+            # outbound peer client now being linked in.  Budget keeps
+            # the same ~575 KiB headroom posture as the original 13.5
+            # MiB entry.  TODO: cut back via release-profile LTO +
+            # panic=abort + strip; sudowork target is 5 MiB.
+            max_size_bytes: 15204352  # 14.5 MiB
           - os: macos-14
             artifact_name: nexusd-cluster-macos-arm64
             binary: nexusd-cluster
-            # Real measured size after the #4261 ObjectStoreProvider
-            # wiring: 11.72 MiB. Budget leaves ~330 KiB headroom. TODO:
-            # same release-profile optimisation work as the Linux entry.
-            max_size_bytes: 12058624  # 11.5 MiB (mach-O arm64 overhead)
+            # Real measured size after the federation boot-wiring
+            # completion: ~11.83 MiB.  Same PeerBlobClient
+            # link-retention story as the Linux entry.  Budget leaves
+            # ~700 KiB headroom.  TODO: same release-profile
+            # optimisation work as the Linux entry.
+            max_size_bytes: 13107200  # 12.5 MiB (mach-O arm64 overhead)
           - os: windows-latest
             artifact_name: nexusd-cluster-windows-x86_64
             binary: nexusd-cluster.exe
-            # Real measured size after the #4261 ObjectStoreProvider
-            # wiring: 12.18 MiB. Budget leaves ~400 KiB headroom without
-            # masking regressions.
-            max_size_bytes: 12582912  # 12 MiB (PE+import-table overhead)
+            # Real measured size after the federation boot-wiring
+            # completion: ~12.37 MiB.  Same PeerBlobClient
+            # link-retention story as the Linux entry.  Budget leaves
+            # ~398 KiB headroom without masking regressions.
+            max_size_bytes: 13369344  # 12.75 MiB (PE+import-table overhead)
 
     steps:
       - name: Checkout code

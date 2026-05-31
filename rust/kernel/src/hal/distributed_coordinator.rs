@@ -6,8 +6,9 @@
 //! rather than naming raft types directly. Distributed state
 //! (`ZoneManager`, `ZoneRaftRegistry`, tokio runtime, cross-zone mounts
 //! reverse index) lives on the concrete impl, which the host binary
-//! installs through `nexus_raft::distributed_coordinator::install` at
-//! startup.
+//! installs by calling
+//! `nexus_raft::distributed_coordinator::RaftDistributedCoordinator::
+//! install_with_kernel` at startup.
 //!
 //! Linux analogue: kernel's `struct super_operations` — the filesystem
 //! abstraction surface that lets the VFS layer talk to any concrete
@@ -29,9 +30,10 @@
 //! - **Share registry (2):** `share_zone`, `lookup_share`.
 //! - **Per-zone dispatch (2):** `metastore_for_zone`, `locks_for_zone`.
 //!
-//! Boot-time setup is a module-level `install()` function — a once-per-process
-//! hook that wires the slot and folds in DI plumbing (blob-fetcher slot
-//! stash) outside the runtime trait surface.
+//! Boot-time setup is the inherent `RaftDistributedCoordinator::
+//! install_with_kernel` method — a once-per-process hook that wires
+//! the slot and folds in DI plumbing (self-address, blob-fetcher slot
+//! stash, apply-cb install, replay) outside the runtime trait surface.
 
 use std::sync::Arc;
 
@@ -99,7 +101,7 @@ pub trait DistributedCoordinator: Send + Sync + 'static {
     /// federation state.
     fn list_zones(&self, kernel: &crate::kernel::Kernel) -> Vec<String>;
 
-    /// Whether `init_from_env` has completed successfully.
+    /// Whether the coordinator's boot wiring has completed.
     ///
     /// This is the readiness signal for "the coordinator can accept
     /// zone-lifecycle calls" — independent of whether any zones have

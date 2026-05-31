@@ -37,7 +37,7 @@ use kernel::kernel::Kernel;
 
 use crate::transport::NodeAddress;
 use crate::zone_meta_store::ZoneMetaStore;
-use crate::{TlsFiles, ZoneManager};
+use crate::ZoneManager;
 
 /// Node-level random ID filename — opaque random u64 minted at first
 /// daemon boot, persisted across restarts, regenerated after a wipe.
@@ -66,8 +66,8 @@ type CrossZoneMountTuple = (String, String, String);
 /// Raft-backed `DistributedCoordinator` impl.
 ///
 /// All state is `OnceLock` so the provider is `Send + Sync + 'static`
-/// without interior mutability noise.  `init_from_env` populates the
-/// slots; subsequent calls observe a stable snapshot.
+/// without interior mutability noise.  [`Self::install_with_kernel`]
+/// populates the slots; subsequent calls observe a stable snapshot.
 pub struct RaftDistributedCoordinator {
     zone_manager: OnceLock<Arc<ZoneManager>>,
     runtime: OnceLock<tokio::runtime::Handle>,
@@ -93,19 +93,38 @@ impl RaftDistributedCoordinator {
         }
     }
 
-    /// Wire this provider against an already-built kernel, zone
-    /// manager, and tokio runtime; then activate every DT_MOUNT entry
-    /// already present on disk.  Idempotent.
+    /// Canonical boot wiring for the cluster-profile binary
+    /// (`nexusd-cluster`).
     ///
-    /// This is the subset of [`init_from_env`]'s boot work that cluster-
-    /// profile binaries (`nexusd-cluster`) also need: those binaries
-    /// build their own [`Kernel`] and [`ZoneManager`] directly rather
-    /// than going through `init_from_env`, so without this method the
-    /// DT_MOUNT apply-cb is never installed on `root` (or any other
-    /// loaded zone) — DT_MOUNT entries committed via `share --mount-at`
-    /// / `join` / `apply_topology` would write into the raft state
-    /// machine but never make it into [`VFSRouter`], and routing for
-    /// the mounted path silently falls through to the parent backend.
+    /// Wires this provider against an already-built kernel, zone
+    /// manager, and tokio runtime, then activates every DT_MOUNT
+    /// entry on disk, publishes the kernel's federation self-address,
+    /// hands the blob-fetcher slot to the raft gRPC server, and marks
+    /// the coordinator initialised.  Idempotent.
+    ///
+    /// Without this method:
+    ///   * the DT_MOUNT apply-cb is never installed on `root` (or any
+    ///     other loaded zone) — DT_MOUNT entries committed via
+    ///     `share --mount-at` / `join` / `apply_topology` write into
+    ///     raft state but never make it into [`VFSRouter`];
+    ///   * the kernel's `self_address` slot stays `None`, so every
+    ///     write records `last_writer_address = None` and federation
+    ///     reads on other nodes fail the `try_remote_fetch` origin
+    ///     check before any RPC fires;
+    ///   * the raft gRPC server's `BlobFetcherSlot` stays empty, so
+    ///     ZoneApi/ReadBlob can't serve content even when peers know
+    ///     where to fetch from;
+    ///   * `bootstrap_done` stays `false`, so [`Self::is_initialized`]
+    ///     reports the coordinator unready and `Kernel::setattr_mount`
+    ///     silently falls through to self-bootstrap on operator
+    ///     `mount source-addr:/zone /local` requests.
+    ///
+    /// The outbound side (`Kernel::peer_client`, i.e. the
+    /// `PeerBlobClient` impl peers use to actually pull bytes) is
+    /// wired separately by the caller via
+    /// `transport::peer_blob::install`, kept out of this method
+    /// because the `transport` crate sits above `raft` in the dep
+    /// graph.
     ///
     /// Caller invariants:
     ///   * `zm.list_zones()` already includes every zone whose mounts
@@ -113,11 +132,15 @@ impl RaftDistributedCoordinator {
     ///     restart/bootstrap dispatch that loads zones from disk.
     ///   * `runtime` is the tokio runtime that owns the zone manager's
     ///     transport loops (typically `zm.runtime_handle()`).
+    ///   * `self_address` matches the address other nodes will use to
+    ///     reach this node's raft / blob-fetch RPCs (typically
+    ///     `<hostname>:<bind_port>`).
     pub fn install_with_kernel(
         &self,
         zm: Arc<ZoneManager>,
         runtime: tokio::runtime::Handle,
-        kernel: &Kernel,
+        self_address: &str,
+        kernel: &Arc<Kernel>,
     ) {
         // Slots are `OnceLock`; second-set silently drops, so calling
         // this twice with the same wiring is a no-op rather than an
@@ -125,9 +148,20 @@ impl RaftDistributedCoordinator {
         let _ = self.zone_manager.set(zm.clone());
         let _ = self.runtime.set(runtime);
 
+        // Federation self-identity — every subsequent write records
+        // `last_writer_address`, the origin pointer that powers
+        // `Kernel::try_remote_fetch` on peers.
+        kernel.set_self_address(self_address);
+
+        // Hand the raft gRPC server's `BlobFetcherSlot` up to the
+        // kernel; `blob_fetcher_handler::install` below drains it and
+        // wires the kernel-backed `KernelBlobFetcher` that serves
+        // ZoneApi/ReadBlob.
+        kernel.stash_blob_fetcher_slot(Box::new(zm.blob_fetcher_slot()));
+
         // Apply-cb install on every loaded zone — root, federation
         // zones from `NEXUS_FEDERATION_ZONES`, zones restored from
-        // disk after restart.  Mirrors `init_from_env` lines 1191-1199.
+        // disk after restart.
         for zone_id in zm.list_zones() {
             self.install_apply_cb_for_zone(kernel, &zone_id);
         }
@@ -136,6 +170,21 @@ impl RaftDistributedCoordinator {
         // without this a restart leaves restored DT_MOUNTs unwired in
         // VFSRouter / DCache.
         self.replay_existing_mounts(kernel);
+
+        // Drain the pending blob-fetcher slot stashed above and bind
+        // the kernel-backed `KernelBlobFetcher` to the raft gRPC
+        // server's slot so peer ReadBlob RPCs route through this
+        // node's VFSRouter.
+        crate::blob_fetcher_handler::install(kernel);
+
+        // Mark the coordinator initialised — `is_initialized()` reads
+        // this flag, and `Kernel::setattr_mount` gates the operator-
+        // driven joiner branch (`mount source-addr:/zone /path`) on it.
+        // Without this store the cluster binary's coordinator never
+        // reports ready and that branch silently falls through to
+        // self-bootstrap semantics — same failure class as the
+        // `last_writer_address` gap closed above.
+        self.bootstrap_done.store(true, Ordering::Release);
     }
 
     fn zm(&self) -> Option<&Arc<ZoneManager>> {
@@ -143,7 +192,7 @@ impl RaftDistributedCoordinator {
     }
 
     /// Install the DT_MOUNT apply-cb on `zone_id`'s consensus.  Called
-    /// from boot (`init_from_env` for root + listed federation zones)
+    /// from boot ([`Self::install_with_kernel`] for every loaded zone)
     /// and from `create_zone` so every locally-loaded zone fires
     /// `wire_mount_core` on raft-applied DT_MOUNT events — the
     /// follower-side mechanism that keeps cross-zone routing in sync.
@@ -446,11 +495,10 @@ pub fn validate_bootstrap_mode(
 /// `<NEXUS_DATA_DIR>` is bound to a single daemon.
 /// Mint or load the node-identity file at `<zones_dir>/.node_id`.
 ///
-/// Public so non-`init_from_env` boot paths (cluster-profile binary
-/// `nexusd-cluster::run_daemon`) share the same SSOT for raft node
-/// identity.  See `bootstrap_or_join_zone` for why opaque random IDs
-/// are required under raft-rs 0.7's stale-`Progress` heartbeat
-/// invariant.
+/// Public so the cluster-profile binary's `run_daemon` boot path
+/// shares this single SSOT for raft node identity.  See
+/// `bootstrap_or_join_zone` for why opaque random IDs are required
+/// under raft-rs 0.7's stale-`Progress` heartbeat invariant.
 pub fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
     use std::io::Write;
 
@@ -750,8 +798,8 @@ fn record_join_attempt(
 /// branches under the opaque-ID contract.  Generalised over `zone_id`
 /// so the same SSOT machinery serves:
 ///
-///   * `init_from_env` and `nexusd-cluster::run_daemon` for the root
-///     zone (`zone_id="root"`, `max_attempts=None` — daemon boot path
+///   * `nexusd-cluster::run_daemon` for the root zone
+///     (`zone_id="root"`, `max_attempts=None` — daemon boot path
 ///     wants forever-retry on misconfig).
 ///   * `nexusd-cluster::run_join` for non-root zones via the offline
 ///     `join` subcommand (`zone_id=<remote_zone>`,
@@ -811,11 +859,10 @@ fn record_join_attempt(
 // `clippy::too_many_arguments`: every argument here is a primitive
 // boot-time descriptor (zone id, node id, address, peer list, three
 // flags).  Bundling them into a struct would force every caller —
-// `init_from_env`, `run_daemon`, `run_join`, future Python RPC
-// handlers — to import that struct just to populate the fields one
-// by one with the same names.  Net readability loss for zero
-// expressive gain, so we keep the explicit signature and silence
-// the lint locally.
+// `run_daemon`, `run_join`, future boot paths — to import that
+// struct just to populate the fields one by one with the same
+// names.  Net readability loss for zero expressive gain, so we keep
+// the explicit signature and silence the lint locally.
 #[allow(clippy::too_many_arguments)]
 pub fn bootstrap_or_join_zone(
     zm: &ZoneManager,
@@ -955,318 +1002,19 @@ pub fn bootstrap_or_join_zone(
     }
 }
 
-impl RaftDistributedCoordinator {
-    /// Boot-time init from environment variables (`NEXUS_HOSTNAME`,
-    /// `NEXUS_PEERS`, `NEXUS_BIND_ADDR`, `NEXUS_DATA_DIR`,
-    /// `NEXUS_RAFT_TLS`, …). Idempotent — `Ok(false)` when federation
-    /// was already initialised, `Ok(true)` on first successful init.
-    ///
-    /// Inherent (not on trait): boot-time wiring, fires once per
-    /// process from [`install`], outside the runtime trait surface.
-    pub fn init_from_env(&self, kernel: &Kernel) -> CoordinatorResult<bool> {
-        // Idempotent — if zone manager already exists, treat as
-        // "already initialised" and report no-op.
-        if self.zone_manager.get().is_some() {
-            return Ok(false);
-        }
-
-        // Bootstrap contract — single classic-aligned path:
-        //
-        //   1. `node_id` is an opaque random u64 minted at first daemon
-        //      boot, persisted to `<NEXUS_DATA_DIR>/.node_id`.  Wipe-
-        //      rejoin mints a fresh ID; raft-rs's `Progress[new_id]`
-        //      starts at `matched=0`, so the first heartbeat carries
-        //      `m.commit=0` and cannot trip `RaftLog::commit_to`'s
-        //      stale-`Progress` panic.
-        //   2. NEXUS_PEERS is a hostname → endpoint address book only.
-        //      It seeds the transport peer map for raft messaging; it
-        //      is **not** the source of truth for ConfState.  ConfState
-        //      is mutated by ConfChange (AddNode / RemoveNode), driven
-        //      by JoinZone RPC.
-        //   3. Empty storage + `NEXUS_BOOTSTRAP_NEW=1` →
-        //      `create_zone("root")` 1-voter cluster.  Empty storage +
-        //      flag unset → block on JoinZone forever.  Non-empty
-        //      storage → resume from persisted ConfState.
-        //
-        // See `bootstrap_or_join_zone` for the dispatch table.
-        let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
-        let bootstrap_new = std::env::var("NEXUS_BOOTSTRAP_NEW")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        if std::env::var("NEXUS_JOINER_HINT").is_ok() {
-            tracing::warn!(
-                "NEXUS_JOINER_HINT is no longer honored — bootstrap mode is \
-                 auto-detected from on-disk state + NEXUS_BOOTSTRAP_NEW.  \
-                 Drop the env var; this warning is non-fatal."
-            );
-        }
-
-        let hostname = std::env::var("NEXUS_HOSTNAME").ok().unwrap_or_else(|| {
-            #[cfg(unix)]
-            {
-                std::process::Command::new("hostname")
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "localhost".to_string())
-            }
-            #[cfg(not(unix))]
-            {
-                std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string())
-            }
-        });
-
-        let bind_addr =
-            std::env::var("NEXUS_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:2126".to_string());
-
-        let self_addr = std::env::var("NEXUS_ADVERTISE_ADDR")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                let raft_port = bind_addr
-                    .rsplit_once(':')
-                    .and_then(|(_, p)| p.parse::<u16>().ok())
-                    .unwrap_or(2126);
-                format!("{hostname}:{raft_port}")
-            });
-        kernel.set_self_address(&self_addr);
-        tracing::info!(self_address = %self_addr, "federation: self-address published");
-
-        let zones_dir = std::env::var("NEXUS_DATA_DIR").unwrap_or_else(|_| {
-            std::env::var("NEXUS_STATE_DIR")
-                .map(|s| format!("{s}/zones"))
-                .unwrap_or_else(|_| "./nexus-zones".to_string())
-        });
-
-        // TLS detection — disabled when NEXUS_RAFT_TLS=false (E2E).
-        let tls_disabled = std::env::var("NEXUS_RAFT_TLS")
-            .map(|v| v.eq_ignore_ascii_case("false") || v == "0")
-            .unwrap_or(false)
-            || std::env::var("NEXUS_NO_TLS")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
-        let use_tls_for_endpoints = !tls_disabled;
-
-        // Parse NEXUS_PEERS once into structured NodeAddress entries —
-        // address book only.  ZoneManager seeds its transport peer map
-        // from this; ConfState is independent (mutated only by
-        // ConfChange via JoinZone).
-        let peer_addrs: Vec<NodeAddress> = peers_csv
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|entry| {
-                NodeAddress::parse(entry, use_tls_for_endpoints)
-                    .map_err(|e| format!("NEXUS_PEERS parse '{entry}': {e}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Reject "self listed in NEXUS_PEERS" early — the only way
-        // self enters the cluster post-#3996 is through `create_zone`
-        // (founder) or AddNode-on-leader (joiner).  See
-        // `validate_peers_excludes_self` for the full rationale.
-        validate_peers_excludes_self(&peer_addrs, &self_addr)?;
-
-        // Operator declares bootstrap intent up front when federation
-        // is in play.  "In play" = any of: data dir already holds a
-        // root zone (restart), `NEXUS_BOOTSTRAP_NEW=1` (explicit
-        // founder), or non-empty peers (joiner).  Tests / single-
-        // node dev workflows that touch none of those signals skip
-        // federation entirely — `bootstrap_mode` stays `None` and
-        // `bootstrap_or_join_zone` is not called below.
-        let data_dir_has_root = Path::new(&zones_dir).join("root").join("raft").exists();
-        let federation_in_play = data_dir_has_root || bootstrap_new || !peer_addrs.is_empty();
-        let bootstrap_mode: Option<BootstrapMode> = if federation_in_play {
-            let mode_str = std::env::var("NEXUS_BOOTSTRAP_MODE").map_err(|_| {
-                "NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation \
-                 (NEXUS_PEERS, NEXUS_BOOTSTRAP_NEW, or persisted root zone state \
-                 detected).  Pass one of: static, dynamic, restart.  \
-                 See BootstrapMode docs in nexus_raft."
-                    .to_string()
-            })?;
-            let mode = BootstrapMode::parse(&mode_str)?;
-            validate_bootstrap_mode(
-                mode,
-                data_dir_has_root,
-                bootstrap_new,
-                !peer_addrs.is_empty(),
-            )?;
-            tracing::info!(
-                mode = mode.as_str(),
-                bootstrap_new,
-                peers_non_empty = !peer_addrs.is_empty(),
-                data_dir_has_root,
-                "bootstrap mode validated",
-            );
-            Some(mode)
-        } else {
-            None
-        };
-
-        let tls = if tls_disabled {
-            None
-        } else {
-            let tls_dir = Path::new(&zones_dir).join("tls");
-            let ca_path = tls_dir.join("ca.pem");
-            let cert_path = tls_dir.join("node.pem");
-            let key_path = tls_dir.join("node-key.pem");
-            if ca_path.exists() && cert_path.exists() && key_path.exists() {
-                Some(TlsFiles {
-                    ca_path,
-                    cert_path,
-                    key_path,
-                    ca_key_path: None,
-                    join_token_hash: None,
-                })
-            } else {
-                None
-            }
-        };
-
-        std::fs::create_dir_all(&zones_dir)
-            .map_err(|e| format!("create zones dir '{zones_dir}': {e}"))?;
-
-        // SSOT for raft node identity.  First boot mints a random u64
-        // and persists `<zones_dir>/.node_id`; restart loads the
-        // persisted value.  Decoupling node_id from hostname satisfies
-        // raft-rs's stale-`Progress` heartbeat invariant under wipe-
-        // rejoin — a wiped follower's fresh random ID has
-        // `Progress[new_id].matched=0` from the moment AddNode commits,
-        // so heartbeats with `m.commit=0` cannot trip `commit_to`'s
-        // panic.  Witness binaries still derive ID from hostname (see
-        // `lib::transport_primitives::hostname_to_node_id`) — they
-        // never wipe-rejoin in practice and live at well-known
-        // addresses, so the contract doesn't apply there.
-        let node_id = read_or_mint_node_id(&zones_dir)?;
-        let peers: Vec<String> = peer_addrs
-            .iter()
-            .map(NodeAddress::to_raft_peer_str)
-            .collect();
-        let _ = use_tls_for_endpoints; // peer_addrs already carry tls scheme
-
-        let zm = ZoneManager::with_node_id(
-            &hostname,
-            node_id,
-            &zones_dir,
-            peers,
-            &bind_addr,
-            tls,
-            Some(self_addr.clone()),
-            None,
-        )
-        .map_err(|e| format!("ZoneManager::with_node_id: {e}"))?;
-
-        let runtime_handle = zm.runtime_handle();
-        let blob_slot = zm.blob_fetcher_slot();
-
-        let _ = self.zone_manager.set(zm.clone());
-        let _ = self.runtime.set(runtime_handle);
-
-        // Hand the blob-fetcher slot up to the kernel so transport's
-        // `install_transport_wiring` can drain it.
-        kernel.stash_blob_fetcher_slot(Box::new(blob_slot));
-
-        // Bring root zone online based on the declared mode.
-        //
-        //   * Static / Restart: `bootstrap_or_join_zone` dispatches —
-        //     empty peers + empty storage → 1-voter single-node
-        //     default; non-empty peers → joiner retry loop;
-        //     persisted state → resume.
-        //   * Dynamic: skip — daemon comes up rootless, operator
-        //     drives `create_zone` via runtime API.
-        //   * `None` (no federation in play): skip — caller did not
-        //     ask for federation init (typical for tests / single-
-        //     node dev workflows that strip env vars).
-        //
-        // `max_attempts=None` blocks indefinitely under the joiner
-        // branch (no deadline) so misconfig surfaces as "daemon
-        // stays up retrying" rather than "daemon exits after timeout".
-        match bootstrap_mode {
-            Some(BootstrapMode::Static) | Some(BootstrapMode::Restart) => {
-                bootstrap_or_join_zone(
-                    zm.as_ref(),
-                    "root",
-                    node_id,
-                    &self_addr,
-                    &peer_addrs,
-                    bootstrap_new,
-                    /* max_attempts */ None,
-                    /* as_learner   */ false,
-                )?;
-            }
-            Some(BootstrapMode::Dynamic) => {
-                tracing::info!(
-                    node_id,
-                    "bootstrap mode = dynamic; daemon up rootless — operator drives \
-                     create_zone via runtime API",
-                );
-            }
-            None => {
-                tracing::debug!(
-                    node_id,
-                    "no federation intent declared — skipping root zone bootstrap",
-                );
-            }
-        }
-
-        // Federation zones listed in `NEXUS_FEDERATION_ZONES` are
-        // brought up only when this node bootstrapped root (1-voter
-        // owner).  Joiners receive these zones via the standard
-        // mount-with-source / share flows once they've joined root —
-        // bootstrapping them locally on a joiner would create a
-        // duplicate raft group with disjoint state.
-        if bootstrap_new {
-            if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
-                for zone_id in zones_csv
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    if zm.get_zone(zone_id).is_none() {
-                        zm.create_zone(zone_id, zm.current_peer_strings())
-                            .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
-                    }
-                }
-            }
-        }
-
-        // Install the DT_MOUNT apply-cb on every zone the ZoneManager
-        // loaded — root, env-listed federation zones, AND zones restored
-        // from disk after a restart.  Without this, restored zones lose
-        // their wire_mount path on followers and DT_MOUNT replays go
-        // unwired.  Idempotent — re-installation replaces with an
-        // equivalent closure.
-        for zone_id in zm.list_zones() {
-            self.install_apply_cb_for_zone(kernel, &zone_id);
-        }
-
-        // Replay scan: each restored zone may already hold DT_MOUNT
-        // entries in its applied state machine.  The apply-cb only
-        // fires on NEW applies, so without this scan a restart leaves
-        // restored mounts unwired in VFSRouter / DCache.
-        self.replay_existing_mounts(kernel);
-
-        self.bootstrap_done.store(true, Ordering::Release);
-        tracing::info!("federation bootstrap complete (hostname={hostname})");
-        Ok(true)
-    }
-}
-
 impl DistributedCoordinator for RaftDistributedCoordinator {
     fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
         self.zm().map(|zm| zm.list_zones()).unwrap_or_default()
     }
 
     fn is_initialized(&self, _kernel: &Kernel) -> bool {
-        // SSOT — `bootstrap_done` is set at the end of `init_from_env`
-        // regardless of whether any zones were bootstrapped.  The
-        // default trait impl falls back to `!list_zones().is_empty()`,
-        // which is a SHADOW of init readiness that misclassifies
-        // dynamic-bootstrap mode (init complete, zones empty until
-        // `create_zone("root")` is invoked).  Override it.
+        // SSOT — `bootstrap_done` is set at the end of
+        // [`Self::install_with_kernel`] regardless of whether any zones
+        // were bootstrapped.  The default trait impl falls back to
+        // `!list_zones().is_empty()`, which is a SHADOW of init
+        // readiness that misclassifies dynamic-bootstrap mode (init
+        // complete, zones empty until `create_zone("root")` is
+        // invoked).  Override it.
         self.bootstrap_done.load(Ordering::Acquire)
     }
 

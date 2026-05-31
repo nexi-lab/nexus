@@ -15,10 +15,12 @@
 //! ``FileMetadata.content_id`` (hash for CAS, backend_path for PAS).
 //! The kernel never inspects the string.
 //!
-//! Installation: `Kernel::wire_blob_fetcher` (called from
-//! `init_federation_from_env` once the ZoneManager is up) takes the
-//! slot handed back by `ZoneManager::blob_fetcher_slot()` and writes
-//! `Arc<KernelBlobFetcher>` into it. From then on, peer `ReadBlob`
+//! Installation: [`install`] is called from
+//! `RaftDistributedCoordinator::install_with_kernel` once the
+//! ZoneManager is up — it drains the slot stashed via
+//! `Kernel::stash_blob_fetcher_slot` and writes `Arc<KernelBlobFetcher>`
+//! into the `BlobFetcherSlot` handed back by
+//! `ZoneManager::blob_fetcher_slot()`.  From then on, peer `ReadBlob`
 //! requests resolve against the local data plane.
 
 use std::sync::Arc;

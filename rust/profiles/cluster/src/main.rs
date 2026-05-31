@@ -294,7 +294,7 @@ fn open_zone_manager(
 
     // Advertise address — used as `StepMessage.sender_address` so the
     // peer-map runtime SSOT can learn this node's reachable endpoint.
-    // Default mirrors `init_from_env`: `<hostname>:<bind_port>`.
+    // Default: `<hostname>:<bind_port>`.
     let bind_port = common
         .bind_addr
         .rsplit_once(':')
@@ -460,7 +460,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
 
     // `bootstrap_static` — invoked below when federation env vars are
     // set — is `NEXUS_FEDERATION_ZONES`/`_MOUNTS` driven and only
-    // meaningful on the founder; mirrors the `init_from_env` guard.
+    // meaningful on the founder (`bootstrap_new` true).
     let peers_str: Vec<String> = peer_addrs
         .iter()
         .map(NodeAddress::to_raft_peer_str)
@@ -479,21 +479,27 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("bootstrap_static: {}", e))?;
     }
 
-    // Wire the DT_MOUNT apply-cb on every loaded zone (root + any
-    // federation zones from env / disk) and replay DT_MOUNT entries
-    // already present in those zones' state machines.  Without this,
-    // DT_MOUNT entries proposed via `share --mount-at` / `join` /
-    // `apply_topology` land in raft state but never make it into
-    // VFSRouter, and mounted paths silently fall through to the
-    // parent backend (the `nexus-cluster` profile equivalent of
-    // `init_from_env`'s boot wiring for the Python runtime).
-    // Held until shutdown so the apply-cb closures + their Arc clones
-    // see a stable provider lifetime.
+    // Canonical coordinator boot wiring: self-address publish, DT_MOUNT
+    // apply-cb install on every loaded zone (root + env-listed federation
+    // zones + zones restored from disk), DT_MOUNT replay, blob-fetcher
+    // slot stash + drain, `bootstrap_done` flip.  Without this, DT_MOUNT
+    // entries proposed via `share --mount-at` / `join` / `apply_topology`
+    // would write into raft state but never reach `VFSRouter`, writes
+    // would carry no `last_writer_address`, and ReadBlob would have
+    // nothing to serve.  Held until shutdown so the apply-cb closures +
+    // their Arc clones see a stable provider lifetime.
     let _dist_coord = {
         let coord = nexus_raft::distributed_coordinator::RaftDistributedCoordinator::new();
-        coord.install_with_kernel(zm.clone(), zm.runtime_handle(), kernel.as_ref());
+        coord.install_with_kernel(zm.clone(), zm.runtime_handle(), &self_address, &kernel);
         coord
     };
+
+    // Outbound peer-blob client — installs a `PeerBlobClient` over
+    // the kernel-shared tokio runtime, replacing the `NoopPeerBlobClient`
+    // default so `Kernel::try_remote_fetch` can actually fetch bytes
+    // from origin nodes on local-backend misses.  Sits above raft in
+    // the dep graph; kept out of `install_with_kernel` for that reason.
+    transport::peer_blob::install(kernel.as_ref());
 
     let zm_for_loop = zm.clone();
     let topology_handle = tokio::spawn(async move {
@@ -630,9 +636,8 @@ async fn run_join(
     // the leader on ``peer_addr`` "I want in".  No JoinZone RPC fires,
     // no AddNode commits, the joiner waits forever after restart.
     //
-    // Drive the same SSOT machinery ``init_from_env`` and
-    // ``run_daemon`` use for the root zone:
-    // ``bootstrap_or_join_zone`` with ``bootstrap_new=false``.  That
+    // Drive the same SSOT machinery ``run_daemon`` uses for the root
+    // zone: ``bootstrap_or_join_zone`` with ``bootstrap_new=false``.  That
     // (a) registers the zone locally with ``skip_bootstrap=true`` so
     // the local gRPC server can serve append-entries from the leader
     // once the membership change commits, then (b) sends ``JoinZone``

@@ -1,13 +1,18 @@
 //! PeerBlobClient — shared gRPC infrastructure for CAS-level peer fetch.
 //!
-//! Owns a single multi-threaded tokio runtime plus a tonic `Channel`
-//! pool (one per peer address) so every peer RPC reuses its channel
-//! instead of building an HTTP/2 connection per call.
+//! Holds a `tokio::runtime::Handle` (not an `Arc<Runtime>`) plus a
+//! tonic `Channel` pool (one per peer address) so every peer RPC
+//! reuses its channel instead of building an HTTP/2 connection per
+//! call.
 //!
-//! The runtime is constructed once at `Kernel::new` and handed out as
-//! `Arc<Runtime>`. `Kernel::shutdown` drops the owning Arc so tokio's
-//! background workers shut down cleanly (avoiding stuck tokio tasks
-//! that block `docker stop`).
+//! Runtime ownership lives with `Kernel` — `PeerBlobClient` only
+//! borrows the executor via the `Handle`.  Dropping this client never
+//! triggers a runtime shutdown, so the client can safely outlive the
+//! kernel and drop in any context (including from an async worker
+//! during process shutdown).  When the kernel drops its
+//! `Arc<Runtime>` the `Handle` here invalidates on next use; that's
+//! the correct ownership shape — peer fetches must not survive their
+//! runtime.
 //!
 //! Thread-safety: `DashMap` guards the channel pool; per-peer + global
 //! semaphores cap concurrent RPCs.
@@ -36,14 +41,14 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// any caller that needs to fetch blobs from peers.
 #[allow(dead_code)]
 pub struct PeerBlobClient {
-    runtime: Arc<tokio::runtime::Runtime>,
+    runtime: tokio::runtime::Handle,
     channels: DashMap<String, tonic::transport::Channel>,
     per_peer_semaphores: DashMap<String, Arc<Semaphore>>,
     global_semaphore: Arc<Semaphore>,
     timeout: Duration,
     per_peer_permits: usize,
     /// Late-bound mTLS material. Populated by the kernel via
-    /// `install_tls_config` once `init_federation_from_env` reads the
+    /// `install_tls_config` once the leader / joiner has resolved the
     /// on-disk `ca.pem` / `node.pem` / `node-key.pem` triplet. When
     /// present, peer channels are built as `https://…` with full mTLS
     /// (same cert material that `ZoneManager` uses for raft RPCs — one
@@ -54,8 +59,13 @@ pub struct PeerBlobClient {
 
 #[allow(dead_code)]
 impl PeerBlobClient {
-    /// Build a peer-blob client backed by a shared runtime.
-    pub fn new(runtime: Arc<tokio::runtime::Runtime>) -> Self {
+    /// Build a peer-blob client borrowing the executor via `Handle`.
+    ///
+    /// The kernel owns the runtime; this client only needs spawn /
+    /// block_on access.  Holding a `Handle` rather than `Arc<Runtime>`
+    /// keeps runtime shutdown a kernel-side responsibility and makes
+    /// drops here side-effect-free.
+    pub fn new(runtime: tokio::runtime::Handle) -> Self {
         Self {
             runtime,
             channels: DashMap::new(),
@@ -70,19 +80,11 @@ impl PeerBlobClient {
     /// Install mTLS material so subsequent channel builds use TLS.
     ///
     /// Drops any cached plaintext channels — the next RPC to each peer
-    /// reconnects over TLS. Called from `Kernel::init_federation_from_env`
-    /// once the leader / joiner has resolved the cluster CA + node
-    /// cert.
+    /// reconnects over TLS. Called by the boot installer once the
+    /// leader / joiner has resolved the cluster CA + node cert.
     pub fn install_tls_config(&self, tls: lib::transport_primitives::TlsConfig) {
         *self.tls.write() = Some(tls);
         self.channels.clear();
-    }
-
-    /// Exposed runtime handle — kernel-owned code paths (e.g. the migrated
-    /// `try_remote_fetch`) call `runtime.handle().block_on(...)` to execute
-    /// async work without reconstructing a runtime per call.
-    pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
-        &self.runtime
     }
 
     /// Fetch or build a tonic `Channel` for `address`.
@@ -239,11 +241,11 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
 }
 
 /// Install hook called during kernel process boot —
-/// constructs a `PeerBlobClient` on the kernel-owned tokio runtime
-/// and installs it via `Kernel::set_peer_client`, replacing the
-/// `NoopPeerBlobClient` default.
+/// constructs a `PeerBlobClient` that borrows the kernel's tokio
+/// runtime via `Handle` and installs it via `Kernel::set_peer_client`,
+/// replacing the `NoopPeerBlobClient` default.
 pub fn install(kernel: &kernel::kernel::Kernel) {
-    let client = Arc::new(PeerBlobClient::new(Arc::clone(kernel.runtime())));
+    let client = Arc::new(PeerBlobClient::new(kernel.runtime().handle().clone()));
     kernel.set_peer_client(client as Arc<dyn kernel::hal::peer::PeerBlobClient>);
 }
 
@@ -260,10 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn test_client_constructs_and_exposes_runtime() {
+    fn test_client_constructs_with_handle() {
         let rt = build_kernel_runtime();
-        let client = PeerBlobClient::new(Arc::clone(&rt));
-        assert!(Arc::ptr_eq(client.runtime(), &rt));
+        let client = PeerBlobClient::new(rt.handle().clone());
+        // Smoke: drives a trivial future through the borrowed Handle.
+        let _ = client
+            .runtime
+            .block_on(async { 1 + 1 });
     }
 
     #[test]
@@ -271,7 +276,7 @@ mod tests {
         // Use a port we know is unbound so we test the error path without
         // needing a live peer. Short timeout = fast test.
         let rt = build_kernel_runtime();
-        let mut client = PeerBlobClient::new(Arc::clone(&rt));
+        let mut client = PeerBlobClient::new(rt.handle().clone());
         client.timeout = Duration::from_millis(200);
         let result = client.fetch(
             "127.0.0.1:1",

@@ -764,11 +764,14 @@ struct S3MountConfig {
     mount_point: String,
 }
 
-/// Treat a present-but-empty string (e.g. an exported-but-empty env
-/// var) as absent, so it triggers the required-field error instead of
-/// building a degenerate backend.
+/// Treat a present-but-blank string (an exported-but-empty or
+/// whitespace-only env var, e.g. a poorly-templated Secret) as absent,
+/// so a required field triggers the env-var-named error and an optional
+/// one (prefix / endpoint) falls back to its default instead of building
+/// a degenerate backend (literal whitespace prefix / malformed host).
+/// Returns the original (untrimmed) value when non-blank.
 fn nonempty_owned(v: &Option<String>) -> Option<&str> {
-    v.as_deref().filter(|s| !s.is_empty())
+    v.as_deref().filter(|s| !s.trim().is_empty())
 }
 
 /// Parse + validate the `NEXUS_S3_*` declaration.
@@ -1166,6 +1169,30 @@ mod tests {
             };
             let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
             assert!(err.contains("NEXUS_S3_BUCKET"), "err was: {err}");
+        }
+    }
+
+    #[test]
+    fn whitespace_only_required_fields_fail_fast() {
+        // Whitespace-only required fields (e.g. a poorly-templated Secret)
+        // must fail fast naming the var, not build a degenerate backend that
+        // only errors on first I/O.
+        let cases: [(fn(&mut CommonArgs), &str); 3] = [
+            (|a| a.s3_region = Some("   ".into()), "NEXUS_S3_REGION"),
+            (
+                |a| a.s3_access_key_id = Some("  ".into()),
+                "NEXUS_S3_ACCESS_KEY_ID",
+            ),
+            (
+                |a| a.s3_secret_access_key = Some(" ".into()),
+                "NEXUS_S3_SECRET_ACCESS_KEY",
+            ),
+        ];
+        for (mutate, var) in cases {
+            let mut args = s3_args();
+            mutate(&mut args);
+            let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+            assert!(err.contains(var), "expected {var} in err, got: {err}");
         }
     }
 

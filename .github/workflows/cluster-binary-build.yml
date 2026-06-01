@@ -54,6 +54,13 @@ jobs:
             # ~700 KiB headroom.  TODO: same release-profile
             # optimisation work as the Linux entry.
             max_size_bytes: 13107200  # 12.5 MiB (mach-O arm64 overhead)
+          - os: macos-13
+            artifact_name: nexusd-cluster-macos-x86_64
+            binary: nexusd-cluster
+            # macOS Intel (x86_64) — needed for sudowork desktop on
+            # Intel Macs. macos-13 is the last GitHub-hosted Intel
+            # runner. Same size budget as arm64.
+            max_size_bytes: 13107200  # 12.5 MiB
           - os: windows-latest
             artifact_name: nexusd-cluster-windows-x86_64
             binary: nexusd-cluster.exe

@@ -16,7 +16,7 @@
 //! a runtime."
 //!
 //! The Federation E2E suite does NOT cover this path — it goes through
-//! PyO3, where the Python main thread is a regular sync thread (no
+//! the cluster binary, where `fn main()` is a regular sync thread (no
 //! outer tokio runtime) and `block_on` is straightforwardly safe.
 //!
 //! This test exercises every sync API that bridges to async work, all

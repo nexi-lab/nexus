@@ -9,7 +9,7 @@
 //! We enforce this at **compile time** by splitting into two types:
 //!
 //! - [`ZoneConsensus`] — the public **handle** (Clone + Send + Sync). External code
-//!   (gRPC handlers, PyO3, tests) uses this. All mutating operations go through
+//!   (gRPC handlers, kernel internals, tests) uses this. All mutating operations go through
 //!   an `mpsc` channel to the driver.
 //!
 //! - [`ZoneConsensusDriver`] — the private **actor** that exclusively owns `RawNode`.
@@ -33,7 +33,7 @@
 //!          │ mpsc::UnboundedSender<RaftMsg>
 //!     ┌────┴──────────────────────────┐
 //!     │ gRPC handlers: send Step      │
-//!     │ PyO3 propose: send Propose    │
+//!     │ kernel propose: send Propose   │
 //!     │ startup: send Campaign        │
 //!     └───────────────────────────────┘
 //! ```
@@ -303,7 +303,7 @@ pub enum RaftMsg {
 /// each `advance()`. State machine reads use a shared `Arc<RwLock<S>>`.
 ///
 /// This type is `Clone + Send + Sync` and can be freely shared across
-/// gRPC handlers, PyO3, and other contexts.
+/// gRPC handlers, kernel internals, and other contexts.
 /// Transport context for transparent leader forwarding.
 ///
 /// When a follower receives a propose(), instead of returning NotLeader,
@@ -525,7 +525,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Create a new Raft node, returning a (handle, driver) pair.
     ///
     /// The **handle** is Clone + Send + Sync and should be shared with gRPC
-    /// handlers, PyO3, etc. The **driver** must be passed to the transport
+    /// handlers, kernel code, etc. The **driver** must be passed to the transport
     /// loop which will call [`ZoneConsensusDriver::process_messages`] and
     /// [`ZoneConsensusDriver::advance`] sequentially from a single task.
     ///
@@ -2350,7 +2350,7 @@ mod tests {
     ///
     /// Previously, update_cached_status() was only called inside advance(),
     /// so the cached role stayed Follower until the next transport loop tick.
-    /// Callers (PyO3 set_metadata) that checked is_leader() right after
+    /// Callers (set_metadata) that checked is_leader() right after
     /// create_zone() would get "not leader" errors.
     #[tokio::test]
     async fn test_single_node_is_leader_after_campaign_without_advance() {

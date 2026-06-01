@@ -4,9 +4,8 @@ Pure Rust VFS kernel crate. Owns all core state: VFSRouter, Trie,
 MetaStore, LockManager, PipeManager, StreamManager, FileWatchRegistry,
 PermissionLeaseCache.
 
-Zero Python dependency. The kernel compiles to both `nexusd-cluster`
-(standalone binary) and `nexus-cdylib` (Python extension via PyO3) from
-the same source.
+Zero Python dependency. The kernel compiles into `nexusd-cluster`
+(standalone binary). Python interacts via gRPC (no in-process binding).
 
 ## Syscall surface
 

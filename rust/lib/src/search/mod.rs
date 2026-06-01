@@ -97,7 +97,7 @@ pub fn extract_original_match(
 /// Search lines of content for matches. Returns up to `max_results` matches.
 ///
 /// This is the unified search function extracted from `grep_bulk` — it works on
-/// already-decoded UTF-8 content (no file I/O, no mmap, no PyO3).
+/// already-decoded UTF-8 content (no file I/O, no mmap).
 pub fn search_lines(
     file_path: &str,
     content: &str,

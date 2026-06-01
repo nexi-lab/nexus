@@ -1,7 +1,7 @@
 //! `lib` — portable Rust lib for Nexus.
 //!
 //! This crate contains WASM-safe computation extracted from `kernel`.
-//! It compiles to `wasm32-unknown-unknown` and has zero CPython (PyO3) dependency.
+//! It compiles to `wasm32-unknown-unknown` and has zero CPython dependency.
 //!
 //! Modules:
 //! - `types` — domain types (Entity, Permission, etc.)

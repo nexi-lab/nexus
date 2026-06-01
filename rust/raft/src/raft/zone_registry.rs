@@ -216,7 +216,7 @@ impl ZoneRaftRegistry {
     /// has a runtime handle, regardless of whether the calling thread
     /// is itself running inside a tokio runtime, so this fn is safe
     /// from both `#[tokio::main]` async callers (e.g. `nexusd-cluster`)
-    /// and bare-sync callers (e.g. PyO3 `#[pymethod]` constructors).
+    /// and bare-sync callers (e.g. cluster binary boot).
     ///
     /// raft contract: leader election is owned by raft-rs's `tick()`
     /// loop. For single-voter clusters, the election timer fires once

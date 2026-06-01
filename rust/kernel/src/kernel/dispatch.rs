@@ -283,7 +283,7 @@ impl Kernel {
     /// mirrors the way `Kernel::add_mount` is the Rust parallel of
     /// `sys_setattr(DT_MOUNT)` for backends.
     ///
-    /// Cdylib boot wiring calls this after the kernel finishes
+    /// Cluster binary boot wiring calls this after the kernel finishes
     /// constructing itself; for services that pull hooks into the
     /// `KernelDispatch` chain, register the hooks inside the service's
     /// `start()` (called by the registry on enlist).

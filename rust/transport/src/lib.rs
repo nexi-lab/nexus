@@ -39,7 +39,7 @@ pub mod auth;
 pub mod federation;
 /// Generic `Call` RPC dispatcher — JSON in, kernel syscall, JSON out.
 pub mod call_dispatch;
-/// VFS gRPC server (in-bound). Always compiled — zero PyO3 coupling.
+/// VFS gRPC server (in-bound). Always compiled.
 pub mod grpc;
 pub mod ipc;
 pub mod peer_blob;

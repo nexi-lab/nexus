@@ -16,6 +16,7 @@
 //! Sudowork's primary deployment path is the static topology env vars
 //! consumed at daemon startup; share/join are operator escape hatches.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -774,6 +775,25 @@ fn nonempty_owned(v: &Option<String>) -> Option<&str> {
     v.as_deref().filter(|s| !s.trim().is_empty())
 }
 
+/// Return the colliding `NEXUS_FEDERATION_MOUNTS` path if `mount_point`
+/// (the declared S3 mount) shares a VFS path with a static federation
+/// mount. Both resolve to the same canonical key under the root zone, and
+/// `VFSRouter::add` overwrites an occupied key — so a collision would let
+/// federation topology silently replace the S3 backend. Comparison is
+/// trailing-slash-insensitive to match mount-path normalization.
+fn federation_mount_collision<'a>(
+    mount_point: &str,
+    fed_mounts: &'a BTreeMap<String, String>,
+) -> Option<&'a str> {
+    let mp = mount_point.trim_end_matches('/');
+    for path in fed_mounts.keys() {
+        if path.trim_end_matches('/') == mp {
+            return Some(path.as_str());
+        }
+    }
+    None
+}
+
 /// Parse + validate the `NEXUS_S3_*` declaration.
 ///
 ///   * `Ok(None)`        — no `NEXUS_S3_BUCKET`; no S3 mount declared.
@@ -856,6 +876,20 @@ fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
     let Some(cfg) = resolve_s3_mount_config(common)? else {
         return Ok(()); // no S3 mount declared
     };
+
+    // Fail fast on a mount-point collision with static federation topology:
+    // a `NEXUS_FEDERATION_MOUNTS` entry at the same VFS path would later
+    // overwrite this backend (`VFSRouter::add` replaces an occupied canonical
+    // key), silently re-routing the mount's traffic. Catch it at boot rather
+    // than mis-placing data.
+    let (_zones, fed_mounts) = parse_federation_env();
+    if let Some(fed_path) = federation_mount_collision(&cfg.mount_point, &fed_mounts) {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT {:?} collides with a NEXUS_FEDERATION_MOUNTS entry at \
+             {fed_path:?}; choose a different S3 mount point",
+            cfg.mount_point,
+        );
+    }
 
     let provider =
         get_provider().ok_or_else(|| anyhow::anyhow!("no ObjectStoreProvider registered"))?;
@@ -1194,6 +1228,21 @@ mod tests {
             let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
             assert!(err.contains(var), "expected {var} in err, got: {err}");
         }
+    }
+
+    #[test]
+    fn federation_mount_collision_detection() {
+        let mut m = BTreeMap::new();
+        m.insert("/corp".to_string(), "corp".to_string());
+        m.insert("/family".to_string(), "family".to_string());
+        // Exact collision.
+        assert_eq!(federation_mount_collision("/corp", &m), Some("/corp"));
+        // Trailing-slash-insensitive (both sides normalized).
+        assert_eq!(federation_mount_collision("/corp/", &m), Some("/corp"));
+        // No collision for a distinct path.
+        assert_eq!(federation_mount_collision("/s3", &m), None);
+        // Empty federation map never collides.
+        assert_eq!(federation_mount_collision("/s3", &BTreeMap::new()), None);
     }
 
     #[test]

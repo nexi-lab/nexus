@@ -793,8 +793,28 @@ fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>>
         anyhow::anyhow!("NEXUS_S3_SECRET_ACCESS_KEY is required when NEXUS_S3_BUCKET is set")
     })?;
 
-    let mount_point = nonempty_owned(&common.s3_mount).unwrap_or("/s3");
-    if mount_point.trim_end_matches('/').is_empty() {
+    // Normalize the mount point to the same canonical shape the kernel
+    // router uses for lookups, so a configured value can't silently
+    // mis-route. The router strips trailing slashes and walks ancestors on
+    // lookup; a stored `/s3/` key would never match `/s3/file`, sending
+    // writes to the local root instead. Require an absolute path and reject
+    // `..` traversal / NUL, matching the rest of the syscall path's
+    // path contract.
+    let raw_mount = nonempty_owned(&common.s3_mount).unwrap_or("/s3");
+    if !raw_mount.starts_with('/') {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT must be an absolute path starting with \"/\" \
+             (got {raw_mount:?})"
+        );
+    }
+    if raw_mount.split('/').any(|seg| seg == "..") {
+        anyhow::bail!("NEXUS_S3_MOUNT must not contain \"..\" path segments (got {raw_mount:?})");
+    }
+    if raw_mount.contains('\0') {
+        anyhow::bail!("NEXUS_S3_MOUNT must not contain NUL bytes");
+    }
+    let mount_point = raw_mount.trim_end_matches('/');
+    if mount_point.is_empty() {
         anyhow::bail!(
             "NEXUS_S3_MOUNT must be a sub-path (e.g. \"/s3\"); \"/\" is \
              reserved for the local host-fs root mount"
@@ -1072,6 +1092,48 @@ mod tests {
         };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains("sub-path"), "err was: {err}");
+    }
+
+    #[test]
+    fn trailing_slash_is_trimmed_to_canonical_mount_point() {
+        // `/s3/` must canonicalize to `/s3` — the kernel router strips
+        // trailing slashes on lookup, so a stored `/s3/` key would never
+        // match `/s3/file` and writes would silently fall through to the
+        // local root mount.
+        for raw in ["/s3/", "/s3///", "/cloud/data/"] {
+            let args = CommonArgs {
+                s3_mount: Some(raw.into()),
+                ..s3_args()
+            };
+            let cfg = resolve_s3_mount_config(&args).expect("ok").expect("some");
+            assert_eq!(
+                cfg.mount_point,
+                raw.trim_end_matches('/'),
+                "trailing slash not trimmed for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_mount_point_is_rejected() {
+        // A non-absolute mount point can't be routed; reject it rather than
+        // register a key the syscall path treats as invalid.
+        let args = CommonArgs {
+            s3_mount: Some("s3".into()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("absolute"), "err was: {err}");
+    }
+
+    #[test]
+    fn parent_dir_traversal_mount_point_is_rejected() {
+        let args = CommonArgs {
+            s3_mount: Some("/s3/../etc".into()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains(".."), "err was: {err}");
     }
 
     #[test]

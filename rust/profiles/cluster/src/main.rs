@@ -16,6 +16,7 @@
 //! Sudowork's primary deployment path is the static topology env vars
 //! consumed at daemon startup; share/join are operator escape hatches.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,7 +26,9 @@ use backends::provider::DefaultObjectStoreProvider;
 use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
-use kernel::hal::object_store_provider::{set_enabled_drivers, set_provider};
+use kernel::hal::object_store_provider::{
+    get_provider, set_enabled_drivers, set_provider, ObjectStoreProviderArgs,
+};
 use kernel::kernel::convenience::{KernelConvenience, MountOptions};
 use kernel::kernel::Kernel;
 
@@ -98,6 +101,44 @@ struct CommonArgs {
     /// validator since they always operate on existing state.
     #[arg(long, env = "NEXUS_BOOTSTRAP_MODE", global = true)]
     bootstrap_mode: Option<String>,
+
+    /// S3-compatible bucket to mount (AWS S3 / Cloudflare R2 / MinIO).
+    /// Presence of this var DECLARES an S3 mount; when unset the daemon
+    /// boots with only the local `/` root mount, exactly as before.
+    #[arg(long, env = "NEXUS_S3_BUCKET", global = true)]
+    s3_bucket: Option<String>,
+
+    /// AWS region for the S3 mount. Required when `NEXUS_S3_BUCKET` is
+    /// set. Cloudflare R2 uses `auto`.
+    #[arg(long, env = "NEXUS_S3_REGION", global = true)]
+    s3_region: Option<String>,
+
+    /// Access key id for the S3 mount. Required when `NEXUS_S3_BUCKET`
+    /// is set. Prefer the env var over the flag so the secret does not
+    /// land in `argv` (visible via `ps`).
+    #[arg(long, env = "NEXUS_S3_ACCESS_KEY_ID", global = true)]
+    s3_access_key_id: Option<String>,
+
+    /// Secret access key for the S3 mount. Required when
+    /// `NEXUS_S3_BUCKET` is set. Prefer the env var over the flag.
+    #[arg(long, env = "NEXUS_S3_SECRET_ACCESS_KEY", global = true)]
+    s3_secret_access_key: Option<String>,
+
+    /// Custom S3-compatible endpoint (Cloudflare R2 / MinIO). Omit for
+    /// AWS S3 (virtual-hosted addressing is derived from bucket+region).
+    #[arg(long, env = "NEXUS_S3_ENDPOINT", global = true)]
+    s3_endpoint: Option<String>,
+
+    /// Key prefix within the bucket. Optional; defaults to empty (bucket
+    /// root).
+    #[arg(long, env = "NEXUS_S3_PREFIX", global = true)]
+    s3_prefix: Option<String>,
+
+    /// VFS mount point for the S3 backend. Must be a non-root absolute
+    /// path; defaults to `/s3`. `/` is reserved for the local host-fs
+    /// root mount.
+    #[arg(long, env = "NEXUS_S3_MOUNT", global = true)]
+    s3_mount: Option<String>,
 }
 
 impl CommonArgs {
@@ -405,6 +446,13 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         "mounted host-fs at \"/\" via PathLocalBackend",
     );
 
+    // ── Optional S3-compatible mount declared via NEXUS_S3_* ──
+    // Built through the same provider the gRPC bridge uses, so the
+    // driver gate fails fast on a slim binary without `driver-s3`.
+    // Runs before the VFS gRPC server serves so the mount is live.
+    // Re-verified after the coordinator replays persisted mounts (below).
+    let s3_mount_point = mount_declared_s3(&kernel, &common)?;
+
     // Build VFS gRPC service as tonic Routes — co-hosted on the raft
     // port via ZoneManager. Uses NoAuth (mTLS is the boundary).
     let vfs_auth: Arc<dyn transport::auth::AuthProvider> = Arc::new(transport::auth::NoAuth);
@@ -500,6 +548,14 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         coord.install_with_kernel(zm.clone(), zm.runtime_handle(), &self_address, &kernel);
         coord
     };
+
+    // `install_with_kernel` replayed any DT_MOUNT entries persisted in the
+    // root zone's raft state. If one of those federation mounts sits at the
+    // declared S3 mount point, it just overwrote the S3 backend — fail fast
+    // rather than silently serve the wrong zone under that path.
+    if let Some(mount_point) = &s3_mount_point {
+        verify_s3_mount_not_shadowed(&kernel, mount_point)?;
+    }
 
     // Outbound peer-blob client — installs a `PeerBlobClient` over
     // the kernel-shared tokio runtime, replacing the `NoopPeerBlobClient`
@@ -702,6 +758,259 @@ async fn run_join(
     Ok(())
 }
 
+/// Validated S3-compatible mount declaration, resolved from `CommonArgs`.
+///
+/// Produced by [`resolve_s3_mount_config`]; consumed by
+/// [`mount_declared_s3`]. Owns its strings so it outlives the borrowed
+/// `ObjectStoreProviderArgs` built from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct S3MountConfig {
+    bucket: String,
+    region: String,
+    access_key: String,
+    secret_key: String,
+    endpoint: Option<String>,
+    prefix: Option<String>,
+    mount_point: String,
+}
+
+/// Treat a present-but-blank string (an exported-but-empty or
+/// whitespace-only env var, e.g. a poorly-templated Secret) as absent,
+/// so a required field triggers the env-var-named error and an optional
+/// one (prefix / endpoint) falls back to its default instead of building
+/// a degenerate backend (literal whitespace prefix / malformed host).
+/// Returns the original (untrimmed) value when non-blank.
+fn nonempty_owned(v: &Option<String>) -> Option<&str> {
+    v.as_deref().filter(|s| !s.trim().is_empty())
+}
+
+/// Return the colliding `NEXUS_FEDERATION_MOUNTS` path if `mount_point`
+/// (the declared S3 mount) shares a VFS path with a static federation
+/// mount. Both resolve to the same canonical key under the root zone, and
+/// `VFSRouter::add` overwrites an occupied key — so a collision would let
+/// federation topology silently replace the S3 backend. Comparison is
+/// trailing-slash-insensitive to match mount-path normalization.
+fn federation_mount_collision<'a>(
+    mount_point: &str,
+    fed_mounts: &'a BTreeMap<String, String>,
+) -> Option<&'a str> {
+    let mp = mount_point.trim_end_matches('/');
+    for path in fed_mounts.keys() {
+        if path.trim_end_matches('/') == mp {
+            return Some(path.as_str());
+        }
+    }
+    None
+}
+
+/// Parse + validate the `NEXUS_S3_*` declaration.
+///
+///   * `Ok(None)`        — no `NEXUS_S3_BUCKET`; no S3 mount declared.
+///   * `Ok(Some(cfg))`   — a fully-validated mount.
+///   * `Err(_)`          — bucket set but a required field is missing /
+///     empty, or the mount point is illegal. The
+///     message names the offending env var.
+fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>> {
+    // `NEXUS_S3_BUCKET` is the declaration trigger. Distinguish "truly
+    // absent" (`None` → no S3 mount, boot exactly as before) from "present
+    // but blank" (`Some("")` / whitespace → a typo'd or empty-Secret config
+    // that must fail fast, not silently disable the mount and let `/s3`
+    // writes fall through to the local root). clap surfaces an
+    // exported-empty env var as `Some("")`, so this case is reachable.
+    let bucket = match common.s3_bucket.as_deref() {
+        None => return Ok(None),
+        Some(b) if b.trim().is_empty() => anyhow::bail!(
+            "NEXUS_S3_BUCKET is set but blank; unset it to disable the S3 \
+             mount, or provide a bucket name"
+        ),
+        Some(b) => b,
+    };
+
+    let region = nonempty_owned(&common.s3_region).ok_or_else(|| {
+        anyhow::anyhow!("NEXUS_S3_REGION is required when NEXUS_S3_BUCKET is set")
+    })?;
+    let access_key = nonempty_owned(&common.s3_access_key_id).ok_or_else(|| {
+        anyhow::anyhow!("NEXUS_S3_ACCESS_KEY_ID is required when NEXUS_S3_BUCKET is set")
+    })?;
+    let secret_key = nonempty_owned(&common.s3_secret_access_key).ok_or_else(|| {
+        anyhow::anyhow!("NEXUS_S3_SECRET_ACCESS_KEY is required when NEXUS_S3_BUCKET is set")
+    })?;
+
+    // Normalize the mount point to the same canonical shape the kernel
+    // router uses for lookups, so a configured value can't silently
+    // mis-route. The router strips trailing slashes and walks ancestors on
+    // lookup; a stored `/s3/` key would never match `/s3/file`, sending
+    // writes to the local root instead. Require an absolute path and reject
+    // `..` traversal / NUL, matching the rest of the syscall path's
+    // path contract.
+    let raw_mount = nonempty_owned(&common.s3_mount).unwrap_or("/s3");
+    if !raw_mount.starts_with('/') {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT must be an absolute path starting with \"/\" \
+             (got {raw_mount:?})"
+        );
+    }
+    if raw_mount.split('/').any(|seg| seg == "..") {
+        anyhow::bail!("NEXUS_S3_MOUNT must not contain \"..\" path segments (got {raw_mount:?})");
+    }
+    if raw_mount.contains('\0') {
+        anyhow::bail!("NEXUS_S3_MOUNT must not contain NUL bytes");
+    }
+    let mount_point = raw_mount.trim_end_matches('/');
+    if mount_point.is_empty() {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT must be a sub-path (e.g. \"/s3\"); \"/\" is \
+             reserved for the local host-fs root mount"
+        );
+    }
+
+    Ok(Some(S3MountConfig {
+        bucket: bucket.to_string(),
+        region: region.to_string(),
+        access_key: access_key.to_string(),
+        secret_key: secret_key.to_string(),
+        endpoint: nonempty_owned(&common.s3_endpoint).map(str::to_string),
+        prefix: nonempty_owned(&common.s3_prefix).map(str::to_string),
+        mount_point: mount_point.to_string(),
+    }))
+}
+
+/// Construct + mount the declared S3 backend at boot, if any. Returns the
+/// VFS mount point on success so the caller can re-verify it after the
+/// federation coordinator replays persisted mounts (see
+/// [`verify_s3_mount_not_shadowed`]).
+///
+/// `Ok(None)` when `NEXUS_S3_BUCKET` is unset. Builds through the
+/// registered `ObjectStoreProvider` (the same path the gRPC bridge uses),
+/// so the driver gate is honored: on a slim binary without `--features
+/// driver-s3`, `build` returns the gate error and this fails fast.
+fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<Option<String>> {
+    let Some(cfg) = resolve_s3_mount_config(common)? else {
+        return Ok(None); // no S3 mount declared
+    };
+
+    // Fail fast on a mount-point collision with static federation topology:
+    // a `NEXUS_FEDERATION_MOUNTS` entry at the same VFS path would later
+    // overwrite this backend (`VFSRouter::add` replaces an occupied canonical
+    // key), silently re-routing the mount's traffic. Catch it at boot rather
+    // than mis-placing data.
+    let (_zones, fed_mounts) = parse_federation_env();
+    if let Some(fed_path) = federation_mount_collision(&cfg.mount_point, &fed_mounts) {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT {:?} collides with a NEXUS_FEDERATION_MOUNTS entry at \
+             {fed_path:?}; choose a different S3 mount point",
+            cfg.mount_point,
+        );
+    }
+
+    let provider =
+        get_provider().ok_or_else(|| anyhow::anyhow!("no ObjectStoreProvider registered"))?;
+
+    // Locals the args borrow from must outlive `args`.
+    let peer_client = kernel.peer_client_arc();
+    let self_address = kernel.self_address_string();
+
+    let args = ObjectStoreProviderArgs {
+        backend_type: "s3",
+        backend_name: "s3",
+        mount_path: Some(cfg.mount_point.as_str()),
+        local_root: None,
+        fsync: false,
+        follow_symlinks: false,
+        openai_base_url: None,
+        openai_api_key: None,
+        openai_model: None,
+        openai_blob_root: None,
+        anthropic_base_url: None,
+        anthropic_api_key: None,
+        anthropic_model: None,
+        anthropic_blob_root: None,
+        s3_bucket: Some(cfg.bucket.as_str()),
+        s3_prefix: cfg.prefix.as_deref(),
+        aws_region: Some(cfg.region.as_str()),
+        aws_access_key: Some(cfg.access_key.as_str()),
+        aws_secret_key: Some(cfg.secret_key.as_str()),
+        s3_endpoint: cfg.endpoint.as_deref(),
+        gcs_bucket: None,
+        gcs_prefix: None,
+        access_token: None,
+        root_folder_id: None,
+        bot_token: None,
+        default_channel: None,
+        hn_stories_per_feed: None,
+        hn_include_comments: None,
+        cli_command: None,
+        cli_service: None,
+        cli_auth_env_json: None,
+        x_bearer_token: None,
+        server_address: None,
+        remote_auth_token: None,
+        remote_ca_pem: None,
+        remote_cert_pem: None,
+        remote_key_pem: None,
+        remote_timeout: 0.0,
+        peer_client: &peer_client,
+        self_address: self_address.as_deref(),
+        runtime: kernel.runtime(),
+    };
+
+    let built = provider.build(&args).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to build S3 backend for mount '{}' (bucket '{}'): {e}",
+            cfg.mount_point,
+            cfg.bucket,
+        )
+    })?;
+    // DefaultObjectStoreProvider always returns Some for s3 on Ok; this
+    // guard covers a custom provider that signals "no backend" via None.
+    let backend = built
+        .backend
+        .ok_or_else(|| anyhow::anyhow!("ObjectStoreProvider returned no backend for S3 mount"))?;
+
+    kernel
+        .mount(
+            &cfg.mount_point,
+            MountOptions::new("s3").with_backend(backend),
+        )
+        .map_err(|e| anyhow::anyhow!("mount S3 at '{}': {e:?}", cfg.mount_point))?;
+
+    tracing::info!(
+        bucket = %cfg.bucket,
+        mount_point = %cfg.mount_point,
+        prefix = cfg.prefix.as_deref().unwrap_or(""),
+        endpoint = cfg.endpoint.as_deref().unwrap_or("default (AWS)"),
+        "mounted S3-compatible backend",
+    );
+    Ok(Some(cfg.mount_point))
+}
+
+/// Fail fast if the S3 mount at `mount_point` was shadowed by a
+/// federation mount the coordinator replayed from persisted raft state at
+/// startup. The env-time collision check ([`federation_mount_collision`])
+/// only sees the current `NEXUS_FEDERATION_MOUNTS`; a DT_MOUNT persisted
+/// by a prior `share`/`join` is replayed by `install_with_kernel` *after*
+/// the S3 mount is installed, and `VFSRouter::add` overwrites the occupied
+/// canonical key — so the route would silently resolve to the federation
+/// zone instead of the bucket. A federation mount carries a
+/// `target_zone_id`; the S3 local mount does not, so that field is the
+/// discriminator. Call after the coordinator install/replay completes.
+fn verify_s3_mount_not_shadowed(kernel: &Arc<Kernel>, mount_point: &str) -> Result<()> {
+    let router = kernel.vfs_router_arc();
+    // Extract the shadowing target zone (if any) into an owned value so the
+    // dashmap `Ref` is dropped before `router` at the end of the function.
+    let shadow_zone: Option<String> = router
+        .get(mount_point, contracts::ROOT_ZONE_ID)
+        .and_then(|entry| entry.target_zone_id.clone());
+    if let Some(zone) = shadow_zone {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT {mount_point:?} was shadowed by a persisted federation \
+             mount (target zone {zone:?}) replayed at startup; unmount it \
+             (`nexusd-cluster unmount {mount_point}`) before serving S3 there",
+        );
+    }
+    Ok(())
+}
+
 /// Install the global tracing subscriber with a non-blocking stdout
 /// writer. The returned [`WorkerGuard`] MUST be held for the lifetime of
 /// the process — dropping it flushes buffered lines and stops the writer
@@ -747,4 +1056,268 @@ async fn wait_for_shutdown() {
 async fn wait_for_shutdown() {
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("Received Ctrl+C");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a `CommonArgs` with all non-S3 fields at their inert
+    /// defaults, so each test sets only the S3 fields it exercises.
+    fn base_args() -> CommonArgs {
+        CommonArgs {
+            hostname: None,
+            bind_addr: DEFAULT_BIND.to_string(),
+            data_dir: PathBuf::from("./nexus-cluster-data"),
+            peers: String::new(),
+            no_tls: false,
+            root_path: None,
+            bootstrap_mode: None,
+            s3_bucket: None,
+            s3_region: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
+            s3_endpoint: None,
+            s3_prefix: None,
+            s3_mount: None,
+        }
+    }
+
+    /// Fully-populated S3 args for the happy-path tests.
+    fn s3_args() -> CommonArgs {
+        CommonArgs {
+            s3_bucket: Some("my-bucket".into()),
+            s3_region: Some("auto".into()),
+            s3_access_key_id: Some("AKID".into()),
+            s3_secret_access_key: Some("SECRET".into()),
+            ..base_args()
+        }
+    }
+
+    #[test]
+    fn no_bucket_is_no_mount() {
+        let cfg = resolve_s3_mount_config(&base_args()).expect("ok");
+        assert!(cfg.is_none(), "no NEXUS_S3_BUCKET → no mount declared");
+    }
+
+    #[test]
+    fn full_config_resolves_with_default_mount_point() {
+        let cfg = resolve_s3_mount_config(&s3_args())
+            .expect("ok")
+            .expect("some");
+        assert_eq!(cfg.bucket, "my-bucket");
+        assert_eq!(cfg.region, "auto");
+        assert_eq!(cfg.access_key, "AKID");
+        assert_eq!(cfg.secret_key, "SECRET");
+        assert_eq!(cfg.mount_point, "/s3", "defaults to /s3");
+        assert_eq!(cfg.prefix, None);
+        assert_eq!(cfg.endpoint, None);
+    }
+
+    #[test]
+    fn custom_mount_point_and_optional_fields_pass_through() {
+        let args = CommonArgs {
+            s3_mount: Some("/cloud".into()),
+            s3_prefix: Some("team/data".into()),
+            s3_endpoint: Some("https://acct.r2.cloudflarestorage.com".into()),
+            ..s3_args()
+        };
+        let cfg = resolve_s3_mount_config(&args).expect("ok").expect("some");
+        assert_eq!(cfg.mount_point, "/cloud");
+        assert_eq!(cfg.prefix.as_deref(), Some("team/data"));
+        assert_eq!(
+            cfg.endpoint.as_deref(),
+            Some("https://acct.r2.cloudflarestorage.com")
+        );
+    }
+
+    #[test]
+    fn missing_region_errors_naming_the_env_var() {
+        let args = CommonArgs {
+            s3_region: None,
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_REGION"), "err was: {err}");
+    }
+
+    #[test]
+    fn missing_access_key_errors_naming_the_env_var() {
+        let args = CommonArgs {
+            s3_access_key_id: None,
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_ACCESS_KEY_ID"), "err was: {err}");
+    }
+
+    #[test]
+    fn missing_secret_key_errors_naming_the_env_var() {
+        let args = CommonArgs {
+            s3_secret_access_key: None,
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_SECRET_ACCESS_KEY"), "err was: {err}");
+    }
+
+    #[test]
+    fn root_mount_point_is_rejected() {
+        let args = CommonArgs {
+            s3_mount: Some("/".into()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("sub-path"), "err was: {err}");
+    }
+
+    #[test]
+    fn trailing_slash_only_mount_point_is_rejected() {
+        let args = CommonArgs {
+            s3_mount: Some("///".into()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("sub-path"), "err was: {err}");
+    }
+
+    #[test]
+    fn trailing_slash_is_trimmed_to_canonical_mount_point() {
+        // `/s3/` must canonicalize to `/s3` — the kernel router strips
+        // trailing slashes on lookup, so a stored `/s3/` key would never
+        // match `/s3/file` and writes would silently fall through to the
+        // local root mount.
+        for raw in ["/s3/", "/s3///", "/cloud/data/"] {
+            let args = CommonArgs {
+                s3_mount: Some(raw.into()),
+                ..s3_args()
+            };
+            let cfg = resolve_s3_mount_config(&args).expect("ok").expect("some");
+            assert_eq!(
+                cfg.mount_point,
+                raw.trim_end_matches('/'),
+                "trailing slash not trimmed for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_mount_point_is_rejected() {
+        // A non-absolute mount point can't be routed; reject it rather than
+        // register a key the syscall path treats as invalid.
+        let args = CommonArgs {
+            s3_mount: Some("s3".into()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("absolute"), "err was: {err}");
+    }
+
+    #[test]
+    fn parent_dir_traversal_mount_point_is_rejected() {
+        let args = CommonArgs {
+            s3_mount: Some("/s3/../etc".into()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains(".."), "err was: {err}");
+    }
+
+    #[test]
+    fn truly_absent_bucket_is_no_mount() {
+        // Unset NEXUS_S3_BUCKET (None) → no S3 mount declared; boot as before.
+        let cfg = resolve_s3_mount_config(&base_args()).expect("ok");
+        assert!(cfg.is_none());
+    }
+
+    #[test]
+    fn present_but_blank_bucket_fails_fast() {
+        // An exported-but-empty / whitespace `NEXUS_S3_BUCKET` (e.g. a k8s
+        // Secret typo) must fail fast naming the var, NOT silently disable the
+        // mount and let `/s3` writes fall through to the local root.
+        for blank in ["", "   "] {
+            let args = CommonArgs {
+                s3_bucket: Some(blank.into()),
+                ..s3_args()
+            };
+            let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+            assert!(err.contains("NEXUS_S3_BUCKET"), "err was: {err}");
+        }
+    }
+
+    #[test]
+    fn whitespace_only_required_fields_fail_fast() {
+        // Whitespace-only required fields (e.g. a poorly-templated Secret)
+        // must fail fast naming the var, not build a degenerate backend that
+        // only errors on first I/O.
+        let cases: [(fn(&mut CommonArgs), &str); 3] = [
+            (|a| a.s3_region = Some("   ".into()), "NEXUS_S3_REGION"),
+            (
+                |a| a.s3_access_key_id = Some("  ".into()),
+                "NEXUS_S3_ACCESS_KEY_ID",
+            ),
+            (
+                |a| a.s3_secret_access_key = Some(" ".into()),
+                "NEXUS_S3_SECRET_ACCESS_KEY",
+            ),
+        ];
+        for (mutate, var) in cases {
+            let mut args = s3_args();
+            mutate(&mut args);
+            let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+            assert!(err.contains(var), "expected {var} in err, got: {err}");
+        }
+    }
+
+    #[test]
+    fn federation_mount_collision_detection() {
+        let mut m = BTreeMap::new();
+        m.insert("/corp".to_string(), "corp".to_string());
+        m.insert("/family".to_string(), "family".to_string());
+        // Exact collision.
+        assert_eq!(federation_mount_collision("/corp", &m), Some("/corp"));
+        // Trailing-slash-insensitive (both sides normalized).
+        assert_eq!(federation_mount_collision("/corp/", &m), Some("/corp"));
+        // No collision for a distinct path.
+        assert_eq!(federation_mount_collision("/s3", &m), None);
+        // Empty federation map never collides.
+        assert_eq!(federation_mount_collision("/s3", &BTreeMap::new()), None);
+    }
+
+    #[test]
+    fn shadowed_s3_mount_is_detected() {
+        // A persisted federation mount replayed at the S3 path carries a
+        // target_zone_id → must be detected as a shadow and fail fast.
+        let kernel = Arc::new(Kernel::new());
+        let router = kernel.vfs_router_arc();
+        router.add_federation_mount("/s3", contracts::ROOT_ZONE_ID, None, "corp", false);
+        let err = verify_s3_mount_not_shadowed(&kernel, "/s3")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("shadowed"), "err was: {err}");
+    }
+
+    #[test]
+    fn unshadowed_s3_mount_passes_verification() {
+        // A plain local mount (no target_zone_id), as the S3 mount installs,
+        // is not a shadow → verification passes. Absence of any mount also
+        // passes (nothing to shadow).
+        let kernel = Arc::new(Kernel::new());
+        let router = kernel.vfs_router_arc();
+        router.add_mount("/s3", contracts::ROOT_ZONE_ID, None, false);
+        assert!(verify_s3_mount_not_shadowed(&kernel, "/s3").is_ok());
+        assert!(verify_s3_mount_not_shadowed(&kernel, "/never-mounted").is_ok());
+    }
+
+    #[test]
+    fn empty_string_required_field_is_treated_as_missing() {
+        // An exported-but-empty env var arrives as Some(""); it must not
+        // build a degenerate backend.
+        let args = CommonArgs {
+            s3_region: Some(String::new()),
+            ..s3_args()
+        };
+        let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+        assert!(err.contains("NEXUS_S3_REGION"), "err was: {err}");
+    }
 }

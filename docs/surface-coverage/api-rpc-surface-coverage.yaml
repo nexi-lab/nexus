@@ -488,7 +488,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus agent register alice_bot "Alice Bot"; nexus agent update alice_bot --metadata tier=gold; nexus
     agent transition alice_bot CONNECTED; nexus agent heartbeat alice_bot'
-  correctness_test: null
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py
   perf_class: control
   perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
     and :92
@@ -4596,7 +4596,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus agent info alice_bot; RPC: await nx.service("agent_rpc").get_agent("alice_bot")'
-  correctness_test: null
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py
   perf_class: control
   perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
     and :92
@@ -4719,7 +4719,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac namespace-get file --format json
-  correctness_test: null
+  correctness_test: tests/e2e/server/test_namespace_async_e2e.py
   perf_class: setup
   perf_link: setup/control-plane schema operation; not on the per-request permission hot path
   gap_issue: null
@@ -4770,7 +4770,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: get_rebac_option("max_depth")'
-  correctness_test: null
+  correctness_test: tests/surface_coverage/test_rebac_surface_story.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -6215,7 +6215,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac namespace-delete document --yes
-  correctness_test: null
+  correctness_test: tests/e2e/server/test_namespace_async_e2e.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -6232,7 +6232,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac namespace-list --format json
-  correctness_test: null
+  correctness_test: tests/e2e/server/test_namespace_async_e2e.py
   perf_class: setup
   perf_link: setup/control-plane schema operation; not on the per-request permission hot path
   gap_issue: null
@@ -7935,7 +7935,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac check agent alice write file /workspace/secret.txt
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
@@ -7952,7 +7952,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac check-batch checks.json --format summary
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
@@ -7986,7 +7986,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac create agent alice direct_owner file /workspace/secret.txt
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -8003,7 +8003,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac delete tuple-123
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -8020,7 +8020,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac expand read file /workspace/secret.txt
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
@@ -8055,7 +8055,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac explain agent alice write file /workspace/secret.txt --verbose
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -8072,7 +8072,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: rebac_list_objects(relation="direct_viewer", subject=("user", "alice"), zone_id="corp")'
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
@@ -8089,7 +8089,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus rebac list --subject-type user --subject-id alice --format json
-  correctness_test: null
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
@@ -8175,7 +8175,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: register_namespace({"object_type": "file", "config": {"relations": {}, "permissions": {}}})'
-  correctness_test: null
+  correctness_test: tests/e2e/server/test_namespace_async_e2e.py
   perf_class: setup
   perf_link: setup/control-plane schema operation; not on the per-request permission hot path
   gap_issue: null
@@ -8334,7 +8334,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: revoke_share_by_id("tuple-share-1")'
-  correctness_test: null
+  correctness_test: tests/unit/services/test_share_link_service.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -9344,7 +9344,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: set_rebac_option("max_depth", 15)'
-  correctness_test: null
+  correctness_test: tests/surface_coverage/test_rebac_surface_story.py
   perf_class: control
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
@@ -9430,7 +9430,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus snapshot create --description "Before migration"; nexus snapshot info TXN; nexus snapshot entries
     TXN; nexus snapshot commit TXN; nexus snapshot restore TXN'
-  correctness_test: null
+  correctness_test: tests/unit/services/snapshot/test_service.py
   perf_class: control
   perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: 4137
@@ -10562,7 +10562,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus agent update alice_bot --description "Planner" --metadata tier=gold; RPC: update_agent("alice_bot",
     metadata={"tier":"gold"})'
-  correctness_test: null
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py
   perf_class: control
   perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
     and :92

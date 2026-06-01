@@ -17,7 +17,7 @@
 
 use super::engine::CASError;
 use super::remote::RemoteChunkFetcher;
-use super::transport::LocalCASTransport;
+use super::transport::{CasTransport, LocalCASTransport};
 use serde_json::{json, Value};
 use std::sync::Arc;
 

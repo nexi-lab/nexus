@@ -27,6 +27,55 @@ pub(crate) fn blob_key(content_id: &str) -> String {
     )
 }
 
+/// Blob-storage surface required by `CASEngine` and the CDC chunking layer.
+///
+/// Extracted from `LocalCASTransport` (#4264) so the engine is storage-agnostic:
+/// any backend that can store/fetch/delete content-addressed blobs (plus their
+/// `.meta` sidecars) can drive the full CAS engine — hashing, dedup, CDC
+/// chunking, scatter-gather — without re-implementing it. `LocalCASTransport`
+/// is the first impl; `S3CasTransport` (cas-2, #4265) is next.
+///
+/// Object-safe: stored behind `Arc<dyn CasTransport>` inside `CASEngine` and
+/// passed as `&dyn CasTransport` into the object-safe `ChunkingStrategy` /
+/// `ChunkAssembler` DI traits (which cannot take a generic transport).
+/// `Send + Sync` because `CASEngine` is shared across threads via `Arc`.
+pub trait CasTransport: Send + Sync {
+    /// Read a CAS blob by content hash. `io::ErrorKind::NotFound` if absent.
+    fn read_blob(&self, content_id: &str) -> io::Result<Vec<u8>>;
+
+    /// Write content, returning its BLAKE3 hash. Dedup: an existing blob is a no-op.
+    fn write_blob(&self, content: &[u8]) -> io::Result<String>;
+
+    /// Like `write_blob` but also reports whether storage was touched (`true`)
+    /// or the write hit CAS dedup (`false`).
+    fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)>;
+
+    /// Write a pre-hashed blob. `true` if written, `false` if it already
+    /// existed (dedup). Used by scatter-gather chunk write-back.
+    fn write_blob_with_hash(&self, content: &[u8], content_id: &str) -> io::Result<bool>;
+
+    /// Does a CAS blob exist for this hash?
+    fn exists(&self, content_id: &str) -> bool;
+
+    /// Size in bytes of a CAS blob. `io::ErrorKind::NotFound` if absent.
+    fn blob_size(&self, content_id: &str) -> io::Result<u64>;
+
+    /// Read the `.meta` JSON sidecar. `io::ErrorKind::NotFound` if absent.
+    fn read_meta(&self, content_id: &str) -> io::Result<Vec<u8>>;
+
+    /// Write the `.meta` JSON sidecar.
+    fn write_meta(&self, content_id: &str, meta: &[u8]) -> io::Result<()>;
+
+    /// Cheap existence check for the `.meta` sidecar.
+    fn meta_exists(&self, content_id: &str) -> bool;
+
+    /// Remove a CAS blob. `io::ErrorKind::NotFound` if absent.
+    fn remove_blob(&self, content_id: &str) -> io::Result<()>;
+
+    /// Remove the `.meta` sidecar. Absorbs `NotFound` (best-effort).
+    fn remove_meta(&self, content_id: &str) -> io::Result<()>;
+}
+
 /// Pure Rust CAS transport for local filesystem blob I/O.
 ///
 /// Thread-safe: all mutable state is behind `Mutex`. Designed to be shared
@@ -89,10 +138,25 @@ impl LocalCASTransport {
         Ok(())
     }
 
+    /// Get the absolute path of a CAS blob (for debugging/diagnostics).
+    #[allow(dead_code)]
+    pub fn blob_path(&self, content_id: &str) -> PathBuf {
+        let key = blob_key(content_id);
+        self.resolve(&key)
+    }
+
+    /// Root path of the transport (for diagnostics).
+    #[allow(dead_code)]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl CasTransport for LocalCASTransport {
     /// Read a CAS blob by content hash.
     ///
     /// Corresponds to Python `LocalTransport.fetch(CASAddressingEngine._blob_key(hash))`.
-    pub fn read_blob(&self, content_id: &str) -> io::Result<Vec<u8>> {
+    fn read_blob(&self, content_id: &str) -> io::Result<Vec<u8>> {
         let key = blob_key(content_id);
         let path = self.resolve(&key);
         std::fs::read(&path)
@@ -104,7 +168,7 @@ impl LocalCASTransport {
     ///
     /// Corresponds to Python `CASAddressingEngine.write_content()` (hash) +
     /// `LocalTransport.store()` (I/O).
-    pub fn write_blob(&self, content: &[u8]) -> io::Result<String> {
+    fn write_blob(&self, content: &[u8]) -> io::Result<String> {
         self.write_blob_tracked(content).map(|(h, _)| h)
     }
 
@@ -112,7 +176,7 @@ impl LocalCASTransport {
     /// touched disk (`true`) or hit CAS dedup (`false`). Used by
     /// `CASEngine::write_content_tracked` to drive the `is_new` bit that
     /// Python's on_write_callback (e.g. Zoekt reindex) keys off.
-    pub fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)> {
+    fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)> {
         let hash = lib::hash::hash_content(content);
         let key = blob_key(&hash);
         let path = self.resolve(&key);
@@ -147,7 +211,7 @@ impl LocalCASTransport {
     /// Used when the hash was computed externally (e.g., by CASEngine with
     /// bloom filter check). Returns `true` if the blob was actually written,
     /// `false` if it already existed (CAS dedup).
-    pub fn write_blob_with_hash(&self, content: &[u8], content_id: &str) -> io::Result<bool> {
+    fn write_blob_with_hash(&self, content: &[u8], content_id: &str) -> io::Result<bool> {
         let key = blob_key(content_id);
         let path = self.resolve(&key);
 
@@ -176,31 +240,34 @@ impl LocalCASTransport {
     /// Check if a CAS blob exists on disk.
     ///
     /// Corresponds to Python `LocalTransport.exists(CASAddressingEngine._blob_key(hash))`.
-    pub fn exists(&self, content_id: &str) -> bool {
+    fn exists(&self, content_id: &str) -> bool {
         let key = blob_key(content_id);
         let path = self.resolve(&key);
         path.is_file()
     }
 
-    /// Get the absolute path of a CAS blob (for debugging/diagnostics).
-    #[allow(dead_code)]
-    pub fn blob_path(&self, content_id: &str) -> PathBuf {
-        let key = blob_key(content_id);
-        self.resolve(&key)
-    }
-
     /// Get the size of a CAS blob in bytes.
-    pub fn blob_size(&self, content_id: &str) -> io::Result<u64> {
+    fn blob_size(&self, content_id: &str) -> io::Result<u64> {
         let key = blob_key(content_id);
         let path = self.resolve(&key);
         Ok(std::fs::metadata(&path)?.len())
     }
 
-    /// Remove a CAS blob from disk.
+    /// Read a `.meta` JSON sidecar.
+    ///
+    /// Corresponds to Python `CASAddressingEngine._read_meta()`'s transport fetch.
+    /// Returns `io::ErrorKind::NotFound` when the sidecar is absent (callers
+    /// treat that as "not chunked").
+    fn read_meta(&self, content_id: &str) -> io::Result<Vec<u8>> {
+        let key = blob_key(content_id);
+        let path = self.resolve(&format!("{}.meta", key));
+        std::fs::read(&path)
+    }
+
     /// Write a `.meta` JSON sidecar next to a blob (used by CDC to flag
     /// chunked manifests for GC + Python-side `is_chunked` compatibility).
     /// Path is `cas/<h[0..2]>/<h[2..4]>/<hash>.meta`.
-    pub fn write_meta(&self, content_id: &str, meta: &[u8]) -> io::Result<()> {
+    fn write_meta(&self, content_id: &str, meta: &[u8]) -> io::Result<()> {
         let key = blob_key(content_id);
         let path = self.resolve(&format!("{}.meta", key));
         self.ensure_parent(&path)?;
@@ -216,28 +283,23 @@ impl LocalCASTransport {
         Ok(())
     }
 
-    /// Read a `.meta` JSON sidecar.
-    ///
-    /// Corresponds to Python `CASAddressingEngine._read_meta()`'s transport fetch.
-    /// Returns `io::ErrorKind::NotFound` when the sidecar is absent (callers
-    /// treat that as "not chunked").
-    pub fn read_meta(&self, content_id: &str) -> io::Result<Vec<u8>> {
-        let key = blob_key(content_id);
-        let path = self.resolve(&format!("{}.meta", key));
-        std::fs::read(&path)
-    }
-
     /// Cheap existence check for the `.meta` sidecar — used by `is_chunked`
     /// as a fast-reject before the full read + JSON parse.
-    pub fn meta_exists(&self, content_id: &str) -> bool {
+    fn meta_exists(&self, content_id: &str) -> bool {
         let key = blob_key(content_id);
         let path = self.resolve(&format!("{}.meta", key));
         path.is_file()
     }
 
+    fn remove_blob(&self, content_id: &str) -> io::Result<()> {
+        let key = blob_key(content_id);
+        let path = self.resolve(&key);
+        std::fs::remove_file(&path)
+    }
+
     /// Remove the `.meta` sidecar. Absorbs `NotFound` (best-effort, matches
     /// Python's `contextlib.suppress(Exception)` in `delete_chunked`).
-    pub fn remove_meta(&self, content_id: &str) -> io::Result<()> {
+    fn remove_meta(&self, content_id: &str) -> io::Result<()> {
         let key = blob_key(content_id);
         let path = self.resolve(&format!("{}.meta", key));
         match std::fs::remove_file(&path) {
@@ -245,18 +307,6 @@ impl LocalCASTransport {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e),
         }
-    }
-
-    pub fn remove_blob(&self, content_id: &str) -> io::Result<()> {
-        let key = blob_key(content_id);
-        let path = self.resolve(&key);
-        std::fs::remove_file(&path)
-    }
-
-    /// Root path of the transport (for diagnostics).
-    #[allow(dead_code)]
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 }
 
@@ -519,6 +569,24 @@ mod tests {
         assert!(!transport.meta_exists(&hash));
         // Blob itself is untouched
         assert!(transport.exists(&hash));
+    }
+
+    #[test]
+    fn test_dyn_cas_transport_roundtrip() {
+        let (_tmp, transport) = setup();
+        let t: &dyn CasTransport = &transport;
+        let hash = t.write_blob(b"via trait object").unwrap();
+        assert!(t.exists(&hash));
+        assert_eq!(t.read_blob(&hash).unwrap(), b"via trait object");
+        let (h2, is_new) = t.write_blob_tracked(b"via trait object").unwrap();
+        assert_eq!(h2, hash);
+        assert!(!is_new); // dedup hit
+        assert_eq!(t.blob_size(&hash).unwrap(), 16);
+        t.write_meta(&hash, b"{}").unwrap();
+        assert!(t.meta_exists(&hash));
+        t.remove_meta(&hash).unwrap();
+        t.remove_blob(&hash).unwrap();
+        assert!(!t.exists(&hash));
     }
 
     #[test]

@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use super::chunking::{finalize_manifest, read_and_verify_chunk, ChunkingStrategy};
 use super::remote::RemoteChunkFetcher;
-use super::transport::LocalCASTransport;
+use super::transport::{CasTransport, LocalCASTransport};
 
 /// Error type for CAS operations.
 #[derive(Debug)]

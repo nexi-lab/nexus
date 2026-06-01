@@ -32,6 +32,7 @@ Agent harnesses (LangGraph, CrewAI, AutoGen) decide **what** agents do — tool 
 
 **Steering engineering** — infrastructure that sets boundaries and rules so agents operate safely at scale:
 - Permission boundaries (ReBAC) — agents only touch what they're allowed to
+- Data sovereignty (zone isolation, local-first, encrypted-at-rest) — data never leaves its zone without explicit policy; cross-zone computation uses privacy-preserving protocols
 - IPC primitives (DT_PIPE ~0.5us, DT_STREAM append-only log) — zero-copy inter-agent messaging
 - Process isolation (ProcessTable, workspace boundaries) — agent crashes don't cascade
 - Distributed coordination (Raft consensus, advisory locks) — multi-node without split-brain
@@ -79,8 +80,8 @@ graph TD
     end
 
     subgraph Infra ["Infra Layer (one per node)"]
-        NX["NEXUS (distributed VFS: storage, IPC, permissions, coordination)"]
-        SR["SUDOROUTER (unified LLM access: Claude, GPT, Gemini, local models)"]
+        NX["NEXUS (distributed VFS: storage, IPC, permissions, coordination, data sovereignty)"]
+        SR["SUDOROUTER (unified LLM access + confidential computing: Claude, GPT, Gemini, local models)"]
     end
 
     SW --> SC
@@ -94,7 +95,7 @@ graph TD
     NX -->|as backend| SR
 ```
 
-Agents don't need to integrate Nexus directly. The **hook layer** (Node.js `fs` interception / Python `open` patching) transparently routes any agent's file I/O through Nexus syscalls — the agent gets federation, A2A, collaboration, approval hooks, and security for free without changing a line of code. **SudoRouter** provides unified model access (any agent, any model, no provider lock-in); agents reach it either through Nexus (as a mounted backend) or directly.
+Agents don't need to integrate Nexus directly. The **hook layer** (Node.js `fs` interception / Python `open` patching) transparently routes any agent's file I/O through Nexus syscalls — the agent gets federation, A2A, collaboration, approval hooks, and security for free without changing a line of code. **SudoRouter** provides unified model access (any agent, any model, no provider lock-in) with confidential computing for privacy-preserving inference and training; agents reach it either through Nexus (as a mounted backend) or directly.
 
 ### Nexus internals
 
@@ -127,7 +128,7 @@ graph TD
 
 | Category | Services |
 |---|---|
-| **Security** | ReBAC (Zanzibar-style permissions), Auth (API key, OAuth, mTLS), Delegation (SSH-style scoped access), Identity (DID + verifiable credentials) |
+| **Security & Privacy** | ReBAC (Zanzibar-style permissions), Auth (API key, OAuth, mTLS), Delegation (SSH-style scoped access), Identity (DID + verifiable credentials), Encrypted Storage (AES-256-GCM), Zone data isolation |
 | **Search & Context** | Keyword search (BM25S), Semantic search (pgvector), Section-aware grep, Content parsing (50+ formats via pdf-inspector), Catalog (schema extraction) |
 | **Agent Runtime** | Agent Registry, Agent Runtime (subprocess + managed), IPC (DT_PIPE + DT_STREAM), Sandbox (Docker isolation), Task Manager |
 | **Collaboration** | Share Links (capability URLs), Workspace boundaries, A2A Protocol, MCP (30+ tools, mount external MCP servers) |
@@ -233,6 +234,7 @@ asyncio.run(main())
 | **Pay** | Credit ledger with reserves, policies, approvals | Metered compute for multi-tenant deployments |
 | **IPC** | DT_PIPE (FIFO) + DT_STREAM (append-only log) | Sub-microsecond inter-agent messaging |
 | **Federation** | Multi-zone Raft consensus with mTLS TOFU | Span data centers without a central coordinator |
+| **Data Sovereignty** | Zone isolation, local-first, AES-256-GCM encrypted storage | Data stays in its zone; cross-zone ops use privacy-preserving computation |
 | **Sandbox** | Docker-backed execution environments | Isolated code execution per agent |
 
 See [Services and Drivers](#nexus-internals) for the full categorized list.

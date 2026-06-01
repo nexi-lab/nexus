@@ -353,6 +353,107 @@ def test_s3_r2_dt_mount_builds_backend_and_round_trips(cluster_grpc):
 # ── bridge-3 (#4263): S3 mount declared via NEXUS_S3_* at startup ─────────────
 
 
+def _s3_env_from_r2(env_r2: dict[str, str]) -> dict[str, str]:
+    """Map the test's ``NEXUS_R2_*`` creds onto the daemon's ``NEXUS_S3_*``
+    startup-mount surface (mount point ``/s3``)."""
+    return {
+        "NEXUS_S3_BUCKET": env_r2["NEXUS_R2_BUCKET"],
+        "NEXUS_S3_REGION": env_r2["NEXUS_R2_REGION"],
+        "NEXUS_S3_ACCESS_KEY_ID": env_r2["NEXUS_R2_ACCESS_KEY_ID"],
+        "NEXUS_S3_SECRET_ACCESS_KEY": env_r2["NEXUS_R2_SECRET_ACCESS_KEY"],
+        "NEXUS_S3_ENDPOINT": env_r2["NEXUS_R2_ENDPOINT"],
+        "NEXUS_S3_MOUNT": "/s3",
+    }
+
+
+def _spawn_cluster_s3(
+    binary: str,
+    data_dir: Path,
+    s3_env: dict[str, str],
+    log_handle,
+    log_path: Path,
+) -> tuple[subprocess.Popen, str]:
+    """Boot ``nexus-cluster`` with an S3 startup mount on ``data_dir`` and
+    return ``(proc, "host:port")`` once the gRPC port accepts connections.
+
+    Retries a few ephemeral ports (TOCTOU between pick and bind). Raises
+    ``AssertionError`` if it never binds; calls ``pytest.skip`` when the
+    binary lacks the ``driver-s3`` arm (so the gate is a clean skip, not a
+    confusing failure).
+    """
+    last_err = ""
+    for _attempt in range(5):
+        s = socket.socket()
+        try:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        finally:
+            s.close()
+        addr = f"127.0.0.1:{port}"
+        proc = subprocess.Popen(
+            [
+                binary,
+                "--no-tls",
+                "--hostname",
+                "127.0.0.1",
+                "--bind-addr",
+                addr,
+                "--data-dir",
+                str(data_dir),
+                "--bootstrap-mode",
+                "static",
+            ],
+            env={
+                **os.environ,
+                **s3_env,
+                "RUST_LOG": os.environ.get("RUST_LOG") or "info,nexus_raft=info",
+            },
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                log_text = log_path.read_text()
+                last_err = (
+                    f"nexus-cluster exited early (rc={proc.returncode}); log: {log_text[-600:]}"
+                )
+                # A driver-not-compiled exit is an explicit skip signal.
+                if "not enabled" in log_text:
+                    pytest.skip(
+                        "cluster binary lacks the s3 driver — rebuild with "
+                        "`cargo build -p nexus-cluster --features driver-s3`"
+                    )
+                break
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    return proc, addr
+            except OSError:
+                time.sleep(0.2)
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+    raise AssertionError(
+        f"nexus-cluster (S3 startup) failed to bind; last err: {last_err or 'timed out'}"
+    )
+
+
+def _terminate(proc: subprocess.Popen | None) -> None:
+    """SIGTERM then SIGKILL-after-grace teardown for a spawned daemon."""
+    if proc is None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+
+
 @pytest.fixture()
 def cluster_grpc_s3(tmp_path: Path) -> Iterator[str]:
     """Boot ``nexus-cluster`` with ``NEXUS_S3_*`` set so the daemon mounts
@@ -375,101 +476,14 @@ def cluster_grpc_s3(tmp_path: Path) -> Iterator[str]:
     log_path = tmp_path / "cluster.log"
     log_handle = log_path.open("wb")
     proc: subprocess.Popen | None = None
-    addr: str | None = None
-
-    s3_env = {
-        "NEXUS_S3_BUCKET": env_r2["NEXUS_R2_BUCKET"],
-        "NEXUS_S3_REGION": env_r2["NEXUS_R2_REGION"],
-        "NEXUS_S3_ACCESS_KEY_ID": env_r2["NEXUS_R2_ACCESS_KEY_ID"],
-        "NEXUS_S3_SECRET_ACCESS_KEY": env_r2["NEXUS_R2_SECRET_ACCESS_KEY"],
-        "NEXUS_S3_ENDPOINT": env_r2["NEXUS_R2_ENDPOINT"],
-        "NEXUS_S3_MOUNT": "/s3",
-    }
-
-    def _cleanup() -> None:
-        if proc is not None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    proc.wait(timeout=5)
-        log_handle.close()
+    s3_env = _s3_env_from_r2(env_r2)
 
     try:
-        last_err = ""
-        for _attempt in range(5):
-            s = socket.socket()
-            try:
-                s.bind(("127.0.0.1", 0))
-                port = s.getsockname()[1]
-            finally:
-                s.close()
-            candidate_addr = f"127.0.0.1:{port}"
-            proc = subprocess.Popen(
-                [
-                    nexus_cluster,
-                    "--no-tls",
-                    "--hostname",
-                    "127.0.0.1",
-                    "--bind-addr",
-                    candidate_addr,
-                    "--data-dir",
-                    str(data_dir),
-                    "--bootstrap-mode",
-                    "static",
-                ],
-                env={
-                    **os.environ,
-                    **s3_env,
-                    "RUST_LOG": os.environ.get("RUST_LOG") or "info,nexus_raft=info",
-                },
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-            )
-            deadline = time.monotonic() + 20
-            bound = False
-            while time.monotonic() < deadline:
-                if proc.poll() is not None:
-                    log_text = log_path.read_text()
-                    last_err = (
-                        f"nexus-cluster exited early (rc={proc.returncode}); log: {log_text[-600:]}"
-                    )
-                    # A driver-not-compiled exit is an explicit skip signal.
-                    if "not enabled" in log_text:
-                        pytest.skip(
-                            "cluster binary lacks the s3 driver — rebuild with "
-                            "`cargo build -p nexus-cluster --features driver-s3`"
-                        )
-                    break
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                        bound = True
-                        break
-                except OSError:
-                    time.sleep(0.2)
-            if bound:
-                addr = candidate_addr
-                break
-            with contextlib.suppress(ProcessLookupError):
-                proc.terminate()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.wait(timeout=5)
-            proc = None
-
-        if addr is None:
-            raise AssertionError(
-                f"nexus-cluster (S3 startup) failed to bind; last err: {last_err or 'timed out'}"
-            )
+        proc, addr = _spawn_cluster_s3(nexus_cluster, data_dir, s3_env, log_handle, log_path)
         yield addr
-    except BaseException:
-        _cleanup()
-        raise
-    else:
-        _cleanup()
+    finally:
+        _terminate(proc)
+        log_handle.close()
 
 
 @requires_e2e
@@ -500,3 +514,70 @@ def test_startup_s3_mount_round_trips(cluster_grpc_s3):
     finally:
         with contextlib.suppress(Exception):
             stub.Delete(vfs_pb2.DeleteRequest(path=obj_path), timeout=30)
+
+
+@requires_e2e
+@requires_r2
+def test_startup_s3_mount_survives_restart(tmp_path: Path):
+    """bridge-3 (#4263) — metadata for objects written through the startup
+    S3 mount survives a daemon restart on the same data dir.
+
+    Guards against the startup mount's path→content_id metadata landing in a
+    non-durable boot metastore: write via ``/s3`` in one process, stop the
+    daemon, reboot it on the *same* data dir + bucket config, and read the
+    same path back. A regression that routed startup-mount metadata to a
+    throwaway store would write+read fine in one process (the round-trip
+    test) but fail this read-after-restart.
+    """
+    import grpc
+
+    from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+
+    binary = _resolve_worktree_cluster_binary()
+    if not binary:
+        pytest.skip(
+            "nexus-cluster binary not built (`cargo build -p nexus-cluster --features driver-s3`)"
+        )
+    env_r2 = _r2_env()
+    assert env_r2 is not None  # guarded by @requires_r2
+    s3_env = _s3_env_from_r2(env_r2)
+
+    data_dir = tmp_path / "data"
+    obj_path = f"/s3/bridge3-restart-{os.getpid()}.txt"
+    body = b"startup-s3-survives-restart-" + str(os.getpid()).encode()
+
+    # ---- Boot 1: write through /s3, confirm the round-trip ----
+    log1 = tmp_path / "boot1.log"
+    h1 = log1.open("wb")
+    proc1: subprocess.Popen | None = None
+    try:
+        proc1, addr1 = _spawn_cluster_s3(binary, data_dir, s3_env, h1, log1)
+        stub1 = vfs_pb2_grpc.NexusVFSServiceStub(grpc.insecure_channel(addr1))
+        w = stub1.Write(vfs_pb2.WriteRequest(path=obj_path, content=body), timeout=30)
+        assert not w.is_error, w.error_payload
+        assert w.size == len(body)
+    finally:
+        _terminate(proc1)
+        h1.close()
+
+    # ---- Boot 2: SAME data dir, fresh process — metadata must persist ----
+    log2 = tmp_path / "boot2.log"
+    h2 = log2.open("wb")
+    proc2: subprocess.Popen | None = None
+    addr2: str | None = None
+    try:
+        proc2, addr2 = _spawn_cluster_s3(binary, data_dir, s3_env, h2, log2)
+        stub2 = vfs_pb2_grpc.NexusVFSServiceStub(grpc.insecure_channel(addr2))
+        r = stub2.Read(vfs_pb2.ReadRequest(path=obj_path), timeout=30)
+        assert not r.is_error, (
+            "read after restart failed — startup S3 mount metadata is not "
+            f"durable across restart: {r.error_payload!r}"
+        )
+        assert r.content == body, "read-back bytes differ after restart"
+    finally:
+        if addr2 is not None:
+            with contextlib.suppress(Exception):
+                stub_cleanup = vfs_pb2_grpc.NexusVFSServiceStub(grpc.insecure_channel(addr2))
+                stub_cleanup.Delete(vfs_pb2.DeleteRequest(path=obj_path), timeout=30)
+        _terminate(proc2)
+        h2.close()

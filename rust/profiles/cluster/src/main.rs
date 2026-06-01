@@ -779,8 +779,19 @@ fn nonempty_owned(v: &Option<String>) -> Option<&str> {
 ///     empty, or the mount point is illegal. The
 ///     message names the offending env var.
 fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>> {
-    let Some(bucket) = nonempty_owned(&common.s3_bucket) else {
-        return Ok(None); // not declared
+    // `NEXUS_S3_BUCKET` is the declaration trigger. Distinguish "truly
+    // absent" (`None` → no S3 mount, boot exactly as before) from "present
+    // but blank" (`Some("")` / whitespace → a typo'd or empty-Secret config
+    // that must fail fast, not silently disable the mount and let `/s3`
+    // writes fall through to the local root). clap surfaces an
+    // exported-empty env var as `Some("")`, so this case is reachable.
+    let bucket = match common.s3_bucket.as_deref() {
+        None => return Ok(None),
+        Some(b) if b.trim().is_empty() => anyhow::bail!(
+            "NEXUS_S3_BUCKET is set but blank; unset it to disable the S3 \
+             mount, or provide a bucket name"
+        ),
+        Some(b) => b,
     };
 
     let region = nonempty_owned(&common.s3_region).ok_or_else(|| {
@@ -1134,6 +1145,28 @@ mod tests {
         };
         let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
         assert!(err.contains(".."), "err was: {err}");
+    }
+
+    #[test]
+    fn truly_absent_bucket_is_no_mount() {
+        // Unset NEXUS_S3_BUCKET (None) → no S3 mount declared; boot as before.
+        let cfg = resolve_s3_mount_config(&base_args()).expect("ok");
+        assert!(cfg.is_none());
+    }
+
+    #[test]
+    fn present_but_blank_bucket_fails_fast() {
+        // An exported-but-empty / whitespace `NEXUS_S3_BUCKET` (e.g. a k8s
+        // Secret typo) must fail fast naming the var, NOT silently disable the
+        // mount and let `/s3` writes fall through to the local root.
+        for blank in ["", "   "] {
+            let args = CommonArgs {
+                s3_bucket: Some(blank.into()),
+                ..s3_args()
+            };
+            let err = resolve_s3_mount_config(&args).unwrap_err().to_string();
+            assert!(err.contains("NEXUS_S3_BUCKET"), "err was: {err}");
+        }
     }
 
     #[test]

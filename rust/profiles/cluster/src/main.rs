@@ -450,7 +450,8 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // Built through the same provider the gRPC bridge uses, so the
     // driver gate fails fast on a slim binary without `driver-s3`.
     // Runs before the VFS gRPC server serves so the mount is live.
-    mount_declared_s3(&kernel, &common)?;
+    // Re-verified after the coordinator replays persisted mounts (below).
+    let s3_mount_point = mount_declared_s3(&kernel, &common)?;
 
     // Build VFS gRPC service as tonic Routes — co-hosted on the raft
     // port via ZoneManager. Uses NoAuth (mTLS is the boundary).
@@ -547,6 +548,14 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         coord.install_with_kernel(zm.clone(), zm.runtime_handle(), &self_address, &kernel);
         coord
     };
+
+    // `install_with_kernel` replayed any DT_MOUNT entries persisted in the
+    // root zone's raft state. If one of those federation mounts sits at the
+    // declared S3 mount point, it just overwrote the S3 backend — fail fast
+    // rather than silently serve the wrong zone under that path.
+    if let Some(mount_point) = &s3_mount_point {
+        verify_s3_mount_not_shadowed(&kernel, mount_point)?;
+    }
 
     // Outbound peer-blob client — installs a `PeerBlobClient` over
     // the kernel-shared tokio runtime, replacing the `NoopPeerBlobClient`
@@ -866,15 +875,18 @@ fn resolve_s3_mount_config(common: &CommonArgs) -> Result<Option<S3MountConfig>>
     }))
 }
 
-/// Construct + mount the declared S3 backend at boot, if any.
+/// Construct + mount the declared S3 backend at boot, if any. Returns the
+/// VFS mount point on success so the caller can re-verify it after the
+/// federation coordinator replays persisted mounts (see
+/// [`verify_s3_mount_not_shadowed`]).
 ///
-/// No-op when `NEXUS_S3_BUCKET` is unset. Builds through the registered
-/// `ObjectStoreProvider` (the same path the gRPC bridge uses), so the
-/// driver gate is honored: on a slim binary without `--features
+/// `Ok(None)` when `NEXUS_S3_BUCKET` is unset. Builds through the
+/// registered `ObjectStoreProvider` (the same path the gRPC bridge uses),
+/// so the driver gate is honored: on a slim binary without `--features
 /// driver-s3`, `build` returns the gate error and this fails fast.
-fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
+fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<Option<String>> {
     let Some(cfg) = resolve_s3_mount_config(common)? else {
-        return Ok(()); // no S3 mount declared
+        return Ok(None); // no S3 mount declared
     };
 
     // Fail fast on a mount-point collision with static federation topology:
@@ -969,6 +981,33 @@ fn mount_declared_s3(kernel: &Arc<Kernel>, common: &CommonArgs) -> Result<()> {
         endpoint = cfg.endpoint.as_deref().unwrap_or("default (AWS)"),
         "mounted S3-compatible backend",
     );
+    Ok(Some(cfg.mount_point))
+}
+
+/// Fail fast if the S3 mount at `mount_point` was shadowed by a
+/// federation mount the coordinator replayed from persisted raft state at
+/// startup. The env-time collision check ([`federation_mount_collision`])
+/// only sees the current `NEXUS_FEDERATION_MOUNTS`; a DT_MOUNT persisted
+/// by a prior `share`/`join` is replayed by `install_with_kernel` *after*
+/// the S3 mount is installed, and `VFSRouter::add` overwrites the occupied
+/// canonical key — so the route would silently resolve to the federation
+/// zone instead of the bucket. A federation mount carries a
+/// `target_zone_id`; the S3 local mount does not, so that field is the
+/// discriminator. Call after the coordinator install/replay completes.
+fn verify_s3_mount_not_shadowed(kernel: &Arc<Kernel>, mount_point: &str) -> Result<()> {
+    let router = kernel.vfs_router_arc();
+    // Extract the shadowing target zone (if any) into an owned value so the
+    // dashmap `Ref` is dropped before `router` at the end of the function.
+    let shadow_zone: Option<String> = router
+        .get(mount_point, contracts::ROOT_ZONE_ID)
+        .and_then(|entry| entry.target_zone_id.clone());
+    if let Some(zone) = shadow_zone {
+        anyhow::bail!(
+            "NEXUS_S3_MOUNT {mount_point:?} was shadowed by a persisted federation \
+             mount (target zone {zone:?}) replayed at startup; unmount it \
+             (`nexusd-cluster unmount {mount_point}`) before serving S3 there",
+        );
+    }
     Ok(())
 }
 
@@ -1243,6 +1282,31 @@ mod tests {
         assert_eq!(federation_mount_collision("/s3", &m), None);
         // Empty federation map never collides.
         assert_eq!(federation_mount_collision("/s3", &BTreeMap::new()), None);
+    }
+
+    #[test]
+    fn shadowed_s3_mount_is_detected() {
+        // A persisted federation mount replayed at the S3 path carries a
+        // target_zone_id → must be detected as a shadow and fail fast.
+        let kernel = Arc::new(Kernel::new());
+        let router = kernel.vfs_router_arc();
+        router.add_federation_mount("/s3", contracts::ROOT_ZONE_ID, None, "corp", false);
+        let err = verify_s3_mount_not_shadowed(&kernel, "/s3")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("shadowed"), "err was: {err}");
+    }
+
+    #[test]
+    fn unshadowed_s3_mount_passes_verification() {
+        // A plain local mount (no target_zone_id), as the S3 mount installs,
+        // is not a shadow → verification passes. Absence of any mount also
+        // passes (nothing to shadow).
+        let kernel = Arc::new(Kernel::new());
+        let router = kernel.vfs_router_arc();
+        router.add_mount("/s3", contracts::ROOT_ZONE_ID, None, false);
+        assert!(verify_s3_mount_not_shadowed(&kernel, "/s3").is_ok());
+        assert!(verify_s3_mount_not_shadowed(&kernel, "/never-mounted").is_ok());
     }
 
     #[test]

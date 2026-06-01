@@ -11,7 +11,7 @@
 //! * [`engine`]    — `CASEngine`: hash + dedup + read/write driver.
 //! * [`chunking`]  — CDC chunking + chunked-write / chunked-read.
 //! * [`remote`]    — `RemoteChunkFetcher`: scatter-gather across peer nodes.
-//! * [`transport`] — `LocalCASTransport`: on-disk blob fetch/store/exists.
+//! * [`transport`] — `CasTransport` trait + `LocalCASTransport` impl: blob fetch/store/exists.
 
 pub mod chunking;
 pub mod engine;

@@ -1658,7 +1658,7 @@ impl StateMachine for FullStateMachine {
 
         // Update in-memory state only after successful commit. Release
         // ordering pairs with Acquire loads in sync readers (e.g. the
-        // PyO3 gate helper) so a reader observing a new last_applied
+        // gRPC gate helper) so a reader observing a new last_applied
         // value also sees the metadata write that preceded it.
         self.last_applied.store(index, Ordering::Release);
 

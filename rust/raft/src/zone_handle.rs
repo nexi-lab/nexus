@@ -1,9 +1,8 @@
 //! Pure-Rust `ZoneHandle` — per-zone raft node handle.
 //!
-//! Kernel-internal: only syscalls / dispatch hooks / 4-pillar storage
-//! traits cross the PyO3 boundary, so `ZoneHandle` is never exposed to
-//! Python directly. The kernel crate uses zone handles without going
-//! through the PyO3 boundary.
+//! Kernel-internal: `ZoneHandle` is never exposed to Python directly.
+//! The kernel crate uses zone handles in-process; Python interacts
+//! via gRPC.
 
 #![cfg(all(feature = "grpc", has_protos))]
 

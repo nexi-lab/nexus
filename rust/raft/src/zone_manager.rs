@@ -1,8 +1,8 @@
 //! Pure-Rust `ZoneManager` — multi-zone raft registry owner.
 //!
 //! Kernel-internal: the kernel crate owns an `Arc<ZoneManager>` and
-//! reads env vars at `Kernel::new()` time to bootstrap federation
-//! without any PyO3 seam. Never exposed to Python.
+//! reads env vars at `Kernel::new()` time to bootstrap federation.
+//! Never exposed to Python.
 
 #![cfg(all(feature = "grpc", has_protos))]
 
@@ -63,8 +63,8 @@ pub(crate) fn decode_file_metadata(
 
 /// Sync façade bridge to the inner runtime's async work.
 ///
-/// `ZoneManager` exposes a sync API to its callers (PyO3 wrappers,
-/// `nexusd-cluster`, `federation_server` daemon, kernel) and owns an
+/// `ZoneManager` exposes a sync API to its callers
+/// (`nexusd-cluster`, `federation_server` daemon, kernel) and owns an
 /// inner tokio `Runtime` that drives the raft `transport_loop`,
 /// driver tasks, tonic gRPC server / clients, and `spawn_blocking`
 /// redb I/O — all of which are `async fn` because tonic + tokio
@@ -72,8 +72,8 @@ pub(crate) fn decode_file_metadata(
 /// Bridging the sync façade to that async core requires `block_on`
 /// on the inner runtime's handle. Two callsite shapes coexist:
 ///
-/// * **Sync caller** (PyO3 main thread; binary `fn main()` before
-///   it spawns its runtime): no outer tokio context. `Handle::block_on`
+/// * **Sync caller** (binary `fn main()` before it spawns its
+///   runtime): no outer tokio context. `Handle::block_on`
 ///   parks the calling thread on the inner runtime — straight
 ///   forward, no panic.
 /// * **Async caller** (anything reachable from `#[tokio::main]` or

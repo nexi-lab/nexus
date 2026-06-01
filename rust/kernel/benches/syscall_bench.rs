@@ -2,7 +2,7 @@
 //!
 //! This is the production call path — sudocode/sudowork call
 //! `kernel.sys_read()` / `kernel.sys_write()` directly in-process,
-//! zero Python, zero PyO3.
+//! zero Python.
 //!
 //! Run:  cd rust/kernel && cargo bench syscall
 //!

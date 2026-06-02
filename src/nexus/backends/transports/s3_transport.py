@@ -61,6 +61,8 @@ class S3Transport:
         self,
         bucket_name: str,
         region_name: str | None = None,
+        endpoint_url: str | None = None,
+        signature_version: str = "s3v4",
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
@@ -71,6 +73,7 @@ class S3Transport:
         self.bucket_name = bucket_name
         self._operation_timeout = operation_timeout
         self._upload_timeout = upload_timeout
+        self.endpoint_url = endpoint_url
 
         if boto3 is None or Config is None:
             raise BackendError(
@@ -79,10 +82,16 @@ class S3Transport:
                 path=bucket_name,
             )
 
+        # Default region to "auto" when a custom endpoint is supplied without
+        # an explicit region (R2-friendly; MinIO/B2 accept it too).
+        if endpoint_url and not region_name:
+            region_name = "auto"
+
         try:
             boto_config = Config(
                 retries={"max_attempts": 3, "mode": "adaptive"},
                 max_pool_connections=25,
+                signature_version=signature_version,
             )
 
             session_kwargs: dict[str, Any] = {}
@@ -103,7 +112,10 @@ class S3Transport:
                     session_kwargs["aws_session_token"] = creds["aws_session_token"]
 
             session = boto3.Session(**session_kwargs)
-            self.s3_client = session.client("s3", config=boto_config)
+            client_kwargs: dict[str, Any] = {"config": boto_config}
+            if endpoint_url:
+                client_kwargs["endpoint_url"] = endpoint_url
+            self.s3_client = session.client("s3", **client_kwargs)
 
         except Exception as e:
             raise BackendError(
@@ -538,6 +550,31 @@ class S3Transport:
                 backend="s3",
                 path=key,
             ) from e
+
+    def get_mtime(self, key: str) -> float:
+        """Return the object's last-modified time as epoch seconds.
+
+        Used by ``CasGcService._list_keys_fallback`` to enforce the grace
+        period for unreferenced blobs. Returns 0.0 on any error so the
+        fallback safely skips deletion of objects whose timestamps it
+        can't read.
+        """
+        try:
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
+        except BotoClientError:
+            return 0.0
+        last_modified = response.get("LastModified")
+        if last_modified is None:
+            return 0.0
+        try:
+            return float(last_modified.timestamp())
+        except Exception:
+            logger.debug(
+                "get_mtime: unexpected LastModified type %s for %s",
+                type(last_modified).__name__,
+                key,
+            )
+            return 0.0
 
     def fingerprint(self, key: str) -> str:
         """Return a stable object fingerprint without downloading content."""

@@ -36,11 +36,26 @@ def test_endpoint_url_threads_into_session_client(fake_boto):
     assert kwargs["endpoint_url"] == "http://minio.local:9000"
 
 
-def test_endpoint_url_not_passed_when_unset(fake_boto):
+def test_endpoint_url_not_passed_when_unset(fake_boto, monkeypatch):
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
     _, session, _ = fake_boto
     S3Transport(bucket_name="b", region_name="us-east-1")
     kwargs = session.client.call_args.kwargs
     assert "endpoint_url" not in kwargs
+
+
+def test_env_endpoint_url_triggers_auto_region(fake_boto, monkeypatch):
+    """AWS_ENDPOINT_URL env (no constructor arg, no region) → custom endpoint is
+    recognized, so the region falls back to 'auto' instead of mis-signing as AWS."""
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://acct.r2.cloudflarestorage.com")
+    monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+    _, session, _ = fake_boto
+    session.region_name = None
+    t = S3Transport(bucket_name="b", access_key_id="ak", secret_access_key="sk")
+    client_kwargs = session.client.call_args.kwargs
+    assert client_kwargs.get("region_name") == "auto"
+    assert t.endpoint_url == "https://acct.r2.cloudflarestorage.com"
 
 
 def test_region_defaults_to_auto_when_endpoint_set_and_no_region(fake_boto):

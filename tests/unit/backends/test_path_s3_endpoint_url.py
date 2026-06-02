@@ -34,9 +34,12 @@ def test_path_s3_threads_endpoint_url(fake_boto_for_path_s3):
     assert backend._s3_transport.endpoint_url == "http://minio.local:9000"
 
 
-def test_path_s3_endpoint_url_optional(fake_boto_for_path_s3):
+def test_path_s3_endpoint_url_optional(fake_boto_for_path_s3, monkeypatch):
     from nexus.backends.storage.path_s3 import PathS3Backend
 
+    # No explicit endpoint and no ambient endpoint env → None.
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
     backend = PathS3Backend(
         bucket_name="b",
         region_name="us-east-1",

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -73,7 +74,15 @@ class S3Transport:
         self.bucket_name = bucket_name
         self._operation_timeout = operation_timeout
         self._upload_timeout = upload_timeout
-        self.endpoint_url = endpoint_url
+        # Effective endpoint: explicit arg, or botocore's global endpoint env vars
+        # (AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL) which boto3 honors even without
+        # an explicit arg. Drives both the exposed attr and the region fallback so
+        # an env-only custom endpoint isn't mis-signed as default AWS.
+        self.endpoint_url = (
+            endpoint_url
+            or os.environ.get("AWS_ENDPOINT_URL_S3")
+            or os.environ.get("AWS_ENDPOINT_URL")
+        )
 
         if boto3 is None or Config is None:
             raise BackendError(
@@ -110,11 +119,11 @@ class S3Transport:
 
             # Resolve the SigV4 region: an explicit region wins, then whatever
             # boto3 resolves through its own chain (AWS_DEFAULT_REGION/AWS_REGION,
-            # AWS_PROFILE, ~/.aws/config). A custom endpoint still needs a region,
-            # so only fall back to "auto" (which R2 requires) when boto3 resolves
-            # none — never silently override a profile/env region with "auto".
+            # AWS_PROFILE, ~/.aws/config). A custom endpoint (explicit or env) still
+            # needs a region, so only fall back to "auto" (which R2 requires) when
+            # boto3 resolves none — never silently override a profile/env region.
             resolved_region = (
-                region_name or session.region_name or ("auto" if endpoint_url else None)
+                region_name or session.region_name or ("auto" if self.endpoint_url else None)
             )
             self.region_name = resolved_region
 

@@ -229,9 +229,10 @@ impl CASEngine {
             })
     }
 
-    /// Expose the transport for direct blob access (read-back in tests,
-    /// pre-hashed writes). Returns a trait object — concrete-only methods
-    /// (`blob_path`, `root`) are intentionally not reachable here.
+    /// Expose the transport for direct blob access (test read-back today;
+    /// anticipated pre-hashed write paths). Returns a trait object — the
+    /// concrete-only methods (`blob_path`, `root`) are intentionally not
+    /// reachable here.
     pub fn transport(&self) -> &dyn CasTransport {
         self.transport.as_ref()
     }
@@ -1043,7 +1044,7 @@ mod tests {
         assert!(engine.is_chunked(&new_hash));
     }
 
-    // ---------- Task 3: CASEngine drives Arc<dyn CasTransport> ----------
+    // ---------- #4264: CASEngine over a non-local CasTransport ----------
 
     /// In-memory `CasTransport` double — proves `CASEngine` drives a backend with
     /// zero filesystem involvement (the cas-2 / S3 shape, exercised cheaply).

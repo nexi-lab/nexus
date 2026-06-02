@@ -27,8 +27,8 @@ All production changes live in the `kernel` crate's CAS module; the `backends` c
 - **Modify** `rust/kernel/src/core/cas/transport.rs` — add `pub trait CasTransport`; move the 11 blob-surface methods from `impl LocalCASTransport` into `impl CasTransport for LocalCASTransport`. Keep `new`, `resolve`, `ensure_parent`, `blob_path`, `root` inherent (local-only / private helpers, never reached through `&dyn`).
 - **Modify** `rust/kernel/src/core/cas/chunking.rs` — change all 5 `transport: &LocalCASTransport` parameters to `&dyn CasTransport`; swap the import.
 - **Modify** `rust/kernel/src/core/cas/engine.rs` — field `transport: LocalCASTransport` → `Arc<dyn CasTransport>`; constructors accept `impl CasTransport + 'static`; `transport()` returns `&dyn CasTransport`; pass `self.transport.as_ref()` to chunking helpers.
-- **Modify** `rust/backends/src/transports/api/ai/openai/mod.rs` and `.../anthropic/mod.rs` — add `use kernel::cas_transport::CasTransport;` to the `#[cfg(test)] mod tests` block so `engine.transport().read_blob(...)` (now a trait method on `&dyn CasTransport`) resolves.
-- **Untouched** (verified): `remote.rs` (no transport coupling), `cas_local.rs` (`CASEngine::new(transport)` still type-checks — `LocalCASTransport: CasTransport + 'static`), `abc/object_store.rs` (`as_cas` signature unchanged), `vfs_router.rs`, `lib.rs` re-exports (`kernel::cas_transport::CasTransport` is exposed automatically once the trait is `pub`).
+- **Untouched** (verified): the entire `backends` crate — including `cas_local.rs` (`CASEngine::new(transport)` still type-checks — `LocalCASTransport: CasTransport + 'static`) and the openai/anthropic test modules. **Correction (during execution):** an earlier draft of this plan expected the openai/anthropic test modules to need `use kernel::cas_transport::CasTransport;` so that `engine.transport().read_blob(...)` resolves. That premise was **wrong** — `transport()` returns `&dyn CasTransport`, and a method call on a trait-object value resolves the method through the type (which already names the trait), so the trait does **not** need to be in scope. Adding the import produces a dead `unused_imports` warning instead. The backends crate compiles, tests (77), and lints clean with **no change at all**. See Task 4.
+- **Untouched** (verified): `remote.rs` (no transport coupling), `abc/object_store.rs` (`as_cas` signature unchanged), `vfs_router.rs`, `lib.rs` re-exports (`kernel::cas_transport::CasTransport` is exposed automatically once the trait is `pub`).
 
 ## The 11 trait methods (union of what engine.rs + chunking.rs invoke on the transport)
 
@@ -442,41 +442,26 @@ git commit -m "refactor(cas): CASEngine drives Arc<dyn CasTransport> (#4264)"
 
 ---
 
-### Task 4: Fix `backends` test imports and run the full downstream suite
+### Task 4: Verify the `backends` crate needs no change (NO-OP — premise was wrong)
 
-**Files:**
-- Modify: `rust/backends/src/transports/api/ai/openai/mod.rs` (`mod tests`)
-- Modify: `rust/backends/src/transports/api/ai/anthropic/mod.rs` (`mod tests`)
+**Outcome:** the `backends` crate requires **no edits**. This task's original premise — that the openai/anthropic test modules need `use kernel::cas_transport::CasTransport;` for `b.engine.transport().read_blob(...)` to resolve — is **false**. `transport()` returns `&dyn CasTransport`; a method call on a trait-object value resolves through the type (which names the trait), so the trait does not need to be in scope. Adding the import yields a dead `unused_imports` warning (caught in the test build; the per-crate `cargo clippy -- -D warnings` would *not* flag it because it does not lint `#[cfg(test)]` code, which is why the warning is easy to miss).
 
-- [ ] **Step 1: Confirm the breakage**
+**Files:** none changed.
 
-Run: `cargo test -p backends`
-Expected: FAIL to compile — `b.engine.transport().read_blob(...)` (openai/mod.rs:216,218 and anthropic/mod.rs:216,218) now calls a `CasTransport` trait method on `&dyn CasTransport`; without the trait in scope: `error[E0599]: no method named `read_blob``.
-
-- [ ] **Step 2: Bring the trait into scope in both test modules**
-
-In the `#[cfg(test)] mod tests { ... }` block of **each** file, add as the first `use`:
-
-```rust
-    use kernel::cas_transport::CasTransport;
-```
-
-(`kernel::cas_transport::CasTransport` is exported automatically — `lib.rs:73` re-exports the module and the trait is `pub`. No `lib.rs` change.)
-
-- [ ] **Step 3: Run the backends suite + clippy**
+- [ ] **Step 1: Confirm backends compiles, tests, and lints clean with no change**
 
 Run: `cargo test -p backends`
-Expected: PASS — `storage::cas_local::tests::*` (CAS + path + connector + partial-write), `transports::api::ai::openai::*`, `transports::api::ai::anthropic::*` all green.
+Expected: PASS — `storage::cas_local::tests::*` (CAS + path + connector + partial-write), `transports::api::ai::openai::*`, `transports::api::ai::anthropic::*`, `transports::blob::s3::*`, streaming — all green (77 tests).
+
+Run (surfaces any unused-import warning the CI clippy would miss): `cargo test -p backends --no-run 2>&1 | grep -i warning`
+Expected: no output.
 
 Run: `cd rust/backends && cargo clippy -- -D warnings && cd "$OLDPWD"`
 Expected: no warnings.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 2: No commit** — nothing to change. (If a `CasTransport` import was added to either test module by mistake, remove it.)
 
-```bash
-git add rust/backends/src/transports/api/ai/openai/mod.rs rust/backends/src/transports/api/ai/anthropic/mod.rs
-git commit -m "test(backends): import CasTransport for engine.transport() trait calls (#4264)"
-```
+**Lesson for future trait extractions:** widening an accessor's return type from a concrete type to `&dyn Trait` does **not** ripple a "import the trait" requirement to call sites — trait-object method dispatch needs the trait named in the *type*, not in scope. The import-in-scope rule only applies when calling a trait method on a **concrete** receiver.
 
 ---
 

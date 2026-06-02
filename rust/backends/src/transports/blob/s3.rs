@@ -17,7 +17,7 @@ use std::io;
 type HmacSha256 = Hmac<Sha256>;
 
 /// S3-compatible object storage backend.
-pub(crate) struct S3Backend {
+pub(crate) struct S3Transport {
     backend_name: String,
     bucket: String,
     prefix: String,
@@ -28,7 +28,7 @@ pub(crate) struct S3Backend {
     runtime: tokio::runtime::Runtime,
 }
 
-impl S3Backend {
+impl S3Transport {
     pub(crate) fn new(
         name: &str,
         bucket: &str,
@@ -195,7 +195,7 @@ mod hex {
     }
 }
 
-impl ObjectStore for S3Backend {
+impl ObjectStore for S3Transport {
     fn name(&self) -> &str {
         &self.backend_name
     }
@@ -364,8 +364,8 @@ fn s3_uri_encode(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn mk(endpoint: Option<&str>) -> S3Backend {
-        S3Backend::new(
+    fn mk(endpoint: Option<&str>) -> S3Transport {
+        S3Transport::new(
             "test",
             "mybucket",
             "",
@@ -508,7 +508,7 @@ mod tests {
 
     /// Live round-trip against real S3-compatible storage (Cloudflare R2).
     /// Skipped unless `NEXUS_R2_*` env creds are set, so CI / dev without
-    /// creds is unaffected. Exercises the actual `S3Backend` SigV4 signing +
+    /// creds is unaffected. Exercises the actual `S3Transport` SigV4 signing +
     /// path-style `request_path` against the configured endpoint — the
     /// end-to-end proof that the bridge-2 (#4262) S3 path works against R2.
     #[test]
@@ -523,7 +523,7 @@ mod tests {
             return;
         };
         let region = std::env::var("NEXUS_R2_REGION").unwrap_or_else(|_| "auto".into());
-        let backend = S3Backend::new(
+        let backend = S3Transport::new(
             "r2-live",
             &bucket,
             "bridge2-e2e",
@@ -532,7 +532,7 @@ mod tests {
             &sk,
             Some(&endpoint),
         )
-        .expect("S3Backend::new against R2");
+        .expect("S3Transport::new against R2");
         let ctx = kernel::kernel::OperationContext::new("test", "root", true, None, true);
         let content_id = format!("bridge2e2e{}", std::process::id());
         let body = b"cloudflare-r2-through-rust-s3backend";

@@ -55,6 +55,21 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             required=False,
             env_var="AWS_DEFAULT_REGION",
         ),
+        "endpoint_url": ConnectionArg(
+            type=ArgType.STRING,
+            description="Custom S3-compatible endpoint URL (R2/MinIO/B2/Tencent COS/LocalStack)",
+            required=False,
+            env_var="AWS_ENDPOINT_URL",
+        ),
+        "signature_version": ConnectionArg(
+            type=ArgType.STRING,
+            description=(
+                "S3 SigV4 variant; defaults to 's3v4'. Use 's3' for legacy "
+                "providers that don't support SigV4."
+            ),
+            required=False,
+            default="s3v4",
+        ),
         "credentials_path": ConnectionArg(
             type=ArgType.PATH,
             description="Path to AWS credentials JSON file",
@@ -101,6 +116,9 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
         session_token: str | None = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
+        *,
+        endpoint_url: str | None = None,
+        signature_version: str = "s3v4",
     ):
         try:
             from nexus.backends.transports.s3_transport import S3Transport
@@ -108,6 +126,8 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             transport = S3Transport(
                 bucket_name=bucket_name,
                 region_name=region_name,
+                endpoint_url=endpoint_url,
+                signature_version=signature_version,
                 access_key_id=access_key_id,
                 secret_access_key=secret_access_key,
                 session_token=session_token,
@@ -126,6 +146,15 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
                 versioning_enabled=versioning_enabled,
             )
             self._s3_transport = transport
+            # Mirror the endpoint and region the transport actually resolved
+            # (explicit arg → AWS_ENDPOINT_URL[_S3] env for endpoint; explicit →
+            # AWS_REGION → boto3 chain → "auto" for region) so callers and Rust
+            # metadata extraction see the effective values used for I/O and SigV4
+            # signing rather than the raw constructor args.
+            self.endpoint_url = transport.endpoint_url
+            self.region_name = transport.region_name
+            self._access_key_id = access_key_id
+            self._secret_access_key = secret_access_key
 
         except BackendError:
             raise

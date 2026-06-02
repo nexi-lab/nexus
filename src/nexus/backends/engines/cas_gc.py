@@ -190,17 +190,49 @@ class CasGcService:
 
         Used when transport doesn't support list_content_hashes().
         """
+        # A transport with no mtime source can't establish blob ages, so the
+        # grace period can't be enforced. Skip age-based collection *visibly*
+        # rather than silently — deleting on a 0.0 sentinel would risk fresh
+        # blobs, but silently retaining everything hides a misconfiguration.
+        if not hasattr(transport, "get_mtime"):
+            logger.warning(
+                "CAS GC fallback: transport %s exposes neither list_content_hashes "
+                "nor get_mtime — cannot determine blob ages; skipping age-based "
+                "collection (no blobs deleted). Add a timestamp source to enable GC.",
+                type(transport).__name__,
+            )
+            return []
+
         blob_keys, _ = transport.list_keys(prefix="cas/", delimiter="")
         entries: list[tuple[str, float]] = []
+        skipped = 0
         for blob_key in blob_keys:
             if blob_key.endswith(".meta"):
                 continue
             content_hash = blob_key.split("/")[-1]
             try:
-                mtime = transport.get_mtime(blob_key) if hasattr(transport, "get_mtime") else 0.0
+                mtime = transport.get_mtime(blob_key)
             except Exception:
-                mtime = 0.0
+                # Unknown timestamp — e.g. a transient S3 HeadObject failure on an
+                # object that still exists. Skip rather than treat as ancient: a
+                # 0.0 sentinel falls outside the grace window at the caller and
+                # would delete a possibly-fresh unreferenced blob (data loss).
+                skipped += 1
+                continue
+            if not mtime or mtime <= 0:
+                skipped += 1
+                continue
             entries.append((content_hash, mtime))
+        if skipped:
+            # Visibility: if mtime is unreadable for many/all keys (e.g. HeadObject
+            # denied/throttled/mis-signed), those blobs are retained, not collected.
+            # Warn once per pass so a wholesale failure isn't a silent storage leak.
+            logger.warning(
+                "CAS GC fallback: skipped %d blob(s) with unreadable mtime; they were "
+                "NOT collected this pass. Persistent skips may indicate HeadObject "
+                "permission/throttling/signing errors on the backend.",
+                skipped,
+            )
         return entries
 
     def _scan_namespace(self, referenced: set[str]) -> None:

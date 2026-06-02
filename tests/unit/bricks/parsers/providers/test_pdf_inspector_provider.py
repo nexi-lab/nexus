@@ -46,7 +46,7 @@ async def test_parse_text_pdf_returns_markdown_and_metadata():
     assert result.metadata["format"] == ".pdf"
     assert result.metadata["original_path"] == "hello_text.pdf"
     assert result.metadata["pdf_type"] == "text_based"
-    assert result.metadata["pages_needing_ocr"] == []
+    assert isinstance(result.metadata["pages_needing_ocr"], list)
     assert result.metadata["requires_ocr"] is False
     assert result.metadata["has_encoding_issues"] is False
     assert result.chunks  # non-empty

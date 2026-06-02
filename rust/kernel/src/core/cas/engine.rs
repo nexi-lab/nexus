@@ -19,7 +19,9 @@ use serde_json::{json, Value};
 
 use super::chunking::{finalize_manifest, read_and_verify_chunk, ChunkingStrategy};
 use super::remote::RemoteChunkFetcher;
-use super::transport::{CasTransport, LocalCASTransport};
+use super::transport::CasTransport;
+#[cfg(test)]
+use super::transport::LocalCASTransport;
 
 /// Error type for CAS operations.
 #[derive(Debug)]
@@ -61,18 +63,19 @@ impl From<io::Error> for CASError {
     }
 }
 
-/// Pure Rust CAS engine: hash + dedup + local blob I/O.
+/// Pure Rust CAS engine: hash + dedup + pluggable transport.
 ///
-/// Combines `LocalCASTransport` with BLAKE3 hashing to provide
-/// complete content-addressable read/write without Python involvement.
+/// Holds an `Arc<dyn CasTransport>` so any backend (local filesystem,
+/// in-memory, S3, GCS, …) can be injected at construction time.
 ///
 /// CDC chunk reassembly uses the `ChunkAssembler` DI trait (composition,
 /// matching Python's `CASAddressingEngine(cdc_engine=...)` pattern).
 ///
-/// Thread-safe: all mutable state is in `LocalCASTransport` (which uses Mutex).
+/// Thread-safe: all mutable state lives inside the transport impl and
+/// the bloom `RwLock`.
 #[allow(dead_code)]
 pub struct CASEngine {
-    transport: LocalCASTransport,
+    transport: Arc<dyn CasTransport>,
     chunk_assembler: Option<Arc<dyn super::chunking::ChunkAssembler>>,
     chunking_strategy: Option<Arc<dyn super::chunking::ChunkingStrategy>>,
     /// Optional scatter-gather remote-chunk fetcher. When set, any local
@@ -87,12 +90,12 @@ pub struct CASEngine {
 
 #[allow(dead_code)]
 impl CASEngine {
-    /// Create a new CASEngine backed by a local filesystem transport.
+    /// Create a new CASEngine with an arbitrary transport.
     /// CDC chunk reassembly (read) + chunked-manifest write are enabled by
     /// default via `ChunkedManifestAssembler` + `FastCDCStrategy`.
-    pub fn new(transport: LocalCASTransport) -> Self {
+    pub fn new(transport: impl CasTransport + 'static) -> Self {
         Self {
-            transport,
+            transport: Arc::new(transport),
             chunk_assembler: Some(super::chunking::default_chunk_assembler()),
             chunking_strategy: Some(super::chunking::default_chunking_strategy()),
             fetcher: None,
@@ -109,11 +112,11 @@ impl CASEngine {
     /// `MessageBoundaryStrategy` here; generic CAS defaults to FastCDC via
     /// `new()`.
     pub fn with_strategy(
-        transport: LocalCASTransport,
+        transport: impl CasTransport + 'static,
         strategy: Arc<dyn ChunkingStrategy>,
     ) -> Self {
         Self {
-            transport,
+            transport: Arc::new(transport),
             chunk_assembler: Some(super::chunking::default_chunk_assembler()),
             chunking_strategy: Some(strategy),
             fetcher: None,
@@ -156,7 +159,7 @@ impl CASEngine {
         if let Some(assembler) = &self.chunk_assembler {
             let fetcher = self.fetcher.as_deref();
             if let Some(reassembled) =
-                assembler.try_reassemble(&data, &self.transport, fetcher, origins)?
+                assembler.try_reassemble(&data, self.transport.as_ref(), fetcher, origins)?
             {
                 return Ok(reassembled);
             }
@@ -178,7 +181,7 @@ impl CASEngine {
     pub fn write_content_tracked(&self, content: &[u8]) -> Result<(String, bool), CASError> {
         let result = if let Some(strategy) = &self.chunking_strategy {
             if strategy.should_chunk(content) {
-                strategy.write_chunked(content, &self.transport)?
+                strategy.write_chunked(content, self.transport.as_ref())?
             } else {
                 self.transport.write_blob_tracked(content)?
             }
@@ -226,10 +229,11 @@ impl CASEngine {
             })
     }
 
-    /// Expose transport for direct access (used by Kernel for
-    /// pre-hashed writes where the hash is already known from dcache).
-    pub fn transport(&self) -> &LocalCASTransport {
-        &self.transport
+    /// Expose the transport for direct blob access (read-back in tests,
+    /// pre-hashed writes). Returns a trait object — concrete-only methods
+    /// (`blob_path`, `root`) are intentionally not reachable here.
+    pub fn transport(&self) -> &dyn CasTransport {
+        self.transport.as_ref()
     }
 
     /// Expose the chunking strategy for diagnostics / ad-hoc dispatch.
@@ -379,7 +383,7 @@ impl CASEngine {
         let fetcher = self.fetcher.as_deref();
         let mut assembled: Vec<u8> = Vec::new();
         for (_o, _l, hash) in &overlapping {
-            let bytes = read_and_verify_chunk(&self.transport, hash, fetcher, origins)?;
+            let bytes = read_and_verify_chunk(self.transport.as_ref(), hash, fetcher, origins)?;
             assembled.extend_from_slice(&bytes);
         }
 
@@ -560,7 +564,7 @@ impl CASEngine {
             let fetcher = self.fetcher.as_deref();
             let mut assembled: Vec<u8> = Vec::new();
             for (_o, _l, hash) in &affected {
-                let data = read_and_verify_chunk(&self.transport, hash, fetcher, origins)?;
+                let data = read_and_verify_chunk(self.transport.as_ref(), hash, fetcher, origins)?;
                 assembled.extend_from_slice(&data);
             }
 
@@ -612,7 +616,7 @@ impl CASEngine {
             chunk_count,
             total_size as usize,
             String::new(),
-            &self.transport,
+            self.transport.as_ref(),
         )
         .map(|(hash, _is_new)| hash)
     }
@@ -1037,6 +1041,120 @@ mod tests {
             .unwrap();
         assert_ne!(new_hash, manifest_hash);
         assert!(engine.is_chunked(&new_hash));
+    }
+
+    // ---------- Task 3: CASEngine drives Arc<dyn CasTransport> ----------
+
+    /// In-memory `CasTransport` double — proves `CASEngine` drives a backend with
+    /// zero filesystem involvement (the cas-2 / S3 shape, exercised cheaply).
+    #[derive(Default)]
+    struct MemoryCasTransport {
+        blobs: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+        metas: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+    }
+
+    impl CasTransport for MemoryCasTransport {
+        fn read_blob(&self, content_id: &str) -> io::Result<Vec<u8>> {
+            self.blobs
+                .lock()
+                .unwrap()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+        }
+        fn write_blob(&self, content: &[u8]) -> io::Result<String> {
+            Ok(self.write_blob_tracked(content)?.0)
+        }
+        fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)> {
+            let hash = lib::hash::hash_content(content);
+            let mut b = self.blobs.lock().unwrap();
+            if b.contains_key(&hash) {
+                return Ok((hash, false));
+            }
+            b.insert(hash.clone(), content.to_vec());
+            Ok((hash, true))
+        }
+        fn write_blob_with_hash(&self, content: &[u8], content_id: &str) -> io::Result<bool> {
+            let mut b = self.blobs.lock().unwrap();
+            if b.contains_key(content_id) {
+                return Ok(false);
+            }
+            b.insert(content_id.to_string(), content.to_vec());
+            Ok(true)
+        }
+        fn exists(&self, content_id: &str) -> bool {
+            self.blobs.lock().unwrap().contains_key(content_id)
+        }
+        fn blob_size(&self, content_id: &str) -> io::Result<u64> {
+            self.blobs
+                .lock()
+                .unwrap()
+                .get(content_id)
+                .map(|v| v.len() as u64)
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+        }
+        fn read_meta(&self, content_id: &str) -> io::Result<Vec<u8>> {
+            self.metas
+                .lock()
+                .unwrap()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+        }
+        fn write_meta(&self, content_id: &str, meta: &[u8]) -> io::Result<()> {
+            self.metas
+                .lock()
+                .unwrap()
+                .insert(content_id.to_string(), meta.to_vec());
+            Ok(())
+        }
+        fn meta_exists(&self, content_id: &str) -> bool {
+            self.metas.lock().unwrap().contains_key(content_id)
+        }
+        fn remove_blob(&self, content_id: &str) -> io::Result<()> {
+            self.blobs
+                .lock()
+                .unwrap()
+                .remove(content_id)
+                .map(|_| ())
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+        }
+        fn remove_meta(&self, content_id: &str) -> io::Result<()> {
+            self.metas.lock().unwrap().remove(content_id);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_engine_over_memory_transport_plain_blob() {
+        let engine = CASEngine::new(MemoryCasTransport::default());
+        let content = b"engine over a non-local transport";
+        let hash = engine.write_content(content).unwrap();
+        assert_eq!(hash.len(), 64);
+        assert!(engine.content_exists(&hash));
+        assert_eq!(engine.read_content(&hash).unwrap(), content);
+        engine.delete_content(&hash).unwrap();
+        assert!(!engine.content_exists(&hash));
+    }
+
+    #[test]
+    fn test_engine_over_memory_transport_chunked() {
+        // Drives the full CDC chunked write+read path through &dyn CasTransport
+        // against a non-local backend.
+        let engine = CASEngine::with_strategy(
+            MemoryCasTransport::default(),
+            Arc::new(super::super::chunking::MessageBoundaryStrategy),
+        );
+        let content = sample_conversation();
+        let manifest_hash = engine.write_content(&content).unwrap();
+        assert!(engine.is_chunked(&manifest_hash));
+
+        let parsed: Value = serde_json::from_slice(&content).unwrap();
+        let mut concat: Vec<u8> = Vec::new();
+        for msg in parsed.as_array().unwrap() {
+            concat.extend_from_slice(&serde_json::to_vec(msg).unwrap());
+        }
+        assert_eq!(engine.read_content(&manifest_hash).unwrap(), concat);
     }
 
     #[test]

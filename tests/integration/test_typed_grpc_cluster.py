@@ -316,11 +316,13 @@ def test_s3_r2_dt_mount_builds_backend_and_round_trips(cluster_grpc):
             entry_type=2,
             backend_name="r2-e2e",
             backend_type="s3",
-            s3_bucket=env["NEXUS_R2_BUCKET"],
-            aws_region=env["NEXUS_R2_REGION"],
-            aws_access_key=env["NEXUS_R2_ACCESS_KEY_ID"],
-            aws_secret_key=env["NEXUS_R2_SECRET_ACCESS_KEY"],
-            s3_endpoint=env["NEXUS_R2_ENDPOINT"],
+            backend_params={
+                "s3_bucket": env["NEXUS_R2_BUCKET"],
+                "aws_region": env["NEXUS_R2_REGION"],
+                "aws_access_key": env["NEXUS_R2_ACCESS_KEY_ID"],
+                "aws_secret_key": env["NEXUS_R2_SECRET_ACCESS_KEY"],
+                "s3_endpoint": env["NEXUS_R2_ENDPOINT"],
+            },
         ),
         timeout=30,
     )

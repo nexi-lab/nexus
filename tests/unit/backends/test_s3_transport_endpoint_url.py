@@ -147,3 +147,15 @@ def test_endpoint_url_attribute_exposed(fake_boto):
 def test_endpoint_url_attribute_none_when_unset(fake_boto):
     t = S3Transport(bucket_name="b", region_name="us-east-1")
     assert t.endpoint_url is None
+
+
+def test_old_positional_constructor_still_binds_credentials(fake_boto):
+    """Back-compat: the new params must not shift existing positional slots.
+    Old call: S3Transport(bucket, region, access_key, secret_key)."""
+    boto, session, _ = fake_boto
+    S3Transport("b", "us-east-1", "AKIAEXAMPLE", "secretkey")
+    session_kwargs = boto.Session.call_args.kwargs
+    assert session_kwargs.get("aws_access_key_id") == "AKIAEXAMPLE"
+    assert session_kwargs.get("aws_secret_access_key") == "secretkey"
+    # 3rd positional must remain access_key_id, not endpoint_url
+    assert "endpoint_url" not in session.client.call_args.kwargs

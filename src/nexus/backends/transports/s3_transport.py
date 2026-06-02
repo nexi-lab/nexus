@@ -62,14 +62,15 @@ class S3Transport:
         self,
         bucket_name: str,
         region_name: str | None = None,
-        endpoint_url: str | None = None,
-        signature_version: str = "s3v4",
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
         credentials_path: str | None = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
+        *,
+        endpoint_url: str | None = None,
+        signature_version: str = "s3v4",
     ) -> None:
         self.bucket_name = bucket_name
         self._operation_timeout = operation_timeout

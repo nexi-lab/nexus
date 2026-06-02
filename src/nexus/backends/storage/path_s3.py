@@ -109,8 +109,6 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
         self,
         bucket_name: str,
         region_name: str | None = None,
-        endpoint_url: str | None = None,
-        signature_version: str = "s3v4",
         credentials_path: str | None = None,
         prefix: str = "",
         access_key_id: str | None = None,
@@ -118,6 +116,9 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
         session_token: str | None = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
+        *,
+        endpoint_url: str | None = None,
+        signature_version: str = "s3v4",
     ):
         try:
             from nexus.backends.transports.s3_transport import S3Transport

@@ -53,6 +53,20 @@ def test_path_s3_connection_args_contains_endpoint_url():
     assert "endpoint_url" in PathS3Backend.CONNECTION_ARGS
 
 
+def test_path_s3_old_positional_constructor_preserved(fake_boto_for_path_s3, monkeypatch):
+    """Back-compat: new params must not shift existing positional slots. Old call:
+    PathS3Backend(bucket, region, credentials_path, prefix, access_key, secret_key)."""
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+    from nexus.backends.storage.path_s3 import PathS3Backend
+
+    backend = PathS3Backend("b", "us-east-1", None, "myprefix", "AKIA", "secret")
+    assert backend.prefix == "myprefix"  # 4th positional stays prefix
+    assert backend._access_key_id == "AKIA"  # 5th positional stays access_key_id
+    assert backend._secret_access_key == "secret"  # 6th positional stays secret
+    assert backend.endpoint_url is None  # new param not bound positionally
+
+
 def test_path_s3_signature_version_threads_through(fake_boto_for_path_s3):
     """signature_version reaches S3Transport / botocore.Config."""
     from nexus.backends.storage.path_s3 import PathS3Backend

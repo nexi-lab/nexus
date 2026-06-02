@@ -201,21 +201,7 @@ impl VfsServiceImpl {
             // version-skew guard only fires for known provider-built
             // backend_types, so it can't catch this. A genuine metadata-only /
             // federation mount carries none of these fields.
-            let has_backend_params = req.s3_bucket.is_some()
-                || req.s3_prefix.is_some()
-                || req.aws_region.is_some()
-                || req.aws_access_key.is_some()
-                || req.aws_secret_key.is_some()
-                || req.s3_endpoint.is_some()
-                || req.gcs_bucket.is_some()
-                || req.gcs_prefix.is_some()
-                || req.access_token.is_some()
-                || req.server_address.is_some()
-                || req.remote_auth_token.is_some()
-                || req.remote_ca_pem.is_some()
-                || req.remote_cert_pem.is_some()
-                || req.remote_key_pem.is_some()
-                || req.remote_timeout.is_some();
+            let has_backend_params = !req.backend_params.is_empty();
             if has_backend_params {
                 return error_setattr(Status::invalid_argument(
                     "DT_MOUNT carries backend-construction params but no \
@@ -240,58 +226,17 @@ impl VfsServiceImpl {
             ));
         };
 
-        // `peer_client` / `self_address` are owned locals the args borrow
-        // from; `runtime()` already returns a borrow.
+        // Build the opaque params map from the proto's `backend_params`.
+        // The proto map is already `HashMap<String, String>` — pass
+        // it directly. Empty values are handled by the provider's
+        // `param()` helper (coerces empty to None).
         let peer_client = self.kernel.peer_client_arc();
         let self_address = self.kernel.self_address_string();
         let args = ObjectStoreProviderArgs {
             backend_type: req.backend_type.as_str(),
             backend_name: req.backend_name.as_str(),
-            // Thread the mount point so the `remote` arm fails closed on
-            // sub-path mounts (RemoteBackend path reconstruction — #4273).
             mount_path: Some(req.path.as_str()),
-            local_root: None,
-            fsync: false,
-            follow_symlinks: false,
-            openai_base_url: None,
-            openai_api_key: None,
-            openai_model: None,
-            openai_blob_root: None,
-            anthropic_base_url: None,
-            anthropic_api_key: None,
-            anthropic_model: None,
-            anthropic_blob_root: None,
-            // `nonempty` coerces a present-but-empty wire value to `None` so
-            // the provider's required-arg checks reject it (a `Some("")`
-            // bucket / region / key would otherwise build a degenerate
-            // backend and report created=true — defeating the version-skew
-            // guard), and so an empty `s3_endpoint` falls back to AWS
-            // addressing instead of a malformed host.
-            s3_bucket: nonempty(req.s3_bucket.as_deref()),
-            s3_prefix: nonempty(req.s3_prefix.as_deref()),
-            aws_region: nonempty(req.aws_region.as_deref()),
-            aws_access_key: nonempty(req.aws_access_key.as_deref()),
-            aws_secret_key: nonempty(req.aws_secret_key.as_deref()),
-            s3_endpoint: nonempty(req.s3_endpoint.as_deref()),
-            gcs_bucket: nonempty(req.gcs_bucket.as_deref()),
-            gcs_prefix: nonempty(req.gcs_prefix.as_deref()),
-            access_token: nonempty(req.access_token.as_deref()),
-            root_folder_id: None,
-            bot_token: None,
-            default_channel: None,
-            hn_stories_per_feed: None,
-            hn_include_comments: None,
-            cli_command: None,
-            cli_service: None,
-            cli_auth_env_json: None,
-            x_bearer_token: None,
-            server_address: nonempty(req.server_address.as_deref()),
-            remote_auth_token: nonempty(req.remote_auth_token.as_deref()),
-            remote_ca_pem: req.remote_ca_pem.as_deref().filter(|b| !b.is_empty()),
-            remote_cert_pem: req.remote_cert_pem.as_deref().filter(|b| !b.is_empty()),
-            remote_key_pem: req.remote_key_pem.as_deref().filter(|b| !b.is_empty()),
-            // proto `optional double`; 0.0 / unset → provider default (30s).
-            remote_timeout: req.remote_timeout.unwrap_or(0.0),
+            backend_params: &req.backend_params,
             peer_client: &peer_client,
             self_address: self_address.as_deref(),
             runtime: self.kernel.runtime(),
@@ -1670,15 +1615,6 @@ fn error_copy(status: Status) -> CopyResponse {
 }
 
 /// Treat a present-but-empty wire string as absent. Proto3 `optional` fields
-/// arrive as `Some("")` when a client — or the Python extractor's `... or ""`
-/// defaults — sends an empty value, but the `ObjectStoreProvider`'s
-/// required-arg checks only reject `None`. Normalizing empty to `None` keeps
-/// the provider failing the build loudly on a missing bucket/region/key
-/// instead of constructing an unusable backend.
-fn nonempty(s: Option<&str>) -> Option<&str> {
-    s.filter(|v| !v.is_empty())
-}
-
 /// Historical synthetic ack for a DT_MOUNT the server intentionally does not
 /// build (metadata-only / federation no-op, or the boot-owned root remount):
 /// `created=false`, no error, no state change.
@@ -1822,8 +1758,12 @@ mod tests {
             match args.backend_type {
                 "s3" => {
                     // The handler must thread the request's S3 params through.
-                    let _bucket = args.s3_bucket.ok_or("fake s3: missing s3_bucket")?;
-                    let _region = args.aws_region.ok_or("fake s3: missing aws_region")?;
+                    let _bucket = args.backend_params.get("s3_bucket")
+                        .filter(|v| !v.is_empty())
+                        .ok_or("fake s3: missing s3_bucket")?;
+                    let _region = args.backend_params.get("aws_region")
+                        .filter(|v| !v.is_empty())
+                        .ok_or("fake s3: missing aws_region")?;
                     Ok(ObjectStoreBuildResult {
                         backend: Some(std::sync::Arc::new(MemBackend::default())),
                         pending_remote_meta_store: None,
@@ -1852,11 +1792,13 @@ mod tests {
                 entry_type: 2,
                 backend_name: "r2".into(),
                 backend_type: "s3".into(),
-                s3_bucket: Some("nexus-test".into()),
-                aws_region: Some("auto".into()),
-                aws_access_key: Some("AKID".into()),
-                aws_secret_key: Some("SECRET".into()),
-                s3_endpoint: Some("https://acct.r2.cloudflarestorage.com".into()),
+                backend_params: HashMap::from([
+                    ("s3_bucket".into(), "nexus-test".into()),
+                    ("aws_region".into(), "auto".into()),
+                    ("aws_access_key".into(), "AKID".into()),
+                    ("aws_secret_key".into(), "SECRET".into()),
+                    ("s3_endpoint".into(), "https://acct.r2.cloudflarestorage.com".into()),
+                ]),
                 ..Default::default()
             }))
             .await
@@ -1903,10 +1845,12 @@ mod tests {
                 auth_token: "test-key".into(),
                 entry_type: 2,
                 backend_type: "s3".into(),
-                s3_bucket: Some(String::new()), // present-but-empty → treated as absent
-                aws_region: Some("auto".into()),
-                aws_access_key: Some("k".into()),
-                aws_secret_key: Some("s".into()),
+                backend_params: HashMap::from([
+                    ("s3_bucket".into(), String::new()), // present-but-empty → treated as absent
+                    ("aws_region".into(), "auto".into()),
+                    ("aws_access_key".into(), "k".into()),
+                    ("aws_secret_key".into(), "s".into()),
+                ]),
                 ..Default::default()
             }))
             .await
@@ -2041,8 +1985,10 @@ mod tests {
                 auth_token: "test-key".into(),
                 entry_type: 2,
                 // backend_type omitted (empty) but S3 params present → malformed.
-                s3_bucket: Some("b".into()),
-                aws_region: Some("auto".into()),
+                backend_params: HashMap::from([
+                    ("s3_bucket".into(), "b".into()),
+                    ("aws_region".into(), "auto".into()),
+                ]),
                 ..Default::default()
             }))
             .await
@@ -2158,8 +2104,10 @@ mod tests {
                 path: "/r2".into(),
                 entry_type: 2,
                 backend_type: "s3".into(),
-                s3_bucket: Some("b".into()),
-                aws_region: Some("auto".into()),
+                backend_params: HashMap::from([
+                    ("s3_bucket".into(), "b".into()),
+                    ("aws_region".into(), "auto".into()),
+                ]),
                 ..Default::default()
             },
             &ctx,

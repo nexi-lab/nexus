@@ -624,13 +624,7 @@ class RPCTransport:
             is_external=bool(kwargs.get("is_external", False)),
             capacity=int(kwargs.get("capacity", 0) or 0),
         )
-        # Optional scalar fields — only set when the caller actually supplied
-        # a non-None value so `HasField` round-trips correctly. Bridge-2
-        # (#4262) forwards the DT_MOUNT backend-construction params produced by
-        # ``nexus_fs_metadata._extract_rust_backend_params`` (S3 / S3-compatible
-        # Cloudflare R2 + MinIO, GCS) plus the remote analogues, so the Rust
-        # gRPC handler can build a live backend via ``ObjectStoreProvider``
-        # instead of synthetically acking the mount.
+        # Optional scalar fields on the request message itself.
         for opt_field in (
             "mime_type",
             "content_id",
@@ -638,31 +632,39 @@ class RPCTransport:
             "created_at_ms",
             "size",
             "version",
-            # DT_MOUNT — S3 / S3-compatible (Cloudflare R2, MinIO)
+        ):
+            val = kwargs.get(opt_field)
+            if val is not None:
+                setattr(request, opt_field, val)
+        # DT_MOUNT backend-construction params go into the opaque
+        # ``backend_params`` map. The Rust provider parses per-backend
+        # keys from this map. PEM bytes are stored as UTF-8 strings.
+        _BACKEND_PARAM_KEYS = (
             "s3_bucket",
             "s3_prefix",
             "aws_region",
             "aws_access_key",
             "aws_secret_key",
             "s3_endpoint",
-            # DT_MOUNT — GCS
             "gcs_bucket",
             "gcs_prefix",
             "access_token",
-            # DT_MOUNT — RemoteBackend
             "server_address",
             "remote_auth_token",
             "remote_timeout",
-        ):
-            val = kwargs.get(opt_field)
+            "remote_ca_pem",
+            "remote_cert_pem",
+            "remote_key_pem",
+            "local_root",
+            "fsync",
+            "follow_symlinks",
+        )
+        for key in _BACKEND_PARAM_KEYS:
+            val = kwargs.get(key)
             if val is not None:
-                setattr(request, opt_field, val)
-        # DT_MOUNT remote TLS material is ``bytes`` on the wire; accept str
-        # (PEM text) from mount config and encode it.
-        for pem_field in ("remote_ca_pem", "remote_cert_pem", "remote_key_pem"):
-            val = kwargs.get(pem_field)
-            if val is not None:
-                setattr(request, pem_field, val.encode() if isinstance(val, str) else val)
+                if isinstance(val, bytes):
+                    val = val.decode("utf-8", "replace")
+                request.backend_params[key] = str(val)
 
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:

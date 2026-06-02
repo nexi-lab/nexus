@@ -453,16 +453,15 @@ class TestRPCTransportTypedMethods:
 
         request = transport._mock_stub.Setattr.call_args[0][0]
         assert request.backend_type == "s3"
-        assert request.HasField("s3_bucket") and request.s3_bucket == "nexus-test"
-        assert request.HasField("s3_prefix") and request.s3_prefix == "p/"
-        assert request.HasField("aws_region") and request.aws_region == "auto"
-        assert request.HasField("aws_access_key") and request.aws_access_key == "AKID"
-        assert request.HasField("aws_secret_key") and request.aws_secret_key == "SECRET"
-        assert request.HasField("s3_endpoint")
-        assert request.s3_endpoint == "https://acct.r2.cloudflarestorage.com"
-        # Unrelated backend-family params stay unset across the wire.
-        assert not request.HasField("gcs_bucket")
-        assert not request.HasField("server_address")
+        assert request.backend_params["s3_bucket"] == "nexus-test"
+        assert request.backend_params["s3_prefix"] == "p/"
+        assert request.backend_params["aws_region"] == "auto"
+        assert request.backend_params["aws_access_key"] == "AKID"
+        assert request.backend_params["aws_secret_key"] == "SECRET"
+        assert request.backend_params["s3_endpoint"] == "https://acct.r2.cloudflarestorage.com"
+        # Unrelated backend-family params stay unset.
+        assert "gcs_bucket" not in request.backend_params
+        assert "server_address" not in request.backend_params
 
     def test_setattr_forwards_remote_backend_params(self, transport) -> None:
         """DT_MOUNT remote params forward; str PEM material is encoded to bytes."""
@@ -481,12 +480,11 @@ class TestRPCTransportTypedMethods:
 
         request = transport._mock_stub.Setattr.call_args[0][0]
         assert request.backend_type == "remote"
-        assert request.server_address == "grpcs://hub:443"
-        assert request.remote_auth_token == "tok"
-        assert request.HasField("remote_ca_pem")
-        assert request.remote_ca_pem == b"-----BEGIN CERT-----"
-        assert request.HasField("remote_timeout") and request.remote_timeout == 12.5
-        assert not request.HasField("s3_bucket")
+        assert request.backend_params["server_address"] == "grpcs://hub:443"
+        assert request.backend_params["remote_auth_token"] == "tok"
+        assert request.backend_params["remote_ca_pem"] == "-----BEGIN CERT-----"
+        assert request.backend_params["remote_timeout"] == "12.5"
+        assert "s3_bucket" not in request.backend_params
 
     def test_setattr_local_backend_type_forwarded_verbatim(self, transport) -> None:
         """A local backend_type rides ``backend_type`` (the handler acks it)."""
@@ -497,7 +495,7 @@ class TestRPCTransportTypedMethods:
 
         request = transport._mock_stub.Setattr.call_args[0][0]
         assert request.backend_type == "cas-local"
-        assert not request.HasField("s3_bucket")
+        assert "s3_bucket" not in request.backend_params
 
     def test_setattr_provider_built_uninstalled_raises(self, transport) -> None:
         """Version-skew (#4262): a provider-built DT_MOUNT acked without being

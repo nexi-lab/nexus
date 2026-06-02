@@ -1,7 +1,7 @@
 # Nexus Raft Server — Minimal Rust-Only Image
 #
-# Builds the nexus-raft-server binary for multi-node Raft consensus.
-# No Python, no SQLAlchemy — pure Rust gRPC server.
+# Kernel-tier Rust migrated to nexus-vfs (#4259). This Dockerfile
+# installs the nexus-raft-server binary from the nexus-vfs git repo.
 #
 # Usage:
 #   docker build -f dockerfiles/Dockerfile.raft-server -t nexus-raft-server .
@@ -13,25 +13,15 @@
 
 FROM rust:1-slim-bookworm AS builder
 
-# protobuf-compiler: raft-proto v0.7.0 uses protobuf-build which shells
-# out to system ``protoc`` on PATH (separate from the vendored protoc
-# our own build.rs wires up for tonic).  Removing this package broke
-# every Docker build after commit 3d93e0155.
+# protobuf-compiler: raft-proto uses protobuf-build which shells out
+# to system protoc on PATH.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Copy proto files (build.rs expects ../../proto relative to rust/raft/)
-COPY proto/ ./proto/
-
-# Copy Rust source
-COPY rust/raft/ ./rust/raft/
-
-# Build the raft server binary
-WORKDIR /build/rust/raft
-RUN cargo build --release --features grpc --bin nexus-raft-server
+RUN cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexus-raft-server raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim
@@ -40,7 +30,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/rust/raft/target/release/nexus-raft-server /usr/local/bin/
+COPY --from=builder /usr/local/cargo/bin/nexus-raft-server /usr/local/bin/
 
 # Create non-root user
 RUN useradd -r -m -u 1000 -s /bin/bash nexus && \

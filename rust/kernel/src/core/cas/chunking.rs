@@ -17,7 +17,7 @@
 
 use super::engine::CASError;
 use super::remote::RemoteChunkFetcher;
-use super::transport::{CasTransport, LocalCASTransport};
+use super::transport::CasTransport;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -51,7 +51,7 @@ pub(crate) trait ChunkAssembler: Send + Sync {
     fn try_reassemble(
         &self,
         data: &[u8],
-        transport: &LocalCASTransport,
+        transport: &dyn CasTransport,
         fetcher: Option<&dyn RemoteChunkFetcher>,
         origins: &[String],
     ) -> Result<Option<Vec<u8>>, CASError>;
@@ -72,7 +72,7 @@ impl ChunkAssembler for ChunkedManifestAssembler {
     fn try_reassemble(
         &self,
         data: &[u8],
-        transport: &LocalCASTransport,
+        transport: &dyn CasTransport,
         fetcher: Option<&dyn RemoteChunkFetcher>,
         origins: &[String],
     ) -> Result<Option<Vec<u8>>, CASError> {
@@ -123,7 +123,7 @@ impl ChunkAssembler for ChunkedManifestAssembler {
 /// response is already hash-verified inside the fetcher; we still double-check
 /// here before writing it back so local CAS never holds bad bytes.
 pub(crate) fn read_and_verify_chunk(
-    transport: &LocalCASTransport,
+    transport: &dyn CasTransport,
     expected_hash: &str,
     fetcher: Option<&dyn RemoteChunkFetcher>,
     origins: &[String],
@@ -178,7 +178,7 @@ pub(crate) fn read_and_verify_chunk(
 /// `CASError::IOError`.
 pub(crate) fn reassemble_chunks(
     chunks: &[Value],
-    transport: &LocalCASTransport,
+    transport: &dyn CasTransport,
     fetcher: Option<&dyn RemoteChunkFetcher>,
     origins: &[String],
 ) -> Result<Vec<u8>, CASError> {
@@ -266,7 +266,7 @@ pub trait ChunkingStrategy: Send + Sync {
     fn write_chunked(
         &self,
         content: &[u8],
-        transport: &LocalCASTransport,
+        transport: &dyn CasTransport,
     ) -> Result<(String, bool), CASError>;
 
     /// Split `content` into chunks without touching storage.
@@ -300,7 +300,7 @@ pub(crate) fn finalize_manifest(
     chunk_count: usize,
     total_size: usize,
     full_content_hash: String,
-    transport: &LocalCASTransport,
+    transport: &dyn CasTransport,
 ) -> Result<(String, bool), CASError> {
     let avg_chunk_size = total_size.checked_div(chunk_count).unwrap_or(0);
 
@@ -359,7 +359,7 @@ impl ChunkingStrategy for FastCDCStrategy {
     fn write_chunked(
         &self,
         content: &[u8],
-        transport: &LocalCASTransport,
+        transport: &dyn CasTransport,
     ) -> Result<(String, bool), CASError> {
         let total_size = content.len();
 
@@ -452,7 +452,7 @@ impl ChunkingStrategy for MessageBoundaryStrategy {
     fn write_chunked(
         &self,
         content: &[u8],
-        transport: &LocalCASTransport,
+        transport: &dyn CasTransport,
     ) -> Result<(String, bool), CASError> {
         let total_size = content.len();
         let full_content_hash = lib::hash::hash_content(content);

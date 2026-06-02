@@ -79,7 +79,7 @@ dependencies = [
     "aiosqlite>=0.22.1", # SQLite driver (async)
     # Caching
     "cachetools>=7.1.1",
-    "cachebox>=5.2.3", # Rust-backed TTLCache via PyO3 (Issue #3192)
+    "cachebox>=5.2.3,<6.0.0", # Rust-backed TTLCache via PyO3 (Issue #3192); pin <6 for API compat
     "fastbloom-rs>=0.5.10", # Rust Bloom filter for Tiger cache pre-gate (Issue #3192)
     "redis>=7.4.0", # Redis/Dragonfly client (async support)
     "nats-py>=2.14.0", # NATS JetStream event bus (Issue #1331)

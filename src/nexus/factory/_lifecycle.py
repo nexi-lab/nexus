@@ -1,9 +1,31 @@
-"""NexusFS lifecycle implementations — _wire_services() / _initialize_services().
+"""NexusFS lifecycle — _wire_services() and _initialize_services().
 
-These factory-layer functions are called directly by create_nexus_fs()
-in the orchestrator, keeping the kernel free of factory/bricks imports.
+Called by ``orchestrator.create_nexus_fs()`` after the Rust kernel
+subprocess is up and the gRPC channel is live.  Separated from the
+orchestrator so that kernel code never imports factory/bricks modules.
 
-Linearized in PR #3371 Phase 2: partial injection eliminated.
+Two phases (see orchestrator.py module docstring for the full 4-phase
+boot sequence):
+
+    _wire_services(nx, ...)  →  _InitContext
+        Phase 2.  Pure memory, no I/O.  Constructs ParsersBrick and
+        CacheBrick, boots post-kernel wired services (those that need an
+        NexusFS reference), enlists them into ServiceRegistry, and creates
+        the PermissionChecker.  Returns an ``_InitContext`` dataclass that
+        captures all factory-phase locals needed by the next phase.
+
+    _initialize_services(nx, ctx)
+        Phase 3.  One-time side effects — VFS hook registration (INTERCEPT
+        + OBSERVE hooks via KernelDispatch), BLM brick registration.
+        No background threads — those are started later by
+        ``NexusFS.bootstrap()`` which calls ``BackgroundService.start()``
+        on each registered service in dependency order.
+
+Service lifecycle protocols:
+
+    BackgroundService   start() / stop() — auto-managed by ServiceRegistry
+    duck-typed hook_spec()  → HookSpec — auto-registered at enlist() time
+    swap_service()      unified path: refcount drain → unhook → replace → rehook
 """
 
 import dataclasses

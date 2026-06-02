@@ -1,4 +1,51 @@
-"""Factory orchestrator — create_nexus_services, create_nexus_fs."""
+"""Factory orchestrator — the init system for the Nexus Python app layer.
+
+Analogous to systemd: selects a DeploymentProfile, constructs services,
+and wires them into the Rust kernel via DI.  Two public entry points:
+
+    create_nexus_fs(backend, metadata_store, ...)
+        Recommended entry point.  Instantiates NexusFS (which spawns the
+        Rust kernel subprocess + gRPC channel), then calls
+        create_nexus_services() and _lifecycle._wire_services() /
+        _initialize_services() to assemble the full stack.
+
+    create_nexus_services(record_store, metadata_store, backend, ...)
+        Lower-level: builds the service dict without creating NexusFS.
+        Useful when you already have a kernel handle and just need services.
+
+Boot sequence (4 phases):
+
+    1. create_nexus_services()  — 3-tier brick construction:
+       Tier 0 (Kernel):    validate Storage Pillars (VFS router, Metastore)
+       Tier 1 (Services):  critical services (ReBAC, permissions) → BootError
+       Tier 2 (Bricks):    optional (search, LLM, sandbox) → graceful degrade
+
+    2. _wire_services()        — pure memory, no I/O.  Creates ParsersBrick,
+       CacheBrick; boots post-kernel services; binds onto NexusFS; creates
+       PermissionChecker.  Returns _InitContext.
+
+    3. _initialize_services()  — one-time side effects (VFS hook registration,
+       BLM brick registration).  No background threads yet.
+
+    4. NexusFS.bootstrap()     — starts BackgroundService instances (.start())
+       in dependency order.
+
+Kernel DI patterns (two mechanisms):
+
+    +-----------------+-------------------+-----------------------+
+    | Pattern         | Kernel __init__   | Factory _do_link()    |
+    +-----------------+-------------------+-----------------------+
+    | Kernel owns     | Creates instance  | —                     |
+    | Kernel knows    | self._x = None    | Injects real value    |
+    +-----------------+-------------------+-----------------------+
+
+    "Kernel knows" follows the Linux LSM pattern: kernel declares a
+    default (None), factory overrides at link-time.
+
+See also:
+    - ``deployment_profile.py`` — profile definitions and brick/driver gating
+    - ``_lifecycle.py`` — _wire_services() and _initialize_services() impl
+"""
 
 from __future__ import annotations
 

@@ -167,21 +167,20 @@ jobs:
         run: uv pip install -e ".[dev,test]"
 
       # The nexus-cluster binary is required by NexusFS (KernelClient spawns
-      # it as a subprocess). Tests that create NexusFS directly (not via
-      # Docker) need the binary on PATH.
+      # it as a subprocess). Binary SSOT is now nexus-vfs; install via
+      # cargo install from the git repo.
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Cache nexus-cluster build
+      - name: Cache nexus-cluster install
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: e2e-self-contained
+          shared-key: e2e-nexus-cluster
 
-      - name: Build nexus-cluster binary
+      - name: Install nexus-cluster from nexus-vfs
         run: |
-          cargo build --release -p nexus-cluster --bin nexusd-cluster
-          sudo cp target/release/nexusd-cluster /usr/local/bin/
-          sudo ln -sf /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
+          cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+          sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py

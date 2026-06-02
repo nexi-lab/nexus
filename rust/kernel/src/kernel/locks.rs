@@ -61,13 +61,4 @@ impl Kernel {
                 .map_err(|e| KernelError::IOError(format!("sys_unlock({path}): {e}")))
         }
     }
-
-    /// Enumerate locks under `prefix`, capped at `limit`.
-    pub fn metastore_list_locks(
-        &self,
-        prefix: &str,
-        limit: usize,
-    ) -> Vec<crate::lock_manager::KernelLockInfo> {
-        self.lock_manager.list_locks(prefix, limit)
-    }
 }

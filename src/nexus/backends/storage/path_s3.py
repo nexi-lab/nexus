@@ -146,7 +146,10 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             )
             self._s3_transport = transport
             self.endpoint_url = endpoint_url
-            self.region_name = region_name or ("auto" if endpoint_url else None)
+            # Mirror the region the transport actually resolved (explicit →
+            # env → "auto" fallback) so Rust metadata extraction sees the same
+            # value used for SigV4 signing rather than a re-derived guess.
+            self.region_name = transport.region_name
             self._access_key_id = access_key_id
             self._secret_access_key = secret_access_key
 

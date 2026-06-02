@@ -167,3 +167,22 @@ class TestGCFallbackUnknownMtime:
         assert "known" in hashes  # readable mtime → eligible for grace-period check
         assert "transient" not in hashes  # raised → skipped (preserve)
         assert "zero" not in hashes  # unknown sentinel → skipped (preserve)
+
+    def test_fallback_warns_when_transport_has_no_mtime_source(self, caplog) -> None:
+        # A transport with list_keys but no get_mtime (e.g. GCSTransport) cannot
+        # provide blob ages. GC must skip *visibly* — not silently disable itself.
+        import logging
+
+        class _NoMtimeTransport:
+            def list_keys(
+                self, prefix: str = "", delimiter: str = ""
+            ) -> tuple[list[str], list[str]]:
+                return ["cas/aa/blob1", "cas/bb/blob2"], []
+
+        with caplog.at_level(logging.WARNING):
+            entries = CasGcService._list_keys_fallback(_NoMtimeTransport())
+
+        assert entries == []  # nothing deleted (safe)
+        assert any(
+            "get_mtime" in rec.message or "age" in rec.message.lower() for rec in caplog.records
+        ), "expected a visible warning that age-based GC is unsupported for this transport"

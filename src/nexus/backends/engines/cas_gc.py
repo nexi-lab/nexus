@@ -190,6 +190,19 @@ class CasGcService:
 
         Used when transport doesn't support list_content_hashes().
         """
+        # A transport with no mtime source can't establish blob ages, so the
+        # grace period can't be enforced. Skip age-based collection *visibly*
+        # rather than silently — deleting on a 0.0 sentinel would risk fresh
+        # blobs, but silently retaining everything hides a misconfiguration.
+        if not hasattr(transport, "get_mtime"):
+            logger.warning(
+                "CAS GC fallback: transport %s exposes neither list_content_hashes "
+                "nor get_mtime — cannot determine blob ages; skipping age-based "
+                "collection (no blobs deleted). Add a timestamp source to enable GC.",
+                type(transport).__name__,
+            )
+            return []
+
         blob_keys, _ = transport.list_keys(prefix="cas/", delimiter="")
         entries: list[tuple[str, float]] = []
         for blob_key in blob_keys:
@@ -197,11 +210,11 @@ class CasGcService:
                 continue
             content_hash = blob_key.split("/")[-1]
             try:
-                mtime = transport.get_mtime(blob_key) if hasattr(transport, "get_mtime") else None
+                mtime = transport.get_mtime(blob_key)
             except Exception:
                 # Unknown timestamp — e.g. a transient S3 HeadObject failure on an
                 # object that still exists. Skip rather than treat as ancient: a
-                # 0.0/None sentinel falls outside the grace window at the caller and
+                # 0.0 sentinel falls outside the grace window at the caller and
                 # would delete a possibly-fresh unreferenced blob (data loss).
                 continue
             if not mtime or mtime <= 0:

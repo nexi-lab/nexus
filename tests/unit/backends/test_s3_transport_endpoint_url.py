@@ -40,7 +40,10 @@ def test_endpoint_url_not_passed_when_unset(fake_boto):
     assert "endpoint_url" not in kwargs
 
 
-def test_region_defaults_to_auto_when_endpoint_set_and_no_region(fake_boto):
+def test_region_defaults_to_auto_when_endpoint_set_and_no_region(fake_boto, monkeypatch):
+    # "auto" is only the fallback when no region is resolvable from the env.
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.delenv("AWS_REGION", raising=False)
     boto, _, _ = fake_boto
     S3Transport(
         bucket_name="b",
@@ -50,6 +53,22 @@ def test_region_defaults_to_auto_when_endpoint_set_and_no_region(fake_boto):
     )
     session_kwargs = boto.Session.call_args.kwargs
     assert session_kwargs.get("region_name") == "auto"
+
+
+def test_endpoint_honors_env_region_over_auto(fake_boto, monkeypatch):
+    """endpoint_url + AWS_DEFAULT_REGION but no region_name → env region wins, not 'auto'."""
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    boto, _, _ = fake_boto
+    t = S3Transport(
+        bucket_name="b",
+        endpoint_url="http://minio.local:9000",
+        access_key_id="ak",
+        secret_access_key="sk",
+    )
+    session_kwargs = boto.Session.call_args.kwargs
+    assert session_kwargs.get("region_name") == "us-west-2"
+    assert t.region_name == "us-west-2"
 
 
 def test_explicit_region_preserved_with_endpoint(fake_boto):

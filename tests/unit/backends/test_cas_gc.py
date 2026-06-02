@@ -151,9 +151,11 @@ class _FallbackFakeTransport:
 class TestGCFallbackUnknownMtime:
     """#4266: unknown mtime in the legacy fallback must mean *skip*, never *delete*."""
 
-    def test_fallback_skips_blobs_with_unreadable_mtime(self) -> None:
+    def test_fallback_skips_blobs_with_unreadable_mtime(self, caplog) -> None:
         # A fresh, unreferenced blob whose mtime read fails transiently must NOT
         # become a deletion candidate (0.0 would fall outside any grace window).
+        import logging
+
         transport = _FallbackFakeTransport(
             {
                 "cas/aa/known": time.time(),
@@ -161,12 +163,15 @@ class TestGCFallbackUnknownMtime:
                 "cas/cc/zero": 0.0,
             }
         )
-        entries = CasGcService._list_keys_fallback(transport)
+        with caplog.at_level(logging.WARNING):
+            entries = CasGcService._list_keys_fallback(transport)
         hashes = {content_hash for content_hash, _ in entries}
 
         assert "known" in hashes  # readable mtime → eligible for grace-period check
         assert "transient" not in hashes  # raised → skipped (preserve)
         assert "zero" not in hashes  # unknown sentinel → skipped (preserve)
+        # Skips must be visible — not a silent retention leak.
+        assert any("skipped 2" in rec.message for rec in caplog.records)
 
     def test_fallback_warns_when_transport_has_no_mtime_source(self, caplog) -> None:
         # A transport with list_keys but no get_mtime (e.g. GCSTransport) cannot

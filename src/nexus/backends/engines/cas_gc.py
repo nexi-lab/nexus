@@ -205,6 +205,7 @@ class CasGcService:
 
         blob_keys, _ = transport.list_keys(prefix="cas/", delimiter="")
         entries: list[tuple[str, float]] = []
+        skipped = 0
         for blob_key in blob_keys:
             if blob_key.endswith(".meta"):
                 continue
@@ -216,10 +217,22 @@ class CasGcService:
                 # object that still exists. Skip rather than treat as ancient: a
                 # 0.0 sentinel falls outside the grace window at the caller and
                 # would delete a possibly-fresh unreferenced blob (data loss).
+                skipped += 1
                 continue
             if not mtime or mtime <= 0:
+                skipped += 1
                 continue
             entries.append((content_hash, mtime))
+        if skipped:
+            # Visibility: if mtime is unreadable for many/all keys (e.g. HeadObject
+            # denied/throttled/mis-signed), those blobs are retained, not collected.
+            # Warn once per pass so a wholesale failure isn't a silent storage leak.
+            logger.warning(
+                "CAS GC fallback: skipped %d blob(s) with unreadable mtime; they were "
+                "NOT collected this pass. Persistent skips may indicate HeadObject "
+                "permission/throttling/signing errors on the backend.",
+                skipped,
+            )
         return entries
 
     def _scan_namespace(self, referenced: set[str]) -> None:

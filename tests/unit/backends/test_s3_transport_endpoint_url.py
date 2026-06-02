@@ -16,6 +16,9 @@ def fake_boto():
         session = MagicMock()
         client = MagicMock()
         session.client.return_value = client
+        # Simulate boto3 resolving no region by default (env/profile/config empty).
+        # Tests that exercise resolution set this explicitly.
+        session.region_name = None
         boto.Session.return_value = session
         yield boto, session, client
 
@@ -40,34 +43,34 @@ def test_endpoint_url_not_passed_when_unset(fake_boto):
     assert "endpoint_url" not in kwargs
 
 
-def test_region_defaults_to_auto_when_endpoint_set_and_no_region(fake_boto, monkeypatch):
-    # "auto" is only the fallback when no region is resolvable from the env.
-    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-    monkeypatch.delenv("AWS_REGION", raising=False)
-    boto, _, _ = fake_boto
-    S3Transport(
+def test_region_defaults_to_auto_when_endpoint_set_and_no_region(fake_boto):
+    # boto3 resolves no region (session.region_name is None) → fall back to "auto".
+    _, session, _ = fake_boto
+    session.region_name = None
+    t = S3Transport(
         bucket_name="b",
         endpoint_url="https://acct.r2.cloudflarestorage.com",
         access_key_id="ak",
         secret_access_key="sk",
     )
-    session_kwargs = boto.Session.call_args.kwargs
-    assert session_kwargs.get("region_name") == "auto"
+    client_kwargs = session.client.call_args.kwargs
+    assert client_kwargs.get("region_name") == "auto"
+    assert t.region_name == "auto"
 
 
-def test_endpoint_honors_env_region_over_auto(fake_boto, monkeypatch):
-    """endpoint_url + AWS_DEFAULT_REGION but no region_name → env region wins, not 'auto'."""
-    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
-    monkeypatch.delenv("AWS_REGION", raising=False)
-    boto, _, _ = fake_boto
+def test_endpoint_uses_boto3_resolved_region_over_auto(fake_boto):
+    """endpoint_url, no explicit region, but boto3 resolves one (env/profile/config)
+    → that region wins, never 'auto'."""
+    _, session, _ = fake_boto
+    session.region_name = "us-west-2"  # what boto3's chain resolved
     t = S3Transport(
         bucket_name="b",
         endpoint_url="http://minio.local:9000",
         access_key_id="ak",
         secret_access_key="sk",
     )
-    session_kwargs = boto.Session.call_args.kwargs
-    assert session_kwargs.get("region_name") == "us-west-2"
+    client_kwargs = session.client.call_args.kwargs
+    assert client_kwargs.get("region_name") == "us-west-2"
     assert t.region_name == "us-west-2"
 
 

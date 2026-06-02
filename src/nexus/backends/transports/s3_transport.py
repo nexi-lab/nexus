@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -83,17 +82,6 @@ class S3Transport:
                 path=bucket_name,
             )
 
-        # A custom endpoint still needs *some* region for SigV4 signing. Honor an
-        # explicit region first, then any region boto3 would resolve from the
-        # environment (AWS_DEFAULT_REGION/AWS_REGION) — never override it — and
-        # only fall back to "auto" (which R2 requires) when none is available.
-        # Avoids signing non-R2 S3-compatible providers with the wrong region.
-        if endpoint_url and not region_name:
-            region_name = (
-                os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
-            )
-        self.region_name = region_name
-
         try:
             boto_config = Config(
                 retries={"max_attempts": 3, "mode": "adaptive"},
@@ -119,9 +107,22 @@ class S3Transport:
                     session_kwargs["aws_session_token"] = creds["aws_session_token"]
 
             session = boto3.Session(**session_kwargs)
+
+            # Resolve the SigV4 region: an explicit region wins, then whatever
+            # boto3 resolves through its own chain (AWS_DEFAULT_REGION/AWS_REGION,
+            # AWS_PROFILE, ~/.aws/config). A custom endpoint still needs a region,
+            # so only fall back to "auto" (which R2 requires) when boto3 resolves
+            # none — never silently override a profile/env region with "auto".
+            resolved_region = (
+                region_name or session.region_name or ("auto" if endpoint_url else None)
+            )
+            self.region_name = resolved_region
+
             client_kwargs: dict[str, Any] = {"config": boto_config}
             if endpoint_url:
                 client_kwargs["endpoint_url"] = endpoint_url
+            if resolved_region:
+                client_kwargs["region_name"] = resolved_region
             self.s3_client = session.client("s3", **client_kwargs)
 
         except Exception as e:

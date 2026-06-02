@@ -197,9 +197,15 @@ class CasGcService:
                 continue
             content_hash = blob_key.split("/")[-1]
             try:
-                mtime = transport.get_mtime(blob_key) if hasattr(transport, "get_mtime") else 0.0
+                mtime = transport.get_mtime(blob_key) if hasattr(transport, "get_mtime") else None
             except Exception:
-                mtime = 0.0
+                # Unknown timestamp — e.g. a transient S3 HeadObject failure on an
+                # object that still exists. Skip rather than treat as ancient: a
+                # 0.0/None sentinel falls outside the grace window at the caller and
+                # would delete a possibly-fresh unreferenced blob (data loss).
+                continue
+            if not mtime or mtime <= 0:
+                continue
             entries.append((content_hash, mtime))
         return entries
 

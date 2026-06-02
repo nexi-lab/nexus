@@ -126,3 +126,44 @@ class TestGCReachability:
         gc._collect()
 
         assert engine.content_exists(content_id)
+
+
+class _FallbackFakeTransport:
+    """Transport without ``list_content_hashes`` → exercises ``_list_keys_fallback``.
+
+    ``get_mtime`` may raise (transient backend error, e.g. an S3 HeadObject 5xx
+    on an object that still exists) or report a non-positive sentinel.
+    """
+
+    def __init__(self, mtimes: dict[str, object]) -> None:
+        self._mtimes = mtimes
+
+    def list_keys(self, prefix: str = "", delimiter: str = "") -> tuple[list[str], list[str]]:
+        return list(self._mtimes.keys()), []
+
+    def get_mtime(self, key: str) -> float:
+        value = self._mtimes[key]
+        if isinstance(value, BaseException):
+            raise value
+        return float(value)
+
+
+class TestGCFallbackUnknownMtime:
+    """#4266: unknown mtime in the legacy fallback must mean *skip*, never *delete*."""
+
+    def test_fallback_skips_blobs_with_unreadable_mtime(self) -> None:
+        # A fresh, unreferenced blob whose mtime read fails transiently must NOT
+        # become a deletion candidate (0.0 would fall outside any grace window).
+        transport = _FallbackFakeTransport(
+            {
+                "cas/aa/known": time.time(),
+                "cas/bb/transient": RuntimeError("HeadObject 503 — object still exists"),
+                "cas/cc/zero": 0.0,
+            }
+        )
+        entries = CasGcService._list_keys_fallback(transport)
+        hashes = {content_hash for content_hash, _ in entries}
+
+        assert "known" in hashes  # readable mtime → eligible for grace-period check
+        assert "transient" not in hashes  # raised → skipped (preserve)
+        assert "zero" not in hashes  # unknown sentinel → skipped (preserve)

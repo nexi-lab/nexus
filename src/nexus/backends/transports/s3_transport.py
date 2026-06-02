@@ -555,9 +555,11 @@ class S3Transport:
         """Return the object's last-modified time as epoch seconds.
 
         Used by ``CasGcService._list_keys_fallback`` to enforce the grace
-        period for unreferenced blobs. Returns 0.0 on any error so the
-        fallback safely skips deletion of objects whose timestamps it
-        can't read.
+        period for unreferenced blobs. Returns 0.0 on any error (HeadObject
+        failure, missing/malformed ``LastModified``) to signal "timestamp
+        unknown". The GC fallback treats a non-positive mtime as a skip — it
+        will NOT delete a blob whose age it cannot establish — so a transient
+        HeadObject error never causes a fresh blob to be collected.
         """
         try:
             response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)

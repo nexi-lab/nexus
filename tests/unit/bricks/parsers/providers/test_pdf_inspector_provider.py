@@ -1,4 +1,4 @@
-"""Tests for PdfInspectorProvider."""
+"""Tests for PdfInspectorProvider (pdf_inspector integration)."""
 
 import pathlib
 import sys

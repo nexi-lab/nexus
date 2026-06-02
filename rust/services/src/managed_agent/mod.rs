@@ -1052,7 +1052,8 @@ mod tests {
         }
 
         fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService<Kernel>> {
-            ManagedAgentService::install_returning(kernel, None).expect("install ManagedAgentService")
+            ManagedAgentService::install_returning(kernel, None)
+                .expect("install ManagedAgentService")
         }
 
         #[test]
@@ -1089,9 +1090,10 @@ mod tests {
                 .expect("descriptor must carry repos");
             assert_eq!(desc.repos.len(), 2);
 
-            for (alias, expected) in
-                [("myrepo", "/host/repos/myrepo"), ("another", "/host/repos/another")]
-            {
+            for (alias, expected) in [
+                ("myrepo", "/host/repos/myrepo"),
+                ("another", "/host/repos/another"),
+            ] {
                 let alias_path = format!("{}{}", &resp.workspace_path, alias);
                 assert_eq!(
                     link_target_at(&kernel, &alias_path).as_deref(),
@@ -1224,8 +1226,7 @@ mod tests {
             // followed the DT_LINK to the canonical stream" without
             // coupling to the stamping policy.  The MailboxStamping
             // e2e companion exercises the rewrite path explicitly.
-            let payload =
-                br#"{"from":"scode-standard","to":"human-ethan","body":"ping"}"#;
+            let payload = br#"{"from":"scode-standard","to":"human-ethan","body":"ping"}"#;
 
             let ctx = OperationContext {
                 user_id: "ethan".into(),
@@ -1331,7 +1332,10 @@ mod tests {
                 .sys_stat(&shortcut, ROOT_ZONE_ID)
                 .expect("workspace shortcut entry present");
             assert_eq!(shortcut_meta.entry_type, DT_LINK);
-            assert_eq!(shortcut_meta.link_target.as_deref(), Some(canonical.as_str()));
+            assert_eq!(
+                shortcut_meta.link_target.as_deref(),
+                Some(canonical.as_str())
+            );
 
             // Canonical path holds the DT_STREAM the link points at.
             let canonical_meta = kernel

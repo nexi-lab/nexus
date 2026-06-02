@@ -65,14 +65,8 @@ pub async fn sync<K: kernel::abi::KernelAbi>(
     let ctx = super::rooms::ctx_from_session(&session);
 
     // First read pass — drains anything that's already past `since`.
-    let mut rooms_with_events = pump_rooms(
-        kernel,
-        &joined,
-        &mut offsets,
-        &server_name,
-        &ctx,
-    )
-    .await?;
+    let mut rooms_with_events =
+        pump_rooms(kernel, &joined, &mut offsets, &server_name, &ctx).await?;
 
     // No new events on any joined room AND the client asked us to
     // wait → poll-loop until something arrives or the timeout
@@ -141,8 +135,10 @@ fn decode_since(since: Option<&str>) -> Result<HashMap<String, u64>, AdapterErro
     let Some(token) = since.filter(|s| !s.is_empty()) else {
         return Ok(HashMap::new());
     };
-    let decoded = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, token)
-        .ok_or_else(|| AdapterError::BadJson(format!("since token {token:?} is not valid base32")))?;
+    let decoded =
+        base32::decode(base32::Alphabet::Rfc4648 { padding: true }, token).ok_or_else(|| {
+            AdapterError::BadJson(format!("since token {token:?} is not valid base32"))
+        })?;
     serde_json::from_slice(&decoded)
         .map_err(|e| AdapterError::BadJson(format!("since token JSON: {e}")))
 }
@@ -391,9 +387,8 @@ mod tests {
         let room_id = body["room_id"].as_str().unwrap().to_string();
         // Send three messages.
         for body_text in ["one", "two", "three"] {
-            let send_uri = format!(
-                "/_matrix/client/v3/rooms/{room_id}/send/m.room.message/txn-{body_text}"
-            );
+            let send_uri =
+                format!("/_matrix/client/v3/rooms/{room_id}/send/m.room.message/txn-{body_text}");
             let (status, _) = json_request(
                 &app,
                 Method::PUT,
@@ -470,8 +465,7 @@ mod tests {
         let token_for_sync = token.clone();
         let since_for_sync = since.clone();
         let sync_handle = tokio::spawn(async move {
-            let uri =
-                format!("/_matrix/client/v3/sync?timeout=5000&since={since_for_sync}");
+            let uri = format!("/_matrix/client/v3/sync?timeout=5000&since={since_for_sync}");
             json_request(&app_for_sync, Method::GET, &uri, &token_for_sync, None).await
         });
 

@@ -169,9 +169,7 @@ pub async fn room_messages<K: kernel::abi::KernelAbi>(
                 let read = kernel_for_read
                     .sys_read(&stream_path_for_read, &ctx, 0, next_offset)
                     .map_err(|e| {
-                        AdapterError::Internal(format!(
-                            "sys_read({stream_path_for_read}): {e:?}"
-                        ))
+                        AdapterError::Internal(format!("sys_read({stream_path_for_read}): {e:?}"))
                     })?;
                 let bytes = match read.data {
                     Some(b) => b,
@@ -304,9 +302,11 @@ pub async fn create_room<K: kernel::abi::KernelAbi>(
     // matching managed_agent::proc_entry::chat_stream_profile.
     let kernel_for_create = Arc::clone(kernel);
     let stream_path_for_create = stream_path.clone();
-    tokio::task::spawn_blocking(move || create_chat_stream(&kernel_for_create, &stream_path_for_create))
-        .await
-        .map_err(|e| AdapterError::Internal(format!("spawn_blocking join: {e}")))??;
+    tokio::task::spawn_blocking(move || {
+        create_chat_stream(&kernel_for_create, &stream_path_for_create)
+    })
+    .await
+    .map_err(|e| AdapterError::Internal(format!("spawn_blocking join: {e}")))??;
 
     // The creating user is joined to the new room — drives /sync.
     state
@@ -401,23 +401,12 @@ fn create_chat_stream<K: kernel::abi::KernelAbi>(
     const CAPACITY: usize = 65_536;
     kernel
         .sys_setattr(
-            path,
-            DT_STREAM,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
-            /* io_profile */ "memory",
-            /* zone_id */ "root",
-            /* is_external */ false,
-            CAPACITY,
-            /* read_fd */ None,
-            /* write_fd */ None,
-            /* mime_type */ None,
-            /* modified_at_ms */ None,
-            /* link_target */ None,
-            /* source */ None,
-            /* remote_metastore */ None,
+            path, DT_STREAM, /* backend_name */ "", /* backend */ None,
+            /* metastore */ None, /* raft_backend */ None,
+            /* io_profile */ "memory", /* zone_id */ "root",
+            /* is_external */ false, CAPACITY, /* read_fd */ None,
+            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
+            /* link_target */ None, /* source */ None, /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| AdapterError::Internal(format!("createRoom sys_setattr({path}): {e:?}")))
@@ -557,7 +546,8 @@ mod tests {
         assert!(event_id.starts_with('$'));
 
         // Read it back via /messages.
-        let messages_uri = format!("/_matrix/client/v3/rooms/{room_id}/messages?dir=f&from=0&limit=10");
+        let messages_uri =
+            format!("/_matrix/client/v3/rooms/{room_id}/messages?dir=f&from=0&limit=10");
         let (status, body) = json_request(&app, Method::GET, &messages_uri, &token, None).await;
         assert_eq!(status, StatusCode::OK);
         let chunk = body["chunk"].as_array().unwrap();
@@ -597,10 +587,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let events = body.as_array().unwrap();
         assert_eq!(events.len(), 2);
-        let types: Vec<&str> = events
-            .iter()
-            .map(|e| e["type"].as_str().unwrap())
-            .collect();
+        let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
         assert!(types.contains(&"m.room.create"));
         assert!(types.contains(&"m.room.member"));
         for ev in events {
@@ -615,7 +602,8 @@ mod tests {
         let token = login_and_get_token(&app, "ethan", "hunter2").await;
         let room_id = encode_room_id("/agents/human-bob/chat-with-me", SERVER);
 
-        let uri = format!("/_matrix/client/v3/rooms/{room_id}/state/m.room.member/@ethan:nexus.local");
+        let uri =
+            format!("/_matrix/client/v3/rooms/{room_id}/state/m.room.member/@ethan:nexus.local");
         let (status, body) = json_request(&app, Method::GET, &uri, &token, None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["membership"], "join");

@@ -23,9 +23,9 @@ pub mod proto {
     tonic::include_proto!("nexus.password_vault.v1");
 }
 
-mod types;
 mod crypto;
 mod storage;
+mod types;
 
 // Re-export the public error type for binaries that host the service.
 pub use types::PasswordVaultError;
@@ -76,13 +76,12 @@ fn compute_totp(secret_b32: &str, time_seconds: u64) -> Result<String, PasswordV
         .filter(|c| !c.is_whitespace())
         .flat_map(char::to_uppercase)
         .collect();
-    let key = base32::decode(
-        base32::Alphabet::Rfc4648 { padding: false },
-        &normalised,
-    )
-    .ok_or_else(|| PasswordVaultError::Invalid("totp_secret is not valid base32".into()))?;
+    let key = base32::decode(base32::Alphabet::Rfc4648 { padding: false }, &normalised)
+        .ok_or_else(|| PasswordVaultError::Invalid("totp_secret is not valid base32".into()))?;
     if key.is_empty() {
-        return Err(PasswordVaultError::Invalid("totp_secret decoded to empty bytes".into()));
+        return Err(PasswordVaultError::Invalid(
+            "totp_secret decoded to empty bytes".into(),
+        ));
     }
 
     let window = time_seconds / TOTP_PERIOD_SECONDS;
@@ -123,10 +122,7 @@ impl PasswordVaultServiceImpl {
     /// Open or create a vault at `data_dir/vault.redb`, with the master
     /// key at `master_key_path` (32 bytes, generated + persisted on
     /// first call). Both files are atomically created if absent.
-    pub fn new(
-        data_dir: &Path,
-        master_key_path: &Path,
-    ) -> Result<Self, PasswordVaultError> {
+    pub fn new(data_dir: &Path, master_key_path: &Path) -> Result<Self, PasswordVaultError> {
         let storage = storage::Storage::open(&data_dir.join("vault.redb"))?;
         let master_key = crypto::load_or_create_master_key(master_key_path)?;
         Ok(Self {
@@ -287,8 +283,8 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
 
         // Decrypt + deserialise plaintext.
         let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
-        let plain: VaultEntryPlaintext = bincode::deserialize(&plain_bytes)
-            .map_err(|_| PasswordVaultError::Crypto)?;
+        let plain: VaultEntryPlaintext =
+            bincode::deserialize(&plain_bytes).map_err(|_| PasswordVaultError::Crypto)?;
 
         Ok(Response::new(GetEntryResponse {
             entry: Some(plaintext_to_proto(plain)),
@@ -323,7 +319,8 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
                 Some(s) => s,
                 None => continue, // index points at a missing version — skip silently (corruption tracker should pick this up)
             };
-            let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
+            let plain_bytes =
+                crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
             let plain: VaultEntryPlaintext = match bincode::deserialize(&plain_bytes) {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -472,8 +469,8 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
             .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
 
         let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
-        let plain: VaultEntryPlaintext = bincode::deserialize(&plain_bytes)
-            .map_err(|_| PasswordVaultError::Crypto)?;
+        let plain: VaultEntryPlaintext =
+            bincode::deserialize(&plain_bytes).map_err(|_| PasswordVaultError::Crypto)?;
 
         if plain.totp_secret.is_empty() {
             return Err(PasswordVaultError::TotpNotConfigured(req.title).into());
@@ -518,11 +515,8 @@ mod tests {
 
     fn fresh_service() -> (TempDir, PasswordVaultServiceImpl) {
         let dir = TempDir::new().unwrap();
-        let svc = PasswordVaultServiceImpl::new(
-            dir.path(),
-            &dir.path().join("master.key"),
-        )
-        .unwrap();
+        let svc =
+            PasswordVaultServiceImpl::new(dir.path(), &dir.path().join("master.key")).unwrap();
         (dir, svc)
     }
 

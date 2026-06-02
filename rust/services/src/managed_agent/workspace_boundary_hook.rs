@@ -96,9 +96,7 @@ impl NativeInterceptHook for WorkspaceBoundaryHook {
         // Only mutating-write contexts gate the boundary; reads, stat, and
         // other no-mutation ops walk through.
         let path = match ctx {
-            HookContext::Write(_) | HookContext::Delete(_) | HookContext::Rename(_) => {
-                ctx.path()
-            }
+            HookContext::Write(_) | HookContext::Delete(_) | HookContext::Rename(_) => ctx.path(),
             _ => return Ok(HookOutcome::Pass),
         };
 

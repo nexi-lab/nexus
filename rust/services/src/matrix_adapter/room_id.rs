@@ -23,7 +23,10 @@ use crate::matrix_adapter::error::AdapterError;
 /// `server_name` is the homeserver suffix configured at adapter boot
 /// (typically `nexus.local`).
 pub fn encode_room_id(stream_path: &str, server_name: &str) -> String {
-    let local_part = base32::encode(base32::Alphabet::Rfc4648 { padding: true }, stream_path.as_bytes());
+    let local_part = base32::encode(
+        base32::Alphabet::Rfc4648 { padding: true },
+        stream_path.as_bytes(),
+    );
     format!("!{local_part}:{server_name}")
 }
 
@@ -34,16 +37,20 @@ pub fn decode_room_id(room_id: &str, server_name: &str) -> Result<String, Adapte
     let stripped = room_id
         .strip_prefix('!')
         .ok_or_else(|| AdapterError::BadJson(format!("room id {room_id:?} missing '!' sigil")))?;
-    let (local_part, suffix) = stripped
-        .rsplit_once(':')
-        .ok_or_else(|| AdapterError::BadJson(format!("room id {room_id:?} missing ':server-name'")))?;
+    let (local_part, suffix) = stripped.rsplit_once(':').ok_or_else(|| {
+        AdapterError::BadJson(format!("room id {room_id:?} missing ':server-name'"))
+    })?;
     if suffix != server_name {
         return Err(AdapterError::BadJson(format!(
             "room id {room_id:?} server-name {suffix:?} != adapter homeserver {server_name:?}"
         )));
     }
     let bytes = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, local_part)
-        .ok_or_else(|| AdapterError::BadJson(format!("room id {room_id:?} local-part is not valid base32")))?;
+        .ok_or_else(|| {
+            AdapterError::BadJson(format!(
+                "room id {room_id:?} local-part is not valid base32"
+            ))
+        })?;
     String::from_utf8(bytes).map_err(|e| {
         AdapterError::BadJson(format!(
             "room id {room_id:?} local-part decoded but not UTF-8: {e}"

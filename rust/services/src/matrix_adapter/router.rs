@@ -131,10 +131,7 @@ pub fn build_router<K: kernel::abi::KernelAbi>(state: AdapterState<K>) -> Router
         )
         .route("/_matrix/client/v3/pushrules", get(push::pushrules))
         .route("/_matrix/client/v3/pushers", get(push::pushers))
-        .route_layer(from_fn_with_state(
-            state.clone(),
-            require_access_token::<K>,
-        ));
+        .route_layer(from_fn_with_state(state.clone(), require_access_token::<K>));
 
     public.merge(protected).with_state(state)
 }
@@ -189,9 +186,7 @@ async fn logout<K: kernel::abi::KernelAbi>(
     Ok(Json(EmptyResponse::default()))
 }
 
-async fn whoami(
-    Extension(session): Extension<AuthSession>,
-) -> Json<WhoAmIResponse> {
+async fn whoami(Extension(session): Extension<AuthSession>) -> Json<WhoAmIResponse> {
     Json(WhoAmIResponse {
         user_id: session.user_id,
         device_id: session.device_id,
@@ -231,11 +226,8 @@ mod tests {
         for (user, pw) in seed_users {
             backend.add_user(user, pw);
         }
-        let state = AdapterState::<kernel::kernel::Kernel>::new(
-            backend,
-            Arc::from(SERVER_NAME),
-            None,
-        );
+        let state =
+            AdapterState::<kernel::kernel::Kernel>::new(backend, Arc::from(SERVER_NAME), None);
         build_router(state)
     }
 
@@ -278,10 +270,7 @@ mod tests {
     #[tokio::test]
     async fn login_wrong_password_is_forbidden() {
         let app = fixture(&[("ethan", "hunter2")]);
-        let resp = app
-            .oneshot(login_request("ethan", "wrong"))
-            .await
-            .unwrap();
+        let resp = app.oneshot(login_request("ethan", "wrong")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         let body = json_body(resp).await;
         assert_eq!(body["errcode"], "M_FORBIDDEN");
@@ -290,10 +279,7 @@ mod tests {
     #[tokio::test]
     async fn login_unknown_user_is_forbidden() {
         let app = fixture(&[]);
-        let resp = app
-            .oneshot(login_request("ghost", "x"))
-            .await
-            .unwrap();
+        let resp = app.oneshot(login_request("ghost", "x")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 

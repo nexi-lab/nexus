@@ -31,10 +31,7 @@ use crate::matrix_adapter::room_id::encode_room_id;
 /// on-disk chat envelope. Returns the envelope JSON bytes ready to be
 /// passed to `kernel.sys_write` — `from` is left absent so
 /// MailboxStampingHook stamps it, mailbox_stamping_policy.rs §3.3.
-pub fn pdu_send_to_chat_envelope(
-    pdu_content: &Value,
-    ts_ms: i64,
-) -> Result<Vec<u8>, AdapterError> {
+pub fn pdu_send_to_chat_envelope(pdu_content: &Value, ts_ms: i64) -> Result<Vec<u8>, AdapterError> {
     let content_obj = pdu_content
         .as_object()
         .ok_or_else(|| AdapterError::BadJson("PDU `content` must be a JSON object".into()))?;
@@ -94,7 +91,10 @@ pub fn chat_envelope_to_pdu_event(
         .get("msgtype")
         .and_then(|v| v.as_str())
         .unwrap_or("m.text");
-    let ts_ms = envelope_obj.get("ts_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+    let ts_ms = envelope_obj
+        .get("ts_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     let room_id = encode_room_id(stream_path, server_name);
     let event_id = format!("$offset_{offset}:{server_name}");
@@ -127,7 +127,10 @@ mod tests {
         let content = json!({"body": "hi", "msgtype": "m.text"});
         let bytes = pdu_send_to_chat_envelope(&content, 1_700_000_000_000).unwrap();
         let envelope: Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(envelope.get("from").is_none(), "from must be absent so kernel hook stamps it");
+        assert!(
+            envelope.get("from").is_none(),
+            "from must be absent so kernel hook stamps it"
+        );
         assert_eq!(envelope["body"], "hi");
         assert_eq!(envelope["msgtype"], "m.text");
         assert_eq!(envelope["ts_ms"], 1_700_000_000_000_i64);
@@ -164,13 +167,9 @@ mod tests {
             "ts_ms": 17,
         }))
         .unwrap();
-        let event = chat_envelope_to_pdu_event(
-            "/agents/human-bob/chat-with-me",
-            SERVER,
-            42,
-            &envelope,
-        )
-        .unwrap();
+        let event =
+            chat_envelope_to_pdu_event("/agents/human-bob/chat-with-me", SERVER, 42, &envelope)
+                .unwrap();
         assert_eq!(event["event_id"], "$offset_42:nexus.local");
         assert_eq!(event["sender"], "@ethan:nexus.local");
         assert_eq!(event["type"], "m.room.message");
@@ -199,8 +198,7 @@ mod tests {
 
     #[test]
     fn read_side_event_rejects_corrupt_envelope() {
-        let err =
-            chat_envelope_to_pdu_event("/x", SERVER, 0, b"not json at all").unwrap_err();
+        let err = chat_envelope_to_pdu_event("/x", SERVER, 0, b"not json at all").unwrap_err();
         assert!(matches!(err, AdapterError::Internal(_)));
     }
 
@@ -210,14 +208,12 @@ mod tests {
         // that by injecting it into the stored envelope.
         let pdu_content = json!({"body": "ping", "msgtype": "m.text"});
         let mut stored: Value =
-            serde_json::from_slice(&pdu_send_to_chat_envelope(&pdu_content, 99).unwrap())
-                .unwrap();
+            serde_json::from_slice(&pdu_send_to_chat_envelope(&pdu_content, 99).unwrap()).unwrap();
         stored["from"] = Value::String("@ethan:nexus.local".into());
         let stored_bytes = serde_json::to_vec(&stored).unwrap();
 
         let event =
-            chat_envelope_to_pdu_event("/proc/p_1/chat-with-me", SERVER, 7, &stored_bytes)
-                .unwrap();
+            chat_envelope_to_pdu_event("/proc/p_1/chat-with-me", SERVER, 7, &stored_bytes).unwrap();
         assert_eq!(event["content"]["body"], "ping");
         assert_eq!(event["content"]["msgtype"], "m.text");
         assert_eq!(event["sender"], "@ethan:nexus.local");

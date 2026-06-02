@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-10T07:04:18Z",
+  "generated_at": "2026-06-02T20:44:00Z",
   "manifests": [
     {
       "config_schema": null,
@@ -116,6 +116,16 @@
           "secret": true,
           "type": "path"
         },
+        "endpoint_url": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "Custom S3-compatible endpoint URL (R2/MinIO/B2/Tencent COS/LocalStack)",
+          "env_var": "AWS_ENDPOINT_URL",
+          "required": false,
+          "secret": false,
+          "type": "string"
+        },
         "prefix": {
           "audit_safe": false,
           "config_key": null,
@@ -155,6 +165,16 @@
           "required": false,
           "secret": true,
           "type": "secret"
+        },
+        "signature_version": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": "s3v4",
+          "description": "S3 SigV4 variant; defaults to 's3v4'. Use 's3' for legacy providers that don't support SigV4.",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "string"
         }
       },
       "description": "AWS S3 with direct path mapping",

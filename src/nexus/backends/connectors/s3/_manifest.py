@@ -51,6 +51,21 @@ MANIFEST = ConnectorManifest(
             required=False,
             env_var="AWS_DEFAULT_REGION",
         ),
+        "endpoint_url": ConnectionArg(
+            type=ArgType.STRING,
+            description="Custom S3-compatible endpoint URL (R2/MinIO/B2/Tencent COS/LocalStack)",
+            required=False,
+            env_var="AWS_ENDPOINT_URL",
+        ),
+        "signature_version": ConnectionArg(
+            type=ArgType.STRING,
+            description=(
+                "S3 SigV4 variant; defaults to 's3v4'. Use 's3' for legacy "
+                "providers that don't support SigV4."
+            ),
+            required=False,
+            default="s3v4",
+        ),
         "credentials_path": ConnectionArg(
             type=ArgType.PATH,
             description="Path to AWS credentials JSON file",

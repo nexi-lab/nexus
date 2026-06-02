@@ -1012,7 +1012,9 @@ mod tests {
     mod procfs {
         use super::*;
         use kernel::core::agents::registry::AgentSignal;
+        use kernel::kernel::convenience::KernelConvenience;
         use kernel::kernel::Kernel;
+        use kernel::ROOT_ZONE_ID;
 
         const DT_DIR: u8 = 1;
         const DT_STREAM: u8 = 4;
@@ -1022,25 +1024,21 @@ mod tests {
         fn dir_exists(kernel: &Kernel, path: &str) -> bool {
             let path = path.trim_end_matches('/');
             kernel
-                .metastore_get(path)
-                .ok()
-                .flatten()
+                .sys_stat(path, ROOT_ZONE_ID)
                 .is_some_and(|e| e.entry_type == DT_DIR)
         }
 
         /// True when `path` has any metastore entry.
         fn entry_exists(kernel: &Kernel, path: &str) -> bool {
             let path = path.trim_end_matches('/');
-            kernel.metastore_get(path).ok().flatten().is_some()
+            kernel.access(path, ROOT_ZONE_ID)
         }
 
         /// DT_LINK target string at `path` — None if the entry is
         /// missing or not a DT_LINK.
         fn link_target_at(kernel: &Kernel, path: &str) -> Option<String> {
             kernel
-                .metastore_get(path)
-                .ok()
-                .flatten()
+                .sys_stat(path, ROOT_ZONE_ID)
                 .filter(|e| e.entry_type == DT_LINK)
                 .and_then(|e| e.link_target)
         }
@@ -1330,18 +1328,14 @@ mod tests {
             // Workspace shortcut is a DT_LINK whose target is the
             // canonical path.
             let shortcut_meta = kernel
-                .metastore_get(&shortcut)
-                .ok()
-                .flatten()
+                .sys_stat(&shortcut, ROOT_ZONE_ID)
                 .expect("workspace shortcut entry present");
             assert_eq!(shortcut_meta.entry_type, DT_LINK);
             assert_eq!(shortcut_meta.link_target.as_deref(), Some(canonical.as_str()));
 
             // Canonical path holds the DT_STREAM the link points at.
             let canonical_meta = kernel
-                .metastore_get(&canonical)
-                .ok()
-                .flatten()
+                .sys_stat(&canonical, ROOT_ZONE_ID)
                 .expect("canonical chat-with-me entry present");
             assert_eq!(canonical_meta.entry_type, DT_STREAM);
         }

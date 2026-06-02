@@ -117,13 +117,18 @@ class S3Transport:
 
             session = boto3.Session(**session_kwargs)
 
-            # Resolve the SigV4 region: an explicit region wins, then whatever
-            # boto3 resolves through its own chain (AWS_DEFAULT_REGION/AWS_REGION,
-            # AWS_PROFILE, ~/.aws/config). A custom endpoint (explicit or env) still
+            # Resolve the SigV4 region. AWS precedence: an explicit region, then
+            # AWS_REGION, then whatever boto3.Session resolves (AWS_DEFAULT_REGION,
+            # AWS_PROFILE, ~/.aws/config). AWS_REGION is checked explicitly because
+            # botocore's Session.region_name does NOT reflect it (only
+            # AWS_DEFAULT_REGION does). A custom endpoint (explicit or env) still
             # needs a region, so only fall back to "auto" (which R2 requires) when
-            # boto3 resolves none — never silently override a profile/env region.
+            # nothing else resolves — never silently override a configured region.
             resolved_region = (
-                region_name or session.region_name or ("auto" if self.endpoint_url else None)
+                region_name
+                or os.environ.get("AWS_REGION")
+                or session.region_name
+                or ("auto" if self.endpoint_url else None)
             )
             self.region_name = resolved_region
 

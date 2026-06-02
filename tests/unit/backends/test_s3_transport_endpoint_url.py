@@ -6,6 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip(
+    "botocore", reason="botocore not installed (s3 extra); see test_s3_region_resolution"
+)
+
 from nexus.backends.transports.s3_transport import S3Transport
 
 

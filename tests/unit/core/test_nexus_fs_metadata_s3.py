@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("botocore", reason="botocore not installed (s3 extra)")
+
 
 @pytest.fixture
 def fake_boto():

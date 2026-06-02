@@ -948,7 +948,7 @@ impl Kernel {
     // R7: keys are now zone-relative (backend_path from route, prefixed
     // with `/`). Callers pass global paths; these methods translate.
 
-    pub fn metastore_get(
+    pub(crate) fn metastore_get(
         &self,
         path: &str,
     ) -> Result<Option<crate::meta_store::FileMetadata>, KernelError> {
@@ -966,7 +966,7 @@ impl Kernel {
     /// Routing zone is derived from ``metadata.zone_id`` — the row IS the
     /// SSOT for which zone owns it, so callers don't pass a separate zone
     /// parameter. ``None``/``"root"`` falls back to the root namespace.
-    pub fn metastore_put(
+    pub(crate) fn metastore_put(
         &self,
         path: &str,
         mut metadata: crate::meta_store::FileMetadata,
@@ -985,7 +985,7 @@ impl Kernel {
         }
     }
 
-    pub fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
+    pub(crate) fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         match self.with_metastore(&mount_point, |ms| ms.delete(path)) {
             Some(result) => {
@@ -995,109 +995,9 @@ impl Kernel {
         }
     }
 
-    pub fn metastore_list(
-        &self,
-        prefix: &str,
-    ) -> Result<Vec<crate::meta_store::FileMetadata>, KernelError> {
-        let route_path = if prefix.is_empty() {
-            contracts::VFS_ROOT
-        } else {
-            prefix
-        };
-        let global_prefix = if prefix.is_empty() {
-            contracts::VFS_ROOT.to_string()
-        } else {
-            prefix.to_string()
-        };
-        let routed_mount = self.resolve_mount_point(route_path, contracts::ROOT_ZONE_ID);
-
-        let mut results: Vec<crate::meta_store::FileMetadata> = match self
-            .with_metastore(&routed_mount, |ms| ms.list(&global_prefix))
-        {
-            Some(result) => result
-                .map_err(|e| KernelError::IOError(format!("metastore_list({prefix}): {e:?}")))?,
-            None => return Err(KernelError::IOError("no metastore wired".into())),
-        };
-
-        // F2 C5 follow-up: when the user-facing prefix spans MULTIPLE mounts
-        // (e.g. prefix=`/personal/` with a mount at `/personal/alice`), the
-        // routed metastore above only returns entries rooted on the parent
-        // mount. Merge in each child mount's own per-mount metastore so the
-        // caller sees the full subtree — including the mount roots themselves,
-        // which each metastore stores under its own mount-point key.
-        let user_prefix = if prefix.is_empty() {
-            contracts::VFS_ROOT.to_string()
-        } else if prefix.ends_with('/') {
-            prefix.to_string()
-        } else {
-            format!("{}/", prefix)
-        };
-        let user_prefix_trim = if user_prefix == contracts::VFS_ROOT {
-            ""
-        } else {
-            user_prefix.trim_end_matches('/')
-        };
-        for canonical in self.vfs_router.canonical_keys() {
-            if canonical == routed_mount {
-                continue;
-            }
-            let (_zone, user_mp) = crate::vfs_router::extract_zone_from_canonical(&canonical);
-            // Child mount must sit strictly under the list prefix. Root list
-            // (`/`) sees every mount. Non-root prefix `/a` matches `/a/b` but
-            // not `/a` itself (caller already has the DT_MOUNT entry from the
-            // parent metastore, or gets it via a separate sys_stat).
-            let under_prefix = if user_prefix == contracts::VFS_ROOT {
-                user_mp != contracts::VFS_ROOT
-            } else {
-                user_mp.starts_with(&user_prefix)
-                    || user_mp == user_prefix_trim.to_string().as_str()
-            };
-            if !under_prefix {
-                continue;
-            }
-            // Ask the child metastore to list its own full-path
-            // root; it translates internally. Returned entries already
-            // carry full global paths, so no post-hoc translation needed.
-            if let Some(Ok(child_entries)) = self.with_metastore(&canonical, |ms| ms.list(&user_mp))
-            {
-                for meta in child_entries {
-                    // Deduplicate — parent metastore may also carry a stub
-                    // DT_DIR entry for the mount point path.
-                    if !results.iter().any(|m| m.path == meta.path) {
-                        results.push(meta);
-                    }
-                }
-            }
-        }
-        Ok(results)
-    }
-
-    pub fn metastore_exists(&self, path: &str) -> Result<bool, KernelError> {
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.exists(path)) {
-            Some(result) => {
-                result.map_err(|e| KernelError::IOError(format!("metastore_exists({path}): {e:?}")))
-            }
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    pub fn metastore_get_batch(
-        &self,
-        paths: &[String],
-    ) -> Result<Vec<Option<crate::meta_store::FileMetadata>>, KernelError> {
-        match self.metastore.read().as_ref() {
-            Some(ms) => ms
-                .get_batch(paths)
-                .map_err(|e| KernelError::IOError(format!("metastore_get_batch: {e:?}"))),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
     /// Bulk-delete the given paths from the global metastore.
-    /// Mirror of `metastore_get_batch` on the delete side.
     #[allow(dead_code)]
-    pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
+    pub(crate) fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
         match self.metastore.read().as_ref() {
             Some(ms) => ms
                 .delete_batch(paths)
@@ -1106,54 +1006,7 @@ impl Kernel {
         }
     }
 
-    pub fn metastore_put_batch(
-        &self,
-        items: &[(String, crate::meta_store::FileMetadata)],
-    ) -> Result<(), KernelError> {
-        match self.metastore.read().as_ref() {
-            Some(ms) => ms
-                .put_batch(items)
-                .map_err(|e| KernelError::IOError(format!("metastore_put_batch: {e:?}"))),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    /// OCC put. See `MetaStore::put_if_version`.
-    pub fn metastore_put_if_version(
-        &self,
-        mut metadata: crate::meta_store::FileMetadata,
-        expected_version: u32,
-    ) -> Result<crate::meta_store::PutIfVersionResult, KernelError> {
-        let path = metadata.path.clone();
-        let mount_point = self.resolve_mount_point(&path, contracts::ROOT_ZONE_ID);
-        // Metadata.path stays at the full global path — ZoneMetaStore
-        // translates internally now.
-        metadata.path = path.clone();
-        match self.with_metastore(&mount_point, move |ms| {
-            ms.put_if_version(metadata, expected_version)
-        }) {
-            Some(result) => result.map_err(|e| {
-                KernelError::IOError(format!("metastore_put_if_version({path}): {e:?}"))
-            }),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    /// Rename `old_path` → `new_path` (and prefix children). See
-    /// `MetaStore::rename_path`.
-    pub fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> Result<(), KernelError> {
-        let old_mp = self.resolve_mount_point(old_path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&old_mp, |ms| ms.rename_path(old_path, new_path, false)) {
-            Some(result) => result.map_err(|e| {
-                KernelError::IOError(format!(
-                    "metastore_rename_path({old_path} → {new_path}): {e:?}"
-                ))
-            }),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    pub fn metastore_set_file_metadata(
+    pub(crate) fn metastore_set_file_metadata(
         &self,
         path: &str,
         key: &str,
@@ -1170,7 +1023,7 @@ impl Kernel {
         }
     }
 
-    pub fn metastore_get_file_metadata(
+    pub(crate) fn metastore_get_file_metadata(
         &self,
         path: &str,
         key: &str,
@@ -1184,7 +1037,7 @@ impl Kernel {
         }
     }
 
-    pub fn metastore_get_file_metadata_bulk(
+    pub(crate) fn metastore_get_file_metadata_bulk(
         &self,
         paths: &[String],
         key: &str,
@@ -1195,57 +1048,6 @@ impl Kernel {
         match self.metastore.read().as_ref() {
             Some(ms) => ms.get_file_metadata_bulk(paths, key).map_err(|e| {
                 KernelError::IOError(format!("metastore_get_file_metadata_bulk: {e:?}"))
-            }),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    pub fn metastore_is_implicit_directory(&self, path: &str) -> Result<bool, KernelError> {
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.is_implicit_directory(path)) {
-            Some(result) => result.map_err(|e| {
-                KernelError::IOError(format!("metastore_is_implicit_directory({path}): {e:?}"))
-            }),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    pub fn metastore_list_paginated(
-        &self,
-        prefix: &str,
-        recursive: bool,
-        limit: usize,
-        cursor: Option<&str>,
-    ) -> Result<crate::meta_store::PaginatedList, KernelError> {
-        let route_path = if prefix.is_empty() {
-            contracts::VFS_ROOT
-        } else {
-            prefix
-        };
-        let list_prefix = if prefix.is_empty() {
-            contracts::VFS_ROOT
-        } else {
-            prefix
-        };
-        let mount_point = self.resolve_mount_point(route_path, contracts::ROOT_ZONE_ID);
-        // Cursor is a metastore-internal key, pass as-is.
-        match self.with_metastore(&mount_point, |ms| {
-            ms.list_paginated(list_prefix, recursive, limit, cursor)
-        }) {
-            Some(result) => result.map_err(|e| {
-                KernelError::IOError(format!("metastore_list_paginated({prefix}): {e:?}"))
-            }),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    pub fn metastore_batch_get_content_ids(
-        &self,
-        paths: &[String],
-    ) -> Result<Vec<crate::meta_store::PathEtag>, KernelError> {
-        match self.metastore.read().as_ref() {
-            Some(ms) => ms.batch_get_content_ids(paths).map_err(|e| {
-                KernelError::IOError(format!("metastore_batch_get_content_ids: {e:?}"))
             }),
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
@@ -3292,7 +3094,7 @@ mod tests {
 
     #[test]
     fn metastore_proxy_returns_global_paths() {
-        // metastore_get/list should return global paths even though storage is zone-relative.
+        // metastore_get / sys_readdir should return global paths even though storage is zone-relative.
         let k = Kernel::new();
         let ms = temp_metastore();
         k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
@@ -3331,16 +3133,17 @@ mod tests {
             "metastore_get must return global path"
         );
 
-        // metastore_list should return global paths
-        let entries = k.metastore_list("/data/").unwrap();
-        assert!(!entries.is_empty());
-        for e in &entries {
-            assert!(
-                e.path.starts_with("/data/"),
-                "metastore_list entry path must be global: {}",
-                e.path
-            );
-        }
+        // sys_readdir should list the child we just created under /data
+        let entries = k.sys_readdir("/data", "root", true);
+        assert!(
+            !entries.is_empty(),
+            "sys_readdir must return the created child"
+        );
+        assert!(
+            entries.iter().any(|(name, _)| name == "/data/reports"),
+            "sys_readdir must include '/data/reports': {:?}",
+            entries
+        );
     }
 
     #[test]

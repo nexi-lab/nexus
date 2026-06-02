@@ -862,7 +862,7 @@ Service tier:      S2,S4-S7,       S8,S9 (split)   S3,S14,S21-S23,
 
 ### 3.3 Tier Assignment
 
-Tier assignment per KERNEL-ARCHITECTURE.md (three swap tiers):
+Tier assignment per [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) (three swap tiers):
 
 | Tier | Swap | Protocols | Scenarios |
 |------|------|-----------|-----------|

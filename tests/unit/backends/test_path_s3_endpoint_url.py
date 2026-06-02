@@ -53,6 +53,20 @@ def test_path_s3_connection_args_contains_endpoint_url():
     assert "endpoint_url" in PathS3Backend.CONNECTION_ARGS
 
 
+def test_path_s3_mirrors_env_resolved_endpoint(fake_boto_for_path_s3, monkeypatch):
+    """AWS_ENDPOINT_URL env (no constructor arg) → backend.endpoint_url must mirror
+    the transport's effective endpoint, not the raw (None) constructor arg."""
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://acct.r2.cloudflarestorage.com")
+    monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+    from nexus.backends.storage.path_s3 import PathS3Backend
+
+    backend = PathS3Backend(
+        bucket_name="b", region_name="us-east-1", access_key_id="ak", secret_access_key="sk"
+    )
+    assert backend._s3_transport.endpoint_url == "https://acct.r2.cloudflarestorage.com"
+    assert backend.endpoint_url == "https://acct.r2.cloudflarestorage.com"
+
+
 def test_path_s3_old_positional_constructor_preserved(fake_boto_for_path_s3, monkeypatch):
     """Back-compat: new params must not shift existing positional slots. Old call:
     PathS3Backend(bucket, region, credentials_path, prefix, access_key, secret_key)."""

@@ -146,10 +146,12 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
                 versioning_enabled=versioning_enabled,
             )
             self._s3_transport = transport
-            self.endpoint_url = endpoint_url
-            # Mirror the region the transport actually resolved (explicit →
-            # env → "auto" fallback) so Rust metadata extraction sees the same
-            # value used for SigV4 signing rather than a re-derived guess.
+            # Mirror the endpoint and region the transport actually resolved
+            # (explicit arg → AWS_ENDPOINT_URL[_S3] env for endpoint; explicit →
+            # AWS_REGION → boto3 chain → "auto" for region) so callers and Rust
+            # metadata extraction see the effective values used for I/O and SigV4
+            # signing rather than the raw constructor args.
+            self.endpoint_url = transport.endpoint_url
             self.region_name = transport.region_name
             self._access_key_id = access_key_id
             self._secret_access_key = secret_access_key

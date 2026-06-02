@@ -1,7 +1,11 @@
+# Exchange proto files migrated to nexus-vfs (#4259).
+# Service-tier protos (password_vault) live in rust/services/proto/.
+# This file is retained for buf tooling compatibility; the proto
+# lint and breaking-change workflows now run in nexus-vfs CI.
 version: v2
 modules:
-  - path: proto
-    name: buf.build/nexus/exchange
+  - path: rust/services/proto
+    name: buf.build/nexus/services
 lint:
   use:
     - STANDARD

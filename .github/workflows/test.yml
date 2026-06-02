@@ -526,12 +526,14 @@ jobs:
           fi
 
   # ── nexusd-cluster boot smoke test ──────────────────────────────────
+  # Kernel-tier Rust (including nexusd-cluster) migrated to nexus-vfs (#4259).
+  # Install from nexus-vfs git and smoke-test the binary.
   nexusd-cluster-smoke:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -539,8 +541,13 @@ jobs:
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Build nexusd-cluster
-        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+      - name: Cache nexus-cluster install
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nexusd-cluster-smoke
+
+      - name: Install nexusd-cluster from nexus-vfs
+        run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Boot smoke test
         run: |
@@ -548,11 +555,11 @@ jobs:
           # Smoke uses static + empty peers → single-node default
           # (creates own root 1-voter zone).  --bootstrap-mode is
           # required since BootstrapMode validator landed.
-          RUST_LOG=info ./target/release/nexusd-cluster \
+          RUST_LOG=info nexusd-cluster \
             --no-tls --data-dir "$DATA_DIR" \
             --bootstrap-mode static &
           PID=$!
-          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot…"
+          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot..."
 
           sleep 5
 
@@ -562,7 +569,7 @@ jobs:
             exit 1
           fi
 
-          echo "nexusd-cluster is alive after 5s — sending SIGTERM…"
+          echo "nexusd-cluster is alive after 5s — sending SIGTERM..."
           kill "$PID"
           wait "$PID"
           EXIT_CODE=$?

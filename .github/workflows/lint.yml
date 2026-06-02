@@ -78,49 +78,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "rust-lint"
-          workspaces: |
-            rust/lib
-            rust/kernel
-            rust/raft
-            rust/profiles/cluster
 
+      # Kernel-tier Rust (lib, kernel, raft, cluster) migrated to nexus-vfs.
+      # Only service-tier crates (services, vault) remain in this repo.
       - name: Check Rust formatting
-        run: |
-          for crate in lib kernel raft profiles/cluster; do
-            echo "::group::fmt $crate"
-            cd rust/$crate && cargo fmt --check && cd "$GITHUB_WORKSPACE"
-            echo "::endgroup::"
-          done
+        run: cargo fmt --all --check
 
       - name: Run Clippy
-        run: |
-          for crate in lib kernel; do
-            echo "::group::clippy $crate"
-            cd rust/$crate && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
-            echo "::endgroup::"
-          done
-          echo "::group::clippy raft (all-features)"
-          cd rust/raft && cargo clippy --all-features -- -D warnings && cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
-          echo "::group::clippy cluster"
-          cd rust/profiles/cluster && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
+        run: cargo clippy --workspace -- -D warnings
 
       - name: Run Rust tests
-        run: |
-          for crate in lib kernel; do
-            echo "::group::test $crate"
-            cd rust/$crate && cargo test && cd "$GITHUB_WORKSPACE"
-            echo "::endgroup::"
-          done
-          echo "::group::test raft (all-features)"
-          cd rust/raft && cargo test --all-features && cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
-          echo "::group::test cluster"
-          cd rust/profiles/cluster && cargo test && cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
-
-      - name: Verify WASM compilation (lib)
-        run: |
-          rustup target add wasm32-unknown-unknown
-          cargo check --target wasm32-unknown-unknown -p lib --no-default-features
+        run: cargo test --workspace

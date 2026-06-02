@@ -80,37 +80,8 @@ def _assert_gha_cache_export_non_blocking(workflow_name: str, job_id: str, step_
 
 
 # ---------------------------------------------------------------------------
-# cluster-binary-build.yml
+# cluster-binary-build.yml — deleted (#4259, migrated to nexus-vfs)
 # ---------------------------------------------------------------------------
-
-
-def test_cluster_binary_uses_single_rust_cache_layer() -> None:
-    """Cluster binary build must let ``Swatinem/rust-cache`` be the only
-    Rust cache.
-
-    ``actions-rust-lang/setup-rust-toolchain`` enables its own cache by
-    default; we layer ``Swatinem/rust-cache`` on top deliberately, so the
-    toolchain step must opt out of its own cache to avoid double-caching
-    (slow + wastes runner disk).
-    """
-    workflow = _load_workflow("cluster-binary-build.yml")
-    # Single matrix-driven job; iterate it directly.
-    job = _job(workflow, "build")
-
-    toolchain_steps = [
-        step
-        for step in job.get("steps", [])
-        if isinstance(step.get("uses"), str)
-        and step["uses"].startswith("actions-rust-lang/setup-rust-toolchain")
-    ]
-    assert toolchain_steps, "Expected a setup-rust-toolchain step in cluster-binary build job"
-
-    for step in toolchain_steps:
-        with_block = step.get("with") or {}
-        assert with_block.get("cache") is False, (
-            f"setup-rust-toolchain step must set ``with.cache: false`` to avoid "
-            f"double-caching with Swatinem/rust-cache. Got: with={with_block!r}"
-        )
 
 
 # ---------------------------------------------------------------------------

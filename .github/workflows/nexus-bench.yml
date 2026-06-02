@@ -8,9 +8,7 @@ on:
       - "nexus-fuse/**"
       - "packages/nexus-fs/**"
       - "src/nexus/**"
-      - "rust/kernel/**"
-      - "rust/backends/**"
-      - "rust/transport/**"
+      - "rust/**"
       - ".github/workflows/nexus-bench.yml"
       - ".github/workflows/nexus-bench-real.yml"
   push:
@@ -20,9 +18,7 @@ on:
       - "nexus-fuse/**"
       - "packages/nexus-fs/**"
       - "src/nexus/**"
-      - "rust/kernel/**"
-      - "rust/backends/**"
-      - "rust/transport/**"
+      - "rust/**"
       - ".github/workflows/nexus-bench.yml"
       - ".github/workflows/nexus-bench-real.yml"
 

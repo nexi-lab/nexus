@@ -29,7 +29,9 @@ jobs:
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          RUST_CARGO_VERSION=$(grep '^version = ' rust/kernel/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          # Rust kernel Cargo.toml migrated to nexus-vfs (#4259); only
+          # service-tier crates remain. Version check uses services crate.
+          RUST_CARGO_VERSION=$(grep '^version = ' rust/services/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           API_CLIENT_VERSION=$(node -p "require('./packages/nexus-api-client/package.json').version")
           TUI_VERSION=$(node -p "require('./packages/nexus-tui/package.json').version")
           echo "Tag version: $TAG_VERSION"
@@ -38,10 +40,10 @@ jobs:
           echo "API client version: $API_CLIENT_VERSION"
           echo "TUI version: $TUI_VERSION"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ] || [ "$TAG_VERSION" != "$API_CLIENT_VERSION" ] || [ "$TAG_VERSION" != "$TUI_VERSION" ]; then
-            echo "❌ Version mismatch! Tag is v$TAG_VERSION but package metadata is inconsistent"
+            echo "Version mismatch! Tag is v$TAG_VERSION but package metadata is inconsistent"
             exit 1
           fi
-          echo "✅ Version match confirmed"
+          echo "Version match confirmed"
 
   build-wheel:
     needs: [verify-version]

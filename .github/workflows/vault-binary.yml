@@ -20,7 +20,6 @@ on:
       - "rust/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "proto/nexus/password_vault/**"
       - ".github/workflows/vault-binary.yml"
       - ".github/workflows/vault-binary-build.yml"
   pull_request:
@@ -28,7 +27,6 @@ on:
       - "rust/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "proto/nexus/password_vault/**"
       - ".github/workflows/vault-binary.yml"
       - ".github/workflows/vault-binary-build.yml"
 

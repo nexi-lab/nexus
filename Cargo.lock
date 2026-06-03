@@ -1349,6 +1349,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "kernel",
  "services",
  "tokio",
  "tonic",
@@ -1944,7 +1945,6 @@ dependencies = [
  "prost",
  "prost-types",
  "protoc-bin-vendored",
- "redb",
  "serde",
  "serde_json",
  "sha1",

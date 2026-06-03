@@ -340,20 +340,23 @@ class ContentMixin:
             if path not in allowed_set:
                 results[path] = None
 
-        # Read allowed files via Rust kernel sys_read (single path per call).
-        # Rust kernel handles: validate → route → dcache → metastore → backend read.
+        # Parallel kernel read for all allowed paths (#4307): a single
+        # rayon-fanned ``read_batch`` RPC instead of N sequential ``sys_read``
+        # calls. Per-item ``data is None`` (connector mounts, pipes/streams, or
+        # a missing file) falls back to a single-file ``sys_read``, preserving
+        # the prior behaviour exactly for those cases.
         read_start = time.time()
         zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
+        allowed_list = list(allowed_set)
 
         # Batch metadata lookup (needed for return_metadata=True)
         batch_meta: dict[str, dict[str, Any] | None] | None = None
         if return_metadata:
             meta_start = time.time()
-            allowed_paths = list(allowed_set)
             batch_meta = dict(
                 zip(
-                    allowed_paths,
-                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
+                    allowed_list,
+                    self._kernel.stat_batch(allowed_list, ROOT_ZONE_ID),
                     strict=True,
                 )
             )
@@ -362,20 +365,28 @@ class ContentMixin:
                 f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
             )
 
-        for path in allowed_set:
+        rust_results = (
+            self._kernel.read_batch([(p, 0, None) for p in allowed_list], _rust_ctx)
+            if allowed_list
+            else []
+        )
+
+        for path, r in zip(allowed_list, rust_results, strict=True):
             try:
-                bulk_content: bytes | None = None
-                try:
-                    result = self._kernel.sys_read(path, _rust_ctx)
-                    bulk_content = result.data or b""
-                except NexusFileNotFoundError:
-                    bulk_content = None
+                bulk_content: bytes | None = getattr(r, "data", None)
+                if bulk_content is None:
+                    # Fallback for connector mounts / pipes / streams / missing:
+                    # the batched fast path returns data=None for these, so defer
+                    # to the single-file syscall which handles them.
+                    try:
+                        bulk_content = self._kernel.sys_read(path, _rust_ctx).data or b""
+                    except NexusFileNotFoundError:
+                        bulk_content = None
                 if bulk_content is None:
                     if skip_errors:
                         results[path] = None
                         continue
                     raise NexusFileNotFoundError(path)
-                content = bulk_content
                 if return_metadata:
                     assert batch_meta is not None
                     stat = batch_meta.get(path)

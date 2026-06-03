@@ -58,7 +58,7 @@ class TestBatchParity:
         The spy seam is h.fs._kernel.sys_read (KernelClient.sys_read, a plain
         Python method — mock.patch.object works without any Rust-level hooks).
 
-        Follow-up: <BATCH_ISSUE_URL>.
+        Follow-up: https://github.com/nexi-lab/nexus/issues/4307.
         """
         h = parity_kernel
         s3_paths = []

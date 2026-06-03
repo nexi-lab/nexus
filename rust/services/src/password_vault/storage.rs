@@ -147,12 +147,6 @@ impl Storage {
         Ok(storage)
     }
 
-    /// Kernel handle accessor — allows callers (e.g. E2E tests) to
-    /// cross-verify storage via direct kernel syscalls.
-    pub(crate) fn kernel(&self) -> &Arc<Kernel> {
-        &self.kernel
-    }
-
     fn ensure_dir(&self, path: &str) -> Result<(), PasswordVaultError> {
         self.kernel
             .sys_setattr(

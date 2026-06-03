@@ -5,8 +5,8 @@ A2A messaging, audit trace, cross-instance transport.
 
 Cross-references:
 
-- `KERNEL-ARCHITECTURE.md` (peer doc): kernel primitives, syscall surface, dispatch model
-- `federation-memo.md` (peer doc): Raft, zone topology, gRPC transport
+- [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) (peer doc): kernel primitives, syscall surface, dispatch model
+- [federation-architecture](https://github.com/nexi-lab/nexus-vfs/blob/main/docs/federation-architecture.md) (peer doc): Raft, zone topology, gRPC transport
 - sudowork repo (`sudoprivacy/sudowork`) — `OPEN-ITEMS.md`: items not yet implemented; xfail sentinel keeps the list visible in CI
 
 ---
@@ -617,7 +617,7 @@ mechanisms; the adapter is stateless. Stock Matrix clients see the
 chat-with-me DT_STREAM, not a parallel store.
 
 Primitive contracts (`DT_FILE` / `DT_STREAM` / `WalStreamBackend` /
-`PeerBlobClient` / CAS engine) live in `KERNEL-ARCHITECTURE.md` §3
+`PeerBlobClient` / CAS engine) live in [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §3
 and §4. This doc captures only how the integration layer uses them.
 
 ---

@@ -34,7 +34,9 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use kernel::abi::KernelAbi;
-use kernel::core::dispatch::{FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook};
+use kernel::core::dispatch::{
+    FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook,
+};
 use kernel::kernel::{Kernel, KernelError};
 
 /// DT_STREAM entry-type discriminant (mirrors `kernel::core::dcache::DT_STREAM`).
@@ -112,8 +114,7 @@ impl<K: KernelAbi> AuditHook<K> {
                 while let Ok(record) = rx.recv() {
                     match serde_json::to_vec(&record) {
                         Ok(json) => {
-                            if let Err(e) =
-                                kernel_for_thread.sys_write(&audit_path, &ctx, &json, 0)
+                            if let Err(e) = kernel_for_thread.sys_write(&audit_path, &ctx, &json, 0)
                             {
                                 tracing::warn!(error = ?e, "audit stream write failed");
                             }
@@ -468,11 +469,7 @@ mod tests {
             fn share_zone(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<ShareInfo> {
                 Err("test coordinator: share_zone unused".into())
             }
-            fn lookup_share(
-                &self,
-                _: &Kernel,
-                _: &str,
-            ) -> CoordinatorResult<Option<ShareInfo>> {
+            fn lookup_share(&self, _: &Kernel, _: &str) -> CoordinatorResult<Option<ShareInfo>> {
                 Ok(None)
             }
             fn metastore_for_zone(
@@ -484,10 +481,7 @@ mod tests {
                 if let Some(existing) = stores.get(zone_id) {
                     return Ok(Arc::clone(existing));
                 }
-                let path = self
-                    .tempdir
-                    .path()
-                    .join(format!("zone-{zone_id}.redb"));
+                let path = self.tempdir.path().join(format!("zone-{zone_id}.redb"));
                 let store: Arc<dyn MetaStore> = Arc::new(
                     LocalMetaStore::open(&path)
                         .map_err(|e| format!("LocalMetaStore::open({path:?}): {e:?}"))?,
@@ -668,17 +662,11 @@ mod tests {
         let target = "/test-audit/target";
         kernel
             .sys_setattr(
-                target,
-                DT_STREAM,
-                /* backend_name */ "",
-                /* backend */ None,
-                /* metastore */ None,
-                /* raft_backend */ None,
-                /* io_profile */ "wal",
-                /* zone_id */ "root",
-                /* is_external */ false,
-                /* capacity */ 0,
-                None, None, None, None, None, None, None, None, None, None, None,
+                target, DT_STREAM, /* backend_name */ "", /* backend */ None,
+                /* metastore */ None, /* raft_backend */ None,
+                /* io_profile */ "wal", /* zone_id */ "root",
+                /* is_external */ false, /* capacity */ 0, None, None, None, None, None,
+                None, None, None, None, None, None,
             )
             .expect("setattr DT_STREAM target");
 
@@ -719,7 +707,8 @@ mod tests {
 
         // First record decodes as JSON with the expected op + path
         // + agent_id stamped by build_record from the writer ctx.
-        let mut decoder = serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
+        let mut decoder =
+            serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
         let record = decoder
             .next()
             .expect("at least one JSON record present")

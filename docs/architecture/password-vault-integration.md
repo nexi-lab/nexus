@@ -4,10 +4,10 @@ How the password-vault domain service splits across nexus and its
 consumers, and where the gRPC contract sits in the workspace.
 
 Cross-references:
-- `KERNEL-ARCHITECTURE.md` §6.1 (workspace composition + peer-crate
+- [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §6.1 (workspace composition + peer-crate
   invariants) — explains why a new domain service ships as a peer
   crate under `rust/services/`.
-- `KERNEL-ARCHITECTURE.md` §7.1 (profile binaries) — the cluster
+- [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §7.1 (profile binaries) — the cluster
   binary is one consumer of this service through its in-process
   syscall surface.
 - `proto/nexus/exchange/v1/common.proto` — `NexusErrorCode` enum the
@@ -71,7 +71,7 @@ A Rust port lands as a peer crate at `rust/services/password_vault/`.
 
 - The crate depends only on `kernel` + `contracts`, preserving the
   `services ⊥ backends ⊥ transport ⊥ raft` invariant from
-  `KERNEL-ARCHITECTURE.md` §6.1.
+  [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §6.1.
 - Storage delegates to `SecretsService` under `namespace="passwords"`
   — `SecretsService` today is SQLAlchemy on SQLite; the eventual
   Rust port of `SecretsService` chooses its own storage and
@@ -82,7 +82,7 @@ A Rust port lands as a peer crate at `rust/services/password_vault/`.
   the single owner of master-key derivation, sourced from
   `system_settings` SQL per #3850.
 - Audit is wired through `kernel::Kernel::register_native_hook`
-  (the in-tree Rust API surface from `KERNEL-ARCHITECTURE.md` §6.1)
+  (the in-tree Rust API surface from [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §6.1)
   with `AccessContext`-tagged events.  The hook impl mirrors
   `services::audit::AuditHook`'s shape — same `NativeInterceptHook`
   trait, same `mpsc::SyncSender::try_send` non-blocking write.

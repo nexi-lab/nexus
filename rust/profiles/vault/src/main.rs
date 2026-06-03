@@ -40,11 +40,7 @@ use services::password_vault::PasswordVaultServiceImpl;
 struct Args {
     /// Bind address for the gRPC server. Loopback only (no auth layer
     /// yet — refused at startup if non-loopback).
-    #[arg(
-        long,
-        env = "NEXUS_VAULT_BIND_ADDR",
-        default_value = "127.0.0.1:12013"
-    )]
+    #[arg(long, env = "NEXUS_VAULT_BIND_ADDR", default_value = "127.0.0.1:12013")]
     bind_addr: String,
 
     /// Directory holding `vault.redb`. Created on first start.
@@ -94,8 +90,8 @@ async fn main() -> Result<()> {
         "starting nexusd-vault"
     );
 
-    let svc = PasswordVaultServiceImpl::new(&args.data_dir, &master_key_path)
-        .context("open vault")?;
+    let svc =
+        PasswordVaultServiceImpl::new(&args.data_dir, &master_key_path).context("open vault")?;
 
     Server::builder()
         .add_service(PasswordVaultServiceServer::new(svc))

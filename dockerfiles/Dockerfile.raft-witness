@@ -1,8 +1,7 @@
 # Nexus Raft Witness — Lightweight Voting-Only Node
 #
-# Builds the nexus-witness binary for cost-effective HA.
-# Participates in leader election (votes) but doesn't apply state machine.
-# Enables 2 full nodes + 1 witness = 3-vote quorum at lower cost.
+# Kernel-tier Rust migrated to nexus-vfs (#4259). This Dockerfile
+# installs the nexus-witness binary from the nexus-vfs git repo.
 #
 # Usage:
 #   docker build -f dockerfiles/Dockerfile.raft-witness -t nexus-raft-witness .
@@ -14,17 +13,9 @@
 
 FROM rust:1-slim-bookworm AS builder
 
-# protobuf-compiler: raft-proto v0.7.0 uses protobuf-build which shells
-# out to system ``protoc`` on PATH (separate from the vendored protoc
-# our own build.rs wires up for tonic).  Removing this package broke
-# every Docker build after commit 3d93e0155.
-#
-# python3: Phase H made ``raft → kernel`` a real Cargo edge, and kernel
-# transitively pulls pyo3-build-config (kernel + lib both gate their
-# pyo3 surfaces behind a ``python`` feature, but the build script still
-# probes for an interpreter at compile time).  Installing python3 +
-# python3-dev keeps the witness slim-image build resolving without
-# turning pyo3 itself into a runtime dependency of the witness binary.
+# protobuf-compiler: raft-proto uses protobuf-build which shells out
+# to system protoc on PATH.
+# python3: pyo3-build-config probes for an interpreter at compile time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler \
         python3 \
@@ -33,54 +24,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Copy workspace root manifests — nexus_raft uses `workspace = true` deps
-# so Cargo needs the workspace Cargo.toml to resolve them.
-COPY Cargo.toml Cargo.lock ./
-
-# Copy proto files (build.rs expects ../../proto relative to rust/raft/)
-COPY proto/ ./proto/
-
-# Copy Rust source — raft is the build target. The witness build needs
-# the real `kernel` + `lib` (which carries transport_primitives) +
-# `transport` + `contracts` sources the binary links against; everything
-# else is stubbed below.
-COPY rust/raft/ ./rust/raft/
-COPY rust/kernel/ ./rust/kernel/
-COPY rust/lib/ ./rust/lib/
-COPY rust/transport/ ./rust/transport/
-COPY rust/contracts/ ./rust/contracts/
-# Stub out workspace members the witness binary does not depend on.
-# cluster + services + backends only matter at the cluster-binary
-# boundary; the slim witness binary links only `raft` (which
-# transitively pulls in kernel + lib + transport + contracts already
-# copied above).  Empty `lib.rs` keeps the workspace manifest
-# resolvable without dragging in the heavier tokio surface those
-# crates carry.
-RUN for d in services backends; do \
-        mkdir -p rust/$d/src && \
-        printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
-        echo '' > rust/$d/src/lib.rs; \
-    done && \
-    printf '\n[features]\ndefault = []\ndriver-path-local = []\ndriver-remote = []\n' >> rust/backends/Cargo.toml && \
-    mkdir -p rust/profiles/cluster/src && \
-    printf '[package]\nname = "nexus-cluster"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-cluster"\npath = "src/main.rs"\n' > rust/profiles/cluster/Cargo.toml && \
-    echo 'fn main() {}' > rust/profiles/cluster/src/main.rs && \
-    mkdir -p rust/profiles/vault/src && \
-    printf '[package]\nname = "nexus-vault"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-vault"\npath = "src/main.rs"\n' > rust/profiles/vault/Cargo.toml && \
-    echo 'fn main() {}' > rust/profiles/vault/src/main.rs
-
-# Build the witness binary
-WORKDIR /build/rust/raft
-RUN cargo build --release --no-default-features --features grpc --bin nexus-witness
+RUN cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexus-witness raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends bash ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/target/release/nexus-witness /usr/local/bin/
+COPY --from=builder /usr/local/cargo/bin/nexus-witness /usr/local/bin/
 
 # Create non-root user
 RUN useradd -r -m -u 1000 -s /bin/bash nexus && \

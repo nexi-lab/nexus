@@ -22,11 +22,8 @@ ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- 系统依赖 ----------
-# protobuf-compiler is required by raft-proto v0.7.0's protobuf-build
-# step.  The vendored protoc we wire up in our own kernel/raft build.rs
-# only feeds tonic_build → prost-build; protobuf-build is a separate
-# chain that shells out to ``protoc`` on PATH, so dropping this package
-# broke every Docker build after commit 3d93e0155.
+# protobuf-compiler is required by raft-proto's protobuf-build step
+# when building nexusd-cluster from nexus-vfs via cargo install.
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -80,24 +77,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Build Rust nexus-cluster binary (Issue #3125) ----------
-COPY proto/ ./proto/
-COPY rust/ ./rust/
-# BuildKit cache mounts preserve Cargo target artifacts across Docker builds.
-# Files copied into the image can be older than those cached artifacts, so
-# Cargo may incorrectly consider a workspace crate fresh. Touch copied Rust
-# sources so source changes cannot produce a stale binary.
-RUN find rust proto -type f -exec touch {} +
-
-ENV CARGO_TARGET_DIR=/build/target \
-    CARGO_BUILD_JOBS=2 \
-    CARGO_NET_RETRY=10 \
+# ---------- Install nexusd-cluster binary from nexus-vfs (Issue #3125, #4259) ----------
+# Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
+# repo. Install the pre-built binary via `cargo install` from the git repo.
+ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
-    cargo build --release --manifest-path rust/profiles/cluster/Cargo.toml && \
-    cp /build/target/release/nexusd-cluster /build/nexusd-cluster
+    --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster && \
+    cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/

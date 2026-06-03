@@ -260,7 +260,12 @@ impl<K: KernelAbi> AuditNode<K> {
         }
 
         self.write_offset(source_zone, new_offset);
-        tracing::debug!(zone = source_zone, drained = count, new_offset, "audit-node drained");
+        tracing::debug!(
+            zone = source_zone,
+            drained = count,
+            new_offset,
+            "audit-node drained"
+        );
         new_offset
     }
 
@@ -353,7 +358,10 @@ mod tests {
     #[test]
     fn local_collect_paths() {
         let n = node();
-        assert_eq!(n.collect_traces_path("zone-1"), "/audit/collect/zone-1/traces");
+        assert_eq!(
+            n.collect_traces_path("zone-1"),
+            "/audit/collect/zone-1/traces"
+        );
         assert_eq!(n.offset_path("zone-1"), "/audit/collect/zone-1/offset");
     }
 

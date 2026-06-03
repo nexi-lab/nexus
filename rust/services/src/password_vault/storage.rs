@@ -55,10 +55,7 @@ impl Storage {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    PasswordVaultError::Storage(format!(
-                        "mkdir parent of {}: {e}",
-                        path.display()
-                    ))
+                    PasswordVaultError::Storage(format!("mkdir parent of {}: {e}", path.display()))
                 })?;
             }
         }
@@ -82,10 +79,7 @@ impl Storage {
         Ok(Self { db })
     }
 
-    pub(crate) fn get_index(
-        &self,
-        title: &str,
-    ) -> Result<Option<EntryIndex>, PasswordVaultError> {
+    pub(crate) fn get_index(&self, title: &str) -> Result<Option<EntryIndex>, PasswordVaultError> {
         let tx = self
             .db
             .begin_read()
@@ -107,9 +101,7 @@ impl Storage {
         }
     }
 
-    pub(crate) fn list_indexes(
-        &self,
-    ) -> Result<Vec<(String, EntryIndex)>, PasswordVaultError> {
+    pub(crate) fn list_indexes(&self) -> Result<Vec<(String, EntryIndex)>, PasswordVaultError> {
         let tx = self
             .db
             .begin_read()
@@ -122,12 +114,11 @@ impl Storage {
             .map_err(|e| PasswordVaultError::Storage(format!("iter ENTRIES: {e}")))?;
         let mut out = Vec::new();
         for entry in iter {
-            let (k, v) = entry
-                .map_err(|e| PasswordVaultError::Storage(format!("entry iter: {e}")))?;
+            let (k, v) =
+                entry.map_err(|e| PasswordVaultError::Storage(format!("entry iter: {e}")))?;
             let title = k.value().to_string();
-            let idx: EntryIndex = bincode::deserialize(v.value()).map_err(|e| {
-                PasswordVaultError::Storage(format!("decode index {title}: {e}"))
-            })?;
+            let idx: EntryIndex = bincode::deserialize(v.value())
+                .map_err(|e| PasswordVaultError::Storage(format!("decode index {title}: {e}")))?;
             out.push((title, idx));
         }
         Ok(out)
@@ -138,9 +129,8 @@ impl Storage {
         title: &str,
         idx: &EntryIndex,
     ) -> Result<(), PasswordVaultError> {
-        let encoded = bincode::serialize(idx).map_err(|e| {
-            PasswordVaultError::Storage(format!("encode index {title}: {e}"))
-        })?;
+        let encoded = bincode::serialize(idx)
+            .map_err(|e| PasswordVaultError::Storage(format!("encode index {title}: {e}")))?;
         let tx = self
             .db
             .begin_write()
@@ -153,9 +143,8 @@ impl Storage {
                 .insert(title, encoded.as_slice())
                 .map_err(|e| PasswordVaultError::Storage(format!("insert index {title}: {e}")))?;
         }
-        tx.commit().map_err(|e| {
-            PasswordVaultError::Storage(format!("commit set_index {title}: {e}"))
-        })?;
+        tx.commit()
+            .map_err(|e| PasswordVaultError::Storage(format!("commit set_index {title}: {e}")))?;
         Ok(())
     }
 
@@ -179,9 +168,7 @@ impl Storage {
             table
                 .insert(key.as_slice(), encoded.as_slice())
                 .map_err(|e| {
-                    PasswordVaultError::Storage(format!(
-                        "insert version {title}/{version}: {e}"
-                    ))
+                    PasswordVaultError::Storage(format!("insert version {title}/{version}: {e}"))
                 })?;
         }
         tx.commit().map_err(|e| {
@@ -209,9 +196,7 @@ impl Storage {
         match row {
             Some(v) => {
                 let entry: StoredEntry = bincode::deserialize(v.value()).map_err(|e| {
-                    PasswordVaultError::Storage(format!(
-                        "decode version {title}/{version}: {e}"
-                    ))
+                    PasswordVaultError::Storage(format!("decode version {title}/{version}: {e}"))
                 })?;
                 Ok(Some(entry))
             }
@@ -235,16 +220,13 @@ impl Storage {
             .map_err(|e| PasswordVaultError::Storage(format!("open VERSIONS: {e}")))?;
         let iter = table
             .range(lo.as_slice()..=hi.as_slice())
-            .map_err(|e| {
-                PasswordVaultError::Storage(format!("range VERSIONS {title}: {e}"))
-            })?;
+            .map_err(|e| PasswordVaultError::Storage(format!("range VERSIONS {title}: {e}")))?;
         let mut out = Vec::new();
         for entry in iter {
-            let (_, v) = entry
-                .map_err(|e| PasswordVaultError::Storage(format!("version iter: {e}")))?;
-            let stored: StoredEntry = bincode::deserialize(v.value()).map_err(|e| {
-                PasswordVaultError::Storage(format!("decode version row: {e}"))
-            })?;
+            let (_, v) =
+                entry.map_err(|e| PasswordVaultError::Storage(format!("version iter: {e}")))?;
+            let stored: StoredEntry = bincode::deserialize(v.value())
+                .map_err(|e| PasswordVaultError::Storage(format!("decode version row: {e}")))?;
             out.push(stored);
         }
         Ok(out)

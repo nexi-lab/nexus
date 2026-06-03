@@ -172,12 +172,10 @@ jobs:
         with:
           filters: |
             surface:
-              - '.cargo/**'
               - '.github/workflows/api-surface.yml'
               - 'Cargo.*'
               - 'docs/surface-coverage/**'
               - 'docs/benchmarks/**'
-              - 'proto/nexus/**'
               - 'pyproject.toml'
               - 'rust/**'
               - 'scripts/gen_api_surface_coverage.py'
@@ -214,19 +212,21 @@ jobs:
         if: steps.surface-filter.outputs.surface == 'true'
         run: uv pip install -e ".[dev,test]"
 
+      # nexusd-cluster binary SSOT is now nexus-vfs (#4259).
+      # Install from git for runtime discovery in surface matrix tests.
       - name: Set up Rust toolchain
         if: steps.surface-filter.outputs.surface == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Cache nexus-cluster build
+      - name: Cache nexus-cluster install
         if: steps.surface-filter.outputs.surface == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: api-rpc-surface-matrix
 
-      - name: Build nexusd-cluster for runtime discovery
+      - name: Install nexusd-cluster from nexus-vfs
         if: steps.surface-filter.outputs.surface == 'true'
-        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+        run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Validate API/RPC surface matrix
         if: steps.surface-filter.outputs.surface == 'true'

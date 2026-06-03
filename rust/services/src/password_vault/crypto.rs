@@ -71,10 +71,7 @@ pub(crate) fn load_or_create_master_key(path: &Path) -> Result<MasterKey, Passwo
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                PasswordVaultError::Storage(format!(
-                    "mkdir parent of {}: {e}",
-                    path.display()
-                ))
+                PasswordVaultError::Storage(format!("mkdir parent of {}: {e}", path.display()))
             })?;
         }
     }
@@ -87,9 +84,7 @@ pub(crate) fn load_or_create_master_key(path: &Path) -> Result<MasterKey, Passwo
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| {
-                PasswordVaultError::Storage(format!("chmod 0600 on master key: {e}"))
-            })?;
+            .map_err(|e| PasswordVaultError::Storage(format!("chmod 0600 on master key: {e}")))?;
     }
 
     std::fs::rename(&tmp, path).map_err(|e| {

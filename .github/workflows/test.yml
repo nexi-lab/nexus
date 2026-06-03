@@ -167,21 +167,20 @@ jobs:
         run: uv pip install -e ".[dev,test]"
 
       # The nexus-cluster binary is required by NexusFS (KernelClient spawns
-      # it as a subprocess). Tests that create NexusFS directly (not via
-      # Docker) need the binary on PATH.
+      # it as a subprocess). Binary SSOT is now nexus-vfs; install via
+      # cargo install from the git repo.
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Cache nexus-cluster build
+      - name: Cache nexus-cluster install
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: e2e-self-contained
+          shared-key: e2e-nexus-cluster
 
-      - name: Build nexus-cluster binary
+      - name: Install nexus-cluster from nexus-vfs
         run: |
-          cargo build --release -p nexus-cluster --bin nexusd-cluster
-          sudo cp target/release/nexusd-cluster /usr/local/bin/
-          sudo ln -sf /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
+          cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+          sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py
@@ -527,12 +526,14 @@ jobs:
           fi
 
   # ── nexusd-cluster boot smoke test ──────────────────────────────────
+  # Kernel-tier Rust (including nexusd-cluster) migrated to nexus-vfs (#4259).
+  # Install from nexus-vfs git and smoke-test the binary.
   nexusd-cluster-smoke:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -540,8 +541,13 @@ jobs:
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Build nexusd-cluster
-        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+      - name: Cache nexus-cluster install
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nexusd-cluster-smoke
+
+      - name: Install nexusd-cluster from nexus-vfs
+        run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Boot smoke test
         run: |
@@ -549,11 +555,11 @@ jobs:
           # Smoke uses static + empty peers → single-node default
           # (creates own root 1-voter zone).  --bootstrap-mode is
           # required since BootstrapMode validator landed.
-          RUST_LOG=info ./target/release/nexusd-cluster \
+          RUST_LOG=info nexusd-cluster \
             --no-tls --data-dir "$DATA_DIR" \
             --bootstrap-mode static &
           PID=$!
-          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot…"
+          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot..."
 
           sleep 5
 
@@ -563,7 +569,7 @@ jobs:
             exit 1
           fi
 
-          echo "nexusd-cluster is alive after 5s — sending SIGTERM…"
+          echo "nexusd-cluster is alive after 5s — sending SIGTERM..."
           kill "$PID"
           wait "$PID"
           EXIT_CODE=$?

@@ -9,7 +9,6 @@ on:
       - 'Cargo.lock'
       - 'pyproject.toml'
       - 'rust/**'
-      - 'proto/**'
   pull_request:
     branches: [main, develop]
     paths:
@@ -18,7 +17,6 @@ on:
       - 'Cargo.lock'
       - 'pyproject.toml'
       - 'rust/**'
-      - 'proto/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -9,7 +9,7 @@ on:
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'
-      - 'rust/kernel/src/**/*.rs'
+      - 'rust/**/*.rs'
 
 env:
   # Required for third-party PyO3 sdist builds (e.g. pdf-inspector).

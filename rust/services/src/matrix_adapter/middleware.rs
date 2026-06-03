@@ -40,15 +40,11 @@ pub async fn require_access_token<K: kernel::abi::KernelAbi>(
     next: Next,
 ) -> Result<Response, AdapterError> {
     let token = parse_bearer(req.headers()).ok_or(AdapterError::MissingToken)?;
-    let session = state
-        .auth
-        .resolve_token(token)
-        .await
-        .map_err(|e| match e {
-            crate::matrix_adapter::auth::AuthError::UnknownToken => AdapterError::UnknownToken,
-            crate::matrix_adapter::auth::AuthError::Forbidden(m) => AdapterError::Forbidden(m),
-            crate::matrix_adapter::auth::AuthError::Backend(m) => AdapterError::Internal(m),
-        })?;
+    let session = state.auth.resolve_token(token).await.map_err(|e| match e {
+        crate::matrix_adapter::auth::AuthError::UnknownToken => AdapterError::UnknownToken,
+        crate::matrix_adapter::auth::AuthError::Forbidden(m) => AdapterError::Forbidden(m),
+        crate::matrix_adapter::auth::AuthError::Backend(m) => AdapterError::Internal(m),
+    })?;
     req.extensions_mut().insert::<AuthSession>(session);
     Ok(next.run(req).await)
 }

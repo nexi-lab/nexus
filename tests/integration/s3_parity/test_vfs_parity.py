@@ -81,3 +81,29 @@ class TestVfsParity:
             h.fs.write(f"{mp}/src.txt", b"copy me", context=h.ctx)
             h.fs.sys_copy(f"{mp}/src.txt", f"{mp}/dst.txt", context=h.ctx)
             assert h.fs.sys_read(f"{mp}/dst.txt", context=h.ctx) == b"copy me"
+
+    def test_rename_parity_local_control(self, parity_kernel):
+        """Local control: rename works end-to-end."""
+        h = parity_kernel
+        local_old, _ = h.paths("old.txt")
+        local_new, _ = h.paths("new.txt")
+        h.fs.write(local_old, b"rename me", context=h.ctx)
+        h.fs.sys_rename(local_old, local_new, context=h.ctx)
+        assert h.fs.sys_read(local_new, context=h.ctx) == b"rename me"
+
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            'DIVERGENCE (#4267): S3 rename via Rust driver raises NotSupported("rename") — '
+            "the backend does not implement atomic rename; read-after-rename is unreachable. "
+            "Follow-up: <RENAME_ISSUE_URL>."
+        ),
+    )
+    def test_rename_parity_s3(self, parity_kernel):
+        """S3: rename should behave like local (read-after-rename returns content)."""
+        h = parity_kernel
+        _, s3_old = h.paths("old.txt")
+        _, s3_new = h.paths("new.txt")
+        h.fs.write(s3_old, b"rename me", context=h.ctx)
+        h.fs.sys_rename(s3_old, s3_new, context=h.ctx)
+        assert h.fs.sys_read(s3_new, context=h.ctx) == b"rename me"

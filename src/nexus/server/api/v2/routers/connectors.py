@@ -611,6 +611,22 @@ async def mount_connector(
     nx = _get_nx(request)
 
     async def _mount() -> MountResponse:
+        # Idempotency guard (#4267): re-mounting an already-mounted point makes
+        # the kernel cancel the gRPC stream (RST_STREAM), surfacing as a
+        # confusing transport error. Detect the duplicate up front and return a
+        # clear "already mounted" instead. Best-effort — any lookup failure
+        # falls through to the normal mount path.
+        try:
+            _existing = await mount_svc.list_mounts(context=mount_context)
+            if any(m.get("mount_point") == req.mount_point for m in _existing):
+                return MountResponse(
+                    mounted=False,
+                    mount_point=req.mount_point,
+                    error=f"already mounted at {req.mount_point}",
+                )
+        except Exception:
+            pass
+
         # Write readme docs BEFORE mounting — after mount, the path routes to the
         # connector backend instead of Raft. Writing first puts README.md + schemas
         # in the Raft metastore where the TUI file explorer can browse them.

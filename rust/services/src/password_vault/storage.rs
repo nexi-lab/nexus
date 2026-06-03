@@ -138,11 +138,7 @@ impl Storage {
             /* is_system */ true,
         );
 
-        let storage = Self {
-            kernel,
-            ctx,
-            root,
-        };
+        let storage = Self { kernel, ctx, root };
 
         // Ensure directory structure exists.
         storage.ensure_dir(&format!("{}/entries", storage.root))?;
@@ -160,26 +156,14 @@ impl Storage {
     fn ensure_dir(&self, path: &str) -> Result<(), PasswordVaultError> {
         self.kernel
             .sys_setattr(
-                path,
-                DT_DIR,
-                /* backend_name */ "",
-                /* backend */ None,
-                /* metastore */ None,
-                /* raft_backend */ None,
-                /* io_profile */ "memory",
-                /* zone_id */ "root",
-                /* is_external */ false,
-                /* capacity */ 0,
-                /* read_fd */ None,
-                /* write_fd */ None,
-                /* mime_type */ None,
-                /* modified_at_ms */ None,
-                /* content_id */ None,
-                /* size */ None,
-                /* version */ None,
-                /* created_at_ms */ None,
-                /* link_target */ None,
-                /* source */ None,
+                path, DT_DIR, /* backend_name */ "", /* backend */ None,
+                /* metastore */ None, /* raft_backend */ None,
+                /* io_profile */ "memory", /* zone_id */ "root",
+                /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
+                /* write_fd */ None, /* mime_type */ None,
+                /* modified_at_ms */ None, /* content_id */ None, /* size */ None,
+                /* version */ None, /* created_at_ms */ None,
+                /* link_target */ None, /* source */ None,
                 /* remote_metastore */ None,
             )
             .map(|_| ())
@@ -222,11 +206,7 @@ impl Storage {
         let entries = self.kernel.sys_readdir(&dir, "root", true);
         let mut out = Vec::new();
         for (child_path, _etype) in entries {
-            let title = child_path
-                .rsplit('/')
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let title = child_path.rsplit('/').next().unwrap_or("").to_string();
             if title.is_empty() {
                 continue;
             }
@@ -253,9 +233,9 @@ impl Storage {
         let path = self.entries_path(title);
         let encoded = bincode::serialize(idx)
             .map_err(|e| PasswordVaultError::Storage(format!("encode index {title}: {e}")))?;
-        self.kernel.write(&path, &self.ctx, &encoded, 0).map_err(|e| {
-            PasswordVaultError::Storage(format!("set_index {title}: {e:?}"))
-        })?;
+        self.kernel
+            .write(&path, &self.ctx, &encoded, 0)
+            .map_err(|e| PasswordVaultError::Storage(format!("set_index {title}: {e:?}")))?;
         Ok(())
     }
 
@@ -272,9 +252,11 @@ impl Storage {
         let path = self.version_path(title, version);
         let encoded = bincode::serialize(entry)
             .map_err(|e| PasswordVaultError::Storage(format!("encode version: {e}")))?;
-        self.kernel.write(&path, &self.ctx, &encoded, 0).map_err(|e| {
-            PasswordVaultError::Storage(format!("put_version {title}/{version}: {e:?}"))
-        })?;
+        self.kernel
+            .write(&path, &self.ctx, &encoded, 0)
+            .map_err(|e| {
+                PasswordVaultError::Storage(format!("put_version {title}/{version}: {e:?}"))
+            })?;
         Ok(())
     }
 
@@ -292,9 +274,7 @@ impl Storage {
                     ))
                 })?;
                 let entry: StoredEntry = bincode::deserialize(&data).map_err(|e| {
-                    PasswordVaultError::Storage(format!(
-                        "decode version {title}/{version}: {e}"
-                    ))
+                    PasswordVaultError::Storage(format!("decode version {title}/{version}: {e}"))
                 })?;
                 Ok(Some(entry))
             }

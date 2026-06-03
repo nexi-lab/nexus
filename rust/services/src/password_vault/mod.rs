@@ -1257,14 +1257,8 @@ mod e2e_integration {
         assert_eq!(put1.title, "github");
 
         // 2. Kernel cross-verify: index file written to VFS.
-        let index_read = KernelConvenience::read(
-            &*kernel,
-            "/vault/entries/github",
-            &ctx,
-            0,
-            0,
-        )
-        .expect("index entry should exist in VFS");
+        let index_read = KernelConvenience::read(&*kernel, "/vault/entries/github", &ctx, 0, 0)
+            .expect("index entry should exist in VFS");
         assert!(index_read.data.is_some(), "index should have content");
 
         // 3. Rotate password (put v2).  put1.title flows here.
@@ -1476,7 +1470,10 @@ mod e2e_integration {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(got.entry.as_ref().unwrap().password.as_deref(), Some("rotated-pw"));
+        assert_eq!(
+            got.entry.as_ref().unwrap().password.as_deref(),
+            Some("rotated-pw")
+        );
         assert!(
             got.entry.unwrap().totp_secret.is_none(),
             "totp_secret must be redacted in response"

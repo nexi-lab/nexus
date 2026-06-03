@@ -1,25 +1,33 @@
 """Shared boot + harness for S3-vs-local parity tests (#4267).
 
-One in-process NexusFS kernel, two mounts:
-  - /local/data  -> PathLocalBackend   (control)
-  - /s3/data     -> PathS3Backend       (moto mock_aws)
+One in-process NexusFS kernel (spawns the Rust ``nexusd-cluster``), two mounts:
+  - /local/data  -> PathLocalBackend   (control, Rust driver-path-local)
+  - /s3/data     -> PathS3Backend        (Rust driver-s3, pointed at MinIO)
 
 Every parity test runs the same op against both mounts and asserts identical
 results. The storage backend is the only independent variable.
+
+WHY MinIO (not moto): S3 I/O is served Rust-side, so Python's moto never sees
+the kernel's S3 calls. The cluster binary must be built with the S3 driver:
+
+    cargo build -p nexus-cluster --bin nexusd-cluster --features backends/driver-s3
+
+and a real S3 endpoint (MinIO) must be reachable. The suite skips cleanly when
+either prerequisite is missing.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-pytest.importorskip("moto", reason="moto required for S3 parity tests")
 pytest.importorskip("boto3", reason="boto3 required for S3 parity tests")
 
 import boto3
-from moto import mock_aws
+from botocore.client import Config
 
 from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.backends.storage.path_s3 import PathS3Backend
@@ -30,7 +38,13 @@ from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.fs._helpers import LOCAL_CONTEXT
 
-BUCKET_NAME = "nexus-parity-bucket"
+# MinIO / S3 endpoint configuration (overridable via env for CI).
+S3_ENDPOINT = os.environ.get("NEXUS_TEST_S3_ENDPOINT", "http://localhost:9100")
+S3_ACCESS_KEY = os.environ.get("NEXUS_TEST_S3_ACCESS_KEY", "minioadmin")
+S3_SECRET_KEY = os.environ.get("NEXUS_TEST_S3_SECRET_KEY", "minioadmin")
+S3_REGION = os.environ.get("NEXUS_TEST_S3_REGION", "us-east-1")
+S3_BUCKET = os.environ.get("NEXUS_TEST_S3_BUCKET", "nexus-parity-bucket")
+
 LOCAL_MP = "/local/data"
 S3_MP = "/s3/data"
 
@@ -49,19 +63,50 @@ class ParityHarness:
         return f"{self.local_mp}/{rel}", f"{self.s3_mp}/{rel}"
 
 
-def _boot_kernel(tmp_path: Path, *, enforce: bool) -> tuple[NexusFS, object]:
+def _s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        region_name=S3_REGION,
+        config=Config(signature_version="s3v4"),
+    )
+
+
+@pytest.fixture(scope="session")
+def minio_bucket() -> str:
+    """Skip the suite unless MinIO is reachable; ensure the bucket exists."""
+    client = _s3_client()
+    try:
+        client.list_buckets()
+    except Exception as exc:  # noqa: BLE001 — any connection failure -> skip
+        pytest.skip(
+            f"MinIO not reachable at {S3_ENDPOINT} ({type(exc).__name__}). Start one, e.g. "
+            f"`docker run -d -p 9100:9000 -e MINIO_ROOT_USER=minioadmin "
+            f"-e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data`, "
+            f"or set NEXUS_TEST_S3_ENDPOINT."
+        )
+    try:
+        client.create_bucket(Bucket=S3_BUCKET)
+    except client.exceptions.BucketAlreadyOwnedByYou:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        if "BucketAlreadyOwnedByYou" not in str(exc) and "BucketAlreadyExists" not in str(exc):
+            raise
+    return S3_BUCKET
+
+
+def _boot_kernel(tmp_path: Path, bucket: str, *, enforce: bool) -> tuple[NexusFS, object]:
     """Boot a NexusFS with both backends mounted. `enforce` toggles ReBAC.
 
-    Returns (kernel, kernel_client) so the caller can close the client.
-    Raises pytest.skip if nexus-cluster is not available.
+    Returns (kernel, kernel_client) so the caller can close both. Skips if the
+    nexus-cluster binary is missing or was built without the S3 driver.
     """
     from nexus.remote.kernel_client import KernelClient
 
     local_root = tmp_path / "local_store"
     local_root.mkdir(parents=True, exist_ok=True)
-
-    s3 = boto3.client("s3", region_name="us-east-1")
-    s3.create_bucket(Bucket=BUCKET_NAME)
 
     k = KernelClient()
     k.set_metastore_path(str(tmp_path / "metastore.redb"))
@@ -69,33 +114,48 @@ def _boot_kernel(tmp_path: Path, *, enforce: bool) -> tuple[NexusFS, object]:
         k.open()
     except FileNotFoundError as exc:
         pytest.skip(
-            f"S3 parity tests require the ``nexus-cluster`` binary on PATH "
-            f"(KernelClient spawns it). Build with "
-            f"``cargo build -p nexus-profiles-cluster`` and symlink "
-            f"``nexusd-cluster`` -> ``nexus-cluster``. ({exc})"
+            f"S3 parity tests require the `nexusd-cluster` binary on PATH (KernelClient "
+            f"spawns it). Build with `cargo build -p nexus-cluster --bin nexusd-cluster "
+            f"--features backends/driver-s3` and symlink it onto PATH. ({exc})"
         )
 
-    kernel = NexusFS(
-        metadata_store=k,
-        permissions=PermissionConfig(enforce=enforce),
-    )
+    kernel = NexusFS(metadata_store=k, permissions=PermissionConfig(enforce=enforce))
     kernel._init_cred = OperationContext(
         user_id="test", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
     )
     kernel.sys_setattr(
         LOCAL_MP, entry_type=DT_MOUNT, backend=PathLocalBackend(root_path=str(local_root))
     )
-    kernel.sys_setattr(
-        S3_MP, entry_type=DT_MOUNT, backend=PathS3Backend(bucket_name=BUCKET_NAME, prefix="")
+    # Unique prefix per test: MinIO persists across tests (unlike a fresh moto mock).
+    s3_backend = PathS3Backend(
+        bucket_name=bucket,
+        prefix=f"parity/{tmp_path.name}",
+        endpoint_url=S3_ENDPOINT,
+        access_key_id=S3_ACCESS_KEY,
+        secret_access_key=S3_SECRET_KEY,
+        region_name=S3_REGION,
     )
+    try:
+        kernel.sys_setattr(S3_MP, entry_type=DT_MOUNT, backend=s3_backend)
+    except Exception as exc:  # noqa: BLE001
+        if "unknown backend_type" in str(exc):
+            kernel.close()
+            k.close()
+            pytest.skip(
+                "nexusd-cluster was built without the S3 driver. Rebuild with "
+                "`cargo build -p nexus-cluster --bin nexusd-cluster "
+                "--features backends/driver-s3`."
+            )
+        raise
     return kernel, k
 
 
 @pytest.fixture
-def parity_kernel(tmp_path: Path):
+def parity_kernel(tmp_path: Path, minio_bucket: str):
     """ReBAC disabled (enforce=False): for VFS/batch/range parity tests."""
-    with mock_aws():
-        kernel, k = _boot_kernel(tmp_path, enforce=False)
+    kernel, k = _boot_kernel(tmp_path, minio_bucket, enforce=False)
+    try:
         yield ParityHarness(fs=kernel, local_mp=LOCAL_MP, s3_mp=S3_MP, ctx=LOCAL_CONTEXT)
+    finally:
         kernel.close()
         k.close()

@@ -34,33 +34,48 @@ of scope** for this suite (it only applies to a CAS backend).
 
 ## 3. Architecture — two layers, staged across two PRs
 
-Decision: **hybrid**. An in-process deterministic parity matrix carries the bulk of the
+Decision: **hybrid**. An in-process kernel + MinIO parity matrix carries the bulk of the
 proof; one full Docker-stack smoke proves the real end-to-end search path where the
-search daemon and Rust-served S3 actually run.
+search daemon also runs. (Both layers use a real S3 wire via MinIO — see the PIVOT note
+below; the original moto plan was infeasible.)
 
-### PR1 — In-process parity matrix (deterministic, no Docker)
+### PIVOT (2026-06-02): moto → MinIO + `driver-s3`
 
-A single shared, parametrized harness boots **one** `NexusFS` kernel with **two mounts**:
+The original PR1 plan backed the S3 side with `moto` (`mock_aws`). **That does not work**, discovered by actually running it: the in-process `NexusFS` spawns the Rust `nexusd-cluster` kernel (`KernelClient`), and S3 I/O is served **Rust-side** (`core/nexus_fs_metadata.py::_extract_rust_backend_params` → backend_type `"s3"` → Rust `S3Transport`). Python's `moto` only intercepts Python `boto3`, so it never sees the Rust client's calls. Two consequences:
 
-- `/local/<name>` → `PathLocalBackend` (the control)
-- `/s3/<name>` → `PathS3Backend` under `moto`'s `mock_aws`
+1. The cluster binary must be built with the S3 driver: `cargo build -p nexus-cluster --bin nexusd-cluster --features backends/driver-s3`. The default build only has `driver-path-local` + `driver-remote`; a `path_s3` mount otherwise fails at runtime with `ObjectStoreProvider failed to build 's3' backend: unknown backend_type: 's3'`.
+2. Tests need a **real S3 endpoint** the Rust client can reach → **MinIO** (`minio/minio`). Validated working: `PathS3Backend(bucket_name, prefix=..., endpoint_url="http://localhost:9100", access_key_id="minioadmin", secret_access_key="minioadmin", region_name="us-east-1")` → Rust `driver-s3` → MinIO; the blob physically lands in the bucket.
+
+The pre-existing `tests/unit/fs/test_s3_integration.py` (moto + `PathS3Backend`) has only ever "passed" by **skipping** (no `nexusd-cluster` on PATH); with the binary built it errors identically. A follow-up should fix or re-gate it.
+
+This is a *stronger* proof than moto would have been (real Rust S3 wire). Cost: PR1 now needs a MinIO container + a `driver-s3` build, so it is no longer "no Docker" — but it is still far lighter than the full `nexus up` stack (no server, no search daemon).
+
+### PR1 — In-process kernel + MinIO parity matrix
+
+A single shared harness boots **one** `NexusFS` kernel with **two mounts**:
+
+- `/local/data` → `PathLocalBackend` (the control, Rust `driver-path-local`)
+- `/s3/data` → `PathS3Backend` pointed at **MinIO** (Rust `driver-s3`)
 
 Every parity test runs the **identical** operation against both mount points and asserts
-byte- and metadata-identical results. The storage backend is the only independent
-variable. Rationale for moto (not MinIO) here: the acceptance criterion is **correctness /
-byte-parity**, which moto faithfully reproduces; wire-fidelity (real `endpoint_url`,
-multipart, HTTP Range) is covered by the PR2 MinIO smoke, and efficiency is explicitly
-out of scope.
+byte- and metadata-identical results. The storage backend is the only independent variable.
 
-Boot pattern (mirrors existing `tests/unit/fs/test_s3_integration.py`):
+Boot pattern (validated):
 
 ```python
-metastore = create_kernel(str(tmp_path / "metadata.db"))
-kernel = NexusFS(metadata_store=metastore, permissions=PermissionConfig(enforce=...))
+k = KernelClient(); k.set_metastore_path(str(tmp_path / "meta.redb")); k.open()  # spawns nexusd-cluster
+kernel = NexusFS(metadata_store=k, permissions=PermissionConfig(enforce=...))
 kernel._init_cred = OperationContext(user_id=..., zone_id=ROOT_ZONE_ID, is_admin=True)
-kernel.sys_setattr("/local/x", entry_type=DT_MOUNT, backend=PathLocalBackend(...))
-kernel.sys_setattr("/s3/x",    entry_type=DT_MOUNT, backend=PathS3Backend(bucket_name=..., prefix=""))
+kernel.sys_setattr("/local/data", entry_type=DT_MOUNT, backend=PathLocalBackend(root_path=...))
+kernel.sys_setattr("/s3/data", entry_type=DT_MOUNT, backend=PathS3Backend(
+    bucket_name=..., prefix=f"parity/{tmp_path.name}",  # unique prefix per test (MinIO persists)
+    endpoint_url=S3_ENDPOINT, access_key_id=..., secret_access_key=..., region_name="us-east-1"))
 ```
+
+Gating: skip the whole suite if MinIO is unreachable, and skip with a "rebuild with
+`--features backends/driver-s3`" message if the S3 mount reports `unknown backend_type`.
+No env *flag* gate — it runs whenever the infra (MinIO + driver-s3 binary) is present, so
+CI that provides both runs it continuously.
 
 Covers: ReBAC allow/deny · all VFS ops · batch read/write · range read · the `read_bulk`
 resolution.
@@ -165,11 +180,12 @@ semantic_search(query, path)  [ReBAC read filtering] → result includes doc.txt
 
 ## 9. Test strategy
 
-- Gating: module-level `pytest.mark.skipif(os.environ.get("NEXUS_RUN_S3_INTEGRATION") != "1")`
-  plus `pytest.importorskip("moto")` / `importorskip("boto3")` (graceful skip; moto is not
-  a pinned dependency).
-- Determinism: in-process matrix is fully deterministic (moto + SQLite + `tmp_path`).
+- Gating (PR1): skip the suite if MinIO is unreachable (probe via `boto3` against
+  `NEXUS_TEST_S3_ENDPOINT`, default `http://localhost:9100`); skip with a rebuild hint if
+  the S3 mount reports `unknown backend_type` (binary lacks `driver-s3`). No env *flag*
+  gate — runs whenever infra is present. PR2's full-stack smoke keeps the
+  `NEXUS_RUN_S3_INTEGRATION=1` + `NEXUS_E2E=1` gate (needs Docker).
+- Isolation: local control under `tmp_path`; S3 side under a unique per-test bucket prefix
+  (`parity/<tmp_path.name>`) because MinIO persists across tests (unlike a fresh moto mock).
 - Async handling: PR2 search assertion uses a bounded poll loop with an explicit timeout
   and a descriptive failure on timeout.
-- Isolation: follow the existing `isolate_storage_tests`-style env hygiene to avoid
-  cross-test pollution.

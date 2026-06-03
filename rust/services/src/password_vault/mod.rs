@@ -1229,56 +1229,48 @@ mod e2e_integration {
         }
     }
 
-    /// Full CRUD cycle exercising the cross-repo syscall path:
-    ///   nexus repo (PasswordVaultService) → nexus-vfs repo (Kernel)
-    ///
-    /// Steps: put → cross-verify via kernel → get → update → list →
-    /// list_versions → delete → historical read → restore → readdir.
+    // ── Scenario 1: Password rotation with audit trail ──────────────
+    //
+    // User problem: "Rotate a credential and verify old versions are
+    //   preserved for compliance audit."
+    // Workflow: Put v1 → Kernel cross-verify → Put v2 → ListVersions
+    //   → Get historical v1 → Kernel cross-verify version files
+    // Data flow: put returns version → list_versions uses title →
+    //   get_entry uses version number from list → kernel readdir
+    //   confirms on-disk layout matches.
+
     #[tokio::test]
-    async fn full_crud_cycle_through_kernel_syscalls() {
+    async fn password_rotation_with_audit_trail() {
         let (kernel, svc) = kernel_service();
         let ctx = OperationContext::new("test", "root", true, None, true);
 
-        // 1. Put an entry — version 1.
+        // 1. Store initial credential.
         let put1 = svc
             .put_entry(Request::new(PutEntryRequest {
-                entry: Some(entry("github", "s3cret")),
+                entry: Some(entry("github", "initial-pw")),
                 audit: None,
             }))
             .await
             .unwrap()
             .into_inner();
         assert_eq!(put1.version, 1);
+        assert_eq!(put1.title, "github");
 
-        // 2. Cross-verify via kernel: the entries file exists.
-        let read = KernelConvenience::read(
+        // 2. Kernel cross-verify: index file written to VFS.
+        let index_read = KernelConvenience::read(
             &*kernel,
             "/vault/entries/github",
             &ctx,
             0,
             0,
-        );
-        assert!(read.is_ok(), "entry should exist in VFS");
-        assert!(read.unwrap().data.is_some());
+        )
+        .expect("index entry should exist in VFS");
+        assert!(index_read.data.is_some(), "index should have content");
 
-        // 3. Get entry — password matches, totp_secret redacted.
-        let got = svc
-            .get_entry(Request::new(GetEntryRequest {
-                title: "github".into(),
-                version: None,
-                audit: None,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        let e = got.entry.unwrap();
-        assert_eq!(e.password.as_deref(), Some("s3cret"));
-        assert!(e.totp_secret.is_none()); // always redacted
-
-        // 4. Put again — version 2.
+        // 3. Rotate password (put v2).  put1.title flows here.
         let put2 = svc
             .put_entry(Request::new(PutEntryRequest {
-                entry: Some(entry("github", "n3w-pw")),
+                entry: Some(entry(&put1.title, "rotated-pw")),
                 audit: None,
             }))
             .await
@@ -1286,41 +1278,85 @@ mod e2e_integration {
             .into_inner();
         assert_eq!(put2.version, 2);
 
-        // 5. List entries — count = 1.
-        let list = svc
-            .list_entries(Request::new(ListEntriesRequest {
-                query: String::new(),
-                limit: 0,
-                audit: None,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(list.total_in_vault, 1);
-
-        // 6. List versions — count = 2.
+        // 4. List versions — auditor verifies both exist.
+        //    put1.title flows here.
         let versions = svc
             .list_versions(Request::new(ListVersionsRequest {
-                title: "github".into(),
+                title: put1.title.clone(),
                 audit: None,
             }))
             .await
             .unwrap()
             .into_inner();
         assert_eq!(versions.count, 2);
+        let ver_nums: Vec<i32> = versions.versions.iter().map(|v| v.version).collect();
+        assert_eq!(ver_nums, vec![1, 2]);
 
-        // 7. Delete (soft).
-        svc.delete_entry(Request::new(DeleteEntryRequest {
-            title: "github".into(),
-            audit: None,
-        }))
-        .await
-        .unwrap();
+        // 5. Historical read — auditor retrieves the OLD password.
+        //    Version number comes from step 4's version list.
+        let hist = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: put1.title.clone(),
+                version: Some(versions.versions[0].version),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            hist.entry.unwrap().password.as_deref(),
+            Some("initial-pw"),
+            "historical version must return original password"
+        );
 
-        // 8. Get latest → NotFound.
+        // 6. Kernel cross-verify: both version files exist on disk.
+        let version_dir = kernel.sys_readdir("/vault/versions/github", "root", true);
+        assert_eq!(
+            version_dir.len(),
+            2,
+            "VFS should have 2 version files for github"
+        );
+    }
+
+    // ── Scenario 2: Accidental delete and recovery ───────────────
+    //
+    // User problem: "Accidentally soft-delete a credential, then
+    //   recover it without losing any data."
+    // Workflow: Put → Delete → Verify NotFound → Restore →
+    //   Verify recovered → Kernel readdir cross-check
+    // Data flow: put returns title → delete uses title → restore
+    //   uses title → get uses title → readdir verifies VFS state.
+
+    #[tokio::test]
+    async fn accidental_delete_and_recovery() {
+        let (kernel, svc) = kernel_service();
+
+        // 1. Store a credential.
+        let put = svc
+            .put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry("aws-prod", "s3cret-key")),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(put.version, 1);
+
+        // 2. Accidentally delete it.  put.title flows here.
+        let del = svc
+            .delete_entry(Request::new(DeleteEntryRequest {
+                title: put.title.clone(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(del.deleted);
+
+        // 3. Verify latest read returns NotFound.
         let err = svc
             .get_entry(Request::new(GetEntryRequest {
-                title: "github".into(),
+                title: put.title.clone(),
                 version: None,
                 audit: None,
             }))
@@ -1328,87 +1364,156 @@ mod e2e_integration {
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
 
-        // 9. Historical read (version=1) still works.
-        let hist = svc
-            .get_entry(Request::new(GetEntryRequest {
-                title: "github".into(),
-                version: Some(1),
+        // 4. Restore the entry.  put.title flows here.
+        let restored = svc
+            .restore_entry(Request::new(RestoreEntryRequest {
+                title: put.title.clone(),
                 audit: None,
             }))
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(hist.entry.unwrap().password.as_deref(), Some("s3cret"));
+        assert!(restored.restored);
+        assert_eq!(restored.current_version, 1);
 
-        // 10. Restore.
-        svc.restore_entry(Request::new(RestoreEntryRequest {
-            title: "github".into(),
-            audit: None,
-        }))
-        .await
-        .unwrap();
+        // 5. Verify the credential is fully recovered.
+        let got = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: put.title.clone(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            got.entry.unwrap().password.as_deref(),
+            Some("s3cret-key"),
+            "recovered credential must match original"
+        );
 
-        // 11. Cross-verify via kernel readdir: entries directory has 1 child.
+        // 6. Kernel cross-check: VFS entries dir still has the entry.
         let entries = kernel.sys_readdir("/vault/entries", "root", true);
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].0.contains("github"));
+        assert!(entries[0].0.contains("aws-prod"));
     }
 
-    /// TOTP generate after kernel-stored put — verifies crypto pipeline
-    /// survives the kernel round-trip (encrypt → kernel write → kernel
-    /// read → decrypt → TOTP compute).
+    // ── Scenario 3: TOTP setup → rotate password → TOTP survives ─
+    //
+    // User problem: "Set up 2FA for an account, later rotate the
+    //   password, and verify TOTP still works after the update."
+    // Workflow: Put (with TOTP) → GenerateTotp → Put v2 (new pw) →
+    //   GenerateTotp again → Get to verify password changed
+    // Data flow: put returns title → totp uses title → put v2 uses
+    //   title → totp uses title → get uses title, verifies new pw.
+
     #[tokio::test]
-    async fn totp_through_kernel_storage() {
+    async fn totp_survives_password_rotation() {
         let (_kernel, svc) = kernel_service();
 
-        let mut e = entry("aws", "pw");
+        // 1. Store credential WITH TOTP secret.
+        let mut e = entry("aws", "original-pw");
         e.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
-        svc.put_entry(Request::new(PutEntryRequest {
-            entry: Some(e),
-            audit: None,
-        }))
-        .await
-        .unwrap();
-
-        let r = svc
-            .generate_totp(Request::new(GenerateTotpRequest {
-                title: "aws".into(),
+        let put1 = svc
+            .put_entry(Request::new(PutEntryRequest {
+                entry: Some(e),
                 audit: None,
             }))
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(r.code.len(), 6);
-        assert!(r.code.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(put1.version, 1);
+
+        // 2. Generate TOTP — verifies crypto pipeline:
+        //    encrypt → kernel write → kernel read → decrypt → TOTP.
+        let totp1 = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: put1.title.clone(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(totp1.code.len(), 6);
+        assert!(totp1.code.chars().all(|c| c.is_ascii_digit()));
+
+        // 3. Rotate password, keep TOTP secret.  put1.title flows.
+        let mut e2 = entry(&put1.title, "rotated-pw");
+        e2.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
+        let put2 = svc
+            .put_entry(Request::new(PutEntryRequest {
+                entry: Some(e2),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(put2.version, 2);
+
+        // 4. TOTP still works after rotation — same secret, same code
+        //    within the 30s window.
+        let totp2 = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: put1.title.clone(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(totp2.code.len(), 6);
+        assert_eq!(
+            totp1.code, totp2.code,
+            "same TOTP secret within same 30s window must produce same code"
+        );
+
+        // 5. Verify password actually changed.
+        let got = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: put1.title.clone(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.entry.as_ref().unwrap().password.as_deref(), Some("rotated-pw"));
+        assert!(
+            got.entry.unwrap().totp_secret.is_none(),
+            "totp_secret must be redacted in response"
+        );
     }
 
-    /// Multiple entries with query filtering through kernel storage.
+    // ── Scenario 4: Multi-credential search and cleanup ──────────
+    //
+    // User problem: "Manage multiple credentials — add several,
+    //   search for a specific one, delete it, verify it's gone from
+    //   both the service list AND the kernel VFS."
+    // Workflow: Put 3 entries → List (filtered) → Delete matched →
+    //   List (verify count) → Kernel readdir cross-check
+    // Data flow: put returns titles → list uses query to find one →
+    //   delete uses matched title → list confirms removal →
+    //   kernel readdir confirms VFS state matches.
+
     #[tokio::test]
-    async fn multiple_entries_with_filtering() {
-        let (_kernel, svc) = kernel_service();
+    async fn multi_credential_search_and_cleanup() {
+        let (kernel, svc) = kernel_service();
 
-        for (t, p) in [("gmail", "pw1"), ("github", "pw2"), ("aws", "pw3")] {
-            svc.put_entry(Request::new(PutEntryRequest {
-                entry: Some(entry(t, p)),
-                audit: None,
-            }))
-            .await
-            .unwrap();
+        // 1. Seed 3 credentials.
+        let mut titles = Vec::new();
+        for (t, p) in [("gmail", "pw1"), ("github", "pw2"), ("aws-prod", "pw3")] {
+            let r = svc
+                .put_entry(Request::new(PutEntryRequest {
+                    entry: Some(entry(t, p)),
+                    audit: None,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            titles.push(r.title);
         }
+        assert_eq!(titles.len(), 3);
 
-        // Unfiltered: all 3.
-        let all = svc
-            .list_entries(Request::new(ListEntriesRequest {
-                query: String::new(),
-                limit: 0,
-                audit: None,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(all.total_in_vault, 3);
-
-        // Filtered: "git" matches "github" only.
+        // 2. Search for "git" — should match exactly "github".
         let filtered = svc
             .list_entries(Request::new(ListEntriesRequest {
                 query: "git".into(),
@@ -1419,6 +1524,43 @@ mod e2e_integration {
             .unwrap()
             .into_inner();
         assert_eq!(filtered.matched, 1);
-        assert_eq!(filtered.entries[0].title, "github");
+        let matched_title = &filtered.entries[0].title;
+        assert_eq!(matched_title, "github");
+
+        // 3. Delete the matched entry.  matched_title flows from step 2.
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: matched_title.clone(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+
+        // 4. List again — total should be 2, "github" gone.
+        let after = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(after.total_in_vault, 2);
+        let remaining: Vec<&str> = after.entries.iter().map(|e| e.title.as_str()).collect();
+        assert!(
+            !remaining.contains(&"github"),
+            "deleted entry must not appear in list"
+        );
+
+        // 5. Kernel cross-check: VFS entries dir has 3 files (soft-
+        //    delete doesn't remove the index file, but list_entries
+        //    filters by tombstone). This verifies the kernel layer
+        //    stores the tombstone, not the service layer.
+        let vfs_entries = kernel.sys_readdir("/vault/entries", "root", true);
+        assert_eq!(
+            vfs_entries.len(),
+            3,
+            "VFS still has 3 index files (soft-delete = tombstone, not removal)"
+        );
     }
 }

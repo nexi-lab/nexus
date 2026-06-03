@@ -13,7 +13,7 @@
 //! the loopback restriction.
 //!
 //! Data layout (defaults under `--data-dir`):
-//!   data_dir/vault.redb       — encrypted entry storage (redb)
+//!   data_dir/vault-meta.redb  — kernel metastore (entry metadata)
 //!   data_dir/master.key       — 32-byte AES-256 master key
 //!                                (auto-generated on first start)
 //!
@@ -22,9 +22,11 @@
 //! password-agent's README §Cross-box for that workflow.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use kernel::kernel::Kernel;
 use tonic::transport::Server;
 use tracing::info;
 
@@ -90,8 +92,19 @@ async fn main() -> Result<()> {
         "starting nexusd-vault"
     );
 
-    let svc =
-        PasswordVaultServiceImpl::new(&args.data_dir, &master_key_path).context("open vault")?;
+    // Create kernel with persistent metastore so vault data survives
+    // restarts. All vault I/O goes through kernel syscalls (the
+    // cross-repo integration seam).
+    let kernel = Arc::new(Kernel::new());
+    let meta_path = args.data_dir.join("vault-meta.redb");
+    if let Some(p) = meta_path.to_str() {
+        kernel
+            .set_metastore_path(p)
+            .map_err(|e| anyhow::anyhow!("set vault metastore path: {e:?}"))?;
+    }
+
+    let svc = PasswordVaultServiceImpl::new_with_kernel(kernel, "/vault", &master_key_path)
+        .context("open vault")?;
 
     Server::builder()
         .add_service(PasswordVaultServiceServer::new(svc))

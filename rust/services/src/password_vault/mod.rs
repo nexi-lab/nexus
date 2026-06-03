@@ -6,8 +6,8 @@
 //! Per #3923 integration doc, this is the Phase 1 Rust impl. Per the
 //! `services` ⊥ `backends` ⊥ `transport` ⊥ `raft` invariant, this
 //! module depends ONLY on `kernel` + `contracts` (transitively); storage
-//! is a local redb file owned by the service binary, not a `backends`
-//! crate import.
+//! goes through kernel syscalls (the cross-repo integration seam to
+//! nexus-vfs), not direct backend imports.
 //!
 //! Server-side TOTP is the security invariant the rewrite preserves:
 //! the totp_secret never leaves the server — `GetEntry` always redacts

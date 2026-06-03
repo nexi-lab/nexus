@@ -55,7 +55,6 @@ kernel = { workspace = true }
 # `Status` types. Unconditional because each service module is
 # feature-gated, but tonic itself is shared infrastructure for them.
 tonic = { workspace = true }
-redb = "4"
 # Tasks engine storage backend.
 fjall = "3"
 # `acp::subprocess` calls libc::dup() to hand kernel-side OwnedFds

@@ -15,6 +15,10 @@ path = "src/main.rs"
 # aes-gcm / hmac / sha1 / base32 / prost-types / tonic-prost (all
 # gated under service-password-vault in services/Cargo.toml).
 services = { workspace = true, features = ["service-password-vault"] }
+# Kernel from nexus-vfs — vault creates a Kernel and passes it to
+# `PasswordVaultServiceImpl::new_with_kernel()` so all storage goes
+# through kernel syscalls (cross-repo integration seam).
+kernel = { workspace = true }
 # tonic for the gRPC server. Same version family as services / cluster
 # / raft (workspace-pinned).
 tonic = { workspace = true }

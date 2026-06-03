@@ -189,3 +189,42 @@ semantic_search(query, path)  [ReBAC read filtering] → result includes doc.txt
   (`parity/<tmp_path.name>`) because MinIO persists across tests (unlike a fresh moto mock).
 - Async handling: PR2 search assertion uses a bounded poll loop with an explicit timeout
   and a descriptive failure on timeout.
+
+## 10. PR1 results (2026-06-02)
+
+PR1 landed as `tests/integration/s3_parity/` (harness + 4 test modules). Full suite:
+**17 passed, 1 xfailed, 0 skipped** against real MinIO + Rust `driver-s3`.
+
+Findings:
+
+- **VFS parity (write/read/stat/delete/mkdir/rmdir/list/copy):** identical on both backends.
+  `stat` compares `{size, is_directory}` only — mtime excluded (local FS mtime vs S3
+  LastModified differ by construction; documented-acceptable).
+- **rename — REAL DIVERGENCE (bug):** local renames fine; the Rust `driver-s3` raises
+  `NotSupported("rename")`. Captured as `xfail(strict=False)` and filed as
+  [#4306](https://github.com/nexi-lab/nexus/issues/4306) (fix direction: server-side
+  copy+delete). This is deeper than the historical "metadata-only" note.
+- **range read:** `read_range` and `sys_read(offset,count)` byte-identical on both backends.
+- **batch + read_bulk resolution:** `read_bulk`/`write_batch` results identical. Resolved the
+  open question by spying on `KernelClient.sys_read` — `read_bulk` issues N sequential
+  per-file kernel reads, never a batched RPC (and the Python backend's `batch_read_content`
+  is out of the path entirely because S3 is Rust-served). Performance gap, not correctness;
+  filed [#4307](https://github.com/nexi-lab/nexus/issues/4307).
+- **ReBAC allow/deny — stayed in PR1** (not deferred to PR2). The spike confirmed bare
+  `NexusFS(enforce=True)` does NOT auto-wire enforcement, so the `parity_kernel_enforced`
+  fixture manually wires the real classes (`PermissionEnforcer` → `PermissionChecker` →
+  `RebacPermissionCheckHook`, installed at `/__sys__/services/permission`) over an in-memory
+  `ReBACManager` — the same seam unit tests use. Deny-without-grant and allow-after-grant are
+  identical on both backends; the enforcer keys on `("file", <virtual_path>)` regardless of
+  backend, directly observing the issue's "enforcement above the backend boundary" claim.
+  Grants use relation `direct_viewer` (plain `viewer` is a namespace-union alias). ReBAC is
+  also exercised more faithfully end-to-end in PR2's full server stack.
+- **Pre-existing test gap:** `tests/unit/fs/test_s3_integration.py` (moto + PathS3Backend)
+  only ever passed by skipping; with the binary built it errors (`unknown backend_type`).
+  Worth a follow-up to fix or re-gate (not done in PR1).
+
+Out-of-scope items confirmed untouched: dedup (cas_s3), GC, volume packing/CDC/mmap, perf.
+
+Env to run PR1 locally: `nexusd-cluster` built `--features backends/driver-s3` on PATH +
+MinIO reachable at `NEXUS_TEST_S3_ENDPOINT` (default `http://localhost:9100`); then
+`uv run pytest tests/integration/s3_parity/ -n0`.

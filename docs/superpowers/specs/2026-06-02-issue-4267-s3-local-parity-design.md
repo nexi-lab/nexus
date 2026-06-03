@@ -193,23 +193,30 @@ semantic_search(query, path)  [ReBAC read filtering] → result includes doc.txt
 ## 10. PR1 results (2026-06-02)
 
 PR1 landed as `tests/integration/s3_parity/` (harness + 5 test modules). Full suite:
-**19 passed, 1 xfailed, 0 skipped** against real MinIO + Rust `driver-s3`.
+**20 passed, 0 xfailed, 0 skipped** against real MinIO + Rust `driver-s3`. The fixes below
+were also validated end-to-end through the real `nexus up` stack (driver-s3 image + OpenAI
+embeddings): S3 mount + VFS + rename + read_bulk + semantic-search-over-S3 all pass.
 
 Findings:
 
 - **VFS parity (write/read/stat/delete/mkdir/rmdir/list/copy):** identical on both backends.
   `stat` compares `{size, is_directory}` only — mtime excluded (local FS mtime vs S3
   LastModified differ by construction; documented-acceptable).
-- **rename — REAL DIVERGENCE (bug):** local renames fine; the Rust `driver-s3` raises
-  `NotSupported("rename")`. Captured as `xfail(strict=False)` and filed as
-  [#4306](https://github.com/nexi-lab/nexus/issues/4306) (fix direction: server-side
-  copy+delete). This is deeper than the historical "metadata-only" note.
+- **rename — was a divergence, now FIXED ([#4306](https://github.com/nexi-lab/nexus/issues/4306) closed).**
+  The Rust `driver-s3` `ObjectStore::rename` default returned `NotSupported`; implemented it
+  as an S3 server-side copy (`x-amz-copy-source`) + delete. Test flipped from xfail to a
+  passing parity assertion (read-after-rename returns content; source removed). Validated
+  in-process and full-stack.
 - **range read:** `read_range` and `sys_read(offset,count)` byte-identical on both backends.
-- **batch + read_bulk resolution:** `read_bulk`/`write_batch` results identical. Resolved the
-  open question by spying on `KernelClient.sys_read` — `read_bulk` issues N sequential
-  per-file kernel reads, never a batched RPC (and the Python backend's `batch_read_content`
-  is out of the path entirely because S3 is Rust-served). Performance gap, not correctness;
-  filed [#4307](https://github.com/nexi-lab/nexus/issues/4307).
+- **batch + read_bulk — resolved then FIXED ([#4307](https://github.com/nexi-lab/nexus/issues/4307) closed).**
+  Originally `read_bulk` looped `sys_read` per file (N sequential RPCs). Now its large-batch
+  path issues one parallel `kernel.read_batch` (rayon fan-out) for all paths — the Rust
+  kernel services S3 connector mounts in that batch too, so bulk reads over S3 are a single
+  RPC. Per-item `sys_read` fallback preserves connector/pipe/not-found behaviour. Validated:
+  s3_parity 20 passed + CLI↔RPC↔kernel parity 31 passed.
+- **connector re-mount idempotency — FIXED.** Re-mounting an existing point made the kernel
+  cancel the gRPC stream (`RST_STREAM`); the mount route now returns a clean "already
+  mounted at X".
 - **ReBAC allow/deny — stayed in PR1** (not deferred to PR2). The spike confirmed bare
   `NexusFS(enforce=True)` does NOT auto-wire enforcement, so the `parity_kernel_enforced`
   fixture manually wires the real classes (`PermissionEnforcer` → `PermissionChecker` →

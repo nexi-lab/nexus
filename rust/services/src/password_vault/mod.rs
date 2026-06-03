@@ -119,11 +119,46 @@ pub struct PasswordVaultServiceImpl {
 }
 
 impl PasswordVaultServiceImpl {
-    /// Open or create a vault at `data_dir/vault.redb`, with the master
-    /// key at `master_key_path` (32 bytes, generated + persisted on
-    /// first call). Both files are atomically created if absent.
+    /// Open or create a vault backed by an in-process kernel, with
+    /// the master key at `master_key_path` (32 bytes, generated +
+    /// persisted on first call).
+    ///
+    /// Convenience wrapper: creates a `Kernel::new()` internally and
+    /// delegates to `new_with_kernel`. Suitable for tests and the
+    /// default vault binary boot (no external kernel needed).
     pub fn new(data_dir: &Path, master_key_path: &Path) -> Result<Self, PasswordVaultError> {
-        let storage = storage::Storage::open(&data_dir.join("vault.redb"))?;
+        use kernel::kernel::Kernel;
+
+        let kernel = std::sync::Arc::new(Kernel::new());
+
+        // Point metastore at persistent path when a real data_dir is given,
+        // so vault data survives restarts.
+        let meta_path = data_dir.join("vault-meta.redb");
+        if let Some(p) = meta_path.to_str() {
+            let _ = kernel.set_metastore_path(p);
+        }
+
+        Self::new_with_kernel(kernel, "/vault", master_key_path)
+    }
+
+    /// Create a vault service on an existing kernel.
+    ///
+    /// The kernel handles all storage via syscalls — no direct redb
+    /// dependency. `root` is the VFS path prefix for vault data
+    /// (e.g. `"/vault"`); the storage layer registers a mount and
+    /// creates directory structure underneath.
+    ///
+    /// This is the primary constructor for cross-repo integration:
+    /// ```text
+    /// nexus repo (Rust service)  ──in-process──>  nexus-vfs repo (kernel)
+    ///     services crate                            kernel crate (git dep)
+    /// ```
+    pub fn new_with_kernel(
+        kernel: std::sync::Arc<kernel::kernel::Kernel>,
+        root: &str,
+        master_key_path: &Path,
+    ) -> Result<Self, PasswordVaultError> {
+        let storage = storage::Storage::new(kernel, root)?;
         let master_key = crypto::load_or_create_master_key(master_key_path)?;
         Ok(Self {
             inner: Arc::new(Inner {

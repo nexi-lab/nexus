@@ -159,3 +159,69 @@ def parity_kernel(tmp_path: Path, minio_bucket: str):
     finally:
         kernel.close()
         k.close()
+
+
+@pytest.fixture
+def parity_kernel_enforced(tmp_path: Path, minio_bucket: str):
+    """ReBAC enabled (enforce=True): for allow/deny parity tests.
+
+    Wires a MemoryPermissionEnforcer-backed ReBACManager (in-memory SQLite)
+    into the NexusFS kernel so that ReBAC deny/allow is exercised without a
+    full server stack.  The ReBACManager is enlisted as the ``"rebac_mgr"``
+    service so tests can call ``.rebac_write()`` to issue grants.
+    """
+    from sqlalchemy import create_engine
+
+    from nexus.bricks.rebac.checker import PermissionChecker
+    from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+        MetastoreNamespaceStore,
+    )
+    from nexus.bricks.rebac.enforcer import PermissionEnforcer
+    from nexus.bricks.rebac.manager import ReBACManager
+    from nexus.bricks.rebac.permission_hook import RebacPermissionCheckHook
+    from nexus.storage.models import Base
+    from tests.testkit.metadata import InMemoryNexusFS
+
+    kernel, k = _boot_kernel(tmp_path, minio_bucket, enforce=True)
+
+    # Build an in-memory ReBACManager (same pattern as unit tests).
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    rebac_mgr = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+
+    admin = OperationContext(user_id="admin", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True)
+    kernel._init_cred = admin
+
+    # Wire the permission hook into the live kernel.
+    enforcer = PermissionEnforcer(rebac_manager=rebac_mgr)
+    checker = PermissionChecker(
+        permission_enforcer=enforcer,
+        metadata_store=k,
+        default_context=admin,
+        enforce_permissions=True,
+    )
+    hook = RebacPermissionCheckHook(
+        checker=checker,
+        metadata_store=k,
+        default_context=admin,
+        enforce_permissions=True,
+        permission_enforcer=enforcer,
+        descendant_checker=None,
+        lease_table=None,
+    )
+    kernel.sys_setattr("/__sys__/services/permission", service=hook)
+
+    # Expose rebac_mgr for test-side grant writes.
+    kernel._local_services["rebac_mgr"] = rebac_mgr
+
+    try:
+        yield ParityHarness(fs=kernel, local_mp=LOCAL_MP, s3_mp=S3_MP, ctx=admin)
+    finally:
+        kernel.close()
+        rebac_mgr.close()
+        k.close()

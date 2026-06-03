@@ -6,8 +6,9 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// On-disk row in the `versions` redb table. One row per (title, version)
-/// pair. Only `version` and `created_at_ms` are plaintext — the entry
+/// Versioned vault entry. One per (title, version) pair, stored at
+/// `{root}/versions/{title}/{version:010}` via kernel syscalls.
+/// Only `version` and `created_at_ms` are plaintext — the entry
 /// body lives encrypted in `nonce + ciphertext`.
 ///
 /// `bincode`-serialised before being written; AES-GCM auth tag is
@@ -24,10 +25,10 @@ pub(crate) struct StoredEntry {
     pub ciphertext: Vec<u8>,
 }
 
-/// On-disk row in the `entries` redb table — one per title. Tracks
-/// which version is current and whether the title is soft-deleted.
-/// `versions` table holds the actual encrypted bodies; this is the
-/// per-title index that `ListEntries` iterates over.
+/// Per-title index entry, stored at `{root}/entries/{title}` via
+/// kernel syscalls. Tracks which version is current and whether the
+/// title is soft-deleted. Version files hold the actual encrypted
+/// bodies; this is the per-title index that `ListEntries` iterates.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct EntryIndex {
     pub current_version: u32,

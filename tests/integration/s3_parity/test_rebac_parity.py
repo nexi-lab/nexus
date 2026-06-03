@@ -33,7 +33,12 @@ class TestRebacParity:
         alice = _user("alice_deny")
         for p in h.paths("rebac_deny.txt"):
             h.fs.write(p, b"secret", context=h.ctx)
-            with pytest.raises(PermissionError):
+            # Pin the denial to AUTHORIZATION, not absence: confirm the file is
+            # genuinely present+readable as admin first (a never-written path would
+            # also raise PermissionError via the pre-read hook), and match the
+            # message so a "ReBAC degraded / enforcer unavailable" error can't pass.
+            assert h.fs.sys_read(p, context=h.ctx) == b"secret"
+            with pytest.raises(PermissionError, match="does not have READ permission"):
                 h.fs.sys_read(p, context=alice)
 
     def test_allow_after_grant_parity(self, parity_kernel_enforced):

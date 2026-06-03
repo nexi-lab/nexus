@@ -92,7 +92,7 @@ class TestVfsParity:
         assert h.fs.sys_read(local_new, context=h.ctx) == b"rename me"
 
     @pytest.mark.xfail(
-        strict=False,
+        strict=True,  # rename deterministically raises NotSupported; fail loudly if #4306 fixes it
         reason=(
             'DIVERGENCE (#4267): S3 rename via Rust driver raises NotSupported("rename") — '
             "the backend does not implement atomic rename; read-after-rename is unreachable. "

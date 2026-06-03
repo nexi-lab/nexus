@@ -96,7 +96,7 @@ class TestVfsParity:
         reason=(
             'DIVERGENCE (#4267): S3 rename via Rust driver raises NotSupported("rename") — '
             "the backend does not implement atomic rename; read-after-rename is unreachable. "
-            "Follow-up: <RENAME_ISSUE_URL>."
+            "Follow-up: https://github.com/nexi-lab/nexus/issues/4306."
         ),
     )
     def test_rename_parity_s3(self, parity_kernel):

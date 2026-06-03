@@ -168,15 +168,15 @@ semantic_search(query, path)  [ReBAC read filtering] → result includes doc.txt
 
 ## 8. Acceptance criteria mapping
 
-| Issue acceptance criterion | Where proven |
+| Issue acceptance criterion | Status / where proven |
 |---|---|
-| Gated suite (`NEXUS_RUN_S3_INTEGRATION=1`) boots S3 + local control | PR1 (in-process) + PR2 (full stack) |
-| ReBAC allow/deny identical on both | PR1 `test_rebac_parity` (fallback PR2) |
-| All VFS ops identical on both | PR1 `test_vfs_parity` |
-| Written file retrievable via semantic search (op-log → index) on S3 | PR2 `test_s3_fullstack_parity` |
-| Batch read/write parity; `read_bulk` question resolved + documented | PR1 `test_batch_parity` (+ follow-up issue) |
-| Range read correctness on S3 | PR1 `test_range_parity` + PR2 wire |
-| Divergence documented as (a) acceptable or (b) bug w/ follow-up | §6 + follow-up issue |
+| Gated suite boots S3 + local control | ✅ PR1 in-process (kernel + MinIO); literal full-`nexus up` deferred to #4308 |
+| ReBAC allow/deny identical on both | ✅ PR1 `test_rebac_parity` |
+| All VFS ops identical on both | ✅ PR1 `test_vfs_parity` (rename = documented divergence #4306) |
+| Written file retrievable via semantic search on S3 | ✅ PR1 `test_search_parity` (in-process, substantive); op-log→daemon e2e in #4308 |
+| Batch read/write parity; `read_bulk` question resolved + documented | ✅ PR1 `test_batch_parity` (+ #4307) |
+| Range read correctness on S3 | ✅ PR1 `test_range_parity` |
+| Divergence documented as (a) acceptable or (b) bug w/ follow-up | ✅ §6, §10 — #4306 (rename), #4307 (read_bulk), mtime acceptable |
 
 ## 9. Test strategy
 
@@ -192,8 +192,8 @@ semantic_search(query, path)  [ReBAC read filtering] → result includes doc.txt
 
 ## 10. PR1 results (2026-06-02)
 
-PR1 landed as `tests/integration/s3_parity/` (harness + 4 test modules). Full suite:
-**17 passed, 1 xfailed, 0 skipped** against real MinIO + Rust `driver-s3`.
+PR1 landed as `tests/integration/s3_parity/` (harness + 5 test modules). Full suite:
+**19 passed, 1 xfailed, 0 skipped** against real MinIO + Rust `driver-s3`.
 
 Findings:
 
@@ -219,6 +219,22 @@ Findings:
   backend, directly observing the issue's "enforcement above the backend boundary" claim.
   Grants use relation `direct_viewer` (plain `viewer` is a namespace-union alias). ReBAC is
   also exercised more faithfully end-to-end in PR2's full server stack.
+- **Semantic search over S3 — CLOSED in-process** (`test_search_parity.py`). The
+  in-process kernel can't run the async search daemon, but the *substantive* criterion
+  ("a written file is retrievable via semantic search, same as local") is proven: the
+  production indexing file-reader (`_NexusFSFileReader`) reads S3-backed content
+  byte-identical to local, and that content — indexed into the production SANDBOX vector
+  backend (`SqliteVecBackend` + offline `fastembed`) — is retrieved by a *semantic* query
+  with no lexical overlap, identically for both backends. The literal op-log → daemon →
+  index mechanism is **backend-agnostic** (the Rust kernel logs every write regardless of
+  backend; the daemon consumes it the same way), so it is not re-proven per-backend here;
+  the full-`nexus up` daemon path is tracked by [#4308](https://github.com/nexi-lab/nexus/issues/4308).
+  Gated via `importorskip(fastembed, sqlite_vec)`; first run downloads a small ONNX model.
+- **Full-stack `nexus up` on S3 — deferred to [#4308](https://github.com/nexi-lab/nexus/issues/4308)** (infra-blocked).
+  The shipped Docker image builds the cluster binary without `--features` → no `driver-s3`,
+  and enabling it fights the deliberate cluster-binary size gate. That issue covers a
+  `driver-s3` test image, MinIO compose overlay, the real async search daemon end-to-end,
+  and a gated CI job.
 - **Pre-existing test gap:** `tests/unit/fs/test_s3_integration.py` (moto + PathS3Backend)
   only ever passed by skipping; with the binary built it errors (`unknown backend_type`).
   Worth a follow-up to fix or re-gate (not done in PR1).

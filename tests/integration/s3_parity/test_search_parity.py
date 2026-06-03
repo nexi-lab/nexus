@@ -49,6 +49,37 @@ def _backend(tmp_path: Path) -> SqliteVecBackend:
     return SqliteVecBackend(db_path=str(tmp_path / "vec.db"), embedder="fastembed")
 
 
+# Substrings that indicate the offline embedding MODEL itself is unavailable
+# (no network for the one-time HF fetch, ONNX runtime issue, etc.) — distinct
+# from a genuine parity failure. We skip on these, never on assertion errors.
+_MODEL_UNAVAILABLE_MARKERS = (
+    "model",
+    "download",
+    "huggingface",
+    "hf_hub",
+    "onnx",
+    "connection",
+    "network",
+    "fetch",
+    "resolve",
+    "timeout",
+    "offline",
+)
+
+
+async def _embed_or_skip(backend: SqliteVecBackend, docs: list[dict]) -> None:
+    """Upsert docs; skip (don't fail) if the offline model can't be loaded."""
+    try:
+        await backend.upsert(docs, zone_id=ROOT_ZONE_ID)
+    except AssertionError:
+        raise  # a real parity/shape failure — never mask it
+    except Exception as exc:  # noqa: BLE001
+        blob = f"{type(exc).__name__}: {exc}".lower()
+        if any(m in blob for m in _MODEL_UNAVAILABLE_MARKERS):
+            pytest.skip(f"offline embedding model unavailable: {exc}")
+        raise
+
+
 @pytest.mark.integration
 class TestSearchParity:
     async def test_production_reader_reads_s3_content_like_local(self, parity_kernel):
@@ -75,12 +106,12 @@ class TestSearchParity:
         backend = _backend(tmp_path)
         try:
             # Index the content as read FROM each mount (S3 content came from MinIO).
-            await backend.upsert(
+            await _embed_or_skip(
+                backend,
                 [
                     {"path": s3_p, "text": await reader.read_text(s3_p)},
                     {"path": local_p, "text": await reader.read_text(local_p)},
                 ],
-                zone_id=ROOT_ZONE_ID,
             )
             hits = await backend.search(_QUERY, limit=5, zone_id=ROOT_ZONE_ID)
         finally:

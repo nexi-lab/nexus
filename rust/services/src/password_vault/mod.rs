@@ -1188,3 +1188,237 @@ mod tests {
         assert!(r2.deleted);
     }
 }
+
+// -----------------------------------------------------------------
+// Cross-repo E2E integration tests.
+//
+// These tests guard the nexus repo → nexus-vfs repo (kernel git dep)
+// syscall roundtrip at runtime. They use `new_with_kernel` to wire
+// a real Kernel instance and cross-verify data via direct kernel
+// syscalls.
+// -----------------------------------------------------------------
+
+#[cfg(test)]
+mod e2e_integration {
+    use super::*;
+    use kernel::kernel::convenience::KernelConvenience;
+    use kernel::kernel::{Kernel, OperationContext};
+
+    fn kernel_service() -> (Arc<Kernel>, PasswordVaultServiceImpl) {
+        let kernel = Arc::new(Kernel::new());
+        let dir = tempfile::TempDir::new().unwrap();
+        let svc = PasswordVaultServiceImpl::new_with_kernel(
+            kernel.clone(),
+            "/vault",
+            &dir.path().join("master.key"),
+        )
+        .unwrap();
+        (kernel, svc)
+    }
+
+    fn entry(title: &str, password: &str) -> ProtoVaultEntry {
+        ProtoVaultEntry {
+            title: title.into(),
+            username: Some("alice".into()),
+            password: Some(password.into()),
+            url: Some("https://example.com".into()),
+            notes: None,
+            tags: None,
+            totp_secret: None,
+            extra_json: None,
+        }
+    }
+
+    /// Full CRUD cycle exercising the cross-repo syscall path:
+    ///   nexus repo (PasswordVaultService) → nexus-vfs repo (Kernel)
+    ///
+    /// Steps: put → cross-verify via kernel → get → update → list →
+    /// list_versions → delete → historical read → restore → readdir.
+    #[tokio::test]
+    async fn full_crud_cycle_through_kernel_syscalls() {
+        let (kernel, svc) = kernel_service();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+
+        // 1. Put an entry — version 1.
+        let put1 = svc
+            .put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry("github", "s3cret")),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(put1.version, 1);
+
+        // 2. Cross-verify via kernel: the entries file exists.
+        let read = KernelConvenience::read(
+            &*kernel,
+            "/vault/entries/github",
+            &ctx,
+            0,
+            0,
+        );
+        assert!(read.is_ok(), "entry should exist in VFS");
+        assert!(read.unwrap().data.is_some());
+
+        // 3. Get entry — password matches, totp_secret redacted.
+        let got = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "github".into(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let e = got.entry.unwrap();
+        assert_eq!(e.password.as_deref(), Some("s3cret"));
+        assert!(e.totp_secret.is_none()); // always redacted
+
+        // 4. Put again — version 2.
+        let put2 = svc
+            .put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry("github", "n3w-pw")),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(put2.version, 2);
+
+        // 5. List entries — count = 1.
+        let list = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(list.total_in_vault, 1);
+
+        // 6. List versions — count = 2.
+        let versions = svc
+            .list_versions(Request::new(ListVersionsRequest {
+                title: "github".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(versions.count, 2);
+
+        // 7. Delete (soft).
+        svc.delete_entry(Request::new(DeleteEntryRequest {
+            title: "github".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+
+        // 8. Get latest → NotFound.
+        let err = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "github".into(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        // 9. Historical read (version=1) still works.
+        let hist = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "github".into(),
+                version: Some(1),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(hist.entry.unwrap().password.as_deref(), Some("s3cret"));
+
+        // 10. Restore.
+        svc.restore_entry(Request::new(RestoreEntryRequest {
+            title: "github".into(),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+
+        // 11. Cross-verify via kernel readdir: entries directory has 1 child.
+        let entries = kernel.sys_readdir("/vault/entries", "root", true);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].0.contains("github"));
+    }
+
+    /// TOTP generate after kernel-stored put — verifies crypto pipeline
+    /// survives the kernel round-trip (encrypt → kernel write → kernel
+    /// read → decrypt → TOTP compute).
+    #[tokio::test]
+    async fn totp_through_kernel_storage() {
+        let (_kernel, svc) = kernel_service();
+
+        let mut e = entry("aws", "pw");
+        e.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
+        svc.put_entry(Request::new(PutEntryRequest {
+            entry: Some(e),
+            audit: None,
+        }))
+        .await
+        .unwrap();
+
+        let r = svc
+            .generate_totp(Request::new(GenerateTotpRequest {
+                title: "aws".into(),
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(r.code.len(), 6);
+        assert!(r.code.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    /// Multiple entries with query filtering through kernel storage.
+    #[tokio::test]
+    async fn multiple_entries_with_filtering() {
+        let (_kernel, svc) = kernel_service();
+
+        for (t, p) in [("gmail", "pw1"), ("github", "pw2"), ("aws", "pw3")] {
+            svc.put_entry(Request::new(PutEntryRequest {
+                entry: Some(entry(t, p)),
+                audit: None,
+            }))
+            .await
+            .unwrap();
+        }
+
+        // Unfiltered: all 3.
+        let all = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(all.total_in_vault, 3);
+
+        // Filtered: "git" matches "github" only.
+        let filtered = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: "git".into(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(filtered.matched, 1);
+        assert_eq!(filtered.entries[0].title, "github");
+    }
+}

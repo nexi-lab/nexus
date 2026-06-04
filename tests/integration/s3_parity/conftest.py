@@ -8,12 +8,10 @@ Every parity test runs the same op against both mounts and asserts identical
 results. The storage backend is the only independent variable.
 
 WHY MinIO (not moto): S3 I/O is served Rust-side, so Python's moto never sees
-the kernel's S3 calls. The cluster binary must be built with the S3 driver:
-
-    cargo build -p nexus-cluster --bin nexusd-cluster --features backends/driver-s3
-
-and a real S3 endpoint (MinIO) must be reachable. The suite skips cleanly when
-either prerequisite is missing.
+the kernel's S3 calls. The cluster binary must include the driver-s3 feature
+(kernel-tier Rust lives in the nexus-vfs repository — see its build docs for
+the current driver opt-in). A real S3 endpoint (MinIO) must also be reachable.
+The suite skips cleanly when either prerequisite is missing.
 """
 
 from __future__ import annotations
@@ -114,9 +112,10 @@ def _boot_kernel(tmp_path: Path, bucket: str, *, enforce: bool) -> tuple[NexusFS
         k.open()
     except FileNotFoundError as exc:
         pytest.skip(
-            f"S3 parity tests require the `nexusd-cluster` binary on PATH (KernelClient "
-            f"spawns it). Build with `cargo build -p nexus-cluster --bin nexusd-cluster "
-            f"--features backends/driver-s3` and symlink it onto PATH. ({exc})"
+            f"S3 parity tests require the `nexusd-cluster` binary on PATH "
+            f"(KernelClient spawns it). The cluster binary is now built from "
+            f"the nexus-vfs repository — see its build docs for the driver-s3 "
+            f"opt-in — then symlink the result onto PATH. ({exc})"
         )
 
     kernel = NexusFS(metadata_store=k, permissions=PermissionConfig(enforce=enforce))
@@ -142,9 +141,9 @@ def _boot_kernel(tmp_path: Path, bucket: str, *, enforce: bool) -> tuple[NexusFS
             kernel.close()
             k.close()
             pytest.skip(
-                "nexusd-cluster was built without the S3 driver. Rebuild with "
-                "`cargo build -p nexus-cluster --bin nexusd-cluster "
-                "--features backends/driver-s3`."
+                "nexusd-cluster was built without the S3 driver. Rebuild it "
+                "from nexus-vfs with the driver-s3 feature enabled (see that "
+                "repository's build docs)."
             )
         raise
     return kernel, k

@@ -119,46 +119,39 @@ pub struct PasswordVaultServiceImpl {
 }
 
 impl PasswordVaultServiceImpl {
-    /// Open or create a vault backed by an in-process kernel, with
-    /// the master key at `master_key_path` (32 bytes, generated +
-    /// persisted on first call).
-    ///
-    /// Convenience wrapper: creates a `Kernel::new()` internally and
-    /// delegates to `new_with_kernel`. Suitable for tests and the
-    /// default vault binary boot (no external kernel needed).
+    /// Convenience wrapper for tests: creates a Kernel + in-memory
+    /// backend internally. Not for production — content is ephemeral.
     pub fn new(data_dir: &Path, master_key_path: &Path) -> Result<Self, PasswordVaultError> {
         use kernel::kernel::Kernel;
 
         let kernel = std::sync::Arc::new(Kernel::new());
+        let backend = std::sync::Arc::new(storage::MemBackend::new());
 
-        // Point metastore at persistent path when a real data_dir is given,
-        // so vault data survives restarts.
+        // Point metastore at persistent path when a real data_dir is given.
         let meta_path = data_dir.join("vault-meta.redb");
         if let Some(p) = meta_path.to_str() {
             let _ = kernel.set_metastore_path(p);
         }
 
-        Self::new_with_kernel(kernel, "/vault", master_key_path)
+        Self::new_with_kernel(kernel, "/vault", master_key_path, backend)
     }
 
-    /// Create a vault service on an existing kernel.
+    /// Create a vault service on an existing kernel with a caller-
+    /// provided backend for content storage.
     ///
-    /// The kernel handles all storage via syscalls — no direct redb
-    /// dependency. `root` is the VFS path prefix for vault data
-    /// (e.g. `"/vault"`); the storage layer registers a mount and
-    /// creates directory structure underneath.
+    /// - Tests: pass `MemBackend` (ephemeral, fast)
+    /// - Production: pass `PathLocalBackend` (persistent, fsync)
     ///
-    /// This is the primary constructor for cross-repo integration:
-    /// ```text
-    /// nexus repo (Rust service)  ──in-process──>  nexus-vfs repo (kernel)
-    ///     services crate                            kernel crate (git dep)
-    /// ```
+    /// The backend choice is the only difference between ephemeral
+    /// (test) and durable (production) vault storage; kernel metastore
+    /// handles metadata in both cases.
     pub fn new_with_kernel(
         kernel: std::sync::Arc<kernel::kernel::Kernel>,
         root: &str,
         master_key_path: &Path,
+        backend: std::sync::Arc<dyn kernel::abc::object_store::ObjectStore>,
     ) -> Result<Self, PasswordVaultError> {
-        let storage = storage::Storage::new(kernel, root)?;
+        let storage = storage::Storage::new(kernel, root, backend)?;
         let master_key = crypto::load_or_create_master_key(master_key_path)?;
         Ok(Self {
             inner: Arc::new(Inner {
@@ -1207,10 +1200,12 @@ mod e2e_integration {
     fn kernel_service() -> (Arc<Kernel>, PasswordVaultServiceImpl) {
         let kernel = Arc::new(Kernel::new());
         let dir = tempfile::TempDir::new().unwrap();
+        let backend = Arc::new(super::storage::MemBackend::new());
         let svc = PasswordVaultServiceImpl::new_with_kernel(
             kernel.clone(),
             "/vault",
             &dir.path().join("master.key"),
+            backend,
         )
         .unwrap();
         (kernel, svc)

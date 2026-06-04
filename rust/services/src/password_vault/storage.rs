@@ -31,15 +31,14 @@ const DT_MOUNT: i32 = 2;
 
 /// Minimal in-memory ObjectStore — stores vault entry blobs in a
 /// HashMap keyed by content_id. Thread-safe via `parking_lot::Mutex`.
-/// No persistence; the kernel metastore (redb) provides durable
-/// metadata, and the vault binary can swap in a persistent backend
-/// (CasLocal, PathLocal) when data survival across restarts is needed.
-struct MemBackend {
+/// Suitable for tests only; production uses a persistent backend
+/// (PathLocalBackend) injected by the vault binary.
+pub(crate) struct MemBackend {
     data: parking_lot::Mutex<HashMap<String, Vec<u8>>>,
 }
 
 impl MemBackend {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             data: parking_lot::Mutex::new(HashMap::new()),
         }
@@ -96,20 +95,28 @@ pub(crate) struct Storage {
 }
 
 impl Storage {
-    /// Create storage backed by kernel syscalls. Mounts an in-memory
-    /// ObjectStore backend and creates directory structure (`entries/`,
-    /// `versions/`) under `root`.
-    pub(crate) fn new(kernel: Arc<Kernel>, root: &str) -> Result<Self, PasswordVaultError> {
+    /// Create storage backed by kernel syscalls. Mounts `backend` at
+    /// `root` and creates directory structure (`entries/`, `versions/`).
+    ///
+    /// The caller chooses the backend:
+    /// - Tests: `MemBackend` (ephemeral, fast)
+    /// - Production: `PathLocalBackend` (persistent, fsync)
+    pub(crate) fn new(
+        kernel: Arc<Kernel>,
+        root: &str,
+        backend: Arc<dyn ObjectStore>,
+    ) -> Result<Self, PasswordVaultError> {
         let root = root.trim_end_matches('/').to_string();
+        let backend_name = backend.name().to_string();
 
-        // Mount with an in-memory backend so DT_REG content (bincode
-        // blobs) can be written/read via kernel syscalls.
+        // Mount the caller-provided backend at `root` so DT_REG
+        // content (bincode blobs) can be written/read via syscalls.
         kernel
             .sys_setattr(
                 &root,
                 DT_MOUNT,
-                /* backend_name */ "vault-mem",
-                /* backend */ Some(Arc::new(MemBackend::new())),
+                /* backend_name */ &backend_name,
+                /* backend */ Some(backend),
                 /* metastore */ None,
                 /* raft_backend */ None,
                 /* io_profile */ "memory",
@@ -312,7 +319,7 @@ mod tests {
 
     fn fresh() -> Storage {
         let kernel = Arc::new(Kernel::new());
-        Storage::new(kernel, "/vault").unwrap()
+        Storage::new(kernel, "/vault", Arc::new(MemBackend::new())).unwrap()
     }
 
     fn entry(version: u32, ct: &[u8]) -> StoredEntry {

@@ -216,6 +216,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "backends"
+version = "0.1.0"
+source = "git+https://github.com/nexi-lab/nexus-vfs#893e4fb260137b665d697708bc48a4fd625f1d38"
+dependencies = [
+ "ahash",
+ "base64",
+ "blake3",
+ "chrono",
+ "contracts",
+ "crc32fast",
+ "dashmap",
+ "encoding_rs",
+ "fastcdc",
+ "futures",
+ "globset",
+ "kernel",
+ "lib",
+ "libc",
+ "lru",
+ "memchr",
+ "memmap2",
+ "parking_lot",
+ "prost",
+ "rayon",
+ "redb",
+ "regex",
+ "roaring",
+ "serde",
+ "serde_json",
+ "simdutf8",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base32"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -454,7 +492,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs#79cbd061658a46b4e680e23b73b35734ebc899ee"
+source = "git+https://github.com/nexi-lab/nexus-vfs#893e4fb260137b665d697708bc48a4fd625f1d38"
 dependencies = [
  "parking_lot",
  "serde",
@@ -613,6 +651,15 @@ name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "enum_dispatch"
@@ -1142,7 +1189,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs#79cbd061658a46b4e680e23b73b35734ebc899ee"
+source = "git+https://github.com/nexi-lab/nexus-vfs#893e4fb260137b665d697708bc48a4fd625f1d38"
 dependencies = [
  "ahash",
  "base64",
@@ -1196,7 +1243,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs#79cbd061658a46b4e680e23b73b35734ebc899ee"
+source = "git+https://github.com/nexi-lab/nexus-vfs#893e4fb260137b665d697708bc48a4fd625f1d38"
 dependencies = [
  "ahash",
  "base64",
@@ -1348,6 +1395,7 @@ name = "nexus-vault"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backends",
  "clap",
  "kernel",
  "services",
@@ -2016,6 +2064,12 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "simdutf8"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
 name = "siphasher"

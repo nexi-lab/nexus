@@ -19,6 +19,8 @@ services = { workspace = true, features = ["service-password-vault"] }
 # `PasswordVaultServiceImpl::new_with_kernel()` so all storage goes
 # through kernel syscalls (cross-repo integration seam).
 kernel = { workspace = true }
+# PathLocalBackend for persistent vault content storage on local disk.
+backends = { workspace = true, features = ["driver-path-local"] }
 # tonic for the gRPC server. Same version family as services / cluster
 # / raft (workspace-pinned).
 tonic = { workspace = true }

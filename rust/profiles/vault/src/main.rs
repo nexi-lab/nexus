@@ -92,9 +92,9 @@ async fn main() -> Result<()> {
         "starting nexusd-vault"
     );
 
-    // Create kernel with persistent metastore so vault data survives
-    // restarts. All vault I/O goes through kernel syscalls (the
-    // cross-repo integration seam).
+    // Create kernel with persistent metastore + PathLocalBackend so
+    // vault data survives restarts. All vault I/O goes through kernel
+    // syscalls (the cross-repo integration seam).
     let kernel = Arc::new(Kernel::new());
     let meta_path = args.data_dir.join("vault-meta.redb");
     if let Some(p) = meta_path.to_str() {
@@ -103,8 +103,17 @@ async fn main() -> Result<()> {
             .map_err(|e| anyhow::anyhow!("set vault metastore path: {e:?}"))?;
     }
 
-    let svc = PasswordVaultServiceImpl::new_with_kernel(kernel, "/vault", &master_key_path)
-        .context("open vault")?;
+    // PathLocalBackend stores vault content (encrypted bincode blobs)
+    // on local disk at data_dir/content/. Persistent across restarts.
+    let content_dir = args.data_dir.join("content");
+    let backend: Arc<dyn kernel::abc::object_store::ObjectStore> = Arc::new(
+        backends::storage::path_local::PathLocalBackend::new(&content_dir, /* fsync */ true)
+            .context("create PathLocalBackend for vault content")?,
+    );
+
+    let svc =
+        PasswordVaultServiceImpl::new_with_kernel(kernel, "/vault", &master_key_path, backend)
+            .context("open vault")?;
 
     Server::builder()
         .add_service(PasswordVaultServiceServer::new(svc))

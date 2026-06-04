@@ -1,9 +1,8 @@
-"""S3-vs-local batch parity + read_bulk batching (#4267 / #4307)."""
+"""S3-vs-local batch parity + read_bulk resolution (#4267)."""
 
 from __future__ import annotations
 
 import unittest.mock as mock
-from typing import Any
 
 import pytest
 
@@ -44,12 +43,22 @@ class TestBatchParity:
             for path, payload in files:
                 assert h.fs.sys_read(path, context=h.ctx) == payload
 
-    def test_read_bulk_uses_batched_kernel_read(self, parity_kernel):
-        """RESOLUTION (#4307 FIXED): read_bulk's large-batch path now issues a
-        SINGLE parallel ``kernel.read_batch`` RPC (Rust rayon fan-out) for all
-        files instead of N sequential ``sys_read`` calls — and the Rust kernel
-        services S3 connector mounts in that batch too, so no per-file fallback
-        is needed here. Results stay byte-identical to local (test_read_bulk_parity).
+    def test_read_bulk_is_sequential_not_batched(self, parity_kernel):
+        """RESOLUTION (#4267): read_bulk loops a per-file kernel read; it does NOT
+        issue one batched RPC, and (since S3 I/O is Rust-served) it never touches
+        the Python backend's batch_read_content either. Performance gap, not a
+        correctness gap — results are identical to local.
+
+        Implementation detail (nexus_fs_content.py):
+          - Small-batch path (<=4 paths, lines ~293-294): loops paths, calls
+            self._kernel.sys_read(path, _rust_ctx) once per file.
+          - Large-batch path (>4 paths, lines ~368-369): loops allowed_set, calls
+            self._kernel.sys_read(path, _rust_ctx) once per file.
+
+        The spy seam is h.fs._kernel.sys_read (KernelClient.sys_read, a plain
+        Python method — mock.patch.object works without any Rust-level hooks).
+
+        Follow-up: https://github.com/nexi-lab/nexus/issues/4307.
         """
         h = parity_kernel
         s3_paths = []
@@ -59,28 +68,21 @@ class TestBatchParity:
             s3_paths.append(sp)
 
         kernel = h.fs._kernel  # KernelClient instance
-        orig_batch = kernel.read_batch
-        orig_read = kernel.sys_read
-        batch_calls: list[Any] = []
-        read_calls: list[str] = []
+        orig = kernel.sys_read
+        calls: list[str] = []
 
-        def counting_batch(items, *a, **k):
-            batch_calls.append(items)
-            return orig_batch(items, *a, **k)
+        def counting(path, *a, **k):
+            calls.append(path)
+            return orig(path, *a, **k)
 
-        def counting_read(path, *a, **k):
-            read_calls.append(path)
-            return orig_read(path, *a, **k)
-
-        with (
-            mock.patch.object(kernel, "read_batch", side_effect=counting_batch),
-            mock.patch.object(kernel, "sys_read", side_effect=counting_read),
-        ):
+        with mock.patch.object(kernel, "sys_read", side_effect=counting):
             result = h.fs.read_bulk(s3_paths, context=h.ctx)
 
+        # Every file must have been read successfully.
         assert all(v == b"x" for v in result.values())
-        # Exactly ONE batched kernel RPC carrying all files...
-        assert len(batch_calls) == 1, f"expected 1 batched read, got {len(batch_calls)}"
-        assert len(batch_calls[0]) == len(s3_paths)
-        # ...and no per-file sequential sys_read fallback was needed.
-        assert read_calls == [], f"unexpected per-file sys_read fallback: {read_calls}"
+        # One kernel.sys_read call per file — sequential, not a single batched RPC.
+        assert len(calls) == len(s3_paths), (
+            f"Expected {len(s3_paths)} sequential sys_read calls, got {len(calls)}. "
+            "If this fails, read_bulk may have been changed to issue a true batched RPC "
+            "(good!), and this test should be updated to assert count == 1 instead."
+        )

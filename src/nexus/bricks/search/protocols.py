@@ -55,7 +55,13 @@ class SearchBackend(Protocol):
         path: str,
         k: int,
         zone_id: str,
-    ) -> list[BaseSearchResult]: ...
+        *,
+        timing: dict[str, float] | None = None,
+    ) -> list[BaseSearchResult]:
+        # ``timing`` (Issue #4269): optional dict the backend accumulates
+        # per-leg phase timings into (e.g. ``index_load_ms``). Keyword-only
+        # backends record into it; semantic-only stubs accept and ignore it.
+        ...
 
     async def semantic_search(
         self,

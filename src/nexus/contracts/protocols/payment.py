@@ -8,7 +8,7 @@ Concrete implementations live in ``nexus.bricks.pay.protocol``.
 Storage Affinity: **RecordStore** — transaction records + audit trail.
 
 References:
-    - docs/architecture/KERNEL-ARCHITECTURE.md §3
+    - KERNEL-ARCHITECTURE.md (nexus-vfs) §3
     - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1357: Extensible protocol dispatch for agent commerce
     - Issue #2286: Protocol types moved here from bricks/pay/protocol.py

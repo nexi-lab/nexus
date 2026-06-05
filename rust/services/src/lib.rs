@@ -1,6 +1,6 @@
 //! `services` — kernel-adjacent service-tier impls (parallel-layers crate).
 //!
-//! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §1, services sit
+//! Per `KERNEL-ARCHITECTURE.md (nexus-vfs)` §1, services sit
 //! parallel to the kernel: they consume kernel primitives (syscalls,
 //! `NativeInterceptHook`, `PathResolver`, `ServiceRegistry`) without
 //! adding new kernel surface.  The line between "kernel primitive"

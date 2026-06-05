@@ -64,7 +64,7 @@ Linux analogy:
     request.
 
 References:
-    - docs/architecture/KERNEL-ARCHITECTURE.md
+    - KERNEL-ARCHITECTURE.md (nexus-vfs)
     - Issue #1452: Service lifecycle / hot-swap
     - Issue #1577: HotSwappable + PersistentService protocols
     - Issue #1580: Auto-lifecycle for background services

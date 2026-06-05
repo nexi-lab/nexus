@@ -10,4 +10,4 @@
 > or kernel contracts require **kernel team (@elfenlieds7) approval**
 > before merge (CODEOWNERS enforced). Do NOT add new crates or dependencies
 > to `rust/kernel/` without kernel team design review. Do NOT bypass syscalls
-> by calling ObjectStore/Metastore directly. Read `docs/architecture/KERNEL-ARCHITECTURE.md`.
+> by calling ObjectStore/Metastore directly. Read `KERNEL-ARCHITECTURE.md (nexus-vfs)`.

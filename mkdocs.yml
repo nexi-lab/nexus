@@ -194,7 +194,7 @@ nav:
     - Architecture: paths/architecture.md
   - Trust Boundary: getting-started/trust-boundary.md
   - Architecture:
-    - Kernel Architecture: architecture/KERNEL-ARCHITECTURE.md
+    # - Kernel Architecture: architecture/KERNEL-ARCHITECTURE.md  # moved to nexus-vfs
     - Backend Architecture: architecture/backend-architecture.md
     - CLI Design: architecture/cli-design.md
   - Agents:

@@ -69,7 +69,7 @@ services:
       NEXUS_ADVERTISE_ADDR: nexus-1:2126
       # Address book lists OTHER nodes only — self enters the cluster
       # via NEXUS_BOOTSTRAP_NEW=1 (founder) or AddNode (joiner), not
-      # the address book.  See docs/architecture/federation-memo.md
+      # the address book.  See federation-architecture.md (nexus-vfs)
       # §6.3.1 and `validate_peers_excludes_self`.
       NEXUS_PEERS: "nexus-2:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"

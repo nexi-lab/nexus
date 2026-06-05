@@ -6,7 +6,7 @@ Existing implementation: ``nexus.bricks.mcp.mcp_service.MCPService``.
 Storage Affinity: **ObjectStore** — MCP tool definitions stored as JSON files.
 
 References:
-    - docs/design/KERNEL-ARCHITECTURE.md
+    - KERNEL-ARCHITECTURE.md (nexus-vfs)
     - Issue #988: Extract MCP service from NexusFS
 """
 

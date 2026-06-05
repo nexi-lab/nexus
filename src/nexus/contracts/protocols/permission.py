@@ -16,7 +16,7 @@ Storage Affinity: **RecordStore** — relationship tuples stored in SQL.
 
 References:
     - https://www.usenix.org/system/files/atc19-pang.pdf (Zanzibar paper)
-    - docs/architecture/KERNEL-ARCHITECTURE.md
+    - KERNEL-ARCHITECTURE.md (nexus-vfs)
     - Issue #1459: Decompose ReBAC module
 """
 

@@ -22,7 +22,7 @@ Public API:
         - ``ALLOWED_VARIABLES`` — whitelist of allowed template variables
 
 References:
-    - docs/architecture/KERNEL-ARCHITECTURE.md
+    - KERNEL-ARCHITECTURE.md (nexus-vfs)
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 

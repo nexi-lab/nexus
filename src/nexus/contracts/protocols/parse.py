@@ -6,7 +6,7 @@ Existing implementation: ``nexus.parsers.registry.ParserRegistry``.
 Storage Affinity: **ObjectStore** — parsed content derives from stored files.
 
 References:
-    - docs/design/KERNEL-ARCHITECTURE.md
+    - KERNEL-ARCHITECTURE.md (nexus-vfs)
     - ops-scenario-matrix.md (parsing is a core service domain)
 """
 

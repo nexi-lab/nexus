@@ -4,7 +4,7 @@ Service contract for entity registration and lookup.
 Existing implementation: ``nexus.bricks.rebac.entity_registry.EntityRegistry`` (sync).
 
 References:
-    - docs/architecture/KERNEL-ARCHITECTURE.md §3
+    - KERNEL-ARCHITECTURE.md (nexus-vfs) §3
     - Issue #2133: Break circular runtime imports between services/ and core/
     - Issue #2359: Moved from core/protocols/ to services/protocols/ (service tier)
 """

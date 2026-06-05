@@ -7,7 +7,7 @@ Disposing them from a worker thread (where ``NexusFS.close()`` runs) raises
 The FastAPI lifespan must await this on its own loop *before* dispatching
 ``NexusFS.aclose`` to a worker thread. This module is the helper that does
 the loop-bound async dispose; kernel code stays sync per
-``docs/architecture/KERNEL-ARCHITECTURE.md``.
+``KERNEL-ARCHITECTURE.md (nexus-vfs)``.
 """
 
 from __future__ import annotations

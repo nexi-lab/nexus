@@ -9,7 +9,7 @@ the scheduler from the pay service (LEGO 3.3).
 Storage Affinity: **CacheStore** -- ephemeral work queue (Dragonfly sorted set).
 
 References:
-    - docs/architecture/KERNEL-ARCHITECTURE.md 3
+    - KERNEL-ARCHITECTURE.md (nexus-vfs) 3
     - docs/architecture/data-storage-matrix.md (Four Pillars)
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md 2.4, 4.2
     - Issue #1383: Define 6 kernel protocol interfaces

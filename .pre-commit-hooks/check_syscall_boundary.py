@@ -25,7 +25,7 @@ Kernel-internal callers (nexus.core, nexus.kernel_helpers, the CAS GC in
 nexus.backends) are intentionally NOT scanned — they are the kernel /
 wrapper layer and may use the pillars directly.
 
-Reference: docs/architecture/KERNEL-ARCHITECTURE.md §2.5
+Reference: KERNEL-ARCHITECTURE.md (nexus-vfs) §2.5
 """
 
 import ast

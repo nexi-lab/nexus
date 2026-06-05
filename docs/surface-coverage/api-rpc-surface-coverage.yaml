@@ -1955,7 +1955,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus oauth test google alice@example.com; RPC: GET /api/v2/connectors/auth/status reports authed,
     expired, missing, or unavailable states.'
-  correctness_test: tests/integration/services/test_connectors_auth.py; tests/unit/auth/test_unified_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  correctness_test: tests/integration/services/test_connectors_auth.py; tests/integration/auth/test_unified_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
@@ -7510,7 +7510,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: tests/unit/scheduler/test_classifier.py:1
+  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
   perf_class: control
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
@@ -7527,7 +7527,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: tests/unit/scheduler/test_classifier.py:1
+  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
   perf_class: not_perf_sensitive
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
@@ -7544,7 +7544,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: tests/unit/scheduler/test_classifier.py:1
+  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
   perf_class: control
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
@@ -7561,7 +7561,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: tests/unit/scheduler/test_classifier.py:1
+  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
   perf_class: control
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
@@ -7578,7 +7578,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: tests/unit/scheduler/test_classifier.py:1
+  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
   perf_class: setup
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
   gap_issue: null
@@ -9059,7 +9059,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: tests/unit/scheduler/test_classifier.py:1
+  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
   perf_class: control
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
@@ -9675,7 +9675,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus versions rollback /workspace/hello.txt --version 1 --yes; RPC: rollback(path="/workspace/hello.txt",
     version=1)'
-  correctness_test: tests/unit/services/test_version_service.py:247
+  correctness_test: tests/integration/storage/test_version_recorder.py
   perf_class: hot
   perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: 4137

@@ -56,55 +56,64 @@ jobs:
             echo "No Python files changed — required checks will pass cleanly"
           fi
 
+  # Single-job pattern (matches federation-e2e.yml / api-surface.yml):
+  # always runs, every real step gated by `python_changed == 'true'`, with
+  # a leading skip-notice step that succeeds when path-filtered. Avoids the
+  # duplicate-name pair (`<X>` + `<X>-skip`) that GitHub's branch protection
+  # treats inconsistently when both jobs share a required-check name (one
+  # conclusion is SKIPPED, the other SUCCESS, and the rule fails to resolve).
   file-size-check:
     name: Check File Size Limits
     needs: detect-changes
-    if: needs.detect-changes.outputs.python_changed == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no Python changes)
+        if: needs.detect-changes.outputs.python_changed != 'true'
+        run: echo "No Python files changed — file size check not needed (clean SUCCESS)"
+
       - uses: actions/checkout@v4
+        if: needs.detect-changes.outputs.python_changed == 'true'
         with:
           fetch-depth: 0  # Full history for better diffs
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.python_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
       - name: Check Python file sizes
+        if: needs.detect-changes.outputs.python_changed == 'true'
         run: |
           python .pre-commit-hooks/check_file_size.py $(find src -name '*.py')
 
       - name: Report violations
-        if: failure()
+        if: failure() && needs.detect-changes.outputs.python_changed == 'true'
         run: |
           echo "::error::Files exceed 2000 line limit. See job logs for details."
-
-  # Skip-pass job for branch protection when no Python files changed
-  file-size-check-skip:
-    name: Check File Size Limits
-    needs: detect-changes
-    if: needs.detect-changes.outputs.python_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No Python files changed — skipping file size check"
 
   type-ignore-check:
     name: Block New Type Ignores
     needs: detect-changes
-    if: needs.detect-changes.outputs.python_changed == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no Python changes)
+        if: needs.detect-changes.outputs.python_changed != 'true'
+        run: echo "No Python files changed — type-ignore check not needed (clean SUCCESS)"
+
       - uses: actions/checkout@v4
+        if: needs.detect-changes.outputs.python_changed == 'true'
         with:
           fetch-depth: 0
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.python_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
       - name: Check for new type ignore comments
+        if: needs.detect-changes.outputs.python_changed == 'true'
         run: |
           # Get list of changed Python files
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -121,18 +130,9 @@ jobs:
           fi
 
       - name: Report violations
-        if: failure()
+        if: failure() && needs.detect-changes.outputs.python_changed == 'true'
         run: |
           echo "::error::New type: ignore comments detected. Fix type errors properly instead."
-
-  # Skip-pass job for branch protection when no Python files changed
-  type-ignore-check-skip:
-    name: Block New Type Ignores
-    needs: detect-changes
-    if: needs.detect-changes.outputs.python_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No Python files changed — skipping type ignore check"
 
   code-metrics:
     name: Code Quality Metrics

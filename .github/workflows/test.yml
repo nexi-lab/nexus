@@ -38,33 +38,21 @@ jobs:
               - 'Cargo.*'
               - '.github/workflows/**'
 
+  # Single-job pattern (matches federation-e2e.yml / api-surface.yml):
+  # always runs so the required check reports exactly one conclusion;
+  # the per-step `if:` gate keeps the actual work path-filtered while a
+  # leading skip-notice step gives SUCCESS for path-skipped runs.
   rpc-parity:
     name: RPC Parity Check
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
-
-      - name: Create virtual environment
-        run: uv venv --python 3.14
-
-      - name: Install dependencies
-        run: uv pip install -e ".[dev,test]"
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — RPC parity check not needed (clean SUCCESS)"
 
       - name: Check RPC Parity (ENFORCEMENT)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           echo "RPC parity check: test_rpc_parity.py was removed in test cleanup."
           echo "RPC parity is verified by integration/e2e tests."
@@ -73,7 +61,6 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -82,28 +69,38 @@ jobs:
         python-version: ["3.14"]
 
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Test Python ${{ matrix.python-version }} on ${{ matrix.os }} not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python ${{ matrix.python-version }}
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv pip install -e ".[dev,test]"
 
       - name: Run unit tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 30
         run: |
           start=$(date +%s)
@@ -123,7 +120,7 @@ jobs:
         shell: bash
 
       - name: Unit test duration (target <3min; fail if >8min)
-        if: always()
+        if: always() && needs.detect-changes.outputs.code_changed == 'true'
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
@@ -136,48 +133,59 @@ jobs:
         shell: bash
 
       - name: Verify benchmark collection
+        if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           uv run --no-sync pytest tests/benchmarks/ --collect-only -q -o "addopts="
-        if: matrix.os == 'ubuntu-latest'
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (Self-Contained) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       # The nexus-cluster binary is required by NexusFS (KernelClient spawns
       # it as a subprocess). Binary SSOT is now nexus-vfs; install via
       # cargo install from the git repo.
       - name: Set up Rust toolchain
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Cache nexus-cluster install
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: e2e-nexus-cluster
 
       - name: Install nexus-cluster from nexus-vfs
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
@@ -189,9 +197,11 @@ jobs:
       # — a single fixture instantiation timed out at 600s in PR #3961
       # reruns and consumed half the job budget before any test ran.
       - name: Set up Docker Buildx
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Pre-build nexus-server image
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -203,6 +213,7 @@ jobs:
           cache-to: type=gha,scope=e2e-self-contained,mode=max
 
       - name: Run self-contained e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         env:
           # Image is already loaded into the local docker daemon via the
           # pre-build step above, so the fixture can skip ``--build`` and
@@ -226,7 +237,6 @@ jobs:
   e2e-postgres:
     name: E2E Tests (PostgreSQL)
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -245,32 +255,43 @@ jobs:
     env:
       NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (PostgreSQL) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test,postgres]"
 
       - name: Run PostgreSQL e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/ --ignore=tests/e2e/postgres/migrations -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
       - name: Run auth envelope-encryption tests (#3803)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         env:
           TEST_POSTGRES_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
         run: |
@@ -285,7 +306,6 @@ jobs:
   e2e-redis:
     name: E2E Tests (Redis)
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       redis:
@@ -302,27 +322,37 @@ jobs:
       NEXUS_DRAGONFLY_COORDINATION_URL: redis://localhost:6379
       REDIS_ENABLED: "1"
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (Redis) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run Redis e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/redis/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
@@ -330,30 +360,39 @@ jobs:
   e2e-docker:
     name: E2E Tests (Docker)
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (Docker) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run Docker e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/docker/ -v --timeout=180 -o "addopts="
         timeout-minutes: 15
@@ -361,37 +400,47 @@ jobs:
   e2e-nats:
     name: E2E Tests (NATS)
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     env:
       NEXUS_NATS_URL: nats://localhost:4222
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (NATS) not needed (clean SUCCESS)"
+
       - name: Start NATS with JetStream
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           docker run -d --name nats -p 4222:4222 nats:latest -js
           sleep 2
 
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run NATS e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
@@ -531,25 +580,33 @@ jobs:
   nexusd-cluster-smoke:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — nexusd-cluster smoke not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Rust toolchain
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Cache nexus-cluster install
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: nexusd-cluster-smoke
 
       - name: Install nexusd-cluster from nexus-vfs
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Boot smoke test
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           DATA_DIR=$(mktemp -d)
           # Smoke uses static + empty peers → single-node default
@@ -584,37 +641,45 @@ jobs:
   migration-test:
     name: Migration Tests (SQLite)
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Migration (SQLite) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run migration tests (SQLite)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -633,116 +698,36 @@ jobs:
     env:
       NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Migration (PostgreSQL) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test,postgres]"
 
       - name: Run migration tests (PostgreSQL)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="
-
-  # ---------------------------------------------------------------------------
-  # Skip-pass jobs: satisfy required checks on doc-only PRs where
-  # detect-changes sets code_changed=false. Each job uses the same `name:`
-  # as its real counterpart so GitHub matches the required check.
-  # ---------------------------------------------------------------------------
-
-  rpc-parity-skip:
-    name: RPC Parity Check
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping RPC parity check"
-
-  test-skip:
-    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.14"]
-    steps:
-      - run: echo "No code changes — skipping tests"
-
-  e2e-self-contained-skip:
-    name: E2E Tests (Self-Contained)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E tests"
-
-  e2e-pg-skip:
-    name: E2E Tests (PostgreSQL)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E PostgreSQL tests"
-
-  e2e-redis-skip:
-    name: E2E Tests (Redis)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E Redis tests"
-
-  e2e-docker-skip:
-    name: E2E Tests (Docker)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E Docker tests"
-
-  e2e-nats-skip:
-    name: E2E Tests (NATS)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E NATS tests"
-
-  migration-test-skip:
-    name: Migration Tests (SQLite)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping migration tests"
-
-  nexusd-cluster-smoke-skip:
-    name: nexusd-cluster Smoke Test
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping nexusd-cluster smoke test"
-
-  migration-test-pg-skip:
-    name: Migration Tests (PostgreSQL)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping migration tests"

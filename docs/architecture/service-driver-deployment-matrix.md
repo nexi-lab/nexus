@@ -6,11 +6,14 @@
 
 ## Deployment Modes
 
-| Mode | Mechanism | Hot-swap | Perf | VFS hooks |
-|------|-----------|----------|------|-----------|
-| **Compiled-in** | Cargo feature gate / Python wiring | No (recompile) | Best | Full |
-| **dylib** | `PluginLoader` + `dlopen` | Yes | Good (~ns C ABI) | Limited (dispatch OK, hooks need C ABI wrapper) |
-| **gRPC sidecar** | Separate process, `ManagedServiceGrpcProxy` | Inherent | ~100us | No |
+| Mode | Runtime swap | VFS hooks |
+|------|-------------|-----------|
+| **Compiled-in** | Instance swap (same binary) | Full |
+| **dylib** | Code swap (new `.so`) + instance swap | RPC dispatch; VFS hooks require C ABI wrapper |
+| **gRPC sidecar** | Process restart (independent lifecycle) | Out-of-process |
+
+See KERNEL-ARCHITECTURE.md (nexus-vfs) §1 for mechanism details, perf
+characteristics, and the instance swap lifecycle (unhook→drain→replace→rehook).
 
 ---
 
@@ -99,31 +102,14 @@ across `dlopen` boundaries.
 
 ---
 
-## 5. dylib Plugins (Future)
+## 5. dylib Plugin Infrastructure
 
-| Plugin | Repo | Module | Status | Notes |
-|--------|------|--------|--------|-------|
-| vault | nexus | `rust/plugins/vault/` (planned) | Phase 6 — deferred | First dylib plugin guinea pig. Depends on `nexus-plugin-abi` |
+Plugin loading is handled by `PluginLoader` (nexus-vfs
+`rust/kernel/src/kernel/plugins/`) with C ABI contracts defined in the
+`nexus-plugin-abi` crate. The `declare_service_plugin!` macro generates
+the required `extern "C"` symbols from a Rust impl.
 
-Infrastructure in place:
-- `PluginLoader` + `DylibRustService` wrapper (nexus-vfs `rust/kernel/src/kernel/plugins/`)
-- `nexus-plugin-abi` crate with C ABI types + `declare_service_plugin!` macro
-- `plugin.*` gRPC dispatch surface + `--plugin-dir` CLI flag
-- Hook-aware service lifecycle: unhook → drain → replace → rehook
+Runtime surface: `plugin.load` / `plugin.unload` / `plugin.list` gRPC
+RPCs, `--plugin-dir` CLI flag for directory auto-load.
 
-**Limitation**: VFS hooks for dylib plugins require a C ABI wrapper layer
-(Phase 5B, deferred). Current dylib support covers RPC dispatch only.
-Service hot-swap (load/unload/reload) works today; hook hot-swap does not.
-
----
-
-## 6. gRPC Sidecar (Future)
-
-No production gRPC sidecar services exist today. The infrastructure
-(`ManagedServiceGrpcProxy`) is available for language-agnostic services
-(Python, Go, etc.) that run as separate processes.
-
-| Candidate | Rationale |
-|-----------|-----------|
-| Python bricks | If performance isolation is needed |
-| Third-party integrations | Language-agnostic extensibility |
+See KERNEL-ARCHITECTURE.md (nexus-vfs) §10 for the full plugin architecture.

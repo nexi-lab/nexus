@@ -9675,7 +9675,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus versions rollback /workspace/hello.txt --version 1 --yes; RPC: rollback(path="/workspace/hello.txt",
     version=1)'
-  correctness_test: null
+  correctness_test: tests/integration/storage/test_version_recorder.py
   perf_class: hot
   perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: 4137

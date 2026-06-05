@@ -1,25 +1,22 @@
 # justfile — Nexus repo-root task runner
 # Install just: https://github.com/casey/just
-# Usage: just setup        # build nexus-cluster binary
+# Usage: just setup        # install nexus-cluster binary
 #        just doctor       # verify env is healthy
-#        just build-kernel # rebuild kernel binary
 
-# Build the nexus-cluster binary.
-# The kernel now runs as a separate process; Python communicates via gRPC.
-# Run after: git clone, git pull, or switching branches with Rust changes.
+# Install the nexus-cluster binary from nexus-vfs.
+# Kernel-tier Rust (including nexus-cluster) lives in
+# https://github.com/nexi-lab/nexus-vfs after #4259; this repo
+# consumes the binary via `cargo install` rather than building it
+# locally. Run after: git clone, git pull, or any nexus-vfs update.
 setup:
-    @echo "Building nexus-cluster binary..."
-    cargo build --release -p nexus-cluster
-    @echo "Done. Binary at target/release/nexus-cluster."
+    @echo "Installing nexus-cluster from nexus-vfs..."
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+    @echo "Done. Binary at ~/.cargo/bin/nexusd-cluster."
 
 # Verify the environment is healthy.
 doctor:
-    @echo "Checking nexus-cluster binary..."
-    cargo build -p nexus-cluster 2>/dev/null && echo "OK — nexus-cluster builds clean" || echo "FAIL — cargo build failed"
-
-# Rebuild only kernel crate (fastest for Kernel-only changes).
-build-kernel:
-    cargo build --release -p kernel
+    @echo "Checking nexusd-cluster on PATH..."
+    @command -v nexusd-cluster >/dev/null && echo "OK — nexusd-cluster on PATH" || echo "FAIL — nexusd-cluster missing; run \`just setup\`"
 
 # Run the gbrain-evals benchmark gate (Issue #3699 pre-merge check).
 #

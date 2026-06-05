@@ -38,33 +38,21 @@ jobs:
               - 'Cargo.*'
               - '.github/workflows/**'
 
+  # Single-job pattern (matches federation-e2e.yml / api-surface.yml):
+  # always runs so the required check reports exactly one conclusion;
+  # the per-step `if:` gate keeps the actual work path-filtered while a
+  # leading skip-notice step gives SUCCESS for path-skipped runs.
   rpc-parity:
     name: RPC Parity Check
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
-
-      - name: Create virtual environment
-        run: uv venv --python 3.14
-
-      - name: Install dependencies
-        run: uv pip install -e ".[dev,test]"
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — RPC parity check not needed (clean SUCCESS)"
 
       - name: Check RPC Parity (ENFORCEMENT)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           echo "RPC parity check: test_rpc_parity.py was removed in test cleanup."
           echo "RPC parity is verified by integration/e2e tests."

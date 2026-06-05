@@ -580,25 +580,33 @@ jobs:
   nexusd-cluster-smoke:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — nexusd-cluster smoke not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Rust toolchain
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Cache nexus-cluster install
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: nexusd-cluster-smoke
 
       - name: Install nexusd-cluster from nexus-vfs
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Boot smoke test
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           DATA_DIR=$(mktemp -d)
           # Smoke uses static + empty peers → single-node default

@@ -400,37 +400,47 @@ jobs:
   e2e-nats:
     name: E2E Tests (NATS)
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     env:
       NEXUS_NATS_URL: nats://localhost:4222
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (NATS) not needed (clean SUCCESS)"
+
       - name: Start NATS with JetStream
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           docker run -d --name nats -p 4222:4222 nats:latest -js
           sleep 2
 
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run NATS e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10

@@ -680,7 +680,6 @@ jobs:
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -699,26 +698,36 @@ jobs:
     env:
       NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Migration (PostgreSQL) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test,postgres]"
 
       - name: Run migration tests (PostgreSQL)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="

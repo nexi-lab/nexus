@@ -61,7 +61,6 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -70,28 +69,38 @@ jobs:
         python-version: ["3.14"]
 
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Test Python ${{ matrix.python-version }} on ${{ matrix.os }} not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python ${{ matrix.python-version }}
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv pip install -e ".[dev,test]"
 
       - name: Run unit tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 30
         run: |
           start=$(date +%s)
@@ -111,7 +120,7 @@ jobs:
         shell: bash
 
       - name: Unit test duration (target <3min; fail if >8min)
-        if: always()
+        if: always() && needs.detect-changes.outputs.code_changed == 'true'
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
@@ -124,9 +133,9 @@ jobs:
         shell: bash
 
       - name: Verify benchmark collection
+        if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           uv run --no-sync pytest tests/benchmarks/ --collect-only -q -o "addopts="
-        if: matrix.os == 'ubuntu-latest'
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)

@@ -80,12 +80,29 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------- Install nexusd-cluster binary from nexus-vfs (Issue #3125, #4259) ----------
 # Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
 # repo. Install the pre-built binary via `cargo install` from the git repo.
+#
+# PIN the rev. Without `--rev`, the cargo-install RUN layer is cached against an
+# unchanged command string, so a stale (pre-bridge-2 #4262) nexusd-cluster
+# binary gets reused across builds even after nexus-vfs main advances. That
+# stale cluster acks DT_MOUNT but never installs it (`created=false`), and the
+# bridge-2-expecting server fails: "DT_MOUNT backend_type='remote' was
+# acknowledged but not installed; the gRPC server likely predates the #4262
+# backend-params bridge" (edge E2E smoke failure). Pinning makes the cluster
+# build reproducible AND busts the cache when this rev is bumped. Bump this rev
+# together with the nexus-vfs git pin in Cargo.lock.
+#
+# Rev choice: this is the last rev validated end-to-end (boots clean, installs
+# DT_MOUNT, perms-demo green, S3/remote mounts work). A later main rev was
+# observed to (a) panic in `nexus-zone-mgr` ("Cannot drop a runtime in a
+# context where blocking is not allowed") and (b) RST_STREAM on S3 DT_MOUNT —
+# regressions to resolve before bumping the pin forward.
+ARG NEXUSD_CLUSTER_REV=a11bccb0151531b6af440b47b86a9a9f867bd83c
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster && \
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUSD_CLUSTER_REV}" --bin nexusd-cluster nexus-cluster && \
     cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------

@@ -89,7 +89,7 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             let resp = plugin
                 .rt
                 .block_on(plugin.svc.get_entry(Request::new(req)))
-                .map_err(|e| status_to_plugin_error(e))?
+                .map_err(status_to_plugin_error)?
                 .into_inner();
             let mut buf = Vec::new();
             resp.encode(&mut buf).map_err(|_| -3)?;
@@ -111,7 +111,7 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             let resp = plugin
                 .rt
                 .block_on(plugin.svc.delete_entry(Request::new(req)))
-                .map_err(|e| status_to_plugin_error(e))?
+                .map_err(status_to_plugin_error)?
                 .into_inner();
             let mut buf = Vec::new();
             resp.encode(&mut buf).map_err(|_| -3)?;
@@ -122,7 +122,7 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             let resp = plugin
                 .rt
                 .block_on(plugin.svc.restore_entry(Request::new(req)))
-                .map_err(|e| status_to_plugin_error(e))?
+                .map_err(status_to_plugin_error)?
                 .into_inner();
             let mut buf = Vec::new();
             resp.encode(&mut buf).map_err(|_| -3)?;
@@ -133,7 +133,7 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             let resp = plugin
                 .rt
                 .block_on(plugin.svc.list_versions(Request::new(req)))
-                .map_err(|e| status_to_plugin_error(e))?
+                .map_err(status_to_plugin_error)?
                 .into_inner();
             let mut buf = Vec::new();
             resp.encode(&mut buf).map_err(|_| -3)?;
@@ -144,7 +144,7 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             let resp = plugin
                 .rt
                 .block_on(plugin.svc.generate_totp(Request::new(req)))
-                .map_err(|e| status_to_plugin_error(e))?
+                .map_err(status_to_plugin_error)?
                 .into_inner();
             let mut buf = Vec::new();
             resp.encode(&mut buf).map_err(|_| -3)?;

@@ -1072,3 +1072,95 @@ class TestRunbookOperatorErgonomics:
             "`NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation`."
             f"\nstdout/stderr: {combined[-2000:]}"
         )
+
+    def test_static_mode_rejects_existing_data_dir(
+        self,
+        topology: RunbookTopology,
+        joined_cluster: dict,
+    ) -> None:
+        """`--bootstrap-mode static` on a data dir that already holds
+        a `root` zone must fail with the documented error.
+
+        Pins the PR #4028 validator state x flag rejection.  We probe
+        against the joiner's existing /app/data which already has a
+        root zone after the joined_cluster fixture; running static
+        against it must error.
+        """
+        from tests.e2e.docker.runbook_helpers import docker_exec
+
+        result = docker_exec(
+            topology.joiner_container,
+            [
+                "timeout",
+                "5",
+                "nexusd-cluster",
+                "--bind-addr",
+                "0.0.0.0:2199",
+                "--data-dir",
+                "/app/data",
+                "--no-tls",
+                "--bootstrap-mode",
+                "static",
+            ],
+            timeout=20,
+        )
+        combined = result.stdout + result.stderr
+        assert result.rc != 0, (
+            "`nexusd-cluster --bootstrap-mode static` on a non-empty data dir "
+            "did NOT fail — PR #4028 state x flag validator was bypassed."
+            f"\nstdout/stderr: {combined[-2000:]}"
+        )
+        assert "static" in combined.lower() and (
+            "already" in combined.lower()
+            or "non-empty" in combined.lower()
+            or "exist" in combined.lower()
+        ), (
+            "validator error message did not match runbook's documented "
+            "shape (`bootstrap mode = static, but data dir already holds a "
+            "'root' zone`).\nstdout/stderr: {combined[-2000:]}"
+        )
+
+    def test_self_in_peers_rejected_at_parse(
+        self,
+        topology: RunbookTopology,
+        joined_cluster: dict,
+    ) -> None:
+        """`--peers <self>` must exit non-zero at parse time.
+
+        Pins PR #4014's self-exclusion contract: self enters the
+        cluster through create_zone (founder) or AddNode (joiner),
+        never through the address book.
+        """
+        from tests.e2e.docker.runbook_helpers import docker_exec, uid
+
+        suffix = uid()
+        scratch = f"/tmp/self-peer-{suffix}"
+        result = docker_exec(
+            topology.joiner_container,
+            [
+                "timeout",
+                "5",
+                "nexusd-cluster",
+                "--bind-addr",
+                "0.0.0.0:2199",
+                "--data-dir",
+                scratch,
+                "--no-tls",
+                "--bootstrap-mode",
+                "static",
+                "--peers",
+                # NEXUS_HOSTNAME=joiner is set in compose env, so
+                # joiner:2126 is "self" for the parse-time check.
+                "joiner:2126",
+            ],
+            timeout=20,
+        )
+        combined = result.stdout + result.stderr
+        assert result.rc != 0, (
+            "`--peers <self>` was accepted at parse — PR #4014 self-"
+            "exclusion contract regressed.\nstdout/stderr: {combined[-2000:]}"
+        )
+        assert "self" in combined.lower() or "peer" in combined.lower(), (
+            "validator error does not mention self/peer; wrong error fired."
+            f"\nstdout/stderr: {combined[-2000:]}"
+        )

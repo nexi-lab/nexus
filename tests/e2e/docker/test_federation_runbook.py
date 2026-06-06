@@ -720,3 +720,67 @@ class TestRestartReplay:
             f"joiner read after restart returned {got!r}, founder wrote "
             f"{payload!r}; restart-replay corruption"
         )
+
+    def test_joiner_restart_zero_data_loss_on_pending_writes(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """A SIGTERM-then-restart on the joiner must not truncate
+        recently-written files.  After the daemon comes back up the
+        file must read with the full pre-shutdown payload.
+        """
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            docker_restart,
+            grpc_call,
+            uid,
+            wait_healthy,
+            wait_nodes_caught_up,
+        )
+
+        suffix = uid()
+        path = f"/shared/pending-{suffix}.dat"
+        # 64 KiB is large enough to trip any "wrote header but not
+        # tail before SIGTERM" race in the kernel BlobStore, but
+        # small enough to fit inside one CDC chunk so partial-write
+        # truncation would be obvious.
+        payload = bytes(range(256)) * 256
+
+        wr = grpc_call(
+            topology.joiner_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in wr, f"joiner write failed: {wr}"
+
+        # Force raft catch-up so the entry is committed BEFORE the
+        # restart — this method tests "restart does not corrupt
+        # committed data", not "raft survives an in-flight propose".
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+        )
+
+        docker_restart(topology.joiner_container)
+        wait_healthy([topology.joiner_grpc])
+
+        rd = grpc_call(
+            topology.joiner_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, f"post-restart joiner read failed: {rd}"
+        got = decode_content(rd)
+        assert got == payload, (
+            f"post-restart read returned {len(got)} bytes, wrote {len(payload)}; "
+            f"data loss on SIGTERM — kernel BlobStore did not durably commit "
+            f"before SIGTERM acknowledged"
+        )

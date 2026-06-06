@@ -1,11 +1,12 @@
 name: Federation E2E
 
-# Runs `tests/e2e/docker/test_federation_e2e.py` against the dynamic
-# federation cluster in `dockerfiles/docker-compose.dynamic-federation-test.yml`.
-# Goal: catch federation regressions (cross-node read pipeline, raft
-# leader election, last_writer_address attribution, lock replication)
-# at PR time. Mark this check required in branch protection once the
-# first ~10 runs are stable.
+# Runs `tests/e2e/docker/test_federation_runbook.py` against the
+# 3-voter HA cluster in
+# `dockerfiles/docker-compose.federation-runbook.yml`.  The suite
+# binds 1-to-1 to docs/architecture/federation-cross-machine-runbook.md
+# and locks the cross-machine L1 milestone (Win↔Mac sharedzone byte-
+# exact read, landed 2026-06-06) into CI so the six-months bug class
+# the runbook describes cannot regress silently.
 #
 # Why this is a separate workflow (vs docker-integration.yml):
 #   docker-integration.yml is disabled per #1720 and exercises a much
@@ -78,7 +79,7 @@ jobs:
           # Editing federation-e2e.yml on a PR should not force a full Docker
           # cluster build for an unrelated change. Workflow validation runs
           # on the post-merge push to develop via on.push.paths.
-          if grep -Eq '^(Dockerfile|dockerfiles/|Cargo\.toml$|Cargo\.lock$|pyproject\.toml$|rust/|src/nexus/raft/|src/nexus/grpc/|src/nexus/remote/|src/nexus/server/rpc/services/federation_rpc\.py$|src/nexus/server/rpc/services/__init__\.py$|src/nexus/cli/commands/federation\.py$|src/nexus/cli/commands/zone\.py$|tests/e2e/docker/test_federation.*\.py$|\.dockerignore$)' /tmp/federation_changed_files.txt; then
+          if grep -Eq '^(Dockerfile|dockerfiles/|Cargo\.toml$|Cargo\.lock$|pyproject\.toml$|rust/|src/nexus/raft/|src/nexus/grpc/|src/nexus/remote/|src/nexus/server/rpc/services/federation_rpc\.py$|src/nexus/server/rpc/services/__init__\.py$|src/nexus/cli/commands/federation\.py$|src/nexus/cli/commands/zone\.py$|tests/e2e/docker/test_federation.*\.py$|tests/e2e/docker/runbook_helpers\.py$|\.dockerignore$)' /tmp/federation_changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -93,61 +94,60 @@ jobs:
         if: steps.federation_changes.outputs.run == 'true'
         uses: docker/setup-buildx-action@v3
 
-      # Build the main nexus-fullnode image first, with a registry
-      # cache. Subsequent compose builds (witness + sse-mock) reuse
-      # the same buildx instance.
-      - name: Build nexus-fullnode image
+      # Build the production cluster image first, with a registry
+      # cache. The federation-test runner FROMs the same image so
+      # both stay on one buildx instance.
+      - name: Build nexusd-cluster image
         if: steps.federation_changes.outputs.run == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
           load: true
-          tags: nexus-fullnode:latest
-          build-args: |
-            NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
+          tags: nexusd-cluster:latest
           cache-from: type=gha,scope=federation-e2e
           cache-to: type=gha,scope=federation-e2e,mode=max
 
-      - name: Build cluster + sidecar + witness + sse-mock images
+      - name: Build witness + federation-test images
         if: steps.federation_changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml build \
-            nexus-1 nexus-cli witness sse-mock
+          docker compose -f dockerfiles/docker-compose.federation-runbook.yml build \
+            witness test
 
       - name: Start federation cluster
         if: steps.federation_changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml up -d
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml ps
+          docker compose -f dockerfiles/docker-compose.federation-runbook.yml up -d \
+            founder joiner witness
+          docker compose -f dockerfiles/docker-compose.federation-runbook.yml ps
 
-      - name: Wait for both nodes healthy
+      - name: Wait for all three voters healthy
         if: steps.federation_changes.outputs.run == 'true'
         run: |
           deadline=$((SECONDS + 180))
           while [ $SECONDS -lt $deadline ]; do
-            if docker exec nexus-dyn-node-1 bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' \
-            && docker exec nexus-dyn-node-2 bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
-              echo "Both nodes healthy (gRPC port 2126 reachable) after ${SECONDS}s"
+            if docker exec nexus-runbook-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' \
+            && docker exec nexus-runbook-joiner bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' \
+            && docker exec nexus-runbook-witness bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "All three voters healthy (gRPC port 2126 reachable) after ${SECONDS}s"
               exit 0
             fi
             sleep 2
           done
-          echo "::error::Timed out waiting for nodes ready (180s)"
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml logs --tail=300
+          echo "::error::Timed out waiting for voters ready (180s)"
+          docker compose -f dockerfiles/docker-compose.federation-runbook.yml logs --tail=300
           exit 1
 
-      - name: Run federation E2E tests
+      - name: Run federation runbook E2E tests
         if: steps.federation_changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml \
-            run --rm \
-            -e PIP_INDEX_URL=https://pypi.org/simple \
-            test
+          docker compose -f dockerfiles/docker-compose.federation-runbook.yml \
+            run --rm test
 
       - name: Dump container logs on failure
         if: failure() && steps.federation_changes.outputs.run == 'true'
         run: |
-          for c in nexus-dyn-node-1 nexus-dyn-node-2 nexus-dyn-witness nexus-dyn-cli nexus-dyn-dragonfly nexus-dyn-sse-mock; do
+          for c in nexus-runbook-founder nexus-runbook-joiner nexus-runbook-witness; do
             echo "::group::$c"
             docker logs $c --tail=400 2>&1 || echo "(no logs)"
             echo "::endgroup::"
@@ -156,4 +156,4 @@ jobs:
       - name: Tear down
         if: always() && steps.federation_changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml down -v --remove-orphans || true
+          docker compose -f dockerfiles/docker-compose.federation-runbook.yml down -v --remove-orphans || true

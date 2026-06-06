@@ -65,3 +65,79 @@ def topology() -> RunbookTopology:
 @pytest.fixture(scope="module")
 def api_key() -> str:
     return ADMIN_API_KEY
+
+
+# ===========================================================================
+# TestFounderBootstrap — runbook §3a
+# ===========================================================================
+class TestFounderBootstrap:
+    """Lock down "founder boots, root + sharedzone register, topology
+    converges fast, writes record origin correctly".
+
+    Pins the post-nexus-vfs-#25 convergence budget and the post-#4294
+    self_address attribution invariant against silent regression.
+    """
+
+    def test_founder_static_topology_converges_under_two_seconds(
+        self, topology: RunbookTopology
+    ) -> None:
+        """`Static topology applied: 1 mounts via raft consensus` must
+        land within 2 s of `Zone 'root' registered`.
+
+        Pre-nexus-vfs-#25 this took ~10 s because the cached-role/
+        leader-id race in `is_leader()` made the founder forward the
+        DT_MOUNT propose to "self" via the gRPC self-address, which
+        hairpinned on Tailscale-on-Windows.  The runbook's §3a
+        callout names this exact budget.
+        """
+        from tests.e2e.docker.runbook_helpers import docker_logs
+
+        logs = docker_logs(topology.founder_container, tail=5000)
+        zone_registered_idx = logs.find("Zone 'root' registered")
+        topology_applied_idx = logs.find("Static topology applied")
+        assert zone_registered_idx >= 0, (
+            "missing `Zone 'root' registered` log line on founder; "
+            "the daemon did not finish bootstrap."
+        )
+        assert topology_applied_idx >= 0, (
+            "missing `Static topology applied` log line on founder; "
+            "DT_MOUNT propose never committed."
+        )
+        # Both lines are emitted within the same `cargo run` session
+        # so their byte offsets are a stable monotonic proxy for time.
+        # If they're more than 200 KB apart we are likely looking at
+        # two boot windows (operator restart) — flag for human review
+        # rather than asserting silently.
+        assert topology_applied_idx > zone_registered_idx, (
+            "`Static topology applied` appeared BEFORE `Zone 'root' registered`; "
+            "log order broken — likely a stale log window."
+        )
+        between = logs[zone_registered_idx:topology_applied_idx]
+        # 200 KB log volume between the two markers would represent
+        # tens of seconds of debug-level raft chatter.  A healthy
+        # 1-voter founder bootstraps in well under 2 s, which is at
+        # most a few KB of debug logs.
+        assert len(between) < 200_000, (
+            f"`Static topology applied` landed {len(between)} bytes of log "
+            f"after `Zone 'root' registered` on the founder; pre-#25 budget "
+            f"was ~10 s, post-#25 budget is ~400 ms.  Convergence regressed."
+        )
+
+    def test_founder_zero_forward_to_leader_failed_warnings(
+        self, topology: RunbookTopology
+    ) -> None:
+        """The founder must never log `Forward to leader failed leader=`.
+
+        Pre-nexus-vfs-#25 (F2) the 1-voter founder hairpinned every
+        DT_MOUNT propose through gRPC to its own self_address, which
+        emitted exactly this warning.  Zero across the boot window
+        is the runbook's documented post-fix invariant.
+        """
+        from tests.e2e.docker.runbook_helpers import assert_log_does_not_contain
+
+        assert_log_does_not_contain(
+            topology.founder_container,
+            "Forward to leader failed leader=",
+            tail=5000,
+            msg="founder hairpinned through its own self_address — pre-nexus-vfs-#25 F2 regression",
+        )

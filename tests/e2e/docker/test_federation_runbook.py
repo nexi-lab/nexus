@@ -784,3 +784,78 @@ class TestRestartReplay:
             f"data loss on SIGTERM — kernel BlobStore did not durably commit "
             f"before SIGTERM acknowledged"
         )
+
+
+# ===========================================================================
+# TestWitnessQuorumHA — production HA pattern (runbook design decisions)
+# ===========================================================================
+class TestWitnessQuorumHA:
+    """Lock down "3-voter (founder + joiner + witness) cluster keeps
+    quorum when one voter is killed".
+
+    The runbook's "3-node cluster recommended for production" callout
+    (Key design decisions) is what this class binds to.  A regression
+    where the witness vote contract breaks would surface here as
+    a stalled propose after the founder is stopped.
+    """
+
+    def test_witness_keeps_quorum_when_voter_dies(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Kill the founder; joiner + witness must keep sharedzone
+        quorum and a propose-through-joiner must commit.
+        """
+        import time
+
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            docker_start,
+            docker_stop,
+            grpc_call,
+            uid,
+            wait_healthy,
+        )
+
+        suffix = uid()
+        path = f"/shared/ha-{suffix}.txt"
+        payload = b"committed during founder outage"
+
+        docker_stop(topology.founder_container)
+        try:
+            # Give raft an election window — default election timeout
+            # is 1-2 s on the cluster binary; 10 s is well over.  We
+            # do not poll for is_leader here; the propose below will
+            # block until quorum is reformed and either succeed
+            # (post-fix) or time out (regression).
+            time.sleep(5)
+
+            wr = grpc_call(
+                topology.joiner_grpc,
+                "write",
+                {"path": path, "content": payload},
+                api_key=api_key,
+                timeout=60,
+            )
+            assert "error" not in wr, (
+                f"propose-through-joiner failed during founder outage: {wr}.  "
+                f"Witness vote did not count toward quorum — 3-voter HA "
+                f"contract broken."
+            )
+
+            rd = grpc_call(
+                topology.joiner_grpc,
+                "read",
+                {"path": path},
+                api_key=api_key,
+                timeout=60,
+            )
+            assert "error" not in rd, f"read during outage failed: {rd}"
+            assert decode_content(rd) == payload, (
+                "joiner could not read its own write during founder outage"
+            )
+        finally:
+            docker_start(topology.founder_container)
+            wait_healthy([topology.founder_grpc])

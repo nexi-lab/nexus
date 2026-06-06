@@ -48,7 +48,7 @@ across `dlopen` boundaries.
 | AcpService | nexus-vfs | `rust/services/src/acp/` | Compiled-in | `service-acp` | Subprocess + ACP-over-stdio |
 | TasksService | nexus-vfs | `rust/services/src/tasks/` | Compiled-in | `service-tasks` | Durable task queue (fjall) |
 | MatrixAdapterService | nexus-vfs | `rust/services/src/matrix_adapter/` | Compiled-in | `service-matrix-adapter` | Matrix CS v3 adapter |
-| PasswordVaultService | nexus-vfs | `rust/services/src/password_vault/` | Compiled-in | `service-password-vault` | Password vault domain logic |
+| PasswordVaultService | nexus | `rust/services/src/password_vault/` | dylib | `service-password-vault` | Password vault domain logic (loaded via `--plugin-dir`) |
 | AgentStatusResolver | nexus-vfs | `rust/services/src/agents/` | Compiled-in | `service-agents` | Procfs-style agent status |
 
 ---

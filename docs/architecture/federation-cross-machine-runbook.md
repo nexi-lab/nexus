@@ -19,7 +19,7 @@ If you only need the conceptual picture without the operator commands, jump to [
 
 ## Repo split (since #4259, 2026-06-03)
 
-Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends`, `raft`, `profiles/cluster`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, `profiles/vault`) and consumes the kernel tier as git dependencies in `Cargo.toml`.
+Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends`, `raft`, `profiles/cluster`, `plugin-abi`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, `profiles/vault`) and consumes the kernel tier as git dependencies in `Cargo.toml`.  The vault profile compiles to a cdylib plugin loaded by `nexusd-cluster` via `--plugin-dir`.
 
 Two CI gates enforce the split:
 
@@ -58,7 +58,7 @@ Headscale server (company-managed)
 
 ## Prerequisites
 
-* `nexus-vfs` repo cloned on both machines (for the `nexusd-cluster` build).  This `nexus` repo is **not** required on the cluster machines unless you also want service-tier binaries (vault, services).
+* `nexus-vfs` repo cloned on both machines (for the `nexusd-cluster` build).  This `nexus` repo is **not** required on the cluster machines unless you also want service-tier plugins (vault cdylib, etc.).
 * Rust toolchain (stable; the cluster binary builds on the `release` profile).
 * Tailscale client installed on both machines.
 * Headscale pre-auth key (from IT) if joining the corporate mesh.

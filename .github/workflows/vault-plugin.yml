@@ -1,0 +1,32 @@
+name: Vault Plugin
+
+# Per-PR + develop-push gate for the vault cdylib plugin. Builds across
+# all three platforms, enforces per-platform size budgets, and runs the
+# password_vault module unit tests (44 tests covering crypto / storage
+# / all 7 RPCs / RFC 6238 TOTP vectors).
+#
+# paths-filtered: only fires for changes that can actually move the
+# plugin or its build inputs.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/vault-plugin.yml"
+      - ".github/workflows/vault-plugin-build.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/vault-plugin.yml"
+      - ".github/workflows/vault-plugin-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/vault-plugin-build.yml
+    with:
+      upload_retention_days: 14

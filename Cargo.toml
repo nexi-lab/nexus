@@ -3,8 +3,8 @@ resolver = "2"
 members = [
     # nexus-owned service modules (peer crate of nexus-vfs kernel).
     "rust/services",
-    # nexusd-vault — single-purpose binary hosting PasswordVaultService
-    # over gRPC. Runs alongside (not bundled into) cluster.
+    # nexus-vault — cdylib plugin for PasswordVaultService, loaded by
+    # nexusd-cluster via --plugin-dir.
     "rust/profiles/vault",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
@@ -19,6 +19,7 @@ transport = { git = "https://github.com/nexi-lab/nexus-vfs" }
 backends = { git = "https://github.com/nexi-lab/nexus-vfs", default-features = false }
 kernel = { git = "https://github.com/nexi-lab/nexus-vfs", default-features = false }
 raft = { git = "https://github.com/nexi-lab/nexus-vfs", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

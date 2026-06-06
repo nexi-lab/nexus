@@ -527,3 +527,108 @@ class TestJoinerCrossNodeReadRunbook:
             f"{len(payload)} bytes; bidirectional cross-node fetch broken — "
             f"symmetric-semantics invariant violated"
         )
+
+    def test_joiner_zero_mount_not_leader_in_join_cli_log(self, joined_cluster: dict) -> None:
+        """Captured `nexusd-cluster join` subprocess stderr must
+        contain the runbook's success marker AND zero `mount: not leader`
+        errors.
+
+        Pre-nexus-vfs-#25 (and pre-nexus-vfs-#23) the join's
+        zm.mount_async call hit the forward-to-leader self-RPC hairpin
+        path; the join still "succeeded" eventually after retries but
+        the stderr was littered with `mount: not leader, leader hint:
+        Some(<self>)`.  Zero of that string is the post-fix invariant.
+        """
+        expected = "Joined remote zone 'sharedzone'"
+        assert expected in joined_cluster["join_stdout"] + joined_cluster["join_stderr"], (
+            f"`nexusd-cluster join` did not print the runbook's success "
+            f"marker {expected!r}.\nstdout={joined_cluster['join_stdout']}\n"
+            f"stderr={joined_cluster['join_stderr']}"
+        )
+        combined = joined_cluster["join_stdout"] + joined_cluster["join_stderr"]
+        assert "mount: not leader" not in combined, (
+            "join CLI logged `mount: not leader` — pre-nexus-vfs-#25 self-"
+            "forward race; the zm.mount_async propose hit the self-address "
+            "gRPC hairpin path instead of the local submit_to_channel retry."
+            f"\nstderr tail: {combined[-2000:]}"
+        )
+
+    def test_joiner_stat_after_read_caches_origin_locally(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """After joiner cross-node Read, its local Stat carries the
+        same lastWriterAddress as the founder's Stat.
+
+        Proves the metadata-replication + origin-attribution path
+        survives the cross-node fetch.  If the joiner's Stat returned
+        an empty `lastWriterAddress` even after a successful Read,
+        subsequent re-reads would re-trip the `try_remote_fetch`
+        origin check and fall through to NOT_FOUND when the founder
+        is offline (regression PR #4294 closed).
+        """
+        from tests.e2e.docker.runbook_helpers import (
+            grpc_call,
+            uid,
+            wait_nodes_caught_up,
+        )
+
+        suffix = uid()
+        path = f"/shared/stat-origin-{suffix}.txt"
+        payload = b"origin attribution probe"
+
+        wr = grpc_call(
+            topology.founder_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in wr, f"founder write failed: {wr}"
+
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+        )
+
+        founder_stat = grpc_call(
+            topology.founder_grpc,
+            "stat",
+            {"path": path},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in founder_stat, f"founder stat failed: {founder_stat}"
+        founder_origin = founder_stat["result"].get("lastWriterAddress") or ""
+        assert founder_origin, "founder's own stat has empty lastWriterAddress"
+
+        # Drive the cross-node fetch so the joiner's metadata cache
+        # picks up the origin attribution.
+        rd = grpc_call(
+            topology.joiner_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, f"joiner read failed: {rd}"
+
+        joiner_stat = grpc_call(
+            topology.joiner_grpc,
+            "stat",
+            {"path": path},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in joiner_stat, f"joiner stat failed: {joiner_stat}"
+        joiner_origin = joiner_stat["result"].get("lastWriterAddress") or ""
+        assert joiner_origin == founder_origin, (
+            f"joiner's lastWriterAddress={joiner_origin!r} disagrees with "
+            f"founder's {founder_origin!r}; metadata replication or origin "
+            f"attribution broken — second Read after founder offline would "
+            f"NOT_FOUND (pre-#4294 regression)"
+        )

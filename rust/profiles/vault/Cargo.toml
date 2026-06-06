@@ -8,7 +8,7 @@ publish = false
 
 [lib]
 name = "nexus_vault"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Plugin ABI — stable C ABI contract for dylib plugins.
@@ -34,3 +34,6 @@ prost = { workspace = true }
 tokio = { version = "1", features = ["rt"] }
 
 tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

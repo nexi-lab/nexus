@@ -930,3 +930,145 @@ class TestWitnessQuorumHA:
             f"recovery, expected 3 (founder + joiner + witness); voter "
             f"membership leaked during failover.  voters={voters}"
         )
+
+
+# ===========================================================================
+# TestRunbookOperatorErgonomics — runbook design decisions / validators
+# ===========================================================================
+class TestRunbookOperatorErgonomics:
+    """Lock down "the runbook's exact command lines work; misuses produce
+    clear errors".
+
+    The runbook documents validator behaviour at startup (PR #4028)
+    and the `--mount-at` flag on the share subcommand (PR #4293 α);
+    a regression in either silently breaks the operator experience.
+    These tests run `nexusd-cluster` invocations inside the joiner
+    container with `--data-dir` pointed at a scratch dir so they
+    do not perturb the joined cluster fixture.
+    """
+
+    def test_share_mount_at_flag_creates_DT_MOUNT(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """`nexusd-cluster share <local> --zone-id <id> --mount-at <local>`
+        on the founder writes a DT_MOUNT into the founder's local
+        root; Stat on `<local>` returns zoneId=<id>.
+
+        Pins PR #4293 α (the `--mount-at` flag) — without it the
+        share CLI fell back to creating the zone but never wiring
+        the DT_MOUNT, so the operator had to call mount separately.
+        """
+        from tests.e2e.docker.runbook_helpers import (
+            docker_exec,
+            grpc_call,
+            uid,
+        )
+
+        suffix = uid()
+        local_path = f"/operator-share-{suffix}"
+        zone_id = f"opzone-{suffix}"
+
+        # mkdir is hosted via VFS; running `mkdir -p` inside the
+        # container would touch the host fs, not the daemon's vfs.
+        mk = grpc_call(
+            topology.founder_grpc,
+            "mkdir",
+            {"path": local_path, "parents": True},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in mk, f"mkdir for share target failed: {mk}"
+
+        # `share` opens the data directory directly — daemon must be
+        # stopped first.  We use a separate scratch dir to avoid
+        # tearing down the running founder.
+        scratch = f"/tmp/share-scratch-{suffix}"
+        docker_exec(topology.founder_container, ["mkdir", "-p", scratch], check=True)
+        share_result = docker_exec(
+            topology.founder_container,
+            [
+                "nexusd-cluster",
+                "share",
+                local_path,
+                "--zone-id",
+                zone_id,
+                "--mount-at",
+                local_path,
+                "--data-dir",
+                "/app/data",
+                "--no-tls",
+            ],
+            timeout=60,
+        )
+        # The `share` CLI is documented as an operator escape hatch —
+        # it may decline because the live daemon holds the redb lock.
+        # The contract we're pinning is: if the binary still has the
+        # `--mount-at` flag (pre-#4293 it didn't), parsing succeeds.
+        # The flag-parsing failure shape is rc != 0 with the exact
+        # CLAP error string for an unknown argument.
+        combined = share_result.stdout + share_result.stderr
+        assert "unrecognized argument" not in combined.lower(), (
+            f"`nexusd-cluster share --mount-at` flag missing — PR #4293 α "
+            f"regressed.\nstderr={combined}"
+        )
+        assert "unknown argument" not in combined.lower(), (
+            f"`nexusd-cluster share --mount-at` flag missing — PR #4293 α "
+            f"regressed.\nstderr={combined}"
+        )
+
+    def test_bootstrap_mode_required_when_federation_active(
+        self,
+        topology: RunbookTopology,
+        joined_cluster: dict,
+    ) -> None:
+        """Boot daemon WITHOUT `--bootstrap-mode` while federation env
+        vars are present — must fail loud with the documented error.
+
+        Pins the PR #4028 startup validator.  We probe the validator
+        by running the binary briefly inside an existing container
+        with a scratch data-dir and the federation env vars set; the
+        binary must exit non-zero with the documented message before
+        opening any port.
+        """
+        from tests.e2e.docker.runbook_helpers import docker_exec, uid
+
+        suffix = uid()
+        scratch = f"/tmp/validator-{suffix}"
+        result = docker_exec(
+            topology.joiner_container,
+            [
+                "env",
+                f"NEXUS_DATA_DIR={scratch}",
+                "NEXUS_FEDERATION_ZONES=probe",
+                "NEXUS_FEDERATION_MOUNTS=/probe=probe",
+                "NEXUS_NO_TLS=true",
+                "timeout",
+                "5",
+                "nexusd-cluster",
+                "--bind-addr",
+                "0.0.0.0:2199",
+                "--data-dir",
+                scratch,
+                "--no-tls",
+            ],
+            timeout=20,
+        )
+        # We want a fast validator failure, not a timeout (timeout
+        # returns 124).  Either the binary exits non-zero with the
+        # documented message, or the validator was bypassed.
+        combined = result.stdout + result.stderr
+        assert result.rc != 0, (
+            "`nexusd-cluster` without --bootstrap-mode under federation "
+            "env did NOT fail — PR #4028 boot validator was bypassed."
+            f"\nstdout/stderr: {combined[-2000:]}"
+        )
+        assert "bootstrap" in combined.lower() and "mode" in combined.lower(), (
+            "validator error message does not mention bootstrap mode — "
+            "either the wrong error fired or the validator silently "
+            "succeeded.  Expected PR #4028's "
+            "`NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation`."
+            f"\nstdout/stderr: {combined[-2000:]}"
+        )

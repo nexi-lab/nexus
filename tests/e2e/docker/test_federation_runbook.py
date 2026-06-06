@@ -403,3 +403,68 @@ class TestJoinerCrossNodeReadRunbook:
             f"L1 cross-machine byte-exact read regressed — this is the "
             f"exact regression PR #4293 + #4294 + nexus-vfs #23 + #25 closed."
         )
+
+    def test_joiner_cli_join_then_byte_exact_read_binary_chunked(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """4 MiB random payload — exercises the multi-chunk fetch path
+        single-line text never hits.
+
+        The CDC default chunk size in the kernel BlobStore is well
+        below 4 MiB, so this write produces multiple content chunks.
+        The joiner's `KernelBlobFetcher` must round-trip each chunk
+        through `PeerBlobClient` -> origin's `BlobFetcherSlot` ->
+        origin's `VFSRouter` (PR #4294's two-Arc round-trip).  Any
+        regression in the chunked-read path falls out here but not
+        in the text test above.
+        """
+        import secrets
+
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            grpc_call,
+            uid,
+            wait_nodes_caught_up,
+        )
+
+        suffix = uid()
+        path = f"/shared/joiner-bin-{suffix}.dat"
+        payload = secrets.token_bytes(4 * 1024 * 1024)
+
+        wr = grpc_call(
+            topology.founder_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=120,
+        )
+        assert "error" not in wr, f"founder write of 4 MiB failed: {wr}"
+
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+        )
+
+        rd = grpc_call(
+            topology.joiner_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=120,
+        )
+        assert "error" not in rd, f"joiner read of 4 MiB failed: {rd}"
+        got = decode_content(rd)
+        assert len(got) == len(payload), (
+            f"joiner returned {len(got)} bytes, founder wrote {len(payload)} "
+            f"— PeerBlobClient chunked-fetch path returned truncated content"
+        )
+        assert got == payload, (
+            "joiner returned wrong bytes for 4 MiB random payload — "
+            "chunk ordering or boundary corruption in PeerBlobClient "
+            "round-trip"
+        )

@@ -304,10 +304,7 @@ mod dispatch_e2e {
         // Step 7: get_entry after restore — credential recovered
         let resp_bytes = dispatch_vault(&plugin, "get_entry", &get_payload).unwrap();
         let get_resp = GetEntryResponse::decode(resp_bytes.as_slice()).unwrap();
-        assert_eq!(
-            get_resp.entry.unwrap().password.as_deref(),
-            Some("hunter2")
-        );
+        assert_eq!(get_resp.entry.unwrap().password.as_deref(), Some("hunter2"));
     }
 
     // ── Scenario 2: Password rotation with version history ─────────
@@ -416,7 +413,10 @@ mod dispatch_e2e {
         // Step 4: generate_totp after rotation — same code within 30s window
         let resp_bytes = dispatch_vault(&plugin, "generate_totp", &totp_payload).unwrap();
         let totp2 = GenerateTotpResponse::decode(resp_bytes.as_slice()).unwrap();
-        assert_eq!(totp1.code, totp2.code, "same seed + same window = same code");
+        assert_eq!(
+            totp1.code, totp2.code,
+            "same seed + same window = same code"
+        );
 
         // Step 5: get_entry — password changed, totp_secret redacted
         let get_payload = encode(&GetEntryRequest {

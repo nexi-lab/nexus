@@ -1,0 +1,42 @@
+# Federation Runbook E2E Test Runner
+#
+# The runbook E2E suite (tests/e2e/docker/test_federation_runbook.py)
+# exercises the same `nexusd-cluster` binary an operator deploys, plus
+# pytest + grpcio for the test framework itself. Basing the runner on
+# the production cluster image (rather than nexus-fullnode, which drags
+# in the Python daemon — not a production artifact for federation)
+# means tests run against exactly what production deploys.
+#
+# Build (from repo root):
+#   docker build -f dockerfiles/Dockerfile.federation-test \
+#     -t nexus-federation-test:latest .
+#
+# The image is used by docker-compose.federation-runbook.yml's `test`
+# service; pytest invocations call the `nexusd-cluster` binary directly
+# (no docker-exec shell-out, no PATH games).
+
+FROM nexusd-cluster:latest
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/testvenv \
+    && /opt/testvenv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/testvenv/bin/pip install --no-cache-dir \
+        pytest \
+        pytest-asyncio \
+        grpcio \
+        grpcio-tools \
+        protobuf \
+        docker
+
+ENV PATH=/opt/testvenv/bin:$PATH \
+    PYTHONUNBUFFERED=1
+WORKDIR /workspace
+ENTRYPOINT []
+CMD ["pytest", "-v"]

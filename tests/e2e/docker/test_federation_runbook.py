@@ -141,3 +141,97 @@ class TestFounderBootstrap:
             tail=5000,
             msg="founder hairpinned through its own self_address — pre-nexus-vfs-#25 F2 regression",
         )
+
+    def test_founder_write_records_self_address(
+        self, topology: RunbookTopology, api_key: str
+    ) -> None:
+        """Write into the founder's `/shared` mount; Stat must report
+        zoneId=sharedzone and lastWriterAddress=<founder advertise>.
+
+        Pins PR #4294's `last_writer_address` invariant.  Pre-#4294
+        the field was None, which made the joiner's `try_remote_fetch`
+        fail the origin check before any cross-node RPC fired.  The
+        runbook §4 callout names the exact contentId-rebasing
+        semantics: a write into `/shared/payload-<uid>.txt` must
+        produce contentId=`payload-<uid>.txt` (rebased into the
+        sharedzone), NOT `shared/payload-<uid>.txt` (which would
+        indicate the write fell through to PathLocalBackend).
+        """
+        from tests.e2e.docker.runbook_helpers import grpc_call, uid
+
+        suffix = uid()
+        path = f"/shared/payload-{suffix}.txt"
+        payload = b"hello from founder"
+
+        wr = grpc_call(
+            topology.founder_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in wr, f"write failed on founder: {wr}"
+
+        st = grpc_call(
+            topology.founder_grpc,
+            "stat",
+            {"path": path},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in st, f"stat failed on founder: {st}"
+        meta = st["result"]
+        assert meta.get("zoneId") == "sharedzone", (
+            f"write fell through to PathLocalBackend instead of routing "
+            f"through sharedzone: zoneId={meta.get('zoneId')!r}; "
+            f"runbook §4 contentId-rebase contract broken (pre-#4293)"
+        )
+        assert meta.get("contentId") == f"payload-{suffix}.txt", (
+            f"contentId not rebased into sharedzone: got "
+            f"{meta.get('contentId')!r}, expected `payload-{suffix}.txt` "
+            f"(rebased) — the legacy `shared/payload-...` shape would "
+            f"mean the write hit PathLocalBackend (#4293 regression)"
+        )
+        last_writer = meta.get("lastWriterAddress") or ""
+        assert last_writer, (
+            "lastWriterAddress missing — joiner's `try_remote_fetch` will "
+            "fail the origin check before any cross-node RPC fires (pre-#4294)"
+        )
+        assert last_writer.endswith(":2126"), (
+            f"lastWriterAddress=`{last_writer}` doesn't look like an "
+            f"<host>:2126 advertise address; self_address publish path broken"
+        )
+
+    def test_founder_read_byte_exact(self, topology: RunbookTopology, api_key: str) -> None:
+        """Sanity baseline: founder's own Read must return exactly what
+        it wrote.  If this fails the cluster binary itself is broken
+        before we even get to cross-node semantics.
+        """
+        from tests.e2e.docker.runbook_helpers import decode_content, grpc_call, uid
+
+        suffix = uid()
+        path = f"/shared/local-{suffix}.bin"
+        payload = b"\x00\x01\x02\x03local payload\xfe\xff"
+
+        wr = grpc_call(
+            topology.founder_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in wr, f"founder write failed: {wr}"
+
+        rd = grpc_call(
+            topology.founder_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in rd, f"founder read failed: {rd}"
+        got = decode_content(rd)
+        assert got == payload, (
+            f"founder read returned {got!r}, wrote {payload!r}; "
+            f"cluster binary's own write/read pipeline is broken"
+        )

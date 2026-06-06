@@ -235,3 +235,171 @@ class TestFounderBootstrap:
             f"founder read returned {got!r}, wrote {payload!r}; "
             f"cluster binary's own write/read pipeline is broken"
         )
+
+
+# ===========================================================================
+# TestJoinerCrossNodeReadRunbook — runbook §3b + §4 (THE MILESTONE)
+# ===========================================================================
+@pytest.fixture(scope="class")
+def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
+    """Execute the runbook's exact joiner-side CLI flow once per class.
+
+    Steps mirror runbook §3b verbatim:
+      B-1: founder is already up via compose; capture its node_id from
+           the persisted `.node_id` file.
+      B-2: stop the joiner daemon (SIGTERM the nexusd-cluster process
+           inside the container — leaves the container up so /app/data
+           stays reachable).
+      B-3: run `nexusd-cluster join <id>@founder:2126 sharedzone /shared`
+           inside the joiner container.  Captures stdout/stderr for
+           log-window assertions in later tests.
+      B-4: SIGTERM/relaunch the joiner daemon in `restart` mode by
+           docker-restarting the container (its compose `command` is
+           `--bootstrap-mode static`, but restart-after-join makes the
+           validator switch over to restart-mode semantics because
+           DT_MOUNT entries now exist in the persisted data dir; see
+           runbook §3c).  Wait for it to be reachable again.
+      B-5: also join the witness as a sharedzone voter to satisfy the
+           production 3-voter HA shape the runbook recommends.
+
+    Returns the join subprocess result + founder node_id so later
+    tests can assert on the captured stdout/stderr without re-running
+    the flow.
+    """
+    from tests.e2e.docker.runbook_helpers import (
+        docker_restart,
+        fetch_node_id,
+        run_nexusd_cluster_join,
+        stop_daemon_in_container,
+        wait_healthy,
+        wait_zone_ready,
+    )
+
+    founder_node_id = fetch_node_id(topology.founder_container)
+
+    # B-2: stop joiner daemon inside its container.
+    stop_daemon_in_container(topology.joiner_container, grace_seconds=3)
+    # B-3: run the offline join.
+    join_result = run_nexusd_cluster_join(
+        topology.joiner_container,
+        founder_node_id=founder_node_id,
+        founder_addr="founder:2126",
+        zone_id="sharedzone",
+        local_path="/shared",
+        hostname="joiner",
+        data_dir="/app/data",
+        timeout=120,
+    )
+    assert join_result.rc == 0, (
+        f"`nexusd-cluster join` on joiner failed: rc={join_result.rc}\n"
+        f"stdout={join_result.stdout}\nstderr={join_result.stderr}"
+    )
+
+    # B-4: docker-restart the joiner; compose `restart: unless-stopped`
+    # re-launches the daemon, which now sees persisted DT_MOUNT entries
+    # and replays them via apply-cb (runbook §3c).
+    docker_restart(topology.joiner_container)
+    wait_healthy([topology.joiner_grpc])
+
+    # B-5: same flow for the witness so sharedzone is a 3-voter group
+    # for TestWitnessQuorumHA (cheap to do here while the lock is open).
+    stop_daemon_in_container(topology.witness_container, grace_seconds=3)
+    witness_join = run_nexusd_cluster_join(
+        topology.witness_container,
+        founder_node_id=founder_node_id,
+        founder_addr="founder:2126",
+        zone_id="sharedzone",
+        local_path="/shared",
+        hostname="witness",
+        data_dir="/home/nexus/data",
+        timeout=120,
+    )
+    # Witness join failure is logged but not fatal — TestWitnessQuorumHA
+    # asserts on the membership independently.  Cross-node read tests
+    # only need the joiner attached.
+    docker_restart(topology.witness_container)
+    wait_healthy([topology.witness_grpc])
+
+    wait_zone_ready(topology.joiner_grpc, "sharedzone", api_key=api_key, timeout=60)
+    return {
+        "founder_node_id": founder_node_id,
+        "join_stdout": join_result.stdout,
+        "join_stderr": join_result.stderr,
+        "witness_join_rc": witness_join.rc,
+        "witness_join_stderr": witness_join.stderr,
+    }
+
+
+class TestJoinerCrossNodeReadRunbook:
+    """Lock down the cross-machine L1 milestone: operator runs
+    `nexusd-cluster join`, then reads bytes the founder wrote.
+
+    This is the flow that took six months to make pass; it covers
+    PR #4293 (apply-cb wiring), #4294 (self_address + PeerBlobClient
+    runtime-Handle + bootstrap_done flag), nexus-vfs #23 (ZoneManager
+    async wrappers), nexus-vfs #25 (leader-detection SSOT).
+    """
+
+    def test_joiner_cli_join_then_byte_exact_read_text(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Founder writes text, joiner reads byte-exact via CLI-join flow.
+
+        Pre-#4293: joiner's `nexusd-cluster join` panicked on the
+        nested-tokio mount call (post-nexus-vfs-#23 it works because
+        the propose is hosted inside a `spawn_blocking`).
+        Pre-#4294: even if join succeeded, joiner's Read returned
+        `IOError("PeerBlobClient not installed")` because the wiring
+        slot was never drained at boot.
+        Post-fix: byte-exact match.
+        """
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            grpc_call,
+            uid,
+            wait_nodes_caught_up,
+        )
+
+        suffix = uid()
+        path = f"/shared/joiner-text-{suffix}.txt"
+        payload = b"hello from win"
+
+        wr = grpc_call(
+            topology.founder_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in wr, f"founder write failed: {wr}"
+
+        # Cross-node causal gate: wait until both voters' state machines
+        # have applied through the leader's commit_index for sharedzone.
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+        )
+
+        rd = grpc_call(
+            topology.joiner_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, (
+            f"joiner read failed: {rd}.  Pre-#4294 this returned "
+            f"`PeerBlobClient not installed` or `NOT_FOUND (-32007)` "
+            f"depending on which side was unpatched."
+        )
+        got = decode_content(rd)
+        assert got == payload, (
+            f"joiner read returned {got!r}, founder wrote {payload!r}; "
+            f"L1 cross-machine byte-exact read regressed — this is the "
+            f"exact regression PR #4293 + #4294 + nexus-vfs #23 + #25 closed."
+        )

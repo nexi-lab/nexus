@@ -2942,7 +2942,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: federation_cluster_info({"zone_id":"corp"}); CLI equivalent: nexus federation info <zone-id>'
-  correctness_test: tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view
+  correctness_test: tests/e2e/docker/test_federation_runbook.py::TestWitnessQuorumHA::test_witness_voter_recovery_resyncs
   perf_class: control
   perf_link: federation status/inspection path; no per-file or search hot-path budget
   gap_issue: null
@@ -3027,7 +3027,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: federation_list_zones({}); CLI equivalent: nexus federation zones'
-  correctness_test: tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view
+  correctness_test: tests/e2e/docker/test_federation_runbook.py::TestWitnessQuorumHA::test_witness_voter_recovery_resyncs
   perf_class: control
   perf_link: federation status/inspection path; no per-file or search hot-path budget
   gap_issue: null

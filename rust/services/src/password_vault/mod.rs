@@ -13,9 +13,9 @@
 //! the totp_secret never leaves the server — `GetEntry` always redacts
 //! it, and clients call `GenerateTotp` to get a current code.
 //!
-//! Hosted by the `vault` profile (`rust/profiles/vault/`), NOT bundled
-//! into `cluster` — keeps cluster pure-federation per its slim-binary
-//! design goal.
+//! Loaded as a dylib plugin by `nexusd-cluster` via `--plugin-dir`.
+//! The vault profile (`rust/profiles/vault/`) compiles to a `.so` /
+//! `.dylib` and registers through the `declare_service_plugin!` macro.
 
 pub mod proto {
     //! Generated tonic stubs from

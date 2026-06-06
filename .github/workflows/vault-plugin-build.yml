@@ -1,15 +1,14 @@
-name: Vault Binary Build (reusable)
+name: Vault Plugin Build (reusable)
 
-# Reusable workflow for building nexusd-vault across all three platforms.
-# Mirrors cluster-binary-build.yml so vault stays under the same gate as
-# cluster. Per-platform size budgets keep regressions visible — vault is
-# much slimmer than cluster (no raft, no VFS, no federation), so the
-# budgets are tighter.
+# Reusable workflow for building the vault cdylib plugin across all three
+# platforms. Per-platform size budgets keep regressions visible — the
+# dylib is slimmer than the old standalone binary (no clap, no tokio
+# multi-thread, no tonic server, no signal handling).
 #
-# Also runs the password_vault module unit tests on linux — 41 tests
+# Also runs the password_vault module unit tests on linux — 44 tests
 # covering crypto / storage / all 7 RPCs / RFC 6238 TOTP vectors. The
-# tests are gated behind the same feature flag as the binary, so they
-# only fire when the relevant code changes (via paths in vault-binary.yml).
+# tests are gated behind the same feature flag as the plugin, so they
+# only fire when the relevant code changes (via paths in vault-plugin.yml).
 
 on:
   workflow_call:
@@ -45,7 +44,7 @@ jobs:
         run: "cargo test -p services --features service-password-vault password_vault::"
 
   build:
-    name: vault-binary / ${{ matrix.artifact_name }}
+    name: vault-plugin / ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -53,30 +52,19 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: nexusd-vault-linux-x86_64
-            binary: nexusd-vault
-            # CI-measured release size: 5.07 MB on first build (cluster
-            # ships at ~12.75 MiB Linux so vault is comfortably slimmer).
-            # Budget keeps ~1 MiB headroom — tight enough that 2× regressions
-            # trip, loose enough that dep updates don't. Same release-profile
-            # work cluster has TODO'd (workspace LTO + strip + panic=abort)
-            # will tighten this further; vault binary follows cluster's
-            # cadence on that.
+            artifact_name: nexus-vault-linux-x86_64
+            dylib: libnexus_vault.so
+            # cdylib is slimmer than the old standalone binary (no clap,
+            # no tokio server runtime, no signal handling). Budget keeps
+            # ~1 MiB headroom.
             max_size_bytes: 6291456  # 6 MiB
           - os: macos-14
-            artifact_name: nexusd-vault-macos-arm64
-            binary: nexusd-vault
-            # arm64 mach-O is typically ~1.3-1.5× Linux x86_64 for the
-            # same Rust workspace. ~7.5 MiB budget mirrors cluster's
-            # macOS-vs-Linux ratio (cluster: 9 vs 12.75 = 0.71;
-            # vault: 7.5 vs 6 = 1.25 — slack because mach-O metadata
-            # is meaningful at small binary sizes).
+            artifact_name: nexus-vault-macos-arm64
+            dylib: libnexus_vault.dylib
             max_size_bytes: 7864320  # 7.5 MiB
           - os: windows-latest
-            artifact_name: nexusd-vault-windows-x86_64
-            binary: nexusd-vault.exe
-            # Locally-measured Windows release size: 5.1 MB (PE+import
-            # table overhead). Keep ~900 KB headroom.
+            artifact_name: nexus-vault-windows-x86_64
+            dylib: nexus_vault.dll
             max_size_bytes: 6291456  # 6 MiB
 
     steps:
@@ -84,9 +72,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install protoc (macOS)
-        # raft-proto's build script uses `protobuf-build v0.14.1`, which
-        # rejects protoc's new calendar-versioned releases. Same pin as
-        # cluster-binary-build for consistency.
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
@@ -104,8 +89,6 @@ jobs:
           "$HOME/protoc/bin/protoc" --version
 
       - name: Install protoc (Windows)
-        # Same shebang issue as cluster-binary-build — install a real
-        # protoc.exe and override the PROTOC env so cargo sees it.
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -132,41 +115,51 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: vault-binary-${{ matrix.os }}
+          shared-key: vault-plugin-${{ matrix.os }}
 
-      - name: Build release binary
-        run: cargo build --release -p nexus-vault --bin nexusd-vault
+      - name: Build release cdylib
+        run: cargo build --release -p nexus-vault
 
-      - name: Check binary size
+      - name: Check dylib size
         shell: bash
         env:
           MAX_SIZE_BYTES: ${{ matrix.max_size_bytes }}
-          BINARY_PATH: target/release/${{ matrix.binary }}
+          DYLIB_PATH: target/release/${{ matrix.dylib }}
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "macOS" ]; then
-            actual=$(stat -f '%z' "$BINARY_PATH")
+            actual=$(stat -f '%z' "$DYLIB_PATH")
           else
-            actual=$(stat -c '%s' "$BINARY_PATH")
+            actual=$(stat -c '%s' "$DYLIB_PATH")
           fi
-          echo "Binary size: $actual bytes (max: $MAX_SIZE_BYTES)"
+          echo "Plugin size: $actual bytes (max: $MAX_SIZE_BYTES)"
           if [ "$actual" -gt "$MAX_SIZE_BYTES" ]; then
-            echo "::error::nexusd-vault ${{ matrix.artifact_name }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
+            echo "::error::nexus-vault ${{ matrix.artifact_name }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
             exit 1
           fi
 
-      - name: Sanity-check --help
+      - name: Verify plugin symbols
         shell: bash
-        run: target/release/${{ matrix.binary }} --help
-
-      - name: Sanity-check --version
-        shell: bash
-        run: target/release/${{ matrix.binary }} --version
+        run: |
+          set -euo pipefail
+          DYLIB="target/release/${{ matrix.dylib }}"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            nm -gU "$DYLIB" | grep -q nexus_plugin_api_version
+            nm -gU "$DYLIB" | grep -q nexus_service_create
+            nm -gU "$DYLIB" | grep -q nexus_service_dispatch
+            nm -gU "$DYLIB" | grep -q nexus_service_destroy
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            nm -D "$DYLIB" | grep -q nexus_plugin_api_version
+            nm -D "$DYLIB" | grep -q nexus_service_create
+            nm -D "$DYLIB" | grep -q nexus_service_dispatch
+            nm -D "$DYLIB" | grep -q nexus_service_destroy
+          fi
+          echo "All required plugin symbols found"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: target/release/${{ matrix.binary }}
+          path: target/release/${{ matrix.dylib }}
           if-no-files-found: error
           retention-days: ${{ inputs.upload_retention_days }}

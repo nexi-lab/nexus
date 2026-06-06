@@ -2,31 +2,38 @@
 name = "nexus-vault"
 version = "0.1.0"
 edition = "2021"
-description = "Nexus vault-profile runtime — `nexusd-vault`, gRPC PasswordVaultService for password-agent + sudowork-2 clients. Runs alongside (not bundled into) `nexusd-cluster`."
+description = "Nexus vault plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Hosts PasswordVaultService as a dylib plugin with C ABI dispatch."
 authors = ["Nexus Team"]
 publish = false
 
-[[bin]]
-name = "nexusd-vault"
-path = "src/main.rs"
+[lib]
+name = "nexus_vault"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Plugin ABI — stable C ABI contract for dylib plugins.
+nexus-plugin-abi = { workspace = true }
 # Our PasswordVaultService impl. Enabling the feature pulls in
 # aes-gcm / hmac / sha1 / base32 / prost-types / tonic-prost (all
 # gated under service-password-vault in services/Cargo.toml).
 services = { workspace = true, features = ["service-password-vault"] }
-# Kernel from nexus-vfs — vault creates a Kernel and passes it to
-# `PasswordVaultServiceImpl::new_with_kernel()` so all storage goes
-# through kernel syscalls (cross-repo integration seam).
+# Kernel from nexus-vfs — vault creates a private Kernel instance for
+# its own metastore so all storage goes through kernel syscalls.
 kernel = { workspace = true }
 # PathLocalBackend for persistent vault content storage on local disk.
 backends = { workspace = true, features = ["driver-path-local"] }
-# tonic for the gRPC server. Same version family as services / cluster
-# / raft (workspace-pinned).
+# tonic types (Request/Response/Status) for calling into the gRPC trait
+# impl on PasswordVaultServiceImpl.
 tonic = { workspace = true }
+# Protobuf encode/decode for plugin dispatch payload serialization.
+prost = { workspace = true }
 
-clap = { version = "4", features = ["derive", "env"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+# Lightweight runtime for block_on — the gRPC trait methods are async
+# but the plugin dispatch is sync (C ABI). current_thread suffices
+# since all vault I/O is actually synchronous under the hood.
+tokio = { version = "1", features = ["rt"] }
+
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"

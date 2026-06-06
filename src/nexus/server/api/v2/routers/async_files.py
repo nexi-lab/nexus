@@ -1187,6 +1187,69 @@ def create_async_files_router(
             logger.exception(f"Read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    @router.get("/read-url")
+    async def read_url(
+        request: Request,
+        path: str = Query(..., description="VFS path to mint a direct read URL for"),
+        ttl: int = Query(60, ge=5, le=3600, description="URL lifetime seconds (keep short)"),
+        zone: str | None = Query(None, description="Override zone (must be in token's zone_set)."),
+        context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> Response:
+        """Streaming-service read path: validate (ReBAC), then return a short-TTL
+        presigned R2/S3 URL so the client fetches bytes DIRECTLY from object
+        storage (or a CDN fronting R2). nexus stays out of the byte path.
+
+        403 if caller lacks READ on `path`; 409 if the owning mount is not S3/R2
+        (fall back to GET /read). Reads only — writes stay proxied.
+        """
+        # 1. ReBAC gate — identical posture to GET /read. sys_stat enforces READ
+        #    and returns metadata (content_id) without transferring any bytes.
+        context = _apply_zone_override(context, zone, auth_result, required_perm="r")
+        fs = await _get_fs()
+        meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
+
+        # 2. Find the owning mount's backend instance (holds creds). Longest
+        #    matching mount prefix wins.
+        mounted = getattr(fs, "_mounted_backend_instances", {}) or {}
+        norm = "/" + str(path).strip("/")
+        mount_pt = max(
+            (m for m in mounted if norm == m or norm.startswith(m.rstrip("/") + "/")),
+            key=len,
+            default=None,
+        )
+        backend = mounted.get(mount_pt) if mount_pt else None
+        if backend is None or not hasattr(backend, "generate_signed_url"):
+            raise HTTPException(
+                status_code=409,
+                detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
+            )
+
+        # 3. Mint the presigned URL (pure signing, no network). Path relative to
+        #    the mount; the backend adds its own prefix in _get_key_path.
+        rel = norm[len(mount_pt.rstrip("/")):].lstrip("/")
+        try:
+            signed = backend.generate_signed_url(rel, expires_in=ttl, method="GET", context=context)
+        except Exception as e:
+            logger.exception(f"read-url signing error: {e}")
+            raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e
+        content_id = None
+        if isinstance(meta, dict):
+            content_id = meta.get("content_id")
+        elif meta is not None:
+            content_id = getattr(meta, "content_id", None)
+        return Response(
+            content=json.dumps(
+                {
+                    "url": signed["url"],
+                    "expires_in": signed["expires_in"],
+                    "content_id": content_id,
+                    "path": path,
+                }
+            ),
+            media_type="application/json",
+        )
+
     @router.get("/md-structure")
     async def md_structure(
         path: str = Query(..., description="Path to a markdown file"),

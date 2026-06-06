@@ -80,12 +80,25 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------- Install nexusd-cluster binary from nexus-vfs (Issue #3125, #4259) ----------
 # Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
 # repo. Install the pre-built binary via `cargo install` from the git repo.
+#
+# `--features driver-s3` opts the cluster into S3/R2 serving (the standalone
+# slim cluster stays local+remote only under its size gate; the full image can
+# afford the larger binary). Requires nexus-vfs with the opt-in driver-s3
+# cluster feature.
+#
+# `--rev` PIN: without it the cargo-install layer is cached against an unchanged
+# command and reuses a STALE (pre-bridge-2 #4262) cluster, which acks DT_MOUNT
+# but never installs it (created=false) → edge E2E mount-setup failure. Pinning
+# makes the build reproducible and busts that cache. This rev is nexus-vfs main
+# plus the opt-in driver-s3 feature (#27); validated end-to-end (boots clean,
+# 0 panics, installs DT_MOUNT, perms-demo + R2 read/write + hybrid search green).
+# Bump alongside the nexus-vfs git pin in Cargo.lock.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster && \
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev ca9d67439bb7e339795a2475a7bffccf2f10305d --features driver-s3 --bin nexusd-cluster nexus-cluster && \
     cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------

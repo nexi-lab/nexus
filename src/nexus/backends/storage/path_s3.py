@@ -220,6 +220,37 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
         )
         return self._s3_transport.fingerprint(self._get_key_path(backend_path))
 
+    # === Signed URL (BackendFeature.SIGNED_URL) ===
+
+    def generate_signed_url(
+        self,
+        path: str,
+        expires_in: int = 3600,
+        method: str = "GET",
+        context: "OperationContext | None" = None,
+    ) -> dict[str, str | int]:
+        """Mint a presigned S3/R2 URL so a client can fetch (or PUT) the object
+        directly from object storage — nexus stays out of the byte path.
+
+        The CALLER is responsible for the ReBAC permission check BEFORE asking
+        for a URL (the ``/files/read-url`` endpoint gates on ``sys_stat``); this
+        method only signs. Streaming-service model: validate once, hand out a
+        short-TTL signed URL, let R2/CDN serve the bytes.
+        """
+        backend_path = (
+            context.backend_path if context and context.backend_path else path.lstrip("/")
+        )
+        key = self._get_key_path(backend_path)
+        # R2/S3 presign is pure signing — no network round-trip.
+        op = "get_object" if method.upper() == "GET" else "put_object"
+        expires_in = min(expires_in, 604800)  # S3 SigV4 hard cap: 7 days
+        url = self._s3_transport.s3_client.generate_presigned_url(
+            op,
+            Params={"Bucket": self.bucket_name, "Key": key},
+            ExpiresIn=expires_in,
+        )
+        return {"url": url, "expires_in": expires_in, "method": method.upper()}
+
     # === Multipart Upload (MultipartUpload) ===
 
     def init_multipart(

@@ -859,3 +859,74 @@ class TestWitnessQuorumHA:
         finally:
             docker_start(topology.founder_container)
             wait_healthy([topology.founder_grpc])
+
+    def test_witness_voter_recovery_resyncs(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """After founder restart, ConfState shows 3 voters again and
+        the founder catches up to the joiner-only writes from the
+        previous outage window via raft AppendEntries / Snapshot.
+        """
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            grpc_call,
+            uid,
+            wait_nodes_caught_up,
+        )
+
+        # Write through joiner first to give the founder something to
+        # catch up to after recovery (the previous test's payload
+        # may or may not still be in scope under the class fixture).
+        suffix = uid()
+        path = f"/shared/recovery-{suffix}.txt"
+        payload = b"founder catches up after restart"
+
+        wr = grpc_call(
+            topology.joiner_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in wr, f"joiner write during recovery failed: {wr}"
+
+        # Wait for raft AppendEntries / Snapshot to catch the founder up.
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc, topology.witness_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=120,
+        )
+
+        rd = grpc_call(
+            topology.founder_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, f"founder did not catch up to joiner's writes after restart: {rd}"
+        assert decode_content(rd) == payload, (
+            "founder's post-recovery read returned wrong bytes — "
+            "AppendEntries / Snapshot path corrupted on catch-up"
+        )
+
+        # ConfState voter count: each node's federation_cluster_info
+        # for sharedzone should report 3 voters.
+        ci = grpc_call(
+            topology.founder_grpc,
+            "federation_cluster_info",
+            {"zone_id": "sharedzone"},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in ci, f"founder cluster_info failed: {ci}"
+        voters = ci.get("result", {}).get("voters", [])
+        assert len(voters) == 3, (
+            f"sharedzone ConfState shows {len(voters)} voters after "
+            f"recovery, expected 3 (founder + joiner + witness); voter "
+            f"membership leaked during failover.  voters={voters}"
+        )

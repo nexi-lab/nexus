@@ -468,3 +468,62 @@ class TestJoinerCrossNodeReadRunbook:
             "chunk ordering or boundary corruption in PeerBlobClient "
             "round-trip"
         )
+
+    def test_joiner_write_back_byte_exact_read_on_founder(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Bidirectional cross-node fetch: joiner writes, founder reads.
+
+        L1's symmetric-semantics check.  The runbook calls out that
+        each side's local root holds its own DT_MOUNT entry pointing
+        at sharedzone, so a write through joiner's /shared mount lands
+        in sharedzone the same way founder's writes do.  The founder
+        then fetches via the same PeerBlobClient round-trip but with
+        the directionality reversed.
+        """
+        import secrets
+
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            grpc_call,
+            uid,
+            wait_nodes_caught_up,
+        )
+
+        suffix = uid()
+        path = f"/shared/from-joiner-{suffix}.bin"
+        payload = secrets.token_bytes(100 * 1024)
+
+        wr = grpc_call(
+            topology.joiner_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in wr, f"joiner write failed: {wr}"
+
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+        )
+
+        rd = grpc_call(
+            topology.founder_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, f"founder cross-node read failed: {rd}"
+        got = decode_content(rd)
+        assert got == payload, (
+            f"founder read returned {len(got)} bytes, joiner wrote "
+            f"{len(payload)} bytes; bidirectional cross-node fetch broken — "
+            f"symmetric-semantics invariant violated"
+        )

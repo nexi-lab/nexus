@@ -632,3 +632,91 @@ class TestJoinerCrossNodeReadRunbook:
             f"attribution broken — second Read after founder offline would "
             f"NOT_FOUND (pre-#4294 regression)"
         )
+
+
+# ===========================================================================
+# TestRestartReplay — runbook §3c
+# ===========================================================================
+class TestRestartReplay:
+    """Lock down "DT_MOUNT entries persist through restart-mode reboot;
+    reader still sees byte-exact".
+
+    Runbook §3c is the operator-facing flow that exercises the
+    install_mount_apply_cb -> replay_existing_mounts -> wire_mount
+    chain.  A regression here surfaces as `/shared` becoming
+    unreadable after a daemon restart even though no data was lost.
+    """
+
+    def test_joiner_restart_replays_dt_mount(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """After the joined cluster fixture runs (which includes the
+        join + restart), the joiner's logs should show the runbook's
+        DT_MOUNT replay sequence, and pre-existing files should still
+        read byte-exact through the joiner.
+        """
+        from tests.e2e.docker.runbook_helpers import (
+            assert_log_contains,
+            decode_content,
+            grpc_call,
+            uid,
+            wait_nodes_caught_up,
+        )
+
+        # First seed a file via founder so we have something to verify
+        # after the joiner gets restarted again.
+        suffix = uid()
+        path = f"/shared/pre-restart-{suffix}.txt"
+        payload = b"survives the restart"
+        wr = grpc_call(
+            topology.founder_grpc,
+            "write",
+            {"path": path, "content": payload},
+            api_key=api_key,
+            timeout=30,
+        )
+        assert "error" not in wr, f"founder write before restart failed: {wr}"
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+        )
+
+        # Restart joiner — compose-managed daemon comes back up with
+        # the persisted DT_MOUNT entries.  Then verify the apply-cb
+        # replay log markers appear AND the pre-existing file reads
+        # byte-exact via the joiner.
+        from tests.e2e.docker.runbook_helpers import docker_restart, wait_healthy
+
+        docker_restart(topology.joiner_container)
+        wait_healthy([topology.joiner_grpc])
+
+        assert_log_contains(
+            topology.joiner_container,
+            "install_mount_apply_cb",
+            tail=8000,
+            msg="apply-cb not installed at boot — DT_MOUNT entries will "
+            "not replay; runbook §3c invariant broken (pre-#4293)",
+        )
+
+        rd = grpc_call(
+            topology.joiner_grpc,
+            "read",
+            {"path": path},
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, (
+            f"joiner read after restart failed: {rd}.  DT_MOUNT replay "
+            f"did not re-wire /shared after restart — /shared became "
+            f"unreadable post-reboot."
+        )
+        got = decode_content(rd)
+        assert got == payload, (
+            f"joiner read after restart returned {got!r}, founder wrote "
+            f"{payload!r}; restart-replay corruption"
+        )

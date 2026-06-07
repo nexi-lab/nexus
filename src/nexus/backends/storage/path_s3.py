@@ -241,15 +241,25 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             context.backend_path if context and context.backend_path else path.lstrip("/")
         )
         key = self._get_key_path(backend_path)
-        # R2/S3 presign is pure signing — no network round-trip.
-        op = "get_object" if method.upper() == "GET" else "put_object"
+        # R2/S3 presign is pure signing — no network round-trip. Strictly map the
+        # method to an S3 operation and REJECT anything unrecognized: defaulting
+        # an unexpected/mistyped method to put_object would silently mint a
+        # write-capable URL (the caller owns the ReBAC check, not this signer).
+        method = method.upper()
+        op_for_method = {"GET": "get_object", "PUT": "put_object"}
+        op = op_for_method.get(method)
+        if op is None:
+            raise ValueError(
+                f"generate_signed_url: unsupported method {method!r}; "
+                f"expected one of {sorted(op_for_method)}"
+            )
         expires_in = min(expires_in, 604800)  # S3 SigV4 hard cap: 7 days
         url = self._s3_transport.s3_client.generate_presigned_url(
             op,
             Params={"Bucket": self.bucket_name, "Key": key},
             ExpiresIn=expires_in,
         )
-        return {"url": url, "expires_in": expires_in, "method": method.upper()}
+        return {"url": url, "expires_in": expires_in, "method": method}
 
     # === Multipart Upload (MultipartUpload) ===
 

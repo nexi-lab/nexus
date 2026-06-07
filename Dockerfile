@@ -200,11 +200,19 @@ COPY --from=builder /build/nexusd-full /usr/local/bin/nexusd-full
 # Python factory boot spawns "nexus-cluster" (without d) via subprocess; point
 # that name at the full binary (cluster + S3/R2 driver) so usage is unchanged.
 RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexus-cluster
+# Back-compat: preserve the historic `nexusd-cluster` name. Repo consumers still
+# exec it directly (e.g. the federation E2E joiner entrypoint), and nexusd-full
+# is a strict superset of the old slim cluster binary, so the alias is
+# behaviorally identical.
+RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexusd-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------
-# Verify nexusd-full binary is present and executable.
-RUN nexusd-full --version || echo "nexusd-full binary OK"
+# Fail the build if any expected cluster binary name is missing or not on PATH
+# (don't mask failures with `|| echo`), then verify the binary actually runs.
+RUN for b in nexusd-full nexus-cluster nexusd-cluster; do \
+        command -v "$b" >/dev/null 2>&1 || { echo "missing cluster binary: $b" >&2; exit 1; }; \
+    done && nexusd-full --version
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \

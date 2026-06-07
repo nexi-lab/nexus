@@ -1205,49 +1205,59 @@ def create_async_files_router(
         # 1. ReBAC gate — identical posture to GET /read. sys_stat enforces READ
         #    and returns metadata (content_id) without transferring any bytes.
         context = _apply_zone_override(context, zone, auth_result, required_perm="r")
-        fs = await _get_fs()
-        meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
 
-        # 2. Find the owning mount's backend instance (holds creds). Longest
-        #    matching mount prefix wins.
-        mounted = getattr(fs, "_mounted_backend_instances", {}) or {}
-        norm = "/" + str(path).strip("/")
-        mount_pt = max(
-            (m for m in mounted if norm == m or norm.startswith(m.rstrip("/") + "/")),
-            key=len,
-            default=None,
-        )
-        backend = mounted.get(mount_pt) if mount_pt else None
-        if mount_pt is None or backend is None or not hasattr(backend, "generate_signed_url"):
-            raise HTTPException(
-                status_code=409,
-                detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
+        async def _work() -> Response:
+            fs = await _get_fs()
+            meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
+
+            # 2. Find the owning mount's backend instance (holds creds). Longest
+            #    matching mount prefix wins.
+            mounted = getattr(fs, "_mounted_backend_instances", {}) or {}
+            norm = "/" + str(path).strip("/")
+            mount_pt = max(
+                (m for m in mounted if norm == m or norm.startswith(m.rstrip("/") + "/")),
+                key=len,
+                default=None,
+            )
+            backend = mounted.get(mount_pt) if mount_pt else None
+            if mount_pt is None or backend is None or not hasattr(backend, "generate_signed_url"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
+                )
+
+            # 3. Mint the presigned URL (pure signing, no network). Path relative
+            #    to the mount; the backend adds its own prefix in _get_key_path.
+            rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
+            try:
+                signed = backend.generate_signed_url(
+                    rel, expires_in=ttl, method="GET", context=context
+                )
+            except Exception as e:
+                logger.exception(f"read-url signing error: {e}")
+                raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e
+            content_id = None
+            if isinstance(meta, dict):
+                content_id = meta.get("content_id")
+            elif meta is not None:
+                content_id = getattr(meta, "content_id", None)
+            return Response(
+                content=json.dumps(
+                    {
+                        "url": signed["url"],
+                        "expires_in": signed["expires_in"],
+                        "content_id": content_id,
+                        "path": path,
+                    }
+                ),
+                media_type="application/json",
             )
 
-        # 3. Mint the presigned URL (pure signing, no network). Path relative to
-        #    the mount; the backend adds its own prefix in _get_key_path.
-        rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
-        try:
-            signed = backend.generate_signed_url(rel, expires_in=ttl, method="GET", context=context)
-        except Exception as e:
-            logger.exception(f"read-url signing error: {e}")
-            raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e
-        content_id = None
-        if isinstance(meta, dict):
-            content_id = meta.get("content_id")
-        elif meta is not None:
-            content_id = getattr(meta, "content_id", None)
-        return Response(
-            content=json.dumps(
-                {
-                    "url": signed["url"],
-                    "expires_in": signed["expires_in"],
-                    "content_id": content_id,
-                    "path": path,
-                }
-            ),
-            media_type="application/json",
-        )
+        # Route through the same zone-scoped guard as GET /read: a mismatched
+        # path/query zone is rejected (400) before any stat/sign, and the stat +
+        # mount resolution + signing all run in the resolved target zone — so an
+        # out-of-band storage URL can't be minted across a tenant boundary.
+        return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
     @router.get("/md-structure")
     async def md_structure(

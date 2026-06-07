@@ -29,6 +29,7 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.contracts.metadata import DT_REG
 from nexus.core.path_utils import validate_path as _normalize_path
 from nexus.runtime.zone_resolution import (
     target_zone_for_context,
@@ -1215,19 +1216,30 @@ def create_async_files_router(
                 # object. Fail closed: never mint a bearer S3/R2 URL for a key we
                 # have not proven exists as an authorized object.
                 raise HTTPException(status_code=404, detail=f"Not found: {path}")
-            # Only regular files get a direct object URL. sys_stat also succeeds
-            # for directories and mount roots; signing their empty/prefix key
-            # would hand out a bearer URL GET /read would never serve for that
-            # VFS path.
-            is_dir = (
-                meta.get("is_directory")
-                if isinstance(meta, dict)
-                else getattr(meta, "is_directory", False)
-            )
-            if is_dir:
+
+            # Only mint a URL for an explicit regular file (DT_REG). sys_stat also
+            # succeeds for directories (DT_DIR), mount roots (DT_MOUNT),
+            # pipes/streams, and external-storage markers — none map to a single
+            # object key, and a mount root can even report is_directory=False, so
+            # checking is_directory alone is insufficient. Signing their
+            # empty/prefix key would hand out a bearer URL GET /read never serves.
+            def _meta_get(field: str, default: Any = None) -> Any:
+                return (
+                    meta.get(field, default)
+                    if isinstance(meta, dict)
+                    else getattr(meta, field, default)
+                )
+
+            entry_type = _meta_get("entry_type")
+            if _meta_get("is_directory", False) or (
+                entry_type is not None and entry_type != DT_REG
+            ):
                 raise HTTPException(
                     status_code=409,
-                    detail="read-url is for regular files only, not directories/mounts; use GET /read.",
+                    detail=(
+                        "read-url is for regular files only (not directories, mounts, "
+                        "or other special entries); use GET /read."
+                    ),
                 )
 
             # 2. Find the owning mount's backend instance (holds creds). Longest

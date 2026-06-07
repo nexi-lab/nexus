@@ -178,3 +178,18 @@ def test_read_url_directory_returns_409_without_signing(s3_backend: _SignableBac
 
     assert resp.status_code == 409
     assert s3_backend.calls == []  # never signed a directory
+
+
+def test_read_url_mount_root_entry_type_returns_409(s3_backend: _SignableBackend) -> None:
+    """A DT_MOUNT stat (entry_type=2) that reports is_directory=False must STILL
+    409 — checking is_directory alone would let a mount root through and sign its
+    prefix key."""
+    client = _make_client(
+        {"/workspace": s3_backend},
+        stat_result={"entry_type": 2, "is_directory": False, "content_id": None},
+    )
+
+    resp = client.get("/read-url", params={"path": "/workspace"})
+
+    assert resp.status_code == 409
+    assert s3_backend.calls == []  # never signed a mount root

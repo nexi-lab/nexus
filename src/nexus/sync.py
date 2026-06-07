@@ -358,25 +358,36 @@ async def move_file(
                 nx.sys_rename(source, dest, force=force)
                 return True
             except (
-                FileExistsError,
                 NexusPermissionError,
                 PermissionError,
                 NexusFileNotFoundError,
                 InvalidPathError,
             ):
-                # Terminal rename outcomes — destination exists without force,
-                # permission denied, missing source, invalid path. NEVER mask
-                # these with copy+delete: nx.write(dest) would clobber the
-                # destination and a subsequent failed unlink would leave
-                # duplicated state. Propagate (the caller's handler logs +
-                # returns False without ever touching the destination).
+                # Always terminal — force cannot help (permission denied, missing
+                # source, invalid path). Never mask with copy+delete.
                 raise
+            except FileExistsError:
+                # Destination exists. Terminal when the caller did NOT opt into
+                # overwrite; with force=True the caller wants the overwrite and
+                # sys_rename may not forward force to the kernel, so emulate it.
+                if not force:
+                    raise
+                logger.warning(
+                    "move: sys_rename %s -> %s hit FileExistsError with force=True; "
+                    "emulating overwrite via copy+delete",
+                    source,
+                    dest,
+                )
+                content = nx.sys_read(source)
+                nx.write(dest, content)
+                nx.sys_unlink(source)
+                return True
             except Exception as rename_exc:
-                # Genuine rename-unavailable. The copy+delete emulation is NOT
-                # atomic — a check-then-write no-clobber guard still races a
-                # concurrent create of `dest` — so only run it when the caller
-                # explicitly opted into overwrite (force=True). For force=False
-                # we abort rather than risk clobbering a destination.
+                # Genuine rename-unavailable (e.g. gRPC transport absent on the
+                # REMOTE profile). The copy+delete emulation is NOT atomic, so
+                # only run it when the caller explicitly opted into overwrite
+                # (force=True). For force=False we abort rather than risk
+                # clobbering a destination via a check-then-write race.
                 if not force:
                     logger.warning(
                         "move: sys_rename %s -> %s failed (%r); refusing non-atomic "
@@ -387,7 +398,7 @@ async def move_file(
                     )
                     raise
                 logger.warning(
-                    "move: sys_rename %s -> %s failed (%r); copy+delete fallback (force=True)",
+                    "move: sys_rename %s -> %s unavailable (%r); copy+delete (force=True)",
                     source,
                     dest,
                     rename_exc,

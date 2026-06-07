@@ -77,14 +77,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Install nexusd-cluster binary from nexus-vfs (Issue #3125, #4259) ----------
+# ---------- Install nexusd-full binary from nexus-vfs (Issue #3125, #4259) ----------
 # Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
 # repo. Install the pre-built binary via `cargo install` from the git repo.
 #
-# `--features driver-s3` opts the cluster into S3/R2 serving (the standalone
-# slim cluster stays local+remote only under its size gate; the full image can
-# afford the larger binary). Requires nexus-vfs with the opt-in driver-s3
-# cluster feature.
+# We install `nexusd-full` — the `full` profile = `nexusd-cluster` (Raft + IPC +
+# federation) PLUS the S3/R2 object-store driver. Per the nexus-vfs#27 kernel-team
+# review, `driver-s3` is NOT a feature on `nexusd-cluster` (that binary stays pure
+# local+remote and under its size gate); the S3-serving binary is this separate
+# profile. It is symlinked to `nexus-cluster` below so the Python runtime spawns
+# it unchanged.
 #
 # REV is a build-arg, NOT a hardcoded edge. `cargo install --git` lives in a
 # Docker RUN layer that caches by command string, so a bare `--branch main`
@@ -102,12 +104,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 # Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
-ARG NEXUS_VFS_REV=ca9d67439bb7e339795a2475a7bffccf2f10305d
+ARG NEXUS_VFS_REV=f4227a21bc8a7546477bc3851bd9407f3579f925
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --features driver-s3 --bin nexusd-cluster nexus-cluster && \
-    cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-full nexus-full && \
+    cp /root/.cargo/bin/nexusd-full /build/nexusd-full
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -194,14 +196,15 @@ COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
-COPY --from=builder /build/nexusd-cluster /usr/local/bin/nexusd-cluster
-# Python factory boot spawns "nexus-cluster" (without d) via subprocess.
-RUN ln -s /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
+COPY --from=builder /build/nexusd-full /usr/local/bin/nexusd-full
+# Python factory boot spawns "nexus-cluster" (without d) via subprocess; point
+# that name at the full binary (cluster + S3/R2 driver) so usage is unchanged.
+RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexus-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------
-# Verify nexusd-cluster binary is present and executable.
-RUN nexusd-cluster --version || echo "nexusd-cluster binary OK"
+# Verify nexusd-full binary is present and executable.
+RUN nexusd-full --version || echo "nexusd-full binary OK"
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \

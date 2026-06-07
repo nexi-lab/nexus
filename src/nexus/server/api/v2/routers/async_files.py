@@ -1215,9 +1215,32 @@ def create_async_files_router(
                 # object. Fail closed: never mint a bearer S3/R2 URL for a key we
                 # have not proven exists as an authorized object.
                 raise HTTPException(status_code=404, detail=f"Not found: {path}")
+            # Only regular files get a direct object URL. sys_stat also succeeds
+            # for directories and mount roots; signing their empty/prefix key
+            # would hand out a bearer URL GET /read would never serve for that
+            # VFS path.
+            is_dir = (
+                meta.get("is_directory")
+                if isinstance(meta, dict)
+                else getattr(meta, "is_directory", False)
+            )
+            if is_dir:
+                raise HTTPException(
+                    status_code=409,
+                    detail="read-url is for regular files only, not directories/mounts; use GET /read.",
+                )
 
             # 2. Find the owning mount's backend instance (holds creds). Longest
             #    matching mount prefix wins.
+            #
+            # Zone safety: this map is keyed by mount path and the cluster
+            # permits at most one backend per VFS path (mounting the same path
+            # in a second zone is rejected). The authorization boundary is the
+            # zone-scoped sys_stat above — this whole _work runs inside
+            # _run_for_context, so a path not mounted/authorized in the caller's
+            # zone returns None -> 404 before any backend is looked up or signed.
+            # A fully zone-keyed mount map ((zone, path) -> backend) is the
+            # proper long-term hardening and is tracked as separate work.
             mounted = getattr(fs, "_mounted_backend_instances", {}) or {}
             norm = "/" + str(path).strip("/")
             mount_pt = max(

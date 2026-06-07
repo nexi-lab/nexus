@@ -164,3 +164,17 @@ def test_read_url_method_less_signer_returns_409() -> None:
     resp = client.get("/read-url", params={"path": "/workspace/file.txt"})
 
     assert resp.status_code == 409
+
+
+def test_read_url_directory_returns_409_without_signing(s3_backend: _SignableBackend) -> None:
+    """sys_stat for a directory/mount root → 409 (regular files only); never
+    sign the empty/prefix key of a non-file entry."""
+    client = _make_client(
+        {"/workspace": s3_backend},
+        stat_result={"content_id": None, "size": 0, "is_directory": True},
+    )
+
+    resp = client.get("/read-url", params={"path": "/workspace/somedir"})
+
+    assert resp.status_code == 409
+    assert s3_backend.calls == []  # never signed a directory

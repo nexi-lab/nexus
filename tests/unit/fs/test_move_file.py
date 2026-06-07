@@ -47,12 +47,12 @@ def test_move_permission_error_is_terminal() -> None:
     nx.sys_unlink.assert_not_called()
 
 
-def test_move_fallback_no_clobber_when_dest_exists() -> None:
-    """Rename genuinely unavailable AND destination exists with force=False:
-    the copy+delete fallback must NOT clobber it."""
+def test_move_force_false_disables_copy_delete_fallback() -> None:
+    """With force=False, a genuinely-unavailable rename does NOT fall back to the
+    non-atomic copy+delete (which races a concurrent create); it aborts without
+    writing — no check-then-write TOCTOU window."""
     nx = MagicMock()
     nx.sys_rename.side_effect = RuntimeError("gRPC transport unavailable")
-    nx.access.return_value = True  # destination already exists
 
     result = _run(move_file(nx, _SRC, _DST, force=False))
 
@@ -61,15 +61,14 @@ def test_move_fallback_no_clobber_when_dest_exists() -> None:
     nx.sys_unlink.assert_not_called()
 
 
-def test_move_fallback_copies_when_rename_unavailable_and_no_dest() -> None:
-    """Genuine rename-unavailable with no existing destination still falls back
-    to copy+delete (the original Issue #341 behavior)."""
+def test_move_fallback_copies_with_force_when_rename_unavailable() -> None:
+    """Genuine rename-unavailable WITH force=True falls back to copy+delete —
+    overwrite is explicitly requested (the original Issue #341 behavior)."""
     nx = MagicMock()
     nx.sys_rename.side_effect = RuntimeError("gRPC transport unavailable")
-    nx.access.return_value = False  # destination does not exist
     nx.sys_read.return_value = b"data"
 
-    result = _run(move_file(nx, _SRC, _DST, force=False))
+    result = _run(move_file(nx, _SRC, _DST, force=True))
 
     assert result is True
     nx.write.assert_called_once_with(_DST, b"data")

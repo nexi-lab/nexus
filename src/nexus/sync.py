@@ -372,18 +372,26 @@ async def move_file(
                 # returns False without ever touching the destination).
                 raise
             except Exception as rename_exc:
-                # Genuine rename-unavailable. Fall back to copy+delete, but never
-                # silently clobber: require force when the destination exists.
+                # Genuine rename-unavailable. The copy+delete emulation is NOT
+                # atomic — a check-then-write no-clobber guard still races a
+                # concurrent create of `dest` — so only run it when the caller
+                # explicitly opted into overwrite (force=True). For force=False
+                # we abort rather than risk clobbering a destination.
+                if not force:
+                    logger.warning(
+                        "move: sys_rename %s -> %s failed (%r); refusing non-atomic "
+                        "copy+delete fallback without force — aborting",
+                        source,
+                        dest,
+                        rename_exc,
+                    )
+                    raise
                 logger.warning(
-                    "move: sys_rename %s -> %s failed (%r); trying copy+delete fallback",
+                    "move: sys_rename %s -> %s failed (%r); copy+delete fallback (force=True)",
                     source,
                     dest,
                     rename_exc,
                 )
-                if not force and nx.access(dest):
-                    raise FileExistsError(
-                        f"move: destination exists and force=False: {dest}"
-                    ) from rename_exc
                 content = nx.sys_read(source)
                 nx.write(dest, content)
                 nx.sys_unlink(source)

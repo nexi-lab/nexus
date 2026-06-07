@@ -86,19 +86,27 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # afford the larger binary). Requires nexus-vfs with the opt-in driver-s3
 # cluster feature.
 #
-# `--rev` PIN: without it the cargo-install layer is cached against an unchanged
-# command and reuses a STALE (pre-bridge-2 #4262) cluster, which acks DT_MOUNT
-# but never installs it (created=false) → edge E2E mount-setup failure. Pinning
-# makes the build reproducible and busts that cache. This rev is nexus-vfs main
-# plus the opt-in driver-s3 feature (#27); validated end-to-end (boots clean,
-# 0 panics, installs DT_MOUNT, perms-demo + R2 read/write + hybrid search green).
-# Bump alongside the nexus-vfs git pin in Cargo.lock.
+# REV is a build-arg, NOT a hardcoded edge. `cargo install --git` lives in a
+# Docker RUN layer that caches by command string, so a bare `--branch main`
+# would FREEZE at the first-built binary forever — exactly how the stale,
+# pre-bridge-2 (#4262) cluster shipped (acked DT_MOUNT but never installed it,
+# created=false → edge E2E mount-setup failure). Putting the resolved rev in
+# the command both busts that cache and makes the build reproducible.
+#   - Default below = a known-good rev for reproducible local builds.
+#   - Edge: CI passes `--build-arg NEXUS_VFS_REV=$(git ls-remote …main | sha)`.
+#   - Downstream pins the *image*, not this file.
+# SSOT once #27 lands on nexus-vfs main: bump the default to the merged-main rev
+# (or derive it from the nexus-vfs pin in Cargo.lock). The default below is a
+# TEMPORARY integration pin to the unmerged #27 branch tip so the R2 e2e can
+# run pre-merge.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
+# Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
+ARG NEXUS_VFS_REV=ca9d67439bb7e339795a2475a7bffccf2f10305d
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev ca9d67439bb7e339795a2475a7bffccf2f10305d --features driver-s3 --bin nexusd-cluster nexus-cluster && \
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --features driver-s3 --bin nexusd-cluster nexus-cluster && \
     cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------

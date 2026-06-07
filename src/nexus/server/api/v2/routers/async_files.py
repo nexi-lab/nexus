@@ -1304,6 +1304,30 @@ def create_async_files_router(
                     status_code=409,
                     detail="read-url is for regular files only, not a mount root; use GET /read.",
                 )
+
+            # Read post-hooks (e.g. DynamicViewerReadHook's column-level CSV
+            # redaction) run in the GET /read byte path. A direct signed URL
+            # bypasses them, so a file GET /read would redact/transform could be
+            # fetched RAW through the URL. Fail closed whenever any "read"
+            # post-hook is registered — the caller falls back to GET /read, which
+            # applies the hooks. (Default to fail-closed if we can't determine.)
+            kernel = getattr(fs, "_kernel", None)
+            hook_count = getattr(kernel, "hook_count", None)
+            read_hooks_active = True
+            if callable(hook_count):
+                try:
+                    read_hooks_active = hook_count("read") > 0
+                except Exception:  # noqa: BLE001 — unknown hook state -> fail closed
+                    read_hooks_active = True
+            if read_hooks_active:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "read-url unavailable while read-transform hooks are active "
+                        "for this server; use GET /read."
+                    ),
+                )
+
             try:
                 signed = signer(rel, expires_in=ttl, method="GET", context=context)
             except Exception as e:

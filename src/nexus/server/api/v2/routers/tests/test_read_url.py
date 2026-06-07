@@ -58,11 +58,17 @@ class _GcsLikeBackend:
 _DEFAULT_STAT = {"content_id": "abc123", "size": 12, "is_directory": False}
 
 
-def _make_client(mounts: dict[str, object], stat_result: object = _DEFAULT_STAT) -> TestClient:
+def _make_client(
+    mounts: dict[str, object],
+    stat_result: object = _DEFAULT_STAT,
+    read_hook_count: int = 0,
+) -> TestClient:
     fs = MagicMock()
     fs.sys_stat.return_value = stat_result
     # The endpoint resolves the owning mount via this dict.
     fs._mounted_backend_instances = mounts
+    # Read post-hook gate: 0 = no redaction hooks (signing allowed).
+    fs._kernel.hook_count.return_value = read_hook_count
 
     app = FastAPI()
     app.include_router(create_async_files_router(nexus_fs=fs))
@@ -95,6 +101,18 @@ def test_read_url_s3_mount_returns_presigned_url(s3_backend: _SignableBackend) -
     assert body["path"] == "/workspace/demo/file.md"
     # Path handed to the backend is mount-relative (mount prefix stripped).
     assert s3_backend.calls == [("demo/file.md", 120, "GET")]
+
+
+def test_read_url_read_hooks_active_returns_409(s3_backend: _SignableBackend) -> None:
+    """When a 'read' post-hook is registered (e.g. DynamicViewerReadHook column
+    redaction), read-url must 409 — a signed URL would bypass the redaction that
+    GET /read applies, exposing raw bytes. Never sign in that case."""
+    client = _make_client({"/workspace": s3_backend}, read_hook_count=1)
+
+    resp = client.get("/read-url", params={"path": "/workspace/demo/file.md"})
+
+    assert resp.status_code == 409
+    assert s3_backend.calls == []  # never signed while read hooks active
 
 
 def test_read_url_longest_mount_prefix_wins() -> None:

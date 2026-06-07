@@ -15,41 +15,75 @@
 # raft group. See docs/architecture/federation-cross-machine-runbook.md
 # for the operator-level write-up of the same flow.
 #
+# Lifecycle contract — the fixture (not Docker) owns daemon lifecycle.
+# No `restart: unless-stopped`: runbook §3b requires the daemon to be
+# *down* while the offline `nexusd-cluster join` runs (redb exclusive
+# lock).  An auto-restart policy violates that contract and races the
+# join binary against a re-spawned daemon.  TestWitnessQuorumHA's
+# `docker stop founder` / `docker start founder` semantics also need
+# Docker to honor a stop and not bounce the container.
+#
 # Usage:
 #   docker compose -f dockerfiles/docker-compose.federation-runbook.yml up -d founder joiner witness
 #   docker compose -f dockerfiles/docker-compose.federation-runbook.yml run --rm test
 #   docker compose -f dockerfiles/docker-compose.federation-runbook.yml down -v
 
+# Bootstrap-mode auto-detect entrypoint (shared via YAML anchor).
+#
+# Why this exists:
+#   * Runbook §3b says: pass `static` on first boot (empty data dir),
+#     `restart` on subsequent boots (persisted ConfState + DT_MOUNT).
+#   * PR #4028 validator enforces this strictly: `static` on a data dir
+#     that already holds a 'root' zone fails the boot at parse time.
+#   * Our fixture flow stops the joiner, runs offline `join` (writes
+#     DT_MOUNT to data dir), then starts the joiner back up.  At that
+#     second start the data dir is no longer empty, so we must switch
+#     to `restart` — without operator intervention.
+#
+# The script derives the bootstrap mode from on-disk state, which IS
+# the runbook's mental model: "did I bootstrap before?".  Under
+# `restart` it also unsets the static-only env vars (NEXUS_FEDERATION_*,
+# NEXUS_PEERS, NEXUS_BOOTSTRAP_NEW) so the validator's mode-x-env
+# matrix check passes.
+x-runbook-entrypoint: &runbook-entrypoint
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      if [ -f "$$DATA_DIR/.node_id" ]; then
+        MODE=restart
+        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
+      else
+        MODE=static
+      fi
+      exec nexusd-cluster \
+        --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+        --data-dir "$$DATA_DIR" \
+        --no-tls \
+        --bootstrap-mode "$$MODE"
+  command: []
+
 services:
   founder:
+    <<: *runbook-entrypoint
     build:
       context: ..
       dockerfile: dockerfiles/Dockerfile.nexusd-cluster
     image: nexusd-cluster:latest
     container_name: nexus-runbook-founder
     hostname: founder
-    restart: unless-stopped
     environment:
       NEXUS_HOSTNAME: founder
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: founder:2126
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
-      NEXUS_BOOTSTRAP_MODE: static
-      # Founder creates sharedzone as 1-voter at boot; joiner + witness
-      # add themselves as voters via the `nexusd-cluster join` flow the
-      # test container runs (matching the runbook Step 3a contract).
+      # First boot only — auto-detect entrypoint strips these on restart.
       NEXUS_FEDERATION_ZONES: sharedzone
       NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
       RUST_LOG: info,nexus_raft=debug
-    command:
-      - --bind-addr
-      - 0.0.0.0:2126
-      - --data-dir
-      - /app/data
-      - --no-tls
-      - --bootstrap-mode
-      - static
     volumes:
       - runbook_founder_data:/app/data
     networks:
@@ -62,26 +96,17 @@ services:
       start_period: 30s
 
   joiner:
+    <<: *runbook-entrypoint
     image: nexusd-cluster:latest
     container_name: nexus-runbook-joiner
     hostname: joiner
-    restart: unless-stopped
     environment:
       NEXUS_HOSTNAME: joiner
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: joiner:2126
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
-      NEXUS_BOOTSTRAP_MODE: static
       RUST_LOG: info,nexus_raft=debug
-    command:
-      - --bind-addr
-      - 0.0.0.0:2126
-      - --data-dir
-      - /app/data
-      - --no-tls
-      - --bootstrap-mode
-      - static
     volumes:
       - runbook_joiner_data:/app/data
     networks:
@@ -100,7 +125,6 @@ services:
     image: nexus-raft-witness:latest
     container_name: nexus-runbook-witness
     hostname: witness
-    restart: unless-stopped
     environment:
       NEXUS_HOSTNAME: witness
       NEXUS_BIND_ADDR: 0.0.0.0:2126
@@ -153,6 +177,13 @@ services:
       NEXUS_FOUNDER_CONTAINER: nexus-runbook-founder
       NEXUS_JOINER_CONTAINER: nexus-runbook-joiner
       NEXUS_WITNESS_CONTAINER: nexus-runbook-witness
+      # Volume names the fixture mounts into transient `nexusd-cluster join`
+      # sidecars when running the offline join flow.
+      NEXUS_FOUNDER_VOLUME: nexus-runbook-founder-data
+      NEXUS_JOINER_VOLUME: nexus-runbook-joiner-data
+      NEXUS_WITNESS_VOLUME: nexus-runbook-witness-data
+      NEXUS_RUNBOOK_NETWORK: nexus-runbook-net
+      NEXUS_CLUSTER_IMAGE: nexusd-cluster:latest
     networks:
       - nexus-runbook-net
 

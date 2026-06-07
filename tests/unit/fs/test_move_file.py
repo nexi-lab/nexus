@@ -33,6 +33,26 @@ def test_move_terminal_rename_error_does_not_clobber() -> None:
     nx.sys_unlink.assert_not_called()
 
 
+def test_move_legacy_sys_rename_without_force_kwarg() -> None:
+    """A client whose sys_rename has no `force` kwarg must still complete an
+    ordinary non-force move via a positional retry — a signature mismatch must
+    not be misclassified as rename-unavailable (and trigger copy+delete/abort)."""
+    seen: list[tuple[str, str]] = []
+
+    def _rename(source: str, dest: str) -> None:  # NOTE: no force kwarg
+        seen.append((source, dest))
+
+    nx = MagicMock()
+    nx.sys_rename = MagicMock(side_effect=_rename)
+
+    result = _run(move_file(nx, _SRC, _DST, force=False))
+
+    assert result is True
+    assert seen == [(_SRC, _DST)]  # positional retry performed the atomic rename
+    nx.write.assert_not_called()  # no copy+delete fallback
+    nx.sys_unlink.assert_not_called()
+
+
 def test_move_permission_error_is_terminal() -> None:
     """A permission failure must not be downgraded into a copy+delete."""
     from nexus.contracts.exceptions import NexusPermissionError

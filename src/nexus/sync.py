@@ -355,7 +355,15 @@ async def move_file(
             # to copy+delete ONLY when rename is genuinely unavailable (e.g. gRPC
             # transport absent on the REMOTE profile). Issue #341.
             try:
-                nx.sys_rename(source, dest, force=force)
+                try:
+                    nx.sys_rename(source, dest, force=force)
+                except TypeError:
+                    # Legacy/remote sys_rename without a `force` kwarg: retry the
+                    # positional form so an ordinary atomic rename still happens —
+                    # a client signature mismatch must NOT be misread as
+                    # rename-unavailable. A force=True overwrite then surfaces as
+                    # a FileExistsError, handled below.
+                    nx.sys_rename(source, dest)
                 return True
             except (
                 NexusPermissionError,

@@ -42,9 +42,25 @@ class _PlainBackend:
     """A non-S3 backend with NO generate_signed_url (e.g. local)."""
 
 
-def _make_client(mounts: dict[str, object]) -> TestClient:
+class _GcsLikeBackend:
+    """A signing backend whose generate_signed_url has NO ``method`` param (like
+    PathGCSBackend). read-url must 409 it, not call it into a TypeError -> 500."""
+
+    def generate_signed_url(
+        self,
+        path: str,  # noqa: ARG002
+        expires_in: int = 3600,  # noqa: ARG002
+        context=None,  # noqa: ARG002
+    ) -> dict[str, object]:
+        raise AssertionError("read-url must not call a method-less (non-S3) signer")
+
+
+_DEFAULT_STAT = {"content_id": "abc123", "size": 12, "is_directory": False}
+
+
+def _make_client(mounts: dict[str, object], stat_result: object = _DEFAULT_STAT) -> TestClient:
     fs = MagicMock()
-    fs.sys_stat.return_value = {"content_id": "abc123", "size": 12, "is_directory": False}
+    fs.sys_stat.return_value = stat_result
     # The endpoint resolves the owning mount via this dict.
     fs._mounted_backend_instances = mounts
 
@@ -127,3 +143,24 @@ def test_read_url_ttl_bounds_enforced(s3_backend: _SignableBackend) -> None:
 
     assert client.get("/read-url", params={"path": "/workspace/f", "ttl": 1}).status_code == 422
     assert client.get("/read-url", params={"path": "/workspace/f", "ttl": 99999}).status_code == 422
+
+
+def test_read_url_stat_none_returns_404_without_signing(s3_backend: _SignableBackend) -> None:
+    """sys_stat → None (path not resolvable) must 404 BEFORE any signing — never
+    mint a bearer URL for a key the VFS didn't prove exists."""
+    client = _make_client({"/workspace": s3_backend}, stat_result=None)
+
+    resp = client.get("/read-url", params={"path": "/workspace/missing.txt"})
+
+    assert resp.status_code == 404
+    assert s3_backend.calls == []  # signer must not have been called
+
+
+def test_read_url_method_less_signer_returns_409() -> None:
+    """A signer without a ``method`` param (GCS-style) → 409 fallback, not a 500
+    from calling it with an unexpected method= kwarg."""
+    client = _make_client({"/workspace": _GcsLikeBackend()})
+
+    resp = client.get("/read-url", params={"path": "/workspace/file.txt"})
+
+    assert resp.status_code == 409

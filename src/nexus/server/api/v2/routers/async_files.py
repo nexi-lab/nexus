@@ -8,6 +8,7 @@ All operations pass user context for permission enforcement.
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
@@ -1209,6 +1210,11 @@ def create_async_files_router(
         async def _work() -> Response:
             fs = await _get_fs()
             meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
+            if meta is None:
+                # sys_stat returns None when the VFS cannot resolve the path to an
+                # object. Fail closed: never mint a bearer S3/R2 URL for a key we
+                # have not proven exists as an authorized object.
+                raise HTTPException(status_code=404, detail=f"Not found: {path}")
 
             # 2. Find the owning mount's backend instance (holds creds). Longest
             #    matching mount prefix wins.
@@ -1220,7 +1226,19 @@ def create_async_files_router(
                 default=None,
             )
             backend = mounted.get(mount_pt) if mount_pt else None
-            if mount_pt is None or backend is None or not hasattr(backend, "generate_signed_url"):
+            # Only S3/R2-style signers are served here. Detect them by the
+            # ``method`` parameter on generate_signed_url (PathS3Backend has it);
+            # a method-less signer (e.g. PathGCSBackend) would otherwise be called
+            # with method="GET" and raise TypeError -> 500 instead of the
+            # advertised 409 fallback to GET /read.
+            signer = getattr(backend, "generate_signed_url", None)
+            accepts_method = False
+            if signer is not None:
+                try:
+                    accepts_method = "method" in inspect.signature(signer).parameters
+                except (TypeError, ValueError):
+                    accepts_method = False
+            if mount_pt is None or not accepts_method:
                 raise HTTPException(
                     status_code=409,
                     detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
@@ -1230,9 +1248,7 @@ def create_async_files_router(
             #    to the mount; the backend adds its own prefix in _get_key_path.
             rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
             try:
-                signed = backend.generate_signed_url(
-                    rel, expires_in=ttl, method="GET", context=context
-                )
+                signed = signer(rel, expires_in=ttl, method="GET", context=context)
             except Exception as e:
                 logger.exception(f"read-url signing error: {e}")
                 raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e

@@ -665,20 +665,31 @@ def docker_logs(container: str, *, tail: int = 1000, since: str | None = None) -
     return (proc.stdout or "") + (proc.stderr or "")
 
 
-def fetch_node_id(container: str) -> int:
-    """Read `<data-dir>/.node_id` from inside `container`.
+_NODE_ID_LOG_RE = re.compile(r"Zone 'root' registered \(node_id=(\d+)")
 
-    Used to spell out the runbook's `<node_id>@<host>:<port>` peer
-    address when building `nexusd-cluster join` invocations.
+
+def fetch_node_id(container: str, *, timeout: float = 30) -> int:
+    """Extract the daemon's opaque node_id from its boot log.
+
+    Mirrors the runbook §3b operator step verbatim: "Wait for:
+    `Zone 'root' registered (node_id=<A_node_id>, peers=1)`".  That
+    log line is the user-facing contract for "what's this node's id";
+    the on-disk `.node_id` file is a Rust-internal `u64::to_le_bytes()`
+    binary detail that the runbook itself never inspects.  Reading the
+    log keeps the test aligned with the operator's vantage point and
+    insulated from persistence-format changes.
     """
-    paths = ["/app/data/.node_id", "/home/nexus/data/.node_id"]
-    for path in paths:
-        result = docker_exec(container, ["cat", path], timeout=10)
-        if result.rc == 0 and result.stdout.strip():
-            return int(result.stdout.strip())
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        logs = docker_logs(container, tail=5000)
+        m = _NODE_ID_LOG_RE.search(logs)
+        if m:
+            return int(m.group(1))
+        time.sleep(1)
     pytest.fail(
-        f"Could not read .node_id from {container} at {paths}; "
-        f"daemon may not have completed first-boot persistence."
+        f"Could not find `Zone 'root' registered (node_id=...)` in "
+        f"{container} logs within {timeout}s; daemon may not have "
+        f"completed root-zone bootstrap."
     )
 
 

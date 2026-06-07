@@ -78,8 +78,190 @@ def topology_from_env() -> RunbookTopology:
 
 
 # ---------------------------------------------------------------------------
-# gRPC Call wrapper — leader-redirect-aware
+# gRPC wrappers — typed RPCs for VFS ops, generic Call for federation_*
+#
+# nexusd-cluster's gRPC server (the Rust production binary) exposes both
+# typed RPCs (Write/Read/Stat/Mkdir/...) AND a generic Call RPC.  The
+# typed RPCs are what the runbook itself uses (see runbook §4 grpcurl
+# invocations against `.../Write`, `.../Stat`, `.../Read`); the generic
+# Call dispatcher in the Rust binary registers federation_* methods and
+# other non-VFS surfaces but does NOT register "write" / "read" / "stat"
+# (those are typed RPCs).  Tests that go through the typed path mirror
+# the operator contract exactly and avoid the legacy Python-fullnode-
+# only `Call("write", ...)` dispatch pattern.
 # ---------------------------------------------------------------------------
+GRPC_CHANNEL_OPTIONS = [
+    ("grpc.max_send_message_length", 64 * 1024 * 1024),
+    ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+]
+
+
+def _open_stub(target: str):
+    """Open a NexusVFSServiceStub against `target`, returning (channel, stub).
+
+    Caller owns the channel lifecycle.  Lazy imports keep collection-time
+    cost zero so pytest can collect the suite without the stub-package
+    being importable (relevant for static analysis / IDE tooling).
+    """
+    from nexus.grpc.vfs import vfs_pb2_grpc
+
+    channel = grpc.insecure_channel(target, options=GRPC_CHANNEL_OPTIONS)
+    return channel, vfs_pb2_grpc.NexusVFSServiceStub(channel)
+
+
+def _maybe_error_from_payload(error_payload: bytes) -> dict:
+    """Decode a typed RPC's is_error=true payload via the wire-format SSOT."""
+    from nexus.lib.rpc_codec import decode_rpc_message
+
+    if not error_payload:
+        return {"message": "unknown error (empty error_payload)"}
+    try:
+        decoded = decode_rpc_message(error_payload)
+        return decoded if isinstance(decoded, dict) else {"message": str(decoded)}
+    except Exception as exc:
+        return {"message": f"undecodable error_payload: {exc}"}
+
+
+def vfs_write(
+    target: str,
+    path: str,
+    content: bytes,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    content_id: str = "",
+    timeout: float = 30,
+) -> dict:
+    """Typed Write RPC.  Mirrors runbook §4 `.../Write` grpcurl call.
+
+    Returns ``{"result": {"contentId": str, "size": int, "gen": int}}``
+    on success or ``{"error": {...}}`` on server-reported failure.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.WriteRequest(
+            path=path,
+            content=content,
+            auth_token=api_key,
+            content_id=content_id,
+        )
+        resp = stub.Write(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {
+            "result": {
+                "contentId": resp.content_id,
+                "size": resp.size,
+                "gen": resp.gen,
+            }
+        }
+    finally:
+        channel.close()
+
+
+def vfs_read(
+    target: str,
+    path: str,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Typed Read RPC.  Mirrors runbook §4 `.../Read` grpcurl call.
+
+    Returns ``{"result": {"content": bytes, "contentId": str, "size": int}}``
+    on success.  `content` is raw bytes (typed protobuf field, no
+    base64 round-trip) — callers compare with bytes literals.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.ReadRequest(path=path, auth_token=api_key)
+        resp = stub.Read(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {
+            "result": {
+                "content": resp.content,
+                "contentId": resp.content_id,
+                "size": resp.size,
+                "gen": resp.gen,
+            }
+        }
+    finally:
+        channel.close()
+
+
+def vfs_stat(
+    target: str,
+    path: str,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    zone_id: str = "",
+    timeout: float = 15,
+) -> dict:
+    """Typed Stat RPC.  Mirrors runbook §4 `.../Stat` grpcurl call.
+
+    Returns ``{"result": {"found", "zoneId", "contentId",
+    "lastWriterAddress", "size", "gen", "version", ...}}`` on success.
+    Keys are camelCase to match the legacy Python-side helper shape so
+    existing test assertions don't need rewriting at every call site.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.StatRequest(path=path, auth_token=api_key, zone_id=zone_id)
+        resp = stub.Stat(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {
+            "result": {
+                "found": resp.found,
+                "path": resp.path,
+                "size": resp.size,
+                "contentId": resp.content_id,
+                "zoneId": resp.zone_id,
+                "lastWriterAddress": resp.last_writer_address,
+                "gen": resp.gen,
+                "version": resp.version,
+                "entryType": resp.entry_type,
+                "isDirectory": resp.is_directory,
+                "mimeType": resp.mime_type,
+            }
+        }
+    finally:
+        channel.close()
+
+
+def vfs_mkdir(
+    target: str,
+    path: str,
+    *,
+    parents: bool = False,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Typed Mkdir RPC."""
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.MkdirRequest(
+            path=path,
+            auth_token=api_key,
+            parents=parents,
+            exist_ok=True,
+        )
+        resp = stub.Mkdir(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"hit": resp.hit}}
+    finally:
+        channel.close()
+
+
 def grpc_call(
     target: str,
     method: str,
@@ -89,26 +271,26 @@ def grpc_call(
     timeout: float = 10,
     node_id_to_grpc: dict[int, str] | None = None,
 ) -> dict:
-    """Send a gRPC Call RPC, following Raft leader hints up to 2 redirects.
+    """Generic Call RPC — used for federation_* methods that route through
+    the dynamic dispatcher rather than typed RPCs.
 
-    Returns ``{"result": ...}`` on success or ``{"error": ...}`` on
-    server-reported failure.  Transport errors (UNAVAILABLE, deadline
-    exceeded) propagate as `grpc.RpcError` — the runbook suite treats
-    those as real failures, not silent skips.
+    Use the typed wrappers above (vfs_write / vfs_read / vfs_stat /
+    vfs_mkdir) for VFS ops.  The Rust nexusd-cluster's Call dispatcher
+    does NOT register "write" / "read" / "stat" / "mkdir" — those are
+    typed RPCs at the gRPC service level.
+
+    Follows Raft leader hints up to 2 redirects when ``node_id_to_grpc``
+    is supplied.  Returns ``{"result": ...}`` on success or
+    ``{"error": ...}`` on server-reported failure.
     """
-    from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+    from nexus.grpc.vfs import vfs_pb2
     from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
-    channel_options = [
-        ("grpc.max_send_message_length", 64 * 1024 * 1024),
-        ("grpc.max_receive_message_length", 64 * 1024 * 1024),
-    ]
     current = target
     result: dict = {}
     for _ in range(3):
-        channel = grpc.insecure_channel(current, options=channel_options)
+        channel, stub = _open_stub(current)
         try:
-            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
             req = vfs_pb2.CallRequest(
                 method=method,
                 payload=encode_rpc_message(params),

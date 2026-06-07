@@ -24,7 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-RUN cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexus-witness raft
+# See Dockerfile.nexusd-cluster for rationale on the SHA pin.  Both
+# images must build off the same nexus-vfs revision so the witness and
+# cluster nodes negotiate over the same raft contract.
+ARG NEXUS_VFS_REV=621c5c02b783270b1b3bca7376cbb3a77b750776
+RUN cargo install \
+    --git https://github.com/nexi-lab/nexus-vfs \
+    --rev "${NEXUS_VFS_REV}" \
+    --bin nexus-witness \
+    raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

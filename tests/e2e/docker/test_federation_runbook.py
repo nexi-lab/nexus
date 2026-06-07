@@ -157,25 +157,24 @@ class TestFounderBootstrap:
         sharedzone), NOT `shared/payload-<uid>.txt` (which would
         indicate the write fell through to PathLocalBackend).
         """
-        from tests.e2e.docker.runbook_helpers import grpc_call, uid
+        from tests.e2e.docker.runbook_helpers import uid, vfs_stat, vfs_write
 
         suffix = uid()
         path = f"/shared/payload-{suffix}.txt"
         payload = b"hello from founder"
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.founder_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=30,
         )
         assert "error" not in wr, f"write failed on founder: {wr}"
 
-        st = grpc_call(
+        st = vfs_stat(
             topology.founder_grpc,
-            "stat",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=15,
         )
@@ -207,25 +206,24 @@ class TestFounderBootstrap:
         it wrote.  If this fails the cluster binary itself is broken
         before we even get to cross-node semantics.
         """
-        from tests.e2e.docker.runbook_helpers import decode_content, grpc_call, uid
+        from tests.e2e.docker.runbook_helpers import decode_content, uid, vfs_read, vfs_write
 
         suffix = uid()
         path = f"/shared/local-{suffix}.bin"
         payload = b"\x00\x01\x02\x03local payload\xfe\xff"
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.founder_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=30,
         )
         assert "error" not in wr, f"founder write failed: {wr}"
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.founder_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=30,
         )

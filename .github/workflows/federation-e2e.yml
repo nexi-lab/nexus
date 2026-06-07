@@ -110,6 +110,20 @@ jobs:
 
       - name: Build witness + federation-test images
         if: steps.federation_changes.outputs.run == 'true'
+        # BUILDX_BUILDER=default forces this compose build to use the
+        # docker-daemon builder rather than setup-buildx-action@v3's
+        # docker-container builder.  Dockerfile.federation-test starts
+        # `FROM nexusd-cluster:latest`; that image was loaded into the
+        # daemon by the previous step's `load: true`, but a docker-
+        # container builder runs in an isolated context that does NOT
+        # see locally-loaded daemon images and tries to pull from
+        # Docker Hub instead — which fails because the image is not
+        # published.  Switching to the default builder for this step
+        # resolves the FROM against the local daemon, which is the
+        # correct boundary for an inter-image dependency built within
+        # the same workflow run.
+        env:
+          BUILDX_BUILDER: default
         run: |
           docker compose -f dockerfiles/docker-compose.federation-runbook.yml build \
             witness test

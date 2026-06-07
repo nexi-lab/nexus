@@ -2,7 +2,7 @@
 #
 # The runbook E2E suite (tests/e2e/docker/test_federation_runbook.py)
 # exercises the same `nexusd-cluster` binary an operator deploys, plus
-# pytest + grpcio for the test framework itself. Basing the runner on
+# pytest + grpcio for the test framework itself.  Basing the runner on
 # the production cluster image (rather than nexus-fullnode, which drags
 # in the Python daemon — not a production artifact for federation)
 # means tests run against exactly what production deploys.
@@ -14,6 +14,11 @@
 # The image is used by docker-compose.federation-runbook.yml's `test`
 # service; pytest invocations call the `nexusd-cluster` binary directly
 # (no docker-exec shell-out, no PATH games).
+#
+# Runtime config SSOT lives in this Dockerfile (WORKDIR, PYTHONPATH,
+# PYTEST_ADDOPTS, CMD).  Compose only owns the cluster topology + the
+# read-only source mount + container/network env vars.  Override in
+# compose only when topology-specific.
 
 FROM nexusd-cluster:latest
 
@@ -35,8 +40,41 @@ RUN python3 -m venv /opt/testvenv \
         protobuf \
         docker
 
+# ---------------------------------------------------------------------------
+# Wire-format SSOT: bake ONLY the generated protobuf bindings + the
+# tier-neutral JSON-RPC codec into a stub-package tree at /opt/proto.
+# That is the minimal Python surface a runbook-mirroring gRPC client
+# needs to talk to the production nexusd-cluster binary.
+#
+# Why a stub tree instead of mounting /workspace/src on PYTHONPATH:
+# the real `nexus/__init__.py` triggers
+#   nexus.contracts.exceptions  ->  nexus.contracts.oauth_types  ->  pydantic
+# at import time, which drags the auth-tier service surface into a slim
+# Rust-binary test runner that has no business loading it.  The stub's
+# empty `__init__.py` files break that chain at the package boundary,
+# exposing only what's actually used: vfs_pb2*, rpc_codec.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/proto/nexus/grpc/vfs /opt/proto/nexus/lib \
+    && : > /opt/proto/nexus/__init__.py \
+    && : > /opt/proto/nexus/grpc/__init__.py \
+    && : > /opt/proto/nexus/grpc/vfs/__init__.py \
+    && : > /opt/proto/nexus/lib/__init__.py
+COPY src/nexus/grpc/vfs/vfs_pb2.py      /opt/proto/nexus/grpc/vfs/vfs_pb2.py
+COPY src/nexus/grpc/vfs/vfs_pb2_grpc.py /opt/proto/nexus/grpc/vfs/vfs_pb2_grpc.py
+COPY src/nexus/lib/rpc_codec.py         /opt/proto/nexus/lib/rpc_codec.py
+
+# Runtime config SSOT — see header.  Compose env vars override these
+# per-service only when topology demands it (e.g. NEXUS_FOUNDER_GRPC).
+#   --confcutdir stops pytest walking conftests above tests/e2e/docker.
+#   The Python-service-tier conftests at tests/e2e/conftest.py +
+#   tests/conftest.py belong to a different test domain (in-process
+#   FastAPI nexusd + httpx) — eagerly importing them would defeat the
+#   /opt/proto stub-package boundary above.
 ENV PATH=/opt/testvenv/bin:$PATH \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/proto \
+    PYTEST_ADDOPTS="-o cache_dir=/tmp/.pytest_cache --confcutdir=tests/e2e/docker"
+
 WORKDIR /workspace
 ENTRYPOINT []
-CMD ["pytest", "-v"]
+CMD ["pytest", "tests/e2e/docker/test_federation_runbook.py", "-v", "--no-header", "-o", "addopts="]

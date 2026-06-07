@@ -144,7 +144,24 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       PYTHONUNBUFFERED: "1"
-      PYTEST_ADDOPTS: "-o cache_dir=/tmp/.pytest_cache"
+      # --confcutdir stops pytest walking conftests above tests/e2e/docker.
+      # tests/e2e/conftest.py + tests/conftest.py belong to the Python-
+      # service-tier in-process E2E domain (httpx + nexus.factory +
+      # SQLAlchemyRecordStore) — eagerly imported at collection time, so
+      # any pytest invocation that touches the tests/ tree drags that
+      # whole tree in.  The runbook suite tests the production Rust
+      # nexusd-cluster binary over gRPC and has no business loading the
+      # Python service tree.  Skipping those conftests at the pytest-
+      # config layer is the right boundary for an inter-test-domain
+      # separation: small, declarative, no shared-conftest edits.
+      PYTEST_ADDOPTS: "-o cache_dir=/tmp/.pytest_cache --confcutdir=tests/e2e/docker"
+      # Generated protobuf bindings (nexus.grpc.vfs.vfs_pb2*) + the
+      # tier-neutral RPC codec (nexus.lib.rpc_codec, stdlib-only, zero
+      # kernel deps) are the wire-format SSOT.  Putting /workspace/src
+      # on PYTHONPATH lets the runner resolve those at runtime without
+      # importing any other slice of the Python tree.  No service-tier
+      # surface is reachable from this path.
+      PYTHONPATH: /workspace/src
       NEXUS_RUNBOOK_E2E: "1"
       NEXUS_FOUNDER_GRPC: founder:2126
       NEXUS_JOINER_GRPC: joiner:2126

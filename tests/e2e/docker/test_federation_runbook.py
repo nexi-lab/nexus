@@ -356,8 +356,9 @@ class TestJoinerCrossNodeReadRunbook:
         """
         from tests.e2e.docker.runbook_helpers import (
             decode_content,
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_nodes_caught_up,
         )
 
@@ -365,10 +366,10 @@ class TestJoinerCrossNodeReadRunbook:
         path = f"/shared/joiner-text-{suffix}.txt"
         payload = b"hello from win"
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.founder_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=30,
         )
@@ -383,10 +384,9 @@ class TestJoinerCrossNodeReadRunbook:
             timeout=60,
         )
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.joiner_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=60,
         )
@@ -423,8 +423,9 @@ class TestJoinerCrossNodeReadRunbook:
 
         from tests.e2e.docker.runbook_helpers import (
             decode_content,
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_nodes_caught_up,
         )
 
@@ -432,10 +433,10 @@ class TestJoinerCrossNodeReadRunbook:
         path = f"/shared/joiner-bin-{suffix}.dat"
         payload = secrets.token_bytes(4 * 1024 * 1024)
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.founder_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=120,
         )
@@ -448,10 +449,9 @@ class TestJoinerCrossNodeReadRunbook:
             timeout=60,
         )
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.joiner_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=120,
         )
@@ -486,8 +486,9 @@ class TestJoinerCrossNodeReadRunbook:
 
         from tests.e2e.docker.runbook_helpers import (
             decode_content,
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_nodes_caught_up,
         )
 
@@ -495,10 +496,10 @@ class TestJoinerCrossNodeReadRunbook:
         path = f"/shared/from-joiner-{suffix}.bin"
         payload = secrets.token_bytes(100 * 1024)
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.joiner_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=60,
         )
@@ -511,10 +512,9 @@ class TestJoinerCrossNodeReadRunbook:
             timeout=60,
         )
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.founder_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=60,
         )
@@ -568,8 +568,10 @@ class TestJoinerCrossNodeReadRunbook:
         is offline (regression PR #4294 closed).
         """
         from tests.e2e.docker.runbook_helpers import (
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_stat,
+            vfs_write,
             wait_nodes_caught_up,
         )
 
@@ -577,10 +579,10 @@ class TestJoinerCrossNodeReadRunbook:
         path = f"/shared/stat-origin-{suffix}.txt"
         payload = b"origin attribution probe"
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.founder_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=30,
         )
@@ -593,10 +595,9 @@ class TestJoinerCrossNodeReadRunbook:
             timeout=60,
         )
 
-        founder_stat = grpc_call(
+        founder_stat = vfs_stat(
             topology.founder_grpc,
-            "stat",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=15,
         )
@@ -606,19 +607,17 @@ class TestJoinerCrossNodeReadRunbook:
 
         # Drive the cross-node fetch so the joiner's metadata cache
         # picks up the origin attribution.
-        rd = grpc_call(
+        rd = vfs_read(
             topology.joiner_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=60,
         )
         assert "error" not in rd, f"joiner read failed: {rd}"
 
-        joiner_stat = grpc_call(
+        joiner_stat = vfs_stat(
             topology.joiner_grpc,
-            "stat",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=15,
         )
@@ -659,8 +658,9 @@ class TestRestartReplay:
         from tests.e2e.docker.runbook_helpers import (
             assert_log_contains,
             decode_content,
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_nodes_caught_up,
         )
 
@@ -669,10 +669,10 @@ class TestRestartReplay:
         suffix = uid()
         path = f"/shared/pre-restart-{suffix}.txt"
         payload = b"survives the restart"
-        wr = grpc_call(
+        wr = vfs_write(
             topology.founder_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=30,
         )
@@ -701,10 +701,9 @@ class TestRestartReplay:
             "not replay; runbook §3c invariant broken (pre-#4293)",
         )
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.joiner_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=60,
         )
@@ -732,8 +731,9 @@ class TestRestartReplay:
         from tests.e2e.docker.runbook_helpers import (
             decode_content,
             docker_restart,
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_healthy,
             wait_nodes_caught_up,
         )
@@ -746,10 +746,10 @@ class TestRestartReplay:
         # truncation would be obvious.
         payload = bytes(range(256)) * 256
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.joiner_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=60,
         )
@@ -768,10 +768,9 @@ class TestRestartReplay:
         docker_restart(topology.joiner_container)
         wait_healthy([topology.joiner_grpc])
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.joiner_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=60,
         )
@@ -812,8 +811,9 @@ class TestWitnessQuorumHA:
             decode_content,
             docker_start,
             docker_stop,
-            grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_healthy,
         )
 
@@ -830,10 +830,10 @@ class TestWitnessQuorumHA:
             # (post-fix) or time out (regression).
             time.sleep(5)
 
-            wr = grpc_call(
+            wr = vfs_write(
                 topology.joiner_grpc,
-                "write",
-                {"path": path, "content": payload},
+                path,
+                payload,
                 api_key=api_key,
                 timeout=60,
             )
@@ -843,10 +843,9 @@ class TestWitnessQuorumHA:
                 f"contract broken."
             )
 
-            rd = grpc_call(
+            rd = vfs_read(
                 topology.joiner_grpc,
-                "read",
-                {"path": path},
+                path,
                 api_key=api_key,
                 timeout=60,
             )
@@ -872,6 +871,8 @@ class TestWitnessQuorumHA:
             decode_content,
             grpc_call,
             uid,
+            vfs_read,
+            vfs_write,
             wait_nodes_caught_up,
         )
 
@@ -882,10 +883,10 @@ class TestWitnessQuorumHA:
         path = f"/shared/recovery-{suffix}.txt"
         payload = b"founder catches up after restart"
 
-        wr = grpc_call(
+        wr = vfs_write(
             topology.joiner_grpc,
-            "write",
-            {"path": path, "content": payload},
+            path,
+            payload,
             api_key=api_key,
             timeout=60,
         )
@@ -899,10 +900,9 @@ class TestWitnessQuorumHA:
             timeout=120,
         )
 
-        rd = grpc_call(
+        rd = vfs_read(
             topology.founder_grpc,
-            "read",
-            {"path": path},
+            path,
             api_key=api_key,
             timeout=60,
         )
@@ -961,8 +961,8 @@ class TestRunbookOperatorErgonomics:
         """
         from tests.e2e.docker.runbook_helpers import (
             docker_exec,
-            grpc_call,
             uid,
+            vfs_mkdir,
         )
 
         suffix = uid()
@@ -971,10 +971,10 @@ class TestRunbookOperatorErgonomics:
 
         # mkdir is hosted via VFS; running `mkdir -p` inside the
         # container would touch the host fs, not the daemon's vfs.
-        mk = grpc_call(
+        mk = vfs_mkdir(
             topology.founder_grpc,
-            "mkdir",
-            {"path": local_path, "parents": True},
+            local_path,
+            parents=True,
             api_key=api_key,
             timeout=30,
         )

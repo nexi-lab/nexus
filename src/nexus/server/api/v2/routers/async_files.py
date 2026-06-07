@@ -1214,6 +1214,17 @@ def create_async_files_router(
         clients needing read-the-exact-version or immediate-revocation semantics
         must use GET /read. Version-pinned URLs (binding to an S3 VersionId) are
         future work and require backend object-version tracking.
+
+        LIMITATION — read post-hooks: a signed URL fetches RAW object bytes and
+        therefore bypasses the GET /read byte-path post-processing, including any
+        read post-hooks that redact/transform content (e.g. column-level CSV
+        filtering). Deployments that rely on read-time redaction as an access
+        control on S3/R2-mounted paths must serve those reads through GET /read,
+        not read-url. A precise server-side gate (signing only when no
+        content-transforming post-read hook applies) needs a kernel API to count
+        post-read transform hooks distinctly from pre-read permission hooks; that
+        is deferred infrastructure (the aggregate hook_count also includes the
+        always-present permission pre-hook, so it cannot be used here).
         """
         # 1. ReBAC gate — identical posture to GET /read. sys_stat enforces READ
         #    and returns metadata (content_id) without transferring any bytes.
@@ -1303,29 +1314,6 @@ def create_async_files_router(
                 raise HTTPException(
                     status_code=409,
                     detail="read-url is for regular files only, not a mount root; use GET /read.",
-                )
-
-            # Read post-hooks (e.g. DynamicViewerReadHook's column-level CSV
-            # redaction) run in the GET /read byte path. A direct signed URL
-            # bypasses them, so a file GET /read would redact/transform could be
-            # fetched RAW through the URL. Fail closed whenever any "read"
-            # post-hook is registered — the caller falls back to GET /read, which
-            # applies the hooks. (Default to fail-closed if we can't determine.)
-            kernel = getattr(fs, "_kernel", None)
-            hook_count = getattr(kernel, "hook_count", None)
-            read_hooks_active = True
-            if callable(hook_count):
-                try:
-                    read_hooks_active = hook_count("read") > 0
-                except Exception:  # noqa: BLE001 — unknown hook state -> fail closed
-                    read_hooks_active = True
-            if read_hooks_active:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "read-url unavailable while read-transform hooks are active "
-                        "for this server; use GET /read."
-                    ),
                 )
 
             try:

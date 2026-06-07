@@ -694,25 +694,56 @@ def fetch_node_id(container: str, *, timeout: float = 30) -> int:
 
 
 def run_nexusd_cluster_join(
-    joiner_container: str,
+    *,
+    target_container: str,
+    target_volume: str,
     founder_node_id: int,
     founder_addr: str,
     zone_id: str,
     local_path: str,
-    *,
-    hostname: str | None = None,
+    hostname: str,
+    cluster_image: str | None = None,
+    network: str | None = None,
     data_dir: str = "/app/data",
-    timeout: float = 60,
-) -> DockerExecResult:
-    """Run the runbook's exact `nexusd-cluster join` invocation.
+    timeout: float = 120,
+) -> subprocess.CompletedProcess:
+    """Run runbook §3b's offline `nexusd-cluster join` in a transient sidecar.
 
-    Daemon must be stopped on the joiner side (redb holds an exclusive
-    file lock); callers are responsible for `pkill nexusd-cluster` +
-    grace wait before invoking.  Returns the rc/stdout/stderr for
-    log assertions.
+    The runbook says explicitly: the daemon must be stopped while
+    `nexusd-cluster join` runs because redb holds an exclusive file
+    lock.  In Docker, killing PID 1 (the daemon) exits the container,
+    which means we cannot `docker exec` the join into the same
+    container.  Instead, spin up a transient sidecar container from
+    the same `nexusd-cluster:latest` image that the joiner uses, mount
+    the joiner's persisted-data volume into it, and run `join` there.
+
+    Lifecycle the caller must arrange around this:
+      1. `docker_stop(target_container)` — releases the redb lock.
+      2. `run_nexusd_cluster_join(...)` — this function, runs join.
+      3. `docker_start(target_container)` — daemon comes back up,
+         entrypoint auto-detects bootstrap-mode=restart from on-disk
+         state and replays DT_MOUNT via apply-cb (runbook §3c).
+
+    Returns the CompletedProcess so callers can assert on rc /
+    stdout / stderr (see test_joiner_zero_mount_not_leader_in_join_cli_log).
     """
-    argv = [
+    image = cluster_image or os.environ.get("NEXUS_CLUSTER_IMAGE", "nexusd-cluster:latest")
+    net = network or os.environ.get("NEXUS_RUNBOOK_NETWORK", "nexus-runbook-net")
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        net,
+        "--hostname",
+        hostname,
+        "-v",
+        f"{target_volume}:{data_dir}",
+        # Override the image's `ENTRYPOINT ["nexusd-cluster"]` so we
+        # can pass `join` as the subcommand instead of an arg.
+        "--entrypoint",
         "nexusd-cluster",
+        image,
         "join",
         f"{founder_node_id}@{founder_addr}",
         zone_id,
@@ -720,22 +751,10 @@ def run_nexusd_cluster_join(
         "--data-dir",
         data_dir,
         "--no-tls",
+        "--hostname",
+        hostname,
     ]
-    if hostname:
-        argv.extend(["--hostname", hostname])
-    return docker_exec(joiner_container, argv, timeout=timeout)
-
-
-def stop_daemon_in_container(container: str, *, grace_seconds: float = 3) -> None:
-    """SIGTERM the `nexusd-cluster` process inside `container` and wait.
-
-    Used between `up -d` boot and the offline `join` subcommand the
-    runbook calls for.  `docker stop` would also stop the container
-    itself; we want the process down with the container still up so
-    the same /app/data filesystem is reachable for the `join` run.
-    """
-    docker_exec(container, ["pkill", "-TERM", "-f", "nexusd-cluster"], timeout=10)
-    time.sleep(grace_seconds)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
 def assert_log_contains(

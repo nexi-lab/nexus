@@ -264,22 +264,37 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
     tests can assert on the captured stdout/stderr without re-running
     the flow.
     """
+    import os
+
     from tests.e2e.docker.runbook_helpers import (
-        docker_restart,
+        docker_start,
+        docker_stop,
         fetch_node_id,
         run_nexusd_cluster_join,
-        stop_daemon_in_container,
         wait_healthy,
         wait_zone_ready,
     )
 
     founder_node_id = fetch_node_id(topology.founder_container)
 
-    # B-2: stop joiner daemon inside its container.
-    stop_daemon_in_container(topology.joiner_container, grace_seconds=3)
-    # B-3: run the offline join.
+    joiner_volume = os.environ["NEXUS_JOINER_VOLUME"]
+    witness_volume = os.environ["NEXUS_WITNESS_VOLUME"]
+
+    # B-2: stop the joiner container outright so its redb lock is fully
+    # released.  `docker stop` is the only way to guarantee PID 1 is
+    # gone without Docker auto-restarting it (compose's restart policy
+    # was removed in the same PR for the same reason).
+    docker_stop(topology.joiner_container)
+
+    # B-3: run offline `nexusd-cluster join` in a transient sidecar
+    # container that mounts the joiner's data volume.  PID 1 here is
+    # the join binary, not the daemon — exits cleanly when join is
+    # done.  This mirrors runbook §3b semantically: a separate process
+    # invocation against the persisted data dir while the daemon is
+    # down.
     join_result = run_nexusd_cluster_join(
-        topology.joiner_container,
+        target_container=topology.joiner_container,
+        target_volume=joiner_volume,
         founder_node_id=founder_node_id,
         founder_addr="founder:2126",
         zone_id="sharedzone",
@@ -288,22 +303,25 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
         data_dir="/app/data",
         timeout=120,
     )
-    assert join_result.rc == 0, (
-        f"`nexusd-cluster join` on joiner failed: rc={join_result.rc}\n"
+    assert join_result.returncode == 0, (
+        f"`nexusd-cluster join` on joiner failed: rc={join_result.returncode}\n"
         f"stdout={join_result.stdout}\nstderr={join_result.stderr}"
     )
 
-    # B-4: docker-restart the joiner; compose `restart: unless-stopped`
-    # re-launches the daemon, which now sees persisted DT_MOUNT entries
-    # and replays them via apply-cb (runbook §3c).
-    docker_restart(topology.joiner_container)
+    # B-4: start the joiner back up.  Compose's auto-detect entrypoint
+    # sees `.node_id` already on disk, picks bootstrap-mode=restart,
+    # unsets the static-only env vars, and the daemon replays persisted
+    # DT_MOUNT via apply-cb (runbook §3c).
+    docker_start(topology.joiner_container)
     wait_healthy([topology.joiner_grpc])
 
     # B-5: same flow for the witness so sharedzone is a 3-voter group
-    # for TestWitnessQuorumHA (cheap to do here while the lock is open).
-    stop_daemon_in_container(topology.witness_container, grace_seconds=3)
+    # for TestWitnessQuorumHA (cheap to do here while the join sidecar
+    # pattern is already in place).
+    docker_stop(topology.witness_container)
     witness_join = run_nexusd_cluster_join(
-        topology.witness_container,
+        target_container=topology.witness_container,
+        target_volume=witness_volume,
         founder_node_id=founder_node_id,
         founder_addr="founder:2126",
         zone_id="sharedzone",
@@ -312,10 +330,10 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
         data_dir="/home/nexus/data",
         timeout=120,
     )
-    # Witness join failure is logged but not fatal — TestWitnessQuorumHA
-    # asserts on the membership independently.  Cross-node read tests
-    # only need the joiner attached.
-    docker_restart(topology.witness_container)
+    # Witness join failure is logged but not fatal here — the joiner
+    # tests don't depend on it.  TestWitnessQuorumHA asserts witness
+    # membership independently.
+    docker_start(topology.witness_container)
     wait_healthy([topology.witness_grpc])
 
     wait_zone_ready(topology.joiner_grpc, "sharedzone", api_key=api_key, timeout=60)
@@ -323,7 +341,7 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
         "founder_node_id": founder_node_id,
         "join_stdout": join_result.stdout,
         "join_stderr": join_result.stderr,
-        "witness_join_rc": witness_join.rc,
+        "witness_join_rc": witness_join.returncode,
         "witness_join_stderr": witness_join.stderr,
     }
 

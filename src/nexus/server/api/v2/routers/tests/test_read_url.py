@@ -180,6 +180,24 @@ def test_read_url_directory_returns_409_without_signing(s3_backend: _SignableBac
     assert s3_backend.calls == []  # never signed a directory
 
 
+def test_read_url_mount_root_production_metadata_returns_409(
+    s3_backend: _SignableBackend,
+) -> None:
+    """A mount-root request with PRODUCTION-shaped stat metadata (is_directory
+    False, NO entry_type — the real sys_stat projection omits it) must still 409:
+    the path IS the mount root, so the mount-relative key is empty and must never
+    be signed."""
+    client = _make_client(
+        {"/workspace": s3_backend},
+        stat_result={"content_id": "root", "size": 0, "is_directory": False},
+    )
+
+    resp = client.get("/read-url", params={"path": "/workspace"})
+
+    assert resp.status_code == 409
+    assert s3_backend.calls == []  # never signed the mount root's empty key
+
+
 def test_read_url_mount_root_entry_type_returns_409(s3_backend: _SignableBackend) -> None:
     """A DT_MOUNT stat (entry_type=2) that reports is_directory=False must STILL
     409 — checking is_directory alone would let a mount root through and sign its

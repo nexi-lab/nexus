@@ -1293,6 +1293,17 @@ def create_async_files_router(
             # 3. Mint the presigned URL (pure signing, no network). Path relative
             #    to the mount; the backend adds its own prefix in _get_key_path.
             rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
+            if not rel:
+                # The path IS the mount root (stripping the prefix leaves
+                # nothing). Robust mount-root guard independent of stat fields:
+                # the real sys_stat projection omits entry_type, so a mount root
+                # reporting is_directory=False would otherwise reach here and the
+                # signer would mint a bearer URL for the backend's empty/prefix
+                # key. Never sign a mount root.
+                raise HTTPException(
+                    status_code=409,
+                    detail="read-url is for regular files only, not a mount root; use GET /read.",
+                )
             try:
                 signed = signer(rel, expires_in=ttl, method="GET", context=context)
             except Exception as e:

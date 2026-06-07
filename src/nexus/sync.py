@@ -4,12 +4,15 @@ Provides efficient sync, copy, and move operations with hash-based
 change detection and progress reporting.
 """
 
+import logging
 import os
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus import NexusFilesystem
+
+logger = logging.getLogger(__name__)
 
 
 class SyncStats:
@@ -348,8 +351,14 @@ async def move_file(
             try:
                 nx.sys_rename(source, dest, force=force)
                 return True
-            except Exception:
+            except Exception as rename_exc:
                 # Fallback: copy content then delete source
+                logger.warning(
+                    "move: sys_rename %s -> %s failed (%r); trying copy+delete fallback",
+                    source,
+                    dest,
+                    rename_exc,
+                )
                 content = nx.sys_read(source)
                 nx.write(dest, content)
                 nx.sys_unlink(source)
@@ -366,9 +375,12 @@ async def move_file(
                 nx.sys_unlink(source)
             return True
 
-    except (OSError, ValueError, TypeError):
-        # File operation or path validation failed
+    except (OSError, ValueError, TypeError) as exc:
+        # File operation or path validation failed. Log the real cause —
+        # silently returning False here hid genuine errors (Issue #341).
+        logger.error("move %s -> %s failed: %r", source, dest, exc, exc_info=True)
         return False
-    except Exception:
-        # Catch NexusError subclasses (Issue #341)
+    except Exception as exc:
+        # Catch NexusError subclasses (Issue #341). Surface the cause.
+        logger.error("move %s -> %s failed: %r", source, dest, exc, exc_info=True)
         return False

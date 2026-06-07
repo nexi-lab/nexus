@@ -1189,7 +1189,6 @@ def create_async_files_router(
 
     @router.get("/read-url")
     async def read_url(
-        request: Request,
         path: str = Query(..., description="VFS path to mint a direct read URL for"),
         ttl: int = Query(60, ge=5, le=3600, description="URL lifetime seconds (keep short)"),
         zone: str | None = Query(None, description="Override zone (must be in token's zone_set)."),
@@ -1219,7 +1218,7 @@ def create_async_files_router(
             default=None,
         )
         backend = mounted.get(mount_pt) if mount_pt else None
-        if backend is None or not hasattr(backend, "generate_signed_url"):
+        if mount_pt is None or backend is None or not hasattr(backend, "generate_signed_url"):
             raise HTTPException(
                 status_code=409,
                 detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
@@ -1227,7 +1226,7 @@ def create_async_files_router(
 
         # 3. Mint the presigned URL (pure signing, no network). Path relative to
         #    the mount; the backend adds its own prefix in _get_key_path.
-        rel = norm[len(mount_pt.rstrip("/")):].lstrip("/")
+        rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
         try:
             signed = backend.generate_signed_url(rel, expires_in=ttl, method="GET", context=context)
         except Exception as e:

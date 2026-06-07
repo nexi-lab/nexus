@@ -24,7 +24,11 @@ class _SignableBackend:
         self.calls: list[tuple[str, int, str]] = []
 
     def generate_signed_url(
-        self, path: str, expires_in: int = 3600, method: str = "GET", context=None
+        self,
+        path: str,
+        expires_in: int = 3600,
+        method: str = "GET",
+        context: object = None,  # noqa: ARG002
     ) -> dict[str, object]:
         self.calls.append((path, expires_in, method))
         return {

@@ -1201,8 +1201,19 @@ def create_async_files_router(
         presigned R2/S3 URL so the client fetches bytes DIRECTLY from object
         storage (or a CDN fronting R2). nexus stays out of the byte path.
 
-        403 if caller lacks READ on `path`; 409 if the owning mount is not S3/R2
-        (fall back to GET /read). Reads only — writes stay proxied.
+        403 if caller lacks READ on `path`; 404 if `path` doesn't resolve to a
+        regular file; 409 if the owning mount is not S3/R2 (fall back to GET
+        /read). Reads only — writes stay proxied.
+
+        Security model: the URL is a *time-boxed bearer credential* for the
+        path's object key (path-addressed, not version-pinned). It is not
+        revocable within its TTL, and a concurrent overwrite of the same key
+        during the window would serve the new bytes — both inherent to the
+        signed-URL model and bounded by the short default TTL. The caller is
+        already authorized for the path, so this is not an authz escalation;
+        clients needing read-the-exact-version or immediate-revocation semantics
+        must use GET /read. Version-pinned URLs (binding to an S3 VersionId) are
+        future work and require backend object-version tracking.
         """
         # 1. ReBAC gate — identical posture to GET /read. sys_stat enforces READ
         #    and returns metadata (content_id) without transferring any bytes.

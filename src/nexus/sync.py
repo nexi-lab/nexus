@@ -9,6 +9,12 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from nexus.contracts.exceptions import (
+    InvalidPathError,
+    NexusFileNotFoundError,
+    NexusPermissionError,
+)
+
 if TYPE_CHECKING:
     from nexus import NexusFilesystem
 
@@ -345,20 +351,39 @@ async def move_file(
             return True
 
         elif not is_source_local and not is_dest_local:
-            # Nexus to Nexus - prefer efficient rename (metadata-only).
-            # Falls back to copy+delete if rename fails (e.g. gRPC transport
-            # not available on REMOTE profile).  Issue #341.
+            # Nexus to Nexus - prefer efficient rename (metadata-only). Fall back
+            # to copy+delete ONLY when rename is genuinely unavailable (e.g. gRPC
+            # transport absent on the REMOTE profile). Issue #341.
             try:
                 nx.sys_rename(source, dest, force=force)
                 return True
+            except (
+                FileExistsError,
+                NexusPermissionError,
+                PermissionError,
+                NexusFileNotFoundError,
+                InvalidPathError,
+            ):
+                # Terminal rename outcomes — destination exists without force,
+                # permission denied, missing source, invalid path. NEVER mask
+                # these with copy+delete: nx.write(dest) would clobber the
+                # destination and a subsequent failed unlink would leave
+                # duplicated state. Propagate (the caller's handler logs +
+                # returns False without ever touching the destination).
+                raise
             except Exception as rename_exc:
-                # Fallback: copy content then delete source
+                # Genuine rename-unavailable. Fall back to copy+delete, but never
+                # silently clobber: require force when the destination exists.
                 logger.warning(
                     "move: sys_rename %s -> %s failed (%r); trying copy+delete fallback",
                     source,
                     dest,
                     rename_exc,
                 )
+                if not force and nx.access(dest):
+                    raise FileExistsError(
+                        f"move: destination exists and force=False: {dest}"
+                    ) from rename_exc
                 content = nx.sys_read(source)
                 nx.write(dest, content)
                 nx.sys_unlink(source)

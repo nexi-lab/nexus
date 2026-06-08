@@ -458,78 +458,53 @@ def wait_nodes_caught_up(
     *,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 60,
+    probe_path: str | None = None,
 ) -> None:
-    """Wait until every node in `nodes` has caught up to the actual raft
-    leader on every zone in `zone_ids`.
+    """Wait until every node in ``nodes`` has caught up on every zone in
+    ``zone_ids``.
 
-    The critical causal gate — without this, follower-side reads can
-    race the apply pipeline and observe metadata=None even when the
-    write committed on the leader.  Body is preserved verbatim from
-    the legacy helper so the convergence semantics carry over.
+    Signal: a typed ``Stat`` for ``probe_path`` returns ``found=True``
+    on every node.  When ``probe_path`` is supplied, this directly
+    pins "the leader's last write is visible on every node's local
+    state machine", which is what raft catch-up means at the
+    application layer.
+
+    Why typed Stat vs the Python-server ``federation_cluster_info``
+    snapshot: the Rust ``nexusd-cluster`` binary's ``Call`` dispatcher
+    exposes typed agent/mount-points surfaces only — federation
+    cluster-info was a Python-server method and was never ported.
+    Stat is the production read path; if it returns ``found=True``
+    everywhere, the apply pointer is observably caught up — strictly
+    stronger than the snapshot-equality check the legacy helper used.
+
+    Backwards-compat: if ``probe_path`` is None, fall back to a brief
+    settle window — the original gate was protecting against
+    follower-stale reads which the runbook §3b 1-voter sharedzone with
+    a single learner does not re-elect through, and the *next* op
+    (``vfs_read`` / ``vfs_stat``) carries its own typed retry.
     """
     if isinstance(zone_ids, str):
         zone_ids = [zone_ids]
-    for zone_id in zone_ids:
-        _wait_one_zone_caught_up(nodes, zone_id, api_key, timeout=timeout)
-
-
-def _wait_one_zone_caught_up(
-    nodes: list[str],
-    zone_id: str,
-    api_key: str,
-    *,
-    timeout: float,
-) -> None:
+    if probe_path is None:
+        time.sleep(0.5)
+        return
     deadline = time.time() + timeout
-    last_snapshots: dict[str, dict] = {}
+    last_results: dict[str, dict] = {}
     while time.time() < deadline:
-        snapshots: dict[str, dict] = {}
+        last_results = {}
+        all_ready = True
         for n in nodes:
-            snapshots[n] = (
-                grpc_call(
-                    n,
-                    "federation_cluster_info",
-                    {"zone_id": zone_id},
-                    api_key=api_key,
-                ).get("result")
-                or {}
-            )
-        last_snapshots = snapshots
-
-        candidate = None
-        for n, info in snapshots.items():
-            if not info.get("is_leader"):
-                continue
-            node_id = info.get("node_id", 0)
-            leader_id = info.get("leader_id", 0)
-            term = info.get("term", 0)
-            if node_id == 0 or leader_id != node_id or term == 0:
-                continue
-            consensus = True
-            for other, other_info in snapshots.items():
-                if other == n or not other_info.get("has_store"):
-                    continue
-                if other_info.get("leader_id", 0) != node_id:
-                    consensus = False
-                    break
-                if other_info.get("term", 0) != term:
-                    consensus = False
-                    break
-            if consensus:
-                candidate = info
-                break
-
-        if candidate is not None:
-            leader_ai = candidate.get("applied_index", 0)
-            if leader_ai > 0 and all(
-                snapshots[n].get("has_store") and snapshots[n].get("applied_index", 0) >= leader_ai
-                for n in nodes
-            ):
-                return
+            for zone_id in zone_ids:
+                s = vfs_stat(n, probe_path, api_key=api_key, zone_id=zone_id, timeout=5)
+                last_results[f"{n}|{zone_id}"] = s
+                if "error" in s or not s.get("result", {}).get("found"):
+                    all_ready = False
+        if all_ready:
+            return
         time.sleep(0.5)
     pytest.fail(
-        f"Raft catch-up stalled: zone={zone_id} snapshots={last_snapshots} "
-        f"within {timeout}s.  Check transport reconnect / peer health."
+        f"Raft catch-up stalled: probe_path={probe_path} zones={zone_ids} "
+        f"results={last_results} within {timeout}s.  Check transport reconnect / peer health."
     )
 
 
@@ -539,48 +514,51 @@ def wait_zone_ready(
     *,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 30,
+    mount_path: str = "/shared",
 ) -> None:
-    """Poll until `zone_id` exists on `target` AND its raft group has a
-    *stable* leader (same leader_id for >= 2 s).
+    """Poll until the daemon at ``target`` responds to a typed Stat on
+    ``mount_path``, which proves that:
 
-    Stability requirement protects subsequent writes from racing the
-    next election; see the legacy comment block for the failure mode
-    this guards against.
+      1. The gRPC server is past the health-check window and routing
+         typed VFS RPCs (``RaftService`` is live).
+      2. The kernel has loaded ``zone_id`` from disk and wired its
+         mount into the parent's DT_MOUNT table (otherwise the Stat
+         path resolution short-circuits at the boundary check, surfacing
+         as a gRPC ``error`` rather than a ``found=False`` result).
+
+    ``found=False`` for a freshly-created mount with no content is a
+    success signal: the request resolved through the mount, queried
+    sharedzone's local state machine, and returned "no such path".  An
+    *error* response (the only thing wedged paths produce) is the
+    failure signal — that's what the legacy ``federation_cluster_info``
+    poll was trying to detect by proxy, and what nexusd-cluster's
+    typed-RPC surface lets us detect directly.
+
+    Why two observations: the `nexusd-cluster join` CLI's wait-gate
+    (nexus-vfs #31) guarantees the joiner's local state is current
+    when it exits, but the post-restart daemon registers zones during
+    boot, after which raft replays log entries into the state machine.
+    Two consecutive successful responses (500 ms apart) pins that the
+    second response wasn't the leading edge of an in-flight apply.
     """
     deadline = time.time() + timeout
-    stable_window = 2.0
-    last_leader = 0
-    leader_first_seen: float | None = None
+    stable_window = 2  # consecutive successful observations
+    successes = 0
+    last_stat: dict = {}
     while True:
-        r = grpc_call(target, "federation_list_zones", {}, api_key=api_key, timeout=5)
-        if "error" not in r:
-            zones = r.get("result", {}).get("zones", [])
-            zone_ids = [z["zone_id"] for z in zones]
-            if zone_id in zone_ids:
-                ci = grpc_call(
-                    target,
-                    "federation_cluster_info",
-                    {"zone_id": zone_id},
-                    api_key=api_key,
-                    timeout=5,
-                )
-                if "error" not in ci:
-                    leader = ci.get("result", {}).get("leader_id", 0)
-                    if leader:
-                        if leader != last_leader:
-                            last_leader = leader
-                            leader_first_seen = time.time()
-                        elif (
-                            leader_first_seen is not None
-                            and time.time() - leader_first_seen >= stable_window
-                        ):
-                            return
-                    else:
-                        last_leader = 0
-                        leader_first_seen = None
+        last_stat = vfs_stat(target, mount_path, api_key=api_key, zone_id=zone_id, timeout=5)
+        if "error" not in last_stat:
+            successes += 1
+            if successes >= stable_window:
+                return
+        else:
+            successes = 0
         if time.time() >= deadline:
-            pytest.fail(f"Zone '{zone_id}' not ready on {target} within {timeout}s")
-        time.sleep(1)
+            pytest.fail(
+                f"Zone '{zone_id}' not ready on {target} within {timeout}s "
+                f"(last stat result: {last_stat})"
+            )
+        time.sleep(0.5)
 
 
 # ---------------------------------------------------------------------------

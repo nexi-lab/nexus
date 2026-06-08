@@ -237,37 +237,6 @@ class TestFounderBootstrap:
 
 # ===========================================================================
 # TestJoinerCrossNodeReadRunbook — runbook §3b + §4 (THE MILESTONE)
-# ===========================================================================
-# UPSTREAM BUG TRACKER — joined_cluster fixture
-#
-# Symptom: after `nexusd-cluster join` returns rc=0, the joiner's restart
-# shows `Zone 'sharedzone' registered (..., peers=0)` and raft floods
-# `raft step error: raft: cannot step as peer not found`.  Founder's
-# ConfState IS correct ([voter: founder, learner: joiner]); the joiner's
-# persisted view is `solo cluster of self`.
-#
-# Root cause: nexus-vfs offline `nexusd-cluster join` does not durably
-# persist the post-`JoinZone` ConfState (founder added as peer) to the
-# joiner's redb before the CLI exits.  On daemon restart the joiner
-# reloads pre-snapshot state and never recovers because the leader's
-# AppendEntries are rejected.
-#
-# Scope: the offline-CLI path is what runbook §3b documents; this PR's
-# whole point is to lock it in CI.  The bug is in the upstream nexus-vfs
-# main HEAD we pin (621c5c02b...), reproduced reliably in CI.  Cannot be
-# fixed from this repo.
-#
-# What we do until upstream lands a fix:
-#   * `joined_cluster` raises `pytest.xfail()` when the offline-join
-#     produces an invalid joiner state.  Tests depending on it are
-#     marked XFAIL — non-strict, so the moment upstream lands a fix the
-#     tests will XPASS and prompt removal of this xfail.
-#   * TestFounderBootstrap (4 tests) continues passing — those validate
-#     the founder-side static-topology bootstrap which is fully working.
-#   * TestRunbookOperatorErgonomics (4 tests) is decoupled from
-#     joined_cluster — those validators run on a clean joiner and
-#     don't need a successful offline join.
-# ===========================================================================
 @pytest.fixture(scope="class")
 def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
     """Execute the runbook §3b joiner-side CLI flow (offline join + restart).
@@ -281,15 +250,11 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
            "daemon down, separate process against persisted data dir".
       B-4: `docker start` joiner — auto-detect entrypoint picks
            `--bootstrap-mode restart` from `.node_id` presence.
-      B-5: gate on the joiner observing sharedzone with a stable leader.
-
-    Raises pytest.xfail with an upstream-bug tracker message when B-5
-    times out due to the offline-join state-sync bug (peers=0 on
-    joiner's sharedzone ConfState).
+      B-5: gate on the joiner observing sharedzone with a stable leader
+           (the SSOT signal that the post-#33 founder bootstrap → joiner
+           replay → AddLearnerNode-for-self path landed cleanly).
     """
     import os
-
-    from _pytest.outcomes import Failed
 
     from tests.e2e.docker.runbook_helpers import (
         docker_start,
@@ -316,35 +281,21 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
         data_dir="/app/data",
         timeout=120,
     )
-    if join_result.returncode != 0:
-        pytest.xfail(
-            "nexus-vfs `nexusd-cluster join` upstream regression — "
-            "offline-join CLI returned non-zero.  Tracks upstream bug; "
-            f"the L1 milestone substrate is broken until it lands.\n"
-            f"rc={join_result.returncode}\n"
-            f"stdout={join_result.stdout}\nstderr={join_result.stderr}"
-        )
+    assert join_result.returncode == 0, (
+        f"`nexusd-cluster join` exited non-zero.  rc={join_result.returncode}\n"
+        f"stdout={join_result.stdout}\nstderr={join_result.stderr}"
+    )
 
     docker_start(topology.joiner_container)
     wait_healthy([topology.joiner_grpc])
 
-    # B-5 readiness gate — also the canary for the ConfState-sync bug.
-    # If sharedzone never reaches a stable leader on the joiner, we hit
-    # the documented upstream bug (peers=0 in the joiner's ConfState
-    # after offline join; `raft step error: peer not found` in joiner
-    # logs).  xfail the dependents until upstream lands a fix.
-    try:
-        wait_zone_ready(topology.joiner_grpc, "sharedzone", api_key=api_key, timeout=60)
-    except Failed as exc:
-        pytest.xfail(
-            "nexus-vfs offline `nexusd-cluster join` upstream regression: "
-            "joiner's persisted sharedzone ConfState has peers=0 after "
-            "successful CLI return (rc=0).  Joiner logs flood `raft step "
-            "error: peer not found` because founder isn't in joiner's "
-            "Progress map.  L1 cross-node read is structurally blocked "
-            "until upstream nexus-vfs fixes offline-join state persistence.\n"
-            f"Underlying readiness-gate failure: {exc}"
-        )
+    # B-5 readiness gate — joiner's sharedzone reaches a stable leader
+    # within the election timeout window.  Hard requirement of the L1
+    # cross-machine read milestone; nexus-vfs#33 makes the joiner's log
+    # replay reconstruct ConfState correctly so the AddLearnerNode for
+    # self lands on top of voters=[founder] and a leader is observable
+    # locally.
+    wait_zone_ready(topology.joiner_grpc, "sharedzone", api_key=api_key, timeout=60)
 
     return {
         "founder_node_id": founder_node_id,
@@ -407,6 +358,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         rd = vfs_read(
@@ -472,6 +424,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         rd = vfs_read(
@@ -535,6 +488,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         rd = vfs_read(
@@ -618,6 +572,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         founder_stat = vfs_stat(
@@ -707,6 +662,7 @@ class TestRestartReplay:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         # Restart joiner — compose-managed daemon comes back up with
@@ -788,6 +744,7 @@ class TestRestartReplay:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         docker_restart(topology.joiner_container)

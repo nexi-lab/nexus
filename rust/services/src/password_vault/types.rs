@@ -13,8 +13,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 ///
 /// `bincode`-serialised before being written; AES-GCM auth tag is
 /// concatenated into `ciphertext` per the `aes-gcm` crate convention.
+///
+/// Shared by both `PasswordVaultService` and `GenericSecretsService`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct StoredEntry {
+pub struct StoredEntry {
     pub version: u32,
     /// Unix milliseconds when this version was written.
     pub created_at_ms: u64,
@@ -34,6 +36,23 @@ pub(crate) struct EntryIndex {
     pub current_version: u32,
     /// Set when soft-deleted; cleared on Restore. None = live.
     pub deleted_at_ms: Option<u64>,
+}
+
+/// Per-secret index for generic secrets. Stored at
+/// `{root}/secret_entries/{namespace}/{key}` via kernel syscalls.
+/// Richer than `EntryIndex` — carries description and timestamps
+/// needed by `ListSecrets` metadata responses.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SecretIndex {
+    pub current_version: u32,
+    /// Set when soft-deleted; cleared on Restore. None = live.
+    pub deleted_at_ms: Option<u64>,
+    /// User-supplied description (plaintext — not secret data).
+    pub description: String,
+    /// Unix milliseconds when the first version was created.
+    pub created_at_ms: u64,
+    /// Unix milliseconds of the most recent put.
+    pub updated_at_ms: u64,
 }
 
 /// Plaintext form of a vault entry as serialised inside the AES-GCM
@@ -93,7 +112,7 @@ impl From<PasswordVaultError> for tonic::Status {
 /// Current wall-clock as unix milliseconds. Used for `created_at_ms`
 /// and `deleted_at_ms`. Falls back to 0 on the (impossible-in-practice)
 /// case of clock skew below the epoch.
-pub(crate) fn now_unix_ms() -> u64 {
+pub fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

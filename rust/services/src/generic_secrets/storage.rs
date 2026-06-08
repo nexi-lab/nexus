@@ -1,12 +1,12 @@
-//! Kernel-backed storage for generic_secrets.
+//! Kernel-backed storage for the unified secrets layer.
 //!
 //! Two-level namespace layout under the vault mount:
-//!   - `{root}/secret_entries/{namespace}/{key}` → bincode(SecretIndex)
-//!   - `{root}/secret_versions/{namespace}/{key}/{version:010}` → bincode(StoredEntry)
+//!   - `{root}/entries/{namespace}/{key}` → bincode(SecretIndex)
+//!   - `{root}/versions/{namespace}/{key}/{version:010}` → bincode(StoredEntry)
 //!
-//! Shares the same kernel mount as `PasswordVaultService` — created by
-//! the vault plugin at `/vault`. The directory trees are disjoint
-//! (`entries/` vs `secret_entries/`), so no path conflicts.
+//! Shared by both `GenericSecretsService` and `PasswordVaultService`
+//! (the latter uses namespace="passwords"). Created by the vault
+//! plugin at `/vault`.
 
 use std::sync::Arc;
 
@@ -34,8 +34,8 @@ impl SecretStorage {
         let root = root.trim_end_matches('/').to_string();
         let ctx = OperationContext::new("vault-storage", "root", true, Some("vault-storage"), true);
         let storage = Self { kernel, ctx, root };
-        storage.ensure_dir(&format!("{}/secret_entries", storage.root))?;
-        storage.ensure_dir(&format!("{}/secret_versions", storage.root))?;
+        storage.ensure_dir(&format!("{}/entries", storage.root))?;
+        storage.ensure_dir(&format!("{}/versions", storage.root))?;
         Ok(storage)
     }
 
@@ -50,26 +50,26 @@ impl SecretStorage {
     }
 
     fn entries_path(&self, namespace: &str, key: &str) -> String {
-        format!("{}/secret_entries/{}/{}", self.root, namespace, key)
+        format!("{}/entries/{}/{}", self.root, namespace, key)
     }
 
     fn ns_dir_path(&self, namespace: &str) -> String {
-        format!("{}/secret_entries/{}", self.root, namespace)
+        format!("{}/entries/{}", self.root, namespace)
     }
 
     fn version_path(&self, namespace: &str, key: &str, version: u32) -> String {
         format!(
-            "{}/secret_versions/{}/{}/{:010}",
+            "{}/versions/{}/{}/{:010}",
             self.root, namespace, key, version
         )
     }
 
     fn versions_dir(&self, namespace: &str, key: &str) -> String {
-        format!("{}/secret_versions/{}/{}", self.root, namespace, key)
+        format!("{}/versions/{}/{}", self.root, namespace, key)
     }
 
     fn ns_version_dir(&self, namespace: &str) -> String {
-        format!("{}/secret_versions/{}", self.root, namespace)
+        format!("{}/versions/{}", self.root, namespace)
     }
 
     pub(crate) fn get_index(
@@ -229,7 +229,7 @@ impl SecretStorage {
             Some(ns) => vec![ns.to_string()],
             None => {
                 // List all namespace directories.
-                let dir = format!("{}/secret_entries", self.root);
+                let dir = format!("{}/entries", self.root);
                 self.kernel
                     .sys_readdir(&dir, "root", true)
                     .into_iter()

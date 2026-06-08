@@ -23,9 +23,9 @@ pub mod proto {
     tonic::include_proto!("nexus.password_vault.v1");
 }
 
-mod crypto;
+pub mod crypto;
 mod storage;
-mod types;
+pub mod types;
 
 // Re-export the public error type for binaries that host the service.
 pub use types::PasswordVaultError;

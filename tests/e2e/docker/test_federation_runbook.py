@@ -969,42 +969,29 @@ class TestRunbookOperatorErgonomics:
             f"\nstdout/stderr: {combined[-2000:]}"
         )
 
-    def test_static_mode_rejects_existing_data_dir(
+    def test_dynamic_mode_rejects_existing_data_dir(
         self,
         topology: RunbookTopology,
     ) -> None:
-        """`--bootstrap-mode static` + NEXUS_BOOTSTRAP_NEW=1 on a data
-        dir that already holds a `root` zone must fail with the
-        documented validator error.
+        """`--bootstrap-mode dynamic` on a data dir that already holds
+        a `root` zone must fail with the documented validator error.
 
-        Pins the PR #4028 validator state-x-flag rejection.  Runbook
-        troubleshooting:
-          `bootstrap mode = static, but data dir already holds a
-          'root' zone` | Re-bootstrapping a non-empty data dir | …
-        NEXUS_BOOTSTRAP_NEW=1 + `--bootstrap-mode static` on a
-        non-empty dir IS exactly the "re-bootstrap a fresh cluster on
-        live state" scenario the runbook says the validator must
-        reject.
+        Pins PR #4028's dynamic-mode state-x-flag rejection.  Dynamic
+        mode is runtime-API driven (cluster shape arrives via
+        `share` / `join` RPCs), so persisted state would conflict
+        with the model.  The validator emits
+        `bootstrap mode = dynamic, but data dir already holds a
+        'root' zone` and the binary exits before opening any port.
 
-        CI shows the validator currently LOGS "validated" for this
-        combination instead of rejecting it (verified output:
-        `bootstrap mode validated mode="static" bootstrap_new=true
-        peers_non_empty=false data_dir_has_root=true`).  The daemon
-        then proceeds to mount host-fs and load node_id, never
-        emitting the documented error.  Upstream bug in PR #4028's
-        validator on nexus-vfs main HEAD.
-
-        xfail until upstream lands a fix.  When the validator
-        correctly rejects, this test XPASSes and prompts removal of
-        the xfail.
+        Probes against the joiner's existing /app/data, which has a
+        root zone from the joiner's first-boot static topology — no
+        joined_cluster fixture needed.
         """
         from tests.e2e.docker.runbook_helpers import docker_exec
 
         result = docker_exec(
             topology.joiner_container,
             [
-                "env",
-                "NEXUS_BOOTSTRAP_NEW=1",
                 "timeout",
                 "5",
                 "nexusd-cluster",
@@ -1016,7 +1003,7 @@ class TestRunbookOperatorErgonomics:
                 "/app/data",
                 "--no-tls",
                 "--bootstrap-mode",
-                "static",
+                "dynamic",
             ],
             timeout=20,
         )
@@ -1024,37 +1011,19 @@ class TestRunbookOperatorErgonomics:
 
         # tracing's structured fields embed ANSI escape codes between
         # every key/value when stdout is a tty (which `docker exec`
-        # makes it).  Strip them before substring checks so the
-        # validator-bypass signature ("mode=\"static\" bootstrap_new=true
-        # data_dir_has_root=true") actually matches as written.
+        # makes it).  Strip them before substring checks.
         combined = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
         lowered = combined.lower()
-        validator_accepted = (
-            "bootstrap mode validated" in combined
-            and 'mode="static"' in combined
-            and "bootstrap_new=true" in combined
-            and "data_dir_has_root=true" in combined
-        )
-        if validator_accepted:
-            pytest.xfail(
-                "nexus-vfs PR #4028 validator upstream regression: "
-                '`bootstrap mode validated mode="static" bootstrap_new=true '
-                "data_dir_has_root=true` — should reject per runbook but "
-                "logs 'validated' and proceeds.  Operator-error path is "
-                "structurally unprotected until upstream fixes the "
-                "validator's state-x-flag matrix.\n"
-                f"stdout/stderr: {combined[-2000:]}"
-            )
         assert result.rc != 0, (
-            "`nexusd-cluster --bootstrap-mode static` + NEXUS_BOOTSTRAP_NEW=1 "
-            "on a non-empty data dir did NOT fail — PR #4028 state-x-flag "
-            f"validator was bypassed.\nstdout/stderr: {combined[-2000:]}"
+            "`nexusd-cluster --bootstrap-mode dynamic` on a non-empty data dir "
+            "did NOT fail — PR #4028 state-x-flag validator was bypassed."
+            f"\nstdout/stderr: {combined[-2000:]}"
         )
-        assert "static" in lowered and (
-            "already" in lowered or "non-empty" in lowered or "exist" in lowered
+        assert "dynamic" in lowered and (
+            "already" in lowered or "fresh" in lowered or "wipe" in lowered
         ), (
-            "validator error message did not match runbook's documented "
-            "shape (`bootstrap mode = static, but data dir already holds a "
+            "validator error message did not match the documented shape "
+            "(`bootstrap mode = dynamic, but data dir already holds a "
             f"'root' zone`).\nstdout/stderr: {combined[-2000:]}"
         )
 

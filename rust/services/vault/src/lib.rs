@@ -21,11 +21,20 @@ use services::password_vault::proto::password_vault_service_server::PasswordVaul
 use services::password_vault::proto::*;
 use services::password_vault::PasswordVaultServiceImpl;
 
+use services::generic_secrets::proto::generic_secrets_service_server::GenericSecretsService;
+use services::generic_secrets::GenericSecretsServiceImpl;
+
+// Alias to disambiguate from password_vault proto types.
+mod secrets_proto {
+    pub use services::generic_secrets::proto::*;
+}
+
 /// Plugin state: the vault service plus a single-threaded tokio runtime
 /// for driving the async gRPC trait methods (which are sync under the
 /// hood but declared async for tonic compatibility).
 struct VaultPlugin {
     svc: PasswordVaultServiceImpl,
+    secrets_svc: GenericSecretsServiceImpl,
     rt: tokio::runtime::Runtime,
 }
 
@@ -54,9 +63,22 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
     );
 
     let master_key_path = vault_dir.join("master.key");
-    let svc =
-        PasswordVaultServiceImpl::new_with_kernel(kernel, "/vault", &master_key_path, backend)
-            .expect("open vault");
+    let svc = PasswordVaultServiceImpl::new_with_kernel(
+        kernel.clone(),
+        "/vault",
+        &master_key_path,
+        backend,
+    )
+    .expect("open vault");
+
+    // GenericSecretsService shares the same kernel mount + master key.
+    // The master key was created by PasswordVaultServiceImpl above;
+    // load it (never creates a new one — the file already exists).
+    let master_key = services::password_vault::crypto::load_or_create_master_key(&master_key_path)
+        .expect("load master key for generic secrets");
+    let secrets_svc =
+        GenericSecretsServiceImpl::new_on_existing_mount(kernel, "/vault", master_key)
+            .expect("open generic secrets");
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -65,10 +87,14 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
 
     tracing::info!(
         vault_dir = %vault_dir.display(),
-        "vault plugin loaded"
+        "vault plugin loaded (password-vault + generic-secrets)"
     );
 
-    Box::new(VaultPlugin { svc, rt })
+    Box::new(VaultPlugin {
+        svc,
+        secrets_svc,
+        rt,
+    })
 }
 
 fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
@@ -150,6 +176,122 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             resp.encode(&mut buf).map_err(|_| -3)?;
             Ok(buf)
         }
+        // ── Generic secrets dispatch ──────────────────────────────────
+        "secret_put" => {
+            let req = secrets_proto::PutSecretRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.put_secret(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_get" => {
+            let req = secrets_proto::GetSecretRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.get_secret(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_delete" => {
+            let req = secrets_proto::DeleteSecretRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.delete_secret(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_restore" => {
+            let req = secrets_proto::RestoreSecretRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.restore_secret(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_list" => {
+            let req = secrets_proto::ListSecretsRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.list_secrets(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_list_versions" => {
+            let req = secrets_proto::ListSecretVersionsRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.list_secret_versions(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_batch_put" => {
+            let req = secrets_proto::BatchPutSecretsRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.batch_put_secrets(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_batch_get" => {
+            let req = secrets_proto::BatchGetSecretsRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.batch_get_secrets(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_delete_version" => {
+            let req = secrets_proto::DeleteSecretVersionRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.delete_secret_version(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_update_description" => {
+            let req =
+                secrets_proto::UpdateSecretDescriptionRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(
+                    plugin
+                        .secrets_svc
+                        .update_secret_description(Request::new(req)),
+                )
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
         _ => Err(-1), // PluginResult::NotFound
     }
 }
@@ -198,16 +340,32 @@ mod dispatch_e2e {
         );
 
         let master_key_path = vault_dir.join("master.key");
-        let svc =
-            PasswordVaultServiceImpl::new_with_kernel(kernel, "/vault", &master_key_path, backend)
-                .unwrap();
+        let svc = PasswordVaultServiceImpl::new_with_kernel(
+            kernel.clone(),
+            "/vault",
+            &master_key_path,
+            backend,
+        )
+        .unwrap();
+
+        let master_key =
+            services::password_vault::crypto::load_or_create_master_key(&master_key_path).unwrap();
+        let secrets_svc =
+            GenericSecretsServiceImpl::new_on_existing_mount(kernel, "/vault", master_key).unwrap();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
 
-        (dir, VaultPlugin { svc, rt })
+        (
+            dir,
+            VaultPlugin {
+                svc,
+                secrets_svc,
+                rt,
+            },
+        )
     }
 
     fn entry(title: &str, password: &str, totp_secret: Option<&str>) -> VaultEntry {
@@ -501,5 +659,241 @@ mod dispatch_e2e {
         let (_dir, plugin) = fresh_plugin();
         let err = dispatch_vault(&plugin, "get_entry", b"not-valid-protobuf").unwrap_err();
         assert_eq!(err, -2); // PluginResult::InvalidArgument
+    }
+
+    // ── Generic secrets dispatch tests ────────────────────────────
+
+    // ── Scenario 7: Generic secret full lifecycle via dispatch ─────
+    //
+    // User problem: "Store an API key, read it back, list it,
+    //   soft-delete it, verify it's gone, restore it."
+    // Workflow: secret_put → secret_get → secret_list →
+    //   secret_delete → secret_get (404) → secret_restore →
+    //   secret_get (recovered)
+
+    #[test]
+    fn generic_secret_full_lifecycle_via_dispatch() {
+        let (_dir, plugin) = fresh_plugin();
+
+        // Step 1: put
+        let put_payload = encode(&secrets_proto::PutSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+            value: "sk-test-123".into(),
+            description: Some("OpenAI prod key".into()),
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_put", &put_payload).unwrap();
+        let put_resp = secrets_proto::PutSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        let meta = put_resp.metadata.unwrap();
+        assert_eq!(meta.namespace, "provider:openai");
+        assert_eq!(meta.key, "api_key");
+        assert_eq!(meta.current_version, 1);
+        assert!(!meta.deleted);
+
+        // Step 2: get
+        let get_payload = encode(&secrets_proto::GetSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+            version: None,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let get_resp = secrets_proto::GetSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(get_resp.value, "sk-test-123");
+        assert_eq!(get_resp.version, 1);
+
+        // Step 3: list
+        let list_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: Some("provider:openai".into()),
+            include_deleted: false,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_list", &list_payload).unwrap();
+        let list_resp = secrets_proto::ListSecretsResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(list_resp.count, 1);
+        assert_eq!(list_resp.secrets[0].key, "api_key");
+
+        // Step 4: delete
+        let del_payload = encode(&secrets_proto::DeleteSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_delete", &del_payload).unwrap();
+        let del_resp = secrets_proto::DeleteSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert!(del_resp.deleted);
+
+        // Step 5: get after delete → NotFound
+        let err = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap_err();
+        assert_eq!(err, -1);
+
+        // Step 6: restore
+        let restore_payload = encode(&secrets_proto::RestoreSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_restore", &restore_payload).unwrap();
+        let restore_resp =
+            secrets_proto::RestoreSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert!(restore_resp.restored);
+
+        // Step 7: get after restore → recovered
+        let resp_bytes = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let get_resp = secrets_proto::GetSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(get_resp.value, "sk-test-123");
+    }
+
+    // ── Scenario 8: Namespace isolation ──────────────────────────
+    //
+    // Secrets in different namespaces don't interfere.
+
+    #[test]
+    fn generic_secret_namespace_isolation() {
+        let (_dir, plugin) = fresh_plugin();
+
+        // Put secrets in different namespaces
+        for (ns, k, v) in [
+            ("channel:telegram:1", "token", "tok-123"),
+            ("channel:lark:2", "appSecret", "lark-secret"),
+            ("provider:openai", "api_key", "sk-456"),
+        ] {
+            let payload = encode(&secrets_proto::PutSecretRequest {
+                namespace: ns.into(),
+                key: k.into(),
+                value: v.into(),
+                description: None,
+            });
+            dispatch_vault(&plugin, "secret_put", &payload).unwrap();
+        }
+
+        // List only channel:telegram:1
+        let list_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: Some("channel:telegram:1".into()),
+            include_deleted: false,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_list", &list_payload).unwrap();
+        let list_resp = secrets_proto::ListSecretsResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(list_resp.count, 1);
+        assert_eq!(list_resp.secrets[0].namespace, "channel:telegram:1");
+
+        // List all
+        let list_all = encode(&secrets_proto::ListSecretsRequest {
+            namespace: None,
+            include_deleted: false,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_list", &list_all).unwrap();
+        let list_resp = secrets_proto::ListSecretsResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(list_resp.count, 3);
+    }
+
+    // ── Scenario 9: Batch operations via dispatch ─────────────────
+
+    #[test]
+    fn generic_secret_batch_operations_via_dispatch() {
+        let (_dir, plugin) = fresh_plugin();
+
+        // Batch put
+        let batch_put_payload = encode(&secrets_proto::BatchPutSecretsRequest {
+            secrets: vec![
+                secrets_proto::PutSecretRequest {
+                    namespace: "auth:jwt".into(),
+                    key: "webui_secret".into(),
+                    value: "jwt-secret-value".into(),
+                    description: Some("JWT signing key".into()),
+                },
+                secrets_proto::PutSecretRequest {
+                    namespace: "auth:acp:github".into(),
+                    key: "auth_token".into(),
+                    value: "ghp_token123".into(),
+                    description: None,
+                },
+            ],
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_batch_put", &batch_put_payload).unwrap();
+        let batch_put_resp =
+            secrets_proto::BatchPutSecretsResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(batch_put_resp.count, 2);
+
+        // Batch get (including a nonexistent key)
+        let batch_get_payload = encode(&secrets_proto::BatchGetSecretsRequest {
+            queries: vec![
+                secrets_proto::GetSecretRequest {
+                    namespace: "auth:jwt".into(),
+                    key: "webui_secret".into(),
+                    version: None,
+                },
+                secrets_proto::GetSecretRequest {
+                    namespace: "auth:acp:github".into(),
+                    key: "auth_token".into(),
+                    version: None,
+                },
+                secrets_proto::GetSecretRequest {
+                    namespace: "nonexistent".into(),
+                    key: "nope".into(),
+                    version: None,
+                },
+            ],
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_batch_get", &batch_get_payload).unwrap();
+        let batch_get_resp =
+            secrets_proto::BatchGetSecretsResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(batch_get_resp.count, 2);
+        assert_eq!(
+            batch_get_resp.secrets["auth:jwt:webui_secret"],
+            "jwt-secret-value"
+        );
+        assert_eq!(
+            batch_get_resp.secrets["auth:acp:github:auth_token"],
+            "ghp_token123"
+        );
+    }
+
+    // ── Scenario 10: Version history via dispatch ──────────────────
+
+    #[test]
+    fn generic_secret_version_history_via_dispatch() {
+        let (_dir, plugin) = fresh_plugin();
+
+        // Store 3 versions
+        for (i, val) in ["v1", "v2", "v3"].iter().enumerate() {
+            let payload = encode(&secrets_proto::PutSecretRequest {
+                namespace: "provider:openai".into(),
+                key: "api_key".into(),
+                value: val.to_string(),
+                description: None,
+            });
+            let resp_bytes = dispatch_vault(&plugin, "secret_put", &payload).unwrap();
+            let resp = secrets_proto::PutSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+            assert_eq!(resp.metadata.unwrap().current_version, (i + 1) as i32);
+        }
+
+        // List versions
+        let lv_payload = encode(&secrets_proto::ListSecretVersionsRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_list_versions", &lv_payload).unwrap();
+        let lv_resp =
+            secrets_proto::ListSecretVersionsResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(lv_resp.count, 3);
+        let vers: Vec<i32> = lv_resp.versions.iter().map(|v| v.version).collect();
+        assert_eq!(vers, vec![1, 2, 3]);
+
+        // Get historical version
+        let get_v1 = encode(&secrets_proto::GetSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+            version: Some(1),
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_get", &get_v1).unwrap();
+        let resp = secrets_proto::GetSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(resp.value, "v1");
+
+        // Get latest
+        let get_latest = encode(&secrets_proto::GetSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+            version: None,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_get", &get_latest).unwrap();
+        let resp = secrets_proto::GetSecretResponse::decode(resp_bytes.as_slice()).unwrap();
+        assert_eq!(resp.value, "v3");
     }
 }

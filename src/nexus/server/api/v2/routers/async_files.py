@@ -8,6 +8,7 @@ All operations pass user context for permission enforcement.
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
@@ -28,6 +29,7 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.contracts.metadata import DT_REG
 from nexus.core.path_utils import validate_path as _normalize_path
 from nexus.runtime.zone_resolution import (
     target_zone_for_context,
@@ -1186,6 +1188,161 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/read-url")
+    async def read_url(
+        path: str = Query(..., description="VFS path to mint a direct read URL for"),
+        ttl: int = Query(60, ge=5, le=3600, description="URL lifetime seconds (keep short)"),
+        zone: str | None = Query(None, description="Override zone (must be in token's zone_set)."),
+        context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> Response:
+        """Streaming-service read path: validate (ReBAC), then return a short-TTL
+        presigned R2/S3 URL so the client fetches bytes DIRECTLY from object
+        storage (or a CDN fronting R2). nexus stays out of the byte path.
+
+        403 if caller lacks READ on `path`; 404 if `path` doesn't resolve to a
+        regular file; 409 if the owning mount is not S3/R2 (fall back to GET
+        /read). Reads only — writes stay proxied.
+
+        Security model: the URL is a *time-boxed bearer credential* for the
+        path's object key (path-addressed, not version-pinned). It is not
+        revocable within its TTL, and a concurrent overwrite of the same key
+        during the window would serve the new bytes — both inherent to the
+        signed-URL model and bounded by the short default TTL. The caller is
+        already authorized for the path, so this is not an authz escalation;
+        clients needing read-the-exact-version or immediate-revocation semantics
+        must use GET /read. Version-pinned URLs (binding to an S3 VersionId) are
+        future work and require backend object-version tracking.
+
+        LIMITATION — read post-hooks: a signed URL fetches RAW object bytes and
+        therefore bypasses the GET /read byte-path post-processing, including any
+        read post-hooks that redact/transform content (e.g. column-level CSV
+        filtering). Deployments that rely on read-time redaction as an access
+        control on S3/R2-mounted paths must serve those reads through GET /read,
+        not read-url. A precise server-side gate (signing only when no
+        content-transforming post-read hook applies) needs a kernel API to count
+        post-read transform hooks distinctly from pre-read permission hooks; that
+        is deferred infrastructure (the aggregate hook_count also includes the
+        always-present permission pre-hook, so it cannot be used here).
+        """
+        # 1. ReBAC gate — identical posture to GET /read. sys_stat enforces READ
+        #    and returns metadata (content_id) without transferring any bytes.
+        context = _apply_zone_override(context, zone, auth_result, required_perm="r")
+
+        async def _work() -> Response:
+            fs = await _get_fs()
+            meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
+            if meta is None:
+                # sys_stat returns None when the VFS cannot resolve the path to an
+                # object. Fail closed: never mint a bearer S3/R2 URL for a key we
+                # have not proven exists as an authorized object.
+                raise HTTPException(status_code=404, detail=f"Not found: {path}")
+
+            # Only mint a URL for an explicit regular file (DT_REG). sys_stat also
+            # succeeds for directories (DT_DIR), mount roots (DT_MOUNT),
+            # pipes/streams, and external-storage markers — none map to a single
+            # object key, and a mount root can even report is_directory=False, so
+            # checking is_directory alone is insufficient. Signing their
+            # empty/prefix key would hand out a bearer URL GET /read never serves.
+            def _meta_get(field: str, default: Any = None) -> Any:
+                return (
+                    meta.get(field, default)
+                    if isinstance(meta, dict)
+                    else getattr(meta, field, default)
+                )
+
+            entry_type = _meta_get("entry_type")
+            if _meta_get("is_directory", False) or (
+                entry_type is not None and entry_type != DT_REG
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "read-url is for regular files only (not directories, mounts, "
+                        "or other special entries); use GET /read."
+                    ),
+                )
+
+            # 2. Find the owning mount's backend instance (holds creds). Longest
+            #    matching mount prefix wins.
+            #
+            # Zone safety: this map is keyed by mount path and the cluster
+            # permits at most one backend per VFS path (mounting the same path
+            # in a second zone is rejected). The authorization boundary is the
+            # zone-scoped sys_stat above — this whole _work runs inside
+            # _run_for_context, so a path not mounted/authorized in the caller's
+            # zone returns None -> 404 before any backend is looked up or signed.
+            # A fully zone-keyed mount map ((zone, path) -> backend) is the
+            # proper long-term hardening and is tracked as separate work.
+            mounted = getattr(fs, "_mounted_backend_instances", {}) or {}
+            norm = "/" + str(path).strip("/")
+            mount_pt = max(
+                (m for m in mounted if norm == m or norm.startswith(m.rstrip("/") + "/")),
+                key=len,
+                default=None,
+            )
+            backend = mounted.get(mount_pt) if mount_pt else None
+            # Only S3/R2-style signers are served here. Detect them by the
+            # ``method`` parameter on generate_signed_url (PathS3Backend has it);
+            # a method-less signer (e.g. PathGCSBackend) would otherwise be called
+            # with method="GET" and raise TypeError -> 500 instead of the
+            # advertised 409 fallback to GET /read.
+            signer = getattr(backend, "generate_signed_url", None)
+            accepts_method = False
+            if signer is not None:
+                try:
+                    accepts_method = "method" in inspect.signature(signer).parameters
+                except (TypeError, ValueError):
+                    accepts_method = False
+            if mount_pt is None or signer is None or not accepts_method:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
+                )
+
+            # 3. Mint the presigned URL (pure signing, no network). Path relative
+            #    to the mount; the backend adds its own prefix in _get_key_path.
+            rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
+            if not rel:
+                # The path IS the mount root (stripping the prefix leaves
+                # nothing). Robust mount-root guard independent of stat fields:
+                # the real sys_stat projection omits entry_type, so a mount root
+                # reporting is_directory=False would otherwise reach here and the
+                # signer would mint a bearer URL for the backend's empty/prefix
+                # key. Never sign a mount root.
+                raise HTTPException(
+                    status_code=409,
+                    detail="read-url is for regular files only, not a mount root; use GET /read.",
+                )
+
+            try:
+                signed = signer(rel, expires_in=ttl, method="GET", context=context)
+            except Exception as e:
+                logger.exception(f"read-url signing error: {e}")
+                raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e
+            content_id = None
+            if isinstance(meta, dict):
+                content_id = meta.get("content_id")
+            elif meta is not None:
+                content_id = getattr(meta, "content_id", None)
+            return Response(
+                content=json.dumps(
+                    {
+                        "url": signed["url"],
+                        "expires_in": signed["expires_in"],
+                        "content_id": content_id,
+                        "path": path,
+                    }
+                ),
+                media_type="application/json",
+            )
+
+        # Route through the same zone-scoped guard as GET /read: a mismatched
+        # path/query zone is rejected (400) before any stat/sign, and the stat +
+        # mount resolution + signing all run in the resolved target zone — so an
+        # out-of-band storage URL can't be minted across a tenant boundary.
+        return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
     @router.get("/md-structure")
     async def md_structure(

@@ -77,16 +77,39 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Install nexusd-cluster binary from nexus-vfs (Issue #3125, #4259) ----------
+# ---------- Install nexusd-full binary from nexus-vfs (Issue #3125, #4259) ----------
 # Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
 # repo. Install the pre-built binary via `cargo install` from the git repo.
+#
+# We install `nexusd-full` — the `full` profile = `nexusd-cluster` (Raft + IPC +
+# federation) PLUS the S3/R2 object-store driver. Per the nexus-vfs#27 kernel-team
+# review, `driver-s3` is NOT a feature on `nexusd-cluster` (that binary stays pure
+# local+remote and under its size gate); the S3-serving binary is this separate
+# profile. It is symlinked to `nexus-cluster` below so the Python runtime spawns
+# it unchanged.
+#
+# REV is a build-arg, NOT a hardcoded edge. `cargo install --git` lives in a
+# Docker RUN layer that caches by command string, so a bare `--branch main`
+# would FREEZE at the first-built binary forever — exactly how the stale,
+# pre-bridge-2 (#4262) cluster shipped (acked DT_MOUNT but never installed it,
+# created=false → edge E2E mount-setup failure). Putting the resolved rev in
+# the command both busts that cache and makes the build reproducible.
+#   - Default below = a known-good rev for reproducible local builds.
+#   - Edge: CI passes `--build-arg NEXUS_VFS_REV=$(git ls-remote …main | sha)`.
+#   - Downstream pins the *image*, not this file.
+# SSOT once #27 lands on nexus-vfs main: bump the default to the merged-main rev
+# (or derive it from the nexus-vfs pin in Cargo.lock). The default below is a
+# TEMPORARY integration pin to the unmerged #27 branch tip so the R2 e2e can
+# run pre-merge.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
+# Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
+ARG NEXUS_VFS_REV=f4227a21bc8a7546477bc3851bd9407f3579f925
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster && \
-    cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-full nexus-full && \
+    cp /root/.cargo/bin/nexusd-full /build/nexusd-full
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -173,14 +196,23 @@ COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
-COPY --from=builder /build/nexusd-cluster /usr/local/bin/nexusd-cluster
-# Python factory boot spawns "nexus-cluster" (without d) via subprocess.
-RUN ln -s /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
+COPY --from=builder /build/nexusd-full /usr/local/bin/nexusd-full
+# Python factory boot spawns "nexus-cluster" (without d) via subprocess; point
+# that name at the full binary (cluster + S3/R2 driver) so usage is unchanged.
+RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexus-cluster
+# Back-compat: preserve the historic `nexusd-cluster` name. Repo consumers still
+# exec it directly (e.g. the federation E2E joiner entrypoint), and nexusd-full
+# is a strict superset of the old slim cluster binary, so the alias is
+# behaviorally identical.
+RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexusd-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------
-# Verify nexusd-cluster binary is present and executable.
-RUN nexusd-cluster --version || echo "nexusd-cluster binary OK"
+# Fail the build if any expected cluster binary name is missing or not on PATH
+# (don't mask failures with `|| echo`), then verify the binary actually runs.
+RUN for b in nexusd-full nexus-cluster nexusd-cluster; do \
+        command -v "$b" >/dev/null 2>&1 || { echo "missing cluster binary: $b" >&2; exit 1; }; \
+    done && nexusd-full --version
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \

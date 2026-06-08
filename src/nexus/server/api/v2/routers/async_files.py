@@ -1295,7 +1295,7 @@ def create_async_files_router(
                     accepts_method = "method" in inspect.signature(signer).parameters
                 except (TypeError, ValueError):
                     accepts_method = False
-            if mount_pt is None or not accepts_method:
+            if mount_pt is None or signer is None or not accepts_method:
                 raise HTTPException(
                     status_code=409,
                     detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",

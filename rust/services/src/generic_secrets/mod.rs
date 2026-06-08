@@ -7,8 +7,8 @@
 //! `VaultEntry` schema, no TOTP).
 //!
 //! Storage layout (under the vault mount at `/vault`):
-//!   - `/vault/secret_entries/{namespace}/{key}` → bincode(SecretIndex)
-//!   - `/vault/secret_versions/{namespace}/{key}/{version:010}` → bincode(StoredEntry)
+//!   - `/vault/entries/{namespace}/{key}` → bincode(SecretIndex)
+//!   - `/vault/versions/{namespace}/{key}/{version:010}` → bincode(StoredEntry)
 //!
 //! Consumer: sudowork `SecretStoreClient` (replaces HTTP `/api/v2/secrets`).
 
@@ -81,8 +81,9 @@ impl GenericSecretsServiceImpl {
         })
     }
 
-    /// Internal put — shared by single put and batch put.
-    fn do_put(
+    /// Internal put — shared by single put, batch put, and
+    /// `PasswordVaultServiceImpl` (namespace="passwords").
+    pub(crate) fn do_put(
         &self,
         namespace: &str,
         key: &str,
@@ -127,8 +128,9 @@ impl GenericSecretsServiceImpl {
         Ok(index_to_metadata(namespace, key, &idx))
     }
 
-    /// Internal get — shared by single get and batch get.
-    fn do_get(
+    /// Internal get — shared by single get, batch get, and
+    /// `PasswordVaultServiceImpl` (namespace="passwords").
+    pub(crate) fn do_get(
         &self,
         namespace: &str,
         key: &str,
@@ -174,6 +176,82 @@ impl GenericSecretsServiceImpl {
 
         Ok((value, stored.version as i32))
     }
+
+    /// Internal delete — sets tombstone. Used by `PasswordVaultServiceImpl`.
+    pub(crate) fn do_delete(&self, namespace: &str, key: &str) -> Result<(), Status> {
+        if namespace.is_empty() || key.is_empty() {
+            return Err(Status::invalid_argument("namespace and key are required"));
+        }
+        let idx = self
+            .inner
+            .storage
+            .get_index(namespace, key)?
+            .ok_or_else(|| {
+                PasswordVaultError::NotFound(format!("{namespace}/{key}"))
+            })?;
+        let new_idx = SecretIndex {
+            deleted_at_ms: Some(idx.deleted_at_ms.unwrap_or_else(now_unix_ms)),
+            updated_at_ms: now_unix_ms(),
+            ..idx
+        };
+        self.inner.storage.set_index(namespace, key, &new_idx)?;
+        Ok(())
+    }
+
+    /// Internal restore — clears tombstone. Returns `(restored, current_version)`.
+    pub(crate) fn do_restore(&self, namespace: &str, key: &str) -> Result<(bool, i32), Status> {
+        if namespace.is_empty() || key.is_empty() {
+            return Err(Status::invalid_argument("namespace and key are required"));
+        }
+        let idx = self
+            .inner
+            .storage
+            .get_index(namespace, key)?
+            .ok_or_else(|| {
+                PasswordVaultError::NotFound(format!("{namespace}/{key}"))
+            })?;
+        let new_idx = SecretIndex {
+            deleted_at_ms: None,
+            updated_at_ms: now_unix_ms(),
+            ..idx
+        };
+        self.inner.storage.set_index(namespace, key, &new_idx)?;
+        Ok((true, new_idx.current_version as i32))
+    }
+
+    /// Internal list_versions — returns `(version, created_at_ms, tombstoned)` triples.
+    pub(crate) fn do_list_versions(
+        &self,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(Vec<StoredEntry>, SecretIndex), Status> {
+        if namespace.is_empty() || key.is_empty() {
+            return Err(Status::invalid_argument("namespace and key are required"));
+        }
+        let idx = self
+            .inner
+            .storage
+            .get_index(namespace, key)?
+            .ok_or_else(|| {
+                PasswordVaultError::NotFound(format!("{namespace}/{key}"))
+            })?;
+        let stored = self.inner.storage.list_versions(namespace, key)?;
+        Ok((stored, idx))
+    }
+
+    /// Internal list metadata — returns `(namespace, key, SecretIndex)` triples.
+    pub(crate) fn do_list_metadata(
+        &self,
+        namespace: Option<&str>,
+        include_deleted: bool,
+    ) -> Result<Vec<(String, String, SecretIndex)>, Status> {
+        let all = self.inner.storage.list_indexes(namespace)?;
+        let filtered: Vec<_> = all
+            .into_iter()
+            .filter(|(_, _, idx)| include_deleted || idx.deleted_at_ms.is_none())
+            .collect();
+        Ok(filtered)
+    }
 }
 
 #[tonic::async_trait]
@@ -213,24 +291,7 @@ impl GenericSecretsService for GenericSecretsServiceImpl {
         req: Request<DeleteSecretRequest>,
     ) -> Result<Response<DeleteSecretResponse>, Status> {
         let req = req.into_inner();
-        if req.namespace.is_empty() || req.key.is_empty() {
-            return Err(Status::invalid_argument("namespace and key are required"));
-        }
-        let idx = self
-            .inner
-            .storage
-            .get_index(&req.namespace, &req.key)?
-            .ok_or_else(|| {
-                PasswordVaultError::NotFound(format!("{}/{}", req.namespace, req.key))
-            })?;
-        let new_idx = SecretIndex {
-            deleted_at_ms: Some(idx.deleted_at_ms.unwrap_or_else(now_unix_ms)),
-            updated_at_ms: now_unix_ms(),
-            ..idx
-        };
-        self.inner
-            .storage
-            .set_index(&req.namespace, &req.key, &new_idx)?;
+        self.do_delete(&req.namespace, &req.key)?;
         Ok(Response::new(DeleteSecretResponse {
             namespace: req.namespace,
             key: req.key,
@@ -243,29 +304,12 @@ impl GenericSecretsService for GenericSecretsServiceImpl {
         req: Request<RestoreSecretRequest>,
     ) -> Result<Response<RestoreSecretResponse>, Status> {
         let req = req.into_inner();
-        if req.namespace.is_empty() || req.key.is_empty() {
-            return Err(Status::invalid_argument("namespace and key are required"));
-        }
-        let idx = self
-            .inner
-            .storage
-            .get_index(&req.namespace, &req.key)?
-            .ok_or_else(|| {
-                PasswordVaultError::NotFound(format!("{}/{}", req.namespace, req.key))
-            })?;
-        let new_idx = SecretIndex {
-            deleted_at_ms: None,
-            updated_at_ms: now_unix_ms(),
-            ..idx
-        };
-        self.inner
-            .storage
-            .set_index(&req.namespace, &req.key, &new_idx)?;
+        let (restored, current_version) = self.do_restore(&req.namespace, &req.key)?;
         Ok(Response::new(RestoreSecretResponse {
             namespace: req.namespace,
             key: req.key,
-            restored: true,
-            current_version: new_idx.current_version as i32,
+            restored,
+            current_version,
         }))
     }
 
@@ -274,11 +318,9 @@ impl GenericSecretsService for GenericSecretsServiceImpl {
         req: Request<ListSecretsRequest>,
     ) -> Result<Response<ListSecretsResponse>, Status> {
         let req = req.into_inner();
-        let ns_filter = req.namespace.as_deref();
-        let all = self.inner.storage.list_indexes(ns_filter)?;
-        let secrets: Vec<SecretMetadata> = all
+        let filtered = self.do_list_metadata(req.namespace.as_deref(), req.include_deleted)?;
+        let secrets: Vec<SecretMetadata> = filtered
             .iter()
-            .filter(|(_, _, idx)| req.include_deleted || idx.deleted_at_ms.is_none())
             .map(|(ns, key, idx)| index_to_metadata(ns, key, idx))
             .collect();
         let count = secrets.len() as i32;
@@ -290,17 +332,7 @@ impl GenericSecretsService for GenericSecretsServiceImpl {
         req: Request<ListSecretVersionsRequest>,
     ) -> Result<Response<ListSecretVersionsResponse>, Status> {
         let req = req.into_inner();
-        if req.namespace.is_empty() || req.key.is_empty() {
-            return Err(Status::invalid_argument("namespace and key are required"));
-        }
-        let idx = self
-            .inner
-            .storage
-            .get_index(&req.namespace, &req.key)?
-            .ok_or_else(|| {
-                PasswordVaultError::NotFound(format!("{}/{}", req.namespace, req.key))
-            })?;
-        let stored = self.inner.storage.list_versions(&req.namespace, &req.key)?;
+        let (stored, idx) = self.do_list_versions(&req.namespace, &req.key)?;
         let active = idx.current_version;
         let is_deleted = idx.deleted_at_ms.is_some();
         let versions: Vec<SecretVersion> = stored

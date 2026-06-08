@@ -461,5 +461,14 @@ The bug-class history matters here — the same shape regressed twice during the
 ## Smoke regression covered in CI
 
 * nexus-vfs `rust/raft/tests/test_zone_manager_under_tokio_main.rs::one_voter_propose_converges_without_self_forward_loop` — pins the convergence behaviour PR #25 restored.  A 2 s upper bound catches both a re-introduction of the cached-role/leader-id race and any restoration of the self-RPC-forward path.
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestJoinerCrossNodeReadRunbook` — pins the cross-process L1 milestone (byte-exact cross-node read via the `nexusd-cluster join` CLI flow + `PeerBlobClient` round-trip).  Runs against the 3-voter `docker-compose.federation-runbook.yml` topology on every PR via `.github/workflows/federation-e2e.yml`.  The same test class also catches:
+  * pre-#4293 `mount: not leader` from the joiner's `zm.mount_async` propose
+  * pre-#4294 `PeerBlobClient not installed` / `NOT_FOUND` (origin attribution missing)
+  * pre-nexus-vfs-#23 nested-tokio panic on the join's mount path
+  * pre-nexus-vfs-#25 founder self-forward hairpin
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestFounderBootstrap` — convergence budget + zero `Forward to leader failed leader=` warnings.
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestRestartReplay` — `--bootstrap-mode restart` replays persisted `DT_MOUNT` entries; pre-existing files stay readable post-reboot.
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestWitnessQuorumHA` — 3-voter quorum survives founder loss; ConfState recovers to 3 voters on restart.
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestRunbookOperatorErgonomics` — `share --mount-at`, `--bootstrap-mode` validator, `--peers <self>` rejection.
 
-The runbook's Step-4 byte-exact L1 read across two real machines remains a manual gate — the in-process raft tests don't exercise the `transport::peer_blob::install` ↔ `KernelBlobFetcher` ↔ Tailscale path.  A docker-compose-driven 2-process federation E2E is a tracked follow-up.
+The Step-4 byte-exact L1 read across two real machines (Mac↔Win over Tailscale) remains a manual gate for the Tailscale-specific surface; the CI runbook tests cover the cross-process semantics in-network, but do not exercise the Tailscale path itself.

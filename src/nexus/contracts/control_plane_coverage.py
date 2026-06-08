@@ -132,7 +132,7 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
         profile_gate="federation runtime active; cluster/cloud deployments, or full server with federation kernel support",
         correctness_tests=(
             "tests/unit/grpc/test_federation_whoami_rpc.py",
-            "tests/e2e/docker/test_federation_e2e.py",
+            "tests/e2e/docker/test_federation_runbook.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",
             "tests/benchmarks/test_full_control_plane_rpc_benchmark.py",
         ),
@@ -162,7 +162,7 @@ CONTROL_PLANE_SURFACES: tuple[ControlPlaneSurface, ...] = (
         admin_only=True,
         profile_gate="federation runtime active; cluster/cloud deployments, or full server with federation kernel support",
         correctness_tests=(
-            "tests/e2e/docker/test_federation_e2e.py",
+            "tests/e2e/docker/test_federation_runbook.py",
             "tests/e2e/server/test_zone_export_e2e.py",
             "tests/e2e/server/test_zone_import_e2e.py",
             "tests/unit/server/test_full_profile_control_plane_surface.py",

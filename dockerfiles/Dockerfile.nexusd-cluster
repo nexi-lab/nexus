@@ -26,7 +26,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-RUN cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+# Pin nexus-vfs commit SHA — required for reproducible builds and to
+# stop Docker layer caching from freezing a stale binary.  Without a
+# pin, `cargo install --git` resolves to HEAD-of-default-branch at
+# build time, but the cached layer reuses whatever HEAD was when the
+# layer was first built — which silently regresses any fix landed
+# upstream since.  Pinning makes the cargo install RUN line unique
+# per SHA, so changing the pin invalidates the cache deterministically.
+#
+# Bump procedure: update NEXUS_VFS_REV to the latest nexus-vfs main
+# commit you want to adopt.  Pin should always include #23 (ZoneManager
+# async wrappers) and #25 (leader-detection SSOT) — both required for
+# the L1 cross-machine federation read milestone to pass.
+ARG NEXUS_VFS_REV=621c5c02b783270b1b3bca7376cbb3a77b750776
+RUN cargo install \
+    --git https://github.com/nexi-lab/nexus-vfs \
+    --rev "${NEXUS_VFS_REV}" \
+    --bin nexusd-cluster \
+    nexus-cluster
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

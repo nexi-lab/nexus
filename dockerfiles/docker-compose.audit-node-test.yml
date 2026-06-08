@@ -1,33 +1,129 @@
-# Audit-Node E2E Test — federation + a dedicated audit-node learner
+# Audit-Node E2E Test — self-contained federation cluster + audit-node
 # =========================================================================
-# Stacks on top of `docker-compose.dynamic-federation-test.yml` to add the
-# audit-node — a federation peer that joins production zones as a raft
-# learner and runs the AuditNode collect/gather loop.  The voter set
-# (nexus-1, nexus-2, witness) and the SSE mock are inherited verbatim
-# from the federation compose; this file only adds the audit-node
-# service + the test runner that exercises the long-workflow audit
-# integration test.
+# Previously stacked on top of docker-compose.dynamic-federation-test.yml,
+# which was deleted in the same PR that introduced
+# docker-compose.federation-runbook.yml.  The audit-node suite uses a
+# different topology and zone set (corp / family production zones, plus
+# an audit-node learner), so it gets its own self-contained compose
+# rather than re-purposing the runbook one.
 #
 # Usage:
-#   docker compose \
-#     -f dockerfiles/docker-compose.dynamic-federation-test.yml \
-#     -f dockerfiles/docker-compose.audit-node-test.yml \
-#     up -d
-#   docker compose \
-#     -f dockerfiles/docker-compose.dynamic-federation-test.yml \
-#     -f dockerfiles/docker-compose.audit-node-test.yml \
+#   docker compose -f dockerfiles/docker-compose.audit-node-test.yml up -d
+#   docker compose -f dockerfiles/docker-compose.audit-node-test.yml \
 #     run --rm audit-test
-#
-# The audit-node container only joins the cluster *dynamically* (via
-# `federation_join_zone(as_learner=true)` invoked by the AuditNode
-# Python service inside the test runner) — it is intentionally NOT in
-# the voter set's NEXUS_PEERS so adding it does not perturb the
-# pre-existing federation tests.
 
 services:
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: nexus-audit-dragonfly
+    hostname: dragonfly
+    restart: unless-stopped
+    command: >
+      dragonfly
+      --maxmemory=256mb
+      --proactor_threads=1
+      --logtostderr
+      --cache_mode=true
+    expose:
+      - "6379"
+    volumes:
+      - audit_dragonfly_data:/data
+    networks:
+      - audit-nexus-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  nexus-1:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.nexusd-cluster
+    image: nexusd-cluster:latest
+    container_name: nexus-audit-node-1
+    hostname: nexus-1
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: nexus-1:2126
+      NEXUS_PEERS: "nexus-2:2126,witness:2126"
+      NEXUS_RAFT_TLS: "false"
+      NEXUS_BOOTSTRAP_NEW: "1"
+      NEXUS_BOOTSTRAP_MODE: "static"
+      RUST_LOG: info,nexus_raft=debug
+    volumes:
+      - audit_nexus1_data:/app/data
+    networks:
+      - audit-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  nexus-2:
+    image: nexusd-cluster:latest
+    container_name: nexus-audit-node-2
+    hostname: nexus-2
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: nexus-2:2126
+      NEXUS_PEERS: "nexus-1:2126,witness:2126"
+      NEXUS_RAFT_TLS: "false"
+      NEXUS_BOOTSTRAP_MODE: "static"
+      RUST_LOG: info,nexus_raft=debug
+    volumes:
+      - audit_nexus2_data:/app/data
+    networks:
+      - audit-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  witness:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-witness
+    image: nexus-raft-witness:latest
+    container_name: nexus-audit-witness
+    hostname: witness
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
+      NEXUS_DATA_DIR: /home/nexus/data
+      RUST_LOG: info,nexus_raft=debug
+    volumes:
+      - audit_witness_data:/home/nexus/data
+    networks:
+      - audit-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
   audit-node:
     image: nexus-fullnode:latest
-    container_name: nexus-dyn-audit-node
+    container_name: nexus-audit-node
     hostname: audit-node
     restart: unless-stopped
     depends_on:
@@ -42,34 +138,22 @@ services:
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
       NEXUS_PROFILE: cluster
-
-      # The audit-node runs as a single-node degenerate cluster of
-      # *itself* until the test suite calls
-      # federation_join_zone(production_zone, as_learner=true) — at
-      # which point it joins the production raft groups dynamically.
-      # Sharing a peer list with the voter set would auto-bootstrap
-      # this node as a 4th voter and break the existing 3-voter
-      # tests.
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: audit-node:2126
       NEXUS_PEERS: "audit-node:2126"
       NEXUS_RAFT_TLS: "false"
       NEXUS_GRPC_BIND_ALL: "true"
-
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
       NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
       NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
-
-      # Marks this node as the audit collector — `audit-test` below
-      # uses this to know which container hosts the AuditNode loop.
       NEXUS_AUDIT_NODE_ROLE: "true"
       NEXUS_AUDIT_NODE_ZONE_ID: "audit"
     volumes:
-      - dyn_audit_node_data:/app/data
+      - audit_audit_node_data:/app/data
     networks:
-      - dyn-nexus-network
+      - audit-nexus-network
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/ready"]
       interval: 5s
@@ -77,14 +161,9 @@ services:
       retries: 24
       start_period: 30s
 
-  # =========================================================================
-  # E2E Test Runner — audit-node long-workflow tests.  Inherits the
-  # `dyn-nexus-network` network from the federation compose and reaches
-  # every node by hostname (nexus-1, nexus-2, audit-node).
-  # =========================================================================
   audit-test:
     image: nexus-fullnode:latest
-    container_name: nexus-dyn-audit-test
+    container_name: nexus-audit-test
     profiles:
       - run
     working_dir: /app
@@ -103,9 +182,6 @@ services:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /app/src
       PYTEST_ADDOPTS: "-o cache_dir=/tmp/.pytest_cache"
-      # The skip guard inside test_federation_audit.py only enables
-      # the live test when this is set — keeps the test silent in the
-      # host-side pytest pass.
       NEXUS_DOCKER_E2E: "1"
     command: >
       bash -c '
@@ -118,8 +194,21 @@ services:
         python -m pytest tests/e2e/docker/test_federation_audit.py -v --no-header -o "addopts=" --timeout=300
       '
     networks:
-      - dyn-nexus-network
+      - audit-nexus-network
+
+networks:
+  audit-nexus-network:
+    name: nexus_audit-nexus-network
+    driver: bridge
 
 volumes:
-  dyn_audit_node_data:
-    name: nexus-dyn-audit-node-data
+  audit_nexus1_data:
+    name: nexus-audit-node1-data
+  audit_nexus2_data:
+    name: nexus-audit-node2-data
+  audit_witness_data:
+    name: nexus-audit-witness-data
+  audit_audit_node_data:
+    name: nexus-audit-node-data
+  audit_dragonfly_data:
+    name: nexus-audit-dragonfly-data

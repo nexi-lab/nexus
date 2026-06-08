@@ -973,25 +973,41 @@ class TestRunbookOperatorErgonomics:
         self,
         topology: RunbookTopology,
     ) -> None:
-        """`--bootstrap-mode static` on a data dir that already holds
-        a `root` zone must fail with the documented error.
+        """`--bootstrap-mode static` + NEXUS_BOOTSTRAP_NEW=1 on a data
+        dir that already holds a `root` zone must fail with the
+        documented validator error.
 
-        Pins the PR #4028 validator state x flag rejection.  Probes
-        against the joiner's existing /app/data, which already has a
-        root zone from the joiner's own first-boot static topology
-        (no joined_cluster fixture needed — joiner's `.node_id` + root
-        zone are present from compose's `up -d` step).
+        Pins the PR #4028 validator state-x-flag rejection.  Runbook
+        troubleshooting says:
+          `bootstrap mode = static, but data dir already holds a
+          'root' zone` | Re-bootstrapping a non-empty data dir | …
+        The "re-bootstrapping" trigger is NEXUS_BOOTSTRAP_NEW=1 — that
+        env tells the daemon "I want to bootstrap a fresh cluster
+        here", which the validator must reject when the data dir is
+        already non-empty (otherwise the operator silently corrupts a
+        live cluster).  Without that env, `static` alone on a non-
+        empty dir is a benign restart-with-explicit-mode and the
+        validator correctly allows it (seen in CI:
+        `bootstrap mode validated mode="static" bootstrap_new=false
+        data_dir_has_root=true`).
+
+        Probes against the joiner's existing /app/data which already
+        has a root zone from the joiner's own first-boot static
+        topology — no joined_cluster fixture needed.
         """
-        from tests.e2e.docker.runbook_helpers import docker_exec
+        from tests.e2e.docker.runbook_helpers import docker_exec, uid
 
+        suffix = uid()
         result = docker_exec(
             topology.joiner_container,
             [
+                "env",
+                "NEXUS_BOOTSTRAP_NEW=1",
                 "timeout",
                 "5",
                 "nexusd-cluster",
                 "--bind-addr",
-                "0.0.0.0:2199",
+                f"0.0.0.0:21{suffix[:2]}",
                 "--data-dir",
                 "/app/data",
                 "--no-tls",
@@ -1002,18 +1018,17 @@ class TestRunbookOperatorErgonomics:
         )
         combined = result.stdout + result.stderr
         assert result.rc != 0, (
-            "`nexusd-cluster --bootstrap-mode static` on a non-empty data dir "
-            "did NOT fail — PR #4028 state x flag validator was bypassed."
-            f"\nstdout/stderr: {combined[-2000:]}"
+            "`nexusd-cluster --bootstrap-mode static` + NEXUS_BOOTSTRAP_NEW=1 "
+            "on a non-empty data dir did NOT fail — PR #4028 state-x-flag "
+            f"validator was bypassed.\nstdout/stderr: {combined[-2000:]}"
         )
-        assert "static" in combined.lower() and (
-            "already" in combined.lower()
-            or "non-empty" in combined.lower()
-            or "exist" in combined.lower()
+        lowered = combined.lower()
+        assert "static" in lowered and (
+            "already" in lowered or "non-empty" in lowered or "exist" in lowered
         ), (
             "validator error message did not match runbook's documented "
             "shape (`bootstrap mode = static, but data dir already holds a "
-            "'root' zone`).\nstdout/stderr: {combined[-2000:]}"
+            f"'root' zone`).\nstdout/stderr: {combined[-2000:]}"
         )
 
     def test_self_in_peers_rejected_at_parse(

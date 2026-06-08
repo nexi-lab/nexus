@@ -50,7 +50,7 @@ class _GcsLikeBackend:
         self,
         path: str,  # noqa: ARG002
         expires_in: int = 3600,  # noqa: ARG002
-        context=None,  # noqa: ARG002
+        context: object = None,  # noqa: ARG002
     ) -> dict[str, object]:
         raise AssertionError("read-url must not call a method-less (non-S3) signer")
 

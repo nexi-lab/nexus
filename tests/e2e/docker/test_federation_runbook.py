@@ -1020,10 +1020,18 @@ class TestRunbookOperatorErgonomics:
             ],
             timeout=20,
         )
-        combined = result.stdout + result.stderr
+        import re
+
+        # tracing's structured fields embed ANSI escape codes between
+        # every key/value when stdout is a tty (which `docker exec`
+        # makes it).  Strip them before substring checks so the
+        # validator-bypass signature ("mode=\"static\" bootstrap_new=true
+        # data_dir_has_root=true") actually matches as written.
+        combined = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
         lowered = combined.lower()
         validator_accepted = (
-            'bootstrap mode validated mode="static"' in combined
+            "bootstrap mode validated" in combined
+            and 'mode="static"' in combined
             and "bootstrap_new=true" in combined
             and "data_dir_has_root=true" in combined
         )

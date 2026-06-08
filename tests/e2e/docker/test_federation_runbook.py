@@ -358,6 +358,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         rd = vfs_read(
@@ -423,6 +424,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         rd = vfs_read(
@@ -486,6 +488,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         rd = vfs_read(
@@ -569,6 +572,7 @@ class TestJoinerCrossNodeReadRunbook:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         founder_stat = vfs_stat(
@@ -658,6 +662,7 @@ class TestRestartReplay:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         # Restart joiner — compose-managed daemon comes back up with
@@ -739,6 +744,7 @@ class TestRestartReplay:
             "sharedzone",
             api_key=api_key,
             timeout=60,
+            probe_path=path,
         )
 
         docker_restart(topology.joiner_container)

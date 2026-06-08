@@ -77,3 +77,8 @@ pub mod matrix_adapter;
 // (Python), sudowork-2 (TypeScript).
 #[cfg(feature = "service-password-vault")]
 pub mod password_vault;
+// GenericSecretsService — namespace:key encrypted KV store with versioning,
+// soft-delete, and batch operations. Shares AES-256-GCM crypto and kernel
+// mount with PasswordVaultService. Loaded as part of the vault cdylib plugin.
+#[cfg(feature = "service-generic-secrets")]
+pub mod generic_secrets;

@@ -35,6 +35,10 @@ service-matrix-adapter = ["dep:axum", "dep:base32", "dep:tower"]
 # for the Fernet-equivalent envelope on encrypted blob columns
 # (server-side master key).
 service-password-vault = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost", "dep:hmac", "dep:sha1", "dep:base32"]
+# GenericSecretsService — namespace:key encrypted KV with versioning +
+# batch ops. Shares AES-256-GCM crypto with password-vault. Loaded as
+# part of the vault cdylib plugin alongside PasswordVaultService.
+service-generic-secrets = ["service-password-vault"]
 
 [dependencies]
 contracts = { workspace = true }

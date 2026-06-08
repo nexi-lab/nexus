@@ -178,7 +178,7 @@ Windows extra: open a Developer Command Prompt for VS Build Tools first so `cl.e
 
 Key contract rules:
 
-* **`--bootstrap-mode` is required when federation is in play** (PR #4028).  Pass `static` for first boot, `restart` for resuming persisted state, `dynamic` only for runtime-API-driven setups.
+* **`--bootstrap-mode` is required when federation is in play** (PR #4028).  Pass `static` for env-driven topology (`NEXUS_FEDERATION_*` carry the cluster shape, used across first boot and subsequent container restarts), `restart` for operator-managed resume where persisted ConfState is the source of truth (no env needed), `dynamic` for runtime-API-driven setups.
 * **`--peers` lists only the *other* machines.**  Self-listed peers are rejected at parse (PR #4014).
 * **`NEXUS_HOSTNAME` should be the node's Tailscale IP** for unambiguous self-detection across machines.
 * **`NEXUS_DATA_DIR` and `--data-dir` must point to the same directory.**
@@ -354,7 +354,7 @@ The choices below are stable invariants of the design.  Each ties back to a spec
 
 * **Node IDs are opaque random `u64`.**  Minted on first boot, persisted to `<data-dir>/.node_id` (PR #3996).  Wipe-rejoin mints a fresh ID; the old ID stays in ConfState as a ghost.  Hostname is *not* part of the identity — that's what lets a single host re-register cleanly after disk wipe.
 * **`--peers` lists only the *other* nodes** (PR #4014).  Self-in-peers is a parse error.  Self enters the cluster through `create_zone` (founder path) or AddNode-on-leader (joiner path), never via env.
-* **Bootstrap mode is explicit** (PR #4028).  Operator must declare `static` / `restart` / `dynamic` at boot.  A validator runs at startup and rejects state × flag combinations that don't match the declared mode (e.g. `restart` on an empty data dir, `static` on a non-empty one).
+* **Bootstrap mode is explicit** (PR #4028).  Operator declares `static` / `restart` / `dynamic` at boot.  A validator at startup rejects state × flag combinations that contradict the declared mode (e.g. `restart` on an empty data dir, or `dynamic` on a non-empty one); `static` accepts any data-dir state by design so the same env safely covers both first boot and container restart, with `bootstrap_or_join_zone` resuming from persisted ConfState when it finds one.
 * **DT_MOUNT entries live in the *parent* zone's raft state.**  Both `share --mount-at` and `join` write DT_MOUNT via `propose_set_metadata` on the parent zone (PR #4293).  Each node has its own local root zone with its own DT_MOUNT entries — symmetric semantics either side; nodes don't need to share root-zone membership.
 * **Federation cross-node read uses a two-Arc round-trip** (PR #4294).
   1. Write side records `last_writer_address = <self_address>` on every entry's metadata.
@@ -389,8 +389,8 @@ The choices below are stable invariants of the design.  Each ties back to a spec
 | Symptom | Cause | Fix |
 |---|---|---|
 | `NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation` | Missing `--bootstrap-mode` flag | Pass `static`, `restart`, or `dynamic` |
-| `bootstrap mode = static, but data dir already holds a 'root' zone` | Re-bootstrapping a non-empty data dir | Pass `--bootstrap-mode restart`, or wipe the data dir |
-| `bootstrap mode = dynamic forbids NEXUS_BOOTSTRAP_NEW / NEXUS_PEERS` | Mode mismatch | Drop the env/flag or switch to `static` |
+| `bootstrap mode = dynamic, but data dir already holds a 'root' zone` | Dynamic mode requires a fresh data dir; persisted state is reserved for static or restart | Pass `--bootstrap-mode restart` to resume persisted state, or wipe the data dir to start over |
+| `bootstrap mode = dynamic forbids NEXUS_BOOTSTRAP_NEW / NEXUS_PEERS` | Dynamic mode is runtime-API driven; cluster shape arrives via `share` / `join` RPCs, not env | Drop the env/flag, or switch to `--bootstrap-mode static` |
 | `bootstrap mode = restart, but data dir is empty` | First-time boot with `restart` | Use `static` for the first boot |
 | `bootstrap mode = restart forbids NEXUS_PEERS / --peers` | Passing peers under `restart` | Drop the flag — persisted ConfState carries the address book |
 

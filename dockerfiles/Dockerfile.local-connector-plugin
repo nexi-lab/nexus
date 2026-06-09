@@ -50,7 +50,14 @@ RUN cargo build --release -p nexus-local-connector
 FROM nexusd-cluster:latest
 
 USER root
-RUN mkdir -p /plugins && chown nexus:nexus /plugins
+# `/plugins` is where --plugin-dir scans for dylibs to load.
+# `/host/tasks` is the canonical LocalConnector mount root — the
+# compose binds a named volume there.  Pre-creating the directory in
+# the image (rather than letting docker mint it on first volume
+# attach) means docker copies the image's perms into the volume on
+# first start, so the daemon's `nexus` user owns it and can read /
+# write through LocalConnector + `docker exec` from the test runner.
+RUN mkdir -p /plugins /host/tasks && chown nexus:nexus /plugins /host/tasks
 USER nexus
 
 COPY --from=builder --chown=nexus:nexus \

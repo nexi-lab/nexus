@@ -3,9 +3,10 @@ resolver = "2"
 members = [
     # nexus-owned service modules (peer crate of nexus-vfs kernel).
     "rust/services",
-    # nexus-vault — cdylib plugin for PasswordVaultService, loaded by
-    # nexusd-cluster via --plugin-dir.
-    "rust/profiles/vault",
+    # nexus-vault — cdylib service plugin for PasswordVaultService,
+    # loaded by nexusd-cluster via --plugin-dir.  Sits next to the
+    # service crate source it wraps (rust/services/src/password_vault/).
+    "rust/services/vault",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]

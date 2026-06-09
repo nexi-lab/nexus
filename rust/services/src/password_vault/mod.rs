@@ -14,7 +14,7 @@
 //! it, and clients call `GenerateTotp` to get a current code.
 //!
 //! Loaded as a dylib plugin by `nexusd-cluster` via `--plugin-dir`.
-//! The vault profile (`rust/profiles/vault/`) compiles to a `.so` /
+//! The vault dylib (`rust/services/vault/`) compiles to a `.so` /
 //! `.dylib` and registers through the `declare_service_plugin!` macro.
 
 pub mod proto {

@@ -19,14 +19,16 @@ If you only need the conceptual picture without the operator commands, jump to [
 
 ## Repo split (since #4259, 2026-06-03)
 
-Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends`, `raft`, `profiles/cluster`, `plugin-abi`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, `profiles/vault`) and consumes the kernel tier as git dependencies in `Cargo.toml`.  The vault profile compiles to a cdylib plugin loaded by `nexusd-cluster` via `--plugin-dir`.
+Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends` source, `raft`, `profiles/cluster`, `plugin-abi`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, including service-plugin dylib sub-crates such as `services/vault/`) and the driver-plugin dylib sub-crates under `backends/` (`backends/local-connector/`, …), and consumes the kernel tier as git dependencies in `Cargo.toml`.  Each plugin dylib crate compiles to a cdylib loaded by `nexusd-cluster` via `--plugin-dir`.
+
+Directory pairing tracks the plugin ABI: service-kind plugins (`declare_service_plugin!`) sit under `rust/services/<name>/`; driver-kind plugins (`declare_driver_plugin!`) sit under `rust/backends/<name>/`.  `rust/backends/` is shared with nexus-vfs at the directory level — nexus-vfs owns the source crate at the root, nexus owns the dylib sub-crates underneath.  The boundary gates below enforce that split mechanically.
 
 Two CI gates enforce the split:
 
 | Repo | Workflow | Fails on |
 |------|----------|----------|
-| nexus | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/contracts`, `rust/lib`, `rust/transport`, `rust/kernel`, `rust/backends`, `rust/raft`, `rust/profiles/cluster`, `proto/` |
-| nexus-vfs | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/services`, `rust/profiles/vault` |
+| nexus | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/contracts`, `rust/lib`, `rust/transport`, `rust/kernel`, `rust/backends/Cargo.toml` or `rust/backends/src/` (the kernel-tier source crate), `rust/raft`, `rust/profiles/cluster`, `proto/` |
+| nexus-vfs | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/services`, `rust/backends/local-connector` |
 
 `nexusd-cluster` is built from **nexus-vfs**.  Federation behaviour fixes land there; this `nexus` repo only updates the git-dep SHA when it needs kernel-tier changes.
 

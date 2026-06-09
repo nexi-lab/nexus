@@ -51,7 +51,7 @@ services:
           --data-dir "$$DATA_DIR" \
           --no-tls \
           --plugin-dir /plugins \
-          --mount-driver "local-connector:my-tasks:/tasks:{\"local_root\":\"/host/tasks\"}" \
+          --mount-driver "local-connector:root:/tasks:{\"local_root\":\"/host/tasks\"}" \
           --bootstrap-mode "$$MODE"
     command: []
     environment:
@@ -95,10 +95,11 @@ services:
       NEXUS_CC_TASKS_E2E: "1"
       NEXUS_FOUNDER_GRPC: founder:2126
       NEXUS_FOUNDER_CONTAINER: nexus-cc-tasks-founder
-      # Zone the operator mounted LocalConnector into; tests pass it
-      # through to `vfs_stat`'s `zone_id` parameter where the
-      # zone-scoped routing requires it.
-      NEXUS_LOCAL_CONNECTOR_ZONE: my-tasks
+      # Zone the operator mounted LocalConnector into.  Root zone is
+      # the single-canonical node-local case — tests pass the empty
+      # string as `vfs_stat`'s `zone_id` so the routing starts in
+      # root and same-canonical resolution finds the mount.
+      NEXUS_LOCAL_CONNECTOR_ZONE: root
       # VFS path prefix the operator gave to `--mount-driver`.  Tests
       # compose this with relative file names to build full gRPC paths.
       NEXUS_LOCAL_CONNECTOR_VFS_ROOT: /tasks

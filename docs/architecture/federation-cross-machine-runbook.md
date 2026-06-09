@@ -285,10 +285,10 @@ cp /path/to/libnexus_local_connector.so ./plugins/
 target/release/nexusd-cluster \
   ... \
   --plugin-dir ./plugins \
-  --mount-driver 'local-connector:my-tasks:/tasks:{"local_root":"/home/me/.claude/tasks"}'
+  --mount-driver 'local-connector:root:/tasks:{"local_root":"/home/me/.claude/tasks"}'
 ```
 
-`my-tasks` is the zone the mount lives in.  Any non-root zone is accepted — single-voter when only this node uses the mount, multi-voter when the same zone is also joined by peers.  Reads and writes through the VFS gRPC surface go straight to the host fs:
+The second segment names the zone the mount lives in.  `root` is the canonical single-node case (same-canonical routing keeps the mount strictly local).  A separate raft zone is the form operators use when the mount needs to compose with future cross-node operator-mount substrate.  Reads and writes through the VFS gRPC surface go straight to the host fs:
 
 ```bash
 grpcurl -plaintext \

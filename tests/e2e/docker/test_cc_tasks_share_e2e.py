@@ -61,13 +61,14 @@ def api_key() -> str:
 
 @pytest.fixture(scope="module")
 def ready_node(topology: CcTasksTopology, api_key: str) -> None:
-    """Gate on the daemon's `--mount-driver` loop having installed the DT_MOUNT."""
+    """Gate on the daemon's `--mount-driver` loop having installed the mount."""
     runbook_helpers.wait_healthy([topology.founder_grpc])
-    # `vfs_stat` enters through root zone (zone_id default) so the
-    # routing exercises the DT_MOUNT at /tasks → my-tasks that the
-    # mount loop installs.  `found=False` is fine — what we gate on
-    # is the absence of a routing error.  An `"error"` response is
-    # the wedged-path signal that the DT_MOUNT hasn't landed yet.
+    # `vfs_stat` enters through root zone (zone_id default), so the
+    # routing exercises the LocalConnector mount at /tasks the
+    # `--mount-driver` loop installs.  `found=False` is fine — what
+    # we gate on is the absence of a routing error.  An `"error"`
+    # response is the wedged-path signal that the mount hasn't
+    # landed yet.
     deadline = time.time() + 60
     while time.time() < deadline:
         stat = runbook_helpers.vfs_stat(
@@ -80,7 +81,7 @@ def ready_node(topology: CcTasksTopology, api_key: str) -> None:
             return
         time.sleep(0.5)
     pytest.fail(
-        f"`my-tasks` DT_MOUNT never became reachable on {topology.founder_grpc} "
+        f"LocalConnector mount never became reachable on {topology.founder_grpc} "
         f"within 60s — did `--mount-driver` finish at boot?"
     )
 

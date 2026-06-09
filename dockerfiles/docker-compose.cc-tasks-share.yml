@@ -1,0 +1,129 @@
+# cc-tasks-share E2E — LocalConnector dylib through the VFS
+# =========================================================================
+# Single compose for `tests/e2e/docker/test_cc_tasks_share_e2e.py`.
+#
+# Topology: one node (`founder`) running the local-connector dylib in
+# a single-voter `my-tasks` zone.  This validates the dylib + driver-
+# plugin runtime path at the operator-syscall surface:
+#
+#   1. The dylib loads via `--plugin-dir`.
+#   2. `--mount-driver local-connector:my-tasks:/tasks:{...}` mounts the
+#      dylib into the operator-named zone after the federation init
+#      gate flips, so `kernel.mount` can create-on-mount the
+#      single-voter `my-tasks` zone.
+#   3. `vfs_write` through gRPC routes to the LocalConnector backend;
+#      bytes land at the configured `local_root` on the host fs.
+#   4. `vfs_read` returns those bytes; `docker exec cat` confirms host-fs
+#      SSOT (the LocalConnector's defining property).
+#
+# Cross-node sharing — projecting one node's `/host/tasks/` into a
+# peer's view of the federated namespace — needs cross-node operator-
+# mount substrate that is out of scope here.  The operator recipe and
+# the deferred-substrate boundary are documented at
+# `docs/architecture/federation-cross-machine-runbook.md` §3e.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d founder
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml down -v
+
+services:
+  founder:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.local-connector-plugin
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-founder
+    hostname: founder
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+        if [ -f "$$DATA_DIR/.node_id" ]; then
+          MODE=restart
+        else
+          MODE=static
+        fi
+        exec nexusd-cluster \
+          --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+          --data-dir "$$DATA_DIR" \
+          --no-tls \
+          --plugin-dir /plugins \
+          --mount-driver "local-connector:root:/tasks:{\"local_root\":\"/host/tasks\"}" \
+          --bootstrap-mode "$$MODE"
+    command: []
+    environment:
+      NEXUS_HOSTNAME: founder
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      RUST_LOG: info,nexus_raft=info
+    volumes:
+      - cc_tasks_founder_data:/app/data
+      - cc_tasks_founder_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-net
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-cc-tasks-test
+    profiles:
+      - run
+    depends_on:
+      founder:
+        condition: service_healthy
+    # working_dir, PYTHONPATH, PYTEST_ADDOPTS inherited from
+    # Dockerfile.federation-test — the runner image is shared with the
+    # federation-runbook suite (same pytest + grpc + docker SDK stack).
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NEXUS_CC_TASKS_E2E: "1"
+      NEXUS_FOUNDER_GRPC: founder:2126
+      NEXUS_FOUNDER_CONTAINER: nexus-cc-tasks-founder
+      # Zone the operator mounted LocalConnector into.  Root zone is
+      # the single-canonical node-local case — tests pass the empty
+      # string as `vfs_stat`'s `zone_id` so the routing starts in
+      # root and same-canonical resolution finds the mount.
+      NEXUS_LOCAL_CONNECTOR_ZONE: root
+      # VFS path prefix the operator gave to `--mount-driver`.  Tests
+      # compose this with relative file names to build full gRPC paths.
+      NEXUS_LOCAL_CONNECTOR_VFS_ROOT: /tasks
+    networks:
+      - nexus-cc-tasks-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_cc_tasks_share_e2e.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-cc-tasks-net:
+    name: nexus-cc-tasks-net
+    driver: bridge
+
+volumes:
+  cc_tasks_founder_data:
+    name: nexus-cc-tasks-founder-data
+  # `cc_tasks_founder_hostfs` simulates the operator's local
+  # `~/.claude/tasks/` (or any host-fs subtree LocalConnector projects
+  # into the VFS).  The compose mounts it at `/host/tasks` — the path
+  # the `--mount-driver` config's `local_root` points at.
+  cc_tasks_founder_hostfs:
+    name: nexus-cc-tasks-founder-hostfs

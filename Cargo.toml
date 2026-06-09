@@ -3,9 +3,15 @@ resolver = "2"
 members = [
     # nexus-owned service modules (peer crate of nexus-vfs kernel).
     "rust/services",
-    # nexus-vault — cdylib plugin for PasswordVaultService, loaded by
-    # nexusd-cluster via --plugin-dir.
-    "rust/profiles/vault",
+    # nexus-vault — cdylib service plugin for PasswordVaultService,
+    # loaded by nexusd-cluster via --plugin-dir.  Sits next to the
+    # service crate source it wraps (rust/services/src/password_vault/).
+    "rust/services/vault",
+    # nexus-local-connector — cdylib driver plugin that exposes a
+    # host filesystem subtree through the VFS.  Loaded by
+    # nexusd-cluster via --plugin-dir; mounted via
+    # `--mount-driver local-connector:<vfs-path>:<config-json>`.
+    "rust/backends/local-connector",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]
@@ -13,13 +19,16 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs" }
+# Pinned at the nexus-vfs main commit that landed #35 (driver-plugin
+# ABI + --mount-driver CLI).  Bump alongside the rest of nexus-vfs
+# updates when a downstream change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243deb686fa32471b0381aec3c72f262cd624a5f" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

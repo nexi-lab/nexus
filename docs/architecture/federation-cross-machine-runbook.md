@@ -19,14 +19,16 @@ If you only need the conceptual picture without the operator commands, jump to [
 
 ## Repo split (since #4259, 2026-06-03)
 
-Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends`, `raft`, `profiles/cluster`, `plugin-abi`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, `profiles/vault`) and consumes the kernel tier as git dependencies in `Cargo.toml`.  The vault profile compiles to a cdylib plugin loaded by `nexusd-cluster` via `--plugin-dir`.
+Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends` source, `raft`, `profiles/cluster`, `plugin-abi`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, including service-plugin dylib sub-crates such as `services/vault/`) and the driver-plugin dylib sub-crates under `backends/` (`backends/local-connector/`, …), and consumes the kernel tier as git dependencies in `Cargo.toml`.  Each plugin dylib crate compiles to a cdylib loaded by `nexusd-cluster` via `--plugin-dir`.
+
+Directory pairing tracks the plugin ABI: service-kind plugins (`declare_service_plugin!`) sit under `rust/services/<name>/`; driver-kind plugins (`declare_driver_plugin!`) sit under `rust/backends/<name>/`.  `rust/backends/` is shared with nexus-vfs at the directory level — nexus-vfs owns the source crate at the root, nexus owns the dylib sub-crates underneath.  The boundary gates below enforce that split mechanically.
 
 Two CI gates enforce the split:
 
 | Repo | Workflow | Fails on |
 |------|----------|----------|
-| nexus | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/contracts`, `rust/lib`, `rust/transport`, `rust/kernel`, `rust/backends`, `rust/raft`, `rust/profiles/cluster`, `proto/` |
-| nexus-vfs | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/services`, `rust/profiles/vault` |
+| nexus | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/contracts`, `rust/lib`, `rust/transport`, `rust/kernel`, `rust/backends/Cargo.toml` or `rust/backends/src/` (the kernel-tier source crate), `rust/raft`, `rust/profiles/cluster`, `proto/` |
+| nexus-vfs | `.github/workflows/repo-boundary.yml` | Re-introducing any of `rust/services`, `rust/backends/local-connector` |
 
 `nexusd-cluster` is built from **nexus-vfs**.  Federation behaviour fixes land there; this `nexus` repo only updates the git-dep SHA when it needs kernel-tier changes.
 
@@ -269,6 +271,35 @@ sleep 8
 ```
 
 Under `restart`, do **not** pass `--peers`, `--bootstrap-new`, `NEXUS_FEDERATION_ZONES`, or `NEXUS_FEDERATION_MOUNTS` — the persisted ConfState and DT_MOUNT entries are the source of truth.
+
+### Step 3e — Expose host paths via LocalConnector
+
+The `local-connector` driver dylib projects a host filesystem subtree (e.g. `~/.claude/tasks/`) into the VFS at an operator-named path.  Reads and writes through the VFS surface flow through to the configured `local_root` on the host fs — the LocalConnector's defining SSOT property.
+
+Drop the dylib into `NEXUS_PLUGIN_DIR` and mount it at boot:
+
+```bash
+mkdir -p ./plugins
+cp /path/to/libnexus_local_connector.so ./plugins/
+
+target/release/nexusd-cluster \
+  ... \
+  --plugin-dir ./plugins \
+  --mount-driver 'local-connector:root:/tasks:{"local_root":"/home/me/.claude/tasks"}'
+```
+
+The second segment names the zone the mount lives in.  `root` is the canonical single-node case (same-canonical routing keeps the mount strictly local).  A separate raft zone is the form operators use when the mount needs to compose with future cross-node operator-mount substrate.  Reads and writes through the VFS gRPC surface go straight to the host fs:
+
+```bash
+grpcurl -plaintext \
+  -d '{"path":"/tasks/session-foo/1.json","content":"..."}' \
+  <addr>:2126 \
+  nexus.grpc.vfs.NexusVFSService/Write
+```
+
+The CI regression for this surface lives in `tests/e2e/docker/test_cc_tasks_share_e2e.py`.  The `--mount-driver` argument's grammar is documented in `KERNEL-ARCHITECTURE.md §10.4a`.
+
+**Cross-node host-fs sharing** — projecting node A's `/home/me/.claude/tasks/` into node B's view of the federated namespace — needs cross-node operator-mount substrate (DT_EXTERNAL_STORAGE forwarding for operator-installed driver mounts).  Until that lands, cross-machine `cc tasks list` reads the way the operator workflow envisions it run via the FUSE service plugin and a shared zone whose backend is sharedzone's native CAS, not the LocalConnector on each peer.
 
 ### Step 4 — Smoke (cross-machine byte-exact read)
 

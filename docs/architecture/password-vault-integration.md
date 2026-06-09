@@ -94,7 +94,7 @@ The service logic lives at `rust/services/src/password_vault/`.
   [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §6.1.
 - Storage uses kernel syscalls through a private Kernel instance
   with a `PathLocalBackend` for persistent content.
-- The vault profile (`rust/profiles/vault/`) compiles to a cdylib
+- The vault dylib (`rust/services/vault/`) compiles to a cdylib
   that uses `nexus-plugin-abi`'s `declare_service_plugin!` macro.
 - Audit is wired through `kernel::Kernel::register_native_hook`
   with `AccessContext`-tagged events.

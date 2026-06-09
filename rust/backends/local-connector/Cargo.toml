@@ -1,0 +1,33 @@
+[package]
+name = "nexus-local-connector"
+version = "0.1.0"
+edition = "2021"
+description = "Nexus local-connector plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Wraps `backends::storage::local_connector::LocalConnectorBackend` as a driver dylib so operators can mount a host filesystem path through the kernel's normal VFS surface (and, by extension, through federation)."
+authors = ["Nexus Team"]
+publish = false
+
+[lib]
+# `cdylib` is what `nexusd-cluster --plugin-dir` dlopens.  `rlib` is
+# kept alongside so the integration test in `src/lib.rs` can exercise
+# the same dispatch path without going through dlopen.
+name = "nexus_local_connector"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Plugin ABI — stable C ABI contract for dylib plugins.  Source of
+# `declare_driver_plugin!`.
+nexus-plugin-abi = { workspace = true }
+# LocalConnectorBackend — feature-gated so this dylib is the only
+# binary in the workspace pulling its compile-time cost.  The cluster
+# binary stays slim (it does NOT enable `driver-local-connector`).
+backends = { workspace = true, features = ["driver-local-connector"] }
+# Kernel — `OperationContext` is required to call `LocalConnectorBackend::write_content` /
+# `read_content` from the driver's read/write callbacks (the backend's
+# `ObjectStore` trait signatures take `&OperationContext`).
+kernel = { workspace = true }
+# JSON config parsing inside the create callback.
+serde_json = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

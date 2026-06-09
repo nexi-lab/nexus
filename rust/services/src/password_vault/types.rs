@@ -54,7 +54,7 @@ pub(crate) struct VaultEntryPlaintext {
 
 /// Errors local to the password_vault service. Converted to
 /// `tonic::Status` at the RPC boundary via the `From` impl below.
-/// Public so binaries hosting the service (rust/profiles/vault/) can
+/// Public so binaries hosting the service (rust/services/vault/) can
 /// propagate them via anyhow without depending on internal types.
 #[derive(Debug, thiserror::Error)]
 pub enum PasswordVaultError {

@@ -1,0 +1,70 @@
+# Nexus Local-Connector Plugin Image
+#
+# Multi-stage build that produces a cluster image with the
+# `local-connector` cdylib pre-installed under `/plugins/`.  The
+# cluster binary's `--plugin-dir /plugins` flag picks it up at startup;
+# operators then mount it with `--mount-driver
+# local-connector:<vfs-path>:<config-json>`.
+#
+# Build:
+#   docker build -f dockerfiles/Dockerfile.local-connector-plugin \
+#     -t nexus-local-connector-plugin:latest .
+#
+# Stage 1 builds the dylib from this nexus repo against the same
+# nexus-vfs SHA that the cluster image was built against (workspace
+# Cargo.toml + Cargo.lock pin the rev).  Stage 2 starts FROM the cluster
+# image so the operator gets a single image with both the daemon and
+# the plugin in lockstep.
+
+# ---------- Builder ----------
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler: transport / tonic deps shell out to the system
+# protoc at compile time.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at
+# compile time (same as the cluster image).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy only what cargo needs to resolve the workspace + build the
+# dylib.  Source tree is just the workspace manifest + the two
+# in-tree crates (services + the local-connector crate itself); the
+# nexus-vfs deps are fetched by cargo from the git rev pinned in
+# Cargo.toml / Cargo.lock.
+COPY Cargo.toml Cargo.lock ./
+COPY rust ./rust
+
+# Release build picks up the workspace's rev-pin of nexus-vfs so the
+# ABI version baked into the dylib matches the kernel side exactly.
+RUN cargo build --release -p nexus-local-connector
+
+# ---------- Runtime ----------
+# nexusd-cluster:latest must be built first (Dockerfile.nexusd-cluster);
+# CI / compose set BUILDX_BUILDER=default so FROM resolves against the
+# local daemon image rather than reaching out to a registry.
+FROM nexusd-cluster:latest
+
+USER root
+# `/plugins` is where --plugin-dir scans for dylibs to load.
+# `/host/tasks` is the canonical LocalConnector mount root — the
+# compose binds a named volume there.  Pre-creating the directory in
+# the image (rather than letting docker mint it on first volume
+# attach) means docker copies the image's perms into the volume on
+# first start, so the daemon's `nexus` user owns it and can read /
+# write through LocalConnector + `docker exec` from the test runner.
+RUN mkdir -p /plugins /host/tasks && chown nexus:nexus /plugins /host/tasks
+USER nexus
+
+COPY --from=builder --chown=nexus:nexus \
+    /build/target/release/libnexus_local_connector.so \
+    /plugins/libnexus_local_connector.so
+
+# `--plugin-dir /plugins` becomes the daemon's default when callers
+# invoke this image; the cluster image keeps its existing CMD/ENTRYPOINT
+# but compose can override and pass `--plugin-dir /plugins` explicitly.
+ENV NEXUS_PLUGIN_DIR=/plugins

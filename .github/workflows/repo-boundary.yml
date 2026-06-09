@@ -1,14 +1,25 @@
 name: Repo Boundary
 
 # DRY between nexus + nexus-vfs.  Kernel-tier code (contracts / lib /
-# transport / kernel / backends / raft + profiles/cluster + proto)
-# was moved to nexus-vfs in #4259 and MUST NOT reappear here — the
-# dual-repo split was made specifically to prevent that drift.
+# transport / kernel / raft + profiles/cluster + proto, plus the
+# kernel-tier `backends` crate's source files) was moved to nexus-vfs
+# in #4259 and MUST NOT reappear here — the dual-repo split was made
+# specifically to prevent that drift.
+#
+# `rust/backends/` itself is a shared directory: nexus-vfs ships
+# kernel-tier backend SOURCE under it (a single `backends` crate;
+# blocked here by the kernel-source file gate below), and nexus ships
+# driver-kind backend DYLIB sub-crates that wrap those sources
+# (`rust/backends/local-connector/`, …) — same conceptual neighborhood,
+# different build artifact.  Service-kind plugin dylibs (vault, …)
+# live under `rust/services/<name>/` next to the service crate source
+# they wrap.
 #
 # Companion gate in nexus-vfs forbids the service-tier paths
-# (rust/services, rust/profiles/vault).  Either gate firing means the
-# cross-repo boundary is being violated; the fix is to move the
-# offending path back to the correct repo, not to disable the gate.
+# (rust/services, rust/backends/local-connector).
+# Either gate firing means the cross-repo boundary is being violated;
+# the fix is to move the offending path back to the correct repo, not
+# to disable the gate.
 
 on:
   pull_request:
@@ -23,12 +34,12 @@ jobs:
       - name: Forbid kernel-tier paths
         run: |
           set -e
+          # Whole-tree paths that belong exclusively in nexus-vfs.
           forbidden=(
             rust/contracts
             rust/lib
             rust/transport
             rust/kernel
-            rust/backends
             rust/raft
             rust/profiles/cluster
             proto
@@ -39,6 +50,14 @@ jobs:
               violations+=("$p")
             fi
           done
+          # `rust/backends/` itself is shared with nexus-vfs (see
+          # header).  Block only the kernel-tier backend SOURCE crate
+          # — its Cargo.toml + src/ at the directory root — so the
+          # nexus-side driver-dylib sub-crates
+          # (rust/backends/local-connector/, …) remain free to live here.
+          if [ -f "rust/backends/Cargo.toml" ] || [ -d "rust/backends/src" ]; then
+            violations+=("rust/backends/Cargo.toml or rust/backends/src/ (kernel-tier source crate)")
+          fi
           if [ "${#violations[@]}" -gt 0 ]; then
             for v in "${violations[@]}"; do
               echo "::error::path '$v' belongs in nexus-vfs (kernel-tier SSOT), not nexus"

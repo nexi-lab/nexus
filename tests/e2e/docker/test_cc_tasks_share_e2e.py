@@ -38,6 +38,20 @@ import pytest
 from tests.e2e.docker import cc_tasks_share_helpers, runbook_helpers
 from tests.e2e.docker.cc_tasks_share_helpers import CcTasksTopology
 
+# Run sequentially under a single xdist worker — every method shares
+# the same docker compose cluster.  Skip when not invoked from the
+# dedicated workflow that brings the cluster up (the same gate the
+# federation-runbook suite uses; the compose file's `test` service
+# sets `NEXUS_CC_TASKS_E2E=1`).
+pytestmark = [
+    pytest.mark.xdist_group("cc-tasks-share"),
+    pytest.mark.skipif(
+        os.environ.get("NEXUS_CC_TASKS_E2E") != "1",
+        reason="cc-tasks-share E2E suite needs the docker-compose.cc-tasks-share stack; "
+        "set NEXUS_CC_TASKS_E2E=1 to enable (cc-tasks-share-e2e.yml sets this automatically).",
+    ),
+]
+
 
 # ---------------------------------------------------------------------------
 # Module-scoped fixtures

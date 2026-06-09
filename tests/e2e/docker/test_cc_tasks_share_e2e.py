@@ -79,6 +79,12 @@ def joined_cluster(topology: CcTasksTopology, api_key: str) -> dict:
 
     runbook_helpers.docker_stop(topology.joiner_container)
 
+    # `network=` is explicit so the helper doesn't fall back to its
+    # `NEXUS_RUNBOOK_NETWORK` env default — runbook_helpers is shared
+    # SSOT for offline-join across this suite + the federation-runbook
+    # suite, and each compose owns its own network name.
+    # `cluster_image` falls through to NEXUS_CLUSTER_IMAGE env (which
+    # the compose sets), so no extra plumb needed.
     join_result = runbook_helpers.run_nexusd_cluster_join(
         target_container=topology.joiner_container,
         target_volume=joiner_volume,
@@ -87,6 +93,7 @@ def joined_cluster(topology: CcTasksTopology, api_key: str) -> dict:
         zone_id="sharedzone",
         local_path="/shared",
         hostname="joiner",
+        network=os.environ["NEXUS_CC_TASKS_NETWORK"],
         data_dir="/app/data",
         timeout=120,
     )

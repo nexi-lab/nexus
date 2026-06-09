@@ -1,0 +1,154 @@
+name: cc-tasks-share E2E
+
+# Runs `tests/e2e/docker/test_cc_tasks_share_e2e.py` against the
+# 2-voter sharedzone in `dockerfiles/docker-compose.cc-tasks-share.yml`.
+# The suite locks down the LocalConnector dylib + federation surface
+# underlying the Mac↔Win `cc tasks list` share milestone: each daemon
+# loads `libnexus_local_connector.so` via `--plugin-dir`, mounts
+# `/shared/cc-tasks/<hostname>` via `--mount-driver`, and the peer
+# reads the same bytes back through the sharedzone.
+#
+# Independent of federation-e2e.yml — that suite covers the lower-tier
+# 3-voter HA surface; this one covers the dylib + operator-mount surface
+# layered on top.  Both can fire on the same PR without overlap.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'dockerfiles/Dockerfile.local-connector-plugin'
+      - 'dockerfiles/docker-compose.cc-tasks-share.yml'
+      - 'dockerfiles/Dockerfile.nexusd-cluster'
+      - 'dockerfiles/Dockerfile.federation-test'
+      - 'rust/backends/local-connector/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tests/e2e/docker/test_cc_tasks_share_e2e.py'
+      - 'tests/e2e/docker/cc_tasks_share_helpers.py'
+      - 'tests/e2e/docker/runbook_helpers.py'
+      - '.github/workflows/cc-tasks-share-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cc-tasks-share-e2e:
+    name: cc-tasks-share E2E (Docker)
+    runs-on: ubuntu-latest
+    # Cold cache: cluster image build + dylib build + compose up + 4
+    # tests is ~10-12 min.  Warm gha cache shaves the rust compile.
+    # 25 min upper bound leaves margin for slow-building rust deps.
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect cc-tasks-share-relevant changes
+        id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          # Workflow file itself intentionally not in the regex —
+          # editing this YAML alone should not force a full Docker
+          # cluster build for an unrelated change.  Post-merge push
+          # paths above pick it up.
+          if grep -Eq '^(dockerfiles/(Dockerfile\.(local-connector-plugin|nexusd-cluster|federation-test)|docker-compose\.cc-tasks-share\.yml)|rust/backends/local-connector/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_cc_tasks_share_e2e|cc_tasks_share_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip cc-tasks-share E2E
+        if: steps.changes.outputs.run != 'true'
+        run: |
+          echo "No cc-tasks-share-relevant files changed; reporting required check without running suite."
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Build the production cluster image first, with a registry
+      # cache.  Both the local-connector-plugin image and the
+      # federation-test image FROM nexusd-cluster:latest, so they all
+      # stay on one buildx instance.
+      - name: Build nexusd-cluster image
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
+          load: true
+          tags: nexusd-cluster:latest
+          cache-from: type=gha,scope=cc-tasks-share-cluster
+          cache-to: type=gha,scope=cc-tasks-share-cluster,mode=max
+
+      - name: Build local-connector-plugin + federation-test images
+        if: steps.changes.outputs.run == 'true'
+        # BUILDX_BUILDER=default forces compose build to use the
+        # docker-daemon builder rather than the docker-container
+        # builder from setup-buildx-action.  Both downstream images
+        # start `FROM nexusd-cluster:latest`, which only the daemon
+        # builder can resolve against the previous step's
+        # `load: true` artifact.  See federation-e2e.yml for the same
+        # workaround.
+        env:
+          BUILDX_BUILDER: default
+        run: |
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml build \
+            founder test
+
+      - name: Start cc-tasks-share cluster
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d \
+            founder joiner
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml ps
+
+      - name: Wait for both voters healthy
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            if docker exec nexus-cc-tasks-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' \
+            && docker exec nexus-cc-tasks-joiner bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "Both voters healthy (gRPC port 2126 reachable) after ${SECONDS}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for voters ready (180s)"
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml logs --tail=300
+          exit 1
+
+      - name: Run cc-tasks-share E2E tests
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml \
+            run --rm test
+
+      - name: Dump container logs on failure
+        if: failure() && steps.changes.outputs.run == 'true'
+        run: |
+          for c in nexus-cc-tasks-founder nexus-cc-tasks-joiner; do
+            echo "::group::$c"
+            docker logs $c --tail=400 2>&1 || echo "(no logs)"
+            echo "::endgroup::"
+          done
+
+      - name: Tear down
+        if: always() && steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml down -v --remove-orphans || true

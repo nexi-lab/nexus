@@ -1,0 +1,179 @@
+# cc-tasks-share E2E — 2-node federation + LocalConnector dylib
+# =========================================================================
+# Single compose for `tests/e2e/docker/test_cc_tasks_share_e2e.py`.
+#
+# Topology mirrors a Mac↔Win Claude Code share:
+#
+#   founder  (voter, owns sharedzone, mounts /shared/cc-tasks/founder
+#             from its own host fs subtree)
+#   joiner   (voter, joins sharedzone via offline CLI, mounts
+#             /shared/cc-tasks/joiner from its own host fs subtree)
+#
+# Each node loads `libnexus_local_connector.so` from `/plugins/`
+# (baked in by `Dockerfile.local-connector-plugin`) and exposes its
+# own `/host/tasks` at the host-specific VFS path so peer↔peer view
+# is symmetric — neither host duplicates its own tasks under
+# `/shared`.
+#
+# Witness is omitted: cc-tasks-share is a 2-voter sharedzone — quorum
+# is both voters present, which is the same surface
+# tests/e2e/docker/test_federation_runbook.py exercises in its
+# joiner-only scenarios.  Witness brings nothing the suite needs.
+#
+# Lifecycle contract — the fixture (not Docker) owns daemon lifecycle.
+# Runbook §3b requires the daemon down while offline
+# `nexusd-cluster join` runs (redb exclusive lock); auto-restart would
+# race that.  See docker-compose.federation-runbook.yml for the same
+# constraint.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d founder joiner
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml down -v
+
+# Bootstrap-mode + plugin-dir entrypoint (shared via YAML anchor).
+#
+# Auto-detects mode from on-disk state the same way the federation
+# runbook entrypoint does — see docker-compose.federation-runbook.yml's
+# x-runbook-entrypoint anchor for the rationale.  Adds `--plugin-dir
+# /plugins` and the `--mount-driver` line so the local-connector dylib
+# both loads at startup AND mounts at /shared/cc-tasks/<hostname>.
+x-cc-tasks-entrypoint: &cc-tasks-entrypoint
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      if [ -f "$$DATA_DIR/.node_id" ]; then
+        MODE=restart
+        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
+      else
+        MODE=static
+      fi
+      exec nexusd-cluster \
+        --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+        --data-dir "$$DATA_DIR" \
+        --no-tls \
+        --plugin-dir /plugins \
+        --mount-driver "local-connector:/shared/cc-tasks/$${NEXUS_HOSTNAME}:{\"local_root\":\"/host/tasks\"}" \
+        --bootstrap-mode "$$MODE"
+  command: []
+
+services:
+  founder:
+    <<: *cc-tasks-entrypoint
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.local-connector-plugin
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-founder
+    hostname: founder
+    environment:
+      NEXUS_HOSTNAME: founder
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      # First boot only — auto-detect entrypoint strips these on restart.
+      NEXUS_FEDERATION_ZONES: sharedzone
+      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      RUST_LOG: info,nexus_raft=debug
+    volumes:
+      - cc_tasks_founder_data:/app/data
+      - cc_tasks_founder_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-net
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  joiner:
+    <<: *cc-tasks-entrypoint
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-joiner
+    hostname: joiner
+    environment:
+      NEXUS_HOSTNAME: joiner
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: joiner:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      RUST_LOG: info,nexus_raft=debug
+    volumes:
+      - cc_tasks_joiner_data:/app/data
+      - cc_tasks_joiner_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-net
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-cc-tasks-test
+    profiles:
+      - run
+    depends_on:
+      founder:
+        condition: service_healthy
+      joiner:
+        condition: service_healthy
+    # working_dir, PYTHONPATH, PYTEST_ADDOPTS inherited from
+    # Dockerfile.federation-test — the runner image is shared with the
+    # federation-runbook suite (same pytest + grpc + docker SDK stack).
+    # Override CMD to point at the cc-tasks-share test file.
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NEXUS_CC_TASKS_E2E: "1"
+      NEXUS_FOUNDER_GRPC: founder:2126
+      NEXUS_JOINER_GRPC: joiner:2126
+      NEXUS_FOUNDER_CONTAINER: nexus-cc-tasks-founder
+      NEXUS_JOINER_CONTAINER: nexus-cc-tasks-joiner
+      # Volume names the fixture mounts into transient `nexusd-cluster
+      # join` sidecars when running the offline join flow (mirrors the
+      # runbook suite's pattern).
+      NEXUS_FOUNDER_VOLUME: nexus-cc-tasks-founder-data
+      NEXUS_JOINER_VOLUME: nexus-cc-tasks-joiner-data
+      NEXUS_CC_TASKS_NETWORK: nexus-cc-tasks-net
+      NEXUS_CLUSTER_IMAGE: nexus-local-connector-plugin:latest
+    networks:
+      - nexus-cc-tasks-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_cc_tasks_share_e2e.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-cc-tasks-net:
+    name: nexus-cc-tasks-net
+    driver: bridge
+
+volumes:
+  cc_tasks_founder_data:
+    name: nexus-cc-tasks-founder-data
+  cc_tasks_joiner_data:
+    name: nexus-cc-tasks-joiner-data
+  # `*_hostfs` volumes simulate each node's `~/.claude/tasks/` —
+  # tests write into them via `docker exec` and the LocalConnector
+  # dylib mounted at /shared/cc-tasks/<hostname> exposes them through
+  # the VFS.
+  cc_tasks_founder_hostfs:
+    name: nexus-cc-tasks-founder-hostfs
+  cc_tasks_joiner_hostfs:
+    name: nexus-cc-tasks-joiner-hostfs

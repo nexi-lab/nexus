@@ -110,26 +110,24 @@ jobs:
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml build \
             founder test
 
-      - name: Start cc-tasks-share cluster
+      - name: Start cc-tasks-share node
         if: steps.changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d \
-            founder joiner
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d founder
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml ps
 
-      - name: Wait for both voters healthy
+      - name: Wait for founder healthy
         if: steps.changes.outputs.run == 'true'
         run: |
           deadline=$((SECONDS + 180))
           while [ $SECONDS -lt $deadline ]; do
-            if docker exec nexus-cc-tasks-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' \
-            && docker exec nexus-cc-tasks-joiner bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
-              echo "Both voters healthy (gRPC port 2126 reachable) after ${SECONDS}s"
+            if docker exec nexus-cc-tasks-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "Founder healthy (gRPC port 2126 reachable) after ${SECONDS}s"
               exit 0
             fi
             sleep 2
           done
-          echo "::error::Timed out waiting for voters ready (180s)"
+          echo "::error::Timed out waiting for founder ready (180s)"
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml logs --tail=300
           exit 1
 
@@ -142,11 +140,9 @@ jobs:
       - name: Dump container logs on failure
         if: failure() && steps.changes.outputs.run == 'true'
         run: |
-          for c in nexus-cc-tasks-founder nexus-cc-tasks-joiner; do
-            echo "::group::$c"
-            docker logs $c --tail=400 2>&1 || echo "(no logs)"
-            echo "::endgroup::"
-          done
+          echo "::group::nexus-cc-tasks-founder"
+          docker logs nexus-cc-tasks-founder --tail=400 2>&1 || echo "(no logs)"
+          echo "::endgroup::"
 
       - name: Tear down
         if: always() && steps.changes.outputs.run == 'true'

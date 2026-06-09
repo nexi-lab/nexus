@@ -1,21 +1,21 @@
 """Shared helpers for the cc-tasks-share E2E suite.
 
 Sits next to :mod:`tests.e2e.docker.runbook_helpers` and reuses every
-gRPC + raft catch-up gate from it.  Only what's distinct lives here:
+gRPC primitive from it.  Only the helpers distinct to this suite live
+here:
 
-* Topology resolution for the 2-voter sharedzone (no witness — see
-  the compose file header for why).
-* `host_task_write` / `host_task_read` — write / read files inside a
-  cluster container's `/host/tasks` named volume via ``docker exec``.
-  These simulate the operator-side `~/.claude/tasks/<session>/<n>.json`
-  surface that the LocalConnector dylib projects into the VFS.
+* Topology — single-node (founder), no joiner or witness.
+* `host_task_write` / `host_task_read` / `host_task_symlink` — read
+  / write / plant a symlink inside the founder container's
+  `/host/tasks` named volume via ``docker exec``.  These verify the
+  LocalConnector's "host fs is the SSOT" property: after a `vfs_write`
+  through gRPC, the bytes are physically present at
+  `/host/tasks/<rel>` and vice versa.
 
-Using ``docker exec`` (rather than bind-mounting a host directory)
-keeps the suite hermetic across CI runners: the compose file's
-``cc_tasks_*_hostfs`` named volumes live entirely inside the docker
-daemon, and the test runner reaches them through the same
-``docker exec`` it already uses for the offline-join sidecar pattern
-from the runbook suite.
+Cross-node share-via-federation testing needs cross-node operator-
+mount substrate that is out of scope here; see
+`docs/architecture/federation-cross-machine-runbook.md` §3e for the
+boundary.
 """
 
 from __future__ import annotations
@@ -31,35 +31,35 @@ from . import runbook_helpers
 
 @dataclass(frozen=True)
 class CcTasksTopology:
-    """Mirror of :class:`runbook_helpers.RunbookTopology` without the witness slot."""
+    """Single-node founder topology."""
 
     founder_grpc: str
-    joiner_grpc: str
     founder_container: str
-    joiner_container: str
+    local_connector_zone: str
+    local_connector_vfs_root: str
 
-    @property
-    def all_voters_grpc(self) -> list[str]:
-        return [self.founder_grpc, self.joiner_grpc]
+    def vfs_path(self, relpath: str) -> str:
+        """Compose the operator gRPC path from the mount root + a rel path."""
+        if not relpath.startswith("/"):
+            relpath = "/" + relpath
+        return f"{self.local_connector_vfs_root.rstrip('/')}{relpath}"
 
 
 def topology_from_env() -> CcTasksTopology:
     return CcTasksTopology(
         founder_grpc=os.environ.get("NEXUS_FOUNDER_GRPC", "founder:2126"),
-        joiner_grpc=os.environ.get("NEXUS_JOINER_GRPC", "joiner:2126"),
         founder_container=os.environ.get("NEXUS_FOUNDER_CONTAINER", "nexus-cc-tasks-founder"),
-        joiner_container=os.environ.get("NEXUS_JOINER_CONTAINER", "nexus-cc-tasks-joiner"),
+        local_connector_zone=os.environ.get("NEXUS_LOCAL_CONNECTOR_ZONE", "my-tasks"),
+        local_connector_vfs_root=os.environ.get("NEXUS_LOCAL_CONNECTOR_VFS_ROOT", "/tasks"),
     )
 
 
 # ---------------------------------------------------------------------------
-# Host-fs (`/host/tasks/`) write / read helpers
+# Host-fs (`/host/tasks/`) write / read / symlink helpers
 #
-# `mkdir -p` is part of the write so callers don't have to pre-stage
-# parent directories — the LocalConnector backend creates parents on
-# write through the VFS surface, but the operator analogue (Claude
-# Code creating `tasks/<session>/<n>.json`) does it at the OS level
-# first.
+# These talk to the same physical bytes the LocalConnector backend
+# touches — the round-trip through `vfs_write` → host fs → `vfs_read`
+# is what makes the dylib's SSOT property observable.
 # ---------------------------------------------------------------------------
 def _host_path(relpath: str) -> str:
     if not relpath.startswith("/"):
@@ -70,15 +70,14 @@ def _host_path(relpath: str) -> str:
 def host_task_write(container: str, relpath: str, data: bytes) -> None:
     """Write ``data`` to ``<container>:/host/tasks/<relpath>`` via docker exec.
 
-    ``relpath`` is interpreted relative to the LocalConnector's
-    ``local_root`` — the test asserts the same bytes show up at
-    ``/shared/cc-tasks/<hostname>/<relpath>`` through the VFS.
+    Bytes-preserving — the helper does NOT pass `text=True`, so binary
+    content round-trips exactly.  Parents are created as needed; the
+    operator-side analogue (Claude Code creating
+    `tasks/<session>/<n>.json`) does this at the OS level too.
     """
     full_path = _host_path(relpath)
     parent = os.path.dirname(full_path) or "/"
     runbook_helpers.docker_exec(container, ["mkdir", "-p", parent], check=True)
-    # `cat > <path>` round-trips raw bytes; subprocess input=data with
-    # bytes (no text mode) preserves binary content exactly.
     proc = subprocess.run(
         ["docker", "exec", "-i", container, "sh", "-c", f"cat > {full_path}"],
         input=data,
@@ -116,9 +115,9 @@ def host_task_ensure_dir(container: str, relpath: str) -> None:
 def host_task_symlink(container: str, link_relpath: str, target_relpath: str) -> None:
     """Create ``link_relpath`` -> ``target_relpath`` inside ``/host/tasks``.
 
-    Both paths are relative to the LocalConnector's ``local_root``.
-    Used by symlink-escape security tests to plant the link the
-    backend's `resolve_path` is supposed to reject.
+    ``target_relpath`` may be absolute (e.g. ``/etc/passwd``) or
+    relative.  Used by the symlink-escape security test to plant a
+    link the backend's ``resolve_path`` is supposed to reject.
     """
     link_full = _host_path(link_relpath)
     parent = os.path.dirname(link_full) or "/"

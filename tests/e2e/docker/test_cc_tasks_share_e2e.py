@@ -1,30 +1,25 @@
-"""cc-tasks-share Docker E2E — LocalConnector dylib + federation.
+"""cc-tasks-share Docker E2E — LocalConnector dylib at the operator surface.
 
-Locks down the operator workflow underlying the Mac↔Win
-``cc tasks list`` share milestone:
+Locks down the dylib + driver-plugin runtime path on a single node:
 
-  1. Each daemon loads ``libnexus_local_connector.so`` from
-     ``--plugin-dir`` and mounts ``/shared/cc-tasks/<hostname>``
-     via ``--mount-driver`` against its own ``/host/tasks`` volume.
-  2. A file written to one node's ``/host/tasks/<relpath>`` is
-     readable on the peer at ``/shared/cc-tasks/<hostname>/<relpath>``
-     through the federated sharedzone.
+  1. The dylib loads via ``--plugin-dir``.
+  2. ``--mount-driver local-connector:<zone>:<path>:<config>`` mounts the
+     dylib into the operator-named non-root zone after the federation
+     init gate flips.
+  3. ``vfs_write`` through gRPC routes to the LocalConnector backend;
+     bytes land at the configured ``local_root`` on the host fs.
+  4. ``vfs_read`` returns those bytes; ``docker exec cat`` confirms
+     host-fs SSOT (the LocalConnector's defining property).
+  5. Symlink escape stays rejected when the read enters through the
+     VFS gRPC surface.
+  6. Concurrent ``vfs_write`` calls become observable through
+     ``vfs_stat``.
 
-The four test methods correspond 1-to-1 to the plan's "Decisions
-captured" section:
-
-  * Founder→joiner byte-exact read (the primary milestone).
-  * Joiner→founder byte-exact read (symmetric — proves both sides
-    expose their LocalConnector through federation, not just the
-    bootstrap node).
-  * Symlink-escape rejection survives federation (the LocalConnector
-    security property holds when the request comes in via the
-    sharedzone leader instead of a direct local call).
-  * Concurrent writers → eventual-consistency listdir (10 task JSONs
-    arrive at the peer with no permanent missed entries).
-
-Reuses :mod:`tests.e2e.docker.runbook_helpers` verbatim for gRPC,
-raft catch-up, and offline-join lifecycle.
+The "share" goal — projecting one node's ``/host/tasks/`` into a
+peer's view of the federated namespace — needs cross-node operator-
+mount substrate that is out of scope here.  The operator recipe and
+the deferred-substrate boundary live in
+`docs/architecture/federation-cross-machine-runbook.md` §3e.
 """
 
 from __future__ import annotations
@@ -38,11 +33,9 @@ import pytest
 from tests.e2e.docker import cc_tasks_share_helpers, runbook_helpers
 from tests.e2e.docker.cc_tasks_share_helpers import CcTasksTopology
 
-# Run sequentially under a single xdist worker — every method shares
-# the same docker compose cluster.  Skip when not invoked from the
-# dedicated workflow that brings the cluster up (the same gate the
-# federation-runbook suite uses; the compose file's `test` service
-# sets `NEXUS_CC_TASKS_E2E=1`).
+# Skip when not invoked from the dedicated workflow that brings the
+# cluster up — same gate the federation-runbook suite uses (the
+# compose file's `test` service sets `NEXUS_CC_TASKS_E2E=1`).
 pytestmark = [
     pytest.mark.xdist_group("cc-tasks-share"),
     pytest.mark.skipif(
@@ -67,133 +60,102 @@ def api_key() -> str:
 
 
 @pytest.fixture(scope="module")
-def joined_cluster(topology: CcTasksTopology, api_key: str) -> dict:
-    """Drive the runbook §3b joiner CLI flow against the 2-voter sharedzone.
-
-    Lifecycle mirrors `tests/e2e/docker/test_federation_runbook.py`'s
-    `joined_cluster` fixture exactly — only topology object type and
-    container/volume env-var names differ.
-    """
-    founder_node_id = runbook_helpers.fetch_node_id(topology.founder_container)
-    joiner_volume = os.environ["NEXUS_JOINER_VOLUME"]
-
-    runbook_helpers.docker_stop(topology.joiner_container)
-
-    # `network=` is explicit so the helper doesn't fall back to its
-    # `NEXUS_RUNBOOK_NETWORK` env default — runbook_helpers is shared
-    # SSOT for offline-join across this suite + the federation-runbook
-    # suite, and each compose owns its own network name.
-    # `cluster_image` falls through to NEXUS_CLUSTER_IMAGE env (which
-    # the compose sets), so no extra plumb needed.
-    join_result = runbook_helpers.run_nexusd_cluster_join(
-        target_container=topology.joiner_container,
-        target_volume=joiner_volume,
-        founder_node_id=founder_node_id,
-        founder_addr="founder:2126",
-        zone_id="sharedzone",
-        local_path="/shared",
-        hostname="joiner",
-        network=os.environ["NEXUS_CC_TASKS_NETWORK"],
-        data_dir="/app/data",
-        timeout=120,
+def ready_node(topology: CcTasksTopology, api_key: str) -> None:
+    """Gate on the daemon's `--mount-driver` loop having installed the DT_MOUNT."""
+    runbook_helpers.wait_healthy([topology.founder_grpc])
+    # `vfs_stat` enters through root zone (zone_id default) so the
+    # routing exercises the DT_MOUNT at /tasks → my-tasks that the
+    # mount loop installs.  `found=False` is fine — what we gate on
+    # is the absence of a routing error.  An `"error"` response is
+    # the wedged-path signal that the DT_MOUNT hasn't landed yet.
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        stat = runbook_helpers.vfs_stat(
+            topology.founder_grpc,
+            topology.local_connector_vfs_root,
+            api_key=api_key,
+            timeout=5,
+        )
+        if "error" not in stat:
+            return
+        time.sleep(0.5)
+    pytest.fail(
+        f"`my-tasks` DT_MOUNT never became reachable on {topology.founder_grpc} "
+        f"within 60s — did `--mount-driver` finish at boot?"
     )
-    assert join_result.returncode == 0, (
-        f"`nexusd-cluster join` exited non-zero.  rc={join_result.returncode}\n"
-        f"stdout={join_result.stdout}\nstderr={join_result.stderr}"
-    )
-
-    runbook_helpers.docker_start(topology.joiner_container)
-    runbook_helpers.wait_healthy([topology.joiner_grpc])
-    runbook_helpers.wait_zone_ready(topology.joiner_grpc, "sharedzone", api_key=api_key, timeout=60)
-
-    return {"founder_node_id": founder_node_id}
 
 
 # ---------------------------------------------------------------------------
-# Test class
+# Tests
 # ---------------------------------------------------------------------------
-class TestCcTasksShare:
-    """LocalConnector dylib + federation E2E surface."""
+class TestLocalConnectorThroughVFS:
+    """LocalConnector dylib + driver-plugin runtime path at the gRPC surface."""
 
-    def test_peer_sees_founder_local_connector_write_byte_exact(
+    def test_vfs_write_lands_on_host_fs(
         self,
         topology: CcTasksTopology,
         api_key: str,
-        joined_cluster: dict,
+        ready_node: None,
     ) -> None:
-        """Founder host-fs write → joiner reads same bytes through federation.
+        """vfs_write → LocalConnector backend → physical bytes at ``local_root``.
 
-        The primary milestone underlying the Mac↔Win ``cc tasks list``
-        share: a task JSON written to one node's ``~/.claude/tasks/``
-        appears at the peer's view of ``/shared/cc-tasks/<owner>/``.
+        This is the SSOT property the LocalConnector exists to
+        guarantee: writes through the VFS appear directly on the host
+        fs at the operator-configured ``local_root``.  No copy, no
+        shadow.
         """
         relpath = "/session-a/1.json"
-        payload = b'{"task":"founder-write","tags":["mac"]}'
+        payload = b'{"task":"vfs-write-lands-on-host-fs"}'
+
+        result = runbook_helpers.vfs_write(
+            topology.founder_grpc, topology.vfs_path(relpath), payload, api_key=api_key
+        )
+        assert "error" not in result, f"vfs_write failed: {result}"
+
+        host_bytes = cc_tasks_share_helpers.host_task_read(topology.founder_container, relpath)
+        assert host_bytes == payload, (
+            f"host-fs SSOT broken: vfs_write produced {payload!r} but host fs has {host_bytes!r}"
+        )
+
+    def test_host_fs_write_visible_via_vfs(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        ready_node: None,
+    ) -> None:
+        """Bytes written directly to ``local_root`` appear via vfs_read.
+
+        Symmetric to :py:meth:`test_vfs_write_lands_on_host_fs` — the
+        SSOT property cuts both ways.  This is the operator-side
+        workflow (Claude Code writing JSON to ``~/.claude/tasks/``)
+        becoming visible through ``vfs_read`` syscalls.
+        """
+        relpath = "/session-b/2.json"
+        payload = b'{"task":"host-fs-write-visible-via-vfs"}'
 
         cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, payload)
 
-        vfs_path = f"/shared/cc-tasks/founder{relpath}"
-        runbook_helpers.wait_nodes_caught_up(
-            [topology.joiner_grpc],
-            "sharedzone",
-            api_key=api_key,
-            timeout=30,
-            probe_path=vfs_path,
+        result = runbook_helpers.vfs_read(
+            topology.founder_grpc, topology.vfs_path(relpath), api_key=api_key
         )
-
-        result = runbook_helpers.vfs_read(topology.joiner_grpc, vfs_path, api_key=api_key)
         assert "error" not in result, f"vfs_read failed: {result}"
         assert result["result"]["content"] == payload, (
-            f"byte-exact mismatch: expected {payload!r}, got {result['result']['content']!r}"
+            f"vfs_read returned {result['result']['content']!r}, expected {payload!r}"
         )
 
-    def test_peer_sees_joiner_write_back_byte_exact(
+    def test_localconnector_rejects_symlink_escape(
         self,
         topology: CcTasksTopology,
         api_key: str,
-        joined_cluster: dict,
+        ready_node: None,
     ) -> None:
-        """Symmetric: joiner host-fs write → founder reads through federation.
+        """A symlink pointing outside ``local_root`` stays rejected on read.
 
-        Proves the LocalConnector dylib is symmetric — both sides
-        expose their own host fs through the federated path, not just
-        the bootstrap node.
-        """
-        relpath = "/session-b/2.json"
-        payload = b'{"task":"joiner-write","tags":["win"]}'
-
-        cc_tasks_share_helpers.host_task_write(topology.joiner_container, relpath, payload)
-
-        vfs_path = f"/shared/cc-tasks/joiner{relpath}"
-        runbook_helpers.wait_nodes_caught_up(
-            [topology.founder_grpc],
-            "sharedzone",
-            api_key=api_key,
-            timeout=30,
-            probe_path=vfs_path,
-        )
-
-        result = runbook_helpers.vfs_read(topology.founder_grpc, vfs_path, api_key=api_key)
-        assert "error" not in result, f"vfs_read failed: {result}"
-        assert result["result"]["content"] == payload, (
-            f"byte-exact mismatch: expected {payload!r}, got {result['result']['content']!r}"
-        )
-
-    def test_localconnector_rejects_symlink_escape_via_federation(
-        self,
-        topology: CcTasksTopology,
-        api_key: str,
-        joined_cluster: dict,
-    ) -> None:
-        """Symlink escape stays rejected even when the request comes via federation.
-
-        Belt-and-suspenders: the Rust LocalConnector's `resolve_path`
-        escape check (root canonicalization + starts-with guard) is
-        already covered by the unit suite at
-        `rust/backends/local-connector/src/lib.rs`'s
-        `symlink_escape_is_rejected` test.  This case confirms the
-        guard still fires when the request enters the connector
-        through federation forwarding rather than a direct local call.
+        Mirrors the Rust unit test
+        ``rust/backends/local-connector/src/lib.rs::symlink_escape_is_rejected``
+        but exercises the path through the VFS gRPC surface, so the
+        backend's ``resolve_path`` escape check runs after kernel
+        dispatch + DT_MOUNT routing.
         """
         cc_tasks_share_helpers.host_task_write(
             topology.founder_container, "/.real-target.json", b'{"x":1}'
@@ -204,73 +166,60 @@ class TestCcTasksShare:
             "/etc/passwd",
         )
 
-        vfs_path = "/shared/cc-tasks/founder/session-c/escape.json"
-        # The read SHOULD surface an error (the federation surface
-        # propagates the LocalConnector's PermissionDenied through the
-        # gRPC error envelope); the bytes from /etc/passwd MUST NOT
-        # leak back to the joiner.
-        result = runbook_helpers.vfs_read(topology.joiner_grpc, vfs_path, api_key=api_key)
+        result = runbook_helpers.vfs_read(
+            topology.founder_grpc,
+            topology.vfs_path("/session-c/escape.json"),
+            api_key=api_key,
+        )
+        # The backend returns PermissionDenied which surfaces as a
+        # gRPC error envelope OR an empty/non-matching content; either
+        # way the bytes from /etc/passwd MUST NOT leak through.
         if "result" in result:
             content = result["result"].get("content", b"")
             assert b"root:" not in content, (
-                "symlink escape leaked /etc/passwd contents through federation"
+                "symlink escape leaked /etc/passwd contents through the VFS surface"
             )
 
-    def test_two_concurrent_writers_then_list_via_peer(
+    def test_concurrent_vfs_writes_become_visible(
         self,
         topology: CcTasksTopology,
         api_key: str,
-        joined_cluster: dict,
+        ready_node: None,
     ) -> None:
-        """Concurrent writes on founder → joiner sees them all eventually.
+        """N parallel vfs_writes through gRPC; each becomes visible via vfs_stat.
 
-        Soak test for the operator-side burst write pattern (Claude
-        Code rewriting tasks rapidly).  Asserts every written file
-        eventually shows up at the peer's federated path; does NOT
-        assert ordering since the host-fs writes are independent.
+        Soak coverage for the operator burst-write pattern (Claude Code
+        rewriting tasks rapidly).  Asserts every write is observable
+        through the LocalConnector path; ordering is not constrained.
         """
-        session = "/session-burst"
-        cc_tasks_share_helpers.host_task_ensure_dir(topology.founder_container, session)
-
         n = 10
-        payloads = {
-            f"{session}/{i}.json": f'{{"i":{i},"src":"founder"}}'.encode() for i in range(n)
-        }
+        payloads = {f"/session-burst/{i}.json": f'{{"i":{i}}}'.encode() for i in range(n)}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             futures = [
                 pool.submit(
-                    cc_tasks_share_helpers.host_task_write,
-                    topology.founder_container,
-                    relpath,
+                    runbook_helpers.vfs_write,
+                    topology.founder_grpc,
+                    topology.vfs_path(relpath),
                     data,
+                    api_key=api_key,
                 )
                 for relpath, data in payloads.items()
             ]
-            for f in futures:
-                f.result(timeout=30)
+            for fut in futures:
+                write_result = fut.result(timeout=30)
+                assert "error" not in write_result, f"vfs_write failed: {write_result}"
 
-        # Wait for every one of the N files to appear on the joiner's
-        # federated view.  Poll vfs_stat per file rather than vfs_list,
-        # because vfs_list isn't part of the runbook_helpers typed-RPC
-        # surface and the per-path Stat is what wait_nodes_caught_up
-        # already uses.
-        deadline = time.time() + 60
-        pending = set(payloads.keys())
-        while pending and time.time() < deadline:
-            still_pending = set()
-            for relpath in pending:
-                vfs_path = f"/shared/cc-tasks/founder{relpath}"
-                stat = runbook_helpers.vfs_stat(
-                    topology.joiner_grpc, vfs_path, api_key=api_key, zone_id="sharedzone"
-                )
-                if "error" in stat or not stat.get("result", {}).get("found"):
-                    still_pending.add(relpath)
-            pending = still_pending
-            if pending:
-                time.sleep(0.5)
-
-        assert not pending, (
-            f"joiner never saw {len(pending)} of {n} concurrent writes "
-            f"within 60s: {sorted(pending)}"
-        )
+        for relpath in payloads:
+            # Stat enters through root zone so the DT_MOUNT at /tasks
+            # routes through to the LocalConnector's my-tasks view.
+            stat = runbook_helpers.vfs_stat(
+                topology.founder_grpc,
+                topology.vfs_path(relpath),
+                api_key=api_key,
+                timeout=5,
+            )
+            assert "error" not in stat, f"vfs_stat failed for {relpath}: {stat}"
+            assert stat["result"]["found"], (
+                f"vfs_stat after vfs_write did not surface {relpath}: {stat}"
+            )

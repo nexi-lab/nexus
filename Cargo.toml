@@ -7,6 +7,11 @@ members = [
     # loaded by nexusd-cluster via --plugin-dir.  Sits next to the
     # service crate source it wraps (rust/services/src/password_vault/).
     "rust/services/vault",
+    # nexus-local-connector — cdylib driver plugin that exposes a
+    # host filesystem subtree through the VFS.  Loaded by
+    # nexusd-cluster via --plugin-dir; mounted via
+    # `--mount-driver local-connector:<vfs-path>:<config-json>`.
+    "rust/backends/local-connector",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]

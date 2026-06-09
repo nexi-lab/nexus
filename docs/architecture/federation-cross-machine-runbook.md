@@ -272,6 +272,46 @@ sleep 8
 
 Under `restart`, do **not** pass `--peers`, `--bootstrap-new`, `NEXUS_FEDERATION_ZONES`, or `NEXUS_FEDERATION_MOUNTS` — the persisted ConfState and DT_MOUNT entries are the source of truth.
 
+### Step 3e — Expose host paths via LocalConnector
+
+The shared zone alone gives each node a federated namespace at `/shared`.  To project a real host filesystem path (e.g. `~/.claude/tasks/`) into that namespace, mount the `local-connector` driver dylib at a host-specific subpath.  Each node owns its own subpath so peers see a symmetric view, with no duplication between a node's local path and the projection it advertises.
+
+On node A:
+
+```bash
+# Drop the dylib into NEXUS_PLUGIN_DIR (default ./plugins/):
+mkdir -p ./plugins
+cp /path/to/libnexus_local_connector.so ./plugins/
+
+# Start the daemon with both flags (combine with the Step 3 / 3b commands above):
+target/release/nexusd-cluster \
+  ... \
+  --plugin-dir ./plugins \
+  --mount-driver 'local-connector:/shared/cc-tasks/<A_hostname>:{"local_root":"/home/me/.claude/tasks"}'
+```
+
+Mirror on node B with `<B_hostname>` and B's own host path.  Each node's `<hostname>` subpath is the SSOT for that side's projection.
+
+Reads and writes flow through normal VFS syscalls.  On the writer:
+
+```bash
+grpcurl -plaintext \
+  -d '{"path":"/shared/cc-tasks/<A_hostname>/session-foo/1.json","content":"..."}' \
+  <A_addr>:2126 \
+  nexus.grpc.vfs.NexusVFSService/Write
+```
+
+On the peer reads return the same bytes:
+
+```bash
+grpcurl -plaintext \
+  -d '{"path":"/shared/cc-tasks/<A_hostname>/session-foo/1.json"}' \
+  <B_addr>:2126 \
+  nexus.grpc.vfs.NexusVFSService/Read
+```
+
+CI regression for this surface lives in `tests/e2e/docker/test_cc_tasks_share_e2e.py`.  The `--mount-driver` argument's grammar is documented at `KERNEL-ARCHITECTURE.md §10.4a`.
+
 ### Step 4 — Smoke (cross-machine byte-exact read)
 
 On A, write a file into `/shared`:

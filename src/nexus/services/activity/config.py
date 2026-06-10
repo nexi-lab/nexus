@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 from nexus.contracts.protocols.activity import EventKind
 
@@ -73,7 +75,7 @@ class ActivityConfig:
     segment_dir: Path = Path("./activity")
     min_free_mb: int = 1024
     sample_rate: float = 1.0
-    sample_rates: dict[str, float] = field(default_factory=dict)
+    sample_rates: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Bounded-queue contract: a non-positive queue_size disables
@@ -120,6 +122,10 @@ class ActivityConfig:
                     f"valid kinds: {sorted(valid_kinds)}"
                 )
             _validate_rate(f"NEXUS_ACTIVITY_SAMPLE_RATES[{key!r}]", rate)
+        # Frozen dataclass with a mutable dict field: wrap a private copy in
+        # a read-only proxy so the frozen contract extends to the mapping
+        # contents. Note: still unhashable, like any mapping.
+        object.__setattr__(self, "sample_rates", MappingProxyType(dict(self.sample_rates)))
 
     @classmethod
     def from_env(cls) -> ActivityConfig:

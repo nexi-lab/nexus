@@ -15,6 +15,10 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "NEXUS_ACTIVITY_QUEUE_SIZE",
         "NEXUS_ACTIVITY_BATCH_SIZE",
         "NEXUS_ACTIVITY_BATCH_TIMEOUT_S",
+        "NEXUS_ACTIVITY_DIR",
+        "NEXUS_ACTIVITY_MIN_FREE_MB",
+        "NEXUS_ACTIVITY_SAMPLE_RATE",
+        "NEXUS_ACTIVITY_SAMPLE_RATES",
         "NEXUS_DATA_DIR",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -131,12 +135,22 @@ def test_segment_dir_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert str(cfg.segment_dir) == "/var/activity-segments"
 
 
-def test_min_free_mb_zero_allowed_negative_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_min_free_mb_zero_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0 disables shedding — must parse, not raise."""
     monkeypatch.setenv("NEXUS_ACTIVITY_MIN_FREE_MB", "0")
     assert ActivityConfig.from_env().min_free_mb == 0
+
+
+def test_min_free_mb_negative_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEXUS_ACTIVITY_MIN_FREE_MB", "-1")
     with pytest.raises(ValueError, match="NEXUS_ACTIVITY_MIN_FREE_MB"):
         ActivityConfig.from_env()
+
+
+def test_sample_rate_zero_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rate bounds are inclusive — 0.0 records nothing but is valid."""
+    monkeypatch.setenv("NEXUS_ACTIVITY_SAMPLE_RATE", "0")
+    assert ActivityConfig.from_env().sample_rate == 0.0
 
 
 @pytest.mark.parametrize("bad_value", ["-0.1", "1.5", "nan", "inf"])

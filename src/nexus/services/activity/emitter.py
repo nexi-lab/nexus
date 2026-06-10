@@ -12,9 +12,11 @@ service-side imports keep working.
 from __future__ import annotations
 
 import asyncio
+import random
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -77,6 +79,9 @@ class QueueEmitter:
         *,
         queue: asyncio.Queue[ActivityEvent],
         loop: asyncio.AbstractEventLoop | None = None,
+        sample_rate: float = 1.0,
+        sample_rates: Mapping[str, float] | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self._queue = queue
         self._loop = loop
@@ -88,6 +93,10 @@ class QueueEmitter:
         # threadpool burst cannot pile up unbounded ActivityEvent objects
         # in scheduled callbacks before drops are recorded.
         self._max_inflight = max(1, queue.maxsize) if queue.maxsize > 0 else 0
+        # #4336 sampling knobs. rng is injectable for deterministic tests.
+        self._sample_rate = sample_rate
+        self._sample_rates = dict(sample_rates or {})
+        self._rng = rng or random.Random()
 
     @property
     def drop_count(self) -> int:
@@ -136,6 +145,32 @@ class QueueEmitter:
         trace_id: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> None:
+        # #4336 sampling: durable-row reduction for high-volume kinds.
+        # Non-OK results (policy blocks, pending approvals) are audit data
+        # and are never sampled out. Prometheus metrics are still recorded
+        # so the counters stay exact; only the SQLite row is skipped.
+        if result is Result.OK:
+            rate = self._sample_rates.get(kind.value, self._sample_rate)
+            if rate < 1.0 and self._rng.random() >= rate:
+                try:
+                    from nexus.services.activity.metrics import (
+                        ACTIVITY_SAMPLED_OUT,
+                        record_metrics,
+                    )
+
+                    record_metrics(
+                        kind=kind,
+                        result=result,
+                        actor_token_hash=actor_token_hash,
+                        subject_zone=subject_zone,
+                        subject_extra=subject_extra,
+                        latency_ms=latency_ms,
+                    )
+                    ACTIVITY_SAMPLED_OUT.inc()
+                except Exception:  # metrics must never break the hot path
+                    pass
+                return
+
         # Lifecycle + capacity gate. Closing emitters or saturated queues
         # admit nothing new — the event is counted as a drop and we exit
         # before constructing the ActivityEvent or recording metrics.

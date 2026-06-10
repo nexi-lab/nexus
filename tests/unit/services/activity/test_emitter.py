@@ -220,3 +220,65 @@ async def test_emit_after_quiesce_is_dropped() -> None:
 
     assert q.qsize() == 0, "late emit must not enqueue after quiesce"
     assert emitter.drop_count == drops_before + 1
+
+
+class _FixedRandom:
+    """random.Random stand-in returning a fixed value from random()."""
+
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def random(self) -> float:
+        return self._value
+
+
+def test_sampling_drops_ok_events_below_rate() -> None:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(queue=queue, sample_rate=0.5, rng=_FixedRandom(0.9))
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    assert queue.qsize() == 0
+    assert emitter.drop_count == 0  # sampled-out is intentional, not a drop
+
+
+def test_sampling_keeps_ok_events_at_or_above_rate() -> None:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(queue=queue, sample_rate=0.5, rng=_FixedRandom(0.1))
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    assert queue.qsize() == 1
+
+
+def test_per_kind_rate_overrides_global() -> None:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(
+        queue=queue,
+        sample_rate=1.0,
+        sample_rates={"search": 0.0},
+        rng=_FixedRandom(0.5),
+    )
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    emitter.emit(kind=EventKind.MCP_TOOL_CALL, result=Result.OK)
+    assert queue.qsize() == 1  # search sampled out, mcp kept
+
+
+def test_non_ok_results_never_sampled_out() -> None:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(queue=queue, sample_rate=0.0, rng=_FixedRandom(0.5))
+    emitter.emit(kind=EventKind.POLICY_BLOCK, result=Result.BLOCKED)
+    emitter.emit(kind=EventKind.APPROVAL, result=Result.PENDING_APPROVAL)
+    assert queue.qsize() == 2
+
+
+def test_sampled_out_still_records_prometheus() -> None:
+    from prometheus_client import REGISTRY
+
+    def _value(name: str, **labels: str) -> float:
+        return REGISTRY.get_sample_value(name, labels or None) or 0.0
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(queue=queue, sample_rate=0.0, rng=_FixedRandom(0.5))
+    before_req = _value("nexus_search_requests_total", zone="sampled-zone", status="ok")
+    before_out = _value("nexus_activity_sampled_out_total")
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK, subject_zone="sampled-zone")
+    assert queue.qsize() == 0
+    assert _value("nexus_search_requests_total", zone="sampled-zone", status="ok") == before_req + 1
+    assert _value("nexus_activity_sampled_out_total") == before_out + 1

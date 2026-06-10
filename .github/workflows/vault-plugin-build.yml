@@ -62,6 +62,11 @@ jobs:
             artifact_name: nexus-vault-macos-arm64
             dylib: libnexus_vault.dylib
             max_size_bytes: 7864320  # 7.5 MiB
+          - os: macos-14
+            artifact_name: nexus-vault-macos-x86_64
+            dylib: libnexus_vault.dylib
+            target: x86_64-apple-darwin
+            max_size_bytes: 7864320  # 7.5 MiB
           - os: windows-latest
             artifact_name: nexus-vault-windows-x86_64
             dylib: nexus_vault.dll
@@ -111,20 +116,21 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: false
+          target: ${{ matrix.target || '' }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: vault-plugin-${{ matrix.os }}
+          shared-key: vault-plugin-${{ matrix.os }}-${{ matrix.target || 'native' }}
 
       - name: Build release cdylib
-        run: cargo build --release -p nexus-vault
+        run: cargo build --release -p nexus-vault ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       - name: Check dylib size
         shell: bash
         env:
           MAX_SIZE_BYTES: ${{ matrix.max_size_bytes }}
-          DYLIB_PATH: target/release/${{ matrix.dylib }}
+          DYLIB_PATH: ${{ matrix.target && format('target/{0}/release/{1}', matrix.target, matrix.dylib) || format('target/release/{0}', matrix.dylib) }}
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "macOS" ]; then
@@ -142,7 +148,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DYLIB="target/release/${{ matrix.dylib }}"
+          DYLIB="${{ matrix.target && format('target/{0}/release/{1}', matrix.target, matrix.dylib) || format('target/release/{0}', matrix.dylib) }}"
           if [ "$RUNNER_OS" = "macOS" ]; then
             nm -gU "$DYLIB" | grep -q nexus_plugin_api_version
             nm -gU "$DYLIB" | grep -q nexus_service_create
@@ -160,6 +166,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: target/release/${{ matrix.dylib }}
+          path: ${{ matrix.target && format('target/{0}/release/{1}', matrix.target, matrix.dylib) || format('target/release/{0}', matrix.dylib) }}
           if-no-files-found: error
           retention-days: ${{ inputs.upload_retention_days }}

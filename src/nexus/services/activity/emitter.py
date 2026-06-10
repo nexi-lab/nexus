@@ -72,6 +72,10 @@ class QueueEmitter:
     and scheduled-but-not-run callbacks. ``quiesce_pending()`` flips the
     closing flag (rejecting new emits) and waits for that counter to
     reach zero so shutdown cannot orphan an in-flight emission.
+
+    Sampling (#4336): OK-result events may be sampled out before the
+    lifecycle gate; sampled-out events still record Prometheus metrics
+    but never count as drops.
     """
 
     def __init__(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import threading
 
 import pytest
@@ -222,17 +223,18 @@ async def test_emit_after_quiesce_is_dropped() -> None:
     assert emitter.drop_count == drops_before + 1
 
 
-class _FixedRandom:
-    """random.Random stand-in returning a fixed value from random()."""
+class _FixedRandom(random.Random):
+    """random.Random subclass returning a fixed value from random()."""
 
     def __init__(self, value: float) -> None:
+        super().__init__()
         self._value = value
 
     def random(self) -> float:
         return self._value
 
 
-def test_sampling_drops_ok_events_below_rate() -> None:
+def test_sampling_skips_ok_event_when_draw_at_or_above_rate() -> None:
     queue: asyncio.Queue = asyncio.Queue(maxsize=16)
     emitter = QueueEmitter(queue=queue, sample_rate=0.5, rng=_FixedRandom(0.9))
     emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
@@ -240,7 +242,7 @@ def test_sampling_drops_ok_events_below_rate() -> None:
     assert emitter.drop_count == 0  # sampled-out is intentional, not a drop
 
 
-def test_sampling_keeps_ok_events_at_or_above_rate() -> None:
+def test_sampling_keeps_ok_event_when_draw_below_rate() -> None:
     queue: asyncio.Queue = asyncio.Queue(maxsize=16)
     emitter = QueueEmitter(queue=queue, sample_rate=0.5, rng=_FixedRandom(0.1))
     emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
@@ -282,3 +284,22 @@ def test_sampled_out_still_records_prometheus() -> None:
     assert queue.qsize() == 0
     assert _value("nexus_search_requests_total", zone="sampled-zone", status="ok") == before_req + 1
     assert _value("nexus_activity_sampled_out_total") == before_out + 1
+
+
+@pytest.mark.asyncio
+async def test_sampled_out_during_quiesce_counts_as_sampled_not_dropped() -> None:
+    """The sampling gate intentionally precedes the closing gate: a
+    sampled-out emit during shutdown records sampled_out, never a drop."""
+    from prometheus_client import REGISTRY
+
+    def _sampled_out() -> float:
+        return REGISTRY.get_sample_value("nexus_activity_sampled_out_total") or 0.0
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(queue=queue, sample_rate=0.0, rng=_FixedRandom(0.5))
+    await emitter.quiesce_pending(timeout=0.1)
+    before = _sampled_out()
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    assert emitter.drop_count == 0
+    assert queue.qsize() == 0
+    assert _sampled_out() == before + 1

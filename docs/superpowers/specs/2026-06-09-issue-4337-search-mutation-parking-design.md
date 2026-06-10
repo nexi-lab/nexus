@@ -4,6 +4,13 @@
 **Issue:** [#4337](https://github.com/nexi-lab/nexus/issues/4337) — search daemon: unresolvable mutation event blocks checkpoint forever (head-of-line, infinite 2s retry)
 **Companion context:** [#4339](https://github.com/nexi-lab/nexus/issues/4339) — payload integrity loss made a class of paths permanently unreadable; those paths' write events are the observed poison events.
 
+> **Post-#3699 note (2026-06-10):** this spec was written against the
+> four-consumer daemon (`bm25`, `fts`, `embedding`, `txtai`). Issue #3699
+> later removed the txtai/bm25s stack, so the shipped implementation gates
+> the remaining two consumers (`fts`, `embedding`) — see
+> `MUTATION_CONSUMER_NAMES` in `daemon.py`. The design is otherwise
+> unchanged; consumer-count references below are historical.
+
 ## Problem
 
 The four durable search mutation consumers (`bm25`, `fts`, `embedding`, `txtai`) in

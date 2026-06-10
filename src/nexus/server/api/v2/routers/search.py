@@ -11,6 +11,10 @@ Provides search daemon endpoints:
 - POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
+- GET  /api/v2/search/parked            -- parked (poison) mutation events (#4337, admin)
+- POST /api/v2/search/parked/retry      -- re-drive parked events (#4337, admin)
+- POST /api/v2/search/parked/discard    -- discard parked events (#4337, admin)
+- POST /api/v2/search/consumers/{name}/skip-to -- force checkpoint advance (#4337, admin)
 
 Rewritten for txtai backend (#2663):
 - txtai handles hybrid BM25+dense fusion internally
@@ -31,6 +35,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
 from nexus.lib.pagination import build_paginated_list_response
@@ -38,7 +43,7 @@ from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
-from nexus.server.dependencies import get_operation_context, require_auth
+from nexus.server.dependencies import get_operation_context, require_admin, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -205,6 +210,81 @@ async def search_daemon_stats(
     """Get search daemon statistics."""
     stats: dict[str, Any] = search_daemon.get_stats()
     return stats
+
+
+class ParkedRetryRequest(BaseModel):
+    consumer: str
+    event_ids: list[str] | None = None
+
+
+class ParkedDiscardRequest(BaseModel):
+    consumer: str
+    event_ids: list[str]
+
+
+class ConsumerSkipToRequest(BaseModel):
+    sequence: int
+
+
+@router.get("/parked")
+async def search_parked_list(
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """List parked (poison) mutation events per consumer (#4337)."""
+    return {"parked": search_daemon.list_parked()}
+
+
+@router.post("/parked/retry")
+async def search_parked_retry(
+    body: ParkedRetryRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Re-drive parked mutation events through their consumer (#4337)."""
+    try:
+        result: dict[str, Any] = await search_daemon.retry_parked(body.consumer, body.event_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Parked-event retry failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Parked-event retry failed") from exc
+    return result
+
+
+@router.post("/parked/discard")
+async def search_parked_discard(
+    body: ParkedDiscardRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Discard parked mutation events without retrying (#4337)."""
+    try:
+        result: dict[str, Any] = await search_daemon.discard_parked(body.consumer, body.event_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Parked-event discard failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Parked-event discard failed") from exc
+    return result
+
+
+@router.post("/consumers/{consumer_name}/skip-to")
+async def search_consumer_skip_to(
+    consumer_name: str,
+    body: ConsumerSkipToRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Force-advance a mutation consumer checkpoint past a poisoned range (#4337)."""
+    try:
+        result: dict[str, int] = await search_daemon.force_checkpoint(consumer_name, body.sequence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Checkpoint skip-to failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Checkpoint skip-to failed") from exc
+    return result
 
 
 @router.get("/query")

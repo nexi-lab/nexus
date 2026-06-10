@@ -185,6 +185,7 @@ Key contract rules:
 * **`NEXUS_HOSTNAME` should be the node's Tailscale IP** for unambiguous self-detection across machines.
 * **`NEXUS_DATA_DIR` and `--data-dir` must point to the same directory.**
 * **`--no-tls` is fine for local testing.**  Without it the daemon auto-detects certs in `<data-dir>/tls/`.
+* **Windows MSYS / Git Bash operators**: set `MSYS_NO_PATHCONV=1` in the shell *before* exporting `NEXUS_FEDERATION_MOUNTS`, or single-quote the value (`'NEXUS_FEDERATION_MOUNTS=/shared=sharedzone'`).  Without one of these, the shell rewrites the leading `/shared` into `C:/Program Files/Git/shared` before `nexusd-cluster` ever sees the env var; the daemon then boots with `mount_count=0` and the `/shared` namespace stays un-federated.  Post-nexus-vfs#39 the cluster binary refuses to start in this state and names the workaround in the error; on older binaries the symptom is a silent zero-mount federation that surfaces as downstream raft replication failures hours later.
 
 **3a. Founder (machine A, first boot)**
 
@@ -403,6 +404,17 @@ The choices below are stable invariants of the design.  Each ties back to a spec
 ---
 
 ## Troubleshooting
+
+### One-shot self-check: `nexusd-cluster doctor`
+
+Before grepping logs, ask the binary:
+
+```bash
+pkill -f nexusd-cluster
+target/release/nexusd-cluster doctor --data-dir /tmp/nexus-fed-data
+```
+
+It walks every zone subdirectory, reads ConfState + HardState + log indices directly from redb, and prints a one-screen per-zone summary plus any alarms (`STORAGE_LOCKED`, `STALE_LOG`, …) with operator recovery hints.  Exit code 2 means at least one zone is wedged.  Available post-nexus-vfs#39.
 
 ### Tailscale
 

@@ -478,3 +478,27 @@ async def test_defer_open_retries_until_volume_recovers(tmp_path: Path) -> None:
     ids = {r[0] for r in conn.execute("SELECT id FROM activity_events")}
     conn.close()
     assert ids == {"2"}
+
+
+@pytest.mark.asyncio
+async def test_defer_open_retries_mkdir_until_parent_writable(tmp_path: Path) -> None:
+    """mkdir lives in the retry path: a segment dir that could not be
+    created at boot (e.g. ENOSPC) is retried on every batch."""
+    parent = tmp_path / "ro"
+    parent.mkdir()
+    seg_dir = parent / "activity"
+    parent.chmod(0o555)  # mkdir fails
+    clock = _clock("2026-06-09T12:00:00")
+    sink = SQLiteSink(segment_dir=seg_dir, now_fn=clock, defer_open=True)  # no raise
+    try:
+        with pytest.raises(OSError):
+            await sink.write_batch([_event("1")])
+        parent.chmod(0o755)  # "volume recovers"
+        await sink.write_batch([_event("2")])
+    finally:
+        parent.chmod(0o755)
+        await sink.close()
+    conn = sqlite3.connect(segment_path(seg_dir, clock.now.date()))
+    ids = {r[0] for r in conn.execute("SELECT id FROM activity_events")}
+    conn.close()
+    assert ids == {"2"}

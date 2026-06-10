@@ -58,3 +58,10 @@ writes) and deleted automatically once its newest row is older than
 with no VACUUM and no DELETE churn. To reclaim immediately instead, delete
 `activity.db`, `activity.db-wal`, and `activity.db-shm` yourself; the
 server never reopens them.
+
+Rolling upgrades: deletion takes a write lock on the legacy db and
+re-checks its newest row first, so rows committed by a still-running
+pre-upgrade server are seen and keep the file alive. Finish the rollout
+(stop all pre-upgrade servers) within the retention window: a pre-segment
+server still running when the file finally ages out keeps writing to the
+unlinked inode, and that telemetry is lost.

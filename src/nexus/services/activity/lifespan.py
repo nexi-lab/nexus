@@ -87,10 +87,12 @@ async def setup_activity() -> None:
         except Exception:
             pass
         # A failed open may be transient (ENOSPC at boot is the motivating
-        # incident). A deferred sink retries the open on every batch — once
-        # retention or an operator frees space, persistence resumes without
-        # a restart. Only a broken store DIRECTORY (mkdir failure: bad
-        # path/permissions) degrades to the permanent NoopSink.
+        # incident — including mkdir of the segment dir itself). A deferred
+        # sink retries mkdir + open on every batch; once retention or an
+        # operator frees space, persistence resumes without a restart.
+        # Permanent misconfiguration then surfaces as per-batch
+        # ACTIVITY_SINK_ERRORS (alertable) rather than a silent Noop; the
+        # NoopSink arm below is defense in depth only.
         try:
             sinks.append(
                 SQLiteSink(

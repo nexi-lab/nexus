@@ -102,7 +102,6 @@ class SQLiteSink:
         defer_open: bool = False,
     ) -> None:
         self._segment_dir = Path(segment_dir)
-        self._segment_dir.mkdir(parents=True, exist_ok=True)
         self._min_free_bytes = min_free_bytes
         self._checkpoint_interval_s = checkpoint_interval_s
         self._now_fn = now_fn or (lambda: datetime.now(tz=UTC))
@@ -126,6 +125,11 @@ class SQLiteSink:
         return self._now_fn().date()
 
     def _open_segment(self, day: date) -> None:
+        # mkdir lives in the retry path (not the constructor) so a
+        # defer_open sink can recover even when the directory itself could
+        # not be created at boot (ENOSPC eats inodes too). Idempotent and
+        # one syscall when the directory already exists.
+        self._segment_dir.mkdir(parents=True, exist_ok=True)
         path = segment_path(self._segment_dir, day)
         conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         try:

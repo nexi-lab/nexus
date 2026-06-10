@@ -320,7 +320,8 @@ async def test_statvfs_failure_never_sheds(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_free_space_check_is_cached(tmp_path: Path) -> None:
+async def test_free_space_check_is_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nexus.services.activity.sinks.sqlite._FREE_CHECK_INTERVAL_S", 3600.0)
     clock = _clock("2026-06-09T12:00:00")
     calls = {"n": 0}
 
@@ -344,3 +345,39 @@ async def test_free_space_check_is_cached(tmp_path: Path) -> None:
     finally:
         await sink.close()
     assert calls["n"] == 1  # 10s cache → one statvfs for three batches
+
+
+@pytest.mark.asyncio
+async def test_write_after_close_raises_and_does_not_reopen(tmp_path: Path) -> None:
+    """SinkProtocol: a straggler executor write racing close() must fail
+    fast, not reopen the segment and leak a connection."""
+    clock = _clock("2026-06-09T12:00:00")
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock)
+    await sink.close()
+    with pytest.raises(sqlite3.Error):
+        sink._write_rows([("x",) * 12])  # noqa: SLF001 — simulates the straggler
+    assert sink._conn is None  # noqa: SLF001 — close() must stay final
+
+
+@pytest.mark.asyncio
+async def test_rollover_failure_drops_batch_then_recovers(tmp_path: Path) -> None:
+    clock = _clock("2026-06-09T23:59:59")
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock)
+    try:
+        await sink.write_batch([_event("d1")])
+        # Tomorrow's segment file pre-corrupted → rollover open fails.
+        clock.now = datetime.fromisoformat("2026-06-10T00:00:01").replace(tzinfo=UTC)
+        bad = segment_path(tmp_path, clock.now.date())
+        bad.write_bytes(b"not a sqlite file")
+        with pytest.raises(sqlite3.DatabaseError):
+            await sink.write_batch([_event("d2")])
+        assert sink._conn is None  # noqa: SLF001 — retryable state, no half-open segment
+        # Operator clears the bad file -> next batch self-heals.
+        bad.unlink()
+        await sink.write_batch([_event("d3")])
+    finally:
+        await sink.close()
+    conn = sqlite3.connect(segment_path(tmp_path, datetime.fromisoformat("2026-06-10").date()))
+    ids = {r[0] for r in conn.execute("SELECT id FROM activity_events")}
+    conn.close()
+    assert ids == {"d3"}

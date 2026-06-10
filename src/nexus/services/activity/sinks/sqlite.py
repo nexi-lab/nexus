@@ -65,8 +65,9 @@ _PRAGMAS = (
     "PRAGMA synchronous=NORMAL",
     "PRAGMA temp_store=MEMORY",
     "PRAGMA busy_timeout=5000",
-    # #4336: cap the WAL high-water mark — TRUNCATE checkpoints shrink the
-    # file back under this limit instead of leaving a multi-GB WAL behind.
+    # #4336: bound the WAL file size — checkpoints (the periodic TRUNCATE in
+    # _maybe_checkpoint plus SQLite's automatic ones) truncate the file back
+    # under this limit instead of leaving a multi-GB WAL behind.
     "PRAGMA journal_size_limit=67108864",
 )
 
@@ -111,6 +112,7 @@ class SQLiteSink:
         self._free_cached: int | None = None
         self._free_checked_at: float | None = None
         self._shedding = False
+        self._closed = False
         # Eager open keeps lifespan's NoopSink-fallback contract: a broken
         # store directory fails construction, not the first write.
         self._open_segment(self._today())
@@ -166,12 +168,17 @@ class SQLiteSink:
             raise
 
     def _write_rows(self, rows: Sequence[tuple[object, ...]]) -> None:
-        """Executor-thread write path: shed check → rollover → insert.
+        """Executor-thread write path: closed check → shed check → rollover → insert.
 
         A failed segment open propagates: the worker counts it in
         ACTIVITY_SINK_ERRORS and the next batch retries the open, so the
         worker itself never crashes.
         """
+        if self._closed:
+            # SinkProtocol: write_batch must be safe concurrently with
+            # close(). A straggler executor write fails fast here instead
+            # of reopening the segment close() just released.
+            raise sqlite3.OperationalError("activity SQLiteSink is closed")
         if self._shed(len(rows)):
             return
         today = self._today()
@@ -202,16 +209,23 @@ class SQLiteSink:
             return
         self._last_checkpoint = now
         try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         except sqlite3.Error:
-            # Non-fatal: a busy checkpoint simply retries next interval.
             logger.debug("activity WAL checkpoint failed", exc_info=True)
+            return
+        # A busy checkpoint reports through the result row rather than
+        # raising. With this sink's single connection it should never be
+        # busy — surface it for debugging if that invariant breaks.
+        if row is not None and row[0]:
+            logger.debug("activity WAL checkpoint busy: %s", row)
 
     def _shed(self, n: int) -> bool:
         """True when the batch must be dropped to protect the shared volume."""
+        # Run the (cached) free-space probe unconditionally so the
+        # disk-free gauge stays fresh even with shedding disabled.
+        free = self._free_bytes()
         if self._min_free_bytes <= 0:
             return False
-        free = self._free_bytes()
         if free is None:
             return False  # cannot stat → never shed on monitoring failure
         if free >= self._min_free_bytes:
@@ -262,6 +276,7 @@ class SQLiteSink:
         return free
 
     async def close(self) -> None:
+        self._closed = True
         conn = self._conn
         self._conn = None
         self._segment_date = None

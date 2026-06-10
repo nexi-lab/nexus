@@ -99,6 +99,7 @@ class SQLiteSink:
         checkpoint_interval_s: float = 300.0,
         now_fn: Callable[[], datetime] | None = None,
         disk_usage_fn: Callable[[Path], Any] | None = None,
+        defer_open: bool = False,
     ) -> None:
         self._segment_dir = Path(segment_dir)
         self._segment_dir.mkdir(parents=True, exist_ok=True)
@@ -113,9 +114,13 @@ class SQLiteSink:
         self._free_checked_at: float | None = None
         self._shedding = False
         self._closed = False
-        # Eager open keeps lifespan's NoopSink-fallback contract: a broken
-        # store directory fails construction, not the first write.
-        self._open_segment(self._today())
+        if not defer_open:
+            # Eager open keeps lifespan's fallback contract: a broken store
+            # fails construction, not the first write. defer_open=True is
+            # the transient-failure fallback (e.g. ENOSPC at boot) — every
+            # batch then retries the open via the _conn is None path until
+            # the volume recovers.
+            self._open_segment(self._today())
 
     def _today(self) -> date:
         return self._now_fn().date()
@@ -180,6 +185,10 @@ class SQLiteSink:
             # of reopening the segment close() just released.
             raise sqlite3.OperationalError("activity SQLiteSink is closed")
         if self._shed(len(rows)):
+            # Sustained pressure means no idle maintain() ticks: release a
+            # previous-day handle here or an unlinked expired segment stays
+            # pinned — the exact disk retention is trying to give back.
+            self._release_stale_segment()
             return
         today = self._today()
         if self._conn is None or today != self._segment_date:
@@ -221,8 +230,33 @@ class SQLiteSink:
         if self._closed or self._conn is None:
             return
         today = self._today()
-        if today != self._segment_date:
+        if today == self._segment_date:
+            return
+        free = self._free_bytes()
+        if self._min_free_bytes > 0 and free is not None and free < self._min_free_bytes:
+            # Under disk pressure: release the stale handle but do NOT
+            # create today's segment on a full volume.
+            self._release_stale_segment()
+        else:
             self._rollover(today)
+
+    def _release_stale_segment(self) -> None:
+        """Close (without reopening) a previous-day segment handle.
+
+        Closing releases the unlinked inode's disk blocks; deliberately not
+        opening today's segment avoids creating files on a volume under
+        pressure. The next healthy write reopens via the ``_conn is None``
+        path in ``_write_rows``.
+        """
+        if self._conn is None or self._segment_date == self._today():
+            return
+        old = self._segment_date
+        try:
+            self._conn.close()
+        except sqlite3.Error:
+            logger.warning("activity segment close failed for %s", old, exc_info=True)
+        self._conn = None
+        self._segment_date = None
 
     def _maybe_checkpoint(self, conn: sqlite3.Connection) -> None:
         now = time.monotonic()

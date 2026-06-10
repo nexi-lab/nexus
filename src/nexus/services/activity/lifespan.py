@@ -77,12 +77,6 @@ async def setup_activity() -> None:
         )
         logger.info("activity SQLite segment store at %s", cfg.segment_dir)
     except Exception:
-        logger.error(
-            "activity SQLiteSink failed to open at %s — falling back to NoopSink. "
-            "Durable activity_events store is DISABLED for this process.",
-            cfg.segment_dir,
-            exc_info=True,
-        )
         # Surface the degradation in /metrics so operators have an alertable
         # signal — without this, ACTIVITY_SINK_ERRORS stays at 0 while every
         # event is silently discarded.
@@ -92,7 +86,33 @@ async def setup_activity() -> None:
             ACTIVITY_SINK_ERRORS.labels(sink="SQLiteSink").inc()
         except Exception:
             pass
-        sinks.append(NoopSink())
+        # A failed open may be transient (ENOSPC at boot is the motivating
+        # incident). A deferred sink retries the open on every batch — once
+        # retention or an operator frees space, persistence resumes without
+        # a restart. Only a broken store DIRECTORY (mkdir failure: bad
+        # path/permissions) degrades to the permanent NoopSink.
+        try:
+            sinks.append(
+                SQLiteSink(
+                    segment_dir=cfg.segment_dir,
+                    min_free_bytes=cfg.min_free_mb * 1024 * 1024,
+                    defer_open=True,
+                )
+            )
+            logger.error(
+                "activity SQLiteSink failed to open at %s — deferred; "
+                "each batch retries the open until the volume recovers.",
+                cfg.segment_dir,
+                exc_info=True,
+            )
+        except Exception:
+            logger.error(
+                "activity SQLiteSink failed to open at %s — falling back to NoopSink. "
+                "Durable activity_events store is DISABLED for this process.",
+                cfg.segment_dir,
+                exc_info=True,
+            )
+            sinks.append(NoopSink())
 
     if cfg.agent_log_enabled:
         agent_log_store = MemoryBackend(cap_bytes=cfg.agent_log_cap_bytes)

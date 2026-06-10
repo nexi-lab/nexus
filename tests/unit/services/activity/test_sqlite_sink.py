@@ -420,3 +420,61 @@ async def test_maintain_after_close_is_noop(tmp_path: Path) -> None:
     await sink.close()
     await sink.maintain()  # must not raise or reopen
     assert sink._conn is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_shedding_releases_stale_segment_without_new_file(tmp_path: Path) -> None:
+    """Sustained pressure has no idle ticks: the shed path itself must
+    release a previous-day handle (freeing unlinked-segment blocks) and
+    must NOT create today's segment on a full volume."""
+    clock = _clock("2026-06-09T23:00:00")
+    disk = FakeDiskUsage(free=10 * 1024 * 1024)
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock, min_free_bytes=1024, disk_usage_fn=disk)
+    try:
+        await sink.write_batch([_event("d1")])
+        disk.free = 10  # pressure arrives together with the date change
+        sink._free_checked_at = None  # noqa: SLF001
+        clock.now = datetime.fromisoformat("2026-06-10T00:00:01").replace(tzinfo=UTC)
+        await sink.write_batch([_event("d2")])  # shed
+        assert sink._conn is None  # noqa: SLF001 — stale handle closed
+        assert not segment_path(tmp_path, clock.now.date()).exists()
+    finally:
+        await sink.close()
+
+
+@pytest.mark.asyncio
+async def test_maintain_under_pressure_releases_without_opening(tmp_path: Path) -> None:
+    clock = _clock("2026-06-09T23:00:00")
+    disk = FakeDiskUsage(free=10 * 1024 * 1024)
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock, min_free_bytes=1024, disk_usage_fn=disk)
+    try:
+        await sink.write_batch([_event("d1")])
+        disk.free = 10
+        sink._free_checked_at = None  # noqa: SLF001
+        clock.now = datetime.fromisoformat("2026-06-10T00:10:00").replace(tzinfo=UTC)
+        await sink.maintain()
+        assert sink._conn is None  # noqa: SLF001
+        assert not segment_path(tmp_path, clock.now.date()).exists()
+    finally:
+        await sink.close()
+
+
+@pytest.mark.asyncio
+async def test_defer_open_retries_until_volume_recovers(tmp_path: Path) -> None:
+    """defer_open skips the eager open (transient boot failure fallback);
+    each batch retries the open until the store becomes writable."""
+    clock = _clock("2026-06-09T12:00:00")
+    seg = segment_path(tmp_path, clock.now.date())
+    seg.write_bytes(b"not a sqlite file")  # simulated transient breakage
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock, defer_open=True)  # no raise
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            await sink.write_batch([_event("1")])
+        seg.unlink()  # volume recovers
+        await sink.write_batch([_event("2")])
+    finally:
+        await sink.close()
+    conn = sqlite3.connect(segment_path(tmp_path, clock.now.date()))
+    ids = {r[0] for r in conn.execute("SELECT id FROM activity_events")}
+    conn.close()
+    assert ids == {"2"}

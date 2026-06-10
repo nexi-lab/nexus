@@ -21,14 +21,14 @@ use super::types::PasswordVaultError;
 
 /// 32-byte master key. `Debug` is redacted so tracing / panic
 /// messages never leak it.
-pub(crate) struct MasterKey([u8; 32]);
+pub struct MasterKey([u8; 32]);
 
 impl MasterKey {
-    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub(crate) fn generate() -> Self {
+    pub fn generate() -> Self {
         let key = Aes256Gcm::generate_key(&mut OsRng);
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(key.as_slice());
@@ -49,7 +49,7 @@ impl std::fmt::Debug for MasterKey {
 /// Load master key from `path`, or generate + persist a fresh one
 /// if the file doesn't exist. Atomic write (tmp + rename) avoids
 /// half-written keys on crash.
-pub(crate) fn load_or_create_master_key(path: &Path) -> Result<MasterKey, PasswordVaultError> {
+pub fn load_or_create_master_key(path: &Path) -> Result<MasterKey, PasswordVaultError> {
     if path.exists() {
         let bytes = std::fs::read(path).map_err(|e| {
             PasswordVaultError::Storage(format!("read master key {}: {e}", path.display()))
@@ -95,10 +95,7 @@ pub(crate) fn load_or_create_master_key(path: &Path) -> Result<MasterKey, Passwo
 }
 
 /// Encrypt `plaintext` with `key`. Returns `(nonce, ciphertext_with_tag)`.
-pub(crate) fn seal(
-    plaintext: &[u8],
-    key: &MasterKey,
-) -> Result<([u8; 12], Vec<u8>), PasswordVaultError> {
+pub fn seal(plaintext: &[u8], key: &MasterKey) -> Result<([u8; 12], Vec<u8>), PasswordVaultError> {
     let cipher = Aes256Gcm::new(key.as_aes_key());
     let nonce_obj = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
@@ -113,7 +110,7 @@ pub(crate) fn seal(
 /// `key`. Returns the plaintext, or `Crypto` error on tag mismatch
 /// (wrong key, tampered ciphertext, wrong nonce — all
 /// indistinguishable, by design).
-pub(crate) fn open(
+pub fn open(
     nonce: &[u8; 12],
     ciphertext: &[u8],
     key: &MasterKey,

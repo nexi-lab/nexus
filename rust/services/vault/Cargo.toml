@@ -16,7 +16,7 @@ nexus-plugin-abi = { workspace = true }
 # Our PasswordVaultService impl. Enabling the feature pulls in
 # aes-gcm / hmac / sha1 / base32 / prost-types / tonic-prost (all
 # gated under service-password-vault in services/Cargo.toml).
-services = { workspace = true, features = ["service-password-vault"] }
+services = { workspace = true, features = ["service-password-vault", "service-generic-secrets"] }
 # Kernel from nexus-vfs — vault creates a private Kernel instance for
 # its own metastore so all storage goes through kernel syscalls.
 kernel = { workspace = true }

@@ -34,7 +34,12 @@ service-matrix-adapter = ["dep:axum", "dep:base32", "dep:tower"]
 # Loaded as a dylib plugin by nexusd-cluster via --plugin-dir. aes-gcm
 # for the Fernet-equivalent envelope on encrypted blob columns
 # (server-side master key).
-service-password-vault = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost", "dep:hmac", "dep:sha1", "dep:base32"]
+service-password-vault = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost", "dep:hmac", "dep:sha1", "dep:base32", "service-generic-secrets"]
+# GenericSecretsService — namespace:key encrypted KV with versioning +
+# batch ops. Shares AES-256-GCM crypto with password-vault. Loaded as
+# part of the vault cdylib plugin alongside PasswordVaultService.
+# Activates service-password-vault for the shared crypto/storage layer.
+service-generic-secrets = ["dep:aes-gcm", "dep:prost", "dep:prost-types", "dep:tonic-prost", "dep:hmac", "dep:sha1", "dep:base32"]
 
 [dependencies]
 contracts = { workspace = true }

@@ -6,40 +6,49 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Versioned vault entry. One per (title, version) pair, stored at
-/// `{root}/versions/{title}/{version:010}` via kernel syscalls.
-/// Only `version` and `created_at_ms` are plaintext — the entry
-/// body lives encrypted in `nonce + ciphertext`.
+/// Versioned secret entry. One per (namespace, key, version) triple,
+/// stored at `{root}/versions/{namespace}/{key}/{version:010}` via
+/// kernel syscalls. Only `version` and `created_at_ms` are plaintext
+/// — the secret value lives encrypted in `nonce + ciphertext`.
 ///
-/// `bincode`-serialised before being written; AES-GCM auth tag is
-/// concatenated into `ciphertext` per the `aes-gcm` crate convention.
+/// `bincode`-serialised before being written to kernel; AES-GCM auth
+/// tag is concatenated into `ciphertext` per the `aes-gcm` crate
+/// convention.
+///
+/// Shared by both `PasswordVaultService` and `GenericSecretsService`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct StoredEntry {
+pub struct StoredEntry {
     pub version: u32,
     /// Unix milliseconds when this version was written.
     pub created_at_ms: u64,
     /// AES-GCM nonce (12 bytes per RFC 5116) — unique per write.
     pub nonce: [u8; 12],
-    /// AES-256-GCM ciphertext of `bincode(VaultEntryPlaintext)`,
-    /// with the 16-byte auth tag appended (aes-gcm crate convention).
+    /// AES-256-GCM ciphertext of the UTF-8 value string, with the
+    /// 16-byte auth tag appended (aes-gcm crate convention).
     pub ciphertext: Vec<u8>,
 }
 
-/// Per-title index entry, stored at `{root}/entries/{title}` via
-/// kernel syscalls. Tracks which version is current and whether the
-/// title is soft-deleted. Version files hold the actual encrypted
-/// bodies; this is the per-title index that `ListEntries` iterates.
+/// Unified secret index for both password-vault (namespace="passwords")
+/// and generic secrets (arbitrary namespaces). Stored at
+/// `{root}/entries/{namespace}/{key}` via kernel syscalls.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct EntryIndex {
+pub struct SecretIndex {
     pub current_version: u32,
     /// Set when soft-deleted; cleared on Restore. None = live.
     pub deleted_at_ms: Option<u64>,
+    /// User-supplied description (plaintext — not secret data).
+    pub description: String,
+    /// Unix milliseconds when the first version was created.
+    pub created_at_ms: u64,
+    /// Unix milliseconds of the most recent put.
+    pub updated_at_ms: u64,
 }
 
-/// Plaintext form of a vault entry as serialised inside the AES-GCM
-/// envelope. Mirrors the proto `VaultEntry` message fields 1:1; the
-/// `extra_json` proto string is kept as-is (consumers parse JSON
-/// themselves if they care).
+/// Plaintext form of a vault entry, JSON-serialised as the `value`
+/// string stored via `GenericSecretsService` (namespace="passwords").
+/// Mirrors the proto `VaultEntry` message fields 1:1; the `extra_json`
+/// proto string is kept as-is (consumers parse JSON themselves if
+/// they care).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct VaultEntryPlaintext {
     pub title: String,
@@ -93,7 +102,7 @@ impl From<PasswordVaultError> for tonic::Status {
 /// Current wall-clock as unix milliseconds. Used for `created_at_ms`
 /// and `deleted_at_ms`. Falls back to 0 on the (impossible-in-practice)
 /// case of clock skew below the epoch.
-pub(crate) fn now_unix_ms() -> u64 {
+pub fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

@@ -1,21 +1,20 @@
-//! `PasswordVaultService` — gRPC service for the password vault
-//! (namespace="passwords"). Domain wrapper above `SecretsService` that
-//! provides server-side TOTP, audit-tagged access, and the canonical
-//! VaultEntry schema (title/username/password/url/notes/tags/...).
+//! `PasswordVaultService` — domain wrapper above `GenericSecretsService`
+//! for the password vault (namespace="passwords").
 //!
-//! Per #3923 integration doc, this is the Phase 1 Rust impl. Per the
-//! `services` ⊥ `backends` ⊥ `transport` ⊥ `raft` invariant, this
-//! module depends ONLY on `kernel` + `contracts` (transitively); storage
-//! goes through kernel syscalls (the cross-repo integration seam to
-//! nexus-vfs), not direct backend imports.
+//! Provides server-side TOTP, audit-tagged access, and the canonical
+//! VaultEntry schema (title/username/password/url/notes/tags/...).
+//! Internally delegates all storage to `GenericSecretsServiceImpl` via
+//! `do_put("passwords", title, json_str)` / `do_get("passwords", title)`.
+//!
+//! Per #3923 integration doc, this is the Phase 1c storage merge.
+//! VaultEntryPlaintext is JSON-serialised as the value string stored
+//! in the unified `entries/passwords/{title}` path.
 //!
 //! Server-side TOTP is the security invariant the rewrite preserves:
 //! the totp_secret never leaves the server — `GetEntry` always redacts
 //! it, and clients call `GenerateTotp` to get a current code.
 //!
 //! Loaded as a dylib plugin by `nexusd-cluster` via `--plugin-dir`.
-//! The vault dylib (`rust/services/vault/`) compiles to a `.so` /
-//! `.dylib` and registers through the `declare_service_plugin!` macro.
 
 pub mod proto {
     //! Generated tonic stubs from
@@ -23,15 +22,14 @@ pub mod proto {
     tonic::include_proto!("nexus.password_vault.v1");
 }
 
-mod crypto;
-mod storage;
-mod types;
+pub mod crypto;
+pub(crate) mod storage;
+pub mod types;
 
 // Re-export the public error type for binaries that host the service.
 pub use types::PasswordVaultError;
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -46,31 +44,23 @@ use proto::{
     RestoreEntryRequest, RestoreEntryResponse, VaultEntry as ProtoVaultEntry,
 };
 
-use self::types::{now_unix_ms, EntryIndex, StoredEntry, VaultEntryPlaintext};
+use self::types::VaultEntryPlaintext;
+use crate::generic_secrets::GenericSecretsServiceImpl;
+
+/// The namespace under which all password-vault entries are stored.
+const PASSWORDS_NAMESPACE: &str = "passwords";
 
 /// RFC 6238 default: 30-second window.
 const TOTP_PERIOD_SECONDS: u64 = 30;
 
 /// Cache key for TOTP oracle de-duplication. `(title, window_index)`
-/// — single-subject vault, so no subject_id dimension yet. Same code
-/// returned for repeated calls within the same 30s window.
 type TotpCacheKey = (String, u64);
 
 /// Compute a 6-digit TOTP code per RFC 6238 (HMAC-SHA1, 30s window).
-/// `secret_b32` is the user-supplied seed, base32-encoded (RFC 4648,
-/// no padding — pyotp convention; case-insensitive). `time_seconds`
-/// is the wall-clock at code time.
-///
-/// Extracted as a free function (not a method) so tests can pass
-/// fixed timestamps and verify against RFC 6238 vectors.
 fn compute_totp(secret_b32: &str, time_seconds: u64) -> Result<String, PasswordVaultError> {
     use hmac::{Hmac, Mac};
     use sha1::Sha1;
 
-    // RFC 4648 base32 alphabet is uppercase; pyotp accepts mixed-case
-    // by normalising first. We match that for user-friendly inputs.
-    // Strip whitespace too — TOTP QR-code outputs sometimes group
-    // digits with spaces.
     let normalised: String = secret_b32
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -92,8 +82,6 @@ fn compute_totp(secret_b32: &str, time_seconds: u64) -> Result<String, PasswordV
     mac.update(&counter_bytes);
     let hmac_result = mac.finalize().into_bytes();
 
-    // RFC 4226 dynamic truncation: low 4 bits of last byte point to
-    // a 4-byte slice; mask top bit; mod 10^6 for 6 digits.
     let offset = (hmac_result[19] & 0x0f) as usize;
     let truncated = u32::from_be_bytes([
         hmac_result[offset] & 0x7f,
@@ -107,8 +95,7 @@ fn compute_totp(secret_b32: &str, time_seconds: u64) -> Result<String, PasswordV
 /// Service state. Wrapped in `Arc` so the tonic-required `Clone`
 /// impl on `PasswordVaultServiceImpl` is cheap.
 struct Inner {
-    storage: storage::Storage,
-    master_key: crypto::MasterKey,
+    secrets: GenericSecretsServiceImpl,
     totp_cache: Mutex<HashMap<TotpCacheKey, String>>,
 }
 
@@ -121,13 +108,14 @@ pub struct PasswordVaultServiceImpl {
 impl PasswordVaultServiceImpl {
     /// Convenience wrapper for tests: creates a Kernel + in-memory
     /// backend internally. Not for production — content is ephemeral.
-    pub fn new(data_dir: &Path, master_key_path: &Path) -> Result<Self, PasswordVaultError> {
-        use kernel::kernel::Kernel;
+    pub fn new(
+        data_dir: &std::path::Path,
+        master_key_path: &std::path::Path,
+    ) -> Result<Self, PasswordVaultError> {
+        let kernel = Arc::new(kernel::kernel::Kernel::new());
+        let backend: Arc<dyn kernel::abc::object_store::ObjectStore> =
+            Arc::new(storage::MemBackend::new());
 
-        let kernel = std::sync::Arc::new(Kernel::new());
-        let backend = std::sync::Arc::new(storage::MemBackend::new());
-
-        // Point metastore at persistent path when a real data_dir is given.
         let meta_path = data_dir.join("vault-meta.redb");
         if let Some(p) = meta_path.to_str() {
             let _ = kernel.set_metastore_path(p);
@@ -137,42 +125,64 @@ impl PasswordVaultServiceImpl {
     }
 
     /// Create a vault service on an existing kernel with a caller-
-    /// provided backend for content storage.
-    ///
-    /// - Tests: pass `MemBackend` (ephemeral, fast)
-    /// - Production: pass `PathLocalBackend` (persistent, fsync)
-    ///
-    /// The backend choice is the only difference between ephemeral
-    /// (test) and durable (production) vault storage; kernel metastore
-    /// handles metadata in both cases.
+    /// provided backend. Mounts the backend, creates the
+    /// `GenericSecretsServiceImpl`, and wraps it.
     pub fn new_with_kernel(
-        kernel: std::sync::Arc<kernel::kernel::Kernel>,
+        kernel: Arc<kernel::kernel::Kernel>,
         root: &str,
-        master_key_path: &Path,
-        backend: std::sync::Arc<dyn kernel::abc::object_store::ObjectStore>,
+        master_key_path: &std::path::Path,
+        backend: Arc<dyn kernel::abc::object_store::ObjectStore>,
     ) -> Result<Self, PasswordVaultError> {
-        let storage = storage::Storage::new(kernel, root, backend)?;
+        let root = root.trim_end_matches('/');
+        let backend_name = backend.name().to_string();
+
+        // Mount the backend at root.
+        kernel
+            .sys_setattr(
+                root,
+                /* DT_MOUNT */ 2,
+                &backend_name,
+                Some(backend),
+                None,
+                None,
+                "memory",
+                "root",
+                false,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| PasswordVaultError::Storage(format!("mount {root}: {e:?}")))?;
+
         let master_key = crypto::load_or_create_master_key(master_key_path)?;
-        Ok(Self {
+        let secrets = GenericSecretsServiceImpl::new_on_existing_mount(kernel, root, master_key)?;
+        Ok(Self::new_with_secrets(secrets))
+    }
+
+    /// Create a password-vault service wrapping an existing
+    /// `GenericSecretsServiceImpl`. Used by the vault plugin where
+    /// the secrets service is created first.
+    pub fn new_with_secrets(secrets: GenericSecretsServiceImpl) -> Self {
+        Self {
             inner: Arc::new(Inner {
-                storage,
-                master_key,
+                secrets,
                 totp_cache: Mutex::new(HashMap::new()),
             }),
-        })
+        }
     }
 }
 
 // ---------------------------------------------------------------------
 // Conversion helpers — proto <-> internal types.
-//
-// Proto VaultEntry has all non-`title` fields as `optional string`
-// (proto3 explicit presence). Internal plaintext uses plain `String`
-// — we lose the "field unset vs explicitly cleared" distinction at
-// the storage layer. That's intentional for now: vault entries are
-// always full-replace (PutEntry creates a new version with the full
-// payload), so partial-update semantics don't apply yet. If
-// partial-update lands later (PATCH semantics), revisit.
 // ---------------------------------------------------------------------
 
 fn proto_to_plaintext(p: ProtoVaultEntry) -> VaultEntryPlaintext {
@@ -188,11 +198,7 @@ fn proto_to_plaintext(p: ProtoVaultEntry) -> VaultEntryPlaintext {
     }
 }
 
-/// `plaintext_to_proto`: always redacts `totp_secret` (per proto
-/// contract — "totp_secret is always redacted in the response;
-/// clients call GenerateTotp"). Other fields wrap into `Some(_)`
-/// preserving empty strings; "field unset" semantics would require
-/// us to track presence at storage layer, which we don't yet.
+/// `plaintext_to_proto`: always redacts `totp_secret` (security invariant).
 fn plaintext_to_proto(p: VaultEntryPlaintext) -> ProtoVaultEntry {
     ProtoVaultEntry {
         title: p.title,
@@ -213,8 +219,18 @@ fn unix_ms_to_proto_ts(ms: u64) -> prost_types::Timestamp {
     }
 }
 
+/// JSON-serialize VaultEntryPlaintext for storage via GenericSecretsService.
+fn serialize_plaintext(plain: &VaultEntryPlaintext) -> Result<String, Status> {
+    serde_json::to_string(plain).map_err(|e| Status::internal(format!("serialise entry: {e}")))
+}
+
+/// JSON-deserialize VaultEntryPlaintext from GenericSecretsService value.
+fn deserialize_plaintext(json: &str) -> Result<VaultEntryPlaintext, PasswordVaultError> {
+    serde_json::from_str(json).map_err(|_| PasswordVaultError::Crypto)
+}
+
 // ---------------------------------------------------------------------
-// gRPC trait impl.
+// gRPC trait impl — all methods delegate to GenericSecretsServiceImpl.
 // ---------------------------------------------------------------------
 
 #[tonic::async_trait]
@@ -234,41 +250,19 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         }
         let title = entry.title.clone();
 
-        // Encrypt the canonical plaintext form.
         let plain = proto_to_plaintext(entry);
-        let plain_bytes = bincode::serialize(&plain)
-            .map_err(|e| Status::internal(format!("serialise entry: {e}")))?;
-        let (nonce, ciphertext) = crypto::seal(&plain_bytes, &self.inner.master_key)?;
+        let json_str = serialize_plaintext(&plain)?;
 
-        // Allocate next version. Soft-deleted titles get reanimated
-        // (writing a new version implicitly clears the tombstone —
-        // matches user intent of "put new value here").
-        let current = self.inner.storage.get_index(&title)?;
-        let next_version = current.as_ref().map_or(1, |idx| idx.current_version + 1);
-        let created_at_ms = now_unix_ms();
-
-        let stored = StoredEntry {
-            version: next_version,
-            created_at_ms,
-            nonce,
-            ciphertext,
-        };
-        self.inner
-            .storage
-            .put_version(&title, next_version, &stored)?;
-        self.inner.storage.set_index(
-            &title,
-            &EntryIndex {
-                current_version: next_version,
-                deleted_at_ms: None,
-            },
-        )?;
+        let metadata = self
+            .inner
+            .secrets
+            .do_put(PASSWORDS_NAMESPACE, &title, &json_str, None)?;
 
         Ok(Response::new(PutEntryResponse {
             id: title.clone(),
             title,
-            version: next_version as i32,
-            created_at: Some(unix_ms_to_proto_ts(created_at_ms)),
+            version: metadata.current_version,
+            created_at: metadata.updated_at,
         }))
     }
 
@@ -281,42 +275,15 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
             return Err(Status::invalid_argument("title is required (non-empty)"));
         }
 
-        let idx = self
-            .inner
-            .storage
-            .get_index(&req.title)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-
-        // version: None (proto default for `optional`) = latest. An
-        // explicit Some(n) reads a specific historical version even
-        // for soft-deleted titles (rotation auditors need this).
-        let version_to_read = match req.version {
-            None => {
-                if idx.deleted_at_ms.is_some() {
-                    return Err(PasswordVaultError::NotFound(req.title).into());
-                }
-                idx.current_version
-            }
-            Some(v) if v < 0 => {
-                return Err(Status::invalid_argument("version must be >= 0"));
-            }
-            Some(v) => v as u32,
-        };
-
-        let stored = self
-            .inner
-            .storage
-            .get_version(&req.title, version_to_read)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-
-        // Decrypt + deserialise plaintext.
-        let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
-        let plain: VaultEntryPlaintext =
-            bincode::deserialize(&plain_bytes).map_err(|_| PasswordVaultError::Crypto)?;
+        let (json_str, version) =
+            self.inner
+                .secrets
+                .do_get(PASSWORDS_NAMESPACE, &req.title, req.version)?;
+        let plain = deserialize_plaintext(&json_str)?;
 
         Ok(Response::new(GetEntryResponse {
             entry: Some(plaintext_to_proto(plain)),
-            version: stored.version as i32,
+            version,
         }))
     }
 
@@ -325,38 +292,29 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         req: Request<ListEntriesRequest>,
     ) -> Result<Response<ListEntriesResponse>, Status> {
         let req = req.into_inner();
-        // Snapshot all live indexes. Soft-deleted titles are excluded
-        // (Python's include_deleted=False default — surface them via
-        // the dedicated 'show tombstones' tool when that lands).
-        let all = self.inner.storage.list_indexes()?;
-        let live: Vec<(String, EntryIndex)> = all
-            .into_iter()
-            .filter(|(_, idx)| idx.deleted_at_ms.is_none())
-            .collect();
+
+        // List all live entries in the "passwords" namespace.
+        let live = self
+            .inner
+            .secrets
+            .do_list_metadata(Some(PASSWORDS_NAMESPACE), false)?;
         let total_live = live.len() as i32;
 
         let query_lower = req.query.to_lowercase();
         let want_filter = !query_lower.is_empty();
         let mut matched = Vec::new();
-        for (title, idx) in live {
-            let stored = match self
-                .inner
-                .storage
-                .get_version(&title, idx.current_version)?
-            {
-                Some(s) => s,
-                None => continue, // index points at a missing version — skip silently (corruption tracker should pick this up)
-            };
-            let plain_bytes =
-                crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
-            let plain: VaultEntryPlaintext = match bincode::deserialize(&plain_bytes) {
+
+        for (_ns, title, _idx) in &live {
+            let (json_str, _version) =
+                match self.inner.secrets.do_get(PASSWORDS_NAMESPACE, title, None) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+            let plain = match deserialize_plaintext(&json_str) {
                 Ok(p) => p,
                 Err(_) => continue,
             };
             if want_filter {
-                // Case-insensitive substring filter over the four
-                // searchable fields. Matches Python's behaviour at
-                // password_agent/vault.py:71-81.
                 let haystack = format!(
                     "{} {} {} {}",
                     plain.title.to_lowercase(),
@@ -372,7 +330,6 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         }
         let matched_count = matched.len() as i32;
 
-        // limit=0 → no limit.
         if req.limit > 0 && matched.len() > req.limit as usize {
             matched.truncate(req.limit as usize);
         }
@@ -392,18 +349,9 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         if req.title.is_empty() {
             return Err(Status::invalid_argument("title is required"));
         }
-        let idx = self
-            .inner
-            .storage
-            .get_index(&req.title)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-        // Idempotent: deleting an already-deleted entry is a no-op
-        // success, not an error. Matches REST DELETE semantics.
-        let new_idx = EntryIndex {
-            current_version: idx.current_version,
-            deleted_at_ms: Some(idx.deleted_at_ms.unwrap_or_else(now_unix_ms)),
-        };
-        self.inner.storage.set_index(&req.title, &new_idx)?;
+        self.inner
+            .secrets
+            .do_delete(PASSWORDS_NAMESPACE, &req.title)?;
         Ok(Response::new(DeleteEntryResponse {
             title: req.title,
             deleted: true,
@@ -418,21 +366,14 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         if req.title.is_empty() {
             return Err(Status::invalid_argument("title is required"));
         }
-        let idx = self
+        let (_restored, current_version) = self
             .inner
-            .storage
-            .get_index(&req.title)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-        // Idempotent: restoring a live entry is a no-op success.
-        let new_idx = EntryIndex {
-            current_version: idx.current_version,
-            deleted_at_ms: None,
-        };
-        self.inner.storage.set_index(&req.title, &new_idx)?;
+            .secrets
+            .do_restore(PASSWORDS_NAMESPACE, &req.title)?;
         Ok(Response::new(RestoreEntryResponse {
             title: req.title,
             restored: true,
-            current_version: idx.current_version as i32,
+            current_version,
         }))
     }
 
@@ -444,18 +385,12 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         if req.title.is_empty() {
             return Err(Status::invalid_argument("title is required"));
         }
-        let idx = self
+        let (stored, idx) = self
             .inner
-            .storage
-            .get_index(&req.title)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-        let stored = self.inner.storage.list_versions(&req.title)?;
+            .secrets
+            .do_list_versions(PASSWORDS_NAMESPACE, &req.title)?;
         let active = idx.current_version;
         let is_deleted = idx.deleted_at_ms.is_some();
-        // Per proto: tombstoned=true marks "the version that was active
-        // when the entry was soft-deleted". For a live entry, no version
-        // is tombstoned. For a soft-deleted entry, only the latest
-        // (active) version carries the marker.
         let versions: Vec<proto::Version> = stored
             .into_iter()
             .map(|s| proto::Version {
@@ -481,24 +416,12 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
             return Err(Status::invalid_argument("title is required"));
         }
 
-        // Resolve to current version. Soft-deleted entries can't TOTP.
-        let idx = self
-            .inner
-            .storage
-            .get_index(&req.title)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-        if idx.deleted_at_ms.is_some() {
-            return Err(PasswordVaultError::NotFound(req.title).into());
-        }
-        let stored = self
-            .inner
-            .storage
-            .get_version(&req.title, idx.current_version)?
-            .ok_or_else(|| PasswordVaultError::NotFound(req.title.clone()))?;
-
-        let plain_bytes = crypto::open(&stored.nonce, &stored.ciphertext, &self.inner.master_key)?;
-        let plain: VaultEntryPlaintext =
-            bincode::deserialize(&plain_bytes).map_err(|_| PasswordVaultError::Crypto)?;
+        // do_get checks soft-delete for us (None version = latest, 404 if deleted).
+        let (json_str, _version) =
+            self.inner
+                .secrets
+                .do_get(PASSWORDS_NAMESPACE, &req.title, None)?;
+        let plain = deserialize_plaintext(&json_str)?;
 
         if plain.totp_secret.is_empty() {
             return Err(PasswordVaultError::TotpNotConfigured(req.title).into());
@@ -511,9 +434,6 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         let window = now_secs / TOTP_PERIOD_SECONDS;
         let cache_key = (req.title.clone(), window);
 
-        // Hold the cache lock for both check + insert + prune. Locks
-        // are uncontended in single-user workloads; for high QPS we'd
-        // split into per-shard locks later.
         let code = {
             let mut cache = self.inner.totp_cache.lock();
             if let Some(cached) = cache.get(&cache_key) {
@@ -521,8 +441,6 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
             } else {
                 let computed = compute_totp(&plain.totp_secret, now_secs)?;
                 cache.insert(cache_key.clone(), computed.clone());
-                // Drop entries from past windows so the map doesn't
-                // grow unbounded over long server lifetimes.
                 cache.retain(|(_, w), _| *w >= window);
                 computed
             }
@@ -644,8 +562,6 @@ mod tests {
 
     #[tokio::test]
     async fn get_always_redacts_totp_secret() {
-        // Per proto contract — `totp_secret` is never returned by
-        // GetEntry, regardless of caller. Clients use GenerateTotp.
         let (_d, svc) = fresh_service();
         let mut e = entry("aws", "pw");
         e.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
@@ -747,7 +663,7 @@ mod tests {
         seed(&svc, &[("Gmail", "x"), ("GitHub", "y"), ("AWS", "z")]).await;
         let r = svc
             .list_entries(Request::new(ListEntriesRequest {
-                query: "git".into(), // matches "GitHub"
+                query: "git".into(),
                 limit: 0,
                 audit: None,
             }))
@@ -773,8 +689,6 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        // matched counts BEFORE limit truncation (per proto comment:
-        // 'matched' is post-filter, pre-limit).
         assert_eq!(r.matched, 3);
         assert_eq!(r.entries.len(), 2);
     }
@@ -798,7 +712,7 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(r.total_in_vault, 1); // only "b"
+        assert_eq!(r.total_in_vault, 1);
         assert_eq!(r.matched, 1);
         assert_eq!(r.entries[0].title, "b");
     }
@@ -816,7 +730,6 @@ mod tests {
             .unwrap()
             .into_inner();
         assert!(d.deleted);
-        // Latest read after soft-delete: NotFound.
         let err = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: "a".into(),
@@ -826,7 +739,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
-        // But explicit historical version still works (rotation auditors).
+        // Explicit historical version still works.
         let got = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: "a".into(),
@@ -859,7 +772,6 @@ mod tests {
             .into_inner();
         assert!(r.restored);
         assert_eq!(r.current_version, 1);
-        // GetEntry latest now works again.
         let got = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: "a".into(),
@@ -874,8 +786,6 @@ mod tests {
 
     #[tokio::test]
     async fn put_revives_soft_deleted() {
-        // Documented PutEntry behaviour: writing a new version implicitly
-        // clears any tombstone. Sanity-check it works end-to-end.
         let (_d, svc) = fresh_service();
         seed(&svc, &[("a", "v1")]).await;
         svc.delete_entry(Request::new(DeleteEntryRequest {
@@ -958,7 +868,6 @@ mod tests {
         assert_eq!(r.count, 3);
         let vers: Vec<i32> = r.versions.iter().map(|v| v.version).collect();
         assert_eq!(vers, vec![1, 2, 3]);
-        // Live entry — no tombstoned versions.
         assert!(r.versions.iter().all(|v| !v.tombstoned));
     }
 
@@ -988,7 +897,6 @@ mod tests {
             .unwrap()
             .into_inner();
         assert_eq!(r.count, 2);
-        // Only the currently-active version (v=2) is marked tombstoned.
         assert!(!r.versions[0].tombstoned);
         assert!(r.versions[1].tombstoned);
     }
@@ -1010,25 +918,17 @@ mod tests {
     // GenerateTotp + compute_totp tests
     // -----------------------------------------------------------------
 
-    /// RFC 6238 Appendix B test vectors, HMAC-SHA1 variant.
-    /// Seed is ASCII "12345678901234567890" → base32 (no padding) =
-    /// "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".
     const RFC_SEED_B32: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 
     #[test]
     fn compute_totp_matches_rfc6238_vectors() {
-        // T = 59         → 94287082, low 6 digits = 287082
         assert_eq!(compute_totp(RFC_SEED_B32, 59).unwrap(), "287082");
-        // T = 1111111109 → 07081804, low 6 digits = 081804
         assert_eq!(compute_totp(RFC_SEED_B32, 1_111_111_109).unwrap(), "081804");
-        // T = 1234567890 → 89005924, low 6 digits = 005924
         assert_eq!(compute_totp(RFC_SEED_B32, 1_234_567_890).unwrap(), "005924");
     }
 
     #[test]
     fn compute_totp_lowercase_base32_works() {
-        // pyotp accepts lowercase seeds; we should too (RFC 4648 is
-        // case-insensitive).
         assert_eq!(
             compute_totp(&RFC_SEED_B32.to_lowercase(), 59).unwrap(),
             "287082"
@@ -1069,7 +969,7 @@ mod tests {
     async fn generate_totp_not_configured_when_no_seed() {
         let (_d, svc) = fresh_service();
         svc.put_entry(Request::new(PutEntryRequest {
-            entry: Some(entry("aws", "pw")), // entry() leaves totp_secret=None
+            entry: Some(entry("aws", "pw")),
             audit: None,
         }))
         .await
@@ -1126,11 +1026,6 @@ mod tests {
 
     #[tokio::test]
     async fn generate_totp_returns_same_code_within_window() {
-        // Within one 30s window, repeated calls return the cached code.
-        // We can't easily force a window boundary in a sync test, but
-        // back-to-back calls reliably stay in the same window unless
-        // the test is run exactly at a boundary — accept that 1-in-30s
-        // flakiness floor for now (real fix would be a clock trait).
         let (_d, svc) = fresh_service();
         let mut e = entry("aws", "pw");
         e.totp_secret = Some(RFC_SEED_B32.into());
@@ -1169,7 +1064,6 @@ mod tests {
         }))
         .await
         .unwrap();
-        // Second delete: still success, no error.
         let r2 = svc
             .delete_entry(Request::new(DeleteEntryRequest {
                 title: "a".into(),
@@ -1180,15 +1074,31 @@ mod tests {
             .into_inner();
         assert!(r2.deleted);
     }
+
+    // -----------------------------------------------------------------
+    // Cross-service integration: password data visible via generic
+    // secrets API (namespace="passwords").
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn password_entries_visible_via_generic_secrets_namespace() {
+        let (_d, svc) = fresh_service();
+        seed(&svc, &[("gmail", "pw1"), ("github", "pw2")]).await;
+
+        // The underlying GenericSecretsServiceImpl should see these
+        // entries in the "passwords" namespace.
+        let metadata = svc
+            .inner
+            .secrets
+            .do_list_metadata(Some(PASSWORDS_NAMESPACE), false)
+            .unwrap();
+        assert_eq!(metadata.len(), 2);
+        assert!(metadata.iter().all(|(ns, _, _)| ns == PASSWORDS_NAMESPACE));
+    }
 }
 
 // -----------------------------------------------------------------
 // Cross-repo E2E integration tests.
-//
-// These tests guard the nexus repo → nexus-vfs repo (kernel git dep)
-// syscall roundtrip at runtime. They use `new_with_kernel` to wire
-// a real Kernel instance and cross-verify data via direct kernel
-// syscalls.
 // -----------------------------------------------------------------
 
 #[cfg(test)]
@@ -1200,7 +1110,8 @@ mod e2e_integration {
     fn kernel_service() -> (Arc<Kernel>, PasswordVaultServiceImpl) {
         let kernel = Arc::new(Kernel::new());
         let dir = tempfile::TempDir::new().unwrap();
-        let backend = Arc::new(super::storage::MemBackend::new());
+        let backend: Arc<dyn kernel::abc::object_store::ObjectStore> =
+            Arc::new(storage::MemBackend::new());
         let svc = PasswordVaultServiceImpl::new_with_kernel(
             kernel.clone(),
             "/vault",
@@ -1225,21 +1136,12 @@ mod e2e_integration {
     }
 
     // ── Scenario 1: Password rotation with audit trail ──────────────
-    //
-    // User problem: "Rotate a credential and verify old versions are
-    //   preserved for compliance audit."
-    // Workflow: Put v1 → Kernel cross-verify → Put v2 → ListVersions
-    //   → Get historical v1 → Kernel cross-verify version files
-    // Data flow: put returns version → list_versions uses title →
-    //   get_entry uses version number from list → kernel readdir
-    //   confirms on-disk layout matches.
 
     #[tokio::test]
     async fn password_rotation_with_audit_trail() {
         let (kernel, svc) = kernel_service();
         let ctx = OperationContext::new("test", "root", true, None, true);
 
-        // 1. Store initial credential.
         let put1 = svc
             .put_entry(Request::new(PutEntryRequest {
                 entry: Some(entry("github", "initial-pw")),
@@ -1251,12 +1153,12 @@ mod e2e_integration {
         assert_eq!(put1.version, 1);
         assert_eq!(put1.title, "github");
 
-        // 2. Kernel cross-verify: index file written to VFS.
-        let index_read = KernelConvenience::read(&*kernel, "/vault/entries/github", &ctx, 0, 0)
-            .expect("index entry should exist in VFS");
+        // Kernel cross-verify: index file written to unified path.
+        let index_read =
+            KernelConvenience::read(&*kernel, "/vault/entries/passwords/github", &ctx, 0, 0)
+                .expect("index entry should exist in VFS");
         assert!(index_read.data.is_some(), "index should have content");
 
-        // 3. Rotate password (put v2).  put1.title flows here.
         let put2 = svc
             .put_entry(Request::new(PutEntryRequest {
                 entry: Some(entry(&put1.title, "rotated-pw")),
@@ -1267,8 +1169,6 @@ mod e2e_integration {
             .into_inner();
         assert_eq!(put2.version, 2);
 
-        // 4. List versions — auditor verifies both exist.
-        //    put1.title flows here.
         let versions = svc
             .list_versions(Request::new(ListVersionsRequest {
                 title: put1.title.clone(),
@@ -1281,8 +1181,6 @@ mod e2e_integration {
         let ver_nums: Vec<i32> = versions.versions.iter().map(|v| v.version).collect();
         assert_eq!(ver_nums, vec![1, 2]);
 
-        // 5. Historical read — auditor retrieves the OLD password.
-        //    Version number comes from step 4's version list.
         let hist = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: put1.title.clone(),
@@ -1292,35 +1190,19 @@ mod e2e_integration {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(
-            hist.entry.unwrap().password.as_deref(),
-            Some("initial-pw"),
-            "historical version must return original password"
-        );
+        assert_eq!(hist.entry.unwrap().password.as_deref(), Some("initial-pw"),);
 
-        // 6. Kernel cross-verify: both version files exist on disk.
-        let version_dir = kernel.sys_readdir("/vault/versions/github", "root", true);
-        assert_eq!(
-            version_dir.len(),
-            2,
-            "VFS should have 2 version files for github"
-        );
+        // Kernel cross-verify: both version files under unified path.
+        let version_dir = kernel.sys_readdir("/vault/versions/passwords/github", "root", true);
+        assert_eq!(version_dir.len(), 2);
     }
 
     // ── Scenario 2: Accidental delete and recovery ───────────────
-    //
-    // User problem: "Accidentally soft-delete a credential, then
-    //   recover it without losing any data."
-    // Workflow: Put → Delete → Verify NotFound → Restore →
-    //   Verify recovered → Kernel readdir cross-check
-    // Data flow: put returns title → delete uses title → restore
-    //   uses title → get uses title → readdir verifies VFS state.
 
     #[tokio::test]
     async fn accidental_delete_and_recovery() {
         let (kernel, svc) = kernel_service();
 
-        // 1. Store a credential.
         let put = svc
             .put_entry(Request::new(PutEntryRequest {
                 entry: Some(entry("aws-prod", "s3cret-key")),
@@ -1331,7 +1213,6 @@ mod e2e_integration {
             .into_inner();
         assert_eq!(put.version, 1);
 
-        // 2. Accidentally delete it.  put.title flows here.
         let del = svc
             .delete_entry(Request::new(DeleteEntryRequest {
                 title: put.title.clone(),
@@ -1342,7 +1223,6 @@ mod e2e_integration {
             .into_inner();
         assert!(del.deleted);
 
-        // 3. Verify latest read returns NotFound.
         let err = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: put.title.clone(),
@@ -1353,7 +1233,6 @@ mod e2e_integration {
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
 
-        // 4. Restore the entry.  put.title flows here.
         let restored = svc
             .restore_entry(Request::new(RestoreEntryRequest {
                 title: put.title.clone(),
@@ -1365,7 +1244,6 @@ mod e2e_integration {
         assert!(restored.restored);
         assert_eq!(restored.current_version, 1);
 
-        // 5. Verify the credential is fully recovered.
         let got = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: put.title.clone(),
@@ -1375,32 +1253,20 @@ mod e2e_integration {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(
-            got.entry.unwrap().password.as_deref(),
-            Some("s3cret-key"),
-            "recovered credential must match original"
-        );
+        assert_eq!(got.entry.unwrap().password.as_deref(), Some("s3cret-key"),);
 
-        // 6. Kernel cross-check: VFS entries dir still has the entry.
-        let entries = kernel.sys_readdir("/vault/entries", "root", true);
+        // Kernel cross-check: entries under unified path.
+        let entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
         assert_eq!(entries.len(), 1);
         assert!(entries[0].0.contains("aws-prod"));
     }
 
-    // ── Scenario 3: TOTP setup → rotate password → TOTP survives ─
-    //
-    // User problem: "Set up 2FA for an account, later rotate the
-    //   password, and verify TOTP still works after the update."
-    // Workflow: Put (with TOTP) → GenerateTotp → Put v2 (new pw) →
-    //   GenerateTotp again → Get to verify password changed
-    // Data flow: put returns title → totp uses title → put v2 uses
-    //   title → totp uses title → get uses title, verifies new pw.
+    // ── Scenario 3: TOTP survives password rotation ─────────────
 
     #[tokio::test]
     async fn totp_survives_password_rotation() {
         let (_kernel, svc) = kernel_service();
 
-        // 1. Store credential WITH TOTP secret.
         let mut e = entry("aws", "original-pw");
         e.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
         let put1 = svc
@@ -1413,8 +1279,6 @@ mod e2e_integration {
             .into_inner();
         assert_eq!(put1.version, 1);
 
-        // 2. Generate TOTP — verifies crypto pipeline:
-        //    encrypt → kernel write → kernel read → decrypt → TOTP.
         let totp1 = svc
             .generate_totp(Request::new(GenerateTotpRequest {
                 title: put1.title.clone(),
@@ -1426,7 +1290,6 @@ mod e2e_integration {
         assert_eq!(totp1.code.len(), 6);
         assert!(totp1.code.chars().all(|c| c.is_ascii_digit()));
 
-        // 3. Rotate password, keep TOTP secret.  put1.title flows.
         let mut e2 = entry(&put1.title, "rotated-pw");
         e2.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
         let put2 = svc
@@ -1439,8 +1302,6 @@ mod e2e_integration {
             .into_inner();
         assert_eq!(put2.version, 2);
 
-        // 4. TOTP still works after rotation — same secret, same code
-        //    within the 30s window.
         let totp2 = svc
             .generate_totp(Request::new(GenerateTotpRequest {
                 title: put1.title.clone(),
@@ -1450,12 +1311,8 @@ mod e2e_integration {
             .unwrap()
             .into_inner();
         assert_eq!(totp2.code.len(), 6);
-        assert_eq!(
-            totp1.code, totp2.code,
-            "same TOTP secret within same 30s window must produce same code"
-        );
+        assert_eq!(totp1.code, totp2.code);
 
-        // 5. Verify password actually changed.
         let got = svc
             .get_entry(Request::new(GetEntryRequest {
                 title: put1.title.clone(),
@@ -1469,28 +1326,15 @@ mod e2e_integration {
             got.entry.as_ref().unwrap().password.as_deref(),
             Some("rotated-pw")
         );
-        assert!(
-            got.entry.unwrap().totp_secret.is_none(),
-            "totp_secret must be redacted in response"
-        );
+        assert!(got.entry.unwrap().totp_secret.is_none());
     }
 
     // ── Scenario 4: Multi-credential search and cleanup ──────────
-    //
-    // User problem: "Manage multiple credentials — add several,
-    //   search for a specific one, delete it, verify it's gone from
-    //   both the service list AND the kernel VFS."
-    // Workflow: Put 3 entries → List (filtered) → Delete matched →
-    //   List (verify count) → Kernel readdir cross-check
-    // Data flow: put returns titles → list uses query to find one →
-    //   delete uses matched title → list confirms removal →
-    //   kernel readdir confirms VFS state matches.
 
     #[tokio::test]
     async fn multi_credential_search_and_cleanup() {
         let (kernel, svc) = kernel_service();
 
-        // 1. Seed 3 credentials.
         let mut titles = Vec::new();
         for (t, p) in [("gmail", "pw1"), ("github", "pw2"), ("aws-prod", "pw3")] {
             let r = svc
@@ -1505,7 +1349,6 @@ mod e2e_integration {
         }
         assert_eq!(titles.len(), 3);
 
-        // 2. Search for "git" — should match exactly "github".
         let filtered = svc
             .list_entries(Request::new(ListEntriesRequest {
                 query: "git".into(),
@@ -1519,7 +1362,6 @@ mod e2e_integration {
         let matched_title = &filtered.entries[0].title;
         assert_eq!(matched_title, "github");
 
-        // 3. Delete the matched entry.  matched_title flows from step 2.
         svc.delete_entry(Request::new(DeleteEntryRequest {
             title: matched_title.clone(),
             audit: None,
@@ -1527,7 +1369,6 @@ mod e2e_integration {
         .await
         .unwrap();
 
-        // 4. List again — total should be 2, "github" gone.
         let after = svc
             .list_entries(Request::new(ListEntriesRequest {
                 query: String::new(),
@@ -1539,20 +1380,11 @@ mod e2e_integration {
             .into_inner();
         assert_eq!(after.total_in_vault, 2);
         let remaining: Vec<&str> = after.entries.iter().map(|e| e.title.as_str()).collect();
-        assert!(
-            !remaining.contains(&"github"),
-            "deleted entry must not appear in list"
-        );
+        assert!(!remaining.contains(&"github"));
 
-        // 5. Kernel cross-check: VFS entries dir has 3 files (soft-
-        //    delete doesn't remove the index file, but list_entries
-        //    filters by tombstone). This verifies the kernel layer
-        //    stores the tombstone, not the service layer.
-        let vfs_entries = kernel.sys_readdir("/vault/entries", "root", true);
-        assert_eq!(
-            vfs_entries.len(),
-            3,
-            "VFS still has 3 index files (soft-delete = tombstone, not removal)"
-        );
+        // Kernel cross-check: 3 index files in passwords namespace
+        // (soft-delete = tombstone, not removal).
+        let vfs_entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
+        assert_eq!(vfs_entries.len(), 3);
     }
 }

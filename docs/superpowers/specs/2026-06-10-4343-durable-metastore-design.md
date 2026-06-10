@@ -75,16 +75,33 @@ would be lost, so the swap happens before any mount or traffic.
 
 No kernel-crate, raft, or transport changes.
 
+**Coverage**: `nexus-full`'s `[[bin]]` target reuses `../cluster/src/main.rs`
+verbatim (`rust/profiles/full/Cargo.toml`), so this one fix site covers both
+`nexusd-cluster` and `nexusd-full` — the binary the nexus Docker image
+actually ships (installed via `cargo install --git`, symlinked to
+`nexus-cluster` for the Python runtime).
+
+**Why nexus-vfs must change (no nexus-only fix exists)**: the nexus repo
+builds no kernel host binary (workspace = services + two plugin cdylibs);
+the transport layer exposes no RPC for metastore wiring (the Python
+`set_metastore_path` stub is a no-op for this reason); and the plugin ABI
+neither exposes the setter nor loads early enough to swap safely.
+
 ## PR 2 — nexus (this repo, after PR 1 merges)
 
 1. `Cargo.toml` + `Cargo.lock`: bump all seven nexus-vfs git dep pins
    (root `Cargo.toml`) from rev
    `32c47310e48d449bb5c3f02e48ef12455bf0e8fa` to the PR-1 merge commit.
-2. `src/nexus/remote/kernel_client.py` `set_metastore_path` stub (~line
+2. `Dockerfile` `ARG NEXUS_VFS_REV`: bump from `f4227a2…` (stale pre-#27-
+   merge integration pin) to the PR-1 merge commit. **This is the bump
+   that ships the fix** — the image's kernel binary (`nexusd-full`) is
+   `cargo install`ed at this rev; the Cargo.toml pins only sync the
+   plugin/services crates.
+3. `src/nexus/remote/kernel_client.py` `set_metastore_path` stub (~line
    880): replace the false "already passed via env" comment — the binary
    now derives `<NEXUS_DATA_DIR>/metastore.redb` itself; `NEXUS_DATA_DIR`
    set at spawn is the carrier. Comment-only, no behavior change.
-3. Regression test `tests/integration/test_kernel_restart_survival.py`:
+4. Regression test `tests/integration/test_kernel_restart_survival.py`:
    - Spawn real `nexus-cluster` via `KernelClient(metadata_path=tmp_path)`
      + explicit `.open()` (#4133 fixture pattern); skip if the binary is
      not on PATH (s3_parity conftest pattern).

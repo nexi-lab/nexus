@@ -271,3 +271,46 @@ def test_sweep_increments_segments_deleted_counter(tmp_path: Path) -> None:
     )
     assert deleted == 2
     assert _value() == before + 2
+
+
+def test_legacy_probe_cached_across_sweeps(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Frozen legacy db: max(ts) is probed once; later sweeps answer from the
+    cache instead of re-paying a full-WAL-recovery read-only open."""
+    legacy = tmp_path / "activity.db"
+    _make_db(legacy, ["2026-06-01T00:00:00+00:00"])  # fresh row → kept
+    cache: dict[str, str] = {}
+    deleted = sweep_expired(
+        segment_dir=tmp_path / "activity",
+        legacy_db_path=legacy,
+        retention_days=30,
+        now_fn=_now_fn,
+        legacy_probe_cache=cache,
+    )
+    assert deleted == 0
+    assert cache  # populated by the first successful probe
+    # Corrupt the file: a re-probe would log "unreadable"; the cache must
+    # answer instead.
+    legacy.write_bytes(b"not a sqlite file")
+    with caplog.at_level("WARNING"):
+        deleted = sweep_expired(
+            segment_dir=tmp_path / "activity",
+            legacy_db_path=legacy,
+            retention_days=30,
+            now_fn=_now_fn,
+            legacy_probe_cache=cache,
+        )
+    assert deleted == 0
+    assert not any("unreadable" in r.message for r in caplog.records)
+    # Once the cached max(ts) passes the cutoff, the file is deleted with
+    # no further probe.
+    deleted = sweep_expired(
+        segment_dir=tmp_path / "activity",
+        legacy_db_path=legacy,
+        retention_days=30,
+        now_fn=lambda: datetime(2026, 8, 1, tzinfo=UTC),
+        legacy_probe_cache=cache,
+    )
+    assert deleted == 1
+    assert not legacy.exists()

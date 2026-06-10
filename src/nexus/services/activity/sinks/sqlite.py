@@ -84,7 +84,7 @@ _FREE_CHECK_INTERVAL_S = 10.0
 
 
 def segment_path(segment_dir: Path, day: date) -> Path:
-    """Canonical segment file path for a UTC day (shared with retention)."""
+    """Canonical segment file path for a UTC day (retention matches by glob)."""
     return segment_dir / f"activity-{day.isoformat()}.db"
 
 

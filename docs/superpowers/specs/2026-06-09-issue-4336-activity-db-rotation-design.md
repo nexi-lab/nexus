@@ -44,7 +44,7 @@ Bound: disk ≈ `retention_days × daily-volume` + one WAL cap. Rotation fixes *
 
 - Compute `cutoff_ts = now(UTC) - retention_days`. Unlink every segment (plus `-wal`/`-shm`) whose date `< cutoff_ts.date()` — at that point every row in it is older than `cutoff_ts`. Worst-case over-retention is <24 h (today's behavior was exact-to-the-hour; acceptable coarsening, noted in docs).
 - `retention_days <= 0` still disables retention entirely (explicit operator choice; shedding still protects the volume).
-- `RetentionTask` keeps its hourly cadence, executor-thread execution, and stop semantics. It additionally updates the size gauges (below) each tick.
+- `RetentionTask` keeps its hourly cadence, executor-thread execution, and stop semantics. It additionally updates the store-size gauge each tick (the disk-free gauge is maintained by the sink's cached probe).
 - The active (today's) segment is never a deletion candidate by construction.
 
 ### 3. Legacy activity.db: freeze + auto-unlink
@@ -115,7 +115,7 @@ Worker, queue, contracts API, and all 13 `emit()` call sites are untouched.
 ## Error handling
 
 - Sink write failure: unchanged path (warning + `ACTIVITY_SINK_ERRORS`), now also distinguishes shed-drops (counted separately, no error spam — edge-triggered).
-- Rollover/segment-open failure: drop + count + edge-triggered ERROR; retry on next flush (next batch re-attempts open).
+- Rollover/segment-open failure: the batch is dropped and counted (`ACTIVITY_SINK_ERRORS` via the worker's per-batch warning); the next flush retries the open. The expected full-disk path is covered by shedding's edge-triggered ERROR before an open can fail.
 - Retention unlink failure: warning, retried next tick. Legacy max(ts) query failure: warning, skip.
 - Disk checks never raise into the worker; all failures degrade to "keep serving requests, lose telemetry" — the explicit priority from the incident.
 
@@ -130,7 +130,7 @@ Unit:
 
 Integration:
 - `test_emit_to_sqlite_e2e.py` updated: emit → drain → rows land in today's segment file.
-- New: emit across simulated date change lands in two segments; legacy db present at boot → frozen (no new rows) and unlinked once stale.
+- New: stale legacy db at boot unlinked by the first sweep; fresh legacy db stays frozen (no new rows, not deleted); cross-date segment split is covered at unit level with an injected clock.
 
 Existing `test_sqlite_sink.py` / `test_retention.py` assertions updated for the new layout.
 

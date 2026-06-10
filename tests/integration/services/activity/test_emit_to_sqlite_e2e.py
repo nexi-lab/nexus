@@ -31,6 +31,7 @@ async def test_emit_to_sqlite_roundtrip(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(seg_dir))
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))
     monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")  # disable sweep
+    monkeypatch.setenv("NEXUS_ACTIVITY_MIN_FREE_MB", "0")  # CI tmp may be tight
     monkeypatch.setenv("NEXUS_ACTIVITY_QUEUE_SIZE", "1024")
     monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_SIZE", "10")
     monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_TIMEOUT_S", "0.01")
@@ -68,6 +69,7 @@ async def test_off_loop_emit_then_shutdown_does_not_lose_event(
     monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(seg_dir))
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))
     monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")
+    monkeypatch.setenv("NEXUS_ACTIVITY_MIN_FREE_MB", "0")  # CI tmp may be tight
 
     await setup_activity()
     try:
@@ -132,6 +134,7 @@ async def test_stale_legacy_db_unlinked_at_startup(
     monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(tmp_path / "segments"))
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(legacy))
     monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "30")
+    monkeypatch.setenv("NEXUS_ACTIVITY_MIN_FREE_MB", "0")  # CI tmp may be tight
 
     await setup_activity()
     try:
@@ -142,3 +145,54 @@ async def test_stale_legacy_db_unlinked_at_startup(
     finally:
         await shutdown_activity()
     assert not legacy.exists()
+
+
+@pytest.mark.asyncio
+async def test_fresh_legacy_db_stays_frozen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upgrade safety: a legacy db with in-retention rows is neither written
+    to nor deleted — new events land in segments only."""
+    from datetime import UTC, datetime
+
+    legacy = tmp_path / "activity.db"
+    conn = sqlite3.connect(legacy)
+    conn.execute(
+        """CREATE TABLE activity_events (
+            id TEXT PRIMARY KEY, ts TEXT NOT NULL, kind TEXT, result TEXT,
+            latency_ms INTEGER, trace_id TEXT, actor_token_hash TEXT,
+            actor_agent TEXT, actor_user TEXT, subject_zone TEXT,
+            subject_extra TEXT, meta TEXT
+        ) STRICT"""
+    )
+    conn.execute(
+        "INSERT INTO activity_events (id, ts) VALUES ('fresh', ?)",
+        (datetime.now(tz=UTC).isoformat(),),
+    )
+    conn.commit()
+    conn.close()
+
+    seg_dir = tmp_path / "segments"
+    monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "1")
+    monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(seg_dir))
+    monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(legacy))
+    monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "30")
+    monkeypatch.setenv("NEXUS_ACTIVITY_MIN_FREE_MB", "0")  # CI tmp may be tight
+    monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_SIZE", "5")
+    monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_TIMEOUT_S", "0.01")
+
+    await setup_activity()
+    try:
+        for i in range(5):
+            emit(kind=EventKind.SEARCH, result=Result.OK, subject_zone=f"z{i}")
+        await asyncio.sleep(0.5)
+    finally:
+        await shutdown_activity()
+
+    assert legacy.exists(), "fresh legacy db must not be deleted"
+    conn = sqlite3.connect(legacy)
+    legacy_rows = conn.execute("SELECT COUNT(*) FROM activity_events").fetchone()[0]
+    conn.close()
+    assert legacy_rows == 1, "legacy db must stay frozen (no new writes)"
+    rows = _segment_rows(seg_dir, "SELECT id FROM activity_events")
+    assert len(rows) == 5

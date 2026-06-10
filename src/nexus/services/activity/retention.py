@@ -19,7 +19,7 @@ import contextlib
 import logging
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -64,12 +64,12 @@ def _unlink_db_files(db: Path) -> None:
             path.unlink()
 
 
-def _legacy_expired(db: Path, cutoff_iso: str) -> bool:
-    """True when every row in the legacy db is older than the cutoff.
+def _legacy_expired(db: Path, cutoff_iso: str) -> tuple[bool, str | None]:
+    """(expired, max_ts) for the legacy db.
 
     Missing table and empty table both count as expired (nothing left to
-    retain). Locked/corrupt files return False so the sweep retries on a
-    later tick instead of deleting data it could not inspect.
+    retain). Locked/corrupt files return (False, None) so the sweep retries
+    on a later tick instead of deleting data it could not inspect.
     """
     try:
         # db.resolve().as_uri() percent-encodes '#'/'%'/spaces — a raw
@@ -84,13 +84,35 @@ def _legacy_expired(db: Path, cutoff_iso: str) -> bool:
         if isinstance(exc, sqlite3.OperationalError) and (
             "no such table: activity_events" in str(exc).lower()
         ):
-            return True
+            return True, None
         logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
-        return False
+        return False, None
     max_ts = row[0] if row else None
     # ts is ISO-8601 UTC (see emitter._now_iso), so lexicographic
     # comparison matches chronological order.
-    return max_ts is None or max_ts < cutoff_iso
+    return (max_ts is None or max_ts < cutoff_iso), max_ts
+
+
+def _legacy_expired_cached(
+    db: Path, cutoff_iso: str, cache: MutableMapping[str, str] | None
+) -> bool:
+    """_legacy_expired with a max(ts) cache for the frozen legacy db.
+
+    The legacy db never receives writes after the segment store boots, so a
+    successfully-read max(ts) is final. Caching it spares later ticks the
+    read-only probe — which replays full WAL recovery (potentially tens of
+    GB after a disk-full crash) on every open of a frozen file. A manually
+    replaced file is only re-read after a restart; the worst case is
+    over-retention of that replacement, never early deletion.
+    """
+    if cache is not None:
+        cached = cache.get(str(db))
+        if cached is not None:
+            return cached < cutoff_iso
+    expired, max_ts = _legacy_expired(db, cutoff_iso)
+    if cache is not None and not expired and max_ts is not None:
+        cache[str(db)] = max_ts
+    return expired
 
 
 def _update_store_bytes(seg_dir: Path, legacy: Path | None) -> None:
@@ -119,6 +141,7 @@ def sweep_expired(
     legacy_db_path: Path | str | None,
     retention_days: int,
     now_fn: Callable[[], datetime] | None = None,
+    legacy_probe_cache: MutableMapping[str, str] | None = None,
 ) -> int:
     """Delete expired segment files (and the legacy db once fully stale).
 
@@ -158,10 +181,14 @@ def sweep_expired(
                 _unlink_db_files(path)
                 deleted += 1
             except OSError:
-                logger.warning("activity segment unlink failed for %s", path, exc_info=True)
+                logger.error("activity segment unlink failed for %s", path, exc_info=True)
 
     legacy = Path(legacy_db_path) if legacy_db_path is not None else None
-    if legacy is not None and legacy.is_file() and _legacy_expired(legacy, cutoff.isoformat()):
+    if (
+        legacy is not None
+        and legacy.is_file()
+        and _legacy_expired_cached(legacy, cutoff.isoformat(), legacy_probe_cache)
+    ):
         try:
             _unlink_db_files(legacy)
             deleted += 1
@@ -198,6 +225,9 @@ class RetentionTask:
         self._stopping = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._total_deleted = 0
+        # max(ts) of the frozen legacy db, learned on the first successful
+        # probe — see _legacy_expired_cached.
+        self._legacy_probe_cache: dict[str, str] = {}
 
     @property
     def total_deleted(self) -> int:
@@ -235,6 +265,7 @@ class RetentionTask:
                     segment_dir=self._segment_dir,
                     legacy_db_path=self._legacy_db_path,
                     retention_days=self._retention_days,
+                    legacy_probe_cache=self._legacy_probe_cache,
                 )
                 self._total_deleted += deleted
             except Exception:

@@ -211,6 +211,11 @@ async def test_corrupt_todays_segment_raises_at_construction(tmp_path: Path) -> 
         SQLiteSink(segment_dir=tmp_path, now_fn=clock)
 
 
+# ---------------------------------------------------------------------------
+# Task 4 — disk-pressure shedding (#4336)
+# ---------------------------------------------------------------------------
+
+
 class FakeDiskUsage:
     """Mutable disk_usage stand-in; .free is the only consumed field."""
 

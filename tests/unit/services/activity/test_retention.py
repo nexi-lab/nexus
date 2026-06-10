@@ -225,3 +225,49 @@ async def test_retention_task_double_start_is_idempotent(tmp_path: Path) -> None
     await task.start()
     assert task._task is first_task  # noqa: SLF001
     await task.stop()
+
+
+def test_sweep_skips_regex_shaped_but_invalid_date(tmp_path: Path) -> None:
+    """activity-2026-13-99.db matches the segment regex but is not a date."""
+    seg_dir = tmp_path / "activity"
+    seg_dir.mkdir()
+    odd = seg_dir / "activity-2026-13-99.db"
+    odd.write_bytes(b"")
+    deleted = sweep_expired(
+        segment_dir=seg_dir, legacy_db_path=None, retention_days=30, now_fn=_now_fn
+    )
+    assert deleted == 0
+    assert odd.exists()
+
+
+def test_legacy_path_with_hash_char_not_misread_as_expired(tmp_path: Path) -> None:
+    """Regression: '#' in the path must not truncate the SQLite URI — a
+    fresh legacy db behind such a path was misread as expired and deleted."""
+    legacy_dir = tmp_path / "data#prod"
+    legacy = legacy_dir / "activity.db"
+    _make_db(legacy, ["2026-06-01T00:00:00+00:00"])  # fresh row, within retention
+    deleted = sweep_expired(
+        segment_dir=tmp_path / "activity",
+        legacy_db_path=legacy,
+        retention_days=30,
+        now_fn=_now_fn,
+    )
+    assert deleted == 0
+    assert legacy.exists()
+
+
+def test_sweep_increments_segments_deleted_counter(tmp_path: Path) -> None:
+    from prometheus_client import REGISTRY
+
+    def _value() -> float:
+        return REGISTRY.get_sample_value("nexus_activity_segments_deleted_total") or 0.0
+
+    seg_dir = tmp_path / "activity"
+    _make_segment(seg_dir, "2026-05-01")
+    _make_segment(seg_dir, "2026-05-02")
+    before = _value()
+    deleted = sweep_expired(
+        segment_dir=seg_dir, legacy_db_path=None, retention_days=30, now_fn=_now_fn
+    )
+    assert deleted == 2
+    assert _value() == before + 2

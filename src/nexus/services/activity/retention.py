@@ -53,8 +53,13 @@ def sweep_agent_log(
 
 
 def _unlink_db_files(db: Path) -> None:
-    """Remove a SQLite db plus its -wal/-shm siblings, ignoring absences."""
-    for path in (db, Path(f"{db}-wal"), Path(f"{db}-shm")):
+    """Remove a SQLite db plus its -wal/-shm siblings, ignoring absences.
+
+    Siblings go first: if one of their unlinks fails, the .db file is
+    still present as the retry key for the next sweep tick — the reverse
+    order would orphan a -wal forever.
+    """
+    for path in (Path(f"{db}-wal"), Path(f"{db}-shm"), db):
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
 
@@ -67,17 +72,19 @@ def _legacy_expired(db: Path, cutoff_iso: str) -> bool:
     later tick instead of deleting data it could not inspect.
     """
     try:
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        # db.resolve().as_uri() percent-encodes '#'/'%'/spaces — a raw
+        # f"file:{db}" would truncate at '#' and open the wrong path in
+        # create mode, misreading a live legacy db as expired.
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
         try:
             row = conn.execute("SELECT max(ts) FROM activity_events").fetchone()
         finally:
             conn.close()
-    except sqlite3.OperationalError as exc:
-        if "no such table" in str(exc).lower():
+    except sqlite3.Error as exc:
+        if isinstance(exc, sqlite3.OperationalError) and (
+            "no such table: activity_events" in str(exc).lower()
+        ):
             return True
-        logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
-        return False
-    except sqlite3.Error:
         logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
         return False
     max_ts = row[0] if row else None
@@ -87,6 +94,7 @@ def _legacy_expired(db: Path, cutoff_iso: str) -> bool:
 
 
 def _update_store_bytes(seg_dir: Path, legacy: Path | None) -> None:
+    """Refresh the store-size gauge from on-disk segment + legacy file sizes."""
     total = 0
     try:
         if seg_dir.is_dir():
@@ -121,6 +129,11 @@ def sweep_expired(
     deleted only when ``D < (now - retention_days).date()`` — i.e. when its
     newest possible row has expired. Worst-case over-retention is <24h
     (the old DELETE prune was exact-to-the-hour; acceptable coarsening).
+
+    An idle sink may still hold yesterday's (expired) segment open when the
+    sweep unlinks it — safe on POSIX: the data is already expired, the open
+    handle keeps working against the unlinked inode, and the sink's next
+    write rolls over to a fresh segment.
     """
     if retention_days <= 0:
         return 0

@@ -105,7 +105,8 @@ ACTIVITY_DISK_FREE_BYTES = Gauge(
 
 ACTIVITY_STORE_BYTES = Gauge(
     "nexus_activity_store_bytes",
-    "Total bytes of activity segment files, WALs, and the legacy activity.db",
+    "Total bytes of activity segment files, WALs, and the legacy activity.db "
+    "(updated by retention sweeps; static when retention is disabled)",
 )
 
 

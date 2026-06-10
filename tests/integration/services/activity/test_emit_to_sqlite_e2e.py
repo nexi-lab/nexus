@@ -1,4 +1,4 @@
-"""End-to-end: setup_activity → emit → drained to SQLite → queryable."""
+"""End-to-end: setup_activity → emit → drained to SQLite segment → queryable."""
 
 from __future__ import annotations
 
@@ -13,12 +13,24 @@ from nexus.services.activity.emitter import NoopEmitter
 from nexus.services.activity.lifespan import setup_activity, shutdown_activity
 
 
+def _segment_rows(seg_dir: Path, query: str) -> list[tuple]:
+    segments = sorted(seg_dir.glob("activity-*.db"))
+    assert segments, f"no segment files in {seg_dir}"
+    rows: list[tuple] = []
+    for seg in segments:
+        conn = sqlite3.connect(seg)
+        rows.extend(conn.execute(query))
+        conn.close()
+    return rows
+
+
 @pytest.mark.asyncio
 async def test_emit_to_sqlite_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    db = tmp_path / "activity.db"
+    seg_dir = tmp_path / "segments"
     monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "1")
-    monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(db))
-    monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")  # disable prune
+    monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(seg_dir))
+    monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))
+    monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")  # disable sweep
     monkeypatch.setenv("NEXUS_ACTIVITY_QUEUE_SIZE", "1024")
     monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_SIZE", "10")
     monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_TIMEOUT_S", "0.01")
@@ -37,9 +49,7 @@ async def test_emit_to_sqlite_roundtrip(tmp_path: Path, monkeypatch: pytest.Monk
     finally:
         await shutdown_activity()
 
-    conn = sqlite3.connect(db)
-    rows = list(conn.execute("SELECT kind, result, subject_zone FROM activity_events"))
-    conn.close()
+    rows = _segment_rows(seg_dir, "SELECT kind, result, subject_zone FROM activity_events")
     assert len(rows) == 50
     assert all(r[0] == "search" and r[1] == "ok" for r in rows)
 
@@ -53,9 +63,10 @@ async def test_off_loop_emit_then_shutdown_does_not_lose_event(
     Regression for the call_soon_threadsafe vs worker.stop race."""
     import threading
 
-    db = tmp_path / "activity.db"
+    seg_dir = tmp_path / "segments"
     monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "1")
-    monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(db))
+    monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(seg_dir))
+    monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))
     monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")
 
     await setup_activity()
@@ -80,11 +91,7 @@ async def test_off_loop_emit_then_shutdown_does_not_lose_event(
     finally:
         await shutdown_activity()
 
-    # The event must be in the durable store (the QueueEmitter quiesce
-    # step in shutdown_activity guarantees it).
-    conn = sqlite3.connect(db)
-    rows = list(conn.execute("SELECT subject_zone FROM activity_events"))
-    conn.close()
+    rows = _segment_rows(seg_dir, "SELECT subject_zone FROM activity_events")
     zones = [r[0] for r in rows]
     assert "off-loop" in zones, f"off-loop event missing from durable store; got {zones}"
 
@@ -99,3 +106,39 @@ async def test_disabled_installs_noop(monkeypatch: pytest.MonkeyPatch) -> None:
         assert isinstance(get_emitter(), NoopEmitter)
     finally:
         await shutdown_activity()
+
+
+@pytest.mark.asyncio
+async def test_stale_legacy_db_unlinked_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-segment activity.db whose newest row is past retention must be
+    deleted by the retention task's first sweep — the #4336 reclaim path."""
+    legacy = tmp_path / "activity.db"
+    conn = sqlite3.connect(legacy)
+    conn.execute(
+        """CREATE TABLE activity_events (
+            id TEXT PRIMARY KEY, ts TEXT NOT NULL, kind TEXT, result TEXT,
+            latency_ms INTEGER, trace_id TEXT, actor_token_hash TEXT,
+            actor_agent TEXT, actor_user TEXT, subject_zone TEXT,
+            subject_extra TEXT, meta TEXT
+        ) STRICT"""
+    )
+    conn.execute("INSERT INTO activity_events (id, ts) VALUES ('old', '2020-01-01T00:00:00+00:00')")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "1")
+    monkeypatch.setenv("NEXUS_ACTIVITY_DIR", str(tmp_path / "segments"))
+    monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(legacy))
+    monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "30")
+
+    await setup_activity()
+    try:
+        for _ in range(100):  # first sweep runs immediately on start
+            if not legacy.exists():
+                break
+            await asyncio.sleep(0.05)
+    finally:
+        await shutdown_activity()
+    assert not legacy.exists()

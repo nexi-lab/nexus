@@ -55,13 +55,18 @@ async def setup_activity() -> None:
 
     sinks: list[SinkProtocol] = []
     try:
-        sinks.append(SQLiteSink(path=cfg.db_path))
-        logger.info("activity SQLite sink open at %s", cfg.db_path)
+        sinks.append(
+            SQLiteSink(
+                segment_dir=cfg.segment_dir,
+                min_free_bytes=cfg.min_free_mb * 1024 * 1024,
+            )
+        )
+        logger.info("activity SQLite segment store at %s", cfg.segment_dir)
     except Exception:
         logger.error(
             "activity SQLiteSink failed to open at %s — falling back to NoopSink. "
             "Durable activity_events store is DISABLED for this process.",
-            cfg.db_path,
+            cfg.segment_dir,
             exc_info=True,
         )
         # Surface the degradation in /metrics so operators have an alertable
@@ -98,13 +103,22 @@ async def setup_activity() -> None:
         batch_size=cfg.batch_size,
         batch_timeout_s=cfg.batch_timeout_s,
     )
-    retention = RetentionTask(db_path=cfg.db_path, retention_days=cfg.retention_days)
+    retention = RetentionTask(
+        segment_dir=cfg.segment_dir,
+        legacy_db_path=cfg.db_path,
+        retention_days=cfg.retention_days,
+    )
 
     loop = asyncio.get_running_loop()
     await worker.start()
     await retention.start()
 
-    queue_emitter = QueueEmitter(queue=queue, loop=loop)
+    queue_emitter = QueueEmitter(
+        queue=queue,
+        loop=loop,
+        sample_rate=cfg.sample_rate,
+        sample_rates=cfg.sample_rates,
+    )
     set_emitter(queue_emitter)
 
     _STATE["worker"] = worker
@@ -121,8 +135,8 @@ async def shutdown_activity() -> None:
     2. Quiesce the previous QueueEmitter — off-loop emits schedule
        call_soon_threadsafe callbacks that have not yet enqueued, and
        must run before the worker drain closes the queue.
-    3. Stop retention BEFORE the worker so retention's VACUUM cannot
-       hold the SQLite write lock during the final drain.
+    3. Stop retention BEFORE the worker so the retention sweep cannot
+       race the final drain.
     4. Stop the worker and close sinks.
     """
     prev_emitter = _STATE.pop("emitter", None)

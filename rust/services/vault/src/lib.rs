@@ -887,7 +887,10 @@ mod dispatch_e2e {
         });
         let resp = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
         let get_resp = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
-        assert!(get_resp.value.contains("hunter2"), "raw JSON contains password");
+        assert!(
+            get_resp.value.contains("hunter2"),
+            "raw JSON contains password"
+        );
         assert!(
             get_resp.value.contains(&format!("\"title\":\"{}\"", title)),
             "raw JSON title matches put title"
@@ -951,7 +954,10 @@ mod dispatch_e2e {
         assert_eq!(list_resp.total_in_vault, 2);
         let listed_titles: Vec<&str> = list_resp.entries.iter().map(|e| e.title.as_str()).collect();
         for t in &pw_titles {
-            assert!(listed_titles.contains(&t.as_str()), "password title {t} visible");
+            assert!(
+                listed_titles.contains(&t.as_str()),
+                "password title {t} visible"
+            );
         }
 
         // Step 4: Generic list (all namespaces): 4 total
@@ -974,7 +980,10 @@ mod dispatch_e2e {
         // Step 6: Password list still has 2 (cross-type isolation)
         let resp = dispatch_vault(&plugin, "list_entries", &list_pw).unwrap();
         let list_resp = ListEntriesResponse::decode(resp.as_slice()).unwrap();
-        assert_eq!(list_resp.total_in_vault, 2, "password entries unaffected by generic delete");
+        assert_eq!(
+            list_resp.total_in_vault, 2,
+            "password entries unaffected by generic delete"
+        );
 
         // Step 7: Delete a password using title from step 1
         let del_pw = encode(&DeleteEntryRequest {
@@ -992,7 +1001,10 @@ mod dispatch_e2e {
         });
         let resp = dispatch_vault(&plugin, "secret_get", &get).unwrap();
         let get_resp = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
-        assert_eq!(get_resp.value, "jwt-val", "generic secret value preserved after password delete");
+        assert_eq!(
+            get_resp.value, "jwt-val",
+            "generic secret value preserved after password delete"
+        );
     }
 
     // ── Scenario 13: Kernel readdir verifies unified VFS layout ────
@@ -1021,27 +1033,51 @@ mod dispatch_e2e {
         let backend_name = backend.name().to_string();
         kernel
             .sys_setattr(
-                "/vault", 2, &backend_name, Some(backend),
-                None, None, "memory", "root", false, 0,
-                None, None, None, None, None, None, None, None, None, None, None,
+                "/vault",
+                2,
+                &backend_name,
+                Some(backend),
+                None,
+                None,
+                "memory",
+                "root",
+                false,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             )
             .unwrap();
-        let master_key =
-            services::password_vault::crypto::load_or_create_master_key(
-                &vault_dir.join("master.key"),
-            )
-            .unwrap();
-        let secrets_svc = GenericSecretsServiceImpl::new_on_existing_mount(
-            kernel.clone(), "/vault", master_key,
+        let master_key = services::password_vault::crypto::load_or_create_master_key(
+            &vault_dir.join("master.key"),
         )
         .unwrap();
+        let secrets_svc =
+            GenericSecretsServiceImpl::new_on_existing_mount(kernel.clone(), "/vault", master_key)
+                .unwrap();
         let svc = PasswordVaultServiceImpl::new_with_secrets(secrets_svc.clone());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
 
-        (dir, VaultPlugin { svc, secrets_svc, rt }, kernel)
+        (
+            dir,
+            VaultPlugin {
+                svc,
+                secrets_svc,
+                rt,
+            },
+            kernel,
+        )
     }
 
     #[test]
@@ -1077,8 +1113,14 @@ mod dispatch_e2e {
             .iter()
             .filter_map(|(p, _)| p.rsplit('/').next())
             .collect();
-        assert!(ns_names.contains(&"passwords"), "passwords namespace dir exists");
-        assert!(ns_names.contains(&secret_ns.as_str()), "secret namespace dir exists");
+        assert!(
+            ns_names.contains(&"passwords"),
+            "passwords namespace dir exists"
+        );
+        assert!(
+            ns_names.contains(&secret_ns.as_str()),
+            "secret namespace dir exists"
+        );
 
         // Step 4: Verify password entry path uses title from step 1
         let pw_entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
@@ -1089,11 +1131,8 @@ mod dispatch_e2e {
         );
 
         // Step 5: Verify generic secret entry path uses ns:key from step 2
-        let secret_entries = kernel.sys_readdir(
-            &format!("/vault/entries/{secret_ns}"),
-            "root",
-            true,
-        );
+        let secret_entries =
+            kernel.sys_readdir(&format!("/vault/entries/{secret_ns}"), "root", true);
         assert_eq!(secret_entries.len(), 1);
         assert!(
             secret_entries[0].0.ends_with(&format!("/{secret_key}")),

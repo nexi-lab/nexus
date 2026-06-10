@@ -221,8 +221,7 @@ fn unix_ms_to_proto_ts(ms: u64) -> prost_types::Timestamp {
 
 /// JSON-serialize VaultEntryPlaintext for storage via GenericSecretsService.
 fn serialize_plaintext(plain: &VaultEntryPlaintext) -> Result<String, Status> {
-    serde_json::to_string(plain)
-        .map_err(|e| Status::internal(format!("serialise entry: {e}")))
+    serde_json::to_string(plain).map_err(|e| Status::internal(format!("serialise entry: {e}")))
 }
 
 /// JSON-deserialize VaultEntryPlaintext from GenericSecretsService value.
@@ -254,10 +253,10 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         let plain = proto_to_plaintext(entry);
         let json_str = serialize_plaintext(&plain)?;
 
-        let metadata =
-            self.inner
-                .secrets
-                .do_put(PASSWORDS_NAMESPACE, &title, &json_str, None)?;
+        let metadata = self
+            .inner
+            .secrets
+            .do_put(PASSWORDS_NAMESPACE, &title, &json_str, None)?;
 
         Ok(Response::new(PutEntryResponse {
             id: title.clone(),
@@ -306,14 +305,11 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         let mut matched = Vec::new();
 
         for (_ns, title, _idx) in &live {
-            let (json_str, _version) = match self
-                .inner
-                .secrets
-                .do_get(PASSWORDS_NAMESPACE, title, None)
-            {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
+            let (json_str, _version) =
+                match self.inner.secrets.do_get(PASSWORDS_NAMESPACE, title, None) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
             let plain = match deserialize_plaintext(&json_str) {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -1158,14 +1154,9 @@ mod e2e_integration {
         assert_eq!(put1.title, "github");
 
         // Kernel cross-verify: index file written to unified path.
-        let index_read = KernelConvenience::read(
-            &*kernel,
-            "/vault/entries/passwords/github",
-            &ctx,
-            0,
-            0,
-        )
-        .expect("index entry should exist in VFS");
+        let index_read =
+            KernelConvenience::read(&*kernel, "/vault/entries/passwords/github", &ctx, 0, 0)
+                .expect("index entry should exist in VFS");
         assert!(index_read.data.is_some(), "index should have content");
 
         let put2 = svc
@@ -1199,14 +1190,10 @@ mod e2e_integration {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(
-            hist.entry.unwrap().password.as_deref(),
-            Some("initial-pw"),
-        );
+        assert_eq!(hist.entry.unwrap().password.as_deref(), Some("initial-pw"),);
 
         // Kernel cross-verify: both version files under unified path.
-        let version_dir =
-            kernel.sys_readdir("/vault/versions/passwords/github", "root", true);
+        let version_dir = kernel.sys_readdir("/vault/versions/passwords/github", "root", true);
         assert_eq!(version_dir.len(), 2);
     }
 
@@ -1266,14 +1253,10 @@ mod e2e_integration {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(
-            got.entry.unwrap().password.as_deref(),
-            Some("s3cret-key"),
-        );
+        assert_eq!(got.entry.unwrap().password.as_deref(), Some("s3cret-key"),);
 
         // Kernel cross-check: entries under unified path.
-        let entries =
-            kernel.sys_readdir("/vault/entries/passwords", "root", true);
+        let entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
         assert_eq!(entries.len(), 1);
         assert!(entries[0].0.contains("aws-prod"));
     }
@@ -1401,8 +1384,7 @@ mod e2e_integration {
 
         // Kernel cross-check: 3 index files in passwords namespace
         // (soft-delete = tombstone, not removal).
-        let vfs_entries =
-            kernel.sys_readdir("/vault/entries/passwords", "root", true);
+        let vfs_entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
         assert_eq!(vfs_entries.len(), 3);
     }
 }

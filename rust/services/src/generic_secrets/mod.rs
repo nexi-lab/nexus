@@ -186,9 +186,7 @@ impl GenericSecretsServiceImpl {
             .inner
             .storage
             .get_index(namespace, key)?
-            .ok_or_else(|| {
-                PasswordVaultError::NotFound(format!("{namespace}/{key}"))
-            })?;
+            .ok_or_else(|| PasswordVaultError::NotFound(format!("{namespace}/{key}")))?;
         let new_idx = SecretIndex {
             deleted_at_ms: Some(idx.deleted_at_ms.unwrap_or_else(now_unix_ms)),
             updated_at_ms: now_unix_ms(),
@@ -207,9 +205,7 @@ impl GenericSecretsServiceImpl {
             .inner
             .storage
             .get_index(namespace, key)?
-            .ok_or_else(|| {
-                PasswordVaultError::NotFound(format!("{namespace}/{key}"))
-            })?;
+            .ok_or_else(|| PasswordVaultError::NotFound(format!("{namespace}/{key}")))?;
         let new_idx = SecretIndex {
             deleted_at_ms: None,
             updated_at_ms: now_unix_ms(),
@@ -232,9 +228,7 @@ impl GenericSecretsServiceImpl {
             .inner
             .storage
             .get_index(namespace, key)?
-            .ok_or_else(|| {
-                PasswordVaultError::NotFound(format!("{namespace}/{key}"))
-            })?;
+            .ok_or_else(|| PasswordVaultError::NotFound(format!("{namespace}/{key}")))?;
         let stored = self.inner.storage.list_versions(namespace, key)?;
         Ok((stored, idx))
     }

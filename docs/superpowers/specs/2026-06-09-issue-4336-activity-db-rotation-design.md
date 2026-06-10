@@ -110,7 +110,7 @@ New in `metrics.py`:
 | `docs/agents/self-observability.md` (+ env-var docs) | New knobs, legacy-cleanup ops note, retention-granularity note. |
 | `tests/unit/services/activity/*`, `tests/integration/services/activity/*` | See below. |
 
-Worker, queue, contracts API, and all 13 `emit()` call sites are untouched.
+Queue, contracts API, and all 13 `emit()` call sites are untouched. The worker gains one idle-tick hook: when a batch-collection window closes empty, it calls the optional `maintain()` method on each sink (duck-typed, not part of `SinkProtocol`) so the SQLite sink can roll a stale day's segment and release its handle — without this, a fully idle process would pin an unlinked expired segment's disk blocks indefinitely. `setup_activity` also runs one retention sweep BEFORE constructing the sink, so a boot on a full volume reclaims expired data first instead of degrading into the permanent NoopSink fallback. Legacy deletion executes under `BEGIN IMMEDIATE` on the legacy db, fencing a still-running pre-segment writer (rolling upgrade): a held lock reads as "active writer — keep"; a probe under the lock sees every committed row before the unlink.
 
 ## Error handling
 

@@ -203,6 +203,27 @@ class SQLiteSink:
             self._segment_date = None
         self._open_segment(day)
 
+    async def maintain(self) -> None:
+        """Idle housekeeping: release yesterday's segment handle.
+
+        Retention unlinks expired segment files, but on POSIX the disk
+        blocks survive while this sink still holds the previous day's
+        connection — a fully idle process would pin them indefinitely.
+        The worker calls this on idle ticks; rolling over to today's
+        segment closes the stale handle and frees the space.
+        """
+        # Same shield rationale as write_batch: the to_thread future cannot
+        # stop the underlying thread, so a cancelled awaiter must not leave
+        # a half-finished rollover racing close().
+        await asyncio.shield(asyncio.to_thread(self._maintain))
+
+    def _maintain(self) -> None:
+        if self._closed or self._conn is None:
+            return
+        today = self._today()
+        if today != self._segment_date:
+            self._rollover(today)
+
     def _maybe_checkpoint(self, conn: sqlite3.Connection) -> None:
         now = time.monotonic()
         if now - self._last_checkpoint < self._checkpoint_interval_s:

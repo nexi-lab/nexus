@@ -382,3 +382,25 @@ def test_legacy_concurrent_writer_rows_block_deletion(tmp_path: Path) -> None:
     )
     assert deleted == 0
     assert legacy.exists()
+
+
+def test_legacy_locked_by_active_writer_kept(tmp_path: Path) -> None:
+    """Rolling-upgrade fence: a pre-segment writer holding the write lock
+    blocks deletion — the BEGIN IMMEDIATE probe treats busy as evidence of
+    an active writer and keeps the file for a later tick."""
+    legacy = tmp_path / "activity.db"
+    _make_db(legacy, ["2020-01-01T00:00:00+00:00"])  # stale rows
+    holder = sqlite3.connect(legacy)
+    holder.execute("BEGIN IMMEDIATE")  # old writer mid-transaction
+    try:
+        deleted = sweep_expired(
+            segment_dir=tmp_path / "activity",
+            legacy_db_path=legacy,
+            retention_days=30,
+            now_fn=_now_fn,
+        )
+    finally:
+        holder.rollback()
+        holder.close()
+    assert deleted == 0
+    assert legacy.exists()

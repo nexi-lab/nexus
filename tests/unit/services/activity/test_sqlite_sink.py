@@ -381,3 +381,42 @@ async def test_rollover_failure_drops_batch_then_recovers(tmp_path: Path) -> Non
     ids = {r[0] for r in conn.execute("SELECT id FROM activity_events")}
     conn.close()
     assert ids == {"d3"}
+
+
+@pytest.mark.asyncio
+async def test_maintain_rolls_stale_segment_and_releases_handle(tmp_path: Path) -> None:
+    """Idle housekeeping: maintain() must close yesterday's handle (so an
+    unlinked expired segment actually frees disk) and open today's."""
+    clock = _clock("2026-06-09T23:00:00")
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock)
+    try:
+        await sink.write_batch([_event("d1")])
+        clock.now = datetime.fromisoformat("2026-06-10T00:10:00").replace(tzinfo=UTC)
+        await sink.maintain()
+        assert sink._segment_date == clock.now.date()  # noqa: SLF001
+        wal1 = Path(f"{segment_path(tmp_path, datetime.fromisoformat('2026-06-09').date())}-wal")
+        assert not wal1.exists() or wal1.stat().st_size == 0
+        assert segment_path(tmp_path, clock.now.date()).exists()
+    finally:
+        await sink.close()
+
+
+@pytest.mark.asyncio
+async def test_maintain_same_day_keeps_connection(tmp_path: Path) -> None:
+    clock = _clock("2026-06-09T12:00:00")
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock)
+    try:
+        before = sink._conn  # noqa: SLF001
+        await sink.maintain()
+        assert sink._conn is before  # noqa: SLF001
+    finally:
+        await sink.close()
+
+
+@pytest.mark.asyncio
+async def test_maintain_after_close_is_noop(tmp_path: Path) -> None:
+    clock = _clock("2026-06-09T12:00:00")
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock)
+    await sink.close()
+    await sink.maintain()  # must not raise or reopen
+    assert sink._conn is None  # noqa: SLF001

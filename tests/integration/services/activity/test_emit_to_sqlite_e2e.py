@@ -115,7 +115,9 @@ async def test_stale_legacy_db_unlinked_at_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A pre-segment activity.db whose newest row is past retention must be
-    deleted by the retention task's first sweep — the #4336 reclaim path."""
+    deleted by the pre-sink sweep DURING setup — the #4336 reclaim path.
+    Reclaiming before the sink opens is what lets a boot on a full volume
+    succeed instead of degrading into the permanent NoopSink fallback."""
     legacy = tmp_path / "activity.db"
     conn = sqlite3.connect(legacy)
     conn.execute(
@@ -138,13 +140,11 @@ async def test_stale_legacy_db_unlinked_at_startup(
 
     await setup_activity()
     try:
-        for _ in range(100):  # first sweep runs immediately on start
-            if not legacy.exists():
-                break
-            await asyncio.sleep(0.05)
+        # No polling: the pre-sink sweep inside setup_activity must have
+        # already reclaimed the stale legacy db by the time setup returns.
+        assert not legacy.exists()
     finally:
         await shutdown_activity()
-    assert not legacy.exists()
 
 
 @pytest.mark.asyncio

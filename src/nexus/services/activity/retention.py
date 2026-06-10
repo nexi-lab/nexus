@@ -64,23 +64,54 @@ def _unlink_db_files(db: Path) -> None:
             path.unlink()
 
 
-def _legacy_expired(db: Path, cutoff_iso: str) -> tuple[bool, str | None]:
-    """(expired, max_ts) for the legacy db.
+def _sweep_legacy(db: Path, cutoff_iso: str, cache: MutableMapping[str, str] | None) -> int:
+    """Probe and (when fully expired) delete the legacy db. Returns files
+    unlinked (0 or 1).
 
-    Missing table and empty table both count as expired (nothing left to
-    retain). Locked/corrupt files return (False, None) so the sweep retries
-    on a later tick instead of deleting data it could not inspect.
+    A cached max(ts) only short-circuits the NOT-expired answer — it spares
+    the hourly probe, which replays full WAL recovery (potentially tens of
+    GB after a disk-full crash) on every open of a frozen file.
+
+    Deletion runs under ``BEGIN IMMEDIATE`` on the legacy db itself: the
+    write lock serializes against any still-running pre-segment writer
+    (rolling upgrade), so every committed row is visible to the probe and
+    nothing can commit between the probe and the unlink. Failing to get
+    the lock is treated as evidence of an active writer — keep the file
+    and retry next tick.
     """
+    if cache is not None:
+        cached = cache.get(str(db))
+        if cached is not None and cached >= cutoff_iso:
+            return 0  # still fresh — skip the expensive probe
     try:
         # db.resolve().as_uri() percent-encodes '#'/'%'/spaces — a raw
-        # f"file:{db}" would truncate at '#' and open the wrong path in
-        # create mode, misreading a live legacy db as expired.
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
-        try:
-            row = conn.execute("SELECT max(ts) FROM activity_events").fetchone()
-        finally:
-            conn.close()
+        # f"file:{db}" would truncate at '#' and open the wrong path,
+        # misreading a live legacy db as expired. mode=rw (not rwc): never
+        # create the file we are about to judge.
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=rw", uri=True, timeout=1.0)
+    except sqlite3.Error:
+        logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
+        return 0
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT max(ts) FROM activity_events").fetchone()
+        max_ts = row[0] if row else None
+        # ts is ISO-8601 UTC (see emitter._now_iso), so lexicographic
+        # comparison matches chronological order.
+        if max_ts is not None and max_ts >= cutoff_iso:
+            if cache is not None:
+                cache[str(db)] = max_ts
+            return 0  # fresh rows remain
+        # Fully expired (or empty table): unlink while still holding the
+        # write lock — no concurrent commit can slip in before the unlink.
+        _unlink_db_files(db)
+        if cache is not None:
+            cache.pop(str(db), None)
+        logger.info("activity legacy db %s fully expired; deleted", db)
+        return 1
     except sqlite3.Error as exc:
+        if cache is not None:
+            cache.pop(str(db), None)
         if isinstance(exc, sqlite3.OperationalError) and (
             "no such table: activity_events" in str(exc).lower()
         ):
@@ -93,41 +124,15 @@ def _legacy_expired(db: Path, cutoff_iso: str) -> tuple[bool, str | None]:
                 "refusing to treat it as an expired activity store",
                 db,
             )
-            return False, None
-        logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
-        return False, None
-    max_ts = row[0] if row else None
-    # ts is ISO-8601 UTC (see emitter._now_iso), so lexicographic
-    # comparison matches chronological order.
-    return (max_ts is None or max_ts < cutoff_iso), max_ts
-
-
-def _legacy_expired_cached(
-    db: Path, cutoff_iso: str, cache: MutableMapping[str, str] | None
-) -> bool:
-    """_legacy_expired with a max(ts) cache for the frozen legacy db.
-
-    A cached max(ts) only short-circuits the NOT-expired answer — it spares
-    the hourly read-only probe, which replays full WAL recovery (potentially
-    tens of GB after a disk-full crash) on every open of a frozen file.
-    Any deletion-eligible verdict is always re-validated with a fresh probe:
-    during a rolling upgrade an old pre-segment writer may still be
-    appending to the legacy db, so a stale cached timestamp must never be
-    the sole basis for unlinking the file.
-    """
-    if cache is not None:
-        cached = cache.get(str(db))
-        if cached is not None and cached >= cutoff_iso:
-            return False  # still fresh — skip the expensive probe
-    expired, max_ts = _legacy_expired(db, cutoff_iso)
-    if cache is not None:
-        if max_ts is not None:
-            cache[str(db)] = max_ts
         else:
-            # Unreadable or not ours: drop any stale entry so a later
-            # verdict cannot be served from outdated state.
-            cache.pop(str(db), None)
-    return expired
+            # Busy (active writer holding the lock) or corrupt — keep and
+            # retry on a later tick.
+            logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
+        return 0
+    finally:
+        with contextlib.suppress(sqlite3.Error):
+            conn.rollback()
+        conn.close()
 
 
 def _update_store_bytes(seg_dir: Path, legacy: Path | None) -> None:
@@ -169,9 +174,10 @@ def sweep_expired(
     (the old DELETE prune was exact-to-the-hour; acceptable coarsening).
 
     An idle sink may still hold yesterday's (expired) segment open when the
-    sweep unlinks it — safe on POSIX: the data is already expired, the open
-    handle keeps working against the unlinked inode, and the sink's next
-    write rolls over to a fresh segment.
+    sweep unlinks it — safe on POSIX: the data is already expired and the
+    open handle keeps working against the unlinked inode. The handle (and
+    therefore the disk space) is released by the sink's next write OR by
+    the worker's idle ``maintain()`` tick, whichever comes first.
     """
     if retention_days <= 0:
         return 0
@@ -199,15 +205,9 @@ def sweep_expired(
                 logger.error("activity segment unlink failed for %s", path, exc_info=True)
 
     legacy = Path(legacy_db_path) if legacy_db_path is not None else None
-    if (
-        legacy is not None
-        and legacy.is_file()
-        and _legacy_expired_cached(legacy, cutoff.isoformat(), legacy_probe_cache)
-    ):
+    if legacy is not None and legacy.is_file():
         try:
-            _unlink_db_files(legacy)
-            deleted += 1
-            logger.info("activity legacy db %s fully expired; deleted", legacy)
+            deleted += _sweep_legacy(legacy, cutoff.isoformat(), legacy_probe_cache)
         except OSError:
             logger.error("activity legacy db unlink failed for %s", legacy, exc_info=True)
 

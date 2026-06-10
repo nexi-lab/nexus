@@ -19,7 +19,7 @@ from nexus.services.activity.emitter import (
     set_emitter,
 )
 from nexus.services.activity.events import ActivityEvent
-from nexus.services.activity.retention import RetentionTask
+from nexus.services.activity.retention import RetentionTask, sweep_expired
 from nexus.services.activity.sinks import NoopSink, SQLiteSink
 from nexus.services.activity.sinks.jsonl import JsonlActivitySink
 from nexus.services.activity.sinks.protocol import SinkProtocol
@@ -52,6 +52,20 @@ async def setup_activity() -> None:
         return
 
     queue: asyncio.Queue[ActivityEvent] = asyncio.Queue(maxsize=cfg.queue_size)
+
+    # #4336: reclaim expired segments and a stale legacy db BEFORE opening
+    # the sink. Booting on a full volume is the motivating incident — if
+    # the sweep can free space, the sink open below succeeds instead of
+    # degrading into the permanent NoopSink fallback.
+    try:
+        await asyncio.to_thread(
+            sweep_expired,
+            segment_dir=cfg.segment_dir,
+            legacy_db_path=cfg.db_path,
+            retention_days=cfg.retention_days,
+        )
+    except Exception:
+        logger.warning("activity pre-sink retention sweep failed", exc_info=True)
 
     sinks: list[SinkProtocol] = []
     try:

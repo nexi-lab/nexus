@@ -20,12 +20,13 @@ Retention deletes whole expired segment files — O(1) disk reclaim, no VACUUM.
 | `NEXUS_ACTIVITY_RETENTION_DAYS` | `30` | Segments older than this are deleted (whole files). `0` disables retention. Granularity is one day: a segment is removed once its newest possible row passes the cutoff, so worst-case over-retention is <24h. |
 | `NEXUS_ACTIVITY_MIN_FREE_MB` | `1024` | Disk-pressure floor: when free space on the segment volume drops below this, the sink **sheds** activity batches (counted, alerted) instead of consuming the space user file writes need. `0` disables shedding. |
 | `NEXUS_ACTIVITY_SAMPLE_RATE` | `1.0` | Global keep-probability for `result=ok` events. |
-| `NEXUS_ACTIVITY_SAMPLE_RATES` | unset | Per-kind overrides, e.g. `search=0.05,mcp_tool_call=0.2`. Kinds: `search`, `fetch`, `mcp_tool_call`, `zone_access`, `policy_block`, `approval`, `op`, `exec`. |
+| `NEXUS_ACTIVITY_SAMPLE_RATES` | unset | Per-kind overrides, e.g. `search=0.05,mcp_tool_call=0.2`. Sampleable kinds: `search`, `fetch`, `mcp_tool_call`, `op`, `exec`. Audit kinds (`approval`, `policy_block`, `zone_access`) are always recorded — configuring a rate for them is a startup error. |
 | `NEXUS_ACTIVITY_QUEUE_SIZE` / `..._BATCH_SIZE` / `..._BATCH_TIMEOUT_S` | `10000` / `200` / `0.5` | In-process queue/batching (unchanged by #4336). |
 
-Sampling never drops non-`ok` results (policy blocks, pending approvals are
-audit data), and Prometheus counters are recorded before sampling, so
-`/metrics` stays exact regardless of the rate.
+Sampling never drops non-`ok` results, nor any event of an audit kind
+(`approval`, `policy_block`, `zone_access`) — an approved approval is
+`result=ok` but is still audit data. Prometheus counters are recorded
+before sampling, so `/metrics` stays exact regardless of the rate.
 
 ## Sizing
 

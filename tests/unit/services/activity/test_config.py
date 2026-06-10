@@ -182,3 +182,11 @@ def test_sample_rates_out_of_range_value_rejected(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("NEXUS_ACTIVITY_SAMPLE_RATES", "search=2.0")
     with pytest.raises(ValueError, match="NEXUS_ACTIVITY_SAMPLE_RATES"):
         ActivityConfig.from_env()
+
+
+def test_sample_rates_audit_kind_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit kinds must always be recorded; configuring a rate for one is
+    a loud error, not a silently ignored knob."""
+    monkeypatch.setenv("NEXUS_ACTIVITY_SAMPLE_RATES", "approval=0.5")
+    with pytest.raises(ValueError, match="audit kind"):
+        ActivityConfig.from_env()

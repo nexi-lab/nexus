@@ -114,12 +114,22 @@ class ActivityConfig:
         if self.min_free_mb < 0:
             raise ValueError(f"NEXUS_ACTIVITY_MIN_FREE_MB must be >= 0, got {self.min_free_mb}")
         _validate_rate("NEXUS_ACTIVITY_SAMPLE_RATE", self.sample_rate)
+        # Late import: emitter owns the exemption set but also imports this
+        # module's consumers; the function-local import avoids a cycle.
+        from nexus.services.activity.emitter import SAMPLING_EXEMPT_KINDS
+
         valid_kinds = {k.value for k in EventKind}
+        exempt_kinds = {k.value for k in SAMPLING_EXEMPT_KINDS}
         for key, rate in self.sample_rates.items():
             if key not in valid_kinds:
                 raise ValueError(
                     f"NEXUS_ACTIVITY_SAMPLE_RATES has unknown event kind {key!r}; "
                     f"valid kinds: {sorted(valid_kinds)}"
+                )
+            if key in exempt_kinds:
+                raise ValueError(
+                    f"NEXUS_ACTIVITY_SAMPLE_RATES cannot sample audit kind {key!r}; "
+                    f"audit kinds are always recorded: {sorted(exempt_kinds)}"
                 )
             _validate_rate(f"NEXUS_ACTIVITY_SAMPLE_RATES[{key!r}]", rate)
         # Frozen dataclass with a mutable dict field: wrap a private copy in

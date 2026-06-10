@@ -303,3 +303,14 @@ async def test_sampled_out_during_quiesce_counts_as_sampled_not_dropped() -> Non
     assert emitter.drop_count == 0
     assert queue.qsize() == 0
     assert _sampled_out() == before + 1
+
+
+def test_audit_kinds_never_sampled_even_on_ok_result() -> None:
+    """An approved APPROVAL is Result.OK but is audit data — the sampling
+    gate must not apply to SAMPLING_EXEMPT_KINDS at any rate."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    emitter = QueueEmitter(queue=queue, sample_rate=0.0, rng=_FixedRandom(0.5))
+    emitter.emit(kind=EventKind.APPROVAL, result=Result.OK)
+    emitter.emit(kind=EventKind.ZONE_ACCESS, result=Result.OK)
+    emitter.emit(kind=EventKind.POLICY_BLOCK, result=Result.OK)
+    assert queue.qsize() == 3

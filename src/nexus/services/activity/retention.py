@@ -84,7 +84,16 @@ def _legacy_expired(db: Path, cutoff_iso: str) -> tuple[bool, str | None]:
         if isinstance(exc, sqlite3.OperationalError) and (
             "no such table: activity_events" in str(exc).lower()
         ):
-            return True, None
+            # Fail-safe: a SQLite file without activity_events is NOT a
+            # legacy activity store — likely a mispointed
+            # NEXUS_ACTIVITY_DB_PATH. Never delete what we can't positively
+            # identify as ours.
+            logger.warning(
+                "activity legacy db %s has no activity_events table; "
+                "refusing to treat it as an expired activity store",
+                db,
+            )
+            return False, None
         logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
         return False, None
     max_ts = row[0] if row else None
@@ -98,20 +107,26 @@ def _legacy_expired_cached(
 ) -> bool:
     """_legacy_expired with a max(ts) cache for the frozen legacy db.
 
-    The legacy db never receives writes after the segment store boots, so a
-    successfully-read max(ts) is final. Caching it spares later ticks the
-    read-only probe — which replays full WAL recovery (potentially tens of
-    GB after a disk-full crash) on every open of a frozen file. A manually
-    replaced file is only re-read after a restart; the worst case is
-    over-retention of that replacement, never early deletion.
+    A cached max(ts) only short-circuits the NOT-expired answer — it spares
+    the hourly read-only probe, which replays full WAL recovery (potentially
+    tens of GB after a disk-full crash) on every open of a frozen file.
+    Any deletion-eligible verdict is always re-validated with a fresh probe:
+    during a rolling upgrade an old pre-segment writer may still be
+    appending to the legacy db, so a stale cached timestamp must never be
+    the sole basis for unlinking the file.
     """
     if cache is not None:
         cached = cache.get(str(db))
-        if cached is not None:
-            return cached < cutoff_iso
+        if cached is not None and cached >= cutoff_iso:
+            return False  # still fresh — skip the expensive probe
     expired, max_ts = _legacy_expired(db, cutoff_iso)
-    if cache is not None and not expired and max_ts is not None:
-        cache[str(db)] = max_ts
+    if cache is not None:
+        if max_ts is not None:
+            cache[str(db)] = max_ts
+        else:
+            # Unreadable or not ours: drop any stale entry so a later
+            # verdict cannot be served from outdated state.
+            cache.pop(str(db), None)
     return expired
 
 

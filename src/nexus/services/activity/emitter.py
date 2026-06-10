@@ -32,6 +32,7 @@ from nexus.contracts.protocols.activity import (
 from nexus.services.activity.events import ActivityEvent, Actor, Subject
 
 __all__ = [
+    "SAMPLING_EXEMPT_KINDS",
     "Emitter",
     "NoopEmitter",
     "QueueEmitter",
@@ -39,6 +40,14 @@ __all__ = [
     "get_emitter",
     "set_emitter",
 ]
+
+# Audit-sensitive kinds are never sampled out regardless of result: an
+# approved APPROVAL carries Result.OK but the durable trail must stay
+# complete for approvals, policy decisions, and zone-access checks.
+# ActivityConfig rejects per-kind rates for these at parse time.
+SAMPLING_EXEMPT_KINDS = frozenset(
+    {EventKind.APPROVAL, EventKind.POLICY_BLOCK, EventKind.ZONE_ACCESS}
+)
 
 
 def _new_id() -> str:
@@ -73,9 +82,10 @@ class QueueEmitter:
     closing flag (rejecting new emits) and waits for that counter to
     reach zero so shutdown cannot orphan an in-flight emission.
 
-    Sampling (#4336): OK-result events may be sampled out before the
-    lifecycle gate; sampled-out events still record Prometheus metrics
-    but never count as drops.
+    Sampling (#4336): OK-result events of non-audit kinds (see
+    SAMPLING_EXEMPT_KINDS) may be sampled out before the lifecycle gate;
+    sampled-out events still record Prometheus metrics but never count
+    as drops.
     """
 
     def __init__(
@@ -150,10 +160,11 @@ class QueueEmitter:
         meta: dict[str, Any] | None = None,
     ) -> None:
         # #4336 sampling: durable-row reduction for high-volume kinds.
-        # Non-OK results (policy blocks, pending approvals) are audit data
-        # and are never sampled out. Prometheus metrics are still recorded
-        # so the counters stay exact; only the SQLite row is skipped.
-        if result is Result.OK:
+        # Non-OK results AND audit-sensitive kinds are never sampled out —
+        # an approved APPROVAL is Result.OK but is still audit data.
+        # Prometheus metrics are still recorded so the counters stay exact;
+        # only the SQLite row is skipped.
+        if result is Result.OK and kind not in SAMPLING_EXEMPT_KINDS:
             rate = self._sample_rates.get(kind.value, self._sample_rate)
             if rate < 1.0 and self._rng.random() >= rate:
                 try:

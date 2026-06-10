@@ -69,7 +69,7 @@ On the first boot with rotation, the old single `activity.db` (at `NEXUS_ACTIVIT
 In `QueueEmitter.emit`, before the capacity gate:
 
 - Effective rate = `NEXUS_ACTIVITY_SAMPLE_RATES[kind]` if set, else `NEXUS_ACTIVITY_SAMPLE_RATE` (default 1.0). Keep iff `random.random() < rate`.
-- **Exemption:** events with `result != OK` (`BLOCKED`, `PENDING_APPROVAL`) are never sampled out — policy denials and approvals are audit data.
+- **Exemption:** events with `result != OK` (`BLOCKED`, `PENDING_APPROVAL`) are never sampled out, and neither is any event of an audit-sensitive kind (`APPROVAL`, `POLICY_BLOCK`, `ZONE_ACCESS`) regardless of result — an approved approval carries `OK` but is audit data. Config rejects per-kind rates for audit kinds.
 - Sampled-out events still call `record_metrics(...)` so Prometheus counters/histograms remain exact; only the durable SQLite row is skipped. They increment `nexus_activity_sampled_out_total`, **not** `ACTIVITY_DROPS` (intentional vs. failure).
 
 ### 6. Configuration

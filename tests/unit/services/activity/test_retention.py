@@ -150,20 +150,27 @@ def test_legacy_corrupt_skipped_with_warning(
     assert any("unreadable" in r.message for r in caplog.records)
 
 
-def test_legacy_missing_table_counts_as_expired(tmp_path: Path) -> None:
+def test_legacy_missing_table_refused_not_deleted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fail-safe: a SQLite db without activity_events (e.g. a mispointed
+    NEXUS_ACTIVITY_DB_PATH at another subsystem's db) must never be
+    unlinked — it cannot be positively identified as a legacy store."""
     legacy = tmp_path / "activity.db"
     conn = sqlite3.connect(legacy)
     conn.execute("CREATE TABLE other (x INTEGER)")
     conn.commit()
     conn.close()
-    deleted = sweep_expired(
-        segment_dir=tmp_path / "activity",
-        legacy_db_path=legacy,
-        retention_days=30,
-        now_fn=_now_fn,
-    )
-    assert deleted == 1
-    assert not legacy.exists()
+    with caplog.at_level("WARNING"):
+        deleted = sweep_expired(
+            segment_dir=tmp_path / "activity",
+            legacy_db_path=legacy,
+            retention_days=30,
+            now_fn=_now_fn,
+        )
+    assert deleted == 0
+    assert legacy.exists()
+    assert any("no activity_events table" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -303,8 +310,36 @@ def test_legacy_probe_cached_across_sweeps(
         )
     assert deleted == 0
     assert not any("unreadable" in r.message for r in caplog.records)
-    # Once the cached max(ts) passes the cutoff, the file is deleted with
-    # no further probe.
+    # A stale cached max(ts) is only a deletion CANDIDATE: the sweep must
+    # re-validate with a fresh probe, and the (still corrupt) file is kept.
+    with caplog.at_level("WARNING"):
+        deleted = sweep_expired(
+            segment_dir=tmp_path / "activity",
+            legacy_db_path=legacy,
+            retention_days=30,
+            now_fn=lambda: datetime(2026, 8, 1, tzinfo=UTC),
+            legacy_probe_cache=cache,
+        )
+    assert deleted == 0
+    assert legacy.exists()
+    assert any("unreadable" in r.message for r in caplog.records)
+
+
+def test_legacy_stale_cache_revalidated_then_deleted(tmp_path: Path) -> None:
+    """The deletion path re-probes: a genuinely stale legacy db is removed."""
+    legacy = tmp_path / "activity.db"
+    _make_db(legacy, ["2026-06-01T00:00:00+00:00"])
+    cache: dict[str, str] = {}
+    assert (
+        sweep_expired(
+            segment_dir=tmp_path / "activity",
+            legacy_db_path=legacy,
+            retention_days=30,
+            now_fn=_now_fn,
+            legacy_probe_cache=cache,
+        )
+        == 0
+    )
     deleted = sweep_expired(
         segment_dir=tmp_path / "activity",
         legacy_db_path=legacy,
@@ -314,3 +349,36 @@ def test_legacy_probe_cached_across_sweeps(
     )
     assert deleted == 1
     assert not legacy.exists()
+
+
+def test_legacy_concurrent_writer_rows_block_deletion(tmp_path: Path) -> None:
+    """Rolling-upgrade safety: rows appended by an old pre-segment writer
+    AFTER the cache probe must block deletion (re-probe sees them)."""
+    legacy = tmp_path / "activity.db"
+    _make_db(legacy, ["2026-06-01T00:00:00+00:00"])
+    cache: dict[str, str] = {}
+    sweep_expired(
+        segment_dir=tmp_path / "activity",
+        legacy_db_path=legacy,
+        retention_days=30,
+        now_fn=_now_fn,
+        legacy_probe_cache=cache,
+    )
+    assert cache  # max(ts)=2026-06-01 cached
+    # Old writer appends a FRESH row after the probe.
+    conn = sqlite3.connect(legacy)
+    conn.execute(
+        "INSERT INTO activity_events (id, ts) VALUES ('late', '2026-07-30T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+    # Cutoff passes the CACHED ts (2026-06-01) but not the late row.
+    deleted = sweep_expired(
+        segment_dir=tmp_path / "activity",
+        legacy_db_path=legacy,
+        retention_days=30,
+        now_fn=lambda: datetime(2026, 7, 15, tzinfo=UTC),
+        legacy_probe_cache=cache,
+    )
+    assert deleted == 0
+    assert legacy.exists()

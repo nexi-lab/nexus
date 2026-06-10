@@ -7932,40 +7932,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: secrets.{namespace}_{key}_versions
-  module: secrets
-  summary: ''
-  transports:
-    http:
-      name: GET /api/v2/secrets/{namespace}/{key}/versions
-      source: src/nexus/server/api/v2/routers/secrets.py:251
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4137_lifecycle_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: secrets.{namespace}_{key}_versions_{version}
-  module: secrets
-  summary: ''
-  transports:
-    http:
-      name: DELETE /api/v2/secrets/{namespace}/{key}/versions/{version}
-      source: src/nexus/server/api/v2/routers/secrets.py:365
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4137_lifecycle_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: secrets_audit.events_export
   module: secrets
   summary: ''

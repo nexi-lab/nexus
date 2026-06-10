@@ -967,7 +967,7 @@ modules = [
     "nexus.bricks.rebac",
     "nexus.bricks.sandbox",
     "nexus.bricks.search",
-    "nexus.bricks.secrets",
+
     "nexus.bricks.share_link",
     "nexus.bricks.snapshot",
     "nexus.bricks.task_manager",

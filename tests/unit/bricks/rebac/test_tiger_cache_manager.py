@@ -223,6 +223,51 @@ def test_blocked_materialized_listing_still_bounds_boot(
         gate.set()
 
 
+def test_stop_skips_cache_warm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shutdown that stops the sync must not fall through into the
+    DB-bound warm phase (Codex round 2)."""
+    monkeypatch.setenv("NEXUS_TIGER_INIT_TIMEOUT_SECONDS", "0.05")
+    monkeypatch.setenv("NEXUS_WARM_TIGER_CACHE", "true")
+    warm_calls: list[str] = []
+    resource_map = FakeResourceMap()
+    manager = TigerCacheManager(
+        rebac_manager=FakeRebacManager(resource_map),
+        nexus_fs=EndlessNexusFS(),
+        default_zone_id="root",
+        warm_cache_fn=lambda zone_id: warm_calls.append(zone_id) or 0,
+    )
+
+    manager.initialize()  # returns after timeout; sync grinds in background
+    manager.stop_worker()  # stops the sync between entries
+    sync_thread = manager._sync_thread
+    assert sync_thread is not None
+    sync_thread.join(timeout=5.0)
+    assert not sync_thread.is_alive()
+    assert warm_calls == [], "warm phase must be skipped after a stop request"
+
+
+def test_invalid_timeout_values_fall_back_to_default(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """inf raises from Thread.join (aborting initialize), nan/negative skip
+    the join silently — all must fall back to the default instead."""
+    for bad in ("inf", "nan", "-5"):
+        monkeypatch.setenv("NEXUS_TIGER_INIT_TIMEOUT_SECONDS", bad)
+        resource_map = FakeResourceMap()
+        manager = make_manager(FakeNexusFS(["/a.txt"]), resource_map)
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            manager.initialize()  # fast sync: default join returns immediately
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("Invalid NEXUS_TIGER_INIT_TIMEOUT_SECONDS" in m for m in messages), (
+            f"{bad!r} must be rejected with a warning"
+        )
+        assert not any("Failed to initialize" in m for m in messages), (
+            f"{bad!r} must not abort initialize()"
+        )
+
+
 def test_stop_worker_is_safe_without_initialize_and_idempotent() -> None:
     """stop_worker() is wired as a NexusFS close callback (Issue #4342), so it
     must be a no-op when initialize() never ran and safe to call twice."""

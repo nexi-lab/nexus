@@ -234,3 +234,40 @@ async def test_double_start_is_idempotent() -> None:
     await asyncio.sleep(0.1)
     await worker.stop(timeout=1.0)
     assert len(sink.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_idle_tick_calls_optional_sink_maintain() -> None:
+    """Idle ticks invoke the optional maintain() hook so sinks can release
+    stale segment handles; sinks without the method are skipped."""
+
+    class _MaintSink:
+        def __init__(self) -> None:
+            self.maintained = 0
+
+        async def write_batch(self, events) -> None:  # pragma: no cover - unused
+            pass
+
+        async def close(self) -> None:
+            pass
+
+        async def maintain(self) -> None:
+            self.maintained += 1
+
+    class _PlainSink:
+        async def write_batch(self, events) -> None:  # pragma: no cover - unused
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    q: asyncio.Queue = asyncio.Queue()
+    sink = _MaintSink()
+    worker = ActivityWorker(queue=q, sinks=[sink, _PlainSink()], batch_size=4, batch_timeout_s=0.02)
+    await worker.start()
+    for _ in range(200):
+        if sink.maintained >= 1:
+            break
+        await asyncio.sleep(0.01)
+    await worker.stop()
+    assert sink.maintained >= 1

@@ -63,6 +63,9 @@ ACTIVITY_SINK_ERRORS = Counter(
     ["sink"],
 )
 
+# Superseded by ACTIVITY_SEGMENTS_DELETED (#4336): retention now deletes
+# whole segment files, so a row-count metric no longer applies. Kept
+# registered for dashboard compatibility; no longer incremented.
 ACTIVITY_RETENTION_PRUNED = Counter(
     "nexus_activity_retention_pruned_total",
     "Activity events pruned by retention task",
@@ -78,6 +81,32 @@ AGENT_LOG_BYTES = Gauge(
     "nexus_activity_agent_log_bytes",
     "Current bytes held in the agent_log MemoryBackend",
     ["agent_id"],
+)
+
+ACTIVITY_SHED = Counter(
+    "nexus_activity_shed_total",
+    "Activity events dropped under disk pressure (#4336 shedding)",
+)
+
+ACTIVITY_SAMPLED_OUT = Counter(
+    "nexus_activity_sampled_out_total",
+    "Activity events skipped by sampling (Prometheus metrics still recorded)",
+)
+
+ACTIVITY_SEGMENTS_DELETED = Counter(
+    "nexus_activity_segments_deleted_total",
+    "Activity segment files (and the legacy activity.db) deleted by retention",
+)
+
+ACTIVITY_DISK_FREE_BYTES = Gauge(
+    "nexus_activity_disk_free_bytes",
+    "Last observed free bytes on the activity segment volume",
+)
+
+ACTIVITY_STORE_BYTES = Gauge(
+    "nexus_activity_store_bytes",
+    "Total bytes of activity segment files, WALs, and the legacy activity.db "
+    "(updated by retention sweeps; static when retention is disabled)",
 )
 
 

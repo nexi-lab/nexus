@@ -105,6 +105,8 @@ class ActivityWorker:
             batch = await self._collect_batch()
             if batch:
                 await self._flush(batch)
+            else:
+                await self._maintain_sinks()
         # Drain remaining events once stopping is set.
         remainder: list[ActivityEvent] = []
         while not self._queue.empty():
@@ -161,6 +163,25 @@ class ActivityWorker:
                 break
             batch.append(nxt)
         return batch
+
+    async def _maintain_sinks(self) -> None:
+        """Idle tick: let sinks do housekeeping (e.g. release a stale
+        segment handle so retention's unlink actually frees disk).
+
+        maintain() is an optional sink method, not part of SinkProtocol —
+        sinks without it are skipped. Runs on the consumer task, so it is
+        serialized with write_batch like every other sink call.
+        """
+        for sink in self._sinks:
+            maintain = getattr(sink, "maintain", None)
+            if maintain is None:
+                continue
+            try:
+                await maintain()
+            except Exception:
+                logger.warning(
+                    "activity sink %s maintain failed", type(sink).__name__, exc_info=True
+                )
 
     async def _flush(self, batch: list[ActivityEvent]) -> None:
         for sink in self._sinks:

@@ -1,17 +1,33 @@
-"""Periodic prune of activity_events older than the retention threshold."""
+"""Retention for the segmented activity store: delete expired segment files.
+
+Issue #4336: DELETE-based pruning never returned disk (SQLite keeps pages
+until VACUUM, and VACUUM needs ~db-size free space — impossible once the
+db passes ~50% of the volume). Per-day segment files flip that: a whole
+expired day is reclaimed with one unlink, O(1) and VACUUM-free.
+
+The legacy single-file ``activity.db`` from pre-segment deployments is
+frozen (nothing writes to it anymore) and unlinked once its newest row is
+older than the retention cutoff — the same data-loss semantics the old
+DELETE prune already enforced, without DELETE/WAL churn on a potentially
+huge file.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
+import re
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from collections.abc import Callable, MutableMapping
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from nexus.services.activity.agent_log_store import MemoryBackend
 
 logger = logging.getLogger(__name__)
+
+_SEGMENT_RE = re.compile(r"^activity-(\d{4}-\d{2}-\d{2})\.db$")
 
 
 def sweep_agent_log(
@@ -29,77 +45,208 @@ def sweep_agent_log(
     # Snapshot the dates to avoid mutating during iteration.
     dates = store.iter_dates()
     dropped = 0
-    for date in dates:
-        if date < cutoff:
-            store.drop_date(date)
+    for day_key in dates:
+        if day_key < cutoff:
+            store.drop_date(day_key)
             dropped += 1
     return dropped
 
 
-def prune_older_than(
+def _unlink_db_files(db: Path) -> None:
+    """Remove a SQLite db plus its -wal/-shm siblings, ignoring absences.
+
+    Siblings go first: if one of their unlinks fails, the .db file is
+    still present as the retry key for the next sweep tick — the reverse
+    order would orphan a -wal forever.
+    """
+    for path in (Path(f"{db}-wal"), Path(f"{db}-shm"), db):
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+
+
+def _sweep_legacy(db: Path, cutoff_iso: str, cache: MutableMapping[str, str] | None) -> int:
+    """Probe and (when fully expired) delete the legacy db. Returns files
+    unlinked (0 or 1).
+
+    A cached max(ts) only short-circuits the NOT-expired answer — it spares
+    the hourly probe, which replays full WAL recovery (potentially tens of
+    GB after a disk-full crash) on every open of a frozen file.
+
+    Deletion runs under ``BEGIN IMMEDIATE`` on the legacy db itself: the
+    write lock serializes against any still-running pre-segment writer
+    (rolling upgrade), so every committed row is visible to the probe and
+    nothing can commit between the probe and the unlink. Failing to get
+    the lock is treated as evidence of an active writer — keep the file
+    and retry next tick.
+    """
+    if cache is not None:
+        cached = cache.get(str(db))
+        if cached is not None and cached >= cutoff_iso:
+            return 0  # still fresh — skip the expensive probe
+    try:
+        # db.resolve().as_uri() percent-encodes '#'/'%'/spaces — a raw
+        # f"file:{db}" would truncate at '#' and open the wrong path,
+        # misreading a live legacy db as expired. mode=rw (not rwc): never
+        # create the file we are about to judge.
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=rw", uri=True, timeout=1.0)
+    except sqlite3.Error:
+        logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
+        return 0
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT max(ts) FROM activity_events").fetchone()
+        max_ts = row[0] if row else None
+        # ts is ISO-8601 UTC (see emitter._now_iso), so lexicographic
+        # comparison matches chronological order.
+        if max_ts is not None and max_ts >= cutoff_iso:
+            if cache is not None:
+                cache[str(db)] = max_ts
+            return 0  # fresh rows remain
+        # Fully expired (or empty table): unlink while still holding the
+        # write lock — no concurrent commit can slip in before the unlink.
+        _unlink_db_files(db)
+        if cache is not None:
+            cache.pop(str(db), None)
+        logger.info("activity legacy db %s fully expired; deleted", db)
+        return 1
+    except sqlite3.Error as exc:
+        if cache is not None:
+            cache.pop(str(db), None)
+        if isinstance(exc, sqlite3.OperationalError) and (
+            "no such table: activity_events" in str(exc).lower()
+        ):
+            # Fail-safe: a SQLite file without activity_events is NOT a
+            # legacy activity store — likely a mispointed
+            # NEXUS_ACTIVITY_DB_PATH. Never delete what we can't positively
+            # identify as ours.
+            logger.warning(
+                "activity legacy db %s has no activity_events table; "
+                "refusing to treat it as an expired activity store",
+                db,
+            )
+        else:
+            # Busy (active writer holding the lock) or corrupt — keep and
+            # retry on a later tick.
+            logger.warning("activity legacy db %s unreadable; skipping", db, exc_info=True)
+        return 0
+    finally:
+        with contextlib.suppress(sqlite3.Error):
+            conn.rollback()
+        conn.close()
+
+
+def _update_store_bytes(seg_dir: Path, legacy: Path | None) -> None:
+    """Refresh the store-size gauge from on-disk segment + legacy file sizes."""
+    total = 0
+    try:
+        if seg_dir.is_dir():
+            for path in seg_dir.glob("activity-*.db*"):
+                with contextlib.suppress(OSError):
+                    total += path.stat().st_size
+        if legacy is not None:
+            for path in (legacy, Path(f"{legacy}-wal"), Path(f"{legacy}-shm")):
+                with contextlib.suppress(OSError):
+                    if path.is_file():
+                        total += path.stat().st_size
+        from nexus.services.activity.metrics import ACTIVITY_STORE_BYTES
+
+        ACTIVITY_STORE_BYTES.set(total)
+    except Exception:  # metrics must never break retention
+        pass
+
+
+def sweep_expired(
     *,
-    db_path: Path | str,
+    segment_dir: Path | str,
+    legacy_db_path: Path | str | None,
     retention_days: int,
-    vacuum_threshold: int = 1000,
+    now_fn: Callable[[], datetime] | None = None,
+    legacy_probe_cache: MutableMapping[str, str] | None = None,
 ) -> int:
-    """Synchronously delete rows older than now - retention_days.
+    """Delete expired segment files (and the legacy db once fully stale).
 
-    ts is always YYYY-MM-DDTHH:MM:SS.ffffff+00:00 (see emitter._now_iso),
-    so lexicographic comparison matches chronological order.
+    Returns the number of database files unlinked. ``retention_days <= 0``
+    disables retention entirely.
 
-    Returns the number of rows deleted. retention_days <= 0 is a no-op.
-    Missing DB returns 0 silently. Runs VACUUM after deleting more than
-    vacuum_threshold rows (default 1000) to reclaim disk space.
+    A segment ``activity-D.db`` holds rows up to ``D 23:59:59``, so it is
+    deleted only when ``D < (now - retention_days).date()`` — i.e. when its
+    newest possible row has expired. Worst-case over-retention is <24h
+    (the old DELETE prune was exact-to-the-hour; acceptable coarsening).
+
+    An idle sink may still hold yesterday's (expired) segment open when the
+    sweep unlinks it — safe on POSIX: the data is already expired and the
+    open handle keeps working against the unlinked inode. The handle (and
+    therefore the disk space) is released by the sink's next write OR by
+    the worker's idle ``maintain()`` tick, whichever comes first.
     """
     if retention_days <= 0:
         return 0
-    db = Path(db_path)
-    if not db.exists():
-        return 0
-    threshold = (datetime.now(tz=UTC) - timedelta(days=retention_days)).isoformat()
-    try:
-        conn = sqlite3.connect(db, isolation_level=None)  # autocommit needed for VACUUM
+    now = (now_fn or (lambda: datetime.now(tz=UTC)))()
+    cutoff = now - timedelta(days=retention_days)
+    cutoff_date = cutoff.date()
+    seg_dir = Path(segment_dir)
+    deleted = 0
+
+    if seg_dir.is_dir():
+        for path in sorted(seg_dir.glob("activity-*.db")):
+            match = _SEGMENT_RE.match(path.name)
+            if match is None:
+                continue
+            try:
+                seg_date = date.fromisoformat(match.group(1))
+            except ValueError:
+                continue
+            if seg_date >= cutoff_date:
+                continue
+            try:
+                _unlink_db_files(path)
+                deleted += 1
+            except OSError:
+                logger.error("activity segment unlink failed for %s", path, exc_info=True)
+
+    legacy = Path(legacy_db_path) if legacy_db_path is not None else None
+    if legacy is not None and legacy.is_file():
         try:
-            cursor = conn.execute(
-                "DELETE FROM activity_events WHERE ts < ?",
-                (threshold,),
-            )
-            deleted = cursor.rowcount or 0
-            if deleted >= vacuum_threshold:
-                try:
-                    conn.execute("VACUUM")
-                except sqlite3.Error:
-                    logger.warning("activity retention VACUUM failed", exc_info=True)
-            return deleted
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        logger.warning("activity retention prune failed", exc_info=True)
-        return 0
+            deleted += _sweep_legacy(legacy, cutoff.isoformat(), legacy_probe_cache)
+        except OSError:
+            logger.error("activity legacy db unlink failed for %s", legacy, exc_info=True)
+
+    if deleted:
+        try:
+            from nexus.services.activity.metrics import ACTIVITY_SEGMENTS_DELETED
+
+            ACTIVITY_SEGMENTS_DELETED.inc(deleted)
+        except Exception:
+            pass
+    _update_store_bytes(seg_dir, legacy)
+    return deleted
 
 
 class RetentionTask:
-    """Async task wrapping prune_older_than on a fixed cadence."""
+    """Async task wrapping sweep_expired on a fixed cadence."""
 
     def __init__(
         self,
         *,
-        db_path: Path | str,
+        segment_dir: Path | str,
+        legacy_db_path: Path | str | None,
         retention_days: int,
         interval_s: float = 3600.0,
-        vacuum_threshold: int = 1000,
     ) -> None:
-        self._db_path = db_path
+        self._segment_dir = segment_dir
+        self._legacy_db_path = legacy_db_path
         self._retention_days = retention_days
         self._interval_s = interval_s
-        self._vacuum_threshold = vacuum_threshold
         self._stopping = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        self._total_pruned = 0
+        self._total_deleted = 0
+        # max(ts) of the frozen legacy db, learned on the first successful
+        # probe — see _legacy_expired_cached.
+        self._legacy_probe_cache: dict[str, str] = {}
 
     @property
-    def total_pruned(self) -> int:
-        return self._total_pruned
+    def total_deleted(self) -> int:
+        return self._total_deleted
 
     async def start(self) -> None:
         if self._retention_days <= 0:
@@ -111,15 +258,13 @@ class RetentionTask:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
-        """Wait for the in-flight prune (if any) to finish, then exit.
+        """Wait for the in-flight sweep (if any) to finish, then exit.
 
-        Cancellation cannot stop the executor thread mid-VACUUM, so a
-        cancel here would let the thread keep holding the SQLite write
-        lock after stop() returns — and the worker's final drain would
-        then race that lock. Setting the stopping flag is sufficient:
-        ``_run`` checks the flag between iterations and waits on it
-        instead of sleeping, so the loop exits as soon as the current
-        prune finishes.
+        Cancellation cannot stop the executor thread mid-sweep, so a cancel
+        here would let the thread keep unlinking files after stop()
+        returns. Setting the stopping flag is sufficient: ``_run`` checks
+        the flag between iterations and waits on it instead of sleeping, so
+        the loop exits as soon as the current sweep finishes.
         """
         self._stopping.set()
         if self._task is not None:
@@ -131,12 +276,13 @@ class RetentionTask:
         while not self._stopping.is_set():
             try:
                 deleted = await asyncio.to_thread(
-                    prune_older_than,
-                    db_path=self._db_path,
+                    sweep_expired,
+                    segment_dir=self._segment_dir,
+                    legacy_db_path=self._legacy_db_path,
                     retention_days=self._retention_days,
-                    vacuum_threshold=self._vacuum_threshold,
+                    legacy_probe_cache=self._legacy_probe_cache,
                 )
-                self._total_pruned += deleted
+                self._total_deleted += deleted
             except Exception:
                 logger.warning("activity retention loop tick failed", exc_info=True)
             # Agent-log retention (RAM-only ring buffers, see issue #4081).
@@ -150,7 +296,7 @@ class RetentionTask:
                 retention_days = get_agent_log_retention_days()
                 if store is not None and isinstance(retention_days, int):
                     dropped = sweep_agent_log(store, retention_days=retention_days)
-                    self._total_pruned += dropped
+                    self._total_deleted += dropped
             except Exception:
                 logger.warning("agent_log retention sweep failed", exc_info=True)
             try:

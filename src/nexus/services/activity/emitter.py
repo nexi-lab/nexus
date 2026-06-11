@@ -12,9 +12,11 @@ service-side imports keep working.
 from __future__ import annotations
 
 import asyncio
+import random
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,6 +32,7 @@ from nexus.contracts.protocols.activity import (
 from nexus.services.activity.events import ActivityEvent, Actor, Subject
 
 __all__ = [
+    "SAMPLING_EXEMPT_KINDS",
     "Emitter",
     "NoopEmitter",
     "QueueEmitter",
@@ -37,6 +40,14 @@ __all__ = [
     "get_emitter",
     "set_emitter",
 ]
+
+# Audit-sensitive kinds are never sampled out regardless of result: an
+# approved APPROVAL carries Result.OK but the durable trail must stay
+# complete for approvals, policy decisions, and zone-access checks.
+# ActivityConfig rejects per-kind rates for these at parse time.
+SAMPLING_EXEMPT_KINDS = frozenset(
+    {EventKind.APPROVAL, EventKind.POLICY_BLOCK, EventKind.ZONE_ACCESS}
+)
 
 
 def _new_id() -> str:
@@ -70,6 +81,11 @@ class QueueEmitter:
     and scheduled-but-not-run callbacks. ``quiesce_pending()`` flips the
     closing flag (rejecting new emits) and waits for that counter to
     reach zero so shutdown cannot orphan an in-flight emission.
+
+    Sampling (#4336): OK-result events of non-audit kinds (see
+    SAMPLING_EXEMPT_KINDS) may be sampled out before the lifecycle gate;
+    sampled-out events still record Prometheus metrics but never count
+    as drops.
     """
 
     def __init__(
@@ -77,6 +93,9 @@ class QueueEmitter:
         *,
         queue: asyncio.Queue[ActivityEvent],
         loop: asyncio.AbstractEventLoop | None = None,
+        sample_rate: float = 1.0,
+        sample_rates: Mapping[str, float] | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self._queue = queue
         self._loop = loop
@@ -88,6 +107,10 @@ class QueueEmitter:
         # threadpool burst cannot pile up unbounded ActivityEvent objects
         # in scheduled callbacks before drops are recorded.
         self._max_inflight = max(1, queue.maxsize) if queue.maxsize > 0 else 0
+        # #4336 sampling knobs. rng is injectable for deterministic tests.
+        self._sample_rate = sample_rate
+        self._sample_rates = dict(sample_rates or {})
+        self._rng = rng or random.Random()
 
     @property
     def drop_count(self) -> int:
@@ -136,6 +159,33 @@ class QueueEmitter:
         trace_id: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> None:
+        # #4336 sampling: durable-row reduction for high-volume kinds.
+        # Non-OK results AND audit-sensitive kinds are never sampled out —
+        # an approved APPROVAL is Result.OK but is still audit data.
+        # Prometheus metrics are still recorded so the counters stay exact;
+        # only the SQLite row is skipped.
+        if result is Result.OK and kind not in SAMPLING_EXEMPT_KINDS:
+            rate = self._sample_rates.get(kind.value, self._sample_rate)
+            if rate < 1.0 and self._rng.random() >= rate:
+                try:
+                    from nexus.services.activity.metrics import (
+                        ACTIVITY_SAMPLED_OUT,
+                        record_metrics,
+                    )
+
+                    record_metrics(
+                        kind=kind,
+                        result=result,
+                        actor_token_hash=actor_token_hash,
+                        subject_zone=subject_zone,
+                        subject_extra=subject_extra,
+                        latency_ms=latency_ms,
+                    )
+                    ACTIVITY_SAMPLED_OUT.inc()
+                except Exception:  # metrics must never break the hot path
+                    pass
+                return
+
         # Lifecycle + capacity gate. Closing emitters or saturated queues
         # admit nothing new — the event is counted as a drop and we exit
         # before constructing the ActivityEvent or recording metrics.

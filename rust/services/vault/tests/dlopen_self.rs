@@ -19,6 +19,7 @@
 
 use std::ffi::CStr;
 use std::path::PathBuf;
+use std::process::Command;
 
 use nexus_plugin_abi::{symbols, PluginKind, PLUGIN_API_VERSION};
 
@@ -42,14 +43,35 @@ fn plugin_path() -> PathBuf {
     target_profile_dir.join(PLUGIN_FILE)
 }
 
+/// `cargo test` builds the test binary against the rlib variant of the
+/// crate, but does not necessarily emit the cdylib output. Workspace-
+/// wide runs (`cargo test --workspace`) therefore land here without
+/// the cdylib on disk. Triggering an explicit `cargo build -p
+/// nexus-vault` keeps the test self-contained in every context —
+/// `vault-plugin-build.yml` (cdylib already built by a prior step,
+/// instant) and the broader workspace gate alike.
+fn ensure_cdylib_built(plugin: &std::path::Path) {
+    if plugin.exists() {
+        return;
+    }
+    let mut cmd = Command::new(env!("CARGO"));
+    cmd.args(["build", "-p", "nexus-vault"]);
+    if !cfg!(debug_assertions) {
+        cmd.arg("--release");
+    }
+    let status = cmd.status().expect("invoke cargo");
+    assert!(status.success(), "cargo build -p nexus-vault failed");
+    assert!(
+        plugin.exists(),
+        "cdylib still not at {} after cargo build — check [lib] crate-type includes \"cdylib\"",
+        plugin.display()
+    );
+}
+
 #[test]
 fn vault_cdylib_dlopens_with_required_symbols() {
     let plugin = plugin_path();
-    assert!(
-        plugin.exists(),
-        "plugin cdylib not at {} — run `cargo build --release -p nexus-vault` first",
-        plugin.display()
-    );
+    ensure_cdylib_built(&plugin);
 
     let lib = unsafe { libloading::Library::new(&plugin) }
         .unwrap_or_else(|e| panic!("dlopen({}) failed: {e}", plugin.display()));

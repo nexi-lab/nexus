@@ -74,7 +74,7 @@ jobs:
 
           # Windows x86_64
           cp artifacts/nexus-vault-windows-x86_64/nexus_vault.dll nexus_vault.dll
-          cd release-assets && zip nexus-vault-windows-x86_64.zip ../nexus_vault.dll && cd ..
+          zip release-assets/nexus-vault-windows-x86_64.zip nexus_vault.dll
           rm nexus_vault.dll
 
           echo "=== release-assets ==="

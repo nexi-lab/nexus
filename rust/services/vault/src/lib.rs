@@ -1092,7 +1092,11 @@ mod dispatch_e2e {
         let resp = dispatch_vault(&plugin, "put_entry", &payload).unwrap();
         let pw_title = PutEntryResponse::decode(resp.as_slice()).unwrap().title;
 
-        // Step 2: Store generic secret — capture returned namespace:key
+        // Step 2: Store generic secret. Uses `provider:openai` (with a
+        // colon — an NTFS-illegal char) on purpose, to make this test
+        // also assert the post-encoding contract: namespace/key segments
+        // on disk are percent-encoded, while the wire-level API echoes
+        // back the original literal.
         let payload = encode(&secrets_proto::PutSecretRequest {
             namespace: "provider:openai".into(),
             key: "api_key".into(),
@@ -1104,10 +1108,18 @@ mod dispatch_e2e {
             .unwrap()
             .metadata
             .unwrap();
-        let secret_ns = meta.namespace;
-        let secret_key = meta.key;
+        // API contract: returned namespace/key are the original strings,
+        // NOT the on-disk encoded form.
+        assert_eq!(meta.namespace, "provider:openai");
+        assert_eq!(meta.key, "api_key");
+        let secret_ns_api = meta.namespace; // logical (API) value
+        // Physical layout contract: disk segments are percent-encoded.
+        // `:` is encoded as `%3A`; `api_key` is safe → identity.
+        let secret_ns_disk = "provider%3Aopenai";
+        let secret_key_disk = "api_key";
 
-        // Step 3: Verify /vault/entries/ has namespace dirs from steps 1-2
+        // Step 3: Verify /vault/entries/ shows the ENCODED namespace dir
+        // (not the API literal). This is what readdir actually returns.
         let entries_root = kernel.sys_readdir("/vault/entries", "root", true);
         let ns_names: Vec<&str> = entries_root
             .iter()
@@ -1115,11 +1127,16 @@ mod dispatch_e2e {
             .collect();
         assert!(
             ns_names.contains(&"passwords"),
-            "passwords namespace dir exists"
+            "passwords namespace dir exists (no encoding — ASCII-safe)"
         );
         assert!(
-            ns_names.contains(&secret_ns.as_str()),
-            "secret namespace dir exists"
+            ns_names.contains(&secret_ns_disk),
+            "secret namespace dir exists IN ENCODED FORM ({secret_ns_disk}), not as API literal {secret_ns_api}"
+        );
+        // Explicitly assert the API literal is NOT what shows up on disk.
+        assert!(
+            !ns_names.contains(&secret_ns_api.as_str()),
+            "raw colon must not survive on disk — it would break NTFS"
         );
 
         // Step 4: Verify password entry path uses title from step 1
@@ -1130,13 +1147,18 @@ mod dispatch_e2e {
             "password entry filename matches put title"
         );
 
-        // Step 5: Verify generic secret entry path uses ns:key from step 2
-        let secret_entries =
-            kernel.sys_readdir(&format!("/vault/entries/{secret_ns}"), "root", true);
+        // Step 5: Verify generic secret entry path. Direct readdir into
+        // the storage layout MUST use the encoded namespace segment;
+        // walking via the API literal would simply not exist on disk.
+        let secret_entries = kernel.sys_readdir(
+            &format!("/vault/entries/{secret_ns_disk}"),
+            "root",
+            true,
+        );
         assert_eq!(secret_entries.len(), 1);
         assert!(
-            secret_entries[0].0.ends_with(&format!("/{secret_key}")),
-            "secret entry filename matches put key"
+            secret_entries[0].0.ends_with(&format!("/{secret_key_disk}")),
+            "secret entry filename matches put key (encoded)"
         );
 
         // Step 6: Verify version files exist under unified versions/ tree
@@ -1148,7 +1170,7 @@ mod dispatch_e2e {
         assert_eq!(pw_vers.len(), 1, "1 version for password");
 
         let secret_vers = kernel.sys_readdir(
-            &format!("/vault/versions/{secret_ns}/{secret_key}"),
+            &format!("/vault/versions/{secret_ns_disk}/{secret_key_disk}"),
             "root",
             true,
         );
@@ -1221,5 +1243,250 @@ mod dispatch_e2e {
         let resp = dispatch_vault(&plugin, "list_versions", &lv).unwrap();
         let lv_resp = ListVersionsResponse::decode(resp.as_slice()).unwrap();
         assert_eq!(lv_resp.count, 2);
+    }
+
+    // ── Scenario 15: Real-disk PathLocalBackend accepts `%` in path
+    //                segments (the namespace percent-encoding "head
+    //                constraint" turned into executable evidence).
+    //
+    // Background: `zazzy-chasing-pizza.md` assumes the kernel + backend
+    // write path does not reject `%` characters. Source of that claim is
+    // the external `nexus-vfs` crate (pinned by commit in workspace
+    // Cargo.toml) — its source is not vendored, so this test exists to
+    // make the assumption fail loudly under CI three-platform matrix if
+    // a future bump rejects `%`.
+    //
+    // Crucially this test uses `fresh_plugin` (PathLocalBackend on a
+    // TempDir), not `mount_and_create` from storage.rs which is
+    // MemBackend-backed and bypasses real filesystem rules.
+
+    #[test]
+    fn pathlocal_backend_accepts_percent_in_namespace() {
+        let (_dir, plugin) = fresh_plugin();
+
+        let put_payload = encode(&secrets_proto::PutSecretRequest {
+            namespace: "ns%test".into(),
+            key: "k".into(),
+            value: "v".into(),
+            description: None,
+        });
+        // The whole point: this must not error on Windows / Linux / macOS.
+        dispatch_vault(&plugin, "secret_put", &put_payload).unwrap();
+
+        let get_payload = encode(&secrets_proto::GetSecretRequest {
+            namespace: "ns%test".into(),
+            key: "k".into(),
+            version: None,
+        });
+        let resp = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(got.value, "v");
+        assert_eq!(got.namespace, "ns%test", "namespace returned unencoded");
+    }
+
+    // ── Scenario 16: Verification step 2 — colon namespace round-trip on
+    //                real disk, value + namespace echo identity.
+    //
+    // Maps to zazzy verification step 2: secret_put with namespace
+    // "service:shareone" key "X-API-Key" must round-trip on PathLocalBackend
+    // and the list must echo namespace unencoded.
+
+    #[test]
+    fn colon_namespace_round_trip_on_real_disk() {
+        let (_dir, plugin) = fresh_plugin();
+
+        let put_payload = encode(&secrets_proto::PutSecretRequest {
+            namespace: "service:shareone".into(),
+            key: "X-API-Key".into(),
+            value: "sk-prod-123".into(),
+            description: Some("AI Platform key".into()),
+        });
+        dispatch_vault(&plugin, "secret_put", &put_payload).unwrap();
+
+        let get_payload = encode(&secrets_proto::GetSecretRequest {
+            namespace: "service:shareone".into(),
+            key: "X-API-Key".into(),
+            version: None,
+        });
+        let got_resp = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(got_resp.as_slice()).unwrap();
+        assert_eq!(got.value, "sk-prod-123");
+
+        let list_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: Some("service:shareone".into()),
+            include_deleted: false,
+        });
+        let list_resp = dispatch_vault(&plugin, "secret_list", &list_payload).unwrap();
+        let list = secrets_proto::ListSecretsResponse::decode(list_resp.as_slice()).unwrap();
+        assert_eq!(list.count, 1);
+        assert_eq!(
+            list.secrets[0].namespace, "service:shareone",
+            "namespace must echo original, NOT percent-encoded"
+        );
+        assert!(
+            !list.secrets[0].namespace.contains('%'),
+            "no encoded form must leak through API"
+        );
+    }
+
+    // ── Scenario 17: Verification step 3 — slash in namespace does NOT
+    //                split into directory levels on real disk.
+
+    #[test]
+    fn slash_namespace_does_not_split_directories_on_real_disk() {
+        let (_dir, plugin) = fresh_plugin();
+
+        let put_payload = encode(&secrets_proto::PutSecretRequest {
+            namespace: "a/b/c".into(),
+            key: "k".into(),
+            value: "v".into(),
+            description: None,
+        });
+        dispatch_vault(&plugin, "secret_put", &put_payload).unwrap();
+
+        let list_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: None,
+            include_deleted: false,
+        });
+        let list_resp = dispatch_vault(&plugin, "secret_list", &list_payload).unwrap();
+        let list = secrets_proto::ListSecretsResponse::decode(list_resp.as_slice()).unwrap();
+        // Exactly one secret, with the original namespace "a/b/c" intact.
+        assert_eq!(list.count, 1);
+        assert_eq!(list.secrets[0].namespace, "a/b/c");
+        assert_eq!(list.secrets[0].key, "k");
+    }
+
+    // ── Scenario 18: Verification step 4 — multi-character combination
+    //                (`:` and `/`) on real disk.
+
+    #[test]
+    fn mixed_special_chars_namespace_round_trip_on_real_disk() {
+        let (_dir, plugin) = fresh_plugin();
+
+        let ns = "service:shareone/v2";
+        let put_payload = encode(&secrets_proto::PutSecretRequest {
+            namespace: ns.into(),
+            key: "k".into(),
+            value: "v".into(),
+            description: None,
+        });
+        dispatch_vault(&plugin, "secret_put", &put_payload).unwrap();
+
+        let get_payload = encode(&secrets_proto::GetSecretRequest {
+            namespace: ns.into(),
+            key: "k".into(),
+            version: None,
+        });
+        let resp = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(got.value, "v");
+
+        let list_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: Some(ns.into()),
+            include_deleted: false,
+        });
+        let list_resp = dispatch_vault(&plugin, "secret_list", &list_payload).unwrap();
+        let list = secrets_proto::ListSecretsResponse::decode(list_resp.as_slice()).unwrap();
+        assert_eq!(list.count, 1);
+        assert_eq!(list.secrets[0].namespace, ns);
+    }
+
+    // ── Scenario 19: Verification step 5 — full lifecycle of a secret
+    //                whose namespace contains `:`, exercising all 6
+    //                outward operations (put / get / list / delete /
+    //                restore / list_versions) plus delete_secret_version.
+    //
+    // This is the documented regression net for ns_version_dir-class
+    // omissions: if any path helper failed to escape, one of these steps
+    // would fail on Windows even when the simpler put/get test passed.
+
+    #[test]
+    fn full_lifecycle_with_colon_namespace_on_real_disk() {
+        let (_dir, plugin) = fresh_plugin();
+        let ns = "service:shareone";
+        let key = "X-API-Key";
+
+        // Step 1: put twice — version 1, then version 2 (rotation).
+        for val in ["v1", "v2"] {
+            let payload = encode(&secrets_proto::PutSecretRequest {
+                namespace: ns.into(),
+                key: key.into(),
+                value: val.to_string(),
+                description: None,
+            });
+            dispatch_vault(&plugin, "secret_put", &payload).unwrap();
+        }
+
+        // Step 2: get latest — must be v2.
+        let get_payload = encode(&secrets_proto::GetSecretRequest {
+            namespace: ns.into(),
+            key: key.into(),
+            version: None,
+        });
+        let resp = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(got.value, "v2");
+
+        // Step 3: list_versions — must see both v1 and v2.
+        let lv_payload = encode(&secrets_proto::ListSecretVersionsRequest {
+            namespace: ns.into(),
+            key: key.into(),
+        });
+        let resp = dispatch_vault(&plugin, "secret_list_versions", &lv_payload).unwrap();
+        let lv = secrets_proto::ListSecretVersionsResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(lv.count, 2);
+        let vers: Vec<i32> = lv.versions.iter().map(|v| v.version).collect();
+        assert_eq!(vers, vec![1, 2]);
+
+        // Step 4: delete (tombstone).
+        let del_payload = encode(&secrets_proto::DeleteSecretRequest {
+            namespace: ns.into(),
+            key: key.into(),
+        });
+        let resp = dispatch_vault(&plugin, "secret_delete", &del_payload).unwrap();
+        let del = secrets_proto::DeleteSecretResponse::decode(resp.as_slice()).unwrap();
+        assert!(del.deleted);
+
+        // Step 5: list with include_deleted=true — must surface the entry,
+        // and the listed namespace must round-trip to the original string.
+        let list_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: Some(ns.into()),
+            include_deleted: true,
+        });
+        let resp = dispatch_vault(&plugin, "secret_list", &list_payload).unwrap();
+        let list = secrets_proto::ListSecretsResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(list.count, 1);
+        assert_eq!(list.secrets[0].namespace, ns);
+        assert!(list.secrets[0].deleted);
+
+        // Step 6: restore — must clear the tombstone.
+        let restore_payload = encode(&secrets_proto::RestoreSecretRequest {
+            namespace: ns.into(),
+            key: key.into(),
+        });
+        let resp = dispatch_vault(&plugin, "secret_restore", &restore_payload).unwrap();
+        let restored = secrets_proto::RestoreSecretResponse::decode(resp.as_slice()).unwrap();
+        assert!(restored.restored);
+
+        // Step 7: get post-restore — must return v2 again.
+        let resp = dispatch_vault(&plugin, "secret_get", &get_payload).unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(got.value, "v2");
+
+        // Step 8: delete_secret_version on a non-current version (v1).
+        let dv_payload = encode(&secrets_proto::DeleteSecretVersionRequest {
+            namespace: ns.into(),
+            key: key.into(),
+            version: 1,
+        });
+        let resp = dispatch_vault(&plugin, "secret_delete_version", &dv_payload).unwrap();
+        let dv = secrets_proto::DeleteSecretVersionResponse::decode(resp.as_slice()).unwrap();
+        assert!(dv.deleted);
+
+        // Step 9: list_versions — only v2 should remain.
+        let resp = dispatch_vault(&plugin, "secret_list_versions", &lv_payload).unwrap();
+        let lv = secrets_proto::ListSecretVersionsResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(lv.count, 1);
+        assert_eq!(lv.versions[0].version, 2);
     }
 }

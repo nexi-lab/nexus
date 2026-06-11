@@ -17,6 +17,61 @@ use crate::password_vault::types::{PasswordVaultError, SecretIndex, StoredEntry}
 
 const DT_DIR: i32 = 1;
 
+/// Percent-encode characters that are illegal in Windows NTFS path components
+/// (and the leading `%` to keep the round-trip unambiguous).
+///
+/// Encoded set: `% : / \ < > " | ? *` + ASCII control chars 0x00..=0x1F.
+/// Output uses uppercase `%HH` (matches URL percent-encoding convention).
+///
+/// Applied uniformly across all platforms — there is no `cfg(windows)` branch:
+/// on-disk layout must round-trip between Linux/macOS/Windows. See
+/// `zazzy-chasing-pizza.md` "头号约束" for the rationale.
+fn escape_path_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        let needs_encode = matches!(
+            b,
+            b'%' | b':' | b'/' | b'\\' | b'<' | b'>' | b'"' | b'|' | b'?' | b'*' | 0x00..=0x1F
+        );
+        if needs_encode {
+            out.push('%');
+            out.push_str(&format!("{:02X}", b));
+        } else {
+            out.push(b as char);
+        }
+    }
+    out
+}
+
+/// Inverse of `escape_path_component`. Decodes `%HH` (two hex digits, either
+/// case) back to the original byte. Tolerant of malformed input: a `%` not
+/// followed by two hex digits (e.g. `%ZZ`, `%A`, trailing `%`) is passed
+/// through verbatim rather than panicking or returning a `Result`. Rationale:
+/// readdir may surface foreign directories (manual `mv`, future tooling) and
+/// `list` must not crash on them.
+fn unescape_path_component(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = (bytes[i + 1] as char).to_digit(16);
+            let h2 = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h1), Some(h2)) = (h1, h2) {
+                out.push((h1 * 16 + h2) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    // Encoded bytes are always valid UTF-8 since we only encode ASCII-range
+    // bytes and pass others through. So from_utf8_lossy is a safety net,
+    // not load-bearing.
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 pub(crate) struct SecretStorage {
     kernel: Arc<Kernel>,
     ctx: OperationContext,
@@ -50,26 +105,43 @@ impl SecretStorage {
     }
 
     fn entries_path(&self, namespace: &str, key: &str) -> String {
-        format!("{}/entries/{}/{}", self.root, namespace, key)
+        format!(
+            "{}/entries/{}/{}",
+            self.root,
+            escape_path_component(namespace),
+            escape_path_component(key)
+        )
     }
 
     fn ns_dir_path(&self, namespace: &str) -> String {
-        format!("{}/entries/{}", self.root, namespace)
+        format!("{}/entries/{}", self.root, escape_path_component(namespace))
     }
 
     fn version_path(&self, namespace: &str, key: &str, version: u32) -> String {
         format!(
             "{}/versions/{}/{}/{:010}",
-            self.root, namespace, key, version
+            self.root,
+            escape_path_component(namespace),
+            escape_path_component(key),
+            version
         )
     }
 
     fn versions_dir(&self, namespace: &str, key: &str) -> String {
-        format!("{}/versions/{}/{}", self.root, namespace, key)
+        format!(
+            "{}/versions/{}/{}",
+            self.root,
+            escape_path_component(namespace),
+            escape_path_component(key)
+        )
     }
 
     fn ns_version_dir(&self, namespace: &str) -> String {
-        format!("{}/versions/{}", self.root, namespace)
+        format!(
+            "{}/versions/{}",
+            self.root,
+            escape_path_component(namespace)
+        )
     }
 
     pub(crate) fn get_index(
@@ -233,7 +305,9 @@ impl SecretStorage {
                 self.kernel
                     .sys_readdir(&dir, "root", true)
                     .into_iter()
-                    .filter_map(|(path, _)| path.rsplit('/').next().map(|s| s.to_string()))
+                    .filter_map(|(path, _)| {
+                        path.rsplit('/').next().map(unescape_path_component)
+                    })
                     .filter(|s| !s.is_empty())
                     .collect()
             }
@@ -244,7 +318,7 @@ impl SecretStorage {
             let entries = self.kernel.sys_readdir(&ns_dir, "root", true);
             for (child_path, _etype) in entries {
                 let key = match child_path.rsplit('/').next() {
-                    Some(k) if !k.is_empty() => k.to_string(),
+                    Some(k) if !k.is_empty() => unescape_path_component(k),
                     _ => continue,
                 };
                 match KernelConvenience::read(&*self.kernel, &child_path, &self.ctx, 0, 0) {
@@ -432,5 +506,81 @@ mod tests {
         let vers = s.list_versions("ns", "k").unwrap();
         let nums: Vec<u32> = vers.iter().map(|e| e.version).collect();
         assert_eq!(nums, vec![1, 2, 3]);
+    }
+
+    // ── Percent-encoding tests for path-component escape/unescape ─────
+    //
+    // These tests target the pure string-transform functions defined at
+    // the top of this module. They must stay platform-agnostic — there is
+    // intentionally no `cfg(target_os = ...)` anywhere in the encoder.
+
+    #[test]
+    fn escape_l1_character_set_explicit_assertions() {
+        // L1 character set (Windows NTFS-illegal + `%` self-encoding).
+        // Each character listed in zazzy-chasing-pizza.md is asserted
+        // individually so the test fails loudly if any one is dropped
+        // from the encoder match arm.
+        assert_eq!(escape_path_component("%"), "%25");
+        assert_eq!(escape_path_component(":"), "%3A");
+        assert_eq!(escape_path_component("/"), "%2F");
+        assert_eq!(escape_path_component("\\"), "%5C");
+        assert_eq!(escape_path_component("<"), "%3C");
+        assert_eq!(escape_path_component(">"), "%3E");
+        assert_eq!(escape_path_component("\""), "%22");
+        assert_eq!(escape_path_component("|"), "%7C");
+        assert_eq!(escape_path_component("?"), "%3F");
+        assert_eq!(escape_path_component("*"), "%2A");
+
+        // ASCII control chars 0x00..=0x1F — loop instead of enumerating.
+        for b in 0x00u8..=0x1F {
+            let input = (b as char).to_string();
+            let got = escape_path_component(&input);
+            let want = format!("%{:02X}", b);
+            assert_eq!(got, want, "control char 0x{:02X} did not encode to {}", b, want);
+        }
+    }
+
+    #[test]
+    fn escape_unescape_round_trip() {
+        let cases: &[&str] = &[
+            "service:shareone",
+            "channel:lark:456",
+            "path/with/slash",
+            "mix:and/match",
+            "percent%inline",
+            "back\\slash",
+            "",
+            "abc123",
+            "no-special",
+            "control\x00\x1Fbytes",
+            "quote\"and|pipe?star*<lt>gt",
+        ];
+        for s in cases {
+            let round = unescape_path_component(&escape_path_component(s));
+            assert_eq!(&round, s, "round-trip failed for {:?}", s);
+        }
+    }
+
+    #[test]
+    fn escape_is_identity_on_safe_alphanumeric() {
+        // Pure alphanumeric / safe-ASCII inputs must pass through unchanged.
+        // Documents the invariant that encoding overhead is paid only when
+        // namespaces actually contain illegal chars.
+        for s in &["abc123", "service-x", "X-API-Key", "passwords", "auth_jwt"] {
+            assert_eq!(escape_path_component(s), *s, "non-identity for safe {:?}", s);
+        }
+    }
+
+    #[test]
+    fn unescape_tolerates_invalid_percent_sequences() {
+        // Malformed inputs must pass through verbatim, not panic, not
+        // return Result. This protects `list_indexes` from crashing on
+        // foreign / hand-placed directories.
+        assert_eq!(unescape_path_component("%ZZ"), "%ZZ");
+        assert_eq!(unescape_path_component("%A"), "%A");
+        assert_eq!(unescape_path_component("100%"), "100%");
+        assert_eq!(unescape_path_component("a%2Gb"), "a%2Gb");
+        // Sanity: valid mixed with invalid still decodes the valid part.
+        assert_eq!(unescape_path_component("a%3Ab%ZZc"), "a:b%ZZc");
     }
 }

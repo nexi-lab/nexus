@@ -307,7 +307,13 @@ class DatabaseAPIKeyAuth(AuthProvider):
         if zone_id:
             from nexus.storage.models import ZoneModel
 
-            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
+            # with_for_update: hold the zone row through the caller's
+            # transaction so a concurrent terminate/soft-delete serializes
+            # with key issuance instead of racing the select→commit window
+            # (no-op on SQLite, row lock on Postgres). #4352 review.
+            zone = session.scalar(
+                select(ZoneModel).where(ZoneModel.zone_id == zone_id).with_for_update()
+            )
             if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
                 raise ValueError(
                     f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "

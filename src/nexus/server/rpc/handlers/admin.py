@@ -266,18 +266,20 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         entity_registry = EntityRegistry(_record_store)
         subject_type = params.subject_type or "user"
         entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
-        # Track newly-created registrations so a create_key rejection in the
-        # precheck→create_key window (zone terminated mid-request) can
+        # Track registrations THIS request inserted so a create_key rejection
+        # in the precheck→create_key window (zone terminated mid-request) can
         # compensate instead of leaving a row parented to an invalid zone.
-        if entity_registry.get_entity(subject_type, entity_id) is None:
-            created_entity = (subject_type, entity_id)
-        entity_registry.register_entity(
+        # Insert provenance comes from the registry's PK-conflict resolution,
+        # so a row inserted by a concurrent request is never ours to delete.
+        _entity, _created = entity_registry.register_entity_if_absent(
             entity_type=subject_type,
             entity_id=entity_id,
             parent_type="zone",
             parent_id=params.zone_id,
             entity_metadata={"name": params.name} if params.name else None,
         )
+        if _created:
+            created_entity = (subject_type, entity_id)
 
     expires_at = None
     if params.expires_days:
@@ -298,7 +300,9 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         except ValueError:
             if entity_registry is not None and created_entity is not None:
                 try:
-                    entity_registry.delete_entity(*created_entity)
+                    # cascade=False: this row was inserted moments ago by this
+                    # request; never sweep children that may have raced in.
+                    entity_registry.delete_entity(*created_entity, cascade=False)
                 except Exception:
                     logger.exception(
                         "Failed to compensate entity registration %s after rejected key create",

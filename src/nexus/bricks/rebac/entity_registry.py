@@ -100,15 +100,42 @@ class EntityRegistry:
             f"[ENTITY-REG] register_entity called: {entity_type}:{entity_id}, parent={parent_type}:{parent_id}"
         )
 
+        entity, _created = self.register_entity_if_absent(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            parent_type=parent_type,
+            parent_id=parent_id,
+            entity_metadata=entity_metadata,
+        )
+        return entity
+
+    def register_entity_if_absent(
+        self,
+        entity_type: str,
+        entity_id: str,
+        parent_type: str | None = None,
+        parent_id: str | None = None,
+        entity_metadata: dict | None = None,
+    ) -> tuple[EntityRegistryModel, bool]:
+        """Register an entity, reporting whether THIS call inserted the row.
+
+        Returns (entity, created). ``created`` is True only when this call
+        won the insert; a concurrent insert that beats us between the
+        existence check and our flush resolves via the PK conflict to
+        (existing row, False). Callers that compensate failed multi-step
+        flows must delete only rows they created (#4352 review).
+        """
         # Check if entity already exists
         existing = self.get_entity(entity_type, entity_id)
         if existing:
             logger.debug(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
-            return existing
+            return existing, False
 
         # Create new entity
         with self._get_session() as session:
             import json
+
+            from sqlalchemy.exc import IntegrityError
 
             # Serialize metadata to JSON string if provided
             metadata_json = json.dumps(entity_metadata) if entity_metadata else None
@@ -126,12 +153,21 @@ class EntityRegistry:
             entity.validate()
 
             session.add(entity)
+            try:
+                session.flush()
+            except IntegrityError:
+                # Concurrent insert won the PK race — ours is the duplicate.
+                session.rollback()
+                winner = self.get_entity(entity_type, entity_id)
+                if winner is not None:
+                    return winner, False
+                raise
             session.commit()
 
             # Refresh to ensure we have the committed state
             session.refresh(entity)
             logger.debug(f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}")
-            return entity
+            return entity, True
 
     def get_entity(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
         """Get an entity from the registry.

@@ -180,7 +180,7 @@ def test_zone_terminated_mid_request_compensates_entity_row(record_store_client,
 
     client, store = record_store_client
 
-    orig_register = EntityRegistry.register_entity
+    orig_register = EntityRegistry.register_entity_if_absent
 
     def register_then_terminate_zone(self, *args, **kwargs):
         result = orig_register(self, *args, **kwargs)
@@ -190,7 +190,7 @@ def test_zone_terminated_mid_request_compensates_entity_row(record_store_client,
             s.commit()
         return result
 
-    monkeypatch.setattr(EntityRegistry, "register_entity", register_then_terminate_zone)
+    monkeypatch.setattr(EntityRegistry, "register_entity_if_absent", register_then_terminate_zone)
 
     resp = client.post("/api/v2/auth/keys", json=_create_body("zone_active"))
     assert resp.status_code == 400, resp.text
@@ -199,3 +199,42 @@ def test_zone_terminated_mid_request_compensates_entity_row(record_store_client,
     with store.session_factory() as s:
         rows = s.scalars(select(EntityRegistryModel)).all()
         assert rows == [], f"stale entity rows after mid-request zone flip: {rows}"
+
+
+def test_compensation_never_deletes_preexisting_entity(record_store_client, monkeypatch):
+    """Ownership: a row registered by an earlier/concurrent request must
+    survive this request's 400 — compensation may only delete rows this
+    request inserted."""
+    from sqlalchemy import select
+
+    from nexus.bricks.rebac.entity_registry import EntityRegistry
+    from nexus.storage.models.memory import EntityRegistryModel
+
+    client, store = record_store_client
+
+    # Another request already registered the subject under the active zone.
+    EntityRegistry(store).register_entity(
+        "agent", "team-agent", parent_type="zone", parent_id="zone_active"
+    )
+
+    orig_register = EntityRegistry.register_entity_if_absent
+
+    def register_then_terminate_zone(self, *args, **kwargs):
+        result = orig_register(self, *args, **kwargs)
+        with store.session_factory() as s:
+            zone = s.scalars(select(ZoneModel).where(ZoneModel.zone_id == "zone_active")).one()
+            zone.phase = "Terminated"
+            s.commit()
+        return result
+
+    monkeypatch.setattr(EntityRegistry, "register_entity_if_absent", register_then_terminate_zone)
+
+    resp = client.post("/api/v2/auth/keys", json=_create_body("zone_active"))
+    assert resp.status_code == 400, resp.text
+
+    with store.session_factory() as s:
+        entity = s.scalars(
+            select(EntityRegistryModel).where(EntityRegistryModel.entity_id == "team-agent")
+        ).one_or_none()
+        assert entity is not None, "compensation deleted another request's entity row"
+        assert entity.parent_id == "zone_active"

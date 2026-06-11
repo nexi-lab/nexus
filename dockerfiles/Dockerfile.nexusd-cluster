@@ -1,49 +1,44 @@
 # Nexus Cluster Binary — Slim Federation Runtime
 #
-# Kernel-tier Rust migrated to nexus-vfs (#4259). This Dockerfile
-# installs the nexusd-cluster binary from the nexus-vfs git repo
-# rather than building from local source.
+# Kernel-tier Rust lives in the nexus-vfs repo (#4259).  This image
+# builds nexusd-cluster from a nexus-vfs source tree provided via the
+# `nexus-vfs-src` named build context — single code path that the
+# caller wires up either way:
 #
-# Build:
-#   docker build -f dockerfiles/Dockerfile.nexusd-cluster -t nexusd-cluster:latest .
+#   Local dev:
+#     docker build \
+#       --build-context nexus-vfs-src=../nexus-vfs \
+#       -f dockerfiles/Dockerfile.nexusd-cluster \
+#       -t nexusd-cluster:latest .
 #
-# Run:
-#   docker run -e NEXUS_BIND_ADDR=0.0.0.0:2126 \
-#     -e NEXUS_PEERS=node1:2126,node2:2126,witness:2126 \
-#     -e NEXUS_BOOTSTRAP_NEW=1 \
-#     -p 2126:2126 nexusd-cluster:latest
+#   CI:
+#     The workflow runs `actions/checkout@v4` against nexi-lab/nexus-vfs
+#     at the SHA parsed from `Cargo.toml`'s workspace dep rev, then
+#     passes the checkout dir as `build-contexts: nexus-vfs-src=...`.
+#
+# Pinning is single-sourced in `Cargo.toml` — the plugin dylibs and
+# the cluster binary must compile against the same nexus-vfs commit
+# for ABI parity, so there is one SHA, one place to bump.
 
 FROM rust:1-slim-bookworm AS builder
 
-# protobuf-compiler: raft-proto uses protobuf-build which shells out
-# to system protoc on PATH.
-# python3: pyo3-build-config probes for an interpreter at compile time.
+# protobuf-compiler: raft proto codegen shells out to system protoc.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at
+# compile time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler \
         python3 \
         python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+# The named build context carries the full nexus-vfs source tree
+# (including the workspace's proto/ at the root so raft/build.rs can
+# locate it via `../../proto`).
+COPY --from=nexus-vfs-src . /build/nexus-vfs
 
-# Pin nexus-vfs commit SHA — required for reproducible builds and to
-# stop Docker layer caching from freezing a stale binary.  Without a
-# pin, `cargo install --git` resolves to HEAD-of-default-branch at
-# build time, but the cached layer reuses whatever HEAD was when the
-# layer was first built — which silently regresses any fix landed
-# upstream since.  Pinning makes the cargo install RUN line unique
-# per SHA, so changing the pin invalidates the cache deterministically.
-#
-# Bump procedure: update NEXUS_VFS_REV to the latest nexus-vfs main
-# commit you want to adopt.  Pin should always include #23 (ZoneManager
-# async wrappers) and #25 (leader-detection SSOT) — both required for
-# the L1 cross-machine federation read milestone to pass.
-ARG NEXUS_VFS_REV=8a4586d8753af0b4300bec4fca4e6b5d5dcdc236
 RUN cargo install \
-    --git https://github.com/nexi-lab/nexus-vfs \
-    --rev "${NEXUS_VFS_REV}" \
-    --bin nexusd-cluster \
-    nexus-cluster
+    --path /build/nexus-vfs/rust/profiles/cluster \
+    --bin nexusd-cluster
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim
@@ -66,7 +61,7 @@ WORKDIR /app
 
 ENV NEXUS_BIND_ADDR=0.0.0.0:2126 \
     NEXUS_DATA_DIR=/app/data \
-    RUST_LOG=info,nexus_raft=debug
+    RUST_LOG=info,nexus_raft=info
 
 EXPOSE 2126
 

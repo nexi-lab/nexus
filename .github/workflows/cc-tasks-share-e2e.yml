@@ -91,16 +91,44 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         uses: docker/setup-buildx-action@v3
 
+      # Pin SSOT: the nexus-vfs SHA the cluster binary + plugin dylibs
+      # compile against lives in `Cargo.toml`'s workspace dep rev.
+      # Parse it once and reuse for the checkout step below.
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        if: steps.changes.outputs.run == 'true'
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved nexus-vfs SHA: $sha"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
       # Build the production cluster image first, with a registry
       # cache.  Both the local-connector-plugin image and the
       # federation-test image FROM nexusd-cluster:latest, so they all
-      # stay on one buildx instance.
+      # stay on one buildx instance.  `build-contexts` feeds the
+      # checked-out nexus-vfs source tree to the Dockerfile's
+      # `COPY --from=nexus-vfs-src` step.
       - name: Build nexusd-cluster image
         if: steps.changes.outputs.run == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: dockerfiles/Dockerfile.nexusd-cluster
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
           load: true
           tags: nexusd-cluster:latest
           cache-from: type=gha,scope=cc-tasks-share-cluster

@@ -273,7 +273,10 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         _record_store = _resolve_record_store(auth_provider)
         subject_type = params.subject_type or "user"
         if _record_store is not None and subject_type in ("user", "agent"):
-            entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
+            # Mirror create_key's effective subject: `subject_id or user_id`
+            # for every subject_type — the registry must describe the same
+            # principal the key authenticates as (#4352 review).
+            entity_id = params.subject_id or user_id
             try:
                 EntityRegistry(_record_store).register_entity_if_absent(
                     entity_type=subject_type,

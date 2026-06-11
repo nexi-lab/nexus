@@ -170,6 +170,31 @@ def test_invalid_subject_type_leaves_no_entity_registry_row(record_store_client)
         assert rows == [], f"stale entity rows after rejected subject_type: {rows}"
 
 
+def test_user_subject_registers_effective_subject_id(record_store_client):
+    """The registry must register the same principal the key authenticates
+    as: create_key's effective subject is `subject_id or user_id` for every
+    subject_type, not just agents."""
+    from sqlalchemy import select
+
+    from nexus.storage.models.memory import EntityRegistryModel
+
+    client, store = record_store_client
+
+    resp = client.post(
+        "/api/v2/auth/keys",
+        json=_create_body(
+            "zone_active", subject_type="user", user_id="owner", subject_id="delegated"
+        ),
+    )
+    assert resp.status_code == 201, resp.text
+
+    with store.session_factory() as s:
+        rows = s.scalars(select(EntityRegistryModel)).all()
+        ids = {(r.entity_type, r.entity_id) for r in rows}
+        assert ("user", "delegated") in ids, f"effective subject not registered: {ids}"
+        assert ("user", "owner") not in ids, f"wrong identity registered: {ids}"
+
+
 def test_registration_failure_does_not_fail_created_key(record_store_client, monkeypatch):
     """Registration runs only after the key commit and is best-effort: a
     registry failure must not turn an already-issued key into an error

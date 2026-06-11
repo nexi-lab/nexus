@@ -162,6 +162,20 @@ jobs:
           fi
           echo "All required plugin symbols found"
 
+      # Real dlopen regression test (issue nexus-vfs#45). `nm` above
+      # proves the manifest symbols exist in the binary; this step
+      # proves the kernel-side `libloading::Library::new` + symbol
+      # resolution path actually works for the just-built cdylib on
+      # this platform. Cross-compile rows (matrix.target set) skip
+      # because the cross-built binary cannot be executed natively on
+      # the runner.
+      - name: Test plugin dlopen + symbol resolution
+        if: matrix.target == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --release -p nexus-vault --test dlopen_self -- --nocapture
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -52,30 +52,69 @@ jobs:
           path: artifacts
           pattern: nexus-vault-*
 
+      - name: Set up Python for signing
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install signing deps
+        run: pip install --quiet cryptography
+
+      - name: Ed25519-sign each platform dylib
+        # Produces `<dylib>.sig` (64 raw bytes) next to each downloaded
+        # binary so the packaging step picks them both into the archive.
+        # The verifier side (nexus-vfs cluster) reads the `.sig` next to
+        # the loaded plugin and Ed25519-verifies against the embedded
+        # `trusted_keys/nexus-team.pub`. Format contract lives in
+        # `nexus_plugin_abi::signing`.
+        env:
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PLUGIN_SIGNING_PRIVKEY}" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY repo secret is empty."
+            echo "Set it on nexi-lab/nexus to base64(32 raw Ed25519 private bytes)."
+            exit 1
+          fi
+          python scripts/sign_plugin.py \
+            artifacts/nexus-vault-linux-x86_64/libnexus_vault.so \
+            artifacts/nexus-vault-macos-arm64/libnexus_vault.dylib \
+            artifacts/nexus-vault-macos-x86_64/libnexus_vault.dylib \
+            artifacts/nexus-vault-windows-x86_64/nexus_vault.dll
+
       - name: Package into archives
         run: |
           set -euo pipefail
           mkdir -p release-assets
 
+          # Each archive ships the dylib AND its detached `.sig`. The
+          # consumer (sudowork download script) extracts both into the
+          # plugin dir; the kernel's PluginLoader::load reads them in
+          # tandem and rejects the plugin if verify fails.
+
           # Linux x86_64
           cp artifacts/nexus-vault-linux-x86_64/libnexus_vault.so libnexus_vault.so
-          tar -czf release-assets/nexus-vault-linux-x86_64.tar.gz libnexus_vault.so
-          rm libnexus_vault.so
+          cp artifacts/nexus-vault-linux-x86_64/libnexus_vault.so.sig libnexus_vault.so.sig
+          tar -czf release-assets/nexus-vault-linux-x86_64.tar.gz libnexus_vault.so libnexus_vault.so.sig
+          rm libnexus_vault.so libnexus_vault.so.sig
 
           # macOS arm64
           cp artifacts/nexus-vault-macos-arm64/libnexus_vault.dylib libnexus_vault.dylib
-          tar -czf release-assets/nexus-vault-macos-arm64.tar.gz libnexus_vault.dylib
-          rm libnexus_vault.dylib
+          cp artifacts/nexus-vault-macos-arm64/libnexus_vault.dylib.sig libnexus_vault.dylib.sig
+          tar -czf release-assets/nexus-vault-macos-arm64.tar.gz libnexus_vault.dylib libnexus_vault.dylib.sig
+          rm libnexus_vault.dylib libnexus_vault.dylib.sig
 
           # macOS x86_64
           cp artifacts/nexus-vault-macos-x86_64/libnexus_vault.dylib libnexus_vault.dylib
-          tar -czf release-assets/nexus-vault-macos-x86_64.tar.gz libnexus_vault.dylib
-          rm libnexus_vault.dylib
+          cp artifacts/nexus-vault-macos-x86_64/libnexus_vault.dylib.sig libnexus_vault.dylib.sig
+          tar -czf release-assets/nexus-vault-macos-x86_64.tar.gz libnexus_vault.dylib libnexus_vault.dylib.sig
+          rm libnexus_vault.dylib libnexus_vault.dylib.sig
 
           # Windows x86_64
           cp artifacts/nexus-vault-windows-x86_64/nexus_vault.dll nexus_vault.dll
-          zip release-assets/nexus-vault-windows-x86_64.zip nexus_vault.dll
-          rm nexus_vault.dll
+          cp artifacts/nexus-vault-windows-x86_64/nexus_vault.dll.sig nexus_vault.dll.sig
+          zip release-assets/nexus-vault-windows-x86_64.zip nexus_vault.dll nexus_vault.dll.sig
+          rm nexus_vault.dll nexus_vault.dll.sig
 
           echo "=== release-assets ==="
           ls -lh release-assets/

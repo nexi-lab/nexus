@@ -333,6 +333,413 @@ declare_service_plugin!("password-vault", VaultPlugin, {
     dispatch: dispatch_vault,
 });
 
+// ── Dylib E2E tests — load the compiled cdylib via dlopen ─────────
+//
+// These tests verify the real C ABI boundary: dlopen → symbol lookup →
+// dispatch → protobuf → response. They catch ABI mismatches, symbol
+// export bugs, and protobuf wire format issues that in-process tests miss.
+//
+// Prerequisites: `cargo build -p nexus-vault` (debug or release).
+// CI runs these after the release build step.
+
+#[cfg(test)]
+mod dylib_e2e {
+    use std::ffi::{c_char, CStr, CString};
+    use std::os::raw::c_void;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    use prost::Message;
+
+    use services::generic_secrets::proto as secrets;
+    use services::password_vault::proto::*;
+
+    fn encode<M: Message>(msg: &M) -> Vec<u8> {
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        buf
+    }
+
+    /// Locate the compiled vault cdylib. Prefers `VAULT_DYLIB_PATH` env
+    /// var, then falls back to target/{release,debug}/.
+    fn find_dylib() -> PathBuf {
+        if let Ok(p) = std::env::var("VAULT_DYLIB_PATH") {
+            let path = PathBuf::from(&p);
+            assert!(path.exists(), "VAULT_DYLIB_PATH={path:?} does not exist");
+            return path;
+        }
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let target_dir = manifest_dir
+            .ancestors()
+            .nth(3)
+            .expect("workspace root")
+            .join("target");
+
+        #[cfg(target_os = "macos")]
+        let name = "libnexus_vault.dylib";
+        #[cfg(target_os = "linux")]
+        let name = "libnexus_vault.so";
+        #[cfg(target_os = "windows")]
+        let name = "nexus_vault.dll";
+
+        for profile in ["release", "debug"] {
+            let p = target_dir.join(profile).join(name);
+            if p.exists() {
+                return p;
+            }
+        }
+
+        panic!(
+            "Vault cdylib not found — run `cargo build -p nexus-vault` first.\n\
+             Searched: {target_dir:?}/{{release,debug}}/{name}"
+        );
+    }
+
+    // Dummy KernelHandle callbacks — create_vault ignores the handle
+    // but the C ABI requires a valid struct pointer.
+    unsafe extern "C" fn noop_read(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_write(
+        _: *const c_void,
+        _: *const c_char,
+        _: *const u8,
+        _: usize,
+    ) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_stat(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -1
+    }
+
+    fn dummy_kernel_handle() -> nexus_plugin_abi::KernelHandle {
+        nexus_plugin_abi::KernelHandle {
+            sys_read: noop_read,
+            sys_write: noop_write,
+            sys_stat: noop_stat,
+            kernel_ptr: std::ptr::null(),
+        }
+    }
+
+    /// Prevents concurrent NEXUS_DATA_DIR mutations across parallel tests.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Load the vault cdylib and create a service instance backed by a
+    /// fresh temp directory. Handles dlopen, env var setup, create, and
+    /// destroy (on drop) through the C ABI.
+    struct DylibFixture {
+        lib: libloading::Library,
+        svc: *mut c_void,
+        _dir: tempfile::TempDir,
+    }
+
+    impl DylibFixture {
+        fn new() -> Self {
+            let dylib_path = find_dylib();
+            let lib = unsafe { libloading::Library::new(&dylib_path) }
+                .unwrap_or_else(|e| panic!("dlopen({dylib_path:?}): {e}"));
+
+            let dir = tempfile::TempDir::new().unwrap();
+
+            let svc = {
+                let _lock = ENV_LOCK.lock().unwrap();
+                #[allow(unused_unsafe)]
+                unsafe {
+                    std::env::set_var("NEXUS_DATA_DIR", dir.path());
+                }
+                let handle = dummy_kernel_handle();
+                unsafe {
+                    let create: libloading::Symbol<nexus_plugin_abi::ServiceCreateFn> =
+                        lib.get(b"nexus_service_create").unwrap();
+                    create(&handle)
+                }
+            };
+            assert!(!svc.is_null(), "nexus_service_create returned null");
+
+            Self {
+                lib,
+                svc,
+                _dir: dir,
+            }
+        }
+
+        /// Dispatch a method through the C ABI, returning the response
+        /// bytes or a plugin error code.
+        fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
+            unsafe {
+                let f: libloading::Symbol<nexus_plugin_abi::ServiceDispatchFn> =
+                    self.lib.get(b"nexus_service_dispatch").unwrap();
+                let method_c = CString::new(method).unwrap();
+                let mut out_buf: *mut u8 = std::ptr::null_mut();
+                let mut out_len: usize = 0;
+
+                let rc = f(
+                    self.svc,
+                    method_c.as_ptr(),
+                    payload.as_ptr(),
+                    payload.len(),
+                    &mut out_buf,
+                    &mut out_len,
+                );
+
+                if rc == 0 {
+                    Ok(Vec::from_raw_parts(out_buf, out_len, out_len))
+                } else {
+                    Err(rc)
+                }
+            }
+        }
+    }
+
+    impl Drop for DylibFixture {
+        fn drop(&mut self) {
+            unsafe {
+                let destroy: libloading::Symbol<nexus_plugin_abi::ServiceDestroyFn> =
+                    self.lib.get(b"nexus_service_destroy").unwrap();
+                destroy(self.svc);
+            }
+        }
+    }
+
+    // ── Test 1: dlopen + verify all C ABI symbols exist ─────────────
+
+    #[test]
+    fn dylib_loads_and_exports_symbols() {
+        let path = find_dylib();
+        let lib = unsafe { libloading::Library::new(&path) }
+            .unwrap_or_else(|e| panic!("dlopen({path:?}): {e}"));
+
+        unsafe {
+            let _: libloading::Symbol<unsafe extern "C" fn() -> u32> =
+                lib.get(b"nexus_plugin_api_version").expect("api_version");
+            let _: libloading::Symbol<unsafe extern "C" fn() -> u32> =
+                lib.get(b"nexus_plugin_kind").expect("kind");
+            let _: libloading::Symbol<unsafe extern "C" fn() -> *const c_char> =
+                lib.get(b"nexus_plugin_name").expect("name");
+            let _: libloading::Symbol<nexus_plugin_abi::ServiceCreateFn> =
+                lib.get(b"nexus_service_create").expect("create");
+            let _: libloading::Symbol<nexus_plugin_abi::ServiceDispatchFn> =
+                lib.get(b"nexus_service_dispatch").expect("dispatch");
+            let _: libloading::Symbol<nexus_plugin_abi::ServiceDestroyFn> =
+                lib.get(b"nexus_service_destroy").expect("destroy");
+
+            // Verify metadata values match compile-time constants.
+            let api_ver: libloading::Symbol<unsafe extern "C" fn() -> u32> =
+                lib.get(b"nexus_plugin_api_version").unwrap();
+            assert_eq!(api_ver(), nexus_plugin_abi::PLUGIN_API_VERSION);
+
+            let kind: libloading::Symbol<unsafe extern "C" fn() -> u32> =
+                lib.get(b"nexus_plugin_kind").unwrap();
+            assert_eq!(kind(), nexus_plugin_abi::PluginKind::Service as u32);
+
+            let name_fn: libloading::Symbol<unsafe extern "C" fn() -> *const c_char> =
+                lib.get(b"nexus_plugin_name").unwrap();
+            assert_eq!(
+                CStr::from_ptr(name_fn()).to_str().unwrap(),
+                "password-vault"
+            );
+        }
+    }
+
+    // ── Test 2: create → dispatch → destroy full lifecycle ──────────
+
+    #[test]
+    fn dylib_create_dispatch_destroy_lifecycle() {
+        let fix = DylibFixture::new();
+
+        // Put via generic secrets.
+        let resp = fix
+            .dispatch(
+                "secret_put",
+                &encode(&secrets::PutSecretRequest {
+                    namespace: "test".into(),
+                    key: "lifecycle-key".into(),
+                    value: "lifecycle-value".into(),
+                    description: None,
+                }),
+            )
+            .unwrap();
+        let put = secrets::PutSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(put.metadata.unwrap().current_version, 1);
+
+        // Get it back.
+        let resp = fix
+            .dispatch(
+                "secret_get",
+                &encode(&secrets::GetSecretRequest {
+                    namespace: "test".into(),
+                    key: "lifecycle-key".into(),
+                    version: None,
+                }),
+            )
+            .unwrap();
+        let get = secrets::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(get.value, "lifecycle-value");
+        assert_eq!(get.version, 1);
+
+        // Destroy happens in DylibFixture::drop.
+    }
+
+    // ── Test 3: generic secrets CRUD via C ABI ──────────────────────
+
+    #[test]
+    fn dylib_generic_secrets_crud() {
+        let fix = DylibFixture::new();
+
+        // Put
+        let resp = fix
+            .dispatch(
+                "secret_put",
+                &encode(&secrets::PutSecretRequest {
+                    namespace: "provider:openai".into(),
+                    key: "api_key".into(),
+                    value: "sk-test-123".into(),
+                    description: Some("OpenAI key".into()),
+                }),
+            )
+            .unwrap();
+        let meta = secrets::PutSecretResponse::decode(resp.as_slice())
+            .unwrap()
+            .metadata
+            .unwrap();
+        assert_eq!(meta.namespace, "provider:openai");
+        assert_eq!(meta.key, "api_key");
+        assert_eq!(meta.current_version, 1);
+
+        // Get
+        let resp = fix
+            .dispatch(
+                "secret_get",
+                &encode(&secrets::GetSecretRequest {
+                    namespace: "provider:openai".into(),
+                    key: "api_key".into(),
+                    version: None,
+                }),
+            )
+            .unwrap();
+        let get = secrets::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(get.value, "sk-test-123");
+
+        // List
+        let resp = fix
+            .dispatch(
+                "secret_list",
+                &encode(&secrets::ListSecretsRequest {
+                    namespace: Some("provider:openai".into()),
+                    include_deleted: false,
+                }),
+            )
+            .unwrap();
+        let list = secrets::ListSecretsResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(list.count, 1);
+        assert_eq!(list.secrets[0].key, "api_key");
+
+        // Delete
+        let resp = fix
+            .dispatch(
+                "secret_delete",
+                &encode(&secrets::DeleteSecretRequest {
+                    namespace: "provider:openai".into(),
+                    key: "api_key".into(),
+                }),
+            )
+            .unwrap();
+        let del = secrets::DeleteSecretResponse::decode(resp.as_slice()).unwrap();
+        assert!(del.deleted);
+
+        // Get after delete → NotFound
+        let err = fix
+            .dispatch(
+                "secret_get",
+                &encode(&secrets::GetSecretRequest {
+                    namespace: "provider:openai".into(),
+                    key: "api_key".into(),
+                    version: None,
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err, -1); // PluginResult::NotFound
+    }
+
+    // ── Test 4: cross-service visibility via C ABI ──────────────────
+
+    #[test]
+    fn dylib_cross_service_visibility() {
+        let fix = DylibFixture::new();
+
+        // Store via PasswordVault dispatch.
+        let resp = fix
+            .dispatch(
+                "put_entry",
+                &encode(&PutEntryRequest {
+                    entry: Some(VaultEntry {
+                        title: "github".into(),
+                        username: Some("alice".into()),
+                        password: Some("hunter2".into()),
+                        url: None,
+                        notes: None,
+                        tags: None,
+                        totp_secret: None,
+                        extra_json: None,
+                    }),
+                    audit: None,
+                }),
+            )
+            .unwrap();
+        let put = PutEntryResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(put.title, "github");
+
+        // List via GenericSecrets — password stored under namespace="passwords".
+        let resp = fix
+            .dispatch(
+                "secret_list",
+                &encode(&secrets::ListSecretsRequest {
+                    namespace: Some("passwords".into()),
+                    include_deleted: false,
+                }),
+            )
+            .unwrap();
+        let list = secrets::ListSecretsResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(list.count, 1);
+        assert_eq!(list.secrets[0].namespace, "passwords");
+        assert_eq!(list.secrets[0].key, "github");
+
+        // Get raw value via GenericSecrets.
+        let resp = fix
+            .dispatch(
+                "secret_get",
+                &encode(&secrets::GetSecretRequest {
+                    namespace: "passwords".into(),
+                    key: "github".into(),
+                    version: None,
+                }),
+            )
+            .unwrap();
+        let get = secrets::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert!(get.value.contains("hunter2"), "raw JSON contains password");
+    }
+
+    // ── Test 5: unknown method returns NOT_FOUND ────────────────────
+
+    #[test]
+    fn dylib_invalid_method_returns_error() {
+        let fix = DylibFixture::new();
+        let err = fix.dispatch("nonexistent_method", &[]).unwrap_err();
+        assert_eq!(err, -1); // PluginResult::NotFound
+    }
+}
+
 // ── Plugin dispatch E2E tests ──────────────────────────────────────
 
 #[cfg(test)]

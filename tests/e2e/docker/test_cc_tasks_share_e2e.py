@@ -276,6 +276,17 @@ def joined_cluster(topology: CcTasksTopology) -> dict:
         runbook_helpers.docker_start(topology.joiner_container)
 
     runbook_helpers.wait_healthy([topology.joiner_grpc])
+    # The cross-node workflow tests fan out via `peer_client.fetch`
+    # using `DistributedCoordinator::zone_peers(sharedzone)` — joiner
+    # needs to be a full member of sharedzone (ConfState containing
+    # founder) before the lookup returns a usable peer roster.
+    # Without this gate the first `vfs_read` after the fixture
+    # returns races joiner's post-restart raft catchup and surfaces
+    # `FileNotFound` against an empty peer list.  Mirrors the
+    # federation-runbook suite's wait_zone_ready usage in its own
+    # `joined_cluster` fixture.
+    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
+    runbook_helpers.wait_zone_ready(topology.joiner_grpc, "sharedzone")
 
     # runbook_helpers uses subprocess with text=True, so stdout/stderr
     # are already `str` — no decode needed.  Defaulting to "" preserves

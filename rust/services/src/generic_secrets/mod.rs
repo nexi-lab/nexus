@@ -73,6 +73,14 @@ impl GenericSecretsServiceImpl {
         master_key: crypto::MasterKey,
     ) -> Result<Self, PasswordVaultError> {
         let storage = SecretStorage::new_on_existing_mount(kernel, root)?;
+        // Bring any pre-v0.1.2 on-disk files (literal NTFS-illegal segments
+        // surviving from when v0.1.1 wrote raw `:` paths on Linux/macOS) onto
+        // the canonical percent-encoded layout. Called explicitly here rather
+        // than from `SecretStorage::new_*` so the constructor stays
+        // side-effect-free; storage's read/write contract then only ever
+        // targets the canonical layout (one SSOT, no fallback paths).
+        // Idempotent on a clean tree.
+        storage.migrate_legacy_layout()?;
         Ok(Self {
             inner: Arc::new(Inner {
                 storage,

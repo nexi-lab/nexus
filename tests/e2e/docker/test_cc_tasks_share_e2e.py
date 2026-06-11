@@ -277,10 +277,14 @@ def joined_cluster(topology: CcTasksTopology) -> dict:
 
     runbook_helpers.wait_healthy([topology.joiner_grpc])
 
+    # runbook_helpers uses subprocess with text=True, so stdout/stderr
+    # are already `str` — no decode needed.  Defaulting to "" preserves
+    # the dict-shape that callers can `assert "marker" in stdout` against
+    # without `is None` guards.
     return {
         "founder_node_id": founder_node_id,
-        "join_stdout": join_proc.stdout.decode(errors="replace") if join_proc.stdout else "",
-        "join_stderr": join_proc.stderr.decode(errors="replace") if join_proc.stderr else "",
+        "join_stdout": join_proc.stdout or "",
+        "join_stderr": join_proc.stderr or "",
     }
 
 

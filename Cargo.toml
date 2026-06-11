@@ -26,13 +26,13 @@ exclude = ["nexus-fuse"]
 # restart's cross-zone routes are always re-wired).  Bump alongside
 # the rest of nexus-vfs updates when a downstream change needs newer
 # kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e90de894aa2f8457f4a894e7605fb0c587e288f7" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "9d83e9678c8f41a90f1fd6a8bf4fe6a59270c25d" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

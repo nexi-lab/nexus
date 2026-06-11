@@ -201,6 +201,30 @@ def test_zone_terminated_mid_request_compensates_entity_row(record_store_client,
         assert rows == [], f"stale entity rows after mid-request zone flip: {rows}"
 
 
+def test_non_valueerror_create_failure_also_compensates(record_store_client, monkeypatch):
+    """Compensation must cover any key-creation failure, not just the
+    ValueError guards — a driver error after registration must not leak the
+    just-inserted entity row either."""
+    from sqlalchemy import select
+
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.storage.models.memory import EntityRegistryModel
+
+    client, store = record_store_client
+
+    def boom(cls_session, *args, **kwargs):
+        raise RuntimeError("simulated driver failure")
+
+    monkeypatch.setattr(DatabaseAPIKeyAuth, "create_key", classmethod(boom))
+
+    resp = client.post("/api/v2/auth/keys", json=_create_body("zone_active"))
+    assert resp.status_code == 500
+
+    with store.session_factory() as s:
+        rows = s.scalars(select(EntityRegistryModel)).all()
+        assert rows == [], f"stale entity rows after non-ValueError failure: {rows}"
+
+
 def test_compensation_never_deletes_preexisting_entity(record_store_client, monkeypatch):
     """Ownership: a row registered by an earlier/concurrent request must
     survive this request's 400 — compensation may only delete rows this

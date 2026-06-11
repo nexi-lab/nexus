@@ -286,6 +286,10 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         expires_at = datetime.now(UTC) + timedelta(days=params.expires_days)
 
     with auth_provider.session_factory() as session:
+        # Compensation covers ANY failure up to and including the key commit
+        # (validation ValueError, driver errors, commit failures) — but not
+        # the post-commit steps (grants): once the key exists the entity
+        # registration is legitimate state and must stay.
         try:
             key_id, raw_key = DatabaseAPIKeyAuth.create_key(
                 session,
@@ -297,7 +301,8 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
                 is_admin=params.is_admin,
                 expires_at=expires_at,
             )
-        except ValueError:
+            session.commit()
+        except Exception:
             if entity_registry is not None and created_entity is not None:
                 try:
                     # cascade=False: this row was inserted moments ago by this
@@ -309,7 +314,6 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
                         created_entity,
                     )
             raise
-        session.commit()
 
         result: dict[str, Any] = {
             "key_id": key_id,

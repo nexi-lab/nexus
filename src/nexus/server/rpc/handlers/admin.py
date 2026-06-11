@@ -246,74 +246,50 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     if not user_id:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
-    # Fail-fast before register_entity: a request rejected by create_key
-    # after registration would leave a committed entity_registry row
-    # parented to the bad zone, and the early-return on existing entities
-    # would keep that wrong parent on every later valid create (#4352
-    # review). Mirrors the exact checks create_key re-runs in-transaction.
-    with auth_provider.session_factory() as session:
-        DatabaseAPIKeyAuth.validate_key_params(
-            session,
-            zone_id=params.zone_id,
-            is_admin=params.is_admin,
-            subject_type=params.subject_type,
-        )
-
-    _record_store = _resolve_record_store(auth_provider)
-    entity_registry = None
-    created_entity: tuple[str, str] | None = None
-    if _record_store is not None:
-        entity_registry = EntityRegistry(_record_store)
-        subject_type = params.subject_type or "user"
-        entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
-        # Track registrations THIS request inserted so a create_key rejection
-        # in the precheck→create_key window (zone terminated mid-request) can
-        # compensate instead of leaving a row parented to an invalid zone.
-        # Insert provenance comes from the registry's PK-conflict resolution,
-        # so a row inserted by a concurrent request is never ours to delete.
-        _entity, _created = entity_registry.register_entity_if_absent(
-            entity_type=subject_type,
-            entity_id=entity_id,
-            parent_type="zone",
-            parent_id=params.zone_id,
-            entity_metadata={"name": params.name} if params.name else None,
-        )
-        if _created:
-            created_entity = (subject_type, entity_id)
-
     expires_at = None
     if params.expires_days:
         expires_at = datetime.now(UTC) + timedelta(days=params.expires_days)
 
     with auth_provider.session_factory() as session:
-        # Compensation covers ANY failure up to and including the key commit
-        # (validation ValueError, driver errors, commit failures) — but not
-        # the post-commit steps (grants): once the key exists the entity
-        # registration is legitimate state and must stay.
-        try:
-            key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id=user_id,
-                name=params.name,
-                subject_type=params.subject_type,
-                subject_id=params.subject_id,
-                zone_id=params.zone_id,
-                is_admin=params.is_admin,
-                expires_at=expires_at,
-            )
-            session.commit()
-        except Exception:
-            if entity_registry is not None and created_entity is not None:
-                try:
-                    # cascade=False: this row was inserted moments ago by this
-                    # request; never sweep children that may have raced in.
-                    entity_registry.delete_entity(*created_entity, cascade=False)
-                except Exception:
-                    logger.exception(
-                        "Failed to compensate entity registration %s after rejected key create",
-                        created_entity,
-                    )
-            raise
+        key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+            session,
+            user_id=user_id,
+            name=params.name,
+            subject_type=params.subject_type,
+            subject_id=params.subject_id,
+            zone_id=params.zone_id,
+            is_admin=params.is_admin,
+            expires_at=expires_at,
+        )
+        session.commit()
+
+        # Register the subject only AFTER the key commit (#4352 review): a
+        # row published before the key exists turns every create_key failure
+        # into a stale-row leak, and a compensating delete can erase a row a
+        # concurrent request has already adopted. Post-commit the row is
+        # legitimate state; a registration failure here is benign (the
+        # registry is best-effort ID disambiguation, junction rows are the
+        # access SSOT per #3871) and self-heals on the next create.
+        _record_store = _resolve_record_store(auth_provider)
+        subject_type = params.subject_type or "user"
+        if _record_store is not None and subject_type in ("user", "agent"):
+            entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
+            try:
+                EntityRegistry(_record_store).register_entity_if_absent(
+                    entity_type=subject_type,
+                    entity_id=entity_id,
+                    parent_type="zone",
+                    parent_id=params.zone_id,
+                    entity_metadata={"name": params.name} if params.name else None,
+                )
+            except Exception:
+                logger.exception(
+                    "Entity registration failed for created key %s (subject %s:%s); "
+                    "registry row will be retried on the next key create",
+                    key_id,
+                    subject_type,
+                    entity_id,
+                )
 
         result: dict[str, Any] = {
             "key_id": key_id,

@@ -1,6 +1,7 @@
 # Build Performance Guide
 
-Tips for faster local builds, especially on macOS.
+Tips for faster local builds, with special attention to multi-worktree
+development setups.
 
 ## Rust Extension Builds
 
@@ -21,6 +22,80 @@ Use `--release` only when you need production-grade performance (benchmarking, p
 The dev profile uses `opt-level = 2` for third-party dependencies via
 `[profile.dev.package."*"]`. These are compiled once and cached in `target/`,
 so subsequent builds after code changes are fast.
+
+## Recommended: sccache (multi-worktree dev)
+
+If you run **multiple git worktrees in parallel** (e.g., several AI agents
+on separate branches), each worktree's `target/` accumulates ~10 GB of Rust
+build artifacts independently — 8 worktrees can sprawl to 40+ GB of largely
+duplicate compiled crates.
+
+[sccache](https://github.com/mozilla/sccache) wraps `rustc` and caches
+compilation results by input hash, so the same crate compiled in any worktree
+hits the shared cache instead of recompiling. Each worktree still keeps its
+own `target/` for link artifacts (no contention with parallel builds), but
+the heavy `rustc` work is deduplicated globally.
+
+This is the single highest-leverage change for multi-worktree setups.
+
+### Install
+
+| Platform | Command |
+|----------|---------|
+| macOS    | `brew install sccache` |
+| Linux (apt)   | `sudo apt install sccache` |
+| Windows (winget) | `winget install Mozilla.sccache` |
+| Any platform (universal fallback, ~3 min) | `cargo install sccache --locked` |
+
+Verify the install:
+
+```bash
+sccache --version
+```
+
+### Enable for cargo
+
+Add this export to your shell profile (`~/.zshrc`, `~/.bashrc`, or
+PowerShell `$PROFILE`) — **once per machine, applies to all worktrees**:
+
+```bash
+# bash / zsh
+export RUSTC_WRAPPER=sccache
+```
+
+```powershell
+# PowerShell
+$env:RUSTC_WRAPPER = "sccache"
+# To persist, add the above line to $PROFILE
+```
+
+Open a new shell after editing the profile. From this point every
+`cargo build` in any worktree consults the shared sccache.
+
+### Verify it's working
+
+After a build, inspect the cache stats:
+
+```bash
+sccache --show-stats
+```
+
+You should see `Cache hits` climb when you rebuild the same crate across
+worktrees. A fresh first build populates the cache; the second worktree's
+first build of the same crate is the one you'll feel — typically **40-70%
+faster** for cold builds of large dependencies.
+
+### Cache configuration (optional)
+
+Default cache location and size (10 GB) are sensible for most setups. To
+customize, set environment variables before any `cargo` invocation — see
+[sccache docs](https://github.com/mozilla/sccache/blob/main/docs/Configuration.md).
+
+Common knob: increase the cache size if you work on many feature branches.
+
+```bash
+export SCCACHE_CACHE_SIZE="40G"
+```
 
 ## macOS-Specific Optimizations
 
@@ -61,22 +136,6 @@ with near-native file system performance.
 
 If Docker builds are slow, switching to OrbStack is the single highest-impact
 change on macOS.
-
-## Optional: sccache
-
-[sccache](https://github.com/mozilla/sccache) caches Rust compilation artifacts
-across projects and machines. It's especially useful if you work on multiple
-branches or frequently `cargo clean`.
-
-```bash
-brew install sccache
-
-# Add to your shell profile:
-export RUSTC_WRAPPER=sccache
-```
-
-sccache wraps `rustc` and caches compilation results. Cache hits skip compilation
-entirely. Works with local disk or remote storage (S3, GCS, Redis).
 
 ## Optional: Faster linker (lld)
 

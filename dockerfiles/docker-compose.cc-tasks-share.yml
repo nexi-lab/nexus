@@ -88,7 +88,7 @@ services:
       NEXUS_FEDERATION_ZONES: sharedzone
       NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
       NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks/founder:{"local_root":"/host/tasks"}'
-      RUST_LOG: info,nexus_raft=info
+      RUST_LOG: info,nexus_raft=info,kernel=debug
     volumes:
       - cc_tasks_founder_data:/app/data
       - cc_tasks_founder_hostfs:/host/tasks
@@ -118,7 +118,7 @@ services:
       # entrypoint's second boot auto-detects restart mode and picks
       # them up via the apply-cb replay path.
       NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks/joiner:{"local_root":"/host/tasks"}'
-      RUST_LOG: info,nexus_raft=info
+      RUST_LOG: info,nexus_raft=info,kernel=debug
     volumes:
       - cc_tasks_joiner_data:/app/data
       - cc_tasks_joiner_hostfs:/host/tasks

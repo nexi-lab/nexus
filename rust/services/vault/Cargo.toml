@@ -37,3 +37,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+# dlopen the just-built cdylib in tests/dlopen_self.rs — closes the
+# Linux/macOS/Windows plugin-load regression gap surfaced by SEV
+# nexus-vfs#45.
+libloading = "0.8"

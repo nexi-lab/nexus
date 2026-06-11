@@ -38,7 +38,7 @@ WORKDIR /build
 # commit you want to adopt.  Pin should always include #23 (ZoneManager
 # async wrappers) and #25 (leader-detection SSOT) — both required for
 # the L1 cross-machine federation read milestone to pass.
-ARG NEXUS_VFS_REV=b1f36b8dc00d129edf96127398d20794a2ed3472
+ARG NEXUS_VFS_REV=bfac0abd6885ef9d0d90885202bd07399282aafb
 RUN cargo install \
     --git https://github.com/nexi-lab/nexus-vfs \
     --rev "${NEXUS_VFS_REV}" \

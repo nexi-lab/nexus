@@ -56,6 +56,10 @@ class TigerCacheManager:
         # and sync stays single-flight (Codex review, Issue #4342). RLock:
         # initialize() calls start_worker() while holding it.
         self._lifecycle_lock = threading.RLock()
+        # Terminal once stop_worker() ran: a boot thread resuming from its
+        # bounded join (held outside the lock) must not start the worker,
+        # and a manual initialize() must not spawn a new sync.
+        self._stopped = False
 
     def initialize(self) -> None:
         """Initialize performance optimizations for permission checks.
@@ -100,6 +104,9 @@ class TigerCacheManager:
             timeout = min(timeout, threading.TIMEOUT_MAX)
 
             with self._lifecycle_lock:
+                if self._stopped:
+                    logger.info("TigerCacheManager stopped; skipping initialize")
+                    return
                 # Single-flight: a manual refresh while the previous sync is
                 # still running would orphan that thread and (via a cleared
                 # stop event) could undo a concurrent shutdown signal.
@@ -265,6 +272,12 @@ class TigerCacheManager:
             return
 
         with self._lifecycle_lock:
+            # Terminal stop: a boot thread that resumed from its bounded
+            # join after stop_worker() completed lands here — don't revive
+            # background work after shutdown began.
+            if self._stopped:
+                logger.debug("TigerCacheManager stopped; not starting worker")
+                return
             # Don't start if already running
             if self._tiger_worker_thread is not None and self._tiger_worker_thread.is_alive():
                 return
@@ -319,6 +332,7 @@ class TigerCacheManager:
         is_test = "pytest" in sys.modules
         timeout = 15.0 if is_test else 5.0
         with self._lifecycle_lock:
+            self._stopped = True
             # Signal BOTH threads before joining either, so the worker does
             # not keep running for the duration of the sync join.
             self._sync_stop.set()

@@ -268,6 +268,47 @@ def test_invalid_timeout_values_fall_back_to_default(
         )
 
 
+def test_stop_is_terminal_against_in_flight_initialize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A boot thread resuming from its bounded join after stop_worker()
+    completed must not start the queue worker (Codex round 3)."""
+    monkeypatch.setenv("NEXUS_TIGER_INIT_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("NEXUS_ENABLE_TIGER_WORKER", "true")
+    resource_map = FakeResourceMap()
+    manager = TigerCacheManager(
+        rebac_manager=FakeRebacManager(resource_map),
+        nexus_fs=EndlessNexusFS(),
+        default_zone_id="root",
+    )
+
+    boot = threading.Thread(target=manager.initialize, daemon=True)
+    boot.start()
+    deadline = time.monotonic() + 2.0  # wait until the sync is grinding
+    while time.monotonic() < deadline:
+        if manager._sync_thread is not None and manager._sync_thread.is_alive():
+            break
+        time.sleep(0.01)
+
+    manager.stop_worker()  # shutdown while boot is inside its bounded join
+    boot.join(timeout=10.0)
+    assert not boot.is_alive()
+    assert manager._tiger_worker_thread is None or not manager._tiger_worker_thread.is_alive(), (
+        "start_worker() after stop_worker() must not revive the queue worker"
+    )
+
+
+def test_initialize_after_stop_is_a_noop() -> None:
+    """Manual initialize() after shutdown must not spawn a new sync."""
+    resource_map = FakeResourceMap()
+    manager = make_manager(FakeNexusFS(["/a.txt"]), resource_map)
+    manager.stop_worker()
+
+    manager.initialize()
+
+    assert resource_map.calls == [], "no sync may run after the manager stopped"
+
+
 def test_stop_worker_is_safe_without_initialize_and_idempotent() -> None:
     """stop_worker() is wired as a NexusFS close callback (Issue #4342), so it
     must be a no-op when initialize() never ran and safe to call twice."""

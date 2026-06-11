@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+VALID_SUBJECT_TYPES = ["user", "agent", "service"]
+
 
 class DatabaseAPIKeyAuth(AuthProvider):
     """Database-backed API key authentication with expiry and revocation.
@@ -266,18 +268,20 @@ class DatabaseAPIKeyAuth(AuthProvider):
         return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod
-    def validate_zone_for_key(
+    def validate_key_params(
         cls,
         session: Session,
         *,
         zone_id: str | None,
         is_admin: bool,
+        subject_type: str = "user",
     ) -> None:
-        """Validate zone constraints for key issuance (#3871).
+        """Validate subject/zone constraints for key issuance.
 
-        Raises ValueError when the request is for a zoneless non-admin key
-        (round 4) or when the target zone is missing, not Active, or
-        soft-deleted (rounds 3+6). Surfaces a controlled ValueError instead
+        Raises ValueError when the subject_type is outside the allow-list,
+        when the request is for a zoneless non-admin key (#3871 round 4),
+        or when the target zone is missing, not Active, or soft-deleted
+        (#3871 rounds 3+6). Surfaces a controlled ValueError instead
         of (a) an opaque IntegrityError from the junction FK constraint or
         (b) a returned raw key that the lifecycle gate immediately rejects
         at first authentication (already persisted/displayed once).
@@ -286,6 +290,11 @@ class DatabaseAPIKeyAuth(AuthProvider):
         registration in handle_admin_create_key) must run this first so a
         rejected request leaves no side effects (#4352 review).
         """
+        if subject_type not in VALID_SUBJECT_TYPES:
+            raise ValueError(
+                f"subject_type must be one of {VALID_SUBJECT_TYPES}, got {subject_type}"
+            )
+
         # Zoneless non-admin: the token would have no zone access at auth
         # time (and downstream routes would coerce the missing zone to
         # ROOT_ZONE_ID, silently granting root).
@@ -326,13 +335,11 @@ class DatabaseAPIKeyAuth(AuthProvider):
         """
         from nexus.storage.models import APIKeyModel
 
-        final_subject_id = subject_id or user_id
-        valid_subject_types = ["user", "agent", "service"]
-        if subject_type not in valid_subject_types:
-            raise ValueError(
-                f"subject_type must be one of {valid_subject_types}, got {subject_type}"
-            )
+        cls.validate_key_params(
+            session, zone_id=zone_id, is_admin=is_admin, subject_type=subject_type
+        )
 
+        final_subject_id = subject_id or user_id
         zone_prefix = f"{zone_id[:8]}_" if zone_id else ""
         subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
         random_suffix = secrets.token_hex(16)
@@ -340,8 +347,6 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
         raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
-
-        cls.validate_zone_for_key(session, zone_id=zone_id, is_admin=is_admin)
 
         api_key = APIKeyModel(
             key_hash=key_hash,

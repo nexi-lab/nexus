@@ -246,20 +246,31 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     if not user_id:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
-    # Fail-fast before register_entity: a zone rejected by create_key after
-    # registration would leave a committed entity_registry row parented to
-    # the bad zone, and the early-return on existing entities would keep
-    # that wrong parent on every later valid create (#4352 review).
+    # Fail-fast before register_entity: a request rejected by create_key
+    # after registration would leave a committed entity_registry row
+    # parented to the bad zone, and the early-return on existing entities
+    # would keep that wrong parent on every later valid create (#4352
+    # review). Mirrors the exact checks create_key re-runs in-transaction.
     with auth_provider.session_factory() as session:
-        DatabaseAPIKeyAuth.validate_zone_for_key(
-            session, zone_id=params.zone_id, is_admin=params.is_admin
+        DatabaseAPIKeyAuth.validate_key_params(
+            session,
+            zone_id=params.zone_id,
+            is_admin=params.is_admin,
+            subject_type=params.subject_type,
         )
 
     _record_store = _resolve_record_store(auth_provider)
+    entity_registry = None
+    created_entity: tuple[str, str] | None = None
     if _record_store is not None:
         entity_registry = EntityRegistry(_record_store)
         subject_type = params.subject_type or "user"
         entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
+        # Track newly-created registrations so a create_key rejection in the
+        # precheck→create_key window (zone terminated mid-request) can
+        # compensate instead of leaving a row parented to an invalid zone.
+        if entity_registry.get_entity(subject_type, entity_id) is None:
+            created_entity = (subject_type, entity_id)
         entity_registry.register_entity(
             entity_type=subject_type,
             entity_id=entity_id,
@@ -273,16 +284,27 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         expires_at = datetime.now(UTC) + timedelta(days=params.expires_days)
 
     with auth_provider.session_factory() as session:
-        key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-            session,
-            user_id=user_id,
-            name=params.name,
-            subject_type=params.subject_type,
-            subject_id=params.subject_id,
-            zone_id=params.zone_id,
-            is_admin=params.is_admin,
-            expires_at=expires_at,
-        )
+        try:
+            key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+                session,
+                user_id=user_id,
+                name=params.name,
+                subject_type=params.subject_type,
+                subject_id=params.subject_id,
+                zone_id=params.zone_id,
+                is_admin=params.is_admin,
+                expires_at=expires_at,
+            )
+        except ValueError:
+            if entity_registry is not None and created_entity is not None:
+                try:
+                    entity_registry.delete_entity(*created_entity)
+                except Exception:
+                    logger.exception(
+                        "Failed to compensate entity registration %s after rejected key create",
+                        created_entity,
+                    )
+            raise
         session.commit()
 
         result: dict[str, Any] = {

@@ -150,3 +150,52 @@ def test_failed_create_leaves_no_entity_registry_row(record_store_client):
             select(EntityRegistryModel).where(EntityRegistryModel.entity_id == "team-agent")
         ).one()
         assert entity.parent_id == "zone_active"
+
+
+def test_invalid_subject_type_leaves_no_entity_registry_row(record_store_client):
+    """'zone' is a valid entity_registry type but not a valid key subject_type;
+    the rejection must come before the entity row is committed."""
+    from sqlalchemy import select
+
+    from nexus.storage.models.memory import EntityRegistryModel
+
+    client, store = record_store_client
+
+    resp = client.post("/api/v2/auth/keys", json=_create_body("zone_active", subject_type="zone"))
+    assert resp.status_code == 400, resp.text
+    assert "subject_type" in resp.json()["detail"]
+
+    with store.session_factory() as s:
+        rows = s.scalars(select(EntityRegistryModel)).all()
+        assert rows == [], f"stale entity rows after rejected subject_type: {rows}"
+
+
+def test_zone_terminated_mid_request_compensates_entity_row(record_store_client, monkeypatch):
+    """TOCTOU: zone passes the precheck but is terminated before create_key's
+    in-transaction recheck. The 400 must compensate the just-registered entity."""
+    from sqlalchemy import select
+
+    from nexus.bricks.rebac.entity_registry import EntityRegistry
+    from nexus.storage.models.memory import EntityRegistryModel
+
+    client, store = record_store_client
+
+    orig_register = EntityRegistry.register_entity
+
+    def register_then_terminate_zone(self, *args, **kwargs):
+        result = orig_register(self, *args, **kwargs)
+        with store.session_factory() as s:
+            zone = s.scalars(select(ZoneModel).where(ZoneModel.zone_id == "zone_active")).one()
+            zone.phase = "Terminated"
+            s.commit()
+        return result
+
+    monkeypatch.setattr(EntityRegistry, "register_entity", register_then_terminate_zone)
+
+    resp = client.post("/api/v2/auth/keys", json=_create_body("zone_active"))
+    assert resp.status_code == 400, resp.text
+    assert "is not active" in resp.json()["detail"]
+
+    with store.session_factory() as s:
+        rows = s.scalars(select(EntityRegistryModel)).all()
+        assert rows == [], f"stale entity rows after mid-request zone flip: {rows}"

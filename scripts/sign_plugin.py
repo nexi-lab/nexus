@@ -60,9 +60,7 @@ def load_privkey_from_env() -> Ed25519PrivateKey:
     except (ValueError, base64.binascii.Error) as exc:
         raise SystemExit(f"{PRIVKEY_ENV}: not valid base64: {exc}") from exc
     if len(raw) != PRIVKEY_LENGTH:
-        raise SystemExit(
-            f"{PRIVKEY_ENV}: decoded length {len(raw)} != expected {PRIVKEY_LENGTH}"
-        )
+        raise SystemExit(f"{PRIVKEY_ENV}: decoded length {len(raw)} != expected {PRIVKEY_LENGTH}")
     return Ed25519PrivateKey.from_private_bytes(raw)
 
 
@@ -76,9 +74,7 @@ def sign_one(privkey: Ed25519PrivateKey, plugin: Path) -> Path:
         # Defence in depth: cryptography always returns 64 for Ed25519, but
         # an SSOT mismatch (someone bumped the constant on one side and not
         # the other) would silently emit a sig the verifier can't read.
-        raise SystemExit(
-            f"signature length {len(signature)} != expected {SIGNATURE_LENGTH}"
-        )
+        raise SystemExit(f"signature length {len(signature)} != expected {SIGNATURE_LENGTH}")
 
     sig_path = plugin.with_name(plugin.name + SIGNATURE_FILE_SUFFIX)
     sig_path.write_bytes(signature)
@@ -90,9 +86,7 @@ def sign_one(privkey: Ed25519PrivateKey, plugin: Path) -> Path:
     try:
         pubkey.verify(sig_path.read_bytes(), payload)
     except InvalidSignature as exc:
-        raise SystemExit(
-            f"self-verify failed for {sig_path} — signing pipeline is broken"
-        ) from exc
+        raise SystemExit(f"self-verify failed for {sig_path} — signing pipeline is broken") from exc
 
     return sig_path
 

@@ -167,6 +167,62 @@ def test_stop_worker_halts_in_progress_background_sync(
     assert not sync_thread.is_alive(), "stop_worker() must end the sync loop"
 
 
+def test_initialize_is_single_flight_while_sync_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-initialize while a sync is still running must not spawn a second
+    sync thread (orphaning the first) nor clear its stop event."""
+    monkeypatch.setenv("NEXUS_TIGER_INIT_TIMEOUT_SECONDS", "0.05")
+    resource_map = FakeResourceMap()
+    manager = TigerCacheManager(
+        rebac_manager=FakeRebacManager(resource_map),
+        nexus_fs=EndlessNexusFS(),
+        default_zone_id="root",
+    )
+
+    manager.initialize()  # returns after timeout; sync grinds in background
+    first_thread = manager._sync_thread
+    assert first_thread is not None and first_thread.is_alive()
+
+    manager.initialize()  # manual refresh while sync still running
+    assert manager._sync_thread is first_thread, (
+        "re-initialize while a sync is alive must be single-flight"
+    )
+
+    manager.stop_worker()
+    first_thread.join(timeout=5.0)
+    assert not first_thread.is_alive()
+
+
+def test_blocked_materialized_listing_still_bounds_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production sys_readdir returns a fully materialized list — a wedged
+    listing blocks inside the call itself. Boot must still be bounded."""
+    monkeypatch.setenv("NEXUS_TIGER_INIT_TIMEOUT_SECONDS", "0.2")
+    gate = threading.Event()
+
+    class BlockingListNexusFS:
+        def sys_readdir(self, path, recursive=False, details=False, context=None):
+            gate.wait()  # block before returning, like a wedged metastore
+            return ["/a.txt"]  # materialized list, not a generator
+
+    resource_map = FakeResourceMap()
+    manager = TigerCacheManager(
+        rebac_manager=FakeRebacManager(resource_map),
+        nexus_fs=BlockingListNexusFS(),
+        default_zone_id="root",
+    )
+
+    boot = threading.Thread(target=manager.initialize, daemon=True)
+    boot.start()
+    boot.join(timeout=5.0)
+    try:
+        assert not boot.is_alive(), "boot must proceed while the listing is wedged"
+    finally:
+        gate.set()
+
+
 def test_stop_worker_is_safe_without_initialize_and_idempotent() -> None:
     """stop_worker() is wired as a NexusFS close callback (Issue #4342), so it
     must be a no-op when initialize() never ran and safe to call twice."""

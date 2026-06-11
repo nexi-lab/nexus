@@ -51,6 +51,10 @@ class TigerCacheManager:
         self._tiger_worker_thread: threading.Thread | None = None
         self._sync_thread: threading.Thread | None = None
         self._sync_stop = threading.Event()
+        # Serializes initialize() vs stop_worker() so a manual refresh cannot
+        # clear a stop event an in-flight shutdown just set, and sync stays
+        # single-flight (Codex review, Issue #4342).
+        self._lifecycle_lock = threading.Lock()
 
     def initialize(self) -> None:
         """Initialize performance optimizations for permission checks.
@@ -86,14 +90,24 @@ class TigerCacheManager:
                 )
                 timeout = _DEFAULT_INIT_TIMEOUT_SECONDS
 
-            self._sync_stop.clear()  # support manual re-initialize after stop
-            sync_thread = threading.Thread(
-                target=self._sync_and_warm,
-                name="tiger-init-sync",
-                daemon=True,
-            )
-            self._sync_thread = sync_thread
-            sync_thread.start()
+            with self._lifecycle_lock:
+                # Single-flight: a manual refresh while the previous sync is
+                # still running would orphan that thread and (via a cleared
+                # stop event) could undo a concurrent shutdown signal.
+                if self._sync_thread is not None and self._sync_thread.is_alive():
+                    logger.info("Tiger resource map sync already running; skipping re-initialize")
+                    self.start_worker()
+                    return
+                # Fresh event per run (never clear()) so an older thread that
+                # was told to stop keeps seeing its own event as set.
+                self._sync_stop = threading.Event()
+                sync_thread = threading.Thread(
+                    target=self._sync_and_warm,
+                    name="tiger-init-sync",
+                    daemon=True,
+                )
+                self._sync_thread = sync_thread
+                sync_thread.start()
             if timeout > 0:
                 sync_thread.join(timeout=timeout)
             if sync_thread.is_alive():
@@ -283,10 +297,23 @@ class TigerCacheManager:
         """
         is_test = "pytest" in sys.modules
         timeout = 15.0 if is_test else 5.0
-        self._sync_stop.set()
-        if self._sync_thread is not None:
-            self._sync_thread.join(timeout=timeout)
-        if self._tiger_worker_stop is not None:
-            self._tiger_worker_stop.set()
-        if self._tiger_worker_thread is not None:
-            self._tiger_worker_thread.join(timeout=timeout)
+        with self._lifecycle_lock:
+            self._sync_stop.set()
+            if self._sync_thread is not None:
+                self._sync_thread.join(timeout=timeout)
+                if self._sync_thread.is_alive():
+                    # The sync observes the stop event between per-path
+                    # upserts, but a call wedged inside sys_readdir or a
+                    # single DB statement cannot be interrupted from Python.
+                    # The thread is a daemon, so it cannot block process
+                    # exit; it may log fail-soft warnings if it touches
+                    # closed resources afterwards.
+                    logger.warning(
+                        "tiger-init-sync still running %.0fs after shutdown "
+                        "request; abandoning daemon thread (Issue #4342)",
+                        timeout,
+                    )
+            if self._tiger_worker_stop is not None:
+                self._tiger_worker_stop.set()
+            if self._tiger_worker_thread is not None:
+                self._tiger_worker_thread.join(timeout=timeout)

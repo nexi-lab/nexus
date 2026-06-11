@@ -57,3 +57,9 @@ when the database unwedges, the sync finishes on its own — no restart needed.
   `NEXUS_DISABLE_PERF_OPTIMIZATIONS=true`.
 - The `tiger-init-sync` thread is named, so it is visible in
   `PYTHONFAULTHANDLER=1` dumps if you need to see where it is blocked.
+- **Shutdown caveat**: graceful stop signals the sync between per-path
+  upserts, but the initial `sys_readdir` listing is materialized in one call
+  (Rust-side, see Issue #3706) and a single wedged DB statement cannot be
+  interrupted from Python. In that case shutdown logs
+  `tiger-init-sync still running ... abandoning daemon thread` and proceeds;
+  the daemon thread cannot block process exit.

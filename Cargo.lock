@@ -1304,7 +1304,7 @@ source = "git+https://github.com/nexi-lab/nexus-vfs?rev=32c47310e48d449bb5c3f02e
 
 [[package]]
 name = "nexus-vault"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "backends",
  "kernel",

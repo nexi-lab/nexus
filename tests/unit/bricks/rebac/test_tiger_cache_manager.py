@@ -165,3 +165,16 @@ def test_stop_worker_halts_in_progress_background_sync(
     manager.stop_worker()
     sync_thread.join(timeout=5.0)
     assert not sync_thread.is_alive(), "stop_worker() must end the sync loop"
+
+
+def test_stop_worker_is_safe_without_initialize_and_idempotent() -> None:
+    """stop_worker() is wired as a NexusFS close callback (Issue #4342), so it
+    must be a no-op when initialize() never ran and safe to call twice."""
+    resource_map = FakeResourceMap()
+    manager = make_manager(FakeNexusFS(["/a.txt"]), resource_map)
+
+    manager.stop_worker()  # never initialized — must not raise
+
+    manager.initialize()
+    manager.stop_worker()
+    manager.stop_worker()  # second call must not raise

@@ -796,9 +796,9 @@ mod tests {
             "café",
             "密码",
             "🔑emoji",
-            "服务:shareone",   // mixed UTF-8 + NTFS-illegal
-            "naïve\x00ctrl",   // UTF-8 + control char
-            "λ→μ",             // multi-byte non-Latin1
+            "服务:shareone", // mixed UTF-8 + NTFS-illegal
+            "naïve\x00ctrl", // UTF-8 + control char
+            "λ→μ",           // multi-byte non-Latin1
         ];
         for s in cases {
             let round = unescape_path_component(&escape_path_component(s));
@@ -851,8 +851,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        let ctx =
-            OperationContext::new("vault-storage", "root", true, Some("vault-storage"), true);
+        let ctx = OperationContext::new("vault-storage", "root", true, Some("vault-storage"), true);
         (kernel, ctx)
     }
 
@@ -956,11 +955,9 @@ mod tests {
 
         // And calling migration a second time must also be safe.
         storage.migrate_legacy_layout().unwrap();
-        assert!(
-            storage
-                .get_index("service:shareone", "X-API-Key")
-                .unwrap()
-                .is_some()
-        );
+        assert!(storage
+            .get_index("service:shareone", "X-API-Key")
+            .unwrap()
+            .is_some());
     }
 }

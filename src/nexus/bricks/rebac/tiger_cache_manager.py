@@ -17,6 +17,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Issue #4342: bound on how long initialize() may hold the boot thread while
+# the resource-map sync runs. Mirrors the search daemon's startup preload
+# (_PRELOAD_TIMEOUT_SECONDS in bricks/search/daemon.py): boot must not block
+# indefinitely on a perf optimization.
+_DEFAULT_INIT_TIMEOUT_SECONDS = 30.0
+
 
 class TigerCacheManager:
     """Manages Tiger Cache performance optimizations.
@@ -43,6 +49,8 @@ class TigerCacheManager:
 
         self._tiger_worker_stop: threading.Event | None = None
         self._tiger_worker_thread: threading.Thread | None = None
+        self._sync_thread: threading.Thread | None = None
+        self._sync_stop = threading.Event()
 
     def initialize(self) -> None:
         """Initialize performance optimizations for permission checks.
@@ -53,11 +61,63 @@ class TigerCacheManager:
         3. Starts background worker for Tiger Cache queue processing
 
         Called automatically during startup. Can be called manually to refresh.
+
+        Issue #4342: steps 1-2 are DB-bound and used to run unbounded on the
+        boot thread — a wedged metastore/DB call blocks instead of raising,
+        so the except below never fires and the port is never bound. They now
+        run on a daemon thread; boot waits at most
+        NEXUS_TIGER_INIT_TIMEOUT_SECONDS (default 30, 0 = don't wait) and
+        then proceeds, leaving the sync to finish in the background.
+        Permission checks fall back to the slow path until it completes.
         """
         if os.getenv("NEXUS_DISABLE_PERF_OPTIMIZATIONS", "false").lower() in ("true", "1", "yes"):
             logger.debug("Performance optimizations disabled via environment variable")
             return
 
+        try:
+            timeout_raw = os.getenv("NEXUS_TIGER_INIT_TIMEOUT_SECONDS", "")
+            try:
+                timeout = float(timeout_raw) if timeout_raw else _DEFAULT_INIT_TIMEOUT_SECONDS
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_TIGER_INIT_TIMEOUT_SECONDS=%r; using %.0fs",
+                    timeout_raw,
+                    _DEFAULT_INIT_TIMEOUT_SECONDS,
+                )
+                timeout = _DEFAULT_INIT_TIMEOUT_SECONDS
+
+            self._sync_stop.clear()  # support manual re-initialize after stop
+            sync_thread = threading.Thread(
+                target=self._sync_and_warm,
+                name="tiger-init-sync",
+                daemon=True,
+            )
+            self._sync_thread = sync_thread
+            sync_thread.start()
+            if timeout > 0:
+                sync_thread.join(timeout=timeout)
+            if sync_thread.is_alive():
+                logger.warning(
+                    "Tiger resource map sync still running after %.0fs; continuing "
+                    "boot without it — permission checks use the slow path until "
+                    "the background sync completes (Issue #4342)",
+                    timeout,
+                )
+
+            # Start Tiger Cache background worker (thread spawn only — safe
+            # on the boot thread, independent of the sync above)
+            self.start_worker()
+
+        except Exception as e:
+            # Don't fail initialization if optimizations fail
+            logger.warning(f"Failed to initialize performance optimizations: {e}")
+
+    def _sync_and_warm(self) -> None:
+        """Resource-map sync + optional cache warm (runs on tiger-init-sync).
+
+        Everything here is fail-soft: failures only mean permission checks
+        keep paying the slow-path cost they would pay anyway.
+        """
         try:
             # 1. Sync tiger_resource_map from existing metadata (Issue #934)
             # This MUST happen BEFORE cache warming so Tiger Cache can find resources
@@ -79,12 +139,7 @@ class TigerCacheManager:
                 entries = self._warm_cache_fn(zone_id=self._default_zone_id)
                 if entries > 0:
                     logger.info(f"Warmed Tiger Cache with {entries} entries")
-
-            # 3. Start Tiger Cache background worker
-            self.start_worker()
-
         except Exception as e:
-            # Don't fail initialization if optimizations fail
             logger.warning(f"Failed to initialize performance optimizations: {e}")
 
     def sync_resource_map(self) -> int:
@@ -135,6 +190,12 @@ class TigerCacheManager:
             for entry_path in self._nexus_fs.sys_readdir(
                 "/", recursive=True, details=False, context=sys_ctx
             ):
+                if self._sync_stop.is_set():
+                    logger.info(
+                        "Tiger resource map sync stopped after %d resources (shutdown)",
+                        count,
+                    )
+                    return count
                 if not entry_path:
                     continue
                 resource_map.get_or_create_int_id(
@@ -216,13 +277,16 @@ class TigerCacheManager:
         logger.debug(f"Tiger Cache worker started (interval={interval}s)")
 
     def stop_worker(self) -> None:
-        """Stop the Tiger Cache background worker.
+        """Stop the Tiger Cache background worker and any in-progress sync.
 
         Call this during graceful shutdown to stop the worker thread.
         """
+        is_test = "pytest" in sys.modules
+        timeout = 15.0 if is_test else 5.0
+        self._sync_stop.set()
+        if self._sync_thread is not None:
+            self._sync_thread.join(timeout=timeout)
         if self._tiger_worker_stop is not None:
             self._tiger_worker_stop.set()
         if self._tiger_worker_thread is not None:
-            is_test = "pytest" in sys.modules
-            timeout = 15.0 if is_test else 5.0
             self._tiger_worker_thread.join(timeout=timeout)

@@ -305,9 +305,7 @@ impl SecretStorage {
                 self.kernel
                     .sys_readdir(&dir, "root", true)
                     .into_iter()
-                    .filter_map(|(path, _)| {
-                        path.rsplit('/').next().map(unescape_path_component)
-                    })
+                    .filter_map(|(path, _)| path.rsplit('/').next().map(unescape_path_component))
                     .filter(|s| !s.is_empty())
                     .collect()
             }
@@ -536,7 +534,11 @@ mod tests {
             let input = (b as char).to_string();
             let got = escape_path_component(&input);
             let want = format!("%{:02X}", b);
-            assert_eq!(got, want, "control char 0x{:02X} did not encode to {}", b, want);
+            assert_eq!(
+                got, want,
+                "control char 0x{:02X} did not encode to {}",
+                b, want
+            );
         }
     }
 
@@ -567,7 +569,12 @@ mod tests {
         // Documents the invariant that encoding overhead is paid only when
         // namespaces actually contain illegal chars.
         for s in &["abc123", "service-x", "X-API-Key", "passwords", "auth_jwt"] {
-            assert_eq!(escape_path_component(s), *s, "non-identity for safe {:?}", s);
+            assert_eq!(
+                escape_path_component(s),
+                *s,
+                "non-identity for safe {:?}",
+                s
+            );
         }
     }
 

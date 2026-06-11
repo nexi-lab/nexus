@@ -1112,7 +1112,8 @@ mod dispatch_e2e {
         // NOT the on-disk encoded form.
         assert_eq!(meta.namespace, "provider:openai");
         assert_eq!(meta.key, "api_key");
-        let secret_ns_api = meta.namespace; // logical (API) value
+        // logical (API) value — returned verbatim by the wire layer
+        let secret_ns_api = meta.namespace;
         // Physical layout contract: disk segments are percent-encoded.
         // `:` is encoded as `%3A`; `api_key` is safe → identity.
         let secret_ns_disk = "provider%3Aopenai";
@@ -1150,14 +1151,13 @@ mod dispatch_e2e {
         // Step 5: Verify generic secret entry path. Direct readdir into
         // the storage layout MUST use the encoded namespace segment;
         // walking via the API literal would simply not exist on disk.
-        let secret_entries = kernel.sys_readdir(
-            &format!("/vault/entries/{secret_ns_disk}"),
-            "root",
-            true,
-        );
+        let secret_entries =
+            kernel.sys_readdir(&format!("/vault/entries/{secret_ns_disk}"), "root", true);
         assert_eq!(secret_entries.len(), 1);
         assert!(
-            secret_entries[0].0.ends_with(&format!("/{secret_key_disk}")),
+            secret_entries[0]
+                .0
+                .ends_with(&format!("/{secret_key_disk}")),
             "secret entry filename matches put key (encoded)"
         );
 

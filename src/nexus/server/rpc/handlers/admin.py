@@ -246,6 +246,15 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     if not user_id:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
+    # Fail-fast before register_entity: a zone rejected by create_key after
+    # registration would leave a committed entity_registry row parented to
+    # the bad zone, and the early-return on existing entities would keep
+    # that wrong parent on every later valid create (#4352 review).
+    with auth_provider.session_factory() as session:
+        DatabaseAPIKeyAuth.validate_zone_for_key(
+            session, zone_id=params.zone_id, is_admin=params.is_admin
+        )
+
     _record_store = _resolve_record_store(auth_provider)
     if _record_store is not None:
         entity_registry = EntityRegistry(_record_store)

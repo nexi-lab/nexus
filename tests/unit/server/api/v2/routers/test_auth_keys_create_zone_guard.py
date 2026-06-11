@@ -97,3 +97,56 @@ def test_create_key_active_zone_still_succeeds(client):
     body = resp.json()
     assert body["zone_id"] == "zone_active"
     assert body["key"].startswith("sk-")
+
+
+@pytest.fixture
+def record_store_client(monkeypatch):
+    """Client backed by a real record store so the entity-registry path runs."""
+    from tests.testkit.records import InMemoryRecordStore
+
+    store = InMemoryRecordStore()
+    with store.session_factory() as s:
+        s.add(ZoneModel(zone_id="zone_active", name="zone_active", phase="Active"))
+        s.commit()
+
+    provider = SimpleNamespace(session_factory=store.session_factory, _record_store=store)
+
+    from nexus.server.api.v2.routers import auth_keys as auth_keys_module
+
+    monkeypatch.setattr(auth_keys_module, "_resolve_db_auth", lambda request: provider)
+
+    app = FastAPI()
+    app.include_router(auth_keys_module.router)
+    app.dependency_overrides[require_admin] = lambda: SimpleNamespace(is_admin=True)
+    app.add_exception_handler(NexusError, nexus_error_handler)
+
+    yield TestClient(app, raise_server_exceptions=False), store
+    store.close()
+
+
+def test_failed_create_leaves_no_entity_registry_row(record_store_client):
+    """A 400 from the zone guard must not commit identity state: a stale
+    entity_registry row parented to the bad zone would make a later valid
+    create skip registration and keep the wrong parent forever."""
+    from sqlalchemy import select
+
+    from nexus.storage.models.memory import EntityRegistryModel
+
+    client, store = record_store_client
+
+    resp = client.post("/api/v2/auth/keys", json=_create_body("zone_ghost"))
+    assert resp.status_code == 400, resp.text
+
+    with store.session_factory() as s:
+        rows = s.scalars(select(EntityRegistryModel)).all()
+        assert rows == [], f"stale entity rows after failed create: {rows}"
+
+    # Subsequent valid create must register the entity under the active zone
+    resp = client.post("/api/v2/auth/keys", json=_create_body("zone_active"))
+    assert resp.status_code == 201, resp.text
+
+    with store.session_factory() as s:
+        entity = s.scalars(
+            select(EntityRegistryModel).where(EntityRegistryModel.entity_id == "team-agent")
+        ).one()
+        assert entity.parent_id == "zone_active"

@@ -266,6 +266,47 @@ class DatabaseAPIKeyAuth(AuthProvider):
         return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod
+    def validate_zone_for_key(
+        cls,
+        session: Session,
+        *,
+        zone_id: str | None,
+        is_admin: bool,
+    ) -> None:
+        """Validate zone constraints for key issuance (#3871).
+
+        Raises ValueError when the request is for a zoneless non-admin key
+        (round 4) or when the target zone is missing, not Active, or
+        soft-deleted (rounds 3+6). Surfaces a controlled ValueError instead
+        of (a) an opaque IntegrityError from the junction FK constraint or
+        (b) a returned raw key that the lifecycle gate immediately rejects
+        at first authentication (already persisted/displayed once).
+
+        Callers that mutate other state before create_key (e.g. entity
+        registration in handle_admin_create_key) must run this first so a
+        rejected request leaves no side effects (#4352 review).
+        """
+        # Zoneless non-admin: the token would have no zone access at auth
+        # time (and downstream routes would coerce the missing zone to
+        # ROOT_ZONE_ID, silently granting root).
+        if not zone_id and not is_admin:
+            raise ValueError(
+                "DatabaseAPIKeyAuth.create_key: non-admin keys must specify a zone_id "
+                "(zoneless tokens are reserved for global admins, #3871)"
+            )
+
+        if zone_id:
+            from nexus.storage.models import ZoneModel
+
+            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
+            if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
+                raise ValueError(
+                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
+                    "(missing, Terminating, or soft-deleted); create or restore "
+                    "the zone before issuing keys against it"
+                )
+
+    @classmethod
     def create_key(
         cls,
         session: Session,
@@ -300,31 +341,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
         raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
 
-        # #3871 round 4: non-admin keys must have a zone. Otherwise the token
-        # has no zone access at auth time (and downstream routes would coerce
-        # the missing zone to ROOT_ZONE_ID, silently granting root). Zoneless
-        # is reserved for explicit global admins.
-        if not zone_id and not is_admin:
-            raise ValueError(
-                "DatabaseAPIKeyAuth.create_key: non-admin keys must specify a zone_id "
-                "(zoneless tokens are reserved for global admins, #3871)"
-            )
-
-        # #3871 round 3+6: validate zone exists, is Active, and not deleted
-        # before inserting junction row. Surfaces a controlled ValueError
-        # instead of (a) an opaque IntegrityError from the FK constraint or
-        # (b) a returned raw key that the lifecycle gate immediately rejects
-        # at first authentication (already persisted/displayed once).
-        if zone_id:
-            from nexus.storage.models import ZoneModel
-
-            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
-            if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
-                raise ValueError(
-                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
-                    "(missing, Terminating, or soft-deleted); create or restore "
-                    "the zone before issuing keys against it"
-                )
+        cls.validate_zone_for_key(session, zone_id=zone_id, is_admin=is_admin)
 
         api_key = APIKeyModel(
             key_hash=key_hash,

@@ -97,10 +97,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #   - Default below = a known-good rev for reproducible local builds.
 #   - Edge: CI passes `--build-arg NEXUS_VFS_REV=$(git ls-remote …main | sha)`.
 #   - Downstream pins the *image*, not this file.
-# SSOT once #27 lands on nexus-vfs main: bump the default to the merged-main rev
-# (or derive it from the nexus-vfs pin in Cargo.lock). The default below is a
-# TEMPORARY integration pin to the unmerged #27 branch tip so the R2 e2e can
-# run pre-merge.
+# Default = nexus-vfs main rev matching the Cargo.toml pins (keep in sync —
+# this ARG is what the shipped kernel binary is built from; the Cargo.toml
+# pins only sync the plugin/services crates). Includes the durable-metastore
+# boot wiring (#4343) — older revs lose the VFS namespace on every restart.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 # Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>

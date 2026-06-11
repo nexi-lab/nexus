@@ -4,18 +4,20 @@ Sits next to :mod:`tests.e2e.docker.runbook_helpers` and reuses every
 gRPC primitive from it.  Only the helpers distinct to this suite live
 here:
 
-* Topology — single-node (founder), no joiner or witness.
+* Topology — founder + joiner sharing a `sharedzone`.  Each node
+  mounts its own LocalConnector backend at a hostname-namespaced
+  path under `/shared/cc-tasks/`.
 * `host_task_write` / `host_task_read` / `host_task_symlink` — read
-  / write / plant a symlink inside the founder container's
-  `/host/tasks` named volume via ``docker exec``.  These verify the
-  LocalConnector's "host fs is the SSOT" property: after a `vfs_write`
-  through gRPC, the bytes are physically present at
-  `/host/tasks/<rel>` and vice versa.
+  / write / plant a symlink inside either container's `/host/tasks`
+  named volume via ``docker exec``.  These verify the LocalConnector's
+  "host fs is the SSOT" property: after a `vfs_write` through gRPC,
+  the bytes are physically present at `/host/tasks/<rel>` and vice
+  versa.
 
-Cross-node share-via-federation testing needs cross-node operator-
-mount substrate that is out of scope here; see
-`docs/architecture/federation-cross-machine-runbook.md` §3e for the
-boundary.
+The host-fs helpers are container-parameterised: pass
+`topology.founder_container` or `topology.joiner_container` to
+target either node, which is the shape the cross-node workflow tests
+(`TestCrossNodeLazyMaterialization`) need.
 """
 
 from __future__ import annotations
@@ -31,26 +33,51 @@ from . import runbook_helpers
 
 @dataclass(frozen=True)
 class CcTasksTopology:
-    """Single-node founder topology."""
+    """Founder + joiner topology backing the cc-tasks-share suite."""
 
     founder_grpc: str
     founder_container: str
+    joiner_grpc: str
+    joiner_container: str
     local_connector_zone: str
     local_connector_vfs_root: str
 
     def vfs_path(self, relpath: str) -> str:
-        """Compose the operator gRPC path from the mount root + a rel path."""
+        """Compose the gRPC path under the *founder's* mount root.
+
+        Used by the single-node substrate tests
+        (`TestLocalConnectorThroughVFS`) where every write happens on
+        founder.  Cross-node tests compose their own per-node paths
+        with explicit hostname namespacing so the data flow between
+        nodes is unambiguous.
+        """
         if not relpath.startswith("/"):
             relpath = "/" + relpath
         return f"{self.local_connector_vfs_root.rstrip('/')}{relpath}"
+
+    def founder_vfs_path(self, relpath: str) -> str:
+        """`/shared/cc-tasks/founder/<rel>` — founder's projection."""
+        if not relpath.startswith("/"):
+            relpath = "/" + relpath
+        return f"/shared/cc-tasks/founder{relpath}"
+
+    def joiner_vfs_path(self, relpath: str) -> str:
+        """`/shared/cc-tasks/joiner/<rel>` — joiner's projection."""
+        if not relpath.startswith("/"):
+            relpath = "/" + relpath
+        return f"/shared/cc-tasks/joiner{relpath}"
 
 
 def topology_from_env() -> CcTasksTopology:
     return CcTasksTopology(
         founder_grpc=os.environ.get("NEXUS_FOUNDER_GRPC", "founder:2126"),
         founder_container=os.environ.get("NEXUS_FOUNDER_CONTAINER", "nexus-cc-tasks-founder"),
-        local_connector_zone=os.environ.get("NEXUS_LOCAL_CONNECTOR_ZONE", "my-tasks"),
-        local_connector_vfs_root=os.environ.get("NEXUS_LOCAL_CONNECTOR_VFS_ROOT", "/tasks"),
+        joiner_grpc=os.environ.get("NEXUS_JOINER_GRPC", "joiner:2126"),
+        joiner_container=os.environ.get("NEXUS_JOINER_CONTAINER", "nexus-cc-tasks-joiner"),
+        local_connector_zone=os.environ.get("NEXUS_LOCAL_CONNECTOR_ZONE", "sharedzone"),
+        local_connector_vfs_root=os.environ.get(
+            "NEXUS_LOCAL_CONNECTOR_VFS_ROOT", "/shared/cc-tasks/founder"
+        ),
     )
 
 

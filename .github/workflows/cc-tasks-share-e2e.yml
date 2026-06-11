@@ -1,16 +1,27 @@
 name: cc-tasks-share E2E
 
 # Runs `tests/e2e/docker/test_cc_tasks_share_e2e.py` against the
-# 2-voter sharedzone in `dockerfiles/docker-compose.cc-tasks-share.yml`.
-# The suite locks down the LocalConnector dylib + federation surface
-# underlying the Mac↔Win `cc tasks list` share milestone: each daemon
-# loads `libnexus_local_connector.so` via `--plugin-dir`, mounts
-# `/shared/cc-tasks/<hostname>` via `--mount-driver`, and the peer
-# reads the same bytes back through the sharedzone.
+# founder + joiner cluster in
+# `dockerfiles/docker-compose.cc-tasks-share.yml`.  The suite has two
+# layers:
+#
+#   * `TestLocalConnectorThroughVFS` — single-node substrate: each
+#     daemon loads `libnexus_local_connector.so` via `--plugin-dir`,
+#     `--mount-driver` lands the LocalConnector backend, and the
+#     host-fs SSOT property holds end-to-end through the gRPC vfs_*
+#     surface.
+#
+#   * `TestCrossNodeLazyMaterialization` — the actual cc-tasks-share
+#     workflow: founder CC writes a task JSON directly to host fs
+#     (no Nexus syscall), joiner's first vfs_read fans out to founder
+#     via `peer_client.fetch`, founder's `BlobFetcher::read`
+#     materialises metadata via the lazy observe substrate
+#     (nexus-vfs#46), and joiner's second read takes the
+#     `try_remote_fetch` fast path with `last_writer_address`.
 #
 # Independent of federation-e2e.yml — that suite covers the lower-tier
-# 3-voter HA surface; this one covers the dylib + operator-mount surface
-# layered on top.  Both can fire on the same PR without overlap.
+# 3-voter HA surface; this one covers the dylib + operator-mount +
+# cross-node-passthrough surface layered on top.
 
 on:
   workflow_dispatch:
@@ -108,26 +119,27 @@ jobs:
           BUILDX_BUILDER: default
         run: |
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml build \
-            founder test
+            founder joiner test
 
-      - name: Start cc-tasks-share node
+      - name: Start cc-tasks-share cluster
         if: steps.changes.outputs.run == 'true'
         run: |
-          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d founder
+          docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d founder joiner
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml ps
 
-      - name: Wait for founder healthy
+      - name: Wait for founder + joiner healthy
         if: steps.changes.outputs.run == 'true'
         run: |
           deadline=$((SECONDS + 180))
           while [ $SECONDS -lt $deadline ]; do
-            if docker exec nexus-cc-tasks-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
-              echo "Founder healthy (gRPC port 2126 reachable) after ${SECONDS}s"
+            if docker exec nexus-cc-tasks-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' && \
+               docker exec nexus-cc-tasks-joiner bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "Founder + joiner healthy (gRPC 2126 reachable on both) after ${SECONDS}s"
               exit 0
             fi
             sleep 2
           done
-          echo "::error::Timed out waiting for founder ready (180s)"
+          echo "::error::Timed out waiting for cluster ready (180s)"
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml logs --tail=300
           exit 1
 
@@ -140,9 +152,11 @@ jobs:
       - name: Dump container logs on failure
         if: failure() && steps.changes.outputs.run == 'true'
         run: |
-          echo "::group::nexus-cc-tasks-founder"
-          docker logs nexus-cc-tasks-founder --tail=400 2>&1 || echo "(no logs)"
-          echo "::endgroup::"
+          for c in nexus-cc-tasks-founder nexus-cc-tasks-joiner; do
+            echo "::group::$c"
+            docker logs "$c" --tail=400 2>&1 || echo "(no logs)"
+            echo "::endgroup::"
+          done
 
       - name: Tear down
         if: always() && steps.changes.outputs.run == 'true'

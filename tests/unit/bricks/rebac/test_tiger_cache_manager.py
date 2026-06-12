@@ -16,20 +16,53 @@ from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
 
 
 class FakeResourceMap:
-    """Records get_or_create_int_id calls; thread-safe."""
+    """Records resource-map calls; thread-safe."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.calls: list[tuple[str, str]] = []
+        self.bulk_calls: list[list[tuple[str, str]]] = []
+        self.connection_entries = 0
+        self.connections_seen: list[object | None] = []
+        self._connection = object()
+        self.on_bulk_call = None
 
     def get_or_create_int_id(self, resource_type: str, resource_id: str) -> int:
         with self._lock:
             self.calls.append((resource_type, resource_id))
             return len(self.calls)
 
+    def connection(self):
+        resource_map = self
+
+        class FakeConnectionContext:
+            def __enter__(self):
+                resource_map.connection_entries += 1
+                return resource_map._connection
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        return FakeConnectionContext()
+
+    def bulk_get_or_create_int_ids(
+        self,
+        resources: list[tuple[str, str]],
+        conn: object | None = None,
+    ) -> dict[tuple[str, str], int]:
+        with self._lock:
+            self.bulk_calls.append(list(resources))
+            self.connections_seen.append(conn)
+            start = sum(len(call) for call in self.bulk_calls[:-1])
+        if self.on_bulk_call is not None:
+            self.on_bulk_call()
+        return {resource: start + index + 1 for index, resource in enumerate(resources)}
+
     def paths(self) -> list[str]:
         with self._lock:
-            return [rid for _, rid in self.calls]
+            resources = [resource for call in self.bulk_calls for resource in call]
+            resources.extend(self.calls)
+            return [rid for _, rid in resources]
 
 
 class FakeTigerCache:
@@ -102,7 +135,35 @@ def test_initialize_completes_sync_before_returning_when_fast() -> None:
     manager.initialize()
 
     assert resource_map.paths() == ["/a.txt", "/b/c.txt"]
-    assert all(rtype == "file" for rtype, _ in resource_map.calls)
+    assert all(rtype == "file" for rtype, _ in resource_map.bulk_calls[0])
+
+
+def test_sync_resource_map_batches_upserts_on_one_connection() -> None:
+    paths = [f"/doc-{i}.txt" for i in range(501)]
+    resource_map = FakeResourceMap()
+    manager = make_manager(FakeNexusFS(paths), resource_map)
+
+    assert manager.sync_resource_map() == 501
+
+    assert resource_map.calls == []
+    assert [len(call) for call in resource_map.bulk_calls] == [500, 1]
+    assert resource_map.bulk_calls[0][0] == ("file", "/doc-0.txt")
+    assert resource_map.bulk_calls[0][-1] == ("file", "/doc-499.txt")
+    assert resource_map.bulk_calls[1] == [("file", "/doc-500.txt")]
+    assert resource_map.connection_entries == 1
+    assert resource_map.connections_seen == [resource_map._connection, resource_map._connection]
+
+
+def test_sync_resource_map_honors_stop_between_batches() -> None:
+    paths = [f"/doc-{i}.txt" for i in range(501)]
+    resource_map = FakeResourceMap()
+    manager = make_manager(FakeNexusFS(paths), resource_map)
+    resource_map.on_bulk_call = manager._sync_stop.set
+
+    assert manager.sync_resource_map() == 500
+
+    assert resource_map.calls == []
+    assert [len(call) for call in resource_map.bulk_calls] == [500]
 
 
 def test_sync_finishes_in_background_after_boot_timeout(

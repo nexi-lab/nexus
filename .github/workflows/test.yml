@@ -37,6 +37,11 @@ jobs:
               - 'pyproject.toml'
               - 'Cargo.*'
               - '.github/workflows/**'
+              # Kernel image pins: the Dockerfiles' NEXUS_VFS_REV decides
+              # which kernel ships — an image-only rev bump must not skip
+              # the pinned-kernel smoke + restart-survival gate (#4343).
+              - 'Dockerfile'
+              - 'dockerfiles/**'
 
   # Single-job pattern (matches federation-e2e.yml / api-surface.yml):
   # always runs so the required check reports exactly one conclusion;
@@ -581,7 +586,9 @@ jobs:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Two pinned cargo installs (slim + full profile) plus the Python
+    # restart-survival gate; rust-cache keeps warm runs well under this.
+    timeout-minutes: 30
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'
@@ -618,6 +625,12 @@ jobs:
           fi
           echo "Installing nexusd-cluster at pinned nexus-vfs rev $REV"
           cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          # Also install the full profile — the binary the Docker image
+          # actually ships (nexusd-full, symlinked to nexus-cluster).
+          # Same main.rs, but a full-profile-only build/feature
+          # regression must not slip past the gate on the slim binary.
+          echo "Installing nexusd-full at pinned nexus-vfs rev $REV"
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-full nexus-full
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'
@@ -677,14 +690,20 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
-      - name: Restart-survival regression test (pinned kernel)
+      - name: Restart-survival regression test (pinned kernels, both profiles)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        timeout-minutes: 10
-        env:
-          NEXUS_KERNEL_BINARY: /home/runner/.cargo/bin/nexusd-cluster
+        timeout-minutes: 15
         run: |
-          test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::pinned kernel binary missing at $NEXUS_KERNEL_BINARY"; exit 1; }
-          uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
+          # nexusd-cluster = slim federation binary; nexusd-full = the
+          # binary the Docker image ships (symlinked to nexus-cluster).
+          # Both reuse cluster/src/main.rs — gate both so neither a
+          # slim- nor a full-profile regression ships untested.
+          for BIN in nexusd-cluster nexusd-full; do
+            export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/$BIN"
+            test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::pinned kernel binary missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+            echo "Restart-survival against $BIN"
+            uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
+          done
 
   migration-test:
     name: Migration Tests (SQLite)

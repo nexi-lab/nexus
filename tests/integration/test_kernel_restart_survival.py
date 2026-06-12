@@ -14,6 +14,7 @@ write -> restart -> the path must still exist.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,11 @@ def _open_kernel(data_dir: Path) -> KernelClient:
         client.open()
     except FileNotFoundError as exc:
         client.close()  # releases the spawn-attempt stderr tempfile
+        if os.environ.get("NEXUS_KERNEL_BINARY"):
+            # CI pinned an explicit binary — a missing/broken one is a
+            # failure, not a skip, or the regression gate silently
+            # turns itself off.
+            raise
         pytest.skip(
             f"requires the ``nexus-cluster`` binary on PATH "
             f"(KernelClient spawns it). Build it in nexus-vfs with "
@@ -44,7 +50,13 @@ def _open_kernel(data_dir: Path) -> KernelClient:
     return client
 
 
-def test_namespace_survives_kernel_restart(tmp_path: Path) -> None:
+def test_namespace_survives_kernel_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # An ambient NEXUS_METASTORE_PATH would redirect both kernels to a
+    # shared fixed-path metastore, defeating tmp_path isolation — a
+    # previous run's registration could false-pass the constant probe
+    # path. The kernel must exercise its <data_dir>/metastore.redb
+    # default here.
+    monkeypatch.delenv("NEXUS_METASTORE_PATH", raising=False)
     data_dir = tmp_path / "data"
 
     first = _open_kernel(data_dir)
@@ -53,6 +65,12 @@ def test_namespace_survives_kernel_restart(tmp_path: Path) -> None:
         assert first.sys_stat(TEST_PATH) is not None
     finally:
         first.close()
+
+    # Default-path contract (#4343): the durable metastore lands at
+    # <NEXUS_DATA_DIR>/metastore.redb, not a tempdir.
+    assert (data_dir / "metastore.redb").exists(), (
+        "kernel did not create the durable metastore at its default path"
+    )
 
     second = _open_kernel(data_dir)
     try:

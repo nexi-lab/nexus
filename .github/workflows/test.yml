@@ -601,9 +601,23 @@ jobs:
         with:
           shared-key: nexusd-cluster-smoke
 
-      - name: Install nexusd-cluster from nexus-vfs
+      - name: Install nexusd-cluster from nexus-vfs (pinned rev)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        run: cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+        # Pin to the rev shipped by this checkout (SSOT: the nexus-vfs
+        # pins in Cargo.toml). An unpinned install tracks nexus-vfs
+        # HEAD and can silently drift from what the Docker image ships
+        # — exactly how a durable-metastore regression (#4343) could
+        # pass smoke while the pinned kernel is broken. --locked honors
+        # the source tree's Cargo.lock (fresh dep resolution drifts on
+        # upstream releases).
+        run: |
+          REV=$(grep -m1 -oE 'rev = "[a-f0-9]{40}"' Cargo.toml | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          echo "Installing nexusd-cluster at pinned nexus-vfs rev $REV"
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'
@@ -637,6 +651,40 @@ jobs:
             exit 1
           fi
           echo "nexusd-cluster shut down cleanly — smoke test passed"
+
+      # Restart-survival regression (#4343): the VFS namespace must
+      # outlive a kernel restart. Runs against the EXACT pinned binary
+      # installed above (NEXUS_KERNEL_BINARY bypasses PATH lookup), so
+      # a rev bump that loses durable-metastore wiring fails this job.
+      - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: uv venv --python 3.14
+
+      - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Restart-survival regression test (pinned kernel)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        timeout-minutes: 10
+        env:
+          NEXUS_KERNEL_BINARY: /home/runner/.cargo/bin/nexusd-cluster
+        run: |
+          test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::pinned kernel binary missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+          uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
 
   migration-test:
     name: Migration Tests (SQLite)

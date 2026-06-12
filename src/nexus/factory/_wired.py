@@ -392,6 +392,14 @@ def _boot_post_kernel_services(
             nexus_fs=nx,
             default_zone_id=getattr(_nx_init_cred, "zone_id", None) or ROOT_ZONE_ID,
         )
+        # Issue #4342: initialize() may leave a tiger-init-sync daemon thread
+        # (and optionally the queue worker) running past boot; stop both at
+        # NexusFS.close() like the other factory-spawned workers
+        # (_lifecycle.py write observer / delivery worker). Registered BEFORE
+        # initialize() so a close() racing the bounded boot wait still owns
+        # the sync thread (stop_worker is terminal — a resumed initialize
+        # cannot restart background work afterwards).
+        nx._close_callbacks.append(_tiger_cache_manager.stop_worker)
         _tiger_cache_manager.initialize()
         logger.debug("[BOOT:WIRED] TigerCacheManager created")
     except Exception as exc:

@@ -186,8 +186,12 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
 
     from nexus.remote.kernel_client import KernelClient
 
-    _meta = None if metadata_path == ":memory:" else metadata_path
-    client = KernelClient(metadata_path=_meta)
+    if metadata_path == ":memory:":
+        # Explicitly ephemeral: the kernel must not pick up an ambient
+        # NEXUS_METASTORE_PATH or a cwd-relative durable data dir.
+        client = KernelClient(ephemeral=True)
+    else:
+        client = KernelClient(metadata_path=metadata_path)
     client.open()
     return client
 

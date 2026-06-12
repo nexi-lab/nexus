@@ -21,7 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexus-raft-server raft
+# Pinned to the same nexus-vfs rev as every other kernel-tier image
+# (CI preflight enforces agreement) — an unpinned install tracks HEAD
+# and can skew the raft contract against the cluster/witness images.
+# --locked honors the source tree's Cargo.lock.
+ARG NEXUS_VFS_REV=e68353c4b1556e20321efbfd52e4ed1a045f66a5
+RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexus-raft-server raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

@@ -88,7 +88,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # profile. It is symlinked to `nexus-cluster` below so the Python runtime spawns
 # it unchanged.
 #
-# REV is a build-arg, NOT a hardcoded edge. `cargo install --git` lives in a
+# REV is a build-arg, NOT a hardcoded edge. `cargo install --locked --git` lives in a
 # Docker RUN layer that caches by command string, so a bare `--branch main`
 # would FREEZE at the first-built binary forever — exactly how the stale,
 # pre-bridge-2 (#4262) cluster shipped (acked DT_MOUNT but never installed it,
@@ -97,14 +97,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #   - Default below = a known-good rev for reproducible local builds.
 #   - Edge: CI passes `--build-arg NEXUS_VFS_REV=$(git ls-remote …main | sha)`.
 #   - Downstream pins the *image*, not this file.
-# SSOT once #27 lands on nexus-vfs main: bump the default to the merged-main rev
-# (or derive it from the nexus-vfs pin in Cargo.lock). The default below is a
-# TEMPORARY integration pin to the unmerged #27 branch tip so the R2 e2e can
-# run pre-merge.
+# Default = nexus-vfs main rev matching the Cargo.toml pins (keep in sync —
+# this ARG is what the shipped kernel binary is built from; the Cargo.toml
+# pins only sync the plugin/services crates). Includes the durable-metastore
+# boot wiring (#4343) — older revs lose the VFS namespace on every restart.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 # Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
-ARG NEXUS_VFS_REV=67ac07f04e509d00eb462b984ef17883eb376211
+ARG NEXUS_VFS_REV=e68353c4b1556e20321efbfd52e4ed1a045f66a5
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \

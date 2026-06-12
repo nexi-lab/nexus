@@ -150,6 +150,9 @@ scripts/*.py
 !scripts/init_semantic_search.py
 !scripts/parse_db_url.py
 !scripts/load_saved_mounts.py
+# Keep the plugin signer — Dockerfile.local-connector-plugin signs the
+# dylib in-build (kernel 67ac07f+ refuses unsigned plugins, #4343)
+!scripts/sign_plugin.py
 *.sh
 # But keep docker-entrypoint.sh for container startup
 !docker-entrypoint.sh

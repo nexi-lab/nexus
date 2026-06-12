@@ -37,6 +37,11 @@ jobs:
               - 'pyproject.toml'
               - 'Cargo.*'
               - '.github/workflows/**'
+              # Kernel image pins: the Dockerfiles' NEXUS_VFS_REV decides
+              # which kernel ships — an image-only rev bump must not skip
+              # the pinned-kernel smoke + restart-survival gate (#4343).
+              - 'Dockerfile'
+              - 'dockerfiles/**'
 
   # Single-job pattern (matches federation-e2e.yml / api-surface.yml):
   # always runs so the required check reports exactly one conclusion;
@@ -173,7 +178,7 @@ jobs:
 
       # The nexus-cluster binary is required by NexusFS (KernelClient spawns
       # it as a subprocess). Binary SSOT is now nexus-vfs; install via
-      # cargo install from the git repo.
+      # cargo install --locked from the git repo.
       - name: Set up Rust toolchain
         if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -184,10 +189,19 @@ jobs:
         with:
           shared-key: e2e-nexus-cluster
 
-      - name: Install nexus-cluster from nexus-vfs
+      - name: Install nexus-cluster from nexus-vfs (pinned rev)
         if: needs.detect-changes.outputs.code_changed == 'true'
+        # Same rev the repo ships (Cargo.toml pins == Dockerfile ARGs,
+        # enforced by the smoke job preflight). Unpinned installs track
+        # nexus-vfs HEAD and let E2E pass/fail on unreviewed upstream
+        # movement (#4343).
         run: |
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
@@ -581,7 +595,9 @@ jobs:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Two pinned cargo installs (slim + full profile) plus the Python
+    # restart-survival gate; rust-cache keeps warm runs well under this.
+    timeout-minutes: 30
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'
@@ -601,9 +617,100 @@ jobs:
         with:
           shared-key: nexusd-cluster-smoke
 
-      - name: Install nexusd-cluster from nexus-vfs
+      - name: Kernel pin consistency preflight
         if: needs.detect-changes.outputs.code_changed == 'true'
-        run: cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+        # Every nexus-vfs pin in the repo must agree: the Cargo.toml
+        # crate pins, the Cargo.lock resolution, the shipping image ARG
+        # (Dockerfile), and the federation test/witness image ARGs.
+        # A partial bump ships a kernel the gate below never tested —
+        # the exact drift class behind #4343.
+        run: |
+          set -euo pipefail
+          # Every nexus-vfs install — in Dockerfiles AND workflow
+          # files — must carry an explicit --rev AND --locked. RUN/run
+          # blocks span backslash continuations, so join continuation
+          # lines per file before matching — a same-line grep misses
+          # blocks whose flags were dropped. Without --rev the install
+          # tracks HEAD; without --locked it resolves transitive deps
+          # fresh at build time, so a new release of ANY dep (e.g.
+          # rcgen 0.14.8) can break every image overnight despite the
+          # rev pin.
+          # URL kept in a variable so this scanner's own source lines
+          # never contain the full match set (no self-flagging).
+          VFS_GIT='--git https://github.com/nexi-lab/nexus-vfs'
+          UNPINNED=""
+          UNLOCKED=""
+          for f in Dockerfile dockerfiles/* .github/workflows/*.yml; do
+            [ -f "$f" ] || continue
+            INSTALLS=$(sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' "$f" \
+              | grep -v '^[[:space:]]*#' \
+              | grep 'cargo install' \
+              | grep -F -- "$VFS_GIT" || true)
+            [ -n "$INSTALLS" ] || continue
+            BAD=$(echo "$INSTALLS" | grep -v '\-\-rev' || true)
+            BADLOCK=$(echo "$INSTALLS" | grep -v '\-\-locked' || true)
+            if [ -n "$BAD" ]; then
+              UNPINNED="${UNPINNED}${f}: ${BAD}"$'\n'
+            fi
+            if [ -n "$BADLOCK" ]; then
+              UNLOCKED="${UNLOCKED}${f}: ${BADLOCK}"$'\n'
+            fi
+          done
+          if [ -n "$UNPINNED" ]; then
+            echo "::error::nexus-vfs install without --rev (tracks HEAD):"
+            echo "$UNPINNED"
+            exit 1
+          fi
+          if [ -n "$UNLOCKED" ]; then
+            echo "::error::nexus-vfs install without --locked (fresh dep resolution drifts):"
+            echo "$UNLOCKED"
+            exit 1
+          fi
+          CARGO_REVS=$(grep 'nexus-vfs' Cargo.toml | grep -oE 'rev = "[a-f0-9]{40}"' | grep -oE '[a-f0-9]{40}' | sort -u)
+          LOCK_REVS=$(grep -oE 'nexus-vfs\?rev=[a-f0-9]{40}' Cargo.lock | grep -oE '[a-f0-9]{40}' | sort -u)
+          DOCKER_REVS=$(grep -rh -oE 'ARG NEXUS_VFS_REV=[a-f0-9]{40}' Dockerfile dockerfiles/ | grep -oE '[a-f0-9]{40}' | sort -u)
+          echo "Cargo.toml pins:  $CARGO_REVS"
+          echo "Cargo.lock pins:  $LOCK_REVS"
+          echo "Dockerfile pins:  $DOCKER_REVS"
+          # Empty extraction means the format drifted and the guard is
+          # comparing nothing — fail closed, not open.
+          for SET in "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS"; do
+            if [ -z "$SET" ]; then
+              echo "::error::a nexus-vfs pin source extracted zero revs — pin-extraction pattern regressed"
+              exit 1
+            fi
+          done
+          UNIQUE=$(printf '%s\n%s\n%s\n' "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS" | sort -u | grep -c . )
+          if [ "$UNIQUE" -ne 1 ]; then
+            echo "::error::nexus-vfs pins diverge across Cargo.toml / Cargo.lock / Dockerfiles — partial bump ships an untested kernel"
+            exit 1
+          fi
+
+      - name: Install nexusd-cluster from nexus-vfs (pinned rev)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # Pin to the rev shipped by this checkout. The preflight above
+        # guarantees Cargo.toml == Cargo.lock == every Dockerfile ARG,
+        # so extracting from Cargo.toml IS the shipping rev. An
+        # unpinned install tracks nexus-vfs HEAD and can silently
+        # drift from what the Docker image ships — exactly how a
+        # durable-metastore regression (#4343) could pass smoke while
+        # the pinned kernel is broken. --locked honors the source
+        # tree's Cargo.lock (fresh dep resolution drifts on upstream
+        # releases).
+        run: |
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          echo "Installing nexusd-cluster at pinned nexus-vfs rev $REV"
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          # Also install the full profile — the binary the Docker image
+          # actually ships (nexusd-full, symlinked to nexus-cluster).
+          # Same main.rs, but a full-profile-only build/feature
+          # regression must not slip past the gate on the slim binary.
+          echo "Installing nexusd-full at pinned nexus-vfs rev $REV"
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-full nexus-full
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'
@@ -637,6 +744,46 @@ jobs:
             exit 1
           fi
           echo "nexusd-cluster shut down cleanly — smoke test passed"
+
+      # Restart-survival regression (#4343): the VFS namespace must
+      # outlive a kernel restart. Runs against the EXACT pinned binary
+      # installed above (NEXUS_KERNEL_BINARY bypasses PATH lookup), so
+      # a rev bump that loses durable-metastore wiring fails this job.
+      - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: uv venv --python 3.14
+
+      - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Restart-survival regression test (pinned kernels, both profiles)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        timeout-minutes: 15
+        run: |
+          # nexusd-cluster = slim federation binary; nexusd-full = the
+          # binary the Docker image ships (symlinked to nexus-cluster).
+          # Both reuse cluster/src/main.rs — gate both so neither a
+          # slim- nor a full-profile regression ships untested.
+          for BIN in nexusd-cluster nexusd-full; do
+            export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/$BIN"
+            test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::pinned kernel binary missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+            echo "Restart-survival against $BIN"
+            uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
+          done
 
   migration-test:
     name: Migration Tests (SQLite)

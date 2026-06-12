@@ -224,9 +224,19 @@ jobs:
         with:
           shared-key: api-rpc-surface-matrix
 
-      - name: Install nexusd-cluster from nexus-vfs
+      - name: Install nexusd-cluster from nexus-vfs (pinned rev)
         if: steps.surface-filter.outputs.surface == 'true'
-        run: cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+        # Same rev the repo ships (Cargo.toml pins == Dockerfile ARGs,
+        # enforced by the test.yml preflight). Unpinned installs track
+        # nexus-vfs HEAD and drift from the shipped kernel (#4343).
+        # --locked honors the source tree's Cargo.lock.
+        run: |
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
 
       - name: Validate API/RPC surface matrix
         if: steps.surface-filter.outputs.surface == 'true'

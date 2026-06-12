@@ -38,6 +38,17 @@ _DEFAULT_LOCAL_PORT = 2126
 _KERNEL_BINARY_ENV = "NEXUS_KERNEL_BINARY"
 _KERNEL_BINARY_CANDIDATES = ("nexus-cluster", "nexusd-cluster")
 _KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX = ".kernel"
+# The kernel's metastore override env name has flip-flopped across
+# nexus-vfs revs: NEXUS_METASTORE_PATH (b04e0683, the original PR #43
+# wiring) -> NEXUS_KERNEL_METASTORE_PATH (67ac07f hardened reland) ->
+# NEXUS_METASTORE_PATH again (e68353c, 12ab8e8 reverted the reland).
+# We export BOTH names with the same value so every rev in circulation
+# honors the override; whichever name a given kernel reads, the answer
+# is identical. Both are treated as caller intent on the way in and
+# both are stripped when this client manages storage.
+_KERNEL_METASTORE_ENV = "NEXUS_KERNEL_METASTORE_PATH"
+_LEGACY_METASTORE_ENV = "NEXUS_METASTORE_PATH"
+_METASTORE_ENVS = (_KERNEL_METASTORE_ENV, _LEGACY_METASTORE_ENV)
 
 
 def _resolve_kernel_binary() -> str:
@@ -82,6 +93,164 @@ def _resolve_kernel_data_dir(metadata_path: str | None) -> str | None:
     return metadata_path
 
 
+# First bytes of every redb database file (verified against files the
+# kernel writes): b"redb\x1a\x0a\xa9\x0d\x0a". Four bytes suffice to
+# tell redb from SQLite ("SQLite format 3\x00") and arbitrary files.
+_REDB_MAGIC = b"redb"
+
+
+def _is_redb_file(path: Path) -> bool:
+    """True if ``path`` is an existing file with the redb magic header.
+
+    Raises ``OSError`` when an existing regular file's header cannot be
+    read (permissions, transient I/O): that file may BE the durable
+    namespace, and falling through to a fresh sidecar data dir would
+    silently boot an empty namespace — the exact data-loss symptom
+    #4343 eliminates. Fail closed; the caller surfaces a boot error.
+    """
+    try:
+        if not path.is_file():
+            return False
+    except OSError:
+        # Could not even stat — indistinguishable from absent; let the
+        # data-dir path proceed (the kernel will surface real errors).
+        return False
+    with path.open("rb") as f:
+        return f.read(len(_REDB_MAGIC)) == _REDB_MAGIC
+
+
+def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, str | None]:
+    """Return ``(data_dir, metastore_file)`` for the kernel spawn env.
+
+    Directory paths are the kernel data dir; the kernel derives
+    ``<data_dir>/metastore.redb`` itself (#4343). An explicit metastore
+    file — a ``.redb``-suffixed path, or an existing file with the redb
+    magic header regardless of name — is honored via
+    ``NEXUS_KERNEL_METASTORE_PATH`` so a preexisting namespace file is
+    reopened rather than silently abandoned, with the payload data dir
+    routed to the deterministic ``.kernel`` sidecar. Other existing
+    files (legacy SQLite-era paths the kernel cannot reopen as redb)
+    keep the sidecar-dir fallback.
+    """
+    if not metadata_path:
+        return None, None
+
+    path = Path(metadata_path).expanduser()
+    try:
+        if path.is_dir():
+            # An existing directory is always the data dir — even one
+            # named like a redb file. Every deployed volume (the kernel
+            # lays out <dir>/root/** + <dir>/metastore.redb) hits this.
+            return str(path), None
+    except OSError:
+        return metadata_path, None
+    if path.suffix == ".redb" or _is_redb_file(path):
+        sidecar = path.with_name(f"{path.name}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}")
+        return str(sidecar), str(path)
+    return _resolve_kernel_data_dir(metadata_path), None
+
+
+def _apply_storage_env(
+    env: dict[str, str],
+    metadata_path: str | None,
+    metastore_file: str | None = None,
+    *,
+    ephemeral_dir: str | None = None,
+) -> None:
+    """Set the kernel storage env (``NEXUS_DATA_DIR``/``NEXUS_KERNEL_METASTORE_PATH``).
+
+    The kernel reads its metastore override from
+    ``NEXUS_KERNEL_METASTORE_PATH`` only (see ``_KERNEL_METASTORE_ENV``);
+    the legacy ``NEXUS_METASTORE_PATH`` is recognized here purely as
+    caller intent and never exported.
+
+    ``metastore_file`` carries *explicit* metastore intent (the
+    ``KernelClient(metastore_file=...)`` channel): it is forwarded
+    verbatim as ``NEXUS_KERNEL_METASTORE_PATH`` — no suffix or
+    existence heuristics — with the data dir taken from
+    ``metadata_path`` (or its ``.kernel`` sidecar when absent).
+
+    Otherwise, when this client manages storage (``metadata_path``
+    given), the spawn env is derived from it: existing directories and
+    fresh paths become the data dir (the kernel derives
+    ``<data_dir>/metastore.redb``, #4343); explicit redb files
+    (``.redb`` suffix or redb magic header) are forwarded as
+    ``NEXUS_KERNEL_METASTORE_PATH``. *Inherited* metastore env (either
+    name) is dropped in that case — it would silently point every
+    client at one shared namespace file regardless of their distinct
+    ``metadata_path``, breaking per-client isolation — unless it names
+    the same path as ``metadata_path`` (explicit operator intent).
+    Without any storage hint the ambient env passes through untouched
+    (operator-managed spawn).
+    """
+    if ephemeral_dir:
+        # Explicitly ephemeral kernel (":memory:"): all storage lives
+        # in a throwaway dir and ambient durable-namespace env must not
+        # leak in — an inherited metastore override would silently
+        # persist and cross-contaminate state the caller asked to be
+        # temporary. (Without a data dir the kernel would also default
+        # to a durable cwd-relative ./nexus-cluster-data.)
+        env["NEXUS_DATA_DIR"] = ephemeral_dir
+        for name in _METASTORE_ENVS:
+            env.pop(name, None)
+        return
+
+    if metastore_file:
+        for name in _METASTORE_ENVS:
+            env[name] = metastore_file
+        if metadata_path:
+            data_dir, _ = _resolve_kernel_spawn_paths(metadata_path)
+            if data_dir:
+                env["NEXUS_DATA_DIR"] = data_dir
+        else:
+            env["NEXUS_DATA_DIR"] = f"{metastore_file}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
+        return
+
+    kernel_data_dir, kernel_metastore = _resolve_kernel_spawn_paths(metadata_path)
+    if not kernel_data_dir:
+        return
+
+    env["NEXUS_DATA_DIR"] = kernel_data_dir
+    if kernel_metastore:
+        for name in _METASTORE_ENVS:
+            env[name] = kernel_metastore
+        return
+
+    # Inherited metastore overrides: the kernel-namespaced name takes
+    # precedence as intent; both names are stripped from the child env
+    # (different revs read different names — see _METASTORE_ENVS).
+    inherited = env.pop(_KERNEL_METASTORE_ENV, None) or env.pop(_LEGACY_METASTORE_ENV, None)
+    for name in _METASTORE_ENVS:
+        env.pop(name, None)
+    if inherited:
+        # The inherited env naming the SAME path as metadata_path is
+        # explicit operator intent for that file — honor it verbatim
+        # unless the path is already a directory (deployed data-dir
+        # layout).
+        same_target = metadata_path is not None and str(Path(inherited).expanduser()) == str(
+            Path(metadata_path).expanduser()
+        )
+        if same_target and not Path(inherited).expanduser().is_dir():
+            for name in _METASTORE_ENVS:
+                env[name] = inherited
+            env["NEXUS_DATA_DIR"] = f"{inherited}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
+            return
+        logger.warning(
+            "Dropping inherited metastore override %s — metadata_path %s "
+            "manages this kernel's storage (namespace derives from "
+            "NEXUS_DATA_DIR=%s)",
+            inherited,
+            metadata_path,
+            kernel_data_dir,
+        )
+    if metadata_path and kernel_data_dir != metadata_path:
+        logger.warning(
+            "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
+            metadata_path,
+            kernel_data_dir,
+        )
+
+
 class KernelClient:
     """gRPC-based kernel client — drop-in replacement for PyKernel.
 
@@ -99,9 +268,22 @@ class KernelClient:
         server_address: str | None = None,
         auth_token: str | None = None,
         metadata_path: str | None = None,
+        metastore_file: str | None = None,
+        ephemeral: bool = False,
         timeout: float = 90.0,
     ) -> None:
+        # ``metadata_path`` is the storage hint (directory, or legacy
+        # file path — see _resolve_kernel_spawn_paths heuristics).
+        # ``metastore_file`` is *explicit* metastore-file intent: it is
+        # forwarded verbatim as NEXUS_KERNEL_METASTORE_PATH, no heuristics —
+        # use it when the exact namespace file location matters (e.g.
+        # suffixless paths, backup/restore tooling).
+        # ``ephemeral`` (":memory:" callers): spawn with a throwaway
+        # temp data dir and strip ambient durable-namespace env.
         self._metadata_path = metadata_path
+        self._metastore_file = metastore_file
+        self._ephemeral = ephemeral
+        self._ephemeral_dir: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._stderr_file: IO[bytes] | None = None
         self._stderr_path: str | None = None
@@ -158,6 +340,12 @@ class KernelClient:
                 with contextlib.suppress(OSError):
                     os.unlink(stderr_path)
             self._stderr_file = None
+        if self._ephemeral_dir is not None:
+            import contextlib
+
+            with contextlib.suppress(OSError):
+                shutil.rmtree(self._ephemeral_dir, ignore_errors=True)
+            self._ephemeral_dir = None
 
     def _is_remote(self) -> bool:
         return self._process is None and self._transport is not None
@@ -167,16 +355,16 @@ class KernelClient:
         kernel_binary = _resolve_kernel_binary()
         cmd = [kernel_binary]
         env = os.environ.copy()
-        # Pass data directory if provided (Rust binary reads NEXUS_DATA_DIR).
-        kernel_data_dir = _resolve_kernel_data_dir(self._metadata_path)
-        if kernel_data_dir:
-            env["NEXUS_DATA_DIR"] = kernel_data_dir
-            if self._metadata_path and kernel_data_dir != self._metadata_path:
-                logger.warning(
-                    "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
-                    self._metadata_path,
-                    kernel_data_dir,
-                )
+        if self._ephemeral and self._ephemeral_dir is None:
+            import tempfile
+
+            self._ephemeral_dir = tempfile.mkdtemp(prefix="nexus-kernel-ephemeral-")
+        _apply_storage_env(
+            env,
+            self._metadata_path,
+            self._metastore_file,
+            ephemeral_dir=self._ephemeral_dir,
+        )
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
         env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")
@@ -878,10 +1066,26 @@ class KernelClient:
     # ── Metastore path ─────────────────────────────────────────────────
 
     def set_metastore_path(self, path: str) -> None:
-        """Set metastore path — handled at spawn time for subprocess."""
-        # For subprocess mode, this was already passed via env.
-        # For remote mode, the server manages its own metastore.
-        self._metadata_path = path
+        """Request an explicit metastore file for the next spawn.
+
+        The method name is the contract: ``path`` is the namespace file
+        the kernel must reopen — forwarded verbatim as
+        ``NEXUS_KERNEL_METASTORE_PATH`` regardless of suffix (#4343). One
+        exception: an existing *directory* is a deployed data-dir
+        layout (the kernel keeps ``<dir>/metastore.redb`` inside it)
+        and is routed as ``NEXUS_DATA_DIR`` instead. Calling this after
+        ``open()`` has no effect. Remote mode: the server manages its
+        own metastore.
+        """
+        try:
+            is_dir = Path(path).expanduser().is_dir()
+        except OSError:
+            is_dir = False
+        if is_dir:
+            self._metadata_path = path
+            self._metastore_file = None
+        else:
+            self._metastore_file = path
 
     # ── Misc kernel methods ────────────────────────────────────────────
 

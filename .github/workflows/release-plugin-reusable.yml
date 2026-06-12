@@ -281,16 +281,16 @@ jobs:
       - name: Install nexusd-cluster for ephemeral vault
         if: inputs.signing_key_source == 'vault'
         env:
-          # TODO(kernel-team): replace with a real pinned nexus-vfs rev
-          # before the first vault-source release tag is pushed. CI flags
-          # this with a clear cargo install failure otherwise.
-          NEXUS_VFS_REV: REPLACE_WITH_PINNED_NEXUS_VFS_REV
+          # Pinned nexus-vfs rev. Refresh quarterly via PR. At pin time:
+          #   - TRUSTED_KEY_FILES embeds the bootstrap pubkey (nexus-team.pub),
+          #     which signs every vault.dylib download we'll Ed25519-verify.
+          #   - rust/profiles/cluster's nexus-cluster package exposes the
+          #     nexusd-cluster bin with --no-tls / --data-dir / --plugin-dir
+          #     / --bootstrap-mode flags this job depends on.
+          # When refreshing, re-verify both invariants before bumping.
+          NEXUS_VFS_REV: 02ef41f46436cfa56e5e3b043aac4bd90bd1cd2f
         run: |
           set -euo pipefail
-          if [ "${NEXUS_VFS_REV}" = "REPLACE_WITH_PINNED_NEXUS_VFS_REV" ]; then
-            echo "::error::nexus-vfs rev is not pinned in release-plugin-reusable.yml; update the workflow before pushing a vault-source release tag."
-            exit 1
-          fi
           cargo install \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "${NEXUS_VFS_REV}" \

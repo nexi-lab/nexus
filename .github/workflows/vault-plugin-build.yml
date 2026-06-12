@@ -180,7 +180,7 @@ jobs:
         if: ${{ !matrix.target }}
         shell: bash
         env:
-          VAULT_DYLIB_PATH: target/release/${{ matrix.dylib }}
+          VAULT_DYLIB_PATH: ${{ github.workspace }}/target/release/${{ matrix.dylib }}
         run: cargo test --release -p nexus-vault dylib_e2e -- --test-threads=1
 
       - name: Upload artifact

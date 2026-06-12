@@ -183,20 +183,31 @@ impl NexusFs {
 
     /// Parse the JSON payload `sys_stat` returns into a `FileAttr`.
     /// The kernel-side shape is `StatResult` (see
-    /// `kernel/src/kernel/mod.rs StatResult`); we hand-roll a tiny
-    /// parser to avoid pulling `serde_json` into the cdylib's
-    /// dependency closure for one path.
+    /// `kernel/src/kernel/mod.rs StatResult` and the JSON serializer
+    /// in `kernel/src/kernel/plugins/mod.rs kernel_cb_sys_stat`);
+    /// we hand-roll a tiny parser to avoid pulling `serde_json` into
+    /// the cdylib's dependency closure for two fields.
     fn parse_stat(&self, ino: u64, json: &str) -> Option<FileAttr> {
-        // Crude key-value scan — kernel-side JSON is well-formed by
-        // construction, and we only need three fields.  When stat
-        // grows more shape (gen, mode bits), promote to serde_json.
+        // Kernel callback exports `entry_type` (the SSOT for "what
+        // kind of inode this is") rather than a precomputed
+        // `is_directory` flag, so dispatch by entry_type instead.
+        // DT_DIR (1) is the only directory variant; everything else
+        // (DT_REG / DT_MOUNT / DT_PIPE / DT_STREAM /
+        // DT_EXTERNAL_STORAGE / DT_LINK) maps to a regular-file
+        // surface for FUSE callers.  DT_MOUNT would deserve a
+        // directory surface here once the FUSE layer learns how to
+        // traverse mount points; for now treating it as a regular
+        // file is consistent with the kernel returning miss on
+        // readdir against a mount root.
         let size = json_u64(json, "\"size\":")?;
-        let is_dir = json_bool(json, "\"is_directory\":")?;
-        let kind = if is_dir {
+        let entry_type = json_u64(json, "\"entry_type\":")?;
+        const DT_DIR: u64 = 1;
+        let kind = if entry_type == DT_DIR {
             FileType::Directory
         } else {
             FileType::RegularFile
         };
+        let is_dir = entry_type == DT_DIR;
         // FUSE wants a complete FileAttr; fields we don't pull from
         // sys_stat default to zero / now / 0644.
         let now = SystemTime::now();
@@ -229,18 +240,6 @@ fn json_u64(json: &str, key: &str) -> Option<u64> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(after.len());
     after[..end].parse().ok()
-}
-
-/// Extract a JSON `true` / `false` from `json` after `key`.
-fn json_bool(json: &str, key: &str) -> Option<bool> {
-    let after = json.split_once(key)?.1.trim_start();
-    if after.starts_with("true") {
-        Some(true)
-    } else if after.starts_with("false") {
-        Some(false)
-    } else {
-        None
-    }
 }
 
 impl Filesystem for NexusFs {
@@ -514,22 +513,24 @@ mod tests {
     }
 
     #[test]
-    fn json_u64_extracts() {
+    fn json_u64_extracts_size() {
         assert_eq!(
-            json_u64(r#"{"size":12345,"is_directory":false}"#, "\"size\":"),
+            json_u64(r#"{"size":12345,"entry_type":0}"#, "\"size\":"),
             Some(12345)
         );
     }
 
     #[test]
-    fn json_bool_extracts() {
+    fn json_u64_extracts_entry_type() {
+        // Directory entry — kernel reports entry_type=1 (DT_DIR).
         assert_eq!(
-            json_bool(r#"{"is_directory":true}"#, "\"is_directory\":"),
-            Some(true)
+            json_u64(r#"{"size":4096,"entry_type":1}"#, "\"entry_type\":"),
+            Some(1)
         );
+        // Regular file — entry_type=0 (DT_REG).
         assert_eq!(
-            json_bool(r#"{"is_directory":false}"#, "\"is_directory\":"),
-            Some(false)
+            json_u64(r#"{"size":12,"entry_type":0}"#, "\"entry_type\":"),
+            Some(0)
         );
     }
 }

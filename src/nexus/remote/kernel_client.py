@@ -89,14 +89,23 @@ _REDB_MAGIC = b"redb"
 
 
 def _is_redb_file(path: Path) -> bool:
-    """True if ``path`` is an existing file with the redb magic header."""
+    """True if ``path`` is an existing file with the redb magic header.
+
+    Raises ``OSError`` when an existing regular file's header cannot be
+    read (permissions, transient I/O): that file may BE the durable
+    namespace, and falling through to a fresh sidecar data dir would
+    silently boot an empty namespace — the exact data-loss symptom
+    #4343 eliminates. Fail closed; the caller surfaces a boot error.
+    """
     try:
         if not path.is_file():
             return False
-        with path.open("rb") as f:
-            return f.read(len(_REDB_MAGIC)) == _REDB_MAGIC
     except OSError:
+        # Could not even stat — indistinguishable from absent; let the
+        # data-dir path proceed (the kernel will surface real errors).
         return False
+    with path.open("rb") as f:
+        return f.read(len(_REDB_MAGIC)) == _REDB_MAGIC
 
 
 def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, str | None]:
@@ -176,6 +185,17 @@ def _apply_storage_env(
 
     inherited = env.pop("NEXUS_METASTORE_PATH", None)
     if inherited:
+        # The inherited env naming the SAME path as metadata_path is
+        # explicit operator intent for that file ("NEXUS_METASTORE_PATH
+        # =/x nexus ... metadata_path=/x") — honor it verbatim unless
+        # the path is already a directory (deployed data-dir layout).
+        same_target = metadata_path is not None and str(Path(inherited).expanduser()) == str(
+            Path(metadata_path).expanduser()
+        )
+        if same_target and not Path(inherited).expanduser().is_dir():
+            env["NEXUS_METASTORE_PATH"] = inherited
+            env["NEXUS_DATA_DIR"] = f"{inherited}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
+            return
         logger.warning(
             "Dropping inherited NEXUS_METASTORE_PATH=%s — metadata_path %s "
             "manages this kernel's storage (namespace derives from "

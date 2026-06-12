@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from nexus.remote.kernel_client import _apply_storage_env, _resolve_kernel_spawn_paths
 
 
@@ -132,3 +134,40 @@ def test_explicit_metastore_file_with_separate_data_dir(tmp_path: Path) -> None:
     _apply_storage_env(env, str(data), str(ns))
     assert env["NEXUS_METASTORE_PATH"] == str(ns)
     assert env["NEXUS_DATA_DIR"] == str(data)
+
+
+def test_inherited_env_naming_same_path_is_explicit_intent(tmp_path: Path) -> None:
+    # `NEXUS_METASTORE_PATH=/x nexus ...` with metadata_path=/x: the
+    # operator named that exact file — forward it, don't demote the
+    # fresh suffixless path to a data dir.
+    target = str(tmp_path / "ns")
+    env = {"NEXUS_METASTORE_PATH": target}
+    _apply_storage_env(env, target)
+    assert env["NEXUS_METASTORE_PATH"] == target
+    assert env["NEXUS_DATA_DIR"] == target + ".kernel"
+
+
+def test_inherited_env_same_path_existing_dir_stays_data_dir(tmp_path: Path) -> None:
+    # Deployed volumes have a directory at the configured path; a
+    # redundant env naming it must not flip it to a (failing) file open.
+    env = {"NEXUS_METASTORE_PATH": str(tmp_path)}
+    _apply_storage_env(env, str(tmp_path))
+    assert env["NEXUS_DATA_DIR"] == str(tmp_path)
+    assert "NEXUS_METASTORE_PATH" not in env
+
+
+def test_unreadable_existing_file_fails_closed(tmp_path: Path) -> None:
+    # A permission-broken existing file may BE the namespace: booting a
+    # fresh sidecar instead would silently lose it (#4343 symptom).
+    import os as _os
+
+    store = tmp_path / "metastore"
+    store.write_bytes(b"redb\x1a\x0a\xa9\x0d\x0a")
+    store.chmod(0)
+    if _os.access(store, _os.R_OK):  # running as root — cannot test
+        pytest.skip("permissions not enforced for this user")
+    try:
+        with pytest.raises(OSError):
+            _resolve_kernel_spawn_paths(str(store))
+    finally:
+        store.chmod(0o600)

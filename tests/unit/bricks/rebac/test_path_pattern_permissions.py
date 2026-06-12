@@ -348,6 +348,68 @@ def test_rebac_check_bulk_matches_recursive_path_pattern(rebac_manager) -> None:
     }
 
 
+def test_rebac_check_bulk_matches_userset_path_pattern(rebac_manager) -> None:
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="member",
+        object=("group", "eng"),
+        zone_id="root",
+    )
+    rebac_manager.rebac_write(
+        subject=("group", "eng", "member"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+
+    checks = [
+        (("agent", "alice"), "read", ("file", "/workspaces/ws1/a.md")),
+        (("agent", "bob"), "read", ("file", "/workspaces/ws1/a.md")),
+    ]
+
+    assert rebac_manager.rebac_check_bulk(checks, zone_id="root") == {
+        checks[0]: True,
+        checks[1]: False,
+    }
+
+
+def test_rebac_check_bulk_denies_conditioned_path_pattern_without_context(
+    rebac_manager,
+) -> None:
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+        conditions={"department": "eng"},
+    )
+
+    check = (("agent", "alice"), "read", ("file", "/workspaces/ws1/a.md"))
+
+    assert rebac_manager.rebac_check_bulk([check], zone_id="root") == {check: False}
+
+
+def test_rebac_check_bulk_keeps_non_file_pattern_syntax_exact_only(
+    rebac_manager,
+) -> None:
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="member",
+        object=("group", "/teams/**"),
+        zone_id="root",
+    )
+
+    checks = [
+        (("agent", "alice"), "member", ("group", "/teams/**")),
+        (("agent", "alice"), "member", ("group", "/teams/dev")),
+    ]
+
+    assert rebac_manager.rebac_check_bulk(checks, zone_id="root") == {
+        checks[0]: True,
+        checks[1]: False,
+    }
+
+
 def test_filter_list_matches_recursive_path_pattern(rebac_manager) -> None:
     rebac_manager.rebac_write(
         subject=("user", "admin"),
@@ -368,6 +430,34 @@ def test_filter_list_matches_recursive_path_pattern(rebac_manager) -> None:
         ["/workspaces/ws1/a.md", "/workspaces/ws2/b.md", "/private/c.md"],
         context,
     ) == ["/workspaces/ws1/a.md", "/workspaces/ws2/b.md"]
+
+
+def test_filter_list_matches_userset_path_pattern(rebac_manager) -> None:
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="member",
+        object=("group", "eng"),
+        zone_id="root",
+    )
+    rebac_manager.rebac_write(
+        subject=("group", "eng", "member"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+    enforcer = PermissionEnforcer(rebac_manager=rebac_manager)
+    context = OperationContext(
+        user_id="alice",
+        groups=[],
+        subject_type="agent",
+        subject_id="alice",
+        zone_id="root",
+    )
+
+    assert enforcer.filter_list(
+        ["/workspaces/ws1/a.md", "/private/c.md"],
+        context,
+    ) == ["/workspaces/ws1/a.md"]
 
 
 def test_zone_aware_bulk_matches_cross_zone_wildcard_path_pattern(

@@ -12,6 +12,7 @@ Related: Issue #1459 Phase 11, Performance optimization
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,7 @@ MAX_DEPTH = 50
 class DirectRelationIndex:
     exact: frozenset[tuple[str, str, str, str, str]]
     patterns: tuple[dict[str, Any], ...]
+    usersets: tuple[dict[str, Any], ...]
 
 
 def compute_permission(
@@ -129,11 +131,6 @@ def compute_permission(
     if direct_index is None and depth == 0:
         direct_index = build_direct_index(tuples_graph)
 
-    # Get namespace config
-    namespace = get_namespace(obj.entity_type)
-    if not namespace:
-        return check_direct_relation(subject, permission, obj, tuples_graph, direct_index)
-
     # Helper to store and return a result.
     # Round-4 fix: only memoize negatives when no cycle was observed
     # during the computation. Positives are always memoizable (the
@@ -142,6 +139,25 @@ def compute_permission(
         if bulk_memo_cache is not None and (result or not cycle_observed[0]):
             bulk_memo_cache[memo_key] = result
         return result
+
+    def _check_direct() -> bool:
+        from nexus.bricks.rebac.domain import Entity as _Entity
+
+        def _check_userset(tuple_data: dict[str, Any]) -> bool:
+            userset_relation = tuple_data.get("subject_relation")
+            if userset_relation is None:
+                return False
+            userset = _Entity(tuple_data["subject_type"], tuple_data["subject_id"])
+            return _recurse(subject, userset_relation, userset)
+
+        return check_direct_relation(
+            subject,
+            permission,
+            obj,
+            tuples_graph,
+            direct_index,
+            userset_relation_checker=_check_userset,
+        )
 
     # Recurse helper. Round-4: detect cycles seen in any subtree by
     # comparing the visited set before/after — if the recursive call
@@ -172,6 +188,11 @@ def compute_permission(
                     cycle_observed[0] = True
                     break
         return result
+
+    # Get namespace config
+    namespace = get_namespace(obj.entity_type)
+    if not namespace:
+        return _store(_check_direct())
 
     # P0-1: Permission -> usersets (e.g., "read" -> ["viewer", "editor", "owner"]).
     # Shared dispatch handles union/intersection/exclusion with fail-closed
@@ -273,7 +294,7 @@ def compute_permission(
         return False
 
     # Direct relation check (base case)
-    return _store(check_direct_relation(subject, permission, obj, tuples_graph, direct_index))
+    return _store(_check_direct())
 
 
 def build_direct_index(
@@ -292,9 +313,14 @@ def build_direct_index(
     """
     exact: set[tuple[str, str, str, str, str]] = set()
     patterns: list[dict[str, Any]] = []
+    usersets: list[dict[str, Any]] = []
 
     for t in tuples_graph:
-        if _has_conditions(t) or t.get("subject_relation") is not None:
+        if _has_conditions(t):
+            continue
+
+        if t.get("subject_relation") is not None:
+            usersets.append(t)
             continue
 
         if is_path_pattern(t["object_type"], t["object_id"]):
@@ -311,7 +337,11 @@ def build_direct_index(
             )
         )
 
-    return DirectRelationIndex(exact=frozenset(exact), patterns=tuple(patterns))
+    return DirectRelationIndex(
+        exact=frozenset(exact),
+        patterns=tuple(patterns),
+        usersets=tuple(usersets),
+    )
 
 
 def _tuple_object_matches(tuple_data: dict[str, Any], obj: "Entity") -> bool:
@@ -337,6 +367,7 @@ def check_direct_relation(
     obj: "Entity",
     tuples_graph: list[dict[str, Any]],
     direct_index: DirectRelationIndex | None = None,
+    userset_relation_checker: Callable[[dict[str, Any]], bool] | None = None,
 ) -> bool:
     """Check if a direct relation tuple exists in the pre-fetched graph.
 
@@ -368,19 +399,31 @@ def check_direct_relation(
             ):
                 return True
 
+        if userset_relation_checker is not None:
+            for tuple_data in direct_index.usersets:
+                if (
+                    tuple_data["relation"] == permission
+                    and tuple_data["object_type"] == obj.entity_type
+                    and _tuple_object_matches(tuple_data, obj)
+                    and userset_relation_checker(tuple_data)
+                ):
+                    return True
+
         return False
 
     # Fallback: O(T) linear scan (for callers without an index).
     for tuple_data in tuples_graph:
         if _has_conditions(tuple_data):
             continue
-        if (
-            tuple_data["relation"] != permission
-            or tuple_data["object_type"] != obj.entity_type
-            or tuple_data["subject_relation"] is not None
-        ):
+        if tuple_data["relation"] != permission or tuple_data["object_type"] != obj.entity_type:
             continue
-        if _tuple_object_matches(tuple_data, obj) and _tuple_subject_matches(tuple_data, subject):
+        if not _tuple_object_matches(tuple_data, obj):
+            continue
+        if tuple_data["subject_relation"] is not None:
+            if userset_relation_checker is not None and userset_relation_checker(tuple_data):
+                return True
+            continue
+        if _tuple_subject_matches(tuple_data, subject):
             return True
     return False
 

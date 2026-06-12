@@ -650,6 +650,7 @@ class BulkPermissionChecker:
                 FROM rebac_tuples t
                 WHERE t.subject_type = :wildcard_type
                   AND t.subject_id = :wildcard_id
+                  AND t.subject_relation IS NULL
                   AND t.zone_id != :zone_id
                   AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                   AND EXISTS (
@@ -687,6 +688,7 @@ class BulkPermissionChecker:
                 FROM rebac_tuples t
                 WHERE t.subject_type = :wildcard_type
                   AND t.subject_id = :wildcard_id
+                  AND t.subject_relation IS NULL
                   AND t.zone_id != :zone_id
                   AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
                   AND EXISTS (

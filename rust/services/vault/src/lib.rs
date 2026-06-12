@@ -1908,4 +1908,162 @@ mod dispatch_e2e {
         assert_eq!(lv.count, 1);
         assert_eq!(lv.versions[0].version, 2);
     }
+
+    // ── Migration verification — reads real Dropbox data ──────────
+    //
+    // Gated on VAULT_VERIFY_DIR env var. When set, it must point to
+    // a directory whose `vault/` subdirectory contains:
+    //   vault-meta.redb, content/, master.key
+    //
+    // Usage:
+    //   VAULT_VERIFY_DIR=~/Dropbox/password-agent/nexus-vault-data \
+    //     cargo test -p nexus-vault verify_migration -- --nocapture
+
+    /// Open an existing vault data directory (read-only verification).
+    fn existing_plugin(data_dir: &std::path::Path) -> VaultPlugin {
+        let vault_dir = data_dir.join("vault");
+        assert!(
+            vault_dir.join("vault-meta.redb").exists(),
+            "vault-meta.redb not found in {vault_dir:?}"
+        );
+        assert!(
+            vault_dir.join("content").exists(),
+            "content/ not found in {vault_dir:?}"
+        );
+        assert!(
+            vault_dir.join("master.key").exists(),
+            "master.key not found in {vault_dir:?}"
+        );
+
+        let kernel = Arc::new(kernel::kernel::Kernel::new());
+        let meta_path = vault_dir.join("vault-meta.redb");
+        kernel
+            .set_metastore_path(meta_path.to_str().unwrap())
+            .unwrap();
+
+        let content_dir = vault_dir.join("content");
+        let backend: Arc<dyn kernel::abc::object_store::ObjectStore> = Arc::new(
+            backends::storage::path_local::PathLocalBackend::new(&content_dir, true).unwrap(),
+        );
+        let backend_name = backend.name().to_string();
+        kernel
+            .sys_setattr(
+                "/vault",
+                2,
+                &backend_name,
+                Some(backend),
+                None,
+                None,
+                "memory",
+                "root",
+                false,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let master_key_path = vault_dir.join("master.key");
+        let master_key =
+            services::password_vault::crypto::load_or_create_master_key(&master_key_path).unwrap();
+
+        let secrets_svc =
+            GenericSecretsServiceImpl::new_on_existing_mount(kernel, "/vault", master_key).unwrap();
+        let svc = PasswordVaultServiceImpl::new_with_secrets(secrets_svc.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        VaultPlugin {
+            svc,
+            secrets_svc,
+            rt,
+        }
+    }
+
+    #[test]
+    fn verify_migration_list_and_get() {
+        let data_dir = match std::env::var("VAULT_VERIFY_DIR") {
+            Ok(d) => std::path::PathBuf::from(d),
+            Err(_) => return, // skip when env var not set
+        };
+
+        let plugin = existing_plugin(&data_dir);
+
+        // List all password entries.
+        let list_payload = encode(&ListEntriesRequest {
+            query: String::new(),
+            limit: 0,
+            audit: None,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "list_entries", &list_payload).unwrap();
+        let list_resp = ListEntriesResponse::decode(resp_bytes.as_slice()).unwrap();
+
+        println!(
+            "=== Migration verification ===\n\
+             Total entries: {}\n\
+             Matched: {}",
+            list_resp.total_in_vault, list_resp.matched,
+        );
+        assert!(
+            list_resp.total_in_vault > 0,
+            "expected migrated entries, got 0"
+        );
+
+        // Print first 10 titles for visual inspection.
+        for (i, e) in list_resp.entries.iter().take(10).enumerate() {
+            println!("  [{:>3}] {}", i + 1, e.title);
+        }
+        if list_resp.entries.len() > 10 {
+            println!("  ... and {} more", list_resp.entries.len() - 10);
+        }
+
+        // Spot-check: get the first entry and verify it decrypts.
+        let first_title = &list_resp.entries[0].title;
+        let get_payload = encode(&GetEntryRequest {
+            title: first_title.clone(),
+            version: None,
+            audit: None,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "get_entry", &get_payload).unwrap();
+        let get_resp = GetEntryResponse::decode(resp_bytes.as_slice()).unwrap();
+        let entry = get_resp.entry.unwrap();
+        println!(
+            "\nSpot-check: title={:?}, username={:?}, has_password={}, version={}",
+            entry.title,
+            entry.username,
+            entry.password.is_some(),
+            get_resp.version,
+        );
+        assert!(
+            entry.password.is_some() || entry.username.is_some(),
+            "decrypted entry should have some data"
+        );
+
+        // Also check total including soft-deleted via generic secrets API.
+        let all_payload = encode(&secrets_proto::ListSecretsRequest {
+            namespace: Some("passwords".into()),
+            include_deleted: true,
+        });
+        let resp_bytes = dispatch_vault(&plugin, "secret_list", &all_payload).unwrap();
+        let all_resp = secrets_proto::ListSecretsResponse::decode(resp_bytes.as_slice()).unwrap();
+        let deleted_count = all_resp.secrets.iter().filter(|s| s.deleted).count();
+        println!(
+            "\nTotal (including deleted): {}, deleted: {}",
+            all_resp.count, deleted_count,
+        );
+
+        println!("\n=== Migration verification PASSED ===");
+    }
 }

@@ -38,7 +38,7 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps --prefix=/install .
 
 # Install nexusd-cluster from nexus-vfs
-RUN cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
 # -- Runtime stage --
 FROM python:3.14-slim

@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-RUN cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexus-raft-server raft
+RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexus-raft-server raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

@@ -189,10 +189,19 @@ jobs:
         with:
           shared-key: e2e-nexus-cluster
 
-      - name: Install nexus-cluster from nexus-vfs
+      - name: Install nexus-cluster from nexus-vfs (pinned rev)
         if: needs.detect-changes.outputs.code_changed == 'true'
+        # Same rev the repo ships (Cargo.toml pins == Dockerfile ARGs,
+        # enforced by the smoke job preflight). Unpinned installs track
+        # nexus-vfs HEAD and let E2E pass/fail on unreviewed upstream
+        # movement (#4343).
         run: |
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
@@ -617,17 +626,23 @@ jobs:
         # the exact drift class behind #4343.
         run: |
           set -euo pipefail
-          # Any nexus-vfs cargo install in any Dockerfile must carry an
-          # explicit --rev. RUN blocks span backslash continuations, so
-          # join continuation lines per file before matching — a
-          # same-line grep misses `cargo install \ ... nexus-vfs \ ...`
-          # blocks whose --rev was dropped.
+          # Any nexus-vfs cargo install — in Dockerfiles AND workflow
+          # files — must carry an explicit --rev. RUN/run blocks span
+          # backslash continuations, so join continuation lines per
+          # file before matching — a same-line grep misses
+          # `cargo install \ ... nexus-vfs \ ...` blocks whose --rev
+          # was dropped.
+          # URL kept in a variable so this scanner's own source lines
+          # never contain the full match set (no self-flagging).
+          VFS_GIT='--git https://github.com/nexi-lab/nexus-vfs'
           UNPINNED=""
-          for f in Dockerfile dockerfiles/*; do
+          for f in Dockerfile dockerfiles/* .github/workflows/*.yml; do
             [ -f "$f" ] || continue
             BAD=$(sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' "$f" \
               | grep -v '^[[:space:]]*#' \
-              | grep 'cargo install' | grep 'nexus-vfs' | grep -v '\-\-rev' || true)
+              | grep 'cargo install' \
+              | grep -F -- "$VFS_GIT" \
+              | grep -v '\-\-rev' || true)
             if [ -n "$BAD" ]; then
               UNPINNED="${UNPINNED}${f}: ${BAD}"$'\n'
             fi

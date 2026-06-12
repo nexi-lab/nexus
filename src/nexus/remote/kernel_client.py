@@ -122,6 +122,46 @@ def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, 
     return _resolve_kernel_data_dir(metadata_path), None
 
 
+def _apply_storage_env(env: dict[str, str], metadata_path: str | None) -> None:
+    """Set the kernel storage env (``NEXUS_DATA_DIR``/``NEXUS_METASTORE_PATH``).
+
+    When this client manages storage (``metadata_path`` given), the
+    spawn env must be fully derived from it: directories become the
+    data dir (the kernel derives ``<data_dir>/metastore.redb``, #4343)
+    and explicit redb files are forwarded as ``NEXUS_METASTORE_PATH``.
+    An *inherited* ``NEXUS_METASTORE_PATH`` is dropped in that case —
+    it would silently point every client at one shared namespace file
+    regardless of their distinct ``metadata_path``, breaking per-client
+    isolation. Without a ``metadata_path`` the ambient env passes
+    through untouched (operator-managed spawn).
+    """
+    kernel_data_dir, kernel_metastore = _resolve_kernel_spawn_paths(metadata_path)
+    if not kernel_data_dir:
+        return
+
+    env["NEXUS_DATA_DIR"] = kernel_data_dir
+    if kernel_metastore:
+        env["NEXUS_METASTORE_PATH"] = kernel_metastore
+        return
+
+    inherited = env.pop("NEXUS_METASTORE_PATH", None)
+    if inherited:
+        logger.warning(
+            "Dropping inherited NEXUS_METASTORE_PATH=%s — metadata_path %s "
+            "manages this kernel's storage (namespace derives from "
+            "NEXUS_DATA_DIR=%s)",
+            inherited,
+            metadata_path,
+            kernel_data_dir,
+        )
+    if metadata_path and kernel_data_dir != metadata_path:
+        logger.warning(
+            "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
+            metadata_path,
+            kernel_data_dir,
+        )
+
+
 class KernelClient:
     """gRPC-based kernel client — drop-in replacement for PyKernel.
 
@@ -207,34 +247,7 @@ class KernelClient:
         kernel_binary = _resolve_kernel_binary()
         cmd = [kernel_binary]
         env = os.environ.copy()
-        # Pass storage paths if provided. Directories become the kernel
-        # data dir (it derives <data_dir>/metastore.redb, #4343); an
-        # explicit .redb file is forwarded verbatim via
-        # NEXUS_METASTORE_PATH so the kernel reopens that namespace.
-        kernel_data_dir, kernel_metastore = _resolve_kernel_spawn_paths(self._metadata_path)
-        if kernel_data_dir:
-            env["NEXUS_DATA_DIR"] = kernel_data_dir
-            if kernel_metastore:
-                env["NEXUS_METASTORE_PATH"] = kernel_metastore
-            elif self._metadata_path and kernel_data_dir != self._metadata_path:
-                logger.warning(
-                    "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
-                    self._metadata_path,
-                    kernel_data_dir,
-                )
-            # An operator-level NEXUS_METASTORE_PATH inherited from our
-            # own environment overrides the kernel's <data_dir> default.
-            # If it collides with the data dir itself the kernel would
-            # try to open its metastore file where it creates its data
-            # directory — surface that misconfiguration loudly.
-            inherited_metastore = env.get("NEXUS_METASTORE_PATH")
-            if inherited_metastore and inherited_metastore == env["NEXUS_DATA_DIR"]:
-                logger.warning(
-                    "NEXUS_METASTORE_PATH and NEXUS_DATA_DIR are both %s; "
-                    "the kernel cannot use one path as both file and "
-                    "directory — boot will likely fail",
-                    inherited_metastore,
-                )
+        _apply_storage_env(env, self._metadata_path)
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
         env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")

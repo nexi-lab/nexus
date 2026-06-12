@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexus.remote.kernel_client import _resolve_kernel_spawn_paths
+from nexus.remote.kernel_client import _apply_storage_env, _resolve_kernel_spawn_paths
 
 
 def test_none_passes_through() -> None:
@@ -77,3 +77,28 @@ def test_suffixless_non_redb_file_keeps_sidecar_fallback(tmp_path: Path) -> None
     data_dir, metastore = _resolve_kernel_spawn_paths(str(store))
     assert metastore is None
     assert data_dir == str(store) + ".kernel"
+
+
+def test_ambient_metastore_env_dropped_when_client_manages_storage(tmp_path: Path) -> None:
+    # Two clients with distinct metadata_paths must not be silently
+    # collapsed onto one shared namespace file by ambient env.
+    env = {"NEXUS_METASTORE_PATH": "/somewhere/shared.redb"}
+    _apply_storage_env(env, str(tmp_path))
+    assert env["NEXUS_DATA_DIR"] == str(tmp_path)
+    assert "NEXUS_METASTORE_PATH" not in env
+
+
+def test_explicit_redb_metadata_path_wins_over_ambient(tmp_path: Path) -> None:
+    redb = tmp_path / "namespace.redb"
+    env = {"NEXUS_METASTORE_PATH": "/somewhere/shared.redb"}
+    _apply_storage_env(env, str(redb))
+    assert env["NEXUS_METASTORE_PATH"] == str(redb)
+    assert env["NEXUS_DATA_DIR"] == str(redb) + ".kernel"
+
+
+def test_ambient_env_passes_through_without_metadata_path() -> None:
+    # Operator-managed spawn: no metadata_path means the ambient env is
+    # the operator's contract — leave it alone.
+    env = {"NEXUS_METASTORE_PATH": "/operator/choice.redb"}
+    _apply_storage_env(env, None)
+    assert env == {"NEXUS_METASTORE_PATH": "/operator/choice.redb"}

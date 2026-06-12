@@ -35,12 +35,13 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Create virtual environment
-        run: uv venv --python 3.14
-
       - name: Install dependencies
+        # `uv sync --frozen` installs from the committed uv.lock instead of
+        # re-resolving, so transient registry / cargo-metadata HTTP/2 flakes
+        # in sdist deps (pdf-inspector, etc.) don't surface as lint failures.
+        # `uv sync` also manages the venv, so no separate `uv venv` step.
         run: |
-          uv pip install -e ".[dev]"
+          uv sync --frozen --extra dev
 
       - name: Run ruff linting
         run: |

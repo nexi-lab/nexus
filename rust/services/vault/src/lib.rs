@@ -560,7 +560,9 @@ mod dylib_e2e {
 
     #[test]
     fn dylib_create_dispatch_destroy_lifecycle() {
-        let Some(fix) = DylibFixture::try_new() else { return };
+        let Some(fix) = DylibFixture::try_new() else {
+            return;
+        };
 
         // Put via generic secrets.
         let resp = fix
@@ -599,7 +601,9 @@ mod dylib_e2e {
 
     #[test]
     fn dylib_generic_secrets_crud() {
-        let Some(fix) = DylibFixture::try_new() else { return };
+        let Some(fix) = DylibFixture::try_new() else {
+            return;
+        };
 
         // Put
         let resp = fix
@@ -680,7 +684,9 @@ mod dylib_e2e {
 
     #[test]
     fn dylib_cross_service_visibility() {
-        let Some(fix) = DylibFixture::try_new() else { return };
+        let Some(fix) = DylibFixture::try_new() else {
+            return;
+        };
 
         // Store via PasswordVault dispatch.
         let resp = fix
@@ -738,7 +744,9 @@ mod dylib_e2e {
 
     #[test]
     fn dylib_invalid_method_returns_error() {
-        let Some(fix) = DylibFixture::try_new() else { return };
+        let Some(fix) = DylibFixture::try_new() else {
+            return;
+        };
         let err = fix.dispatch("nonexistent_method", &[]).unwrap_err();
         assert_eq!(err, -1); // PluginResult::NotFound
     }

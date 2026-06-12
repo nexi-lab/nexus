@@ -86,3 +86,36 @@ def test_namespace_survives_kernel_restart(tmp_path: Path, monkeypatch: pytest.M
         assert second.sys_stat("/restart-survival/never-written.txt") is None
     finally:
         second.close()
+
+
+def test_explicit_redb_metastore_path_survives_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit ``.redb`` metadata_path is the metastore file itself.
+
+    Legacy callers pass the metastore as a file path; the spawn env must
+    forward it verbatim (``NEXUS_METASTORE_PATH``) so the kernel reopens
+    that exact namespace across restarts instead of demoting the path to
+    a data directory and booting a fresh namespace beside it.
+    """
+    monkeypatch.delenv("NEXUS_METASTORE_PATH", raising=False)
+    redb_path = tmp_path / "namespace.redb"
+
+    first = _open_kernel(redb_path)
+    try:
+        first.sys_write(TEST_PATH, data=PAYLOAD)
+        assert first.sys_stat(TEST_PATH) is not None
+    finally:
+        first.close()
+
+    # The kernel must have used the requested file, not a derived one.
+    assert redb_path.exists(), "explicit .redb metastore file was not created"
+
+    second = _open_kernel(redb_path)
+    try:
+        assert second.sys_stat(TEST_PATH) is not None, (
+            "explicit .redb namespace lost across kernel restart (#4343)"
+        )
+        assert second.sys_read_raw(TEST_PATH) == PAYLOAD
+    finally:
+        second.close()

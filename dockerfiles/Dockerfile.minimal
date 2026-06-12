@@ -37,8 +37,13 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps --prefix=/install .
 
-# Install nexusd-cluster from nexus-vfs
-RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+# Install nexusd-cluster from nexus-vfs, pinned to the same rev as the
+# Cargo.toml pins and the other kernel Dockerfiles (CI preflight
+# enforces agreement) — an unpinned install tracks nexus-vfs HEAD and
+# ships an untested kernel (#4343). --locked honors the source tree's
+# Cargo.lock.
+ARG NEXUS_VFS_REV=b04e06830c74d296a943fa906bed214653b1c577
+RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-cluster nexus-cluster
 
 # -- Runtime stage --
 FROM python:3.14-slim

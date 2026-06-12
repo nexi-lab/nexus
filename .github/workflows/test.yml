@@ -617,9 +617,18 @@ jobs:
         # the exact drift class behind #4343.
         run: |
           set -euo pipefail
+          # Any nexus-vfs cargo install in any Dockerfile must carry an
+          # explicit --rev; an unpinned install tracks HEAD and is
+          # invisible to the pin comparison below.
+          UNPINNED=$(grep -rn 'cargo install' Dockerfile dockerfiles/ | grep 'nexus-vfs' | grep -v ':[[:space:]]*#' | grep -v '\-\-rev' || true)
+          if [ -n "$UNPINNED" ]; then
+            echo "::error::unpinned nexus-vfs cargo install in Dockerfiles:"
+            echo "$UNPINNED"
+            exit 1
+          fi
           CARGO_REVS=$(grep 'nexus-vfs' Cargo.toml | grep -oE 'rev = "[a-f0-9]{40}"' | grep -oE '[a-f0-9]{40}' | sort -u)
           LOCK_REVS=$(grep -oE 'nexus-vfs\?rev=[a-f0-9]{40}' Cargo.lock | grep -oE '[a-f0-9]{40}' | sort -u)
-          DOCKER_REVS=$(grep -h -oE 'ARG NEXUS_VFS_REV=[a-f0-9]{40}' Dockerfile dockerfiles/Dockerfile.nexusd-cluster dockerfiles/Dockerfile.raft-witness | grep -oE '[a-f0-9]{40}' | sort -u)
+          DOCKER_REVS=$(grep -rh -oE 'ARG NEXUS_VFS_REV=[a-f0-9]{40}' Dockerfile dockerfiles/ | grep -oE '[a-f0-9]{40}' | sort -u)
           echo "Cargo.toml pins:  $CARGO_REVS"
           echo "Cargo.lock pins:  $LOCK_REVS"
           echo "Dockerfile pins:  $DOCKER_REVS"

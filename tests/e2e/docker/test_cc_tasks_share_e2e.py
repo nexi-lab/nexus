@@ -224,3 +224,247 @@ class TestLocalConnectorThroughVFS:
             assert stat["result"]["found"], (
                 f"vfs_stat after vfs_write did not surface {relpath}: {stat}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Cross-node lazy-observe workflow
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def joined_cluster(topology: CcTasksTopology) -> dict:
+    """Run the runbook §3b offline `nexusd-cluster join` once per module.
+
+    Mirrors the federation-runbook suite's `joined_cluster` fixture
+    but targets the cc-tasks-share two-node setup.  The joiner can't
+    self-join (the static-only env-var matrix forbids
+    `NEXUS_FEDERATION_ZONES` on restart), so we:
+
+      1. Wait for founder to bootstrap sharedzone.
+      2. Stop the joiner (release the redb file lock).
+      3. Run `nexusd-cluster join` in a transient sidecar against
+         the joiner's data volume.
+      4. Start the joiner — entrypoint auto-detects restart mode
+         and the apply-cb replay path wires the DT_MOUNT entries.
+
+    The returned dict carries the join CLI stdout/stderr for
+    diagnostic asserts; tests that just need the joined cluster pass
+    `_=joined_cluster` to depend on it.
+    """
+    runbook_helpers.wait_healthy([topology.founder_grpc, topology.joiner_grpc])
+
+    # Confirm founder's sharedzone is leader-elected before joiner asks
+    # to join — otherwise JoinZone hits "not leader" and retries.
+    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
+
+    founder_node_id = runbook_helpers.fetch_node_id(topology.founder_container)
+
+    runbook_helpers.docker_stop(topology.joiner_container)
+    try:
+        join_proc = runbook_helpers.run_nexusd_cluster_join(
+            target_container=topology.joiner_container,
+            target_volume=f"{topology.joiner_container}-data",
+            founder_node_id=founder_node_id,
+            founder_addr=topology.founder_grpc,
+            zone_id="sharedzone",
+            local_path="/shared",
+            hostname="joiner",
+            cluster_image=os.environ.get(
+                "NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest"
+            ),
+            network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-net"),
+        )
+    finally:
+        runbook_helpers.docker_start(topology.joiner_container)
+
+    runbook_helpers.wait_healthy([topology.joiner_grpc])
+    # The cross-node workflow tests fan out via `peer_client.fetch`
+    # using `DistributedCoordinator::zone_peers(sharedzone)` — joiner
+    # needs to be a full member of sharedzone (ConfState containing
+    # founder) before the lookup returns a usable peer roster.
+    # Without this gate the first `vfs_read` after the fixture
+    # returns races joiner's post-restart raft catchup and surfaces
+    # `FileNotFound` against an empty peer list.  Mirrors the
+    # federation-runbook suite's wait_zone_ready usage in its own
+    # `joined_cluster` fixture.
+    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
+    runbook_helpers.wait_zone_ready(topology.joiner_grpc, "sharedzone")
+
+    # runbook_helpers uses subprocess with text=True, so stdout/stderr
+    # are already `str` — no decode needed.  Defaulting to "" preserves
+    # the dict-shape that callers can `assert "marker" in stdout` against
+    # without `is None` guards.
+    return {
+        "founder_node_id": founder_node_id,
+        "join_stdout": join_proc.stdout or "",
+        "join_stderr": join_proc.stderr or "",
+    }
+
+
+class TestCrossNodeLazyMaterialization:
+    """The real cc-tasks-share workflow — Claude Code writes its own
+    tasks to host fs, peer sees them via federation-routed reads.
+
+    This pins the lazy-observe substrate landed in nexus-vfs#46.  The
+    test is shaped as one long four-step workflow per the
+    integration-test-generator spec: each step has a *necessary* data
+    dependency on the prior step's output, no arbitrary calls.
+
+    Workflow:
+      1. CC on founder writes a task JSON directly to host fs (no
+         Nexus syscall).  Output: bytes physically at
+         `/host/tasks/<rel>` on founder; no Nexus metadata.
+      2. Joiner does its first `vfs_read` for the same path.  The
+         metastore miss + joiner's local backend miss should trigger
+         the new fan-out arm: ask founder via `peer_client.fetch`.
+         Output: the founder bytes return to the joiner caller.
+         Required by step 3: this is what fires `observe` on
+         founder's `BlobFetcher` and materialises metadata.
+      3. Wait for raft replication of the metadata back to joiner —
+         step 2's `observe` was the cause; this is the effect.
+         Output: `vfs_stat` on joiner reports `found=True` with
+         `last_writer_address = founder`.  Required by step 4: the
+         fast path needs this metadata to skip fan-out.
+      4. Joiner's second `vfs_read`.  Must succeed and return the
+         same bytes — but this time via the existing
+         `try_remote_fetch` path rather than the cold fan-out.  We
+         can't assert "no fan-out happened" without instrumentation,
+         but byte-equality + metadata presence + bounded time pins
+         the fast-path contract.
+    """
+
+    def test_founder_host_write_visible_on_joiner_via_lazy_observe(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        relpath = "/session-cross/1.json"
+        payload = b'{"task":"cross-node-lazy-observe","source":"founder"}'
+
+        # Step 1: CC on founder writes its task JSON directly to host fs.
+        # No Nexus syscall — no metadata, no last_writer_address.
+        cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, payload)
+
+        # Sanity: bytes really are on founder's host fs.  This pins
+        # the "no Nexus involvement" precondition that defines the
+        # workflow.
+        founder_host_bytes = cc_tasks_share_helpers.host_task_read(
+            topology.founder_container, relpath
+        )
+        assert founder_host_bytes == payload, (
+            "host-fs direct write to founder didn't land — workflow precondition failed"
+        )
+
+        founder_path = topology.founder_vfs_path(relpath)
+
+        # Step 2: joiner's first read — fan-out path.  Cold.  The
+        # substrate fans out via `DistributedCoordinator::zone_peers`
+        # → founder's `BlobFetcher::read` hits LocalConnector → bytes
+        # come back AND `observe_backend_content` proposes metadata.
+        first_read = runbook_helpers.vfs_read(
+            topology.joiner_grpc, founder_path, api_key=api_key, timeout=30
+        )
+        assert "error" not in first_read, (
+            f"joiner first vfs_read failed — fan-out broken. result={first_read}"
+        )
+        first_bytes = runbook_helpers.decode_content(first_read)
+        assert first_bytes == payload, (
+            f"joiner saw {first_bytes!r}, expected {payload!r} — fan-out returned wrong content"
+        )
+
+        # Step 3: wait for raft to replicate the metadata that
+        # founder's `observe` proposed.  This is the verifiable
+        # side-effect of step 2 — the contract says the peer-served
+        # ctx fires observe → metadata propose.  Without it, step 4
+        # would re-fan-out instead of taking the fast path.
+        runbook_helpers.wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=30,
+            probe_path=founder_path,
+        )
+        stat_after = runbook_helpers.vfs_stat(
+            topology.joiner_grpc, founder_path, api_key=api_key, timeout=10
+        )
+        assert "error" not in stat_after, f"vfs_stat after replication failed: {stat_after}"
+        stat_result = stat_after.get("result") or {}
+        assert stat_result.get("found"), (
+            f"joiner metadata not materialised after fan-out — observe never "
+            f"fired or raft never replicated. stat={stat_after}"
+        )
+        # last_writer_address is the routing-pointer SSOT for cross-node
+        # fetches.  After step 2, it must point at founder — that's the
+        # node whose `BlobFetcher` synthesised the peer-served ctx and
+        # called `observe_backend_content`.
+        last_writer = stat_result.get("lastWriterAddress") or ""
+        assert "founder" in last_writer, (
+            f"last_writer_address should point at founder, got {last_writer!r}. "
+            "Either observe ran on the wrong node or self_address wasn't wired."
+        )
+
+        # Step 4: second read — fast path via `try_remote_fetch` +
+        # `last_writer_address` routing.  Byte-equality pins the
+        # fast path serves the same content; the fact that we got a
+        # `found=True` metadata in step 3 means we'll skip fan-out.
+        second_read = runbook_helpers.vfs_read(
+            topology.joiner_grpc, founder_path, api_key=api_key, timeout=10
+        )
+        assert "error" not in second_read, (
+            f"joiner second vfs_read failed — fast path broken. result={second_read}"
+        )
+        second_bytes = runbook_helpers.decode_content(second_read)
+        assert second_bytes == payload, (
+            f"joiner second read got {second_bytes!r}, expected {payload!r} — "
+            "metadata-driven fetch returned wrong content"
+        )
+
+    def test_joiner_host_write_visible_on_founder_via_lazy_observe(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Symmetric workflow — joiner writes, founder reads.
+
+        Different path namespace (`/shared/cc-tasks/joiner/...`) so
+        the LocalConnector instances at each end never get confused
+        about who owns the bytes.  The substrate must work in both
+        directions identically; without this test the previous
+        could pass by accident (e.g. if founder were special-cased
+        as the leader in the fan-out path).
+        """
+        relpath = "/session-cross-rev/1.json"
+        payload = b'{"task":"cross-node-reverse","source":"joiner"}'
+
+        cc_tasks_share_helpers.host_task_write(topology.joiner_container, relpath, payload)
+
+        joiner_path = topology.joiner_vfs_path(relpath)
+
+        first_read = runbook_helpers.vfs_read(
+            topology.founder_grpc, joiner_path, api_key=api_key, timeout=30
+        )
+        assert "error" not in first_read, (
+            f"founder first vfs_read failed — reverse fan-out broken. result={first_read}"
+        )
+        assert runbook_helpers.decode_content(first_read) == payload
+
+        runbook_helpers.wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=30,
+            probe_path=joiner_path,
+        )
+        stat_after = runbook_helpers.vfs_stat(
+            topology.founder_grpc, joiner_path, api_key=api_key, timeout=10
+        )
+        last_writer = (stat_after.get("result") or {}).get("lastWriterAddress") or ""
+        assert "joiner" in last_writer, (
+            f"reverse direction: last_writer_address should point at joiner, got {last_writer!r}"
+        )
+
+        second_read = runbook_helpers.vfs_read(
+            topology.founder_grpc, joiner_path, api_key=api_key, timeout=10
+        )
+        assert "error" not in second_read
+        assert runbook_helpers.decode_content(second_read) == payload

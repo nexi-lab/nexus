@@ -108,7 +108,7 @@ ARG NEXUS_VFS_REV=67ac07f04e509d00eb462b984ef17883eb376211
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-full nexus-full && \
+    cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-full nexus-full && \
     cp /root/.cargo/bin/nexusd-full /build/nexusd-full
 
 # ---------- Copy real application source and reinstall local package ----------

@@ -88,7 +88,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # profile. It is symlinked to `nexus-cluster` below so the Python runtime spawns
 # it unchanged.
 #
-# REV is a build-arg, NOT a hardcoded edge. `cargo install --git` lives in a
+# REV is a build-arg, NOT a hardcoded edge. `cargo install --locked --git` lives in a
 # Docker RUN layer that caches by command string, so a bare `--branch main`
 # would FREEZE at the first-built binary forever — exactly how the stale,
 # pre-bridge-2 (#4262) cluster shipped (acked DT_MOUNT but never installed it,

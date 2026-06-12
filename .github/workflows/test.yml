@@ -178,7 +178,7 @@ jobs:
 
       # The nexus-cluster binary is required by NexusFS (KernelClient spawns
       # it as a subprocess). Binary SSOT is now nexus-vfs; install via
-      # cargo install from the git repo.
+      # cargo install --locked from the git repo.
       - name: Set up Rust toolchain
         if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -626,30 +626,44 @@ jobs:
         # the exact drift class behind #4343.
         run: |
           set -euo pipefail
-          # Any nexus-vfs cargo install — in Dockerfiles AND workflow
-          # files — must carry an explicit --rev. RUN/run blocks span
-          # backslash continuations, so join continuation lines per
-          # file before matching — a same-line grep misses
-          # `cargo install \ ... nexus-vfs \ ...` blocks whose --rev
-          # was dropped.
+          # Every nexus-vfs install — in Dockerfiles AND workflow
+          # files — must carry an explicit --rev AND --locked. RUN/run
+          # blocks span backslash continuations, so join continuation
+          # lines per file before matching — a same-line grep misses
+          # blocks whose flags were dropped. Without --rev the install
+          # tracks HEAD; without --locked it resolves transitive deps
+          # fresh at build time, so a new release of ANY dep (e.g.
+          # rcgen 0.14.8) can break every image overnight despite the
+          # rev pin.
           # URL kept in a variable so this scanner's own source lines
           # never contain the full match set (no self-flagging).
           VFS_GIT='--git https://github.com/nexi-lab/nexus-vfs'
           UNPINNED=""
+          UNLOCKED=""
           for f in Dockerfile dockerfiles/* .github/workflows/*.yml; do
             [ -f "$f" ] || continue
-            BAD=$(sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' "$f" \
+            INSTALLS=$(sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' "$f" \
               | grep -v '^[[:space:]]*#' \
               | grep 'cargo install' \
-              | grep -F -- "$VFS_GIT" \
-              | grep -v '\-\-rev' || true)
+              | grep -F -- "$VFS_GIT" || true)
+            [ -n "$INSTALLS" ] || continue
+            BAD=$(echo "$INSTALLS" | grep -v '\-\-rev' || true)
+            BADLOCK=$(echo "$INSTALLS" | grep -v '\-\-locked' || true)
             if [ -n "$BAD" ]; then
               UNPINNED="${UNPINNED}${f}: ${BAD}"$'\n'
             fi
+            if [ -n "$BADLOCK" ]; then
+              UNLOCKED="${UNLOCKED}${f}: ${BADLOCK}"$'\n'
+            fi
           done
           if [ -n "$UNPINNED" ]; then
-            echo "::error::unpinned nexus-vfs cargo install in Dockerfiles:"
+            echo "::error::nexus-vfs install without --rev (tracks HEAD):"
             echo "$UNPINNED"
+            exit 1
+          fi
+          if [ -n "$UNLOCKED" ]; then
+            echo "::error::nexus-vfs install without --locked (fresh dep resolution drifts):"
+            echo "$UNLOCKED"
             exit 1
           fi
           CARGO_REVS=$(grep 'nexus-vfs' Cargo.toml | grep -oE 'rev = "[a-f0-9]{40}"' | grep -oE '[a-f0-9]{40}' | sort -u)

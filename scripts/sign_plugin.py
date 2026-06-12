@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
@@ -106,7 +107,14 @@ def main(argv: list[str] | None = None) -> int:
     privkey = load_privkey_from_env()
     for plugin in args.plugins:
         sig_path = sign_one(privkey, plugin)
-        sha = base64.b64encode(privkey.public_key().public_bytes_raw()).decode()
+        # public_bytes(Raw, Raw) rather than public_bytes_raw(): the
+        # latter needs cryptography>=40, which Debian bookworm's
+        # python3-cryptography (38.x, used in plugin image builds)
+        # predates. Identical output.
+        raw_pub = privkey.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        sha = base64.b64encode(raw_pub).decode()
         print(f"signed {plugin} -> {sig_path} (pubkey {sha[:8]}...)")
     return 0
 

@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 # (_PRELOAD_TIMEOUT_SECONDS in bricks/search/daemon.py): boot must not block
 # indefinitely on a perf optimization.
 _DEFAULT_INIT_TIMEOUT_SECONDS = 30.0
+_RESOURCE_MAP_SYNC_CHUNK_SIZE = 500
 
 
 class TigerCacheManager:
@@ -222,29 +224,44 @@ class TigerCacheManager:
         try:
             count = 0
             log_interval = 1000
+            pending: list[tuple[str, str]] = []
 
             from nexus.contracts.types import OperationContext
 
             sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
-            for entry_path in self._nexus_fs.sys_readdir(
-                "/", recursive=True, details=False, context=sys_ctx
-            ):
-                if self._sync_stop.is_set():
-                    logger.info(
-                        "Tiger resource map sync stopped after %d resources (shutdown)",
-                        count,
-                    )
-                    return count
-                if not entry_path:
-                    continue
-                resource_map.get_or_create_int_id(
-                    resource_type="file",
-                    resource_id=str(entry_path),
-                )
-                count += 1
+            with self._resource_map_connection(resource_map) as conn:
+                for entry_path in self._nexus_fs.sys_readdir(
+                    "/", recursive=True, details=False, context=sys_ctx
+                ):
+                    if self._sync_stop.is_set():
+                        logger.info(
+                            "Tiger resource map sync stopped after %d resources (shutdown)",
+                            count,
+                        )
+                        return count
+                    if not entry_path:
+                        continue
+                    pending.append(("file", str(entry_path)))
+                    if len(pending) < _RESOURCE_MAP_SYNC_CHUNK_SIZE:
+                        continue
 
-                if count % log_interval == 0:
-                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
+                    self._sync_resource_map_batch(resource_map, pending, conn)
+                    count += len(pending)
+                    pending.clear()
+
+                    if count % log_interval == 0:
+                        logger.debug(f"Tiger resource map sync progress: {count} resources...")
+
+                    if self._sync_stop.is_set():
+                        logger.info(
+                            "Tiger resource map sync stopped after %d resources (shutdown)",
+                            count,
+                        )
+                        return count
+
+                if pending and not self._sync_stop.is_set():
+                    self._sync_resource_map_batch(resource_map, pending, conn)
+                    count += len(pending)
 
             logger.info(f"Tiger resource map sync complete: {count} resources")
             return count
@@ -252,6 +269,39 @@ class TigerCacheManager:
         except Exception as e:
             logger.warning(f"Failed to sync resource map from metadata: {e}")
             return 0
+
+    def _resource_map_connection(self, resource_map: Any) -> Any:
+        connection_factory = getattr(resource_map, "connection", None)
+        if callable(connection_factory):
+            return connection_factory()
+        engine = getattr(resource_map, "_engine", None)
+        if engine is not None:
+            return engine.connect()
+        return nullcontext(None)
+
+    def _sync_resource_map_batch(
+        self,
+        resource_map: Any,
+        resources: list[tuple[str, str]],
+        conn: Any,
+    ) -> None:
+        bulk_get_or_create = getattr(resource_map, "bulk_get_or_create_int_ids", None)
+        if callable(bulk_get_or_create):
+            bulk_get_or_create(resources, conn=conn)
+            return
+
+        for resource_type, resource_id in resources:
+            try:
+                resource_map.get_or_create_int_id(
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    conn=conn,
+                )
+            except TypeError:
+                resource_map.get_or_create_int_id(
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                )
 
     def start_worker(self) -> None:
         """Start background thread for Tiger Cache queue processing.

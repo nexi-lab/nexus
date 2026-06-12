@@ -5,7 +5,7 @@ Python-only runs and "kernel data directory" post-KernelClient. The
 resolver must keep both callers working: directories pass through as
 ``NEXUS_DATA_DIR`` (the kernel derives ``<data_dir>/metastore.redb``);
 explicit ``.redb`` files are forwarded verbatim as
-``NEXUS_METASTORE_PATH`` so a preexisting namespace file is reopened,
+``NEXUS_KERNEL_METASTORE_PATH`` so a preexisting namespace file is reopened,
 not silently abandoned to a sidecar directory.
 """
 
@@ -84,17 +84,22 @@ def test_suffixless_non_redb_file_keeps_sidecar_fallback(tmp_path: Path) -> None
 def test_ambient_metastore_env_dropped_when_client_manages_storage(tmp_path: Path) -> None:
     # Two clients with distinct metadata_paths must not be silently
     # collapsed onto one shared namespace file by ambient env.
-    env = {"NEXUS_METASTORE_PATH": "/somewhere/shared.redb"}
+    env = {
+        "NEXUS_KERNEL_METASTORE_PATH": "/somewhere/shared.redb",
+        "NEXUS_METASTORE_PATH": "/somewhere/legacy.redb",
+    }
     _apply_storage_env(env, str(tmp_path))
     assert env["NEXUS_DATA_DIR"] == str(tmp_path)
+    assert "NEXUS_KERNEL_METASTORE_PATH" not in env
     assert "NEXUS_METASTORE_PATH" not in env
 
 
 def test_explicit_redb_metadata_path_wins_over_ambient(tmp_path: Path) -> None:
     redb = tmp_path / "namespace.redb"
-    env = {"NEXUS_METASTORE_PATH": "/somewhere/shared.redb"}
+    env = {"NEXUS_KERNEL_METASTORE_PATH": "/somewhere/shared.redb"}
     _apply_storage_env(env, str(redb))
-    assert env["NEXUS_METASTORE_PATH"] == str(redb)
+    assert env["NEXUS_KERNEL_METASTORE_PATH"] == str(redb)
+    assert "NEXUS_METASTORE_PATH" not in env
     assert env["NEXUS_DATA_DIR"] == str(redb) + ".kernel"
 
 
@@ -122,7 +127,7 @@ def test_explicit_metastore_file_forwarded_verbatim_suffixless(tmp_path: Path) -
     target = tmp_path / "metastore"
     env: dict[str, str] = {}
     _apply_storage_env(env, None, str(target))
-    assert env["NEXUS_METASTORE_PATH"] == str(target)
+    assert env["NEXUS_KERNEL_METASTORE_PATH"] == str(target)
     assert env["NEXUS_DATA_DIR"] == str(target) + ".kernel"
 
 
@@ -132,7 +137,7 @@ def test_explicit_metastore_file_with_separate_data_dir(tmp_path: Path) -> None:
     ns = tmp_path / "namespace"
     env: dict[str, str] = {}
     _apply_storage_env(env, str(data), str(ns))
-    assert env["NEXUS_METASTORE_PATH"] == str(ns)
+    assert env["NEXUS_KERNEL_METASTORE_PATH"] == str(ns)
     assert env["NEXUS_DATA_DIR"] == str(data)
 
 
@@ -143,25 +148,39 @@ def test_inherited_env_naming_same_path_is_explicit_intent(tmp_path: Path) -> No
     target = str(tmp_path / "ns")
     env = {"NEXUS_METASTORE_PATH": target}
     _apply_storage_env(env, target)
-    assert env["NEXUS_METASTORE_PATH"] == target
+    assert env["NEXUS_KERNEL_METASTORE_PATH"] == target
+    assert "NEXUS_METASTORE_PATH" not in env
+    assert env["NEXUS_DATA_DIR"] == target + ".kernel"
+
+
+def test_inherited_kernel_env_same_path_is_explicit_intent(tmp_path: Path) -> None:
+    # Same rule for the kernel-namespaced name operators use directly.
+    target = str(tmp_path / "ns")
+    env = {"NEXUS_KERNEL_METASTORE_PATH": target}
+    _apply_storage_env(env, target)
+    assert env["NEXUS_KERNEL_METASTORE_PATH"] == target
     assert env["NEXUS_DATA_DIR"] == target + ".kernel"
 
 
 def test_inherited_env_same_path_existing_dir_stays_data_dir(tmp_path: Path) -> None:
     # Deployed volumes have a directory at the configured path; a
     # redundant env naming it must not flip it to a (failing) file open.
-    env = {"NEXUS_METASTORE_PATH": str(tmp_path)}
+    env = {"NEXUS_KERNEL_METASTORE_PATH": str(tmp_path)}
     _apply_storage_env(env, str(tmp_path))
     assert env["NEXUS_DATA_DIR"] == str(tmp_path)
-    assert "NEXUS_METASTORE_PATH" not in env
+    assert "NEXUS_KERNEL_METASTORE_PATH" not in env
 
 
 def test_ephemeral_strips_ambient_durable_env(tmp_path: Path) -> None:
     # ":memory:" kernels must never reopen an ambient shared namespace
     # nor default to a durable cwd-relative data dir.
-    env = {"NEXUS_METASTORE_PATH": "/shared/namespace.redb"}
+    env = {
+        "NEXUS_KERNEL_METASTORE_PATH": "/shared/namespace.redb",
+        "NEXUS_METASTORE_PATH": "/shared/legacy.redb",
+    }
     _apply_storage_env(env, None, None, ephemeral_dir=str(tmp_path))
     assert env["NEXUS_DATA_DIR"] == str(tmp_path)
+    assert "NEXUS_KERNEL_METASTORE_PATH" not in env
     assert "NEXUS_METASTORE_PATH" not in env
 
 
@@ -184,7 +203,7 @@ def test_set_metastore_path_suffixless_is_explicit_file_intent(tmp_path: Path) -
     client.set_metastore_path(target)
     env: dict[str, str] = {}
     _apply_storage_env(env, client._metadata_path, client._metastore_file)
-    assert env["NEXUS_METASTORE_PATH"] == target
+    assert env["NEXUS_KERNEL_METASTORE_PATH"] == target
     assert env["NEXUS_DATA_DIR"] == target + ".kernel"
 
 
@@ -197,7 +216,7 @@ def test_set_metastore_path_existing_dir_routes_to_data_dir(tmp_path: Path) -> N
     env: dict[str, str] = {}
     _apply_storage_env(env, client._metadata_path, client._metastore_file)
     assert env["NEXUS_DATA_DIR"] == str(tmp_path)
-    assert "NEXUS_METASTORE_PATH" not in env
+    assert "NEXUS_KERNEL_METASTORE_PATH" not in env
 
 
 def test_unreadable_existing_file_fails_closed(tmp_path: Path) -> None:

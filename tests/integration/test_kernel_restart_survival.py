@@ -51,11 +51,12 @@ def _open_kernel(data_dir: Path) -> KernelClient:
 
 
 def test_namespace_survives_kernel_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # An ambient NEXUS_METASTORE_PATH would redirect both kernels to a
+    # An ambient metastore override would redirect both kernels to a
     # shared fixed-path metastore, defeating tmp_path isolation — a
     # previous run's registration could false-pass the constant probe
     # path. The kernel must exercise its <data_dir>/metastore.redb
     # default here.
+    monkeypatch.delenv("NEXUS_KERNEL_METASTORE_PATH", raising=False)
     monkeypatch.delenv("NEXUS_METASTORE_PATH", raising=False)
     data_dir = tmp_path / "data"
 
@@ -94,10 +95,11 @@ def test_explicit_redb_metastore_path_survives_restart(
     """An explicit ``.redb`` metadata_path is the metastore file itself.
 
     Legacy callers pass the metastore as a file path; the spawn env must
-    forward it verbatim (``NEXUS_METASTORE_PATH``) so the kernel reopens
+    forward it verbatim (``NEXUS_KERNEL_METASTORE_PATH``) so the kernel reopens
     that exact namespace across restarts instead of demoting the path to
     a data directory and booting a fresh namespace beside it.
     """
+    monkeypatch.delenv("NEXUS_KERNEL_METASTORE_PATH", raising=False)
     monkeypatch.delenv("NEXUS_METASTORE_PATH", raising=False)
     redb_path = tmp_path / "namespace.redb"
 

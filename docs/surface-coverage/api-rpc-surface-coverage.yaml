@@ -445,7 +445,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.agent_registry
-      source: src/nexus/remote/kernel_client.py:1103
+      source: src/nexus/remote/kernel_client.py:1125
   profiles:
     lite: supported
     sandbox: supported
@@ -1862,7 +1862,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_pipes
-      source: src/nexus/remote/kernel_client.py:982
+      source: src/nexus/remote/kernel_client.py:1004
   profiles:
     lite: supported
     sandbox: supported
@@ -1879,7 +1879,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_streams
-      source: src/nexus/remote/kernel_client.py:1035
+      source: src/nexus/remote/kernel_client.py:1057
   profiles:
     lite: supported
     sandbox: supported
@@ -1896,7 +1896,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_pipe
-      source: src/nexus/remote/kernel_client.py:972
+      source: src/nexus/remote/kernel_client.py:994
   profiles:
     lite: supported
     sandbox: supported
@@ -1913,7 +1913,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_stream
-      source: src/nexus/remote/kernel_client.py:1026
+      source: src/nexus/remote/kernel_client.py:1048
   profiles:
     lite: supported
     sandbox: supported
@@ -2131,7 +2131,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.count_by_state
-      source: src/nexus/remote/kernel_client.py:1579
+      source: src/nexus/remote/kernel_client.py:1601
   profiles:
     lite: supported
     sandbox: supported
@@ -2165,7 +2165,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_pipe
-      source: src/nexus/remote/kernel_client.py:964
+      source: src/nexus/remote/kernel_client.py:986
   profiles:
     lite: supported
     sandbox: supported
@@ -2199,7 +2199,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_stream
-      source: src/nexus/remote/kernel_client.py:989
+      source: src/nexus/remote/kernel_client.py:1011
   profiles:
     lite: supported
     sandbox: supported
@@ -2512,7 +2512,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_pipe
-      source: src/nexus/remote/kernel_client.py:968
+      source: src/nexus/remote/kernel_client.py:990
   profiles:
     lite: supported
     sandbox: supported
@@ -2529,7 +2529,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_stream
-      source: src/nexus/remote/kernel_client.py:1031
+      source: src/nexus/remote/kernel_client.py:1053
   profiles:
     lite: supported
     sandbox: supported
@@ -2635,7 +2635,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_post_hooks
-      source: src/nexus/remote/kernel_client.py:718
+      source: src/nexus/remote/kernel_client.py:740
   profiles:
     lite: supported
     sandbox: supported
@@ -2652,7 +2652,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks
-      source: src/nexus/remote/kernel_client.py:725
+      source: src/nexus/remote/kernel_client.py:747
   profiles:
     lite: supported
     sandbox: supported
@@ -2669,7 +2669,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks_batch_stat
-      source: src/nexus/remote/kernel_client.py:753
+      source: src/nexus/remote/kernel_client.py:775
   profiles:
     lite: supported
     sandbox: supported
@@ -2798,7 +2798,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1335
     sdk:
       name: KernelClient.exists_batch
-      source: src/nexus/remote/kernel_client.py:779
+      source: src/nexus/remote/kernel_client.py:801
   profiles:
     lite: supported
     sandbox: supported
@@ -3884,7 +3884,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.get
-      source: src/nexus/remote/kernel_client.py:1526
+      source: src/nexus/remote/kernel_client.py:1548
   profiles:
     lite: supported
     sandbox: supported
@@ -3901,7 +3901,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.heartbeat
-      source: src/nexus/remote/kernel_client.py:1552
+      source: src/nexus/remote/kernel_client.py:1574
   profiles:
     lite: supported
     sandbox: supported
@@ -3952,7 +3952,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.open
-      source: src/nexus/remote/kernel_client.py:280
+      source: src/nexus/remote/kernel_client.py:302
   profiles:
     lite: supported
     sandbox: supported
@@ -3986,7 +3986,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:1487
+      source: src/nexus/remote/kernel_client.py:1509
   profiles:
     lite: supported
     sandbox: supported
@@ -4054,7 +4054,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.signal
-      source: src/nexus/remote/kernel_client.py:1529
+      source: src/nexus/remote/kernel_client.py:1551
   profiles:
     lite: supported
     sandbox: supported
@@ -4139,7 +4139,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:1520
+      source: src/nexus/remote/kernel_client.py:1542
   profiles:
     lite: supported
     sandbox: supported
@@ -4256,7 +4256,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:627
     sdk:
       name: KernelClient.get_content_id
-      source: src/nexus/remote/kernel_client.py:770
+      source: src/nexus/remote/kernel_client.py:792
   profiles:
     lite: supported
     sandbox: supported
@@ -4324,7 +4324,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_mount_points
-      source: src/nexus/remote/kernel_client.py:784
+      source: src/nexus/remote/kernel_client.py:806
   profiles:
     lite: supported
     sandbox: supported
@@ -4446,7 +4446,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:268
     sdk:
       name: KernelClient.get_top_level_mounts
-      source: src/nexus/remote/kernel_client.py:791
+      source: src/nexus/remote/kernel_client.py:813
   profiles:
     lite: supported
     sandbox: supported
@@ -4481,7 +4481,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr
-      source: src/nexus/remote/kernel_client.py:929
+      source: src/nexus/remote/kernel_client.py:951
   profiles:
     lite: supported
     sandbox: supported
@@ -4498,7 +4498,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr_bulk
-      source: src/nexus/remote/kernel_client.py:950
+      source: src/nexus/remote/kernel_client.py:972
   profiles:
     lite: supported
     sandbox: supported
@@ -4703,7 +4703,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_pipe
-      source: src/nexus/remote/kernel_client.py:977
+      source: src/nexus/remote/kernel_client.py:999
   profiles:
     lite: supported
     sandbox: supported
@@ -4720,7 +4720,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_stream
-      source: src/nexus/remote/kernel_client.py:993
+      source: src/nexus/remote/kernel_client.py:1015
   profiles:
     lite: supported
     sandbox: supported
@@ -4789,7 +4789,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.hook_count
-      source: src/nexus/remote/kernel_client.py:715
+      source: src/nexus/remote/kernel_client.py:737
   profiles:
     lite: supported
     sandbox: supported
@@ -4927,7 +4927,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.is_directory
-      source: src/nexus/remote/kernel_client.py:761
+      source: src/nexus/remote/kernel_client.py:783
   profiles:
     lite: supported
     sandbox: supported
@@ -5066,7 +5066,7 @@ operations:
       source: src/nexus/services/agents/agent_rpc_service.py:584
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:1555
+      source: src/nexus/remote/kernel_client.py:1577
   profiles:
     lite: supported
     sandbox: supported
@@ -5084,7 +5084,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_by_priority
-      source: src/nexus/remote/kernel_client.py:1583
+      source: src/nexus/remote/kernel_client.py:1605
   profiles:
     lite: supported
     sandbox: supported
@@ -5229,7 +5229,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_processes
-      source: src/nexus/remote/kernel_client.py:1558
+      source: src/nexus/remote/kernel_client.py:1580
   profiles:
     lite: supported
     sandbox: supported
@@ -5660,7 +5660,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.metastore_list_paginated
-      source: src/nexus/remote/kernel_client.py:799
+      source: src/nexus/remote/kernel_client.py:821
   profiles:
     lite: supported
     sandbox: supported
@@ -6833,7 +6833,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1613
     sdk:
       name: KernelClient.read_batch
-      source: src/nexus/remote/kernel_client.py:613
+      source: src/nexus/remote/kernel_client.py:635
   profiles:
     lite: supported
     sandbox: supported
@@ -7164,7 +7164,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register_external
-      source: src/nexus/remote/kernel_client.py:1490
+      source: src/nexus/remote/kernel_client.py:1512
   profiles:
     lite: supported
     sandbox: supported
@@ -7181,7 +7181,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_hook
-      source: src/nexus/remote/kernel_client.py:732
+      source: src/nexus/remote/kernel_client.py:754
   profiles:
     lite: supported
     sandbox: supported
@@ -7215,7 +7215,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_native_hook
-      source: src/nexus/remote/kernel_client.py:1070
+      source: src/nexus/remote/kernel_client.py:1092
   profiles:
     lite: supported
     sandbox: supported
@@ -8079,7 +8079,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_close_all
-      source: src/nexus/remote/kernel_client.py:707
+      source: src/nexus/remote/kernel_client.py:729
   profiles:
     lite: supported
     sandbox: supported
@@ -8096,7 +8096,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_enlist
-      source: src/nexus/remote/kernel_client.py:694
+      source: src/nexus/remote/kernel_client.py:716
   profiles:
     lite: supported
     sandbox: supported
@@ -8113,7 +8113,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_lookup
-      source: src/nexus/remote/kernel_client.py:682
+      source: src/nexus/remote/kernel_client.py:704
   profiles:
     lite: supported
     sandbox: supported
@@ -8130,7 +8130,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_mark_bootstrapped
-      source: src/nexus/remote/kernel_client.py:679
+      source: src/nexus/remote/kernel_client.py:701
   profiles:
     lite: supported
     sandbox: supported
@@ -8147,7 +8147,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_start_all
-      source: src/nexus/remote/kernel_client.py:676
+      source: src/nexus/remote/kernel_client.py:698
   profiles:
     lite: supported
     sandbox: supported
@@ -8164,7 +8164,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_stop_all
-      source: src/nexus/remote/kernel_client.py:704
+      source: src/nexus/remote/kernel_client.py:726
   profiles:
     lite: supported
     sandbox: supported
@@ -8181,7 +8181,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_swap
-      source: src/nexus/remote/kernel_client.py:686
+      source: src/nexus/remote/kernel_client.py:708
   profiles:
     lite: supported
     sandbox: supported
@@ -8198,7 +8198,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_unregister
-      source: src/nexus/remote/kernel_client.py:910
+      source: src/nexus/remote/kernel_client.py:932
   profiles:
     lite: supported
     sandbox: supported
@@ -8215,7 +8215,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_hook_count
-      source: src/nexus/remote/kernel_client.py:749
+      source: src/nexus/remote/kernel_client.py:771
   profiles:
     lite: supported
     sandbox: supported
@@ -8232,7 +8232,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_metastore_path
-      source: src/nexus/remote/kernel_client.py:1042
+      source: src/nexus/remote/kernel_client.py:1064
   profiles:
     lite: supported
     sandbox: supported
@@ -8249,7 +8249,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_permission_provider
-      source: src/nexus/remote/kernel_client.py:1074
+      source: src/nexus/remote/kernel_client.py:1096
   profiles:
     lite: supported
     sandbox: supported
@@ -8283,7 +8283,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_vfs_lock
-      source: src/nexus/remote/kernel_client.py:1066
+      source: src/nexus/remote/kernel_client.py:1088
   profiles:
     lite: supported
     sandbox: supported
@@ -8300,7 +8300,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_xattr
-      source: src/nexus/remote/kernel_client.py:942
+      source: src/nexus/remote/kernel_client.py:964
   profiles:
     lite: supported
     sandbox: supported
@@ -8560,7 +8560,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stat_batch
-      source: src/nexus/remote/kernel_client.py:647
+      source: src/nexus/remote/kernel_client.py:669
   profiles:
     lite: supported
     sandbox: supported
@@ -8594,7 +8594,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_collect_all
-      source: src/nexus/remote/kernel_client.py:1022
+      source: src/nexus/remote/kernel_client.py:1044
   profiles:
     lite: supported
     sandbox: supported
@@ -8628,7 +8628,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at
-      source: src/nexus/remote/kernel_client.py:1010
+      source: src/nexus/remote/kernel_client.py:1032
   profiles:
     lite: supported
     sandbox: supported
@@ -8645,7 +8645,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at_blocking
-      source: src/nexus/remote/kernel_client.py:997
+      source: src/nexus/remote/kernel_client.py:1019
   profiles:
     lite: supported
     sandbox: supported
@@ -8662,7 +8662,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_write_nowait
-      source: src/nexus/remote/kernel_client.py:1005
+      source: src/nexus/remote/kernel_client.py:1027
   profiles:
     lite: supported
     sandbox: supported
@@ -8747,7 +8747,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_copy
-      source: src/nexus/remote/kernel_client.py:548
+      source: src/nexus/remote/kernel_client.py:570
   profiles:
     lite: supported
     sandbox: supported
@@ -8764,7 +8764,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_lock
-      source: src/nexus/remote/kernel_client.py:584
+      source: src/nexus/remote/kernel_client.py:606
   profiles:
     lite: supported
     sandbox: supported
@@ -8781,7 +8781,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_mkdir
-      source: src/nexus/remote/kernel_client.py:517
+      source: src/nexus/remote/kernel_client.py:539
   profiles:
     lite: supported
     sandbox: supported
@@ -8798,7 +8798,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read
-      source: src/nexus/remote/kernel_client.py:414
+      source: src/nexus/remote/kernel_client.py:436
   profiles:
     lite: supported
     sandbox: supported
@@ -8815,7 +8815,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read_raw
-      source: src/nexus/remote/kernel_client.py:446
+      source: src/nexus/remote/kernel_client.py:468
   profiles:
     lite: supported
     sandbox: supported
@@ -8832,7 +8832,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_readdir
-      source: src/nexus/remote/kernel_client.py:568
+      source: src/nexus/remote/kernel_client.py:590
   profiles:
     lite: supported
     sandbox: supported
@@ -8849,7 +8849,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_rename
-      source: src/nexus/remote/kernel_client.py:525
+      source: src/nexus/remote/kernel_client.py:547
   profiles:
     lite: supported
     sandbox: supported
@@ -8866,7 +8866,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_setattr
-      source: src/nexus/remote/kernel_client.py:484
+      source: src/nexus/remote/kernel_client.py:506
   profiles:
     lite: supported
     sandbox: supported
@@ -8883,7 +8883,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_stat
-      source: src/nexus/remote/kernel_client.py:467
+      source: src/nexus/remote/kernel_client.py:489
   profiles:
     lite: supported
     sandbox: supported
@@ -8900,7 +8900,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlink
-      source: src/nexus/remote/kernel_client.py:503
+      source: src/nexus/remote/kernel_client.py:525
   profiles:
     lite: supported
     sandbox: supported
@@ -8917,7 +8917,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlock
-      source: src/nexus/remote/kernel_client.py:607
+      source: src/nexus/remote/kernel_client.py:629
   profiles:
     lite: supported
     sandbox: supported
@@ -8937,7 +8937,7 @@ operations:
       source: src/nexus/core/nexus_fs_watch.py:26
     sdk:
       name: KernelClient.sys_watch
-      source: src/nexus/remote/kernel_client.py:662
+      source: src/nexus/remote/kernel_client.py:684
   profiles:
     lite: supported
     sandbox: supported
@@ -8954,7 +8954,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_write
-      source: src/nexus/remote/kernel_client.py:451
+      source: src/nexus/remote/kernel_client.py:473
   profiles:
     lite: supported
     sandbox: supported
@@ -9039,7 +9039,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_lookup
-      source: src/nexus/remote/kernel_client.py:921
+      source: src/nexus/remote/kernel_client.py:943
   profiles:
     lite: supported
     sandbox: supported
@@ -9056,7 +9056,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_register
-      source: src/nexus/remote/kernel_client.py:918
+      source: src/nexus/remote/kernel_client.py:940
   profiles:
     lite: supported
     sandbox: supported
@@ -9073,7 +9073,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_unregister
-      source: src/nexus/remote/kernel_client.py:924
+      source: src/nexus/remote/kernel_client.py:946
   profiles:
     lite: supported
     sandbox: supported
@@ -9449,7 +9449,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister_external
-      source: src/nexus/remote/kernel_client.py:1523
+      source: src/nexus/remote/kernel_client.py:1545
   profiles:
     lite: supported
     sandbox: supported
@@ -9466,7 +9466,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.unregister_hook
-      source: src/nexus/remote/kernel_client.py:737
+      source: src/nexus/remote/kernel_client.py:759
   profiles:
     lite: supported
     sandbox: supported
@@ -9538,7 +9538,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.update_state
-      source: src/nexus/remote/kernel_client.py:1541
+      source: src/nexus/remote/kernel_client.py:1563
   profiles:
     lite: supported
     sandbox: supported
@@ -9778,7 +9778,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1451
     sdk:
       name: KernelClient.write_batch
-      source: src/nexus/remote/kernel_client.py:1078
+      source: src/nexus/remote/kernel_client.py:1100
   profiles:
     lite: supported
     sandbox: supported

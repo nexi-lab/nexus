@@ -13,6 +13,10 @@ Env contract:
   VAULT_ENDPOINT   gRPC endpoint of the cluster running vault.dylib
                    (e.g. "vault-signing.internal:2126").
   VAULT_TOKEN      Bearer token for the vault plugin's auth surface.
+  VAULT_INSECURE   When "1", use grpc.insecure_channel instead of TLS.
+                   Required for the ephemeral-vault-on-runner path (no TLS,
+                   localhost only) and the kernel-team local-provisioning
+                   workflow. Unset / "0" in any prod / network path.
 
 CLI:
   vault_get_signing_key.py <namespace>/<key>
@@ -37,6 +41,7 @@ from pathlib import Path
 
 ENDPOINT_ENV = "VAULT_ENDPOINT"
 TOKEN_ENV = "VAULT_TOKEN"
+INSECURE_ENV = "VAULT_INSECURE"
 
 # Repo-relative path to the secrets proto SSOT.
 PROTO_REL = Path("rust/services/proto/nexus/secrets/v1/secrets.proto")
@@ -100,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     namespace, key = _parse_key(argv[0])
     endpoint = _require_env(ENDPOINT_ENV)
     token = _require_env(TOKEN_ENV)
+    insecure = os.environ.get(INSECURE_ENV, "").strip() == "1"
 
     with tempfile.TemporaryDirectory(prefix="vault-get-signing-key-") as td:
         out_dir = Path(td)
@@ -110,7 +116,10 @@ def main(argv: list[str] | None = None) -> int:
 
         from nexus.secrets.v1 import secrets_pb2, secrets_pb2_grpc
 
-        channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials())
+        if insecure:
+            channel = grpc.insecure_channel(endpoint)
+        else:
+            channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials())
         stub = secrets_pb2_grpc.GenericSecretsServiceStub(channel)
         req = secrets_pb2.GetSecretRequest(namespace=namespace, key=key)
         metadata = (("authorization", f"Bearer {token}"),)

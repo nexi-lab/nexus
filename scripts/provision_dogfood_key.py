@@ -125,6 +125,15 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Optional description recorded with the vault secret metadata.",
     )
+    p.add_argument(
+        "--insecure",
+        action="store_true",
+        help=(
+            "Use grpc.insecure_channel instead of TLS. Required for the kernel-team "
+            "local-provisioning workflow against an ephemeral localhost vault "
+            "(--no-tls cluster). Never use against a network endpoint."
+        ),
+    )
     args = p.parse_args(argv)
 
     from cryptography.exceptions import InvalidSignature
@@ -157,7 +166,10 @@ def main(argv: list[str] | None = None) -> int:
 
         from nexus.secrets.v1 import secrets_pb2, secrets_pb2_grpc
 
-        channel = grpc.secure_channel(args.vault_endpoint, grpc.ssl_channel_credentials())
+        if args.insecure:
+            channel = grpc.insecure_channel(args.vault_endpoint)
+        else:
+            channel = grpc.secure_channel(args.vault_endpoint, grpc.ssl_channel_credentials())
         stub = secrets_pb2_grpc.GenericSecretsServiceStub(channel)
         metadata = (("authorization", f"Bearer {args.vault_token}"),)
 

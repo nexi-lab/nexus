@@ -91,11 +91,10 @@ set of pattern IDs that could match it. Example for
 
 ```text
 /workspaces/ws1/a.md
+/workspaces/ws1/a.md/**
 /workspaces/ws1/*
 /workspaces/ws1/**
-/workspaces/*
 /workspaces/**
-/*
 /**
 ```
 

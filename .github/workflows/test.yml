@@ -187,7 +187,7 @@ jobs:
       - name: Install nexus-cluster from nexus-vfs
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
-          cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
@@ -603,7 +603,7 @@ jobs:
 
       - name: Install nexusd-cluster from nexus-vfs
         if: needs.detect-changes.outputs.code_changed == 'true'
-        run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+        run: cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'

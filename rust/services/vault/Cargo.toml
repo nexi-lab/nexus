@@ -10,6 +10,10 @@ publish = false
 name = "nexus_vault"
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "nexusd-vault"
+path = "src/bin/nexusd_vault.rs"
+
 [dependencies]
 # Plugin ABI — stable C ABI contract for dylib plugins.
 nexus-plugin-abi = { workspace = true }
@@ -31,9 +35,12 @@ prost = { workspace = true }
 # Lightweight runtime for block_on — the gRPC trait methods are async
 # but the plugin dispatch is sync (C ABI). current_thread suffices
 # since all vault I/O is actually synchronous under the hood.
-tokio = { version = "1", features = ["rt"] }
+# The binary uses multi_thread + macros for #[tokio::main].
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal"] }
 
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 [dev-dependencies]
 tempfile = "3"

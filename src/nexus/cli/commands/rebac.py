@@ -984,7 +984,7 @@ async def _async_rebac_check_batch_cmd(
         )
         rebac_svc = nx.service("rebac")
         assert rebac_svc is not None, "ReBAC service not available"
-        results = rebac_svc.rebac_check_batch_sync(checks)
+        results = rebac_svc.rebac_check_batch_sync(checks=checks)
         nx.close()
 
         # Output results

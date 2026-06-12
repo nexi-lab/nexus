@@ -63,6 +63,25 @@ def _coerce_subject_tuple_optional(value: Any, name: str) -> tuple[str, str] | N
     return _coerce_subject_tuple(value, name)
 
 
+def _coerce_check_tuple(
+    value: Any,
+    index: int,
+) -> tuple[tuple[str, str], str, tuple[str, str]]:
+    if isinstance(value, list):
+        value = tuple(value)
+    if not isinstance(value, tuple) or len(value) != 3:
+        raise ValueError(f"Check {index} must be (subject, permission, object) tuple")
+
+    subject, permission, obj = value
+    if not isinstance(permission, str):
+        raise ValueError(f"Check {index}: permission must be a string, got {permission}")
+    return (
+        _coerce_subject_tuple(subject, f"Check {index}: subject"),
+        permission,
+        _coerce_object_tuple(obj, f"Check {index}: object"),
+    )
+
+
 class ReBACService(ReBACShareMixin):
     """Independent ReBAC service extracted from NexusFS.
 
@@ -666,19 +685,10 @@ class ReBACService(ReBACShareMixin):
                 (("user", "alice"), "owner", ("file", "/project")),
             ])
         """
+        normalized_checks = [_coerce_check_tuple(check, i) for i, check in enumerate(checks)]
 
         def _check_batch_sync() -> list[bool]:
             """Synchronous implementation for thread pool execution."""
-            # Validate all checks
-            for i, check in enumerate(checks):
-                if not isinstance(check, tuple) or len(check) != 3:
-                    raise ValueError(f"Check {i} must be (subject, permission, object) tuple")
-                subj, perm, obj = check
-                if not isinstance(subj, tuple) or len(subj) != 2:
-                    raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subj}")
-                if not isinstance(obj, tuple) or len(obj) != 2:
-                    raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
-
             assert self._rebac_manager is not None
 
             # When zone_id is available, use individual rebac_check calls which
@@ -686,7 +696,7 @@ class ReBACService(ReBACShareMixin):
             # does not support zone_id and would query with zone_id IS NULL.
             if zone_id is not None:
                 batch_results: list[bool] = []
-                for subj, perm, obj in checks:
+                for subj, perm, obj in normalized_checks:
                     result: bool = self._rebac_manager.rebac_check(
                         subject=subj,
                         permission=perm,
@@ -697,7 +707,7 @@ class ReBACService(ReBACShareMixin):
                 return batch_results
 
             # No zone_id: use optimized batch path (Rust acceleration)
-            return self._rebac_manager.rebac_check_batch_fast(checks=checks)
+            return self._rebac_manager.rebac_check_batch_fast(checks=normalized_checks)
 
         # Issue #702: Wrap batch check in a summary span
         import time as _time
@@ -708,7 +718,7 @@ class ReBACService(ReBACShareMixin):
         )
 
         batch_start = _time.perf_counter()
-        with start_batch_check_span(batch_size=len(checks)):
+        with start_batch_check_span(batch_size=len(normalized_checks)):
             # Read operation — supports L1 cache fallback per-item (Decision 3A)
             try:
                 batch_results = await self._run_in_thread(_check_batch_sync)
@@ -2178,15 +2188,8 @@ class ReBACService(ReBACShareMixin):
     ) -> list[bool]:
         """Synchronous rebac_check_batch."""
         mgr = self._require_manager()
-        for i, check in enumerate(checks):
-            if not isinstance(check, tuple) or len(check) != 3:
-                raise ValueError(f"Check {i} must be (subject, permission, object) tuple")
-            subj, _perm, obj = check
-            if not isinstance(subj, tuple) or len(subj) != 2:
-                raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subj}")
-            if not isinstance(obj, tuple) or len(obj) != 2:
-                raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
-        results: list[bool] = mgr.rebac_check_batch_fast(checks=checks)
+        normalized_checks = [_coerce_check_tuple(check, i) for i, check in enumerate(checks)]
+        results: list[bool] = mgr.rebac_check_batch_fast(checks=normalized_checks)
         return results
 
     def rebac_delete_sync(self, tuple_id: str) -> bool:

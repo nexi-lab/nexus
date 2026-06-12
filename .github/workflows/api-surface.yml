@@ -226,7 +226,7 @@ jobs:
 
       - name: Install nexusd-cluster from nexus-vfs
         if: steps.surface-filter.outputs.surface == 'true'
-        run: cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+        run: cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
 
       - name: Validate API/RPC surface matrix
         if: steps.surface-filter.outputs.surface == 'true'

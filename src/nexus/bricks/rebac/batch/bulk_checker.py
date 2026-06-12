@@ -23,6 +23,7 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import Entity
 from nexus.bricks.rebac.graph._operators import parent_path_of
+from nexus.bricks.rebac.path_patterns import path_pattern_candidates
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
@@ -329,6 +330,10 @@ class BulkPermissionChecker:
         for obj_type, obj_id in all_objects:
             if obj_type == "file" and "/" in obj_id:
                 file_paths.append(obj_id)
+
+        for file_path in file_paths:
+            for candidate in path_pattern_candidates("file", file_path):
+                all_objects.add(("file", candidate))
 
         ancestor_paths: set[str] = set()
         for file_path in file_paths:

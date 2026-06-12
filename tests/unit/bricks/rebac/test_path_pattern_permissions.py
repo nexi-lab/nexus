@@ -10,7 +10,9 @@ from sqlalchemy import create_engine
 
 from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.domain import NamespaceConfig
+from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import ReBACManager
+from nexus.contracts.types import OperationContext
 from nexus.storage.models import Base
 from tests.testkit.metadata import InMemoryNexusFS
 
@@ -324,4 +326,71 @@ def test_abac_conditions_are_preserved_for_pattern_tuples(rebac_manager):
             context={"current_time": outside_window, "time": outside_window},
         )
         is False
+    )
+
+
+def test_rebac_check_bulk_matches_recursive_path_pattern(rebac_manager) -> None:
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+
+    checks = [
+        (("agent", "alice"), "read", ("file", "/workspaces/ws1/a.md")),
+        (("agent", "alice"), "read", ("file", "/private/a.md")),
+    ]
+
+    assert rebac_manager.rebac_check_bulk(checks, zone_id="root") == {
+        checks[0]: True,
+        checks[1]: False,
+    }
+
+
+def test_filter_list_matches_recursive_path_pattern(rebac_manager) -> None:
+    rebac_manager.rebac_write(
+        subject=("user", "admin"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+    enforcer = PermissionEnforcer(rebac_manager=rebac_manager)
+    context = OperationContext(
+        user_id="admin",
+        groups=[],
+        subject_type="user",
+        subject_id="admin",
+        zone_id="root",
+    )
+
+    assert enforcer.filter_list(
+        ["/workspaces/ws1/a.md", "/workspaces/ws2/b.md", "/private/c.md"],
+        context,
+    ) == ["/workspaces/ws1/a.md", "/workspaces/ws2/b.md"]
+
+
+def test_python_fast_fallback_matches_direct_path_pattern_tuple() -> None:
+    from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
+
+    checks = [(("user", "admin"), "read", ("file", "/workspaces/a.md"))]
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "admin",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": "/workspaces/**",
+        }
+    ]
+
+    assert (
+        check_permissions_bulk_with_fallback(
+            checks,
+            tuples,
+            {},
+            force_python=True,
+        )[("user", "admin", "read", "file", "/workspaces/a.md")]
+        is True
     )

@@ -12,12 +12,14 @@ Related: Issue #1459 Phase 11, Performance optimization
 """
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.graph._operators import (
     dispatch_permission_operators,
     dispatch_relation_operators,
 )
+from nexus.bricks.rebac.path_patterns import is_path_pattern, path_pattern_matches
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
@@ -26,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 # Maximum traversal depth to prevent infinite recursion
 MAX_DEPTH = 50
+
+
+@dataclass(frozen=True)
+class DirectRelationIndex:
+    exact: frozenset[tuple[str, str, str, str, str]]
+    patterns: tuple[dict[str, Any], ...]
 
 
 def compute_permission(
@@ -39,7 +47,7 @@ def compute_permission(
     visited: set[tuple[str, str, str, str, str]] | None = None,
     bulk_memo_cache: dict[tuple[str, str, str, str, str], bool] | None = None,
     memo_stats: dict[str, int] | None = None,
-    direct_index: frozenset[tuple[str, str, str, str, str]] | None = None,
+    direct_index: DirectRelationIndex | None = None,
 ) -> bool:
     """Compute permission using pre-fetched tuples graph with full in-memory traversal.
 
@@ -270,27 +278,57 @@ def compute_permission(
 
 def build_direct_index(
     tuples_graph: list[dict[str, Any]],
-) -> frozenset[tuple[str, str, str, str, str]]:
+) -> DirectRelationIndex:
     """Build an O(1) lookup index for direct relation checks.
 
-    The index is a frozenset of (subject_type, subject_id, relation,
-    object_type, object_id) tuples for unconditional, direct relations.
-    Built once per bulk call, used O(1) per check_direct_relation().
+    The exact index is a frozenset of (subject_type, subject_id,
+    relation, object_type, object_id) tuples for unconditional, direct
+    relations. File path-pattern tuples are kept separately because they
+    need match evaluation against the requested object id.
 
     Returns:
-        frozenset of 5-tuples for O(1) ``in`` membership tests.
+        DirectRelationIndex for O(1) exact membership tests plus a small
+        pattern scan.
     """
-    return frozenset(
-        (
-            t["subject_type"],
-            t["subject_id"],
-            t["relation"],
-            t["object_type"],
-            t["object_id"],
+    exact: set[tuple[str, str, str, str, str]] = set()
+    patterns: list[dict[str, Any]] = []
+
+    for t in tuples_graph:
+        if _has_conditions(t) or t.get("subject_relation") is not None:
+            continue
+
+        if is_path_pattern(t["object_type"], t["object_id"]):
+            patterns.append(t)
+            continue
+
+        exact.add(
+            (
+                t["subject_type"],
+                t["subject_id"],
+                t["relation"],
+                t["object_type"],
+                t["object_id"],
+            )
         )
-        for t in tuples_graph
-        if not t.get("conditions") and t.get("subject_relation") is None
+
+    return DirectRelationIndex(exact=frozenset(exact), patterns=tuple(patterns))
+
+
+def _tuple_object_matches(tuple_data: dict[str, Any], obj: "Entity") -> bool:
+    if tuple_data["object_id"] == obj.entity_id:
+        return True
+    return is_path_pattern(tuple_data["object_type"], tuple_data["object_id"]) and (
+        path_pattern_matches(tuple_data["object_id"], obj.entity_id)
     )
+
+
+def _tuple_subject_matches(tuple_data: dict[str, Any], subject: "Entity") -> bool:
+    if (
+        tuple_data["subject_type"] == subject.entity_type
+        and tuple_data["subject_id"] == subject.entity_id
+    ):
+        return True
+    return bool(tuple_data["subject_type"] == "*" and tuple_data["subject_id"] == "*")
 
 
 def check_direct_relation(
@@ -298,7 +336,7 @@ def check_direct_relation(
     permission: str,
     obj: "Entity",
     tuples_graph: list[dict[str, Any]],
-    direct_index: frozenset[tuple[str, str, str, str, str]] | None = None,
+    direct_index: DirectRelationIndex | None = None,
 ) -> bool:
     """Check if a direct relation tuple exists in the pre-fetched graph.
 
@@ -314,11 +352,23 @@ def check_direct_relation(
     """
     if direct_index is not None:
         key = (subject.entity_type, subject.entity_id, permission, obj.entity_type, obj.entity_id)
-        if key in direct_index:
+        if key in direct_index.exact:
             return True
         # Round-10: wildcard ``("*", "*")`` matches any subject.
         wildcard_key = ("*", "*", permission, obj.entity_type, obj.entity_id)
-        return wildcard_key in direct_index
+        if wildcard_key in direct_index.exact:
+            return True
+
+        for tuple_data in direct_index.patterns:
+            if (
+                tuple_data["relation"] == permission
+                and tuple_data["object_type"] == obj.entity_type
+                and path_pattern_matches(tuple_data["object_id"], obj.entity_id)
+                and _tuple_subject_matches(tuple_data, subject)
+            ):
+                return True
+
+        return False
 
     # Fallback: O(T) linear scan (for callers without an index).
     for tuple_data in tuples_graph:
@@ -327,16 +377,10 @@ def check_direct_relation(
         if (
             tuple_data["relation"] != permission
             or tuple_data["object_type"] != obj.entity_type
-            or tuple_data["object_id"] != obj.entity_id
             or tuple_data["subject_relation"] is not None
         ):
             continue
-        if (
-            tuple_data["subject_type"] == subject.entity_type
-            and tuple_data["subject_id"] == subject.entity_id
-        ):
-            return True
-        if tuple_data["subject_type"] == "*" and tuple_data["subject_id"] == "*":
+        if _tuple_object_matches(tuple_data, obj) and _tuple_subject_matches(tuple_data, subject):
             return True
     return False
 

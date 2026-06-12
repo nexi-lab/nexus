@@ -55,6 +55,11 @@ on:
         required: false
         type: number
         default: 8388608   # 8 MiB
+      platforms:
+        description: 'JSON array of platform suffixes to build. Plugins that don''t support all 4 platforms (e.g. nexus-fuse-plugin is Linux-only) shrink the matrix here. Valid entries: linux-x86_64, macos-arm64, macos-x86_64, windows-x86_64.'
+        required: false
+        type: string
+        default: '["linux-x86_64", "macos-arm64", "macos-x86_64", "windows-x86_64"]'
       release_description:
         description: Multi-line markdown shown in the GitHub Release body under the version header. Optional.
         required: false
@@ -87,12 +92,15 @@ permissions:
 
 jobs:
   # ── Build ──────────────────────────────────────────────────────────────────
-  # 4-platform build matrix. Dylib names are derived from `dylib_basename`:
+  # Up-to-4-platform build matrix. Dylib names are derived from `dylib_basename`:
   #   linux:   <dylib_basename>.so
   #   macos:   <dylib_basename>.dylib   (arm64 + x86_64)
   #   windows: <dylib_basename> with the leading `lib` stripped + `.dll`
+  # The job-level `if` filters out platforms not listed in `inputs.platforms`.
+  # Skipped matrix instances complete without spawning a runner.
   build:
-    name: build / ${{ matrix.artifact_name }}
+    if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
+    name: build / ${{ matrix.artifact_name_suffix }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -308,20 +316,39 @@ jobs:
         # The verifier side (nexus-vfs cluster) reads the `.sig` next to
         # the loaded plugin and Ed25519-verifies against an embedded
         # `trusted_keys/*.pub`. Format contract in `nexus_plugin_abi::signing`.
+        #
+        # Iterates over actually-present artifact dirs so a subset-platform
+        # plugin (e.g. fuse-plugin = linux-only) doesn't need a per-platform
+        # if-skip; the build job's `platforms` input already produced only
+        # the right subset of artifacts.
         env:
           PREFIX: ${{ inputs.archive_prefix }}
           BASENAME: ${{ inputs.dylib_basename }}
         run: |
           set -euo pipefail
-          # Reconstruct platform-specific dylib names matching the build job.
           win_dll="${BASENAME#lib}.dll"
-          python scripts/sign_plugin.py \
-            "artifacts/${PREFIX}-linux-x86_64/${BASENAME}.so" \
-            "artifacts/${PREFIX}-macos-arm64/${BASENAME}.dylib" \
-            "artifacts/${PREFIX}-macos-x86_64/${BASENAME}.dylib" \
-            "artifacts/${PREFIX}-windows-x86_64/${win_dll}"
+          files=()
+          for art_dir in artifacts/${PREFIX}-*/; do
+            [ -d "$art_dir" ] || continue
+            suffix=$(basename "$art_dir" | sed "s/^${PREFIX}-//")
+            case "$suffix" in
+              linux-*)   files+=("${art_dir}${BASENAME}.so") ;;
+              macos-*)   files+=("${art_dir}${BASENAME}.dylib") ;;
+              windows-*) files+=("${art_dir}${win_dll}") ;;
+              *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
+            esac
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no plugin artifacts found under artifacts/${PREFIX}-*"
+            exit 1
+          fi
+          python scripts/sign_plugin.py "${files[@]}"
 
       - name: Package into archives
+        # Each archive ships the dylib AND its detached `.sig`. The
+        # consumer (sudowork download script) extracts both into the
+        # plugin dir; the kernel's PluginLoader::load reads them in
+        # tandem and rejects the plugin if verify fails.
         env:
           PREFIX: ${{ inputs.archive_prefix }}
           BASENAME: ${{ inputs.dylib_basename }}
@@ -329,35 +356,31 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           win_dll="${BASENAME#lib}.dll"
-
-          # Each archive ships the dylib AND its detached `.sig`. The
-          # consumer (sudowork download script) extracts both into the
-          # plugin dir; the kernel's PluginLoader::load reads them in
-          # tandem and rejects the plugin if verify fails.
-
-          # Linux x86_64
-          cp "artifacts/${PREFIX}-linux-x86_64/${BASENAME}.so" "${BASENAME}.so"
-          cp "artifacts/${PREFIX}-linux-x86_64/${BASENAME}.so.sig" "${BASENAME}.so.sig"
-          tar -czf "release-assets/${PREFIX}-linux-x86_64.tar.gz" "${BASENAME}.so" "${BASENAME}.so.sig"
-          rm "${BASENAME}.so" "${BASENAME}.so.sig"
-
-          # macOS arm64
-          cp "artifacts/${PREFIX}-macos-arm64/${BASENAME}.dylib" "${BASENAME}.dylib"
-          cp "artifacts/${PREFIX}-macos-arm64/${BASENAME}.dylib.sig" "${BASENAME}.dylib.sig"
-          tar -czf "release-assets/${PREFIX}-macos-arm64.tar.gz" "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
-          rm "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
-
-          # macOS x86_64
-          cp "artifacts/${PREFIX}-macos-x86_64/${BASENAME}.dylib" "${BASENAME}.dylib"
-          cp "artifacts/${PREFIX}-macos-x86_64/${BASENAME}.dylib.sig" "${BASENAME}.dylib.sig"
-          tar -czf "release-assets/${PREFIX}-macos-x86_64.tar.gz" "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
-          rm "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
-
-          # Windows x86_64
-          cp "artifacts/${PREFIX}-windows-x86_64/${win_dll}" "${win_dll}"
-          cp "artifacts/${PREFIX}-windows-x86_64/${win_dll}.sig" "${win_dll}.sig"
-          zip "release-assets/${PREFIX}-windows-x86_64.zip" "${win_dll}" "${win_dll}.sig"
-          rm "${win_dll}" "${win_dll}.sig"
+          for art_dir in artifacts/${PREFIX}-*/; do
+            [ -d "$art_dir" ] || continue
+            suffix=$(basename "$art_dir" | sed "s/^${PREFIX}-//")
+            case "$suffix" in
+              linux-*)
+                cp "${art_dir}${BASENAME}.so" "${BASENAME}.so"
+                cp "${art_dir}${BASENAME}.so.sig" "${BASENAME}.so.sig"
+                tar -czf "release-assets/${PREFIX}-${suffix}.tar.gz" "${BASENAME}.so" "${BASENAME}.so.sig"
+                rm "${BASENAME}.so" "${BASENAME}.so.sig"
+                ;;
+              macos-*)
+                cp "${art_dir}${BASENAME}.dylib" "${BASENAME}.dylib"
+                cp "${art_dir}${BASENAME}.dylib.sig" "${BASENAME}.dylib.sig"
+                tar -czf "release-assets/${PREFIX}-${suffix}.tar.gz" "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
+                rm "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
+                ;;
+              windows-*)
+                cp "${art_dir}${win_dll}" "${win_dll}"
+                cp "${art_dir}${win_dll}.sig" "${win_dll}.sig"
+                zip "release-assets/${PREFIX}-${suffix}.zip" "${win_dll}" "${win_dll}.sig"
+                rm "${win_dll}" "${win_dll}.sig"
+                ;;
+              *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
+            esac
+          done
 
           echo "=== release-assets ==="
           ls -lh release-assets/

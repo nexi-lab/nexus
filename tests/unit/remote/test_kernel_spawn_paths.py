@@ -156,6 +156,24 @@ def test_inherited_env_same_path_existing_dir_stays_data_dir(tmp_path: Path) -> 
     assert "NEXUS_METASTORE_PATH" not in env
 
 
+def test_ephemeral_strips_ambient_durable_env(tmp_path: Path) -> None:
+    # ":memory:" kernels must never reopen an ambient shared namespace
+    # nor default to a durable cwd-relative data dir.
+    env = {"NEXUS_METASTORE_PATH": "/shared/namespace.redb"}
+    _apply_storage_env(env, None, None, ephemeral_dir=str(tmp_path))
+    assert env["NEXUS_DATA_DIR"] == str(tmp_path)
+    assert "NEXUS_METASTORE_PATH" not in env
+
+
+def test_memory_kernel_client_gets_ephemeral_tempdir(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The ":memory:" mapping must reach KernelClient as ephemeral=True.
+    from nexus.remote.kernel_client import KernelClient
+
+    client = KernelClient(ephemeral=True)
+    assert client._ephemeral is True
+    assert client._metadata_path is None
+
+
 def test_unreadable_existing_file_fails_closed(tmp_path: Path) -> None:
     # A permission-broken existing file may BE the namespace: booting a
     # fresh sidecar instead would silently lose it (#4343 symptom).

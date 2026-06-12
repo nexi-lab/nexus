@@ -143,6 +143,8 @@ def _apply_storage_env(
     env: dict[str, str],
     metadata_path: str | None,
     metastore_file: str | None = None,
+    *,
+    ephemeral_dir: str | None = None,
 ) -> None:
     """Set the kernel storage env (``NEXUS_DATA_DIR``/``NEXUS_METASTORE_PATH``).
 
@@ -164,6 +166,17 @@ def _apply_storage_env(
     storage hint the ambient env passes through untouched
     (operator-managed spawn).
     """
+    if ephemeral_dir:
+        # Explicitly ephemeral kernel (":memory:"): all storage lives
+        # in a throwaway dir and ambient durable-namespace env must not
+        # leak in — an inherited NEXUS_METASTORE_PATH would silently
+        # persist and cross-contaminate state the caller asked to be
+        # temporary. (Without a data dir the kernel would also default
+        # to a durable cwd-relative ./nexus-cluster-data.)
+        env["NEXUS_DATA_DIR"] = ephemeral_dir
+        env.pop("NEXUS_METASTORE_PATH", None)
+        return
+
     if metastore_file:
         env["NEXUS_METASTORE_PATH"] = metastore_file
         if metadata_path:
@@ -230,6 +243,7 @@ class KernelClient:
         auth_token: str | None = None,
         metadata_path: str | None = None,
         metastore_file: str | None = None,
+        ephemeral: bool = False,
         timeout: float = 90.0,
     ) -> None:
         # ``metadata_path`` is the storage hint (directory, or legacy
@@ -238,8 +252,12 @@ class KernelClient:
         # forwarded verbatim as NEXUS_METASTORE_PATH, no heuristics —
         # use it when the exact namespace file location matters (e.g.
         # suffixless paths, backup/restore tooling).
+        # ``ephemeral`` (":memory:" callers): spawn with a throwaway
+        # temp data dir and strip ambient durable-namespace env.
         self._metadata_path = metadata_path
         self._metastore_file = metastore_file
+        self._ephemeral = ephemeral
+        self._ephemeral_dir: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._stderr_file: IO[bytes] | None = None
         self._stderr_path: str | None = None
@@ -296,6 +314,12 @@ class KernelClient:
                 with contextlib.suppress(OSError):
                     os.unlink(stderr_path)
             self._stderr_file = None
+        if self._ephemeral_dir is not None:
+            import contextlib
+
+            with contextlib.suppress(OSError):
+                shutil.rmtree(self._ephemeral_dir, ignore_errors=True)
+            self._ephemeral_dir = None
 
     def _is_remote(self) -> bool:
         return self._process is None and self._transport is not None
@@ -305,7 +329,16 @@ class KernelClient:
         kernel_binary = _resolve_kernel_binary()
         cmd = [kernel_binary]
         env = os.environ.copy()
-        _apply_storage_env(env, self._metadata_path, self._metastore_file)
+        if self._ephemeral and self._ephemeral_dir is None:
+            import tempfile
+
+            self._ephemeral_dir = tempfile.mkdtemp(prefix="nexus-kernel-ephemeral-")
+        _apply_storage_env(
+            env,
+            self._metadata_path,
+            self._metastore_file,
+            ephemeral_dir=self._ephemeral_dir,
+        )
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
         env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")

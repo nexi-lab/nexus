@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import insert, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from nexus.bricks.rebac.cache.tiger.db_timeouts import apply_tiger_write_timeouts
 from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 
 if TYPE_CHECKING:
@@ -81,6 +82,9 @@ class TigerResourceMap:
         )
 
         def do_get_or_create(connection: "Connection") -> int:
+            if self._is_postgresql:
+                apply_tiger_write_timeouts(connection)
+
             # Try to get existing (no zone filter)
             row = connection.execute(select_stmt).first()
             if row:

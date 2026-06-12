@@ -38,19 +38,25 @@ import os
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import text as sa_text
 
+from nexus.bricks.search import consumer_metrics
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
 from nexus.bricks.search.mutation_events import (
     SearchMutationEvent,
     SearchMutationOp,
     extract_zone_id,
     strip_zone_prefix,
+)
+from nexus.bricks.search.mutation_parking import (
+    MutationParkStore,
+    ParkedEvent,
+    UnresolvedMutationError,
 )
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
@@ -68,6 +74,11 @@ if TYPE_CHECKING:
     from nexus.bricks.search.path_context import PathContextCache
 
 logger = logging.getLogger(__name__)
+
+# Durable mutation consumer names (#4337): single source for the refresh
+# loop, startup reconciliation, parked-event re-drive, and admin skip-to.
+MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
+LEGACY_REFRESH_CONSUMER = "legacy-refresh"
 
 _BACKEND_LEG_TIMING_KEYS = (
     "backend_ms",
@@ -264,6 +275,18 @@ class DaemonConfig:
     # as config so operators can tune without a code change.
     path_context_max_zones: int = 2048
 
+    # Bounded retries for unresolved-content mutations (#4337). When the
+    # MutationResolver cannot obtain content for an UPSERT, the consumer
+    # retries the batch (refusing to checkpoint) up to this many passes,
+    # then PARKS the event (durable skip record + metric) so one poisoned
+    # event cannot head-of-line block indexing forever.
+    # NOTE: budgets must be >= 2 — startup reconciliation drives each handler
+    # exactly once through the gate (possibly before the file_reader is
+    # attached), so a budget of 1 would park live files during boot.
+    mutation_unresolved_permanent_attempts: int = 3
+    mutation_unresolved_transient_attempts: int = 30
+    mutation_parked_max_entries: int = 200
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -396,6 +419,16 @@ class SearchDaemon:
         self._consumer_last_sequence: dict[str, int] = {}
         self._checkpoint_file = Path(".nexus-data") / "mutation-checkpoints.json"
         self._checkpoint_lock = asyncio.Lock()
+        # #4337: bounded-retry gate state. Attempt counts are in-memory
+        # (restart resets them; a poisoned event re-accumulates to budget in
+        # seconds). The park store is the durable record of skipped events.
+        self._unresolved_attempts: dict[tuple[str, str], int] = {}
+        self._consumer_retrying: dict[str, dict[str, Any] | None] = {}
+        self._park_store = MutationParkStore(
+            settings_store=settings_store,
+            fallback_file=self._checkpoint_file.parent / "mutation-parked.json",
+            max_entries_per_consumer=self.config.mutation_parked_max_entries,
+        )
         self._shared_mutation_lock = asyncio.Lock()
         self._shared_mutation_events: list[SearchMutationEvent] = []
         self._shared_mutation_floor_sequence = 0
@@ -2854,14 +2887,26 @@ class SearchDaemon:
             self._pending_delete_paths.discard(path)
         self._mutation_wakeup.set()
 
-    async def _index_refresh_loop(self) -> None:
-        """Background task to drive durable per-indexer mutation consumers."""
-        consumer_specs = {
+    def _mutation_handlers(self) -> dict[str, Any]:
+        """Consumer-name → handler map (#4337): single source for the
+        refresh loop, startup reconciliation, and parked-event re-drive."""
+        return {
             "fts": self._consume_fts_mutations,
             "embedding": self._consume_embedding_mutations,
         }
+
+    async def _index_refresh_loop(self) -> None:
+        """Background task to drive durable per-indexer mutation consumers."""
+        consumer_specs = self._mutation_handlers()
         all_consumer_names = tuple(consumer_specs.keys())
         self._consumer_names = all_consumer_names
+        # #4337: load parked records before consumers start so the gauge,
+        # stats, and already-parked filtering reflect prior runs. Best-effort:
+        # a corrupt/unreadable store logs and starts empty.
+        try:
+            await self._park_store.load()
+        except Exception as exc:
+            logger.error("Parked-event store load failed; starting empty: %s", exc)
         # #4016: reconcile pre-existing unindexed files BEFORE consumers
         # snap their checkpoints to MAX(sequence_number). Skipped on warm
         # restarts (any consumer already has a persisted checkpoint).
@@ -2948,7 +2993,7 @@ class SearchDaemon:
             )
             for path in paths
         ]
-        resolved = await self._resolve_mutations(events)
+        resolved = await self._resolve_mutations(LEGACY_REFRESH_CONSUMER, events)
         logger.debug(
             "delete-propagation: resolved=%d (resolved_path_id=%d)",
             len(resolved),
@@ -3327,10 +3372,7 @@ class SearchDaemon:
         if self._async_session is None or not self._consumer_names:
             return
 
-        handlers_by_name: dict[str, Any] = {
-            "fts": self._consume_fts_mutations,
-            "embedding": self._consume_embedding_mutations,
-        }
+        handlers_by_name: dict[str, Any] = self._mutation_handlers()
         pending: list[tuple[str, Any]] = []
         for name in self._consumer_names:
             handler = handlers_by_name.get(name)
@@ -3441,8 +3483,115 @@ class SearchDaemon:
         return events
 
     async def _save_consumer_checkpoint(self, consumer_name: str, sequence_number: int) -> None:
+        current = self._consumer_last_sequence.get(consumer_name)
+        if current is not None and sequence_number < current:
+            # #4337: monotonic guard — an in-flight pass that succeeds with a
+            # stale batch must not rewind an admin force-advance (skip-to).
+            sequence_number = current
         self._consumer_last_sequence[consumer_name] = sequence_number
         await self._persist_checkpoint(consumer_name, sequence_number)
+
+    async def force_checkpoint(self, consumer_name: str, sequence_number: int) -> dict[str, int]:
+        """Force-advance a consumer checkpoint past a poisoned range (#4337).
+
+        Admin escape hatch ("skip event N"): everything with
+        sequence_number <= the new value is permanently skipped for this
+        consumer. Deliberately NOT capped at the current op-log max so an
+        operator can pre-advance past a known-bad range.
+        """
+        if consumer_name not in MUTATION_CONSUMER_NAMES:
+            raise ValueError(
+                f"unknown consumer {consumer_name!r}; expected one of {MUTATION_CONSUMER_NAMES}"
+            )
+        current = self._consumer_last_sequence.get(consumer_name)
+        if current is None:
+            current = await self._initialize_consumer_checkpoint(consumer_name)
+            self._consumer_last_sequence[consumer_name] = current
+        if sequence_number <= current:
+            raise ValueError(
+                f"sequence {sequence_number} must be greater than current checkpoint {current}"
+            )
+        await self._save_consumer_checkpoint(consumer_name, sequence_number)
+        # #4337 review: events skipped by the force-advance can never resolve
+        # or park — drop their in-flight retry counters so the dict stays tidy.
+        self._unresolved_attempts = {
+            key: value
+            for key, value in self._unresolved_attempts.items()
+            if key[0] != consumer_name
+        }
+        logger.warning(
+            "Search mutation checkpoint FORCED for consumer=%s: %d -> %d "
+            "(events in between are skipped)",
+            consumer_name,
+            current,
+            sequence_number,
+        )
+        return {"previous": current, "current": sequence_number}
+
+    def list_parked(self) -> dict[str, list[dict[str, Any]]]:
+        """Parked mutation events per consumer, serialized for the API (#4337)."""
+        return {
+            consumer: [entry.to_dict() for entry in entries]
+            for consumer, entries in self._park_store.list_entries().items()
+            if entries
+        }
+
+    async def retry_parked(
+        self,
+        consumer_name: str,
+        event_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Re-drive parked events through their consumer handler (#4337).
+
+        One-shot per event: the entry is removed from the store FIRST (so
+        the gate doesn't filter it as already-parked, which would make the
+        handler succeed vacuously), then run through the handler. Success →
+        stays unparked. Failure → re-parked with the new error detail.
+        """
+        if consumer_name not in MUTATION_CONSUMER_NAMES:
+            raise ValueError(
+                f"unknown consumer {consumer_name!r}; expected one of {MUTATION_CONSUMER_NAMES}"
+            )
+        entries = self._park_store.list_entries(consumer_name).get(consumer_name, [])
+        if event_ids is not None:
+            wanted = set(event_ids)
+            entries = [entry for entry in entries if entry.event_id in wanted]
+        handler = self._mutation_handlers()[consumer_name]
+        succeeded: list[str] = []
+        failed: list[dict[str, str]] = []
+        for entry in entries:
+            await self._park_store.remove(consumer_name, [entry.event_id])
+            # #4337 review: one-shot semantics — start from a clean counter so
+            # a live pass's accumulated attempts can't make the in-handler gate
+            # park (and double-count) before our own failure handling re-parks.
+            self._unresolved_attempts.pop((consumer_name, entry.event_id), None)
+            # #4337 final review: the one-shot's gate pass writes
+            # _consumer_retrying — snapshot/restore so an admin re-drive
+            # never clobbers (or fabricates) the live loop's blocker stats.
+            retrying_snapshot = self._consumer_retrying.get(consumer_name)
+            try:
+                await handler([entry.to_event()])
+                succeeded.append(entry.event_id)
+            except Exception as exc:
+                await self._park_store.park(replace(entry, detail=str(exc), parked_at=time.time()))
+                failed.append({"event_id": entry.event_id, "error": str(exc)})
+            finally:
+                self._unresolved_attempts.pop((consumer_name, entry.event_id), None)
+                self._consumer_retrying[consumer_name] = retrying_snapshot
+        return {"retried": len(entries), "succeeded": succeeded, "failed": failed}
+
+    async def discard_parked(
+        self,
+        consumer_name: str,
+        event_ids: list[str],
+    ) -> dict[str, Any]:
+        """Drop parked events without retrying — operator accepts the loss (#4337)."""
+        if consumer_name not in MUTATION_CONSUMER_NAMES:
+            raise ValueError(
+                f"unknown consumer {consumer_name!r}; expected one of {MUTATION_CONSUMER_NAMES}"
+            )
+        removed = await self._park_store.remove(consumer_name, event_ids)
+        return {"discarded": [entry.event_id for entry in removed]}
 
     async def _fetch_operation_log_events(
         self,
@@ -3606,11 +3755,116 @@ class SearchDaemon:
 
     async def _resolve_mutations(
         self,
+        consumer_name: str,
         events: list[SearchMutationEvent],
     ) -> list[ResolvedMutation]:
         if self._mutation_resolver is None:
             return []
-        return await self._mutation_resolver.resolve_batch(events)
+        resolved = await self._mutation_resolver.resolve_batch(events)
+        if consumer_name == LEGACY_REFRESH_CONSUMER:
+            # Fallback delete-propagation path: resolves DELETE events only
+            # (always content_resolved) — the gate has nothing to do.
+            return resolved
+        return await self._gate_unresolved(consumer_name, resolved)
+
+    async def _gate_unresolved(
+        self,
+        consumer_name: str,
+        resolved: list[ResolvedMutation],
+    ) -> list[ResolvedMutation]:
+        """Bounded-retry gate for unresolved-content UPSERTs (#4337).
+
+        Per pass over a batch:
+          * already-parked events are filtered out (no recount);
+          * resolved events drop any stale attempt counter and auto-unpark;
+          * unresolved upserts count one attempt against their kind's
+            budget — at/over budget they are parked (durable record +
+            metrics) and filtered, otherwise the lowest-sequence one is
+            reported in a raised ``UnresolvedMutationError`` so the whole
+            batch retries (checkpoint untouched), exactly like the
+            pre-#4337 refuse-to-checkpoint behavior but bounded.
+        """
+        # #4337 review: reset per-pass so a stale blocker from a previous
+        # pass never survives an early return or a mid-batch park failure.
+        self._consumer_retrying[consumer_name] = None
+        kept: list[ResolvedMutation] = []
+        blocking: ResolvedMutation | None = None
+        blocking_attempts = 0
+        blocking_budget = 0
+        for mutation in resolved:
+            event = mutation.event
+            key = (consumer_name, event.event_id)
+            is_unresolved_upsert = (
+                event.op == SearchMutationOp.UPSERT and not mutation.content_resolved
+            )
+            if not is_unresolved_upsert:
+                self._unresolved_attempts.pop(key, None)
+                if self._park_store.contains(consumer_name, event.event_id):
+                    # Content recovered while parked — heal the record.
+                    await self._park_store.remove(consumer_name, [event.event_id])
+                kept.append(mutation)
+                continue
+            if self._park_store.contains(consumer_name, event.event_id):
+                continue  # already parked: skip without recounting
+            kind = mutation.failure_kind or "transient"
+            attempts = self._unresolved_attempts.get(key, 0) + 1
+            self._unresolved_attempts[key] = attempts
+            budget = (
+                self.config.mutation_unresolved_permanent_attempts
+                if kind == "permanent"
+                else self.config.mutation_unresolved_transient_attempts
+            )
+            consumer_metrics.MUTATION_UNRESOLVED_RETRIES_TOTAL.labels(
+                consumer=consumer_name, kind=kind
+            ).inc()
+            if attempts >= budget:
+                entry = ParkedEvent.from_mutation(
+                    consumer_name,
+                    mutation,
+                    kind=kind,
+                    detail=mutation.failure_detail or "",
+                    attempts=attempts,
+                )
+                # park() raises if it cannot persist a record — in that
+                # case the error propagates, the batch retries, and the
+                # event is NEVER skipped without a durable record.
+                await self._park_store.park(entry)
+                consumer_metrics.MUTATION_PARKED_TOTAL.labels(
+                    consumer=consumer_name, kind=kind
+                ).inc()
+                self._unresolved_attempts.pop(key, None)
+                logger.warning(
+                    "Search mutation PARKED for consumer=%s event_id=%s path=%s "
+                    "kind=%s after %d attempts (checkpoint will advance past it; "
+                    "re-drive or discard via /api/v2/search/parked): %s",
+                    consumer_name,
+                    event.event_id,
+                    event.path,
+                    kind,
+                    attempts,
+                    mutation.failure_detail,
+                )
+                continue
+            if blocking is None or event.sequence_number < blocking.event.sequence_number:
+                blocking = mutation
+                blocking_attempts = attempts
+                blocking_budget = budget
+        if blocking is not None:
+            self._consumer_retrying[consumer_name] = {
+                "event_id": blocking.event.event_id,
+                "path": blocking.event.path,
+                "attempts": blocking_attempts,
+                "budget": blocking_budget,
+                "kind": blocking.failure_kind or "transient",
+            }
+            raise UnresolvedMutationError(
+                f"{consumer_name} mutation content unresolved for "
+                f"event_id={blocking.event.event_id} path={blocking.event.path} "
+                f"kind={blocking.failure_kind or 'transient'} "
+                f"attempt={blocking_attempts}/{blocking_budget} — refusing to "
+                "checkpoint so the consumer retries on next pass"
+            )
+        return kept
 
     def _collapse_resolved_mutations(
         self,
@@ -3639,18 +3893,8 @@ class SearchDaemon:
         embedding_active = (
             self._indexing_pipeline is not None and self._embedding_provider is not None
         )
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
+        resolved = self._collapse_resolved_mutations(await self._resolve_mutations("fts", events))
         for mutation in resolved:
-            # Codex review R10 #1 (high): refuse to checkpoint
-            # unresolved-content UPSERTs — see commit history for rationale
-            # for the rationale.
-            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
-                raise RuntimeError(
-                    f"FTS mutation content unresolved for "
-                    f"event_id={mutation.event.event_id} "
-                    f"path={mutation.event.path} — refusing to checkpoint "
-                    "so the consumer retries on next pass"
-                )
             is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
                 mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
             )
@@ -3706,18 +3950,10 @@ class SearchDaemon:
     async def _consume_embedding_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._indexing_pipeline is None or self._embedding_provider is None:
             return
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
+        resolved = self._collapse_resolved_mutations(
+            await self._resolve_mutations("embedding", events)
+        )
         for mutation in resolved:
-            # Codex review R10 #1 (high): refuse to checkpoint
-            # unresolved-content UPSERTs — see commit history for rationale
-            # for the rationale.
-            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
-                raise RuntimeError(
-                    f"Embedding mutation content unresolved for "
-                    f"event_id={mutation.event.event_id} "
-                    f"path={mutation.event.path} — refusing to checkpoint "
-                    "so the consumer retries on next pass"
-                )
             # Codex review R10 #1 (high): treat resolved-empty UPSERTs
             # as DELETEs (real truncation). Combined with the explicit
             # DELETE op below.
@@ -3956,6 +4192,28 @@ class SearchDaemon:
             p99_idx = int(len(sorted_latencies) * 0.99)
             self.stats.p99_latency_ms = sorted_latencies[p99_idx] if sorted_latencies else 0
 
+    def _mutation_consumer_stats(self) -> dict[str, dict[str, Any]]:
+        """Per-consumer loop stats merged with parking state (#4337)."""
+        merged: dict[str, dict[str, Any]] = {}
+        names = set(self.stats.mutation_consumers) | set(MUTATION_CONSUMER_NAMES)
+        for name in sorted(names):
+            entry = dict(self.stats.mutation_consumers.get(name, {}))
+            entry["parked_count"] = self._park_store.count(name)
+            last = self._park_store.last(name)
+            entry["last_parked"] = (
+                {
+                    "event_id": last.event_id,
+                    "path": last.path,
+                    "kind": last.kind,
+                    "parked_at": last.parked_at,
+                }
+                if last is not None
+                else None
+            )
+            entry["retrying"] = self._consumer_retrying.get(name)
+            merged[name] = entry
+        return merged
+
     def get_stats(self) -> dict[str, Any]:
         """Get current daemon statistics.
 
@@ -4003,7 +4261,7 @@ class SearchDaemon:
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,
-            "mutation_consumers": self.stats.mutation_consumers,
+            "mutation_consumers": self._mutation_consumer_stats(),
             # Issue #3773: path-context attach runs fail-soft so search is
             # never broken by a context-lookup bug. Expose the counts so
             # operators can spot persistent failures via /search/stats.

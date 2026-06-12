@@ -7619,13 +7619,30 @@ operations:
   perf_link: thin CLI wrapper; underlying grep/query/index paths carry the performance classification
   gap_issue: null
   owning_issue: 4129
+- id: search.consumers_{consumer_name}_skip_to
+  module: search
+  summary: Admin escape hatch that force-advances a mutation consumer checkpoint past a poisoned op-log range (#4337).
+  transports:
+    http:
+      name: POST /api/v2/search/consumers/{consumer_name}/skip-to
+      source: src/nexus/server/api/v2/routers/search.py:272
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: POST /api/v2/search/consumers/embedding/skip-to {"sequence":123456}
+  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
+  perf_class: control
+  perf_link: rare admin operation; one settings-store/file checkpoint write
+  gap_issue: null
+  owning_issue: 4337
 - id: search.expand
   module: search
   summary: HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion.
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1454
+      source: src/nexus/server/api/v2/routers/search.py:1534
   profiles:
     lite: supported
     sandbox: supported
@@ -7649,7 +7666,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1791
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1335
+      source: src/nexus/server/api/v2/routers/search.py:1415
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7676,7 +7693,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2101
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1212
+      source: src/nexus/server/api/v2/routers/search.py:1292
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7712,7 +7729,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:186
+      source: src/nexus/server/api/v2/routers/search.py:191
   profiles:
     lite: supported
     sandbox: supported
@@ -7729,7 +7746,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1397
+      source: src/nexus/server/api/v2/routers/search.py:1477
   profiles:
     lite: supported
     sandbox: supported
@@ -7747,7 +7764,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/search.py:1596
+      source: src/nexus/server/api/v2/routers/search.py:1676
   profiles:
     lite: supported
     sandbox: supported
@@ -7764,7 +7781,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/search.py:1814
+      source: src/nexus/server/api/v2/routers/search.py:1894
   profiles:
     lite: supported
     sandbox: supported
@@ -7781,7 +7798,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/search.py:1851
+      source: src/nexus/server/api/v2/routers/search.py:1931
   profiles:
     lite: supported
     sandbox: supported
@@ -7798,7 +7815,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/locate
-      source: src/nexus/server/api/v2/routers/search.py:2032
+      source: src/nexus/server/api/v2/routers/search.py:2112
   profiles:
     lite: supported
     sandbox: supported
@@ -7809,13 +7826,65 @@ operations:
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: 4135
+- id: search.parked
+  module: search
+  summary: Lists parked (poison) search mutation events per consumer with kind/attempts/detail for admin triage (#4337).
+  transports:
+    http:
+      name: GET /api/v2/search/parked
+      source: src/nexus/server/api/v2/routers/search.py:229
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: GET /api/v2/search/parked
+  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
+  perf_class: control
+  perf_link: in-memory park-store read; bounded at 200 entries per consumer
+  gap_issue: null
+  owning_issue: 4337
+- id: search.parked_discard
+  module: search
+  summary: "Discards parked search mutation events without retrying \u2014 operator accepts the index loss (#4337)."
+  transports:
+    http:
+      name: POST /api/v2/search/parked/discard
+      source: src/nexus/server/api/v2/routers/search.py:255
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: POST /api/v2/search/parked/discard {"consumer":"embedding","event_ids":["search:..."]}
+  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
+  perf_class: control
+  perf_link: rare admin operation; one park-store document write
+  gap_issue: null
+  owning_issue: 4337
+- id: search.parked_retry
+  module: search
+  summary: Re-drives parked search mutation events through their consumer one-shot; success unparks, failure re-parks with
+    the new error (#4337).
+  transports:
+    http:
+      name: POST /api/v2/search/parked/retry
+      source: src/nexus/server/api/v2/routers/search.py:238
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: POST /api/v2/search/parked/retry {"consumer":"embedding","event_ids":null}
+  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
+  perf_class: control
+  perf_link: rare admin operation; bounded by parked entries (cap 200/consumer), idempotent index upserts
+  gap_issue: null
+  owning_issue: 4337
 - id: search.purge_unscoped
   module: search
   summary: Remove unscoped vector chunks after switching a zone to scoped indexing.
   transports:
     http:
       name: POST /api/v2/search/purge-unscoped
-      source: src/nexus/server/api/v2/routers/search.py:1978
+      source: src/nexus/server/api/v2/routers/search.py:2058
   profiles:
     lite: supported
     sandbox: supported
@@ -7833,7 +7902,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:210
+      source: src/nexus/server/api/v2/routers/search.py:290
   profiles:
     lite: supported
     sandbox: supported
@@ -7851,7 +7920,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:642
+      source: src/nexus/server/api/v2/routers/search.py:722
   profiles:
     lite: supported
     sandbox: supported
@@ -7868,7 +7937,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1433
+      source: src/nexus/server/api/v2/routers/search.py:1513
   profiles:
     lite: supported
     sandbox: supported
@@ -7903,7 +7972,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:201
+      source: src/nexus/server/api/v2/routers/search.py:206
   profiles:
     lite: supported
     sandbox: supported
@@ -12210,6 +12279,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: search.consumers_{consumer_name}_skip_to
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: search.expand
   has:
   - http
@@ -12275,6 +12352,30 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: search.locate
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: search.parked
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: search.parked_discard
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: search.parked_retry
   has:
   - http
   missing:

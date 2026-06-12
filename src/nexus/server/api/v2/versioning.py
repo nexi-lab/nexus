@@ -387,7 +387,8 @@ def build_v2_registry(
         from nexus.server.api.v2.routers.search import router as search_router
 
         # +4 for Issue #3698: index-directory (POST/DELETE), indexed-dirs, purge-unscoped
-        registry.add(RouterEntry(router=search_router, name="search", endpoint_count=9))
+        # +4 for Issue #4337 (parked admin)
+        registry.add(RouterEntry(router=search_router, name="search", endpoint_count=13))
     except ImportError as e:
         logger.warning("Failed to import Search routes: %s", e)
 

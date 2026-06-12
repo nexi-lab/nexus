@@ -158,7 +158,7 @@ async def test_delete_mutation_prunes_sqlite_vec(
         virtual_path="/gone.md",
     )
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return [delete_mut]
 
     # Method-stub injection on a SearchDaemon instance — setattr to
@@ -207,7 +207,7 @@ async def test_fts_consumer_prunes_vec_on_delete_when_no_embedder(
         virtual_path="/old.md",
     )
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return [delete_mut]
 
     setattr(daemon, "_resolve_mutations", _resolve)  # noqa: B010
@@ -349,7 +349,7 @@ async def test_legacy_refresh_prunes_sqlite_vec(monkeypatch: pytest.MonkeyPatch)
         ),
     ]
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return resolved
 
     setattr(daemon, "_resolve_mutations", _resolve)  # noqa: B010
@@ -403,7 +403,7 @@ async def test_legacy_refresh_vec_failure_does_not_block_other_lanes() -> None:
         zone_id: str
         virtual_path: str
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return [
             _R(
                 event=_FakeMutEvent(path="/zone/zX/g.md", op=None),
@@ -453,7 +453,7 @@ async def test_fts_consumer_propagates_vec_delete_failure_on_delete() -> None:
         virtual_path="/v.md",
     )
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return [delete_mut]
 
     setattr(daemon, "_resolve_mutations", _resolve)  # noqa: B010
@@ -491,7 +491,7 @@ async def test_embedding_consumer_propagates_vec_delete_failure_on_delete() -> N
         virtual_path="/e.md",
     )
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return [delete_mut]
 
     setattr(daemon, "_resolve_mutations", _resolve)  # noqa: B010
@@ -503,10 +503,13 @@ async def test_embedding_consumer_propagates_vec_delete_failure_on_delete() -> N
 
 
 @pytest.mark.asyncio
-async def test_fts_consumer_raises_on_unresolved_upsert() -> None:
-    """Codex review R10 #1 (high): the FTS consumer must also refuse
-    to checkpoint unresolved-content UPSERTs (transient resolver
-    failures), or the lane stays broken until the next mutation."""
+async def test_fts_consumer_skips_unresolved_upsert_without_raise() -> None:
+    """#4337: refuse-to-checkpoint now lives in the parking gate inside
+    ``_resolve_mutations``. If an unresolved UPSERT somehow reaches the
+    handler (gate stubbed out here), it must be skipped defensively —
+    never indexed with ``None`` content and never treated as a delete."""
+    from unittest.mock import AsyncMock
+
     from nexus.bricks.search.daemon import SearchDaemon
     from nexus.bricks.search.mutation_events import SearchMutationOp
 
@@ -514,7 +517,9 @@ async def test_fts_consumer_raises_on_unresolved_upsert() -> None:
     daemon._sqlite_vec_backend = None
     daemon._embedding_provider = None
     daemon._indexing_pipeline = None
-    daemon._chunk_store = MagicMock()
+    daemon._chunk_store = MagicMock(
+        replace_document_chunks=AsyncMock(), delete_document_chunks=AsyncMock()
+    )
 
     upsert_event = _FakeMutEvent(path="/zone/zU/u.md", op=SearchMutationOp.UPSERT)
     unresolved = _FakeResolvedMutation(
@@ -526,12 +531,13 @@ async def test_fts_consumer_raises_on_unresolved_upsert() -> None:
         content_resolved=False,
     )
 
-    async def _resolve(_events: Any) -> list[Any]:
+    async def _resolve(_consumer: Any, _events: Any) -> list[Any]:
         return [unresolved]
 
     setattr(daemon, "_resolve_mutations", _resolve)  # noqa: B010
     setattr(daemon, "_collapse_resolved_mutations", lambda items: items)  # noqa: B010
     setattr(daemon, "_has_resolved_path_id", lambda m: True)  # noqa: B010
 
-    with pytest.raises(RuntimeError, match="content unresolved"):
-        await daemon._consume_fts_mutations([MagicMock()])
+    await daemon._consume_fts_mutations([MagicMock()])
+    daemon._chunk_store.replace_document_chunks.assert_not_awaited()
+    daemon._chunk_store.delete_document_chunks.assert_not_awaited()

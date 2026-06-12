@@ -20,3 +20,16 @@
 
 # Architecture docs
 /docs/architecture/       @elfenlieds7
+
+# Plugin signing trust chain — kernel team owns every file the cluster's
+# PluginLoader::load implicitly trusts (signing scripts, signing-keys
+# vault DB, the workflows that produce + verify signed dylibs, the
+# compliance gate that keeps unsigned cdylibs out of the workspace).
+/data/vault-signing/                              @elfenlieds7
+/.github/workflows/release-plugin-reusable.yml    @elfenlieds7
+/.github/workflows/plugin-signing-compliance.yml  @elfenlieds7
+/scripts/sign_plugin.py                           @elfenlieds7
+/scripts/vault_get_signing_key.py                 @elfenlieds7
+/scripts/provision_dogfood_key.py                 @elfenlieds7
+/scripts/bootstrap_dogfood_vault.py               @elfenlieds7
+/scripts/check_plugin_signing_compliance.py       @elfenlieds7

@@ -426,13 +426,7 @@ impl Filesystem for NexusFs {
         reply.error(ERRNO_NOSYS);
     }
 
-    fn unlink(
-        &mut self,
-        _req: &Request,
-        _parent: u64,
-        _name: &std::ffi::OsStr,
-        reply: ReplyEmpty,
-    ) {
+    fn unlink(&mut self, _req: &Request, _parent: u64, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
         reply.error(ERRNO_NOSYS);
     }
 

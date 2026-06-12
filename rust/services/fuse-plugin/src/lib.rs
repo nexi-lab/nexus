@@ -105,7 +105,12 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             let kernel_clone = unsafe { kernel_handle_clone(_kernel) };
             let fs = fs::NexusFs::new(kernel_clone, vfs_root);
 
-            match fuser::spawn_mount2(fs, &mount_point, &fuser::MountOption::default_options()) {
+            // Minimal MountOption set — defaults are sufficient for
+            // cc-tasks-share's flat-file read/write workflow.  Operators
+            // who need uid/gid mapping or read-only mounts set them via
+            // the OS-level FUSE mount wrapper, not the plugin.
+            let mount_opts: &[fuser::MountOption] = &[];
+            match fuser::spawn_mount2(fs, &mount_point, mount_opts) {
                 Ok(session) => {
                     tracing::info!(
                         target: "nexus::fuse",

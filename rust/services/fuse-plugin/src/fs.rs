@@ -319,7 +319,7 @@ impl Filesystem for NexusFs {
         _req: &Request,
         ino: INodeNo,
         _fh: FileHandle,
-        offset: i64,
+        offset: u64,
         size: u32,
         _flags: fuser::AccessFlags,
         _lock_owner: Option<fuser::LockOwner>,
@@ -357,7 +357,7 @@ impl Filesystem for NexusFs {
         _req: &Request,
         ino: INodeNo,
         _fh: FileHandle,
-        offset: i64,
+        offset: u64,
         data: &[u8],
         _write_flags: fuser::WriteFlags,
         _flags: fuser::AccessFlags,
@@ -402,7 +402,7 @@ impl Filesystem for NexusFs {
         _req: &Request,
         _ino: INodeNo,
         _fh: FileHandle,
-        _flags: fuser::AccessFlags,
+        _flags: fuser::OpenFlags,
         _lock_owner: Option<fuser::LockOwner>,
         _flush: bool,
         reply: ReplyEmpty,
@@ -421,7 +421,7 @@ impl Filesystem for NexusFs {
         _req: &Request,
         _ino: INodeNo,
         _fh: FileHandle,
-        _offset: i64,
+        _offset: u64,
         reply: fuser::ReplyDirectory,
     ) {
         reply.error(errno_nosys());
@@ -467,7 +467,7 @@ impl Filesystem for NexusFs {
         _name: &std::ffi::OsStr,
         _mode: u32,
         _umask: u32,
-        _flags: fuser::AccessFlags,
+        _flags: i32,
         reply: fuser::ReplyCreate,
     ) {
         reply.error(errno_nosys());
@@ -488,7 +488,7 @@ impl Filesystem for NexusFs {
         _crtime: Option<SystemTime>,
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
-        _flags: Option<u32>,
+        _flags: Option<fuser::BsdFileFlags>,
         reply: ReplyAttr,
     ) {
         reply.error(errno_nosys());

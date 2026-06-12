@@ -1501,7 +1501,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/auth/keys/{key_id}
-      source: src/nexus/server/api/v2/routers/auth_keys.py:351
+      source: src/nexus/server/api/v2/routers/auth_keys.py:358
   profiles:
     lite: supported
     sandbox: supported

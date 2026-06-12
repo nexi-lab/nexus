@@ -246,19 +246,6 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     if not user_id:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
-    _record_store = _resolve_record_store(auth_provider)
-    if _record_store is not None:
-        entity_registry = EntityRegistry(_record_store)
-        subject_type = params.subject_type or "user"
-        entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
-        entity_registry.register_entity(
-            entity_type=subject_type,
-            entity_id=entity_id,
-            parent_type="zone",
-            parent_id=params.zone_id,
-            entity_metadata={"name": params.name} if params.name else None,
-        )
-
     expires_at = None
     if params.expires_days:
         expires_at = datetime.now(UTC) + timedelta(days=params.expires_days)
@@ -275,6 +262,37 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
             expires_at=expires_at,
         )
         session.commit()
+
+        # Register the subject only AFTER the key commit (#4352 review): a
+        # row published before the key exists turns every create_key failure
+        # into a stale-row leak, and a compensating delete can erase a row a
+        # concurrent request has already adopted. Post-commit the row is
+        # legitimate state; a registration failure here is benign (the
+        # registry is best-effort ID disambiguation, junction rows are the
+        # access SSOT per #3871) and self-heals on the next create.
+        _record_store = _resolve_record_store(auth_provider)
+        subject_type = params.subject_type or "user"
+        if _record_store is not None and subject_type in ("user", "agent"):
+            # Mirror create_key's effective subject: `subject_id or user_id`
+            # for every subject_type — the registry must describe the same
+            # principal the key authenticates as (#4352 review).
+            entity_id = params.subject_id or user_id
+            try:
+                EntityRegistry(_record_store).register_entity_if_absent(
+                    entity_type=subject_type,
+                    entity_id=entity_id,
+                    parent_type="zone",
+                    parent_id=params.zone_id,
+                    entity_metadata={"name": params.name} if params.name else None,
+                )
+            except Exception:
+                logger.exception(
+                    "Entity registration failed for created key %s (subject %s:%s); "
+                    "registry row will be retried on the next key create",
+                    key_id,
+                    subject_type,
+                    entity_id,
+                )
 
         result: dict[str, Any] = {
             "key_id": key_id,

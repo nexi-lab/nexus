@@ -252,7 +252,14 @@ async def create_key(
     # Build a minimal context with is_admin=True (already verified by require_admin)
     context = SimpleNamespace(is_admin=True)
 
-    result = handle_admin_create_key(db_provider, params, context)
+    # Domain validation failures (zone missing/not-Active per #3871, invalid
+    # subject_type, zoneless non-admin key) surface as ValueError from
+    # DatabaseAPIKeyAuth.create_key — translate to a structured 400 instead of
+    # letting them escape as an unstructured plain-text 500 (#4352).
+    try:
+        result = handle_admin_create_key(db_provider, params, context)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     from nexus.storage.api_key_ops import get_primary_zone
 

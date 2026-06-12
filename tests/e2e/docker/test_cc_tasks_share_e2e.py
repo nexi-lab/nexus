@@ -342,9 +342,7 @@ class TestCrossNodeLazyMaterialization:
 
         # Step 1: CC on founder writes its task JSON directly to host fs.
         # No Nexus syscall — no metadata, no last_writer_address.
-        cc_tasks_share_helpers.host_task_write(
-            topology.founder_container, relpath, payload
-        )
+        cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, payload)
 
         # Sanity: bytes really are on founder's host fs.  This pins
         # the "no Nexus involvement" precondition that defines the
@@ -353,8 +351,7 @@ class TestCrossNodeLazyMaterialization:
             topology.founder_container, relpath
         )
         assert founder_host_bytes == payload, (
-            "host-fs direct write to founder didn't land — workflow "
-            "precondition failed"
+            "host-fs direct write to founder didn't land — workflow precondition failed"
         )
 
         founder_path = topology.founder_vfs_path(relpath)
@@ -371,8 +368,7 @@ class TestCrossNodeLazyMaterialization:
         )
         first_bytes = runbook_helpers.decode_content(first_read)
         assert first_bytes == payload, (
-            f"joiner saw {first_bytes!r}, expected {payload!r} — fan-out "
-            "returned wrong content"
+            f"joiner saw {first_bytes!r}, expected {payload!r} — fan-out returned wrong content"
         )
 
         # Step 3: wait for raft to replicate the metadata that
@@ -440,9 +436,7 @@ class TestCrossNodeLazyMaterialization:
         relpath = "/session-cross-rev/1.json"
         payload = b'{"task":"cross-node-reverse","source":"joiner"}'
 
-        cc_tasks_share_helpers.host_task_write(
-            topology.joiner_container, relpath, payload
-        )
+        cc_tasks_share_helpers.host_task_write(topology.joiner_container, relpath, payload)
 
         joiner_path = topology.joiner_vfs_path(relpath)
 
@@ -450,8 +444,7 @@ class TestCrossNodeLazyMaterialization:
             topology.founder_grpc, joiner_path, api_key=api_key, timeout=30
         )
         assert "error" not in first_read, (
-            f"founder first vfs_read failed — reverse fan-out broken. "
-            f"result={first_read}"
+            f"founder first vfs_read failed — reverse fan-out broken. result={first_read}"
         )
         assert runbook_helpers.decode_content(first_read) == payload
 
@@ -467,8 +460,7 @@ class TestCrossNodeLazyMaterialization:
         )
         last_writer = (stat_after.get("result") or {}).get("lastWriterAddress") or ""
         assert "joiner" in last_writer, (
-            f"reverse direction: last_writer_address should point at joiner, "
-            f"got {last_writer!r}"
+            f"reverse direction: last_writer_address should point at joiner, got {last_writer!r}"
         )
 
         second_read = runbook_helpers.vfs_read(

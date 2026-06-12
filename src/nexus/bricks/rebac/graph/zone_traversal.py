@@ -26,6 +26,7 @@ from nexus.bricks.rebac.graph._operators import (
     dispatch_relation_operators,
     parent_path_of,
 )
+from nexus.bricks.rebac.path_patterns import path_pattern_candidates
 from nexus.contracts.rebac_types import (
     GraphLimitExceeded,
     GraphLimits,
@@ -332,6 +333,22 @@ class ZoneAwareTraversal:
     # Direct relation check
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _object_id_candidates(obj: Entity) -> tuple[tuple[str, ...], dict[str, int]]:
+        candidates = tuple(path_pattern_candidates(obj.entity_type, obj.entity_id))
+        candidate_index = {candidate: idx for idx, candidate in enumerate(candidates)}
+        return candidates, candidate_index
+
+    @staticmethod
+    def _rows_by_candidate_priority(
+        rows: list[Any],
+        candidate_index: dict[str, int],
+    ) -> list[Any]:
+        return sorted(
+            rows,
+            key=lambda row: candidate_index.get(row.object_id, len(candidate_index)),
+        )
+
     def has_direct_relation(
         self,
         subject: Entity,
@@ -368,15 +385,16 @@ class ZoneAwareTraversal:
 
         now = datetime.now(UTC)
         expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
+        candidates, candidate_index = self._object_id_candidates(obj)
 
         with self._engine.connect() as conn:
             # Check for direct concrete subject tuple (with ABAC conditions support)
-            stmt = select(RT.tuple_id, RT.conditions).where(
+            stmt = select(RT.tuple_id, RT.object_id, RT.conditions).where(
                 RT.subject_type == subject.entity_type,
                 RT.subject_id == subject.entity_id,
                 RT.relation == relation,
                 RT.object_type == obj.entity_type,
-                RT.object_id == obj.entity_id,
+                RT.object_id.in_(candidates),
                 RT.zone_id == zone_id,
                 RT.subject_relation.is_(None),
                 expires_filter,
@@ -392,25 +410,29 @@ class ZoneAwareTraversal:
                     zone_id,
                 )
 
-            row = conn.execute(stmt).first()
+            rows = self._rows_by_candidate_priority(list(conn.execute(stmt)), candidate_index)
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("[DIRECT-CHECK] Query result row: %s", row)
-            if row and self._conditions_allow(row.conditions, context):
-                return True
+                logger.debug("[DIRECT-CHECK] Query result rows: %s", rows)
+            for row in rows:
+                if self._conditions_allow(row.conditions, context):
+                    return True
 
             # Cross-zone check for shared-* relations (PR #647, #648)
             if self._zone_manager.is_cross_zone_readable(relation):
-                cross_zone_stmt = select(RT.tuple_id, RT.conditions).where(
+                cross_zone_stmt = select(RT.tuple_id, RT.object_id, RT.conditions).where(
                     RT.subject_type == subject.entity_type,
                     RT.subject_id == subject.entity_id,
                     RT.relation == relation,
                     RT.object_type == obj.entity_type,
-                    RT.object_id == obj.entity_id,
+                    RT.object_id.in_(candidates),
                     RT.subject_relation.is_(None),
                     expires_filter,
                 )
                 cross_zone_allowed = False
-                for cross_zone_row in conn.execute(cross_zone_stmt):
+                cross_zone_rows = self._rows_by_candidate_priority(
+                    list(conn.execute(cross_zone_stmt)), candidate_index
+                )
+                for cross_zone_row in cross_zone_rows:
                     if self._conditions_allow(cross_zone_row.conditions, context):
                         cross_zone_allowed = True
                         break
@@ -426,17 +448,20 @@ class ZoneAwareTraversal:
 
             # Check for wildcard/public access (*:*) - Issue #1064
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                wildcard_stmt = select(RT.tuple_id, RT.conditions).where(
+                wildcard_stmt = select(RT.tuple_id, RT.object_id, RT.conditions).where(
                     RT.subject_type == WILDCARD_SUBJECT[0],
                     RT.subject_id == WILDCARD_SUBJECT[1],
                     RT.relation == relation,
                     RT.object_type == obj.entity_type,
-                    RT.object_id == obj.entity_id,
+                    RT.object_id.in_(candidates),
                     RT.subject_relation.is_(None),
                     expires_filter,
                 )
                 wildcard_allowed = False
-                for wildcard_row in conn.execute(wildcard_stmt):
+                wildcard_rows = self._rows_by_candidate_priority(
+                    list(conn.execute(wildcard_stmt)), candidate_index
+                )
+                for wildcard_row in wildcard_rows:
                     if self._conditions_allow(wildcard_row.conditions, context):
                         wildcard_allowed = True
                         break
@@ -454,18 +479,22 @@ class ZoneAwareTraversal:
                 RT.subject_type,
                 RT.subject_id,
                 RT.subject_relation,
+                RT.object_id,
                 RT.conditions,
             ).where(
                 RT.relation == relation,
                 RT.object_type == obj.entity_type,
-                RT.object_id == obj.entity_id,
+                RT.object_id.in_(candidates),
                 RT.subject_relation.isnot(None),
                 RT.zone_id == zone_id,
                 expires_filter,
             )
 
             # BUGFIX (Issue #1): Use recursive ReBAC evaluation instead of direct SQL
-            for userset_row in conn.execute(userset_stmt):
+            userset_rows = self._rows_by_candidate_priority(
+                list(conn.execute(userset_stmt)), candidate_index
+            )
+            for userset_row in userset_rows:
                 if not self._conditions_allow(userset_row.conditions, context):
                     continue
 

@@ -38,6 +38,30 @@ def rebac_manager():
         manager.close()
 
 
+@pytest.fixture
+def zone_aware_rebac_manager():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        enforce_zone_isolation=True,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    manager.create_namespace(
+        NamespaceConfig(
+            namespace_id="path-pattern-permissions-file-zone-aware",
+            object_type="file",
+            config={"relations": {"read": {}}, "permissions": {}},
+        )
+    )
+    try:
+        yield manager
+    finally:
+        manager.close()
+
+
 def test_recursive_descendant_grant(rebac_manager):
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
@@ -101,6 +125,75 @@ def test_single_level_child_but_not_grandchild(rebac_manager):
             zone_id="root",
         )
         is False
+    )
+
+
+def test_zone_aware_recursive_path_pattern_grants_descendant_read(
+    zone_aware_rebac_manager,
+):
+    zone_aware_rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+
+    assert (
+        zone_aware_rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="read",
+            object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
+        )
+        is True
+    )
+
+
+def test_zone_aware_wildcard_path_pattern_grants_cross_zone_public_read(
+    zone_aware_rebac_manager,
+):
+    zone_aware_rebac_manager.rebac_write(
+        subject=("*", "*"),
+        relation="read",
+        object=("file", "/public/**"),
+        zone_id="shared",
+    )
+
+    assert (
+        zone_aware_rebac_manager.rebac_check(
+            subject=("agent", "visitor"),
+            permission="read",
+            object=("file", "/public/docs/readme.md"),
+            zone_id="root",
+        )
+        is True
+    )
+
+
+def test_zone_aware_userset_subject_path_pattern_grants_member_read(
+    zone_aware_rebac_manager,
+):
+    zone_aware_rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="member",
+        object=("group", "eng"),
+        zone_id="root",
+    )
+    zone_aware_rebac_manager.rebac_write(
+        subject=("group", "eng", "member"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+
+    assert (
+        zone_aware_rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="read",
+            object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
+        )
+        is True
     )
 
 

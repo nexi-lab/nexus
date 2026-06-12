@@ -1,15 +1,14 @@
 name: Release Vault Plugin
 
-# Automated release pipeline for the vault cdylib plugin.
-# Triggered by tags of the form vault-v<semver> (e.g., vault-v0.1.1).
+# Release pipeline for the vault cdylib — wrapper around the reusable
+# plugin-release workflow. Triggered by tags of the form `vault-v<semver>`.
 #
-# 1. Builds the vault cdylib for 4 platforms via the reusable workflow.
-# 2. Packages each into platform-appropriate archives (tar.gz / zip).
-# 3. Uploads archives to Tencent COS (gracefully skips if not configured).
-# 4. Creates a GitHub Release with archives and SHA256 checksums.
+# Vault stays on `signing_key_source: github-secret` because vault is the
+# trust root for every other plugin's signing key (chicken-and-egg). Every
+# other plugin uses `signing_key_source: vault` and pulls its privkey
+# from a running vault cluster.
 #
-# COS path convention: nexus-vault/release/<version>/<filename>
-# Example: nexus-vault/release/v0.1.1/nexus-vault-linux-x86_64.tar.gz
+# COS path convention: nexus-vault/release/v<version>/<filename>
 
 on:
   push:
@@ -20,210 +19,29 @@ permissions:
   contents: write
 
 jobs:
-  # ── Build ──────────────────────────────────────────────────────────────────
-  # Reuses the existing vault-plugin-build.yml to compile all 4 platforms.
-  build:
-    name: Build vault plugin
-    uses: ./.github/workflows/vault-plugin-build.yml
+  release:
+    uses: ./.github/workflows/release-plugin-reusable.yml
     with:
-      upload_retention_days: 1
+      plugin_name: nexus-vault
+      dylib_basename: libnexus_vault
+      archive_prefix: nexus-vault
+      cos_subdir: nexus-vault/release
+      version_tag_prefix: vault-v
+      signing_key_source: github-secret
+      # 7.5 MiB — matches the loosest pre-reusable platform budget (macOS).
+      # Stricter than the reusable's 8 MiB default; tightens regression
+      # detection for the only plugin where we've measured a stable size.
+      max_size_bytes: 7864320
+      release_description: |
+        Vault dylib plugin for nexusd-cluster.
 
-  # ── Package and upload ─────────────────────────────────────────────────────
-  # Downloads all dylib artifacts, packages them into tar.gz / zip archives,
-  # computes SHA256 checksums, and uploads to COS.
-  package-and-upload:
-    name: Package and upload
-    needs: [build]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Extract version from tag
-        id: version
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/vault-v}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: nexus-vault-*
-
-      - name: Set up Python for signing
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install signing deps
-        run: pip install --quiet cryptography
-
-      - name: Ed25519-sign each platform dylib
-        # Produces `<dylib>.sig` (64 raw bytes) next to each downloaded
-        # binary so the packaging step picks them both into the archive.
-        # The verifier side (nexus-vfs cluster) reads the `.sig` next to
-        # the loaded plugin and Ed25519-verifies against the embedded
-        # `trusted_keys/nexus-team.pub`. Format contract lives in
-        # `nexus_plugin_abi::signing`.
-        env:
-          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PLUGIN_SIGNING_PRIVKEY}" ]; then
-            echo "::error::PLUGIN_SIGNING_PRIVKEY repo secret is empty."
-            echo "Set it on nexi-lab/nexus to base64(32 raw Ed25519 private bytes)."
-            exit 1
-          fi
-          python scripts/sign_plugin.py \
-            artifacts/nexus-vault-linux-x86_64/libnexus_vault.so \
-            artifacts/nexus-vault-macos-arm64/libnexus_vault.dylib \
-            artifacts/nexus-vault-macos-x86_64/libnexus_vault.dylib \
-            artifacts/nexus-vault-windows-x86_64/nexus_vault.dll
-
-      - name: Package into archives
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-
-          # Each archive ships the dylib AND its detached `.sig`. The
-          # consumer (sudowork download script) extracts both into the
-          # plugin dir; the kernel's PluginLoader::load reads them in
-          # tandem and rejects the plugin if verify fails.
-
-          # Linux x86_64
-          cp artifacts/nexus-vault-linux-x86_64/libnexus_vault.so libnexus_vault.so
-          cp artifacts/nexus-vault-linux-x86_64/libnexus_vault.so.sig libnexus_vault.so.sig
-          tar -czf release-assets/nexus-vault-linux-x86_64.tar.gz libnexus_vault.so libnexus_vault.so.sig
-          rm libnexus_vault.so libnexus_vault.so.sig
-
-          # macOS arm64
-          cp artifacts/nexus-vault-macos-arm64/libnexus_vault.dylib libnexus_vault.dylib
-          cp artifacts/nexus-vault-macos-arm64/libnexus_vault.dylib.sig libnexus_vault.dylib.sig
-          tar -czf release-assets/nexus-vault-macos-arm64.tar.gz libnexus_vault.dylib libnexus_vault.dylib.sig
-          rm libnexus_vault.dylib libnexus_vault.dylib.sig
-
-          # macOS x86_64
-          cp artifacts/nexus-vault-macos-x86_64/libnexus_vault.dylib libnexus_vault.dylib
-          cp artifacts/nexus-vault-macos-x86_64/libnexus_vault.dylib.sig libnexus_vault.dylib.sig
-          tar -czf release-assets/nexus-vault-macos-x86_64.tar.gz libnexus_vault.dylib libnexus_vault.dylib.sig
-          rm libnexus_vault.dylib libnexus_vault.dylib.sig
-
-          # Windows x86_64
-          cp artifacts/nexus-vault-windows-x86_64/nexus_vault.dll nexus_vault.dll
-          cp artifacts/nexus-vault-windows-x86_64/nexus_vault.dll.sig nexus_vault.dll.sig
-          zip release-assets/nexus-vault-windows-x86_64.zip nexus_vault.dll nexus_vault.dll.sig
-          rm nexus_vault.dll nexus_vault.dll.sig
-
-          echo "=== release-assets ==="
-          ls -lh release-assets/
-
-      - name: Compute SHA256 checksums
-        id: checksums
-        working-directory: release-assets
-        run: |
-          CHECKSUMS=$(sha256sum *.tar.gz *.zip)
-          echo "$CHECKSUMS"
-          {
-            echo "checksums<<EOF"
-            echo "$CHECKSUMS"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Upload to COS
-        env:
-          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
-          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
-          COS_BUCKET: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
-          COS_REGION: ${{ secrets.COS_REGION || vars.COS_REGION }}
-          COS_BASE_URL: ${{ secrets.COS_BASE_URL || vars.COS_BASE_URL }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${COS_SECRET_ID}" ] || [ -z "${COS_SECRET_KEY}" ] \
-            || [ -z "${COS_BUCKET}" ] || [ -z "${COS_REGION}" ]; then
-            echo "::warning::COS credentials not configured. Skipping COS upload."
-            echo "Set COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION in secrets or vars to enable."
-            exit 0
-          fi
-
-          pip install cos-python-sdk-v5
-
-          for file in release-assets/*; do
-            basename=$(basename "$file")
-            remote_path="nexus-vault/release/v${VERSION}/${basename}"
-            echo "Uploading ${basename} -> ${remote_path}"
-            python scripts/upload_cos.py \
-              --local-path "$file" \
-              --remote-path "$remote_path"
-          done
-
-      - name: Prepare release body
-        id: release-info
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          CHECKSUMS: ${{ steps.checksums.outputs.checksums }}
-        run: |
-          cat > release_body.md << BODY
-          ## Vault Plugin v${VERSION}
-
-          Vault dylib plugin for nexusd-cluster.
-
-          ### Included services
-          - **GenericSecretsService** — namespace:key encrypted KV with versioning, soft-delete, and batch operations
-          - **PasswordVaultService** — password manager with TOTP, search, and bulk migration
-
-          ### Installation
-          Extract the archive and place the dylib in your nexusd-cluster \`--plugin-dir\` directory.
-
-          ### SHA256 checksums
-          \`\`\`
-          ${CHECKSUMS}
-          \`\`\`
-          BODY
-
-      - name: Upload release body artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-body
-          path: release_body.md
-          retention-days: 1
-
-      - name: Upload release assets artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets
-          path: release-assets/*
-          retention-days: 1
-
-  # ── Create GitHub Release ──────────────────────────────────────────────────
-  # Creates (or updates) a GitHub Release with all packaged archives.
-  create-release:
-    name: Create GitHub Release
-    needs: [package-and-upload]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download release assets
-        uses: actions/download-artifact@v4
-        with:
-          name: release-assets
-          path: release-assets
-
-      - name: Download release body
-        uses: actions/download-artifact@v4
-        with:
-          name: release-body
-          path: release-body
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: release-body/release_body.md
-          files: release-assets/*
-          draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        ### Included services
+        - **GenericSecretsService** — namespace:key encrypted KV with versioning, soft-delete, and batch operations
+        - **PasswordVaultService** — password manager with TOTP, search, and bulk migration
+    secrets:
+      PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+      COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+      COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+      COS_BUCKET: ${{ secrets.COS_BUCKET }}
+      COS_REGION: ${{ secrets.COS_REGION }}
+      COS_BASE_URL: ${{ secrets.COS_BASE_URL }}

@@ -1,0 +1,491 @@
+name: Release Plugin (reusable)
+
+# Reusable release pipeline for any cdylib plugin loaded by nexusd-cluster.
+# Builds across 4 platforms, Ed25519-signs each dylib, packages into
+# platform-appropriate archives, uploads to COS, and creates a GitHub
+# Release.
+#
+# Signing key source is selectable so we can dogfood:
+#   * github-secret — privkey lives in the PLUGIN_SIGNING_PRIVKEY repo
+#                     secret (vault's bootstrap path).
+#   * vault         — privkey lives inside a running vault cluster; this
+#                     workflow calls scripts/vault_get_signing_key.py to
+#                     pull it at sign time. Used for every non-vault plugin.
+#
+# Either way, sign_plugin.py just reads PLUGIN_SIGNING_PRIVKEY from env —
+# it is source-agnostic.
+#
+# COS path convention: <cos_subdir>/v<version>/<filename>
+#   e.g. nexus-vault/release/v0.1.2/nexus-vault-linux-x86_64.tar.gz
+
+on:
+  workflow_call:
+    inputs:
+      plugin_name:
+        description: Cargo package name (e.g. nexus-vault, nexus-local-connector).
+        required: true
+        type: string
+      dylib_basename:
+        description: Dylib basename without platform suffix (e.g. libnexus_vault, libnexus_local_connector). Linux uses .so, macOS .dylib, Windows drops the 'lib' prefix and uses .dll.
+        required: true
+        type: string
+      archive_prefix:
+        description: Per-platform archive filename prefix (e.g. nexus-vault → nexus-vault-linux-x86_64.tar.gz). Also used as the artifact-name prefix between build and package jobs.
+        required: true
+        type: string
+      cos_subdir:
+        description: COS path subdir for uploaded archives. Final path is `<cos_subdir>/v<version>/<filename>`.
+        required: true
+        type: string
+      version_tag_prefix:
+        description: Git tag prefix used to extract the version (e.g. `vault-v` for tags `vault-v0.1.2`). The caller's `on.push.tags` pattern must match this prefix.
+        required: true
+        type: string
+      signing_key_source:
+        description: Where the signing privkey comes from. `github-secret` reads it directly from `secrets.PLUGIN_SIGNING_PRIVKEY`. `vault` calls scripts/vault_get_signing_key.py against the dogfood cluster.
+        required: true
+        type: string
+      signing_key_name:
+        description: "For `signing_key_source: vault`, the `<namespace>/<key>` to fetch (e.g. signing-keys/kernel-dogfood-v1). Ignored when source is github-secret."
+        required: false
+        type: string
+        default: ""
+      max_size_bytes:
+        description: Per-platform max dylib size in bytes. Cluster's plugin loader has no hard cap, but a regression budget keeps bloat visible at PR time.
+        required: false
+        type: number
+        default: 8388608   # 8 MiB
+      platforms:
+        description: 'JSON array of platform suffixes to build. Plugins that don''t support all 4 platforms (e.g. nexus-fuse-plugin is Linux-only) shrink the matrix here. Valid entries: linux-x86_64, macos-arm64, macos-x86_64, windows-x86_64.'
+        required: false
+        type: string
+        default: '["linux-x86_64", "macos-arm64", "macos-x86_64", "windows-x86_64"]'
+      release_description:
+        description: Multi-line markdown shown in the GitHub Release body under the version header. Optional.
+        required: false
+        type: string
+        default: ""
+
+    secrets:
+      PLUGIN_SIGNING_PRIVKEY:
+        description: Bootstrap signing privkey (base64 of 32 raw Ed25519 priv bytes). Required when signing_key_source=github-secret.
+        required: false
+      VAULT_SIGNING_TOKEN:
+        description: Bearer token for the vault plugin's auth surface. Required when signing_key_source=vault.
+        required: false
+      VAULT_SIGNING_ENDPOINT:
+        description: gRPC endpoint of the cluster running vault.dylib. Required when signing_key_source=vault.
+        required: false
+      COS_SECRET_ID:
+        required: false
+      COS_SECRET_KEY:
+        required: false
+      COS_BUCKET:
+        required: false
+      COS_REGION:
+        required: false
+      COS_BASE_URL:
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build ──────────────────────────────────────────────────────────────────
+  # Up-to-4-platform build matrix. Dylib names are derived from `dylib_basename`:
+  #   linux:   <dylib_basename>.so
+  #   macos:   <dylib_basename>.dylib   (arm64 + x86_64)
+  #   windows: <dylib_basename> with the leading `lib` stripped + `.dll`
+  # The job-level `if` filters out platforms not listed in `inputs.platforms`.
+  # Skipped matrix instances complete without spawning a runner.
+  build:
+    if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
+    name: build / ${{ matrix.artifact_name_suffix }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name_suffix: linux-x86_64
+            dylib_ext: .so
+            strip_lib_prefix: false
+          - os: macos-14
+            artifact_name_suffix: macos-arm64
+            dylib_ext: .dylib
+            strip_lib_prefix: false
+          - os: macos-14
+            artifact_name_suffix: macos-x86_64
+            dylib_ext: .dylib
+            target: x86_64-apple-darwin
+            strip_lib_prefix: false
+          - os: windows-latest
+            artifact_name_suffix: windows-x86_64
+            dylib_ext: .dll
+            strip_lib_prefix: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '3.20.2'
+          $protocDir = Join-Path $env:USERPROFILE 'protoc'
+          New-Item -ItemType Directory -Force -Path $protocDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protocVersion}/protoc-${protocVersion}-win64.zip" `
+            -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $protocDir
+          $protocBinDir = Join-Path $protocDir 'bin'
+          $protocExe = Join-Path $protocBinDir 'protoc.exe'
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBinDir
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
+          & $protocExe --version
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          target: ${{ matrix.target || '' }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ inputs.plugin_name }}-${{ matrix.os }}-${{ matrix.target || 'native' }}
+
+      - name: Compute dylib filename
+        id: dylib
+        shell: bash
+        env:
+          BASENAME: ${{ inputs.dylib_basename }}
+          EXT: ${{ matrix.dylib_ext }}
+          STRIP: ${{ matrix.strip_lib_prefix }}
+        run: |
+          set -euo pipefail
+          if [ "$STRIP" = "true" ] && [[ "$BASENAME" == lib* ]]; then
+            name="${BASENAME#lib}${EXT}"
+          else
+            name="${BASENAME}${EXT}"
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+          if [ -n "${{ matrix.target }}" ]; then
+            echo "path=target/${{ matrix.target }}/release/${name}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=target/release/${name}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release cdylib
+        run: |
+          cargo build --release -p ${{ inputs.plugin_name }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Check dylib size
+        shell: bash
+        env:
+          MAX_SIZE_BYTES: ${{ inputs.max_size_bytes }}
+          DYLIB_PATH: ${{ steps.dylib.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            actual=$(stat -f '%z' "$DYLIB_PATH")
+          else
+            actual=$(stat -c '%s' "$DYLIB_PATH")
+          fi
+          echo "Plugin size: $actual bytes (max: $MAX_SIZE_BYTES)"
+          if [ "$actual" -gt "$MAX_SIZE_BYTES" ]; then
+            echo "::error::${{ inputs.plugin_name }} ${{ matrix.artifact_name_suffix }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.archive_prefix }}-${{ matrix.artifact_name_suffix }}
+          path: ${{ steps.dylib.outputs.path }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── Package, sign, upload ──────────────────────────────────────────────────
+  # Downloads all 4 dylibs, signs each (privkey source per `signing_key_source`),
+  # packages into tar.gz / zip, uploads to COS at <cos_subdir>/v<version>/.
+  package-and-upload:
+    name: Package and upload
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        env:
+          PREFIX: refs/tags/${{ inputs.version_tag_prefix }}
+        run: |
+          VERSION="${GITHUB_REF#${PREFIX}}"
+          if [ "$VERSION" = "$GITHUB_REF" ]; then
+            echo "::error::tag $GITHUB_REF does not start with prefix ${{ inputs.version_tag_prefix }}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: ${{ inputs.archive_prefix }}-*
+
+      - name: Set up Python for signing
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install signing deps
+        run: pip install --quiet cryptography
+
+      - name: Install grpcio-tools (vault source only)
+        if: inputs.signing_key_source == 'vault'
+        run: pip install --quiet grpcio grpcio-tools
+
+      - name: Fetch signing privkey from vault
+        # Pulls the privkey out of the running vault cluster and pipes it
+        # into $GITHUB_ENV so the next step's sign_plugin.py call reads
+        # PLUGIN_SIGNING_PRIVKEY from env exactly like the github-secret path.
+        # ::add-mask:: registers the value as a secret so any subsequent
+        # log line containing it gets redacted.
+        if: inputs.signing_key_source == 'vault'
+        env:
+          VAULT_ENDPOINT: ${{ secrets.VAULT_SIGNING_ENDPOINT }}
+          VAULT_TOKEN: ${{ secrets.VAULT_SIGNING_TOKEN }}
+          SIGNING_KEY_NAME: ${{ inputs.signing_key_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VAULT_ENDPOINT}" ] || [ -z "${VAULT_TOKEN}" ]; then
+            echo "::error::signing_key_source=vault requires VAULT_SIGNING_ENDPOINT + VAULT_SIGNING_TOKEN secrets on the caller."
+            exit 1
+          fi
+          if [ -z "${SIGNING_KEY_NAME}" ]; then
+            echo "::error::signing_key_source=vault requires inputs.signing_key_name (e.g. signing-keys/kernel-dogfood-v1)."
+            exit 1
+          fi
+          PRIVKEY=$(python scripts/vault_get_signing_key.py "${SIGNING_KEY_NAME}")
+          echo "::add-mask::${PRIVKEY}"
+          echo "PLUGIN_SIGNING_PRIVKEY=${PRIVKEY}" >> "$GITHUB_ENV"
+
+      - name: Resolve PLUGIN_SIGNING_PRIVKEY (github-secret source)
+        # Just forwards the repo secret into env so sign_plugin.py sees it.
+        # Done in a separate step so the env var is identically scoped to
+        # the signing step regardless of source.
+        if: inputs.signing_key_source == 'github-secret'
+        env:
+          PRIVKEY_SECRET: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PRIVKEY_SECRET}" ]; then
+            echo "::error::signing_key_source=github-secret requires PLUGIN_SIGNING_PRIVKEY secret on the caller."
+            exit 1
+          fi
+          echo "PLUGIN_SIGNING_PRIVKEY=${PRIVKEY_SECRET}" >> "$GITHUB_ENV"
+
+      - name: Ed25519-sign each platform dylib
+        # Produces `<dylib>.sig` (64 raw bytes) next to each downloaded
+        # binary so the packaging step picks them both into the archive.
+        # The verifier side (nexus-vfs cluster) reads the `.sig` next to
+        # the loaded plugin and Ed25519-verifies against an embedded
+        # `trusted_keys/*.pub`. Format contract in `nexus_plugin_abi::signing`.
+        #
+        # Iterates over actually-present artifact dirs so a subset-platform
+        # plugin (e.g. fuse-plugin = linux-only) doesn't need a per-platform
+        # if-skip; the build job's `platforms` input already produced only
+        # the right subset of artifacts.
+        env:
+          PREFIX: ${{ inputs.archive_prefix }}
+          BASENAME: ${{ inputs.dylib_basename }}
+        run: |
+          set -euo pipefail
+          win_dll="${BASENAME#lib}.dll"
+          files=()
+          for art_dir in artifacts/${PREFIX}-*/; do
+            [ -d "$art_dir" ] || continue
+            suffix=$(basename "$art_dir" | sed "s/^${PREFIX}-//")
+            case "$suffix" in
+              linux-*)   files+=("${art_dir}${BASENAME}.so") ;;
+              macos-*)   files+=("${art_dir}${BASENAME}.dylib") ;;
+              windows-*) files+=("${art_dir}${win_dll}") ;;
+              *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
+            esac
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no plugin artifacts found under artifacts/${PREFIX}-*"
+            exit 1
+          fi
+          python scripts/sign_plugin.py "${files[@]}"
+
+      - name: Package into archives
+        # Each archive ships the dylib AND its detached `.sig`. The
+        # consumer (sudowork download script) extracts both into the
+        # plugin dir; the kernel's PluginLoader::load reads them in
+        # tandem and rejects the plugin if verify fails.
+        env:
+          PREFIX: ${{ inputs.archive_prefix }}
+          BASENAME: ${{ inputs.dylib_basename }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          win_dll="${BASENAME#lib}.dll"
+          for art_dir in artifacts/${PREFIX}-*/; do
+            [ -d "$art_dir" ] || continue
+            suffix=$(basename "$art_dir" | sed "s/^${PREFIX}-//")
+            case "$suffix" in
+              linux-*)
+                cp "${art_dir}${BASENAME}.so" "${BASENAME}.so"
+                cp "${art_dir}${BASENAME}.so.sig" "${BASENAME}.so.sig"
+                tar -czf "release-assets/${PREFIX}-${suffix}.tar.gz" "${BASENAME}.so" "${BASENAME}.so.sig"
+                rm "${BASENAME}.so" "${BASENAME}.so.sig"
+                ;;
+              macos-*)
+                cp "${art_dir}${BASENAME}.dylib" "${BASENAME}.dylib"
+                cp "${art_dir}${BASENAME}.dylib.sig" "${BASENAME}.dylib.sig"
+                tar -czf "release-assets/${PREFIX}-${suffix}.tar.gz" "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
+                rm "${BASENAME}.dylib" "${BASENAME}.dylib.sig"
+                ;;
+              windows-*)
+                cp "${art_dir}${win_dll}" "${win_dll}"
+                cp "${art_dir}${win_dll}.sig" "${win_dll}.sig"
+                zip "release-assets/${PREFIX}-${suffix}.zip" "${win_dll}" "${win_dll}.sig"
+                rm "${win_dll}" "${win_dll}.sig"
+                ;;
+              *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
+            esac
+          done
+
+          echo "=== release-assets ==="
+          ls -lh release-assets/
+
+      - name: Compute SHA256 checksums
+        id: checksums
+        working-directory: release-assets
+        run: |
+          CHECKSUMS=$(sha256sum *.tar.gz *.zip)
+          echo "$CHECKSUMS"
+          {
+            echo "checksums<<EOF"
+            echo "$CHECKSUMS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to COS
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION }}
+          COS_BASE_URL: ${{ secrets.COS_BASE_URL }}
+          VERSION: ${{ steps.version.outputs.version }}
+          COS_SUBDIR: ${{ inputs.cos_subdir }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COS_SECRET_ID}" ] || [ -z "${COS_SECRET_KEY}" ] \
+            || [ -z "${COS_BUCKET}" ] || [ -z "${COS_REGION}" ]; then
+            echo "::warning::COS credentials not configured. Skipping COS upload."
+            echo "Set COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION on the caller to enable."
+            exit 0
+          fi
+
+          pip install cos-python-sdk-v5
+
+          for file in release-assets/*; do
+            basename=$(basename "$file")
+            remote_path="${COS_SUBDIR}/v${VERSION}/${basename}"
+            echo "Uploading ${basename} -> ${remote_path}"
+            python scripts/upload_cos.py \
+              --local-path "$file" \
+              --remote-path "$remote_path"
+          done
+
+      - name: Prepare release body
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUMS: ${{ steps.checksums.outputs.checksums }}
+          PLUGIN_NAME: ${{ inputs.plugin_name }}
+          EXTRA_BODY: ${{ inputs.release_description }}
+        run: |
+          cat > release_body.md << BODY
+          ## ${PLUGIN_NAME} v${VERSION}
+
+          ${EXTRA_BODY}
+
+          ### Installation
+          Extract the archive and place the dylib + \`.sig\` in your nexusd-cluster \`--plugin-dir\`. PluginLoader::load Ed25519-verifies the signature against the embedded trust root before \`dlopen\`.
+
+          ### SHA256 checksums
+          \`\`\`
+          ${CHECKSUMS}
+          \`\`\`
+          BODY
+
+      - name: Upload release body artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-body
+          path: release_body.md
+          retention-days: 1
+
+      - name: Upload release assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/*
+          retention-days: 1
+
+  # ── Create GitHub Release ──────────────────────────────────────────────────
+  create-release:
+    name: Create GitHub Release
+    needs: [package-and-upload]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Download release body
+        uses: actions/download-artifact@v4
+        with:
+          name: release-body
+          path: release-body
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-body/release_body.md
+          files: release-assets/*
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

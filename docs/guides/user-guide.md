@@ -659,6 +659,15 @@ nexus rebac explain agent alice write file /zone/local/notes/todo.txt \
   --zone-id sandbox-agent-1 --verbose
 ```
 
+Path-style `file` tuple object IDs also support two explicit suffixes for bulk
+grants:
+
+- `/prefix/**` grants the relation on `/prefix` and every descendant below it.
+- `/prefix/*` grants the relation on direct children of `/prefix` only.
+
+No other glob syntax is expanded. Values such as `/prefix/*.md` or interior
+`*` characters are stored literally.
+
 MCP tool grants use named profiles from `src/nexus/config/tool_profiles.yaml`.
 The profile CLI materializes those profiles into the same `/tools/...` ReBAC
 namespace used by MCP `tools/list` and `tools/call` filtering:

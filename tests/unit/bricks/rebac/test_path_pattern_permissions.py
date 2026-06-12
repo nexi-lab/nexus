@@ -43,6 +43,7 @@ def test_recursive_descendant_grant(rebac_manager):
         subject=("agent", "alice"),
         relation="read",
         object=("file", "/workspaces/**"),
+        zone_id="root",
     )
 
     assert (
@@ -50,6 +51,7 @@ def test_recursive_descendant_grant(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
         )
         is True
     )
@@ -60,6 +62,7 @@ def test_recursive_prefix_path_grant(rebac_manager):
         subject=("agent", "alice"),
         relation="read",
         object=("file", "/workspaces/**"),
+        zone_id="root",
     )
 
     assert (
@@ -67,6 +70,7 @@ def test_recursive_prefix_path_grant(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces"),
+            zone_id="root",
         )
         is True
     )
@@ -77,6 +81,7 @@ def test_single_level_child_but_not_grandchild(rebac_manager):
         subject=("agent", "alice"),
         relation="read",
         object=("file", "/workspaces/*"),
+        zone_id="root",
     )
 
     assert (
@@ -84,6 +89,7 @@ def test_single_level_child_but_not_grandchild(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces/a.md"),
+            zone_id="root",
         )
         is True
     )
@@ -92,6 +98,7 @@ def test_single_level_child_but_not_grandchild(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
         )
         is False
     )
@@ -102,6 +109,7 @@ def test_no_partial_prefix_match(rebac_manager):
         subject=("agent", "alice"),
         relation="read",
         object=("file", "/workspaces/**"),
+        zone_id="root",
     )
 
     assert (
@@ -109,6 +117,7 @@ def test_no_partial_prefix_match(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces2/a.md"),
+            zone_id="root",
         )
         is False
     )
@@ -119,21 +128,24 @@ def test_non_file_pattern_looking_object_stays_exact_only(rebac_manager):
         subject=("agent", "alice"),
         relation="member",
         object=("group", "/teams/**"),
+        zone_id="root",
     )
 
     assert (
         rebac_manager.rebac_check(
             subject=("agent", "alice"),
-            permission="read",
+            permission="member",
             object=("group", "/teams/**"),
+            zone_id="root",
         )
         is True
     )
     assert (
         rebac_manager.rebac_check(
             subject=("agent", "alice"),
-            permission="read",
+            permission="member",
             object=("group", "/teams/dev"),
+            zone_id="root",
         )
         is False
     )
@@ -144,6 +156,7 @@ def test_wildcard_subject_pattern_grants(rebac_manager):
         subject=("*", "*"),
         relation="read",
         object=("file", "/public/**"),
+        zone_id="root",
     )
 
     assert (
@@ -151,6 +164,7 @@ def test_wildcard_subject_pattern_grants(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/public/docs/readme.md"),
+            zone_id="root",
         )
         is True
     )
@@ -161,11 +175,13 @@ def test_userset_as_subject_pattern_grants(rebac_manager):
         subject=("agent", "alice"),
         relation="member",
         object=("group", "eng"),
+        zone_id="root",
     )
     rebac_manager.rebac_write(
         subject=("group", "eng", "member"),
         relation="read",
         object=("file", "/workspaces/**"),
+        zone_id="root",
     )
 
     assert (
@@ -173,6 +189,7 @@ def test_userset_as_subject_pattern_grants(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
         )
         is True
     )
@@ -186,6 +203,7 @@ def test_abac_conditions_are_preserved_for_pattern_tuples(rebac_manager):
         subject=("agent", "alice"),
         relation="read",
         object=("file", "/workspaces/**"),
+        zone_id="root",
         conditions={
             "time_window": {
                 "start": datetime(2026, 1, 1, 9, tzinfo=UTC).isoformat(),
@@ -199,6 +217,7 @@ def test_abac_conditions_are_preserved_for_pattern_tuples(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
             context={"current_time": inside_window, "time": inside_window},
         )
         is True
@@ -208,6 +227,7 @@ def test_abac_conditions_are_preserved_for_pattern_tuples(rebac_manager):
             subject=("agent", "alice"),
             permission="read",
             object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
             context={"current_time": outside_window, "time": outside_window},
         )
         is False

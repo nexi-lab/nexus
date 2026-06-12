@@ -12,8 +12,19 @@ members = [
     # nexusd-cluster via --plugin-dir; mounted via
     # `--mount-driver local-connector:<vfs-path>:<config-json>`.
     "rust/backends/local-connector",
+    # nexus-fuse-plugin — cdylib service plugin that mounts the Nexus
+    # VFS at an operator-named host path via libfuse3 (Linux).  Spawns
+    # a fuser-based FUSE event loop in a background thread on
+    # `nexus_service_create`; FUSE ops translate in-process to kernel
+    # syscalls via the plugin-abi KernelHandle.  Loaded by
+    # nexusd-cluster via --plugin-dir alongside nexus-vault.
+    "rust/services/fuse-plugin",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
+# from the workspace.  Distinct from nexus-fuse-plugin (the new
+# in-process service plugin above) — the legacy daemon talks to a
+# Python FastAPI server over HTTPS REST and is being phased out as
+# the plugin matures.
 exclude = ["nexus-fuse"]
 
 [workspace.dependencies]

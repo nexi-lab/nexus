@@ -1,0 +1,34 @@
+[package]
+name = "nexus-fuse-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Nexus FUSE service plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Spawns a fuser-based FUSE event loop on /dev/fuse and translates POSIX filesystem ops into Nexus kernel syscalls via the plugin-abi KernelHandle, in-process. Mirrors the `nexus-vault` shape so signing/release pipelines apply identically."
+authors = ["Nexus Team"]
+publish = false
+
+[lib]
+# cdylib for the loader to dlopen at startup.  rlib so unit tests can
+# link the plugin's internal Rust APIs without going through the C ABI.
+name = "nexus_fuse_plugin"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Plugin ABI — stable C ABI contract for dylib plugins.
+# The `declare_service_plugin!` macro + KernelHandle live here.
+nexus-plugin-abi = { workspace = true }
+
+# `fuser` is the production-quality Rust wrapper around libfuse3 on
+# Linux / macFUSE on macOS.  We pin against the same version that
+# `nexus-fuse` (the legacy standalone daemon) used so familiar
+# semantics carry over.  Windows support is via a separate WinFsp
+# adapter — out of scope for this first-cut plugin.
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = "0.17"
+# Errno constants for translating kernel-callback failures into POSIX
+# errors that FUSE clients understand.  Linux-only — macFUSE/WinFsp
+# adapters will pull in their own equivalents.
+libc = "0.2"
+
+# tracing for diagnostic logs.  Kept opt-in via the cluster binary's
+# RUST_LOG so the plugin is silent by default.
+tracing = "0.1"

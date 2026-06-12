@@ -36,7 +36,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # locate it via `../../proto`).
 COPY --from=nexus-vfs-src . /build/nexus-vfs
 
+# `--locked` respects the source tree's `Cargo.lock` instead of
+# re-resolving dependency versions from scratch.  Without it, `cargo
+# install` ignores the lockfile and picks the newest semver-compatible
+# release for every transitive crate at build time — which surfaces as
+# a different dependency graph than the one nexus-vfs CI exercises via
+# `cargo build`, and breaks on the first upstream regression
+# (e.g. `time 0.3.47` introducing a duplicate `From<HourBase>` impl
+# that fails to compile with `rcgen 0.14.7`).  `Cargo.lock` is the
+# substrate's own SSOT for which versions to compile against; honor it.
 RUN cargo install \
+    --locked \
     --path /build/nexus-vfs/rust/profiles/cluster \
     --bin nexusd-cluster
 

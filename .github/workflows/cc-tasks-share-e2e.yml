@@ -145,7 +145,15 @@ jobs:
         # workaround.
         env:
           BUILDX_BUILDER: default
+          # Feeds the compose-level `plugin_signing_key` build secret —
+          # the plugin image Ed25519-signs the local-connector dylib in
+          # the builder stage (kernel 67ac07f+ refuses unsigned plugins).
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
         run: |
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available — cannot sign the local-connector plugin (kernel refuses unsigned plugins)."
+            exit 1
+          fi
           docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml build \
             founder joiner test
 

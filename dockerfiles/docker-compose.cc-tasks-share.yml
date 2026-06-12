@@ -75,6 +75,12 @@ services:
     build:
       context: ..
       dockerfile: dockerfiles/Dockerfile.local-connector-plugin
+      # Plugin-signing key for the in-build Ed25519 sign step (kernel
+      # 67ac07f+ refuses unsigned plugins). Sourced from the
+      # PLUGIN_SIGNING_PRIVKEY env var on the invoking shell — CI
+      # exports it from the repo secret of the same name.
+      secrets:
+        - plugin_signing_key
     image: nexus-local-connector-plugin:latest
     container_name: nexus-cc-tasks-founder
     hostname: founder
@@ -187,6 +193,10 @@ networks:
   nexus-cc-tasks-net:
     name: nexus-cc-tasks-net
     driver: bridge
+
+secrets:
+  plugin_signing_key:
+    environment: PLUGIN_SIGNING_PRIVKEY
 
 volumes:
   cc_tasks_founder_data:

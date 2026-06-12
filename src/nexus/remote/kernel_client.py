@@ -116,25 +116,55 @@ def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, 
         return None, None
 
     path = Path(metadata_path).expanduser()
+    try:
+        if path.is_dir():
+            # An existing directory is always the data dir — even one
+            # named like a redb file. Every deployed volume (the kernel
+            # lays out <dir>/root/** + <dir>/metastore.redb) hits this.
+            return str(path), None
+    except OSError:
+        return metadata_path, None
     if path.suffix == ".redb" or _is_redb_file(path):
         sidecar = path.with_name(f"{path.name}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}")
         return str(sidecar), str(path)
     return _resolve_kernel_data_dir(metadata_path), None
 
 
-def _apply_storage_env(env: dict[str, str], metadata_path: str | None) -> None:
+def _apply_storage_env(
+    env: dict[str, str],
+    metadata_path: str | None,
+    metastore_file: str | None = None,
+) -> None:
     """Set the kernel storage env (``NEXUS_DATA_DIR``/``NEXUS_METASTORE_PATH``).
 
-    When this client manages storage (``metadata_path`` given), the
-    spawn env must be fully derived from it: directories become the
-    data dir (the kernel derives ``<data_dir>/metastore.redb``, #4343)
-    and explicit redb files are forwarded as ``NEXUS_METASTORE_PATH``.
-    An *inherited* ``NEXUS_METASTORE_PATH`` is dropped in that case —
-    it would silently point every client at one shared namespace file
-    regardless of their distinct ``metadata_path``, breaking per-client
-    isolation. Without a ``metadata_path`` the ambient env passes
-    through untouched (operator-managed spawn).
+    ``metastore_file`` carries *explicit* metastore intent (the
+    ``KernelClient(metastore_file=...)`` channel): it is forwarded
+    verbatim as ``NEXUS_METASTORE_PATH`` — no suffix or existence
+    heuristics — with the data dir taken from ``metadata_path`` (or its
+    ``.kernel`` sidecar when absent).
+
+    Otherwise, when this client manages storage (``metadata_path``
+    given), the spawn env is derived from it: existing directories and
+    fresh paths become the data dir (the kernel derives
+    ``<data_dir>/metastore.redb``, #4343); explicit redb files
+    (``.redb`` suffix or redb magic header) are forwarded as
+    ``NEXUS_METASTORE_PATH``. An *inherited* ``NEXUS_METASTORE_PATH``
+    is dropped in that case — it would silently point every client at
+    one shared namespace file regardless of their distinct
+    ``metadata_path``, breaking per-client isolation. Without any
+    storage hint the ambient env passes through untouched
+    (operator-managed spawn).
     """
+    if metastore_file:
+        env["NEXUS_METASTORE_PATH"] = metastore_file
+        if metadata_path:
+            data_dir, _ = _resolve_kernel_spawn_paths(metadata_path)
+            if data_dir:
+                env["NEXUS_DATA_DIR"] = data_dir
+        else:
+            env["NEXUS_DATA_DIR"] = f"{metastore_file}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
+        return
+
     kernel_data_dir, kernel_metastore = _resolve_kernel_spawn_paths(metadata_path)
     if not kernel_data_dir:
         return
@@ -179,9 +209,17 @@ class KernelClient:
         server_address: str | None = None,
         auth_token: str | None = None,
         metadata_path: str | None = None,
+        metastore_file: str | None = None,
         timeout: float = 90.0,
     ) -> None:
+        # ``metadata_path`` is the storage hint (directory, or legacy
+        # file path — see _resolve_kernel_spawn_paths heuristics).
+        # ``metastore_file`` is *explicit* metastore-file intent: it is
+        # forwarded verbatim as NEXUS_METASTORE_PATH, no heuristics —
+        # use it when the exact namespace file location matters (e.g.
+        # suffixless paths, backup/restore tooling).
         self._metadata_path = metadata_path
+        self._metastore_file = metastore_file
         self._process: subprocess.Popen[bytes] | None = None
         self._stderr_file: IO[bytes] | None = None
         self._stderr_path: str | None = None
@@ -247,7 +285,7 @@ class KernelClient:
         kernel_binary = _resolve_kernel_binary()
         cmd = [kernel_binary]
         env = os.environ.copy()
-        _apply_storage_env(env, self._metadata_path)
+        _apply_storage_env(env, self._metadata_path, self._metastore_file)
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
         env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")

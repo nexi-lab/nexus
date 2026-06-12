@@ -102,3 +102,33 @@ def test_ambient_env_passes_through_without_metadata_path() -> None:
     env = {"NEXUS_METASTORE_PATH": "/operator/choice.redb"}
     _apply_storage_env(env, None)
     assert env == {"NEXUS_METASTORE_PATH": "/operator/choice.redb"}
+
+
+def test_existing_directory_named_like_redb_is_data_dir(tmp_path: Path) -> None:
+    # A directory literally named *.redb must not be forwarded as a
+    # metastore file — the kernel would fail opening a dir as redb.
+    trap = tmp_path / "store.redb"
+    trap.mkdir()
+    data_dir, metastore = _resolve_kernel_spawn_paths(str(trap))
+    assert data_dir == str(trap)
+    assert metastore is None
+
+
+def test_explicit_metastore_file_forwarded_verbatim_suffixless(tmp_path: Path) -> None:
+    # The explicit channel carries intent: fresh suffixless paths are
+    # NOT demoted to data dirs (operator-requested namespace file).
+    target = tmp_path / "metastore"
+    env: dict[str, str] = {}
+    _apply_storage_env(env, None, str(target))
+    assert env["NEXUS_METASTORE_PATH"] == str(target)
+    assert env["NEXUS_DATA_DIR"] == str(target) + ".kernel"
+
+
+def test_explicit_metastore_file_with_separate_data_dir(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    ns = tmp_path / "namespace"
+    env: dict[str, str] = {}
+    _apply_storage_env(env, str(data), str(ns))
+    assert env["NEXUS_METASTORE_PATH"] == str(ns)
+    assert env["NEXUS_DATA_DIR"] == str(data)

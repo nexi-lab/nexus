@@ -1040,17 +1040,26 @@ class KernelClient:
     # ── Metastore path ─────────────────────────────────────────────────
 
     def set_metastore_path(self, path: str) -> None:
-        """Record the storage-path hint used when spawning the kernel.
+        """Request an explicit metastore file for the next spawn.
 
-        Subprocess mode: the binary wires its own durable metastore at
-        boot — ``<NEXUS_DATA_DIR>/metastore.redb``, overridable via
-        ``NEXUS_METASTORE_PATH`` (#4343). ``path`` feeds the spawn env
-        (via ``_resolve_kernel_spawn_paths``): a directory becomes
-        ``NEXUS_DATA_DIR``; a ``.redb`` file is forwarded verbatim as
-        ``NEXUS_METASTORE_PATH``. Calling this after ``open()`` has no
-        effect. Remote mode: the server manages its own metastore.
+        The method name is the contract: ``path`` is the namespace file
+        the kernel must reopen — forwarded verbatim as
+        ``NEXUS_METASTORE_PATH`` regardless of suffix (#4343). One
+        exception: an existing *directory* is a deployed data-dir
+        layout (the kernel keeps ``<dir>/metastore.redb`` inside it)
+        and is routed as ``NEXUS_DATA_DIR`` instead. Calling this after
+        ``open()`` has no effect. Remote mode: the server manages its
+        own metastore.
         """
-        self._metadata_path = path
+        try:
+            is_dir = Path(path).expanduser().is_dir()
+        except OSError:
+            is_dir = False
+        if is_dir:
+            self._metadata_path = path
+            self._metastore_file = None
+        else:
+            self._metastore_file = path
 
     # ── Misc kernel methods ────────────────────────────────────────────
 

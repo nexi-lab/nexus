@@ -174,6 +174,32 @@ def test_memory_kernel_client_gets_ephemeral_tempdir(monkeypatch: pytest.MonkeyP
     assert client._metadata_path is None
 
 
+def test_set_metastore_path_suffixless_is_explicit_file_intent(tmp_path: Path) -> None:
+    # The setter's name is the contract: a fresh suffixless path is the
+    # requested namespace file, not a data directory.
+    from nexus.remote.kernel_client import KernelClient
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    target = str(tmp_path / "namespace")
+    client.set_metastore_path(target)
+    env: dict[str, str] = {}
+    _apply_storage_env(env, client._metadata_path, client._metastore_file)
+    assert env["NEXUS_METASTORE_PATH"] == target
+    assert env["NEXUS_DATA_DIR"] == target + ".kernel"
+
+
+def test_set_metastore_path_existing_dir_routes_to_data_dir(tmp_path: Path) -> None:
+    # Deployed volumes pass their directory here; it must keep working.
+    from nexus.remote.kernel_client import KernelClient
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    client.set_metastore_path(str(tmp_path))
+    env: dict[str, str] = {}
+    _apply_storage_env(env, client._metadata_path, client._metastore_file)
+    assert env["NEXUS_DATA_DIR"] == str(tmp_path)
+    assert "NEXUS_METASTORE_PATH" not in env
+
+
 def test_unreadable_existing_file_fails_closed(tmp_path: Path) -> None:
     # A permission-broken existing file may BE the namespace: booting a
     # fresh sidecar instead would silently lose it (#4343 symptom).

@@ -38,8 +38,7 @@ jobs:
         driver dylib so operators can mount a host filesystem path through the
         kernel's normal VFS surface (and, by extension, through federation).
     secrets:
-      VAULT_SIGNING_ENDPOINT: ${{ secrets.VAULT_SIGNING_ENDPOINT }}
-      VAULT_SIGNING_TOKEN: ${{ secrets.VAULT_SIGNING_TOKEN }}
+      VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
       COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
       COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
       COS_BUCKET: ${{ secrets.COS_BUCKET }}

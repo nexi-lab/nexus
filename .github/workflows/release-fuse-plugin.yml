@@ -10,10 +10,11 @@ name: Release FUSE Plugin
 # fuse-plugin Cargo.toml's lib doc references.
 #
 # Uses the dogfood signing path (`signing_key_source: vault`) — vault is
-# the trust root for every non-vault plugin's signing key. Wrapper is
-# committed now so the compliance gate is green; the vault path itself
-# becomes runnable once the encrypted-in-git architecture PR ships
-# (see docs/superpowers/specs/2026-06-12-encrypted-in-git-vault-dogfood-design.md).
+# the trust root for every non-vault plugin's signing key. The reusable
+# boots an ephemeral nexusd-cluster + vault.dylib on the runner against
+# data/vault-signing/vault.redb (encrypted-in-git), fetches the privkey,
+# signs, tears down — see
+# docs/superpowers/specs/2026-06-12-encrypted-in-git-vault-dogfood-design.md.
 #
 # COS path convention: nexus-fuse-plugin/release/v<version>/<filename>
 
@@ -45,8 +46,7 @@ jobs:
         KernelHandle, in-process. Linux only; macFUSE / WinFsp adapters
         are out of scope for this first-cut.
     secrets:
-      VAULT_SIGNING_ENDPOINT: ${{ secrets.VAULT_SIGNING_ENDPOINT }}
-      VAULT_SIGNING_TOKEN: ${{ secrets.VAULT_SIGNING_TOKEN }}
+      VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
       COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
       COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
       COS_BUCKET: ${{ secrets.COS_BUCKET }}

@@ -73,12 +73,6 @@ on:
       VAULT_SIGNING_MASTER_KEY:
         description: Base64-encoded 32-byte master key used to decrypt data/vault-signing/vault.redb. Required when signing_key_source=vault. Boots an ephemeral nexusd-cluster + vault.dylib on the runner against the checked-in encrypted DB.
         required: false
-      VAULT_SIGNING_TOKEN:
-        description: (Deprecated, removed in D5.) Bearer token for an external vault. Kept temporarily for wrapper-call compatibility during the transition.
-        required: false
-      VAULT_SIGNING_ENDPOINT:
-        description: (Deprecated, removed in D5.) gRPC endpoint of an external vault. Kept temporarily for wrapper-call compatibility during the transition.
-        required: false
       COS_SECRET_ID:
         required: false
       COS_SECRET_KEY:

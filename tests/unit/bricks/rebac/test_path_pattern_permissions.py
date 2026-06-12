@@ -670,8 +670,107 @@ def test_path_pattern_tuple_change_invalidates_descendant_cache_entries() -> Non
         )
         is None
     )
+
+
+def test_root_path_pattern_tuple_change_invalidates_boundary_descendants() -> None:
+    from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
+    from nexus.bricks.rebac.cache.coordinator import CacheCoordinator
+    from nexus.bricks.rebac.domain import Entity
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+    boundary_cache = PermissionBoundaryCache()
+    coordinator = CacheCoordinator(
+        boundary_cache=boundary_cache,
+        enable_async_recompute=False,
+    )
+    boundary_cache.set_boundary(
+        "root",
+        "user",
+        "admin",
+        "read",
+        "/a/b.md",
+        "/a",
+    )
+
     assert (
         boundary_cache.get_boundary(
+            "root",
+            "user",
+            "admin",
+            "read",
+            "/a/b.md",
+        )
+        == "/a"
+    )
+
+    coordinator.invalidate_for_tuple_change(
+        Entity("user", "admin"),
+        "read",
+        Entity("file", "/**"),
+        zone_id="root",
+        conn=FakeConnection(),
+    )
+
+    assert (
+        boundary_cache.get_boundary(
+            "root",
+            "user",
+            "admin",
+            "read",
+            "/a/b.md",
+        )
+        is None
+    )
+
+
+def test_path_pattern_tuple_change_invalidates_registered_boundary_cache() -> None:
+    from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
+    from nexus.bricks.rebac.cache.coordinator import CacheCoordinator
+    from nexus.bricks.rebac.domain import Entity
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+    registered_boundary_cache = PermissionBoundaryCache()
+    coordinator = CacheCoordinator(enable_async_recompute=False)
+    coordinator.register_boundary_invalidator(
+        "registered",
+        registered_boundary_cache.invalidate_permission_change,
+    )
+    registered_boundary_cache.set_boundary(
+        "root",
+        "user",
+        "admin",
+        "read",
+        "/workspaces/ws1/a.md",
+        "/workspaces",
+    )
+
+    assert (
+        registered_boundary_cache.get_boundary(
+            "root",
+            "user",
+            "admin",
+            "read",
+            "/workspaces/ws1/a.md",
+        )
+        == "/workspaces"
+    )
+
+    coordinator.invalidate_for_tuple_change(
+        Entity("user", "admin"),
+        "read",
+        Entity("file", "/workspaces/**"),
+        zone_id="root",
+        conn=FakeConnection(),
+    )
+
+    assert (
+        registered_boundary_cache.get_boundary(
             "root",
             "user",
             "admin",

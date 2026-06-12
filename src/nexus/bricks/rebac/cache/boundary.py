@@ -103,6 +103,11 @@ class PermissionBoundaryCache:
             return "/"
         return path.rstrip("/")
 
+    @staticmethod
+    def _path_matches_prefix(path: str, prefix: str) -> bool:
+        """Return whether path is the prefix itself or below it."""
+        return path == prefix or prefix == "/" or path.startswith(prefix + "/")
+
     def get_boundary(
         self,
         zone_id: str,
@@ -308,12 +313,9 @@ class PermissionBoundaryCache:
                     # 2. boundary starts with prefix (pointing to changed location)
                     # 3. cached_path equals prefix
                     # 4. boundary equals prefix
-                    should_remove = (
-                        cached_path.startswith(normalized_prefix + "/")
-                        or cached_path == normalized_prefix
-                        or boundary.startswith(normalized_prefix + "/")
-                        or boundary == normalized_prefix
-                    )
+                    should_remove = self._path_matches_prefix(
+                        cached_path, normalized_prefix
+                    ) or self._path_matches_prefix(boundary, normalized_prefix)
                     if should_remove:
                         paths_to_remove.append(cached_path)
 
@@ -374,12 +376,9 @@ class PermissionBoundaryCache:
                 # Invalidate if:
                 # 1. The cached path is under the changed path
                 # 2. The boundary points to or under the changed path
-                should_remove = (
-                    cached_path.startswith(normalized_path + "/")
-                    or cached_path == normalized_path
-                    or boundary.startswith(normalized_path + "/")
-                    or boundary == normalized_path
-                )
+                should_remove = self._path_matches_prefix(
+                    cached_path, normalized_path
+                ) or self._path_matches_prefix(boundary, normalized_path)
                 if should_remove:
                     paths_to_remove.append(cached_path)
 

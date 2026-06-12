@@ -1176,10 +1176,11 @@ class CacheCoordinator:
 
         # Map relation to permissions
         permissions = RELATION_TO_PERMISSIONS.get(relation, [relation])
+        invalidation_object_id = path_pattern_prefix(object_type, object_id) or object_id
 
         def _invoke_boundary(cb: "Callable[..., None]") -> None:
             for permission in permissions:
-                cb(zone_id, subject_type, subject_id, permission, object_id)
+                cb(zone_id, subject_type, subject_id, permission, invalidation_object_id)
 
         self._dispatch_to_layer(
             InvalidationEventType.BOUNDARY,
@@ -1191,7 +1192,7 @@ class CacheCoordinator:
                 "subject_id": subject_id,
                 "relation": relation,
                 "object_type": object_type,
-                "object_id": object_id,
+                "object_id": invalidation_object_id,
                 "permissions": permissions,
             },
             metric_attr="_boundary_invalidations",

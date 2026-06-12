@@ -25,6 +25,7 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from nexus.bricks.rebac.cache.tiger.db_timeouts import apply_tiger_write_timeouts
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 
 try:
@@ -1560,6 +1561,9 @@ class TigerCache:
             resource_int_id = self._resource_map.get_or_create_int_id(resource_type, resource_id)
 
             with self._engine.begin() as conn:
+                if self._is_postgresql:
+                    apply_tiger_write_timeouts(conn)
+
                 # Step 2: Load existing bitmap from DB (if exists)
                 # IMPORTANT: skip_l2=True to read from database directly, avoiding stale L2 cache
                 # This prevents race conditions when multiple concurrent grants happen

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nexus.bricks.rebac._path_utils import get_ancestors, get_parent
+
 RECURSIVE_SUFFIX = "/**"
 SINGLE_LEVEL_SUFFIX = "/*"
 
@@ -19,24 +21,6 @@ def _dedupe_preserving_order(values: list[str]) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
-
-
-def _ancestors_inclusive(path: str) -> list[str]:
-    if path == "/":
-        return ["/"]
-    parts = [part for part in path.strip("/").split("/") if part]
-    ancestors = ["/" + "/".join(parts[:idx]) for idx in range(len(parts), 0, -1)]
-    ancestors.append("/")
-    return ancestors
-
-
-def _parent(path: str) -> str | None:
-    if path == "/":
-        return None
-    parts = [part for part in path.strip("/").split("/") if part]
-    if len(parts) <= 1:
-        return "/"
-    return "/" + "/".join(parts[:-1])
 
 
 def is_path_pattern(object_type: str, object_id: str) -> bool:
@@ -101,11 +85,11 @@ def path_pattern_candidates(object_type: str, object_id: str) -> list[str]:
     if object_id != "/":
         candidates.append(object_id.rstrip("/") + RECURSIVE_SUFFIX)
 
-    parent = _parent(object_id)
+    parent = get_parent(object_id)
     if parent is not None:
         candidates.append(SINGLE_LEVEL_SUFFIX if parent == "/" else parent + SINGLE_LEVEL_SUFFIX)
 
-    for ancestor in _ancestors_inclusive(object_id):
+    for ancestor in (*get_ancestors(object_id), "/"):
         recursive = RECURSIVE_SUFFIX if ancestor == "/" else ancestor + RECURSIVE_SUFFIX
         candidates.append(recursive)
 

@@ -70,11 +70,14 @@ on:
       PLUGIN_SIGNING_PRIVKEY:
         description: Bootstrap signing privkey (base64 of 32 raw Ed25519 priv bytes). Required when signing_key_source=github-secret.
         required: false
+      VAULT_SIGNING_MASTER_KEY:
+        description: Base64-encoded 32-byte master key used to decrypt data/vault-signing/vault.redb. Required when signing_key_source=vault. Boots an ephemeral nexusd-cluster + vault.dylib on the runner against the checked-in encrypted DB.
+        required: false
       VAULT_SIGNING_TOKEN:
-        description: Bearer token for the vault plugin's auth surface. Required when signing_key_source=vault.
+        description: (Deprecated, removed in D5.) Bearer token for an external vault. Kept temporarily for wrapper-call compatibility during the transition.
         required: false
       VAULT_SIGNING_ENDPOINT:
-        description: gRPC endpoint of the cluster running vault.dylib. Required when signing_key_source=vault.
+        description: (Deprecated, removed in D5.) gRPC endpoint of an external vault. Kept temporarily for wrapper-call compatibility during the transition.
         required: false
       COS_SECRET_ID:
         required: false
@@ -270,6 +273,108 @@ jobs:
         if: inputs.signing_key_source == 'vault'
         run: pip install --quiet grpcio grpcio-tools
 
+      # ── Ephemeral vault on runner (signing_key_source: vault) ──────────────
+      # When the signing key lives in the encrypted-in-git vault DB, we boot
+      # a throwaway nexusd-cluster + vault.dylib on the runner pointed at
+      # data/vault-signing/vault.redb, fetch the privkey over localhost
+      # gRPC, sign, then tear down. The cluster never persists to the
+      # runner outside the job — keys never leave the workflow.
+      #
+      # Pinned nexus-vfs rev: refresh quarterly via PR. The rev controls
+      # which TRUSTED_KEY_FILES the ephemeral cluster ships; bumping it
+      # too aggressively risks the cluster not yet embedding a key that
+      # signs vault.dylib downloaded from GH Releases.
+      - name: Install nexusd-cluster for ephemeral vault
+        if: inputs.signing_key_source == 'vault'
+        env:
+          # TODO(kernel-team): replace with a real pinned nexus-vfs rev
+          # before the first vault-source release tag is pushed. CI flags
+          # this with a clear cargo install failure otherwise.
+          NEXUS_VFS_REV: REPLACE_WITH_PINNED_NEXUS_VFS_REV
+        run: |
+          set -euo pipefail
+          if [ "${NEXUS_VFS_REV}" = "REPLACE_WITH_PINNED_NEXUS_VFS_REV" ]; then
+            echo "::error::nexus-vfs rev is not pinned in release-plugin-reusable.yml; update the workflow before pushing a vault-source release tag."
+            exit 1
+          fi
+          cargo install \
+            --git https://github.com/nexi-lab/nexus-vfs \
+            --rev "${NEXUS_VFS_REV}" \
+            --locked \
+            --bin nexusd-cluster \
+            nexus-cluster
+
+      - name: Download latest signed vault.dylib from GH Release
+        if: inputs.signing_key_source == 'vault'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vault-plugins
+          # Latest release matching the asset pattern. Vault releases via
+          # release-vault-plugin.yml (github-secret path) so a signed
+          # archive is always available before any vault-source plugin
+          # ships.
+          gh release download \
+            --repo nexi-lab/nexus \
+            --pattern 'nexus-vault-linux-x86_64.tar.gz' \
+            --dir /tmp
+          tar -xzf /tmp/nexus-vault-linux-x86_64.tar.gz -C /tmp/vault-plugins/
+          ls -l /tmp/vault-plugins/
+          # Both files must be present — PluginLoader::load Ed25519-verifies
+          # libnexus_vault.so against its TRUSTED_KEY_FILES before dlopen,
+          # using the sibling .sig.
+          test -f /tmp/vault-plugins/libnexus_vault.so
+          test -f /tmp/vault-plugins/libnexus_vault.so.sig
+
+      - name: Stage encrypted vault DB
+        if: inputs.signing_key_source == 'vault'
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vault-data
+          if [ ! -f data/vault-signing/vault.redb ]; then
+            echo "::error::data/vault-signing/vault.redb is missing — run scripts/bootstrap_dogfood_vault.py and commit the DB before pushing a vault-source release tag."
+            exit 1
+          fi
+          cp data/vault-signing/vault.redb /tmp/vault-data/
+
+      - name: Start ephemeral nexusd-cluster
+        if: inputs.signing_key_source == 'vault'
+        env:
+          VAULT_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VAULT_MASTER_KEY:-}" ]; then
+            echo "::error::signing_key_source=vault requires VAULT_SIGNING_MASTER_KEY secret on the caller."
+            exit 1
+          fi
+          nexusd-cluster \
+            --no-tls \
+            --data-dir /tmp/vault-data \
+            --plugin-dir /tmp/vault-plugins \
+            --bootstrap-mode static \
+            > /tmp/cluster.log 2>&1 &
+          CLUSTER_PID=$!
+          echo "CLUSTER_PID=${CLUSTER_PID}" >> "$GITHUB_ENV"
+          # Block until the cluster's ready marker appears. The fallback
+          # heuristic (process exited) catches a crash so we fail fast
+          # instead of hitting the 60s timeout.
+          for i in $(seq 1 60); do
+            if [ -f /tmp/vault-data/cluster.ready ]; then
+              echo "cluster ready after ${i}s"
+              exit 0
+            fi
+            if ! kill -0 "${CLUSTER_PID}" 2>/dev/null; then
+              echo "::error::nexusd-cluster exited before ready marker — log:"
+              cat /tmp/cluster.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::timed out after 60s waiting for /tmp/vault-data/cluster.ready"
+          cat /tmp/cluster.log
+          exit 1
+
       - name: Fetch signing privkey from vault
         # Pulls the privkey out of the running vault cluster and pipes it
         # into $GITHUB_ENV so the next step's sign_plugin.py call reads
@@ -278,15 +383,12 @@ jobs:
         # log line containing it gets redacted.
         if: inputs.signing_key_source == 'vault'
         env:
-          VAULT_ENDPOINT: ${{ secrets.VAULT_SIGNING_ENDPOINT }}
-          VAULT_TOKEN: ${{ secrets.VAULT_SIGNING_TOKEN }}
+          VAULT_ENDPOINT: localhost:2126
+          VAULT_TOKEN: bootstrap-local
+          VAULT_INSECURE: "1"
           SIGNING_KEY_NAME: ${{ inputs.signing_key_name }}
         run: |
           set -euo pipefail
-          if [ -z "${VAULT_ENDPOINT}" ] || [ -z "${VAULT_TOKEN}" ]; then
-            echo "::error::signing_key_source=vault requires VAULT_SIGNING_ENDPOINT + VAULT_SIGNING_TOKEN secrets on the caller."
-            exit 1
-          fi
           if [ -z "${SIGNING_KEY_NAME}" ]; then
             echo "::error::signing_key_source=vault requires inputs.signing_key_name (e.g. signing-keys/kernel-dogfood-v1)."
             exit 1
@@ -460,6 +562,23 @@ jobs:
           name: release-assets
           path: release-assets/*
           retention-days: 1
+
+      # Tear-down runs `if: always()` so a failure in sign/package/upload
+      # still kills the cluster and wipes the staged DB + plugin dir. The
+      # privkey only exists in $GITHUB_ENV for this job and is masked.
+      - name: Tear down ephemeral vault cluster
+        if: always() && inputs.signing_key_source == 'vault'
+        run: |
+          set +e
+          if [ -n "${CLUSTER_PID:-}" ]; then
+            kill "${CLUSTER_PID}" 2>/dev/null
+            for i in $(seq 1 10); do
+              kill -0 "${CLUSTER_PID}" 2>/dev/null || break
+              sleep 1
+            done
+            kill -9 "${CLUSTER_PID}" 2>/dev/null
+          fi
+          rm -rf /tmp/vault-data /tmp/vault-plugins /tmp/nexus-vault-linux-x86_64.tar.gz /tmp/cluster.log
 
   # ── Create GitHub Release ──────────────────────────────────────────────────
   create-release:

@@ -608,17 +608,40 @@ jobs:
         with:
           shared-key: nexusd-cluster-smoke
 
+      - name: Kernel pin consistency preflight
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # Every nexus-vfs pin in the repo must agree: the Cargo.toml
+        # crate pins, the Cargo.lock resolution, the shipping image ARG
+        # (Dockerfile), and the federation test/witness image ARGs.
+        # A partial bump ships a kernel the gate below never tested —
+        # the exact drift class behind #4343.
+        run: |
+          set -euo pipefail
+          CARGO_REVS=$(grep 'nexus-vfs' Cargo.toml | grep -oE 'rev = "[a-f0-9]{40}"' | grep -oE '[a-f0-9]{40}' | sort -u)
+          LOCK_REVS=$(grep -oE 'nexus-vfs\?rev=[a-f0-9]{40}' Cargo.lock | grep -oE '[a-f0-9]{40}' | sort -u)
+          DOCKER_REVS=$(grep -h -oE 'ARG NEXUS_VFS_REV=[a-f0-9]{40}' Dockerfile dockerfiles/Dockerfile.nexusd-cluster dockerfiles/Dockerfile.raft-witness | grep -oE '[a-f0-9]{40}' | sort -u)
+          echo "Cargo.toml pins:  $CARGO_REVS"
+          echo "Cargo.lock pins:  $LOCK_REVS"
+          echo "Dockerfile pins:  $DOCKER_REVS"
+          UNIQUE=$(printf '%s\n%s\n%s\n' "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS" | sort -u | grep -c . )
+          if [ "$UNIQUE" -ne 1 ]; then
+            echo "::error::nexus-vfs pins diverge across Cargo.toml / Cargo.lock / Dockerfiles — partial bump ships an untested kernel"
+            exit 1
+          fi
+
       - name: Install nexusd-cluster from nexus-vfs (pinned rev)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Pin to the rev shipped by this checkout (SSOT: the nexus-vfs
-        # pins in Cargo.toml). An unpinned install tracks nexus-vfs
-        # HEAD and can silently drift from what the Docker image ships
-        # — exactly how a durable-metastore regression (#4343) could
-        # pass smoke while the pinned kernel is broken. --locked honors
-        # the source tree's Cargo.lock (fresh dep resolution drifts on
-        # upstream releases).
+        # Pin to the rev shipped by this checkout. The preflight above
+        # guarantees Cargo.toml == Cargo.lock == every Dockerfile ARG,
+        # so extracting from Cargo.toml IS the shipping rev. An
+        # unpinned install tracks nexus-vfs HEAD and can silently
+        # drift from what the Docker image ships — exactly how a
+        # durable-metastore regression (#4343) could pass smoke while
+        # the pinned kernel is broken. --locked honors the source
+        # tree's Cargo.lock (fresh dep resolution drifts on upstream
+        # releases).
         run: |
-          REV=$(grep -m1 -oE 'rev = "[a-f0-9]{40}"' Cargo.toml | cut -d'"' -f2)
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
           if [ -z "$REV" ]; then
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1

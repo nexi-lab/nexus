@@ -54,7 +54,26 @@ def test_legacy_existing_db_file_keeps_sidecar_fallback(tmp_path: Path) -> None:
     # pre-#4343 behavior (fresh namespace in a sidecar dir) instead of
     # failing the boot on it.
     legacy = tmp_path / "metadata.db"
-    legacy.write_bytes(b"sqlite")
+    legacy.write_bytes(b"SQLite format 3\x00")
     data_dir, metastore = _resolve_kernel_spawn_paths(str(legacy))
     assert metastore is None
     assert data_dir == str(legacy) + ".kernel"
+
+
+def test_suffixless_redb_content_is_forwarded_as_metastore(tmp_path: Path) -> None:
+    # A configured metastore path need not end in .redb — an existing
+    # file with the redb magic header is the namespace itself and must
+    # be reopened, not demoted to a data directory.
+    store = tmp_path / "metastore"
+    store.write_bytes(b"redb\x1a\x0a\xa9\x0d\x0a" + b"\x00" * 16)
+    data_dir, metastore = _resolve_kernel_spawn_paths(str(store))
+    assert metastore == str(store)
+    assert data_dir == str(store) + ".kernel"
+
+
+def test_suffixless_non_redb_file_keeps_sidecar_fallback(tmp_path: Path) -> None:
+    store = tmp_path / "metastore"
+    store.write_bytes(b"not a database")
+    data_dir, metastore = _resolve_kernel_spawn_paths(str(store))
+    assert metastore is None
+    assert data_dir == str(store) + ".kernel"

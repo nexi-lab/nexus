@@ -82,12 +82,30 @@ def _resolve_kernel_data_dir(metadata_path: str | None) -> str | None:
     return metadata_path
 
 
+# First bytes of every redb database file (verified against files the
+# kernel writes): b"redb\x1a\x0a\xa9\x0d\x0a". Four bytes suffice to
+# tell redb from SQLite ("SQLite format 3\x00") and arbitrary files.
+_REDB_MAGIC = b"redb"
+
+
+def _is_redb_file(path: Path) -> bool:
+    """True if ``path`` is an existing file with the redb magic header."""
+    try:
+        if not path.is_file():
+            return False
+        with path.open("rb") as f:
+            return f.read(len(_REDB_MAGIC)) == _REDB_MAGIC
+    except OSError:
+        return False
+
+
 def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, str | None]:
     """Return ``(data_dir, metastore_file)`` for the kernel spawn env.
 
     Directory paths are the kernel data dir; the kernel derives
-    ``<data_dir>/metastore.redb`` itself (#4343). A ``.redb`` file path
-    is an explicit metastore request — honored via
+    ``<data_dir>/metastore.redb`` itself (#4343). An explicit metastore
+    file — a ``.redb``-suffixed path, or an existing file with the redb
+    magic header regardless of name — is honored via
     ``NEXUS_METASTORE_PATH`` so a preexisting namespace file is
     reopened rather than silently abandoned, with the payload data dir
     routed to the deterministic ``.kernel`` sidecar. Other existing
@@ -98,7 +116,7 @@ def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, 
         return None, None
 
     path = Path(metadata_path).expanduser()
-    if path.suffix == ".redb":
+    if path.suffix == ".redb" or _is_redb_file(path):
         sidecar = path.with_name(f"{path.name}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}")
         return str(sidecar), str(path)
     return _resolve_kernel_data_dir(metadata_path), None
@@ -203,6 +221,19 @@ class KernelClient:
                     "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
                     self._metadata_path,
                     kernel_data_dir,
+                )
+            # An operator-level NEXUS_METASTORE_PATH inherited from our
+            # own environment overrides the kernel's <data_dir> default.
+            # If it collides with the data dir itself the kernel would
+            # try to open its metastore file where it creates its data
+            # directory — surface that misconfiguration loudly.
+            inherited_metastore = env.get("NEXUS_METASTORE_PATH")
+            if inherited_metastore and inherited_metastore == env["NEXUS_DATA_DIR"]:
+                logger.warning(
+                    "NEXUS_METASTORE_PATH and NEXUS_DATA_DIR are both %s; "
+                    "the kernel cannot use one path as both file and "
+                    "directory — boot will likely fail",
+                    inherited_metastore,
                 )
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.

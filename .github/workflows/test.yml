@@ -618,9 +618,20 @@ jobs:
         run: |
           set -euo pipefail
           # Any nexus-vfs cargo install in any Dockerfile must carry an
-          # explicit --rev; an unpinned install tracks HEAD and is
-          # invisible to the pin comparison below.
-          UNPINNED=$(grep -rn 'cargo install' Dockerfile dockerfiles/ | grep 'nexus-vfs' | grep -v ':[[:space:]]*#' | grep -v '\-\-rev' || true)
+          # explicit --rev. RUN blocks span backslash continuations, so
+          # join continuation lines per file before matching — a
+          # same-line grep misses `cargo install \ ... nexus-vfs \ ...`
+          # blocks whose --rev was dropped.
+          UNPINNED=""
+          for f in Dockerfile dockerfiles/*; do
+            [ -f "$f" ] || continue
+            BAD=$(sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' "$f" \
+              | grep -v '^[[:space:]]*#' \
+              | grep 'cargo install' | grep 'nexus-vfs' | grep -v '\-\-rev' || true)
+            if [ -n "$BAD" ]; then
+              UNPINNED="${UNPINNED}${f}: ${BAD}"$'\n'
+            fi
+          done
           if [ -n "$UNPINNED" ]; then
             echo "::error::unpinned nexus-vfs cargo install in Dockerfiles:"
             echo "$UNPINNED"
@@ -632,6 +643,14 @@ jobs:
           echo "Cargo.toml pins:  $CARGO_REVS"
           echo "Cargo.lock pins:  $LOCK_REVS"
           echo "Dockerfile pins:  $DOCKER_REVS"
+          # Empty extraction means the format drifted and the guard is
+          # comparing nothing — fail closed, not open.
+          for SET in "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS"; do
+            if [ -z "$SET" ]; then
+              echo "::error::a nexus-vfs pin source extracted zero revs — pin-extraction pattern regressed"
+              exit 1
+            fi
+          done
           UNIQUE=$(printf '%s\n%s\n%s\n' "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS" | sort -u | grep -c . )
           if [ "$UNIQUE" -ne 1 ]; then
             echo "::error::nexus-vfs pins diverge across Cargo.toml / Cargo.lock / Dockerfiles — partial bump ships an untested kernel"

@@ -98,8 +98,10 @@ def test_explicit_redb_metadata_path_wins_over_ambient(tmp_path: Path) -> None:
     redb = tmp_path / "namespace.redb"
     env = {"NEXUS_KERNEL_METASTORE_PATH": "/somewhere/shared.redb"}
     _apply_storage_env(env, str(redb))
+    # Both names exported — the kernel's env name has flip-flopped
+    # across revs, so the spawn env satisfies every kernel in play.
     assert env["NEXUS_KERNEL_METASTORE_PATH"] == str(redb)
-    assert "NEXUS_METASTORE_PATH" not in env
+    assert env["NEXUS_METASTORE_PATH"] == str(redb)
     assert env["NEXUS_DATA_DIR"] == str(redb) + ".kernel"
 
 
@@ -128,6 +130,7 @@ def test_explicit_metastore_file_forwarded_verbatim_suffixless(tmp_path: Path) -
     env: dict[str, str] = {}
     _apply_storage_env(env, None, str(target))
     assert env["NEXUS_KERNEL_METASTORE_PATH"] == str(target)
+    assert env["NEXUS_METASTORE_PATH"] == str(target)
     assert env["NEXUS_DATA_DIR"] == str(target) + ".kernel"
 
 
@@ -138,6 +141,7 @@ def test_explicit_metastore_file_with_separate_data_dir(tmp_path: Path) -> None:
     env: dict[str, str] = {}
     _apply_storage_env(env, str(data), str(ns))
     assert env["NEXUS_KERNEL_METASTORE_PATH"] == str(ns)
+    assert env["NEXUS_METASTORE_PATH"] == str(ns)
     assert env["NEXUS_DATA_DIR"] == str(data)
 
 
@@ -149,7 +153,7 @@ def test_inherited_env_naming_same_path_is_explicit_intent(tmp_path: Path) -> No
     env = {"NEXUS_METASTORE_PATH": target}
     _apply_storage_env(env, target)
     assert env["NEXUS_KERNEL_METASTORE_PATH"] == target
-    assert "NEXUS_METASTORE_PATH" not in env
+    assert env["NEXUS_METASTORE_PATH"] == target
     assert env["NEXUS_DATA_DIR"] == target + ".kernel"
 
 
@@ -204,6 +208,7 @@ def test_set_metastore_path_suffixless_is_explicit_file_intent(tmp_path: Path) -
     env: dict[str, str] = {}
     _apply_storage_env(env, client._metadata_path, client._metastore_file)
     assert env["NEXUS_KERNEL_METASTORE_PATH"] == target
+    assert env["NEXUS_METASTORE_PATH"] == target
     assert env["NEXUS_DATA_DIR"] == target + ".kernel"
 
 

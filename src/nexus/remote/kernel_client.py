@@ -38,15 +38,17 @@ _DEFAULT_LOCAL_PORT = 2126
 _KERNEL_BINARY_ENV = "NEXUS_KERNEL_BINARY"
 _KERNEL_BINARY_CANDIDATES = ("nexus-cluster", "nexusd-cluster")
 _KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX = ".kernel"
-# The kernel's metastore override env (nexus-vfs rev 67ac07f+). The
-# kernel deliberately namespaced it under NEXUS_KERNEL_* and does NOT
-# read the legacy NEXUS_METASTORE_PATH — the Python server historically
-# used that name for its own metadata path and copies its environment
-# into the subprocess, so reusing it would point the kernel at the
-# Python-era file. We still recognize the legacy name as *caller
-# intent* (see _apply_storage_env) but only ever export the kernel one.
+# The kernel's metastore override env name has flip-flopped across
+# nexus-vfs revs: NEXUS_METASTORE_PATH (b04e0683, the original PR #43
+# wiring) -> NEXUS_KERNEL_METASTORE_PATH (67ac07f hardened reland) ->
+# NEXUS_METASTORE_PATH again (e68353c, 12ab8e8 reverted the reland).
+# We export BOTH names with the same value so every rev in circulation
+# honors the override; whichever name a given kernel reads, the answer
+# is identical. Both are treated as caller intent on the way in and
+# both are stripped when this client manages storage.
 _KERNEL_METASTORE_ENV = "NEXUS_KERNEL_METASTORE_PATH"
 _LEGACY_METASTORE_ENV = "NEXUS_METASTORE_PATH"
+_METASTORE_ENVS = (_KERNEL_METASTORE_ENV, _LEGACY_METASTORE_ENV)
 
 
 def _resolve_kernel_binary() -> str:
@@ -189,13 +191,13 @@ def _apply_storage_env(
         # temporary. (Without a data dir the kernel would also default
         # to a durable cwd-relative ./nexus-cluster-data.)
         env["NEXUS_DATA_DIR"] = ephemeral_dir
-        env.pop(_KERNEL_METASTORE_ENV, None)
-        env.pop(_LEGACY_METASTORE_ENV, None)
+        for name in _METASTORE_ENVS:
+            env.pop(name, None)
         return
 
     if metastore_file:
-        env[_KERNEL_METASTORE_ENV] = metastore_file
-        env.pop(_LEGACY_METASTORE_ENV, None)
+        for name in _METASTORE_ENVS:
+            env[name] = metastore_file
         if metadata_path:
             data_dir, _ = _resolve_kernel_spawn_paths(metadata_path)
             if data_dir:
@@ -210,15 +212,16 @@ def _apply_storage_env(
 
     env["NEXUS_DATA_DIR"] = kernel_data_dir
     if kernel_metastore:
-        env[_KERNEL_METASTORE_ENV] = kernel_metastore
-        env.pop(_LEGACY_METASTORE_ENV, None)
+        for name in _METASTORE_ENVS:
+            env[name] = kernel_metastore
         return
 
     # Inherited metastore overrides: the kernel-namespaced name takes
-    # precedence as intent; the legacy Python-era name is intent only
-    # (the kernel never reads it). Both are stripped from the child env.
+    # precedence as intent; both names are stripped from the child env
+    # (different revs read different names — see _METASTORE_ENVS).
     inherited = env.pop(_KERNEL_METASTORE_ENV, None) or env.pop(_LEGACY_METASTORE_ENV, None)
-    env.pop(_LEGACY_METASTORE_ENV, None)
+    for name in _METASTORE_ENVS:
+        env.pop(name, None)
     if inherited:
         # The inherited env naming the SAME path as metadata_path is
         # explicit operator intent for that file — honor it verbatim
@@ -228,7 +231,8 @@ def _apply_storage_env(
             Path(metadata_path).expanduser()
         )
         if same_target and not Path(inherited).expanduser().is_dir():
-            env[_KERNEL_METASTORE_ENV] = inherited
+            for name in _METASTORE_ENVS:
+                env[name] = inherited
             env["NEXUS_DATA_DIR"] = f"{inherited}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
             return
         logger.warning(

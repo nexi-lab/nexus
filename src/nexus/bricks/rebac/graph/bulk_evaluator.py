@@ -473,9 +473,15 @@ def find_subjects(
     for tuple_data in tuples_graph:
         if _has_conditions(tuple_data):
             continue
+        object_matches = tuple_data["object_id"] == obj.entity_id
+        if not object_matches and is_path_pattern(
+            tuple_data["object_type"],
+            tuple_data["object_id"],
+        ):
+            object_matches = path_pattern_matches(tuple_data["object_id"], obj.entity_id)
         if (
             tuple_data["object_type"] == obj.entity_type
-            and tuple_data["object_id"] == obj.entity_id
+            and object_matches
             and tuple_data["relation"] == tupleset_relation
         ):
             subjects.append(_Entity(tuple_data["subject_type"], tuple_data["subject_id"]))

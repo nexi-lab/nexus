@@ -23,7 +23,7 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.bricks.rebac.graph._operators import parent_path_of
-from nexus.bricks.rebac.path_patterns import path_pattern_candidates
+from nexus.bricks.rebac.path_patterns import is_path_pattern, path_pattern_candidates
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
@@ -895,13 +895,14 @@ class BulkPermissionChecker:
                 logger.debug(f"[RUST-PERF] Wrote {l1_cache_writes} results to L1 in-memory cache")
 
             # Write-through to Tiger Cache (Issue #935)
-            self._write_through_tiger_cache(
-                cache_misses,
-                zone_id,
-                lambda check: rust_results_dict.get(
-                    (check[0][0], check[0][1], check[1], check[2][0], check[2][1]), False
-                ),
-            )
+            if not self._has_path_pattern_tuple(tuples_graph):
+                self._write_through_tiger_cache(
+                    cache_misses,
+                    zone_id,
+                    lambda check: rust_results_dict.get(
+                        (check[0][0], check[0][1], check[1], check[2][0], check[2][1]), False
+                    ),
+                )
 
             logger.debug(
                 "[BULK] Rust acceleration successful for %d checks",
@@ -951,11 +952,12 @@ class BulkPermissionChecker:
             self._cache_result(subject_entity, permission, obj_entity, result, zone_id)
 
         # Write-through to Tiger Cache after Python fallback
-        self._write_through_tiger_cache(
-            cache_misses,
-            zone_id,
-            lambda check: results.get(check, False),
-        )
+        if not self._has_path_pattern_tuple(tuples_graph):
+            self._write_through_tiger_cache(
+                cache_misses,
+                zone_id,
+                lambda check: results.get(check, False),
+            )
 
     def _write_through_tiger_cache(
         self,
@@ -1043,6 +1045,17 @@ class BulkPermissionChecker:
                 f"[TIGER] Write-through: {tiger_writes} positive results "
                 f"to {len(tiger_updates)} Tiger Cache bitmaps (async persist started)"
             )
+
+    @staticmethod
+    def _has_path_pattern_tuple(tuples_graph: list[dict[str, Any]]) -> bool:
+        """Return whether the graph contains tuples Tiger cannot materialize safely."""
+        return any(
+            is_path_pattern(
+                str(tuple_data.get("object_type", "")),
+                str(tuple_data.get("object_id", "")),
+            )
+            for tuple_data in tuples_graph
+        )
 
     def _log_bulk_stats(
         self,

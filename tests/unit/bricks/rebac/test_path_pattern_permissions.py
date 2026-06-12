@@ -199,6 +199,175 @@ def test_zone_aware_userset_subject_path_pattern_grants_member_read(
     )
 
 
+def test_group_tuple_to_userset_path_pattern_grants_member_read() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    try:
+        manager.rebac_write(
+            subject=("agent", "alice"),
+            relation="member",
+            object=("group", "eng"),
+            zone_id="root",
+        )
+        manager.rebac_write(
+            subject=("group", "eng"),
+            relation="direct_viewer",
+            object=("file", "/workspaces/**"),
+            zone_id="root",
+        )
+
+        target = ("file", "/workspaces/ws1/a.md")
+        check = (("agent", "alice"), "read", target)
+
+        assert (
+            manager.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=target,
+                zone_id="root",
+            )
+            is True
+        )
+        assert manager.rebac_check_bulk([check], zone_id="root") == {check: True}
+    finally:
+        manager.close()
+
+
+def test_single_check_skips_tiger_write_through_for_path_pattern_grant(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    try:
+        manager.rebac_write(
+            subject=("agent", "alice"),
+            relation="direct_viewer",
+            object=("file", "/workspaces/**"),
+            zone_id="root",
+        )
+
+        tiger_writes: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
+        monkeypatch.setattr(manager, "_tiger_cache", object())
+        monkeypatch.setattr(manager, "tiger_check_access", lambda **_kwargs: None)
+        monkeypatch.setattr(
+            manager._tuple_writer,
+            "tiger_write_through_single",
+            lambda *, subject, permission, object, **_kwargs: tiger_writes.append(
+                (subject, permission, object)
+            ),
+        )
+
+        assert (
+            manager.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=("file", "/workspaces/ws1/a.md"),
+                zone_id="root",
+            )
+            is True
+        )
+        assert tiger_writes == []
+    finally:
+        manager.close()
+
+
+def test_path_pattern_write_invalidates_tiger_instead_of_persisting_pattern(
+    monkeypatch,
+) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        enable_tiger_cache=False,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    try:
+        grants: list[tuple[tuple[str, str], str, str, str, str]] = []
+        invalidations: list[tuple[tuple[str, str], str, str, str]] = []
+        monkeypatch.setattr(manager, "_tiger_cache", object())
+        monkeypatch.setattr(
+            manager,
+            "tiger_persist_grant",
+            lambda *, subject, permission, resource_type, resource_id, zone_id: grants.append(
+                (subject, permission, resource_type, resource_id, zone_id)
+            ),
+        )
+        monkeypatch.setattr(
+            manager,
+            "tiger_invalidate_cache",
+            lambda subject, permission, resource_type, zone_id: invalidations.append(
+                (subject, permission, resource_type, zone_id)
+            ),
+        )
+
+        manager.rebac_write(
+            subject=("agent", "alice"),
+            relation="direct_viewer",
+            object=("file", "/workspaces/**"),
+            zone_id="root",
+        )
+
+        assert grants == []
+        assert invalidations == [(("agent", "alice"), "read", "file", "root")]
+    finally:
+        manager.close()
+
+
+def test_path_pattern_delete_invalidates_tiger_instead_of_exact_revoke(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        enable_tiger_cache=False,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    try:
+        result = manager.rebac_write(
+            subject=("agent", "alice"),
+            relation="direct_viewer",
+            object=("file", "/workspaces/**"),
+            zone_id="root",
+        )
+
+        revokes: list[tuple[tuple[str, str], str, str, str, str]] = []
+        invalidations: list[tuple[tuple[str, str], str, str, str]] = []
+        monkeypatch.setattr(manager, "_tiger_cache", object())
+        monkeypatch.setattr(
+            manager,
+            "tiger_persist_revoke",
+            lambda *, subject, permission, resource_type, resource_id, zone_id: revokes.append(
+                (subject, permission, resource_type, resource_id, zone_id)
+            ),
+        )
+        monkeypatch.setattr(
+            manager,
+            "tiger_invalidate_cache",
+            lambda subject, permission, resource_type, zone_id: invalidations.append(
+                (subject, permission, resource_type, zone_id)
+            ),
+        )
+
+        assert manager.rebac_delete(result)
+        assert revokes == []
+        assert invalidations == [(("agent", "alice"), "read", "file", "root")]
+    finally:
+        manager.close()
+
+
 def test_no_partial_prefix_match(rebac_manager):
     rebac_manager.rebac_write(
         subject=("agent", "alice"),

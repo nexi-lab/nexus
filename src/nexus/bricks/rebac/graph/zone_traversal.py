@@ -618,9 +618,10 @@ class ZoneAwareTraversal:
         logger.debug(f"find_subjects: Looking for (?, '{relation}', {obj})")
 
         now = datetime.now(UTC)
-        stmt = select(RT.subject_type, RT.subject_id, RT.conditions).where(
+        candidates, candidate_index = self._object_id_candidates(obj)
+        stmt = select(RT.subject_type, RT.subject_id, RT.object_id, RT.conditions).where(
             RT.object_type == obj.entity_type,
-            RT.object_id == obj.entity_id,
+            RT.object_id.in_(candidates),
             RT.relation == relation,
             RT.zone_id == zone_id,
             or_(RT.expires_at.is_(None), RT.expires_at >= now),
@@ -629,7 +630,10 @@ class ZoneAwareTraversal:
         with self._engine.connect() as conn:
             results = [
                 Entity(row.subject_type, row.subject_id)
-                for row in conn.execute(stmt)
+                for row in self._rows_by_candidate_priority(
+                    list(conn.execute(stmt)),
+                    candidate_index,
+                )
                 if self._conditions_allow(row.conditions, context)
             ]
 

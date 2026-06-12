@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
+from nexus.bricks.rebac.path_patterns import path_pattern_candidates
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -620,18 +621,25 @@ class TupleRepository:
 
         with self.connection(readonly=True) as conn:
             cursor = self.create_cursor(conn)
+            candidates = path_pattern_candidates(obj.entity_type, obj.entity_id)
+            placeholders = ", ".join("?" for _ in candidates)
 
             cursor.execute(
                 self.fix_sql_placeholders(
-                    """
+                    f"""
                     SELECT subject_type, subject_id, conditions
                     FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
+                    WHERE object_type = ? AND object_id IN ({placeholders})
                       AND relation = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
-                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
+                (
+                    obj.entity_type,
+                    *candidates,
+                    relation,
+                    datetime.now(UTC).isoformat(),
+                ),
             )
 
             results = []

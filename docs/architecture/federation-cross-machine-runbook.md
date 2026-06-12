@@ -300,7 +300,40 @@ grpcurl -plaintext \
 
 The CI regression for this surface lives in `tests/e2e/docker/test_cc_tasks_share_e2e.py`.  The `--mount-driver` argument's grammar is documented in `KERNEL-ARCHITECTURE.md §10.4a`.
 
-**Cross-node host-fs sharing** — projecting node A's `/home/me/.claude/tasks/` into node B's view of the federated namespace — needs cross-node operator-mount substrate (DT_EXTERNAL_STORAGE forwarding for operator-installed driver mounts).  Until that lands, cross-machine `cc tasks list` reads the way the operator workflow envisions it run via the FUSE service plugin and a shared zone whose backend is sharedzone's native CAS, not the LocalConnector on each peer.
+### Step 3f — Cross-node host-fs sharing (cc-tasks-share-style)
+
+Node A and node B each mount their own LocalConnector under a hostname-namespaced path inside the same federated zone.  Reads on B for a path under A's mount resolve to A's host fs without manual sync — the lazy-observe substrate routes them via Mode B (cold fan-out) on the first read and Mode A (`try_remote_fetch` via `last_writer_address`) on every subsequent read (see `docs/federation-architecture.md §6.7`).
+
+Operator flow (mirrors what `dockerfiles/docker-compose.cc-tasks-share.yml` automates):
+
+```bash
+# On A (founder of sharedzone):
+NEXUS_FEDERATION_ZONES=sharedzone \
+NEXUS_FEDERATION_MOUNTS=/shared=sharedzone \
+nexusd-cluster --bootstrap-mode static \
+  --plugin-dir ./plugins \
+  --mount-driver 'local-connector:sharedzone:/shared/cc-tasks/A:{"local_root":"/home/me/.claude/tasks"}' \
+  ...
+
+# On B (joiner):
+# 1. First boot — daemon ignores --mount-driver because sharedzone is not yet loaded
+#    locally; the substrate explicitly skips operator driver mounts on zones that
+#    don't exist yet, preventing a parallel-bootstrap split-brain.
+nexusd-cluster --bootstrap-mode static \
+  --plugin-dir ./plugins \
+  --mount-driver 'local-connector:sharedzone:/shared/cc-tasks/B:{"local_root":"/home/me/.claude/tasks"}' \
+  ...
+
+# 2. Offline join (daemon stopped) — seeds sharedzone's ConfState + log into B's data dir.
+nexusd-cluster join <A_node_id>@<A_addr> sharedzone /shared --data-dir ./data --hostname B
+
+# 3. Restart — entrypoint auto-detects restart mode; sharedzone replays from disk and
+#    --mount-driver runs successfully because the zone is now loaded.
+```
+
+After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount), miss locally, fan out to A, and return A's host-fs bytes.  Subsequent reads take Mode A.  Symmetric on A reading `/shared/cc-tasks/B/...`.
+
+This is the substrate the `cc tasks list` cross-machine workflow rides — operator's CC daemon on A drops `~/.claude/tasks/<n>.json` directly to host fs (no Nexus syscall), and a second CC daemon on B reads them through `/shared/cc-tasks/A/<n>.json`.
 
 ### Step 4 — Smoke (cross-machine byte-exact read)
 

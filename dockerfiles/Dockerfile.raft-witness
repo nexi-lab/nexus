@@ -28,7 +28,8 @@ WORKDIR /build
 # images must build off the same nexus-vfs revision so the witness and
 # cluster nodes negotiate over the same raft contract.
 ARG NEXUS_VFS_REV=7aa2096de02d651b6ada34f065ca330316250193
-RUN cargo install --locked \
+RUN cargo install \
+    --locked \
     --git https://github.com/nexi-lab/nexus-vfs \
     --rev "${NEXUS_VFS_REV}" \
     --bin nexus-witness \

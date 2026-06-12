@@ -139,11 +139,15 @@ my-data/
 # `nexus serve` from the repo root without setting NEXUS_DATA_DIR drops
 # raft state + redb + CAS into data/, which then bakes into the next
 # `docker compose build` and silently pollutes federation bootstrap.
-# Allow only `data/skills/` to be tracked; everything else under data/
-# is runtime detritus.
+# Allow only `data/skills/` and `data/vault-signing/` to be tracked;
+# everything else under data/ is runtime detritus.
+# `data/vault-signing/` holds the encrypted-in-git plugin signing vault DB
+# (per docs/superpowers/specs/2026-06-12-encrypted-in-git-vault-dogfood-design.md).
 /data/*
 !/data/skills
 !/data/skills/**
+!/data/vault-signing
+!/data/vault-signing/**
 # Runtime state + credentials that can land anywhere `data_dir:` points to.
 .admin-api-key
 .state.json

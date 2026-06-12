@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import NamespaceConfig
 
 logger = logging.getLogger(__name__)
+TraversalKey = tuple[str, str, str, str, str, bool]
 
 
 class ZoneAwareTraversal:
@@ -85,12 +86,13 @@ class ZoneAwareTraversal:
         permission: str,
         obj: Entity,
         zone_id: str,
-        visited: set[tuple[str, str, str, str, str]],
+        visited: set[TraversalKey],
         depth: int,
         start_time: float,
         stats: TraversalStats,
         context: dict[str, Any] | None = None,
-        memo: dict[tuple[str, str, str, str, str], bool] | None = None,
+        memo: dict[TraversalKey, bool] | None = None,
+        allow_single_level_patterns: bool = True,
     ) -> bool:
         """Compute permission with P0-5 limits enforced at each step.
 
@@ -111,6 +113,7 @@ class ZoneAwareTraversal:
             permission,
             obj.entity_type,
             obj.entity_id,
+            allow_single_level_patterns,
         )
         if memo_key in memo:
             cached_result = memo[memo_key]
@@ -162,7 +165,14 @@ class ZoneAwareTraversal:
             stats.queries += 1
             if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
-            result = self.has_direct_relation(subject, permission, obj, zone_id, context)
+            result = self.has_direct_relation(
+                subject,
+                permission,
+                obj,
+                zone_id,
+                context,
+                allow_single_level_patterns=allow_single_level_patterns,
+            )
             logger.debug(f"{indent}← RESULT: {result}")
             # Direct lookups are acyclic by construction — always safe
             # to memoize.
@@ -181,7 +191,13 @@ class ZoneAwareTraversal:
         # by checking whether the recursion re-entered any key already
         # in OUR visited frame; if so, propagate cycle_observed up so
         # the parent's negative does not get memoized.
-        def _recurse(subj: Entity, perm: str, target: Entity) -> bool:
+        def _recurse(
+            subj: Entity,
+            perm: str,
+            target: Entity,
+            *,
+            allow_single_level: bool = allow_single_level_patterns,
+        ) -> bool:
             sub_visited = visited.copy()
             result = self.compute_permission(
                 subj,
@@ -194,6 +210,7 @@ class ZoneAwareTraversal:
                 stats,
                 context,
                 memo,
+                allow_single_level_patterns=allow_single_level,
             )
             if not result:
                 for key in sub_visited:
@@ -228,7 +245,14 @@ class ZoneAwareTraversal:
             stats.queries += 1
             if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
-            result = self.has_direct_relation(subject, permission, obj, zone_id, context)
+            result = self.has_direct_relation(
+                subject,
+                permission,
+                obj,
+                zone_id,
+                context,
+                allow_single_level_patterns=allow_single_level_patterns,
+            )
             logger.debug(f"{indent}← RESULT: {result}")
             memo[memo_key] = result
             return result
@@ -274,7 +298,12 @@ class ZoneAwareTraversal:
                     logger.debug(
                         f"{indent}  Checking '{computed_userset}' on related object {related_obj.entity_type}:{related_obj.entity_id}"
                     )
-                    if _recurse(subject, computed_userset, related_obj):
+                    if _recurse(
+                        subject,
+                        computed_userset,
+                        related_obj,
+                        allow_single_level=False,
+                    ):
                         logger.debug(
                             f"{indent}← RESULT: True (via tupleToUserset parent pattern on {related_obj.entity_type}:{related_obj.entity_id})"
                         )
@@ -295,7 +324,13 @@ class ZoneAwareTraversal:
                         "queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries
                     )
 
-                related_subjects = self.find_subjects(obj, tupleset_relation, zone_id, context)
+                related_subjects = self.find_subjects(
+                    obj,
+                    tupleset_relation,
+                    zone_id,
+                    context,
+                    allow_single_level_patterns=allow_single_level_patterns,
+                )
                 logger.debug(
                     f"{indent}[depth={depth}]   Pattern 2 (group): Found {len(related_subjects)} subjects with '{tupleset_relation}' on obj: {[f'{s.entity_type}:{s.entity_id}' for s in related_subjects]}"
                 )
@@ -324,7 +359,14 @@ class ZoneAwareTraversal:
         stats.queries += 1
         if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
             raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
-        result = self.has_direct_relation(subject, permission, obj, zone_id, context)
+        result = self.has_direct_relation(
+            subject,
+            permission,
+            obj,
+            zone_id,
+            context,
+            allow_single_level_patterns=allow_single_level_patterns,
+        )
         logger.debug(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
         memo[memo_key] = result
         return result
@@ -334,8 +376,18 @@ class ZoneAwareTraversal:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _object_id_candidates(obj: Entity) -> tuple[tuple[str, ...], dict[str, int]]:
-        candidates = tuple(path_pattern_candidates(obj.entity_type, obj.entity_id))
+    def _object_id_candidates(
+        obj: Entity,
+        *,
+        include_single_level: bool = True,
+    ) -> tuple[tuple[str, ...], dict[str, int]]:
+        candidates = tuple(
+            path_pattern_candidates(
+                obj.entity_type,
+                obj.entity_id,
+                include_single_level=include_single_level,
+            )
+        )
         candidate_index = {candidate: idx for idx, candidate in enumerate(candidates)}
         return candidates, candidate_index
 
@@ -356,6 +408,8 @@ class ZoneAwareTraversal:
         obj: Entity,
         zone_id: str,
         context: dict[str, Any] | None = None,
+        *,
+        allow_single_level_patterns: bool = True,
     ) -> bool:
         """Check if subject has direct relation to object (zone-scoped).
 
@@ -385,7 +439,10 @@ class ZoneAwareTraversal:
 
         now = datetime.now(UTC)
         expires_filter = or_(RT.expires_at.is_(None), RT.expires_at >= now)
-        candidates, candidate_index = self._object_id_candidates(obj)
+        candidates, candidate_index = self._object_id_candidates(
+            obj,
+            include_single_level=allow_single_level_patterns,
+        )
 
         with self._engine.connect() as conn:
             # Check for direct concrete subject tuple (with ABAC conditions support)
@@ -602,6 +659,8 @@ class ZoneAwareTraversal:
         relation: str,
         zone_id: str,
         context: dict[str, Any] | None = None,
+        *,
+        allow_single_level_patterns: bool = True,
     ) -> list[Entity]:
         """Find all subjects that have a relation to obj (zone-scoped).
 
@@ -618,7 +677,10 @@ class ZoneAwareTraversal:
         logger.debug(f"find_subjects: Looking for (?, '{relation}', {obj})")
 
         now = datetime.now(UTC)
-        candidates, candidate_index = self._object_id_candidates(obj)
+        candidates, candidate_index = self._object_id_candidates(
+            obj,
+            include_single_level=allow_single_level_patterns,
+        )
         stmt = select(RT.subject_type, RT.subject_id, RT.object_id, RT.conditions).where(
             RT.object_type == obj.entity_type,
             RT.object_id.in_(candidates),

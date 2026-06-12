@@ -9,6 +9,7 @@ pytest.importorskip("pyroaring")
 from sqlalchemy import create_engine
 
 from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
+from nexus.bricks.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 from nexus.bricks.rebac.domain import NamespaceConfig
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import ReBACManager
@@ -64,6 +65,41 @@ def zone_aware_rebac_manager():
         manager.close()
 
 
+@pytest.fixture
+def default_file_rebac_manager():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    manager.create_namespace(DEFAULT_FILE_NAMESPACE)
+    try:
+        yield manager
+    finally:
+        manager.close()
+
+
+@pytest.fixture
+def zone_aware_default_file_rebac_manager():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        enforce_zone_isolation=True,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    manager.create_namespace(DEFAULT_FILE_NAMESPACE)
+    try:
+        yield manager
+    finally:
+        manager.close()
+
+
 def test_recursive_descendant_grant(rebac_manager):
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
@@ -102,6 +138,21 @@ def test_recursive_prefix_path_grant(rebac_manager):
     )
 
 
+def test_rebac_expand_includes_recursive_path_pattern_subject(rebac_manager) -> None:
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+
+    assert ("agent", "alice") in rebac_manager.rebac_expand(
+        permission="read",
+        object=("file", "/workspaces/ws1/a.md"),
+        zone_id="root",
+    )
+
+
 def test_single_level_child_but_not_grandchild(rebac_manager):
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
@@ -130,6 +181,41 @@ def test_single_level_child_but_not_grandchild(rebac_manager):
     )
 
 
+def test_default_file_single_level_direct_viewer_does_not_inherit_to_grandchild(
+    default_file_rebac_manager,
+) -> None:
+    default_file_rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="direct_viewer",
+        object=("file", "/workspaces/*"),
+        zone_id="root",
+    )
+
+    assert (
+        default_file_rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="read",
+            object=("file", "/workspaces/a.md"),
+            zone_id="root",
+        )
+        is True
+    )
+    assert (
+        default_file_rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="read",
+            object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
+        )
+        is False
+    )
+    assert ("agent", "alice") not in default_file_rebac_manager.rebac_expand(
+        permission="read",
+        object=("file", "/workspaces/ws1/a.md"),
+        zone_id="root",
+    )
+
+
 def test_zone_aware_recursive_path_pattern_grants_descendant_read(
     zone_aware_rebac_manager,
 ):
@@ -148,6 +234,58 @@ def test_zone_aware_recursive_path_pattern_grants_descendant_read(
             zone_id="root",
         )
         is True
+    )
+
+
+def test_zone_aware_rebac_expand_includes_recursive_path_pattern_subject(
+    zone_aware_rebac_manager,
+) -> None:
+    zone_aware_rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+
+    assert ("agent", "alice") in zone_aware_rebac_manager.rebac_expand(
+        permission="read",
+        object=("file", "/workspaces/ws1/a.md"),
+        zone_id="root",
+    )
+
+
+def test_zone_aware_default_file_single_level_direct_viewer_does_not_inherit_to_grandchild(
+    zone_aware_default_file_rebac_manager,
+) -> None:
+    zone_aware_default_file_rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="direct_viewer",
+        object=("file", "/workspaces/*"),
+        zone_id="root",
+    )
+
+    assert (
+        zone_aware_default_file_rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="read",
+            object=("file", "/workspaces/a.md"),
+            zone_id="root",
+        )
+        is True
+    )
+    assert (
+        zone_aware_default_file_rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="read",
+            object=("file", "/workspaces/ws1/a.md"),
+            zone_id="root",
+        )
+        is False
+    )
+    assert ("agent", "alice") not in zone_aware_default_file_rebac_manager.rebac_expand(
+        permission="read",
+        object=("file", "/workspaces/ws1/a.md"),
+        zone_id="root",
     )
 
 

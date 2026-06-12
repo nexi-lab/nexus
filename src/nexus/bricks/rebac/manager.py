@@ -1533,7 +1533,13 @@ class ReBACManager:
             # Permission name maps to one or more relations — expand each
             for rel in perm_relations:
                 self._expand_permission_zone_aware(
-                    rel, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+                    rel,
+                    object_entity,
+                    namespace,
+                    zone_id,
+                    subjects,
+                    visited=set(),
+                    depth=0,
                 )
         else:
             # Already a relation name (or unknown) — expand directly
@@ -1552,6 +1558,7 @@ class ReBACManager:
         subjects: set[tuple[str, str]],
         visited: set[tuple[str, str, str]],
         depth: int,
+        allow_single_level_patterns: bool = True,
     ) -> None:
         """Recursively expand permission to find all subjects (zone-scoped)."""
         if depth > self.max_depth:
@@ -1564,7 +1571,12 @@ class ReBACManager:
 
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
-            direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+            direct_subjects = self._get_direct_subjects_zone_aware(
+                permission,
+                obj,
+                zone_id,
+                allow_single_level_patterns=allow_single_level_patterns,
+            )
             for subj in direct_subjects:
                 subjects.add(subj)
             return
@@ -1574,7 +1586,14 @@ class ReBACManager:
             union_relations = namespace.get_union_relations(permission)
             for rel in union_relations:
                 self._expand_permission_zone_aware(
-                    rel, obj, namespace, zone_id, subjects, visited.copy(), depth + 1
+                    rel,
+                    obj,
+                    namespace,
+                    zone_id,
+                    subjects,
+                    visited.copy(),
+                    depth + 1,
+                    allow_single_level_patterns=allow_single_level_patterns,
                 )
             return
 
@@ -1600,29 +1619,46 @@ class ReBACManager:
                             subjects,
                             visited.copy(),
                             depth + 1,
+                            allow_single_level_patterns=False,
                         )
             return
 
         # Direct relation
-        direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+        direct_subjects = self._get_direct_subjects_zone_aware(
+            permission,
+            obj,
+            zone_id,
+            allow_single_level_patterns=allow_single_level_patterns,
+        )
         for subj in direct_subjects:
             subjects.add(subj)
 
     def _get_direct_subjects_zone_aware(
-        self, relation: str, obj: Entity, zone_id: str
+        self,
+        relation: str,
+        obj: Entity,
+        zone_id: str,
+        *,
+        allow_single_level_patterns: bool = True,
     ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object (zone-scoped)."""
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
+            candidates = path_pattern_candidates(
+                obj.entity_type,
+                obj.entity_id,
+                include_single_level=allow_single_level_patterns,
+            )
+            placeholders = ", ".join("?" for _ in candidates)
 
             cursor.execute(
                 self._fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
+                    f"""
+                    SELECT DISTINCT subject_type, subject_id
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
@@ -1630,7 +1666,7 @@ class ReBACManager:
                     zone_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -2089,12 +2125,12 @@ class ReBACManager:
         permission: str,
         obj: Entity,
         zone_id: str,
-        visited: set[tuple[str, str, str, str, str]],
+        visited: set[tuple[str, str, str, str, str, bool]],
         depth: int,
         start_time: float,
         stats: TraversalStats,
         context: dict[str, Any] | None = None,
-        memo: dict[tuple[str, str, str, str, str], bool] | None = None,
+        memo: dict[tuple[str, str, str, str, str, bool], bool] | None = None,
     ) -> bool:
         """Compute permission with P0-5 limits enforced at each step.
 

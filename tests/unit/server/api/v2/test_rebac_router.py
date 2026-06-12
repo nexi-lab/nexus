@@ -230,6 +230,54 @@ def test_post_with_subject_relation_passes_3tuple(fake_rebac_manager: MagicMock)
     assert call_kwargs["subject"] == ("user", "alice", "member")
 
 
+def test_post_preserves_recursive_path_pattern_object_id(
+    fake_rebac_manager: MagicMock,
+) -> None:
+    auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
+    app = _make_app(rebac_manager=fake_rebac_manager, auth_provider=auth)
+    body = {**_VALID_BODY, "object_namespace": "file", "object_id": "/workspaces/**"}
+
+    with _client(app) as client:
+        resp = client.post(
+            "/api/v2/rebac/tuples",
+            json=body,
+            headers={"Authorization": "Bearer admin-tok"},
+        )
+
+    assert resp.status_code == 201, resp.text
+    fake_rebac_manager.rebac_write.assert_called_once_with(
+        subject=("user", "alice"),
+        relation="read",
+        object=("file", "/workspaces/**"),
+        zone_id="root",
+    )
+    assert resp.json()["object_id"] == "/workspaces/**"
+
+
+def test_post_preserves_single_level_path_pattern_object_id(
+    fake_rebac_manager: MagicMock,
+) -> None:
+    auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
+    app = _make_app(rebac_manager=fake_rebac_manager, auth_provider=auth)
+    body = {**_VALID_BODY, "object_namespace": "file", "object_id": "/workspaces/*"}
+
+    with _client(app) as client:
+        resp = client.post(
+            "/api/v2/rebac/tuples",
+            json=body,
+            headers={"Authorization": "Bearer admin-tok"},
+        )
+
+    assert resp.status_code == 201, resp.text
+    fake_rebac_manager.rebac_write.assert_called_once_with(
+        subject=("user", "alice"),
+        relation="read",
+        object=("file", "/workspaces/*"),
+        zone_id="root",
+    )
+    assert resp.json()["object_id"] == "/workspaces/*"
+
+
 # ---------------------------------------------------------------------------
 # GET / DELETE happy paths
 # ---------------------------------------------------------------------------
@@ -476,47 +524,28 @@ def test_delete_tuple_no_auth_returns_401(fake_rebac_manager: MagicMock) -> None
 
 
 class TestNormalizeFileObjectId:
-    """Pure helper tests — collapse shell-style globs to a directory path."""
+    """Pure helper tests for preserving explicit path-pattern tuple IDs."""
 
-    def test_double_star_collapses(self) -> None:
-        assert _normalize_file_object_id("file", "/workspaces/ws1/**") == "/workspaces/ws1"
+    def test_double_star_preserved(self) -> None:
+        assert _normalize_file_object_id("file", "/workspaces/ws1/**") == "/workspaces/ws1/**"
 
-    def test_single_star_rejected(self) -> None:
-        """Round-5 review (codex HIGH): ``/*`` previously collapsed to
-        the same directory tuple as ``/**``, silently granting the
-        entire subtree even though shell ``/*`` is one-level-only.
-        Now raises so the caller returns 400 — operator must pick
-        ``/**`` explicitly or list exact paths.
-        """
-        from nexus.server.api.v2.routers.rebac import _WildcardSemanticError
-
-        with pytest.raises(_WildcardSemanticError, match="single-level glob"):
-            _normalize_file_object_id("file", "/workspaces/ws1/*")
+    def test_single_star_preserved(self) -> None:
+        assert _normalize_file_object_id("file", "/workspaces/ws1/*") == "/workspaces/ws1/*"
 
     def test_trailing_slash_collapses(self) -> None:
         assert _normalize_file_object_id("file", "/workspaces/ws1/") == "/workspaces/ws1"
 
     def test_root_double_star(self) -> None:
-        assert _normalize_file_object_id("file", "/**") == "/"
+        assert _normalize_file_object_id("file", "/**") == "/**"
 
-    def test_root_single_star_rejected(self) -> None:
-        """Round-5 review: same as nested ``/*`` — would silently grant
-        every file in every zone."""
-        from nexus.server.api.v2.routers.rebac import _WildcardSemanticError
-
-        with pytest.raises(_WildcardSemanticError):
-            _normalize_file_object_id("file", "/*")
+    def test_root_single_star_preserved(self) -> None:
+        assert _normalize_file_object_id("file", "/*") == "/*"
 
     def test_exact_path_unchanged(self) -> None:
         assert _normalize_file_object_id("file", "/workspaces/ws1/a.md") == "/workspaces/ws1/a.md"
 
-    def test_mixed_globs_rejected(self) -> None:
-        """``/a/**/*`` mixes recursive + single-level — reject since the
-        ``/*`` semantic cannot be honored."""
-        from nexus.server.api.v2.routers.rebac import _WildcardSemanticError
-
-        with pytest.raises(_WildcardSemanticError):
-            _normalize_file_object_id("file", "/a/**/*")
+    def test_mixed_globs_preserved_as_literal_prefix_pattern(self) -> None:
+        assert _normalize_file_object_id("file", "/a/**/*") == "/a/**/*"
 
     def test_non_file_namespace_passthrough(self) -> None:
         """Capabilities like ``("approvals", "global*")`` must not be mangled."""
@@ -565,20 +594,18 @@ def _file_body(object_id: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("input_object_id", "expected_stored"),
     [
-        ("/workspaces/ws1/**", "/workspaces/ws1"),
+        ("/workspaces/ws1/**", "/workspaces/ws1/**"),
         ("/workspaces/ws1/", "/workspaces/ws1"),
-        ("/**", "/"),
+        ("/**", "/**"),
         ("/workspaces/ws1/a.md", "/workspaces/ws1/a.md"),
     ],
 )
-def test_post_wildcard_object_id_normalized(
+def test_post_file_object_id_normalized_without_rewriting_patterns(
     fake_rebac_manager_file: MagicMock,
     input_object_id: str,
     expected_stored: str,
 ) -> None:
-    """POST collapses RECURSIVE ``/**`` and trailing ``/`` so the existing
-    ancestor-walk machinery grants every descendant (Issue #4239).
-    Round-5: ``/*`` is rejected — see test_post_single_star_returns_400."""
+    """POST preserves explicit pattern IDs and only trims exact trailing slash."""
     auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
     app = _make_app(rebac_manager=fake_rebac_manager_file, auth_provider=auth)
     with _client(app) as client:
@@ -595,12 +622,8 @@ def test_post_wildcard_object_id_normalized(
     assert body["object_id_input"] == input_object_id
 
 
-def test_post_single_star_returns_400(fake_rebac_manager_file: MagicMock) -> None:
-    """Round-5 review (codex HIGH): a ``/*`` object_id must return 400
-    rather than silently collapsing to the parent directory tuple
-    (which would grant the whole subtree). Operators should pick
-    ``/**`` for recursive or list exact paths.
-    """
+def test_post_single_star_path_pattern_is_preserved(fake_rebac_manager_file: MagicMock) -> None:
+    """Single-level path patterns are stored literally for graph matching."""
     auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
     app = _make_app(rebac_manager=fake_rebac_manager_file, auth_provider=auth)
     with _client(app) as client:
@@ -609,9 +632,10 @@ def test_post_single_star_returns_400(fake_rebac_manager_file: MagicMock) -> Non
             json=_file_body("/workspaces/ws1/*"),
             headers={"Authorization": "Bearer admin-tok"},
         )
-    assert resp.status_code == 400, resp.text
-    assert "single-level glob" in resp.json()["detail"].lower()
-    fake_rebac_manager_file.rebac_write.assert_not_called()
+    assert resp.status_code == 201, resp.text
+    call_kwargs = fake_rebac_manager_file.rebac_write.call_args.kwargs
+    assert call_kwargs["object"] == ("file", "/workspaces/ws1/*")
+    assert resp.json()["object_id"] == "/workspaces/ws1/*"
 
 
 def test_post_non_file_namespace_not_normalized(fake_rebac_manager: MagicMock) -> None:
@@ -630,9 +654,8 @@ def test_post_non_file_namespace_not_normalized(fake_rebac_manager: MagicMock) -
     assert call_kwargs["object"] == ("approvals", "global*")
 
 
-def test_delete_normalizes_to_match_post(fake_rebac_manager_file: MagicMock) -> None:
-    """DELETE with ``/workspaces/ws1/**`` deletes the tuple POST wrote at
-    ``/workspaces/ws1`` — otherwise operators can't clean up by symmetry."""
+def test_delete_preserves_path_pattern_to_match_post(fake_rebac_manager_file: MagicMock) -> None:
+    """DELETE with ``/workspaces/ws1/**`` deletes the exact pattern tuple."""
     auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
     app = _make_app(rebac_manager=fake_rebac_manager_file, auth_provider=auth)
     with _client(app) as client:
@@ -647,14 +670,14 @@ def test_delete_normalizes_to_match_post(fake_rebac_manager_file: MagicMock) -> 
     fake_rebac_manager_file.rebac_list_tuples.assert_called_once_with(
         subject=("user", "admin"),
         relation="read",
-        object=("file", "/workspaces/ws1"),
+        object=("file", "/workspaces/ws1/**"),
         subject_relation=None,
         zone_id="root",
     )
 
 
-def test_get_normalizes_query_object_id(fake_rebac_manager_file: MagicMock) -> None:
-    """GET ?object_id=/workspaces/ws1/** finds the tuple POST stored."""
+def test_get_preserves_query_object_id(fake_rebac_manager_file: MagicMock) -> None:
+    """GET ?object_id=/workspaces/ws1/** looks up the exact pattern tuple."""
     auth = _FakeAuthProvider(admin_tokens={"admin-tok": {"is_admin": True, "subject_id": "admin"}})
     app = _make_app(rebac_manager=fake_rebac_manager_file, auth_provider=auth)
     with _client(app) as client:
@@ -675,7 +698,7 @@ def test_get_normalizes_query_object_id(fake_rebac_manager_file: MagicMock) -> N
         subject_type="user",
         subject_id="admin",
         object_type="file",
-        object_id="/workspaces/ws1",
+        object_id="/workspaces/ws1/**",
         zone_id=None,
     )
 

@@ -76,7 +76,12 @@ def path_pattern_matches(pattern_object_id: str, requested_object_id: str) -> bo
     return False
 
 
-def path_pattern_candidates(object_type: str, object_id: str) -> list[str]:
+def path_pattern_candidates(
+    object_type: str,
+    object_id: str,
+    *,
+    include_single_level: bool = True,
+) -> list[str]:
     """Return exact and pattern object IDs that can match a requested object."""
     if not _is_absolute_file_path(object_type, object_id):
         return [object_id]
@@ -86,7 +91,7 @@ def path_pattern_candidates(object_type: str, object_id: str) -> list[str]:
         candidates.append(object_id.rstrip("/") + RECURSIVE_SUFFIX)
 
     parent = get_parent(object_id)
-    if parent is not None:
+    if include_single_level and parent is not None:
         candidates.append(SINGLE_LEVEL_SUFFIX if parent == "/" else parent + SINGLE_LEVEL_SUFFIX)
 
     for ancestor in (*get_ancestors(object_id), "/"):

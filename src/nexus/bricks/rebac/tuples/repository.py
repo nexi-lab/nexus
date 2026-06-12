@@ -666,18 +666,25 @@ class TupleRepository:
         """
         with self.connection(readonly=True) as conn:
             cursor = self.create_cursor(conn)
+            candidates = path_pattern_candidates(obj.entity_type, obj.entity_id)
+            placeholders = ", ".join("?" for _ in candidates)
 
             cursor.execute(
                 self.fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
+                    f"""
+                    SELECT DISTINCT subject_type, subject_id
                     FROM rebac_tuples
                     WHERE relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
-                (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
+                (
+                    relation,
+                    obj.entity_type,
+                    *candidates,
+                    datetime.now(UTC).isoformat(),
+                ),
             )
 
             return [(row["subject_type"], row["subject_id"]) for row in cursor.fetchall()]

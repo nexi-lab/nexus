@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from nexus.bricks.rebac.domain import Entity
+from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.bricks.rebac.graph._operators import parent_path_of
 from nexus.bricks.rebac.path_patterns import path_pattern_candidates
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -375,6 +375,9 @@ class BulkPermissionChecker:
                 cross_zone_count = self._fetch_cross_zone_tuples(
                     conn, all_subjects_list, tuples_graph, now_iso
                 )
+                cross_zone_count += self._fetch_cross_zone_wildcard_tuples(
+                    conn, all_objects_list, tuples_graph, zone_id, now_iso
+                )
                 if cross_zone_count > 0:
                     logger.debug(
                         f"[BULK-UNNEST] Fetched {cross_zone_count} cross-zone tuples in single query"
@@ -606,6 +609,99 @@ class BulkPermissionChecker:
             cross_zone_count += 1
 
         return cross_zone_count
+
+    def _fetch_cross_zone_wildcard_tuples(
+        self,
+        conn: Any,
+        all_objects_list: list[tuple[str, str]],
+        tuples_graph: list[dict[str, Any]],
+        zone_id: str,
+        now_iso: str,
+    ) -> int:
+        """Fetch bounded cross-zone wildcard tuples for candidate objects."""
+        if not all_objects_list:
+            return 0
+
+        is_postgresql = self._engine.dialect.name == "postgresql"
+        if not is_postgresql and len(all_objects_list) > SQLITE_ENTITY_CHUNK_SIZE:
+            wildcard_count = 0
+            for object_chunk in self._chunked(all_objects_list, SQLITE_ENTITY_CHUNK_SIZE):
+                wildcard_count += self._fetch_cross_zone_wildcard_tuples(
+                    conn,
+                    object_chunk,
+                    tuples_graph,
+                    zone_id,
+                    now_iso,
+                )
+            return wildcard_count
+
+        object_types = [o[0] for o in all_objects_list]
+        object_ids = [o[1] for o in all_objects_list]
+
+        if is_postgresql:
+            stmt = text("""
+                WITH object_list AS (
+                    SELECT unnest(CAST(:object_types AS text[])) AS object_type,
+                           unnest(CAST(:object_ids AS text[])) AS object_id
+                )
+                SELECT DISTINCT
+                    t.subject_type, t.subject_id, t.subject_relation,
+                    t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                FROM rebac_tuples t
+                WHERE t.subject_type = :wildcard_type
+                  AND t.subject_id = :wildcard_id
+                  AND t.zone_id != :zone_id
+                  AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
+                  AND EXISTS (
+                      SELECT 1 FROM object_list o
+                      WHERE t.object_type = o.object_type AND t.object_id = o.object_id
+                  )
+            """)
+            params: dict[str, Any] = {
+                "object_types": object_types,
+                "object_ids": object_ids,
+                "wildcard_type": WILDCARD_SUBJECT[0],
+                "wildcard_id": WILDCARD_SUBJECT[1],
+                "zone_id": zone_id,
+                "now_iso": now_iso,
+            }
+        else:
+            values_parts = [f"(:otype_{i}, :oid_{i})" for i in range(len(all_objects_list))]
+            values_str = ", ".join(values_parts)
+            params = {}
+            for i, (otype, oid) in enumerate(all_objects_list):
+                params[f"otype_{i}"] = otype
+                params[f"oid_{i}"] = oid
+            params["wildcard_type"] = WILDCARD_SUBJECT[0]
+            params["wildcard_id"] = WILDCARD_SUBJECT[1]
+            params["zone_id"] = zone_id
+            params["now_iso"] = now_iso
+
+            stmt = text(f"""
+                WITH object_list(object_type, object_id) AS (
+                    VALUES {values_str}
+                )
+                SELECT DISTINCT
+                    t.subject_type, t.subject_id, t.subject_relation,
+                    t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                FROM rebac_tuples t
+                WHERE t.subject_type = :wildcard_type
+                  AND t.subject_id = :wildcard_id
+                  AND t.zone_id != :zone_id
+                  AND (t.expires_at IS NULL OR t.expires_at >= :now_iso)
+                  AND EXISTS (
+                      SELECT 1 FROM object_list o
+                      WHERE t.object_type = o.object_type AND t.object_id = o.object_id
+                  )
+            """)
+
+        result = conn.execute(stmt, params)
+        wildcard_count = 0
+        for row in result:
+            tuples_graph.append(self._row_to_tuple_dict(row))
+            wildcard_count += 1
+
+        return wildcard_count
 
     @staticmethod
     def _chunked(items: list[tuple[str, str]], chunk_size: int) -> Iterator[list[tuple[str, str]]]:

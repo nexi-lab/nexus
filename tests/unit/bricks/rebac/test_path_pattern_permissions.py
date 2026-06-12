@@ -370,6 +370,51 @@ def test_filter_list_matches_recursive_path_pattern(rebac_manager) -> None:
     ) == ["/workspaces/ws1/a.md", "/workspaces/ws2/b.md"]
 
 
+def test_zone_aware_bulk_matches_cross_zone_wildcard_path_pattern(
+    zone_aware_rebac_manager,
+) -> None:
+    zone_aware_rebac_manager.rebac_write(
+        subject=("*", "*"),
+        relation="read",
+        object=("file", "/public/**"),
+        zone_id="shared",
+    )
+
+    checks = [
+        (("user", "visitor"), "read", ("file", "/public/docs/readme.md")),
+        (("user", "visitor"), "read", ("file", "/private/readme.md")),
+    ]
+
+    assert zone_aware_rebac_manager.rebac_check_bulk(checks, zone_id="root") == {
+        checks[0]: True,
+        checks[1]: False,
+    }
+
+
+def test_zone_aware_filter_list_matches_cross_zone_wildcard_path_pattern(
+    zone_aware_rebac_manager,
+) -> None:
+    zone_aware_rebac_manager.rebac_write(
+        subject=("*", "*"),
+        relation="read",
+        object=("file", "/public/**"),
+        zone_id="shared",
+    )
+    enforcer = PermissionEnforcer(rebac_manager=zone_aware_rebac_manager)
+    context = OperationContext(
+        user_id="visitor",
+        groups=[],
+        subject_type="user",
+        subject_id="visitor",
+        zone_id="root",
+    )
+
+    assert enforcer.filter_list(
+        ["/public/docs/readme.md", "/public/guide.md", "/private/c.md"],
+        context,
+    ) == ["/public/docs/readme.md", "/public/guide.md"]
+
+
 def test_python_fast_fallback_matches_direct_path_pattern_tuple() -> None:
     from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
 
@@ -391,6 +436,38 @@ def test_python_fast_fallback_matches_direct_path_pattern_tuple() -> None:
             tuples,
             {},
             force_python=True,
+        )[("user", "admin", "read", "file", "/workspaces/a.md")]
+        is True
+    )
+
+
+def test_fast_fallback_skips_rust_when_path_pattern_tuple_present(monkeypatch) -> None:
+    from nexus.bricks.rebac.utils import fast
+
+    checks = [(("user", "admin"), "read", ("file", "/workspaces/a.md"))]
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "admin",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": "/workspaces/**",
+        }
+    ]
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Rust bulk path should not run for path-pattern tuples")
+
+    monkeypatch.setattr(fast, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(fast, "check_permissions_bulk_rust", fail_if_called)
+
+    assert (
+        fast.check_permissions_bulk_with_fallback(
+            checks,
+            tuples,
+            {},
+            force_python=False,
         )[("user", "admin", "read", "file", "/workspaces/a.md")]
         is True
     )

@@ -43,11 +43,11 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use fuser::{
-    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyEmpty, ReplyEntry, ReplyOpen,
-    ReplyWrite, Request, FUSE_ROOT_ID,
+    Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, ReplyAttr, ReplyData,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
 };
 
 use nexus_plugin_abi::{nexus_free, KernelHandle};
@@ -58,13 +58,26 @@ use nexus_plugin_abi::{nexus_free, KernelHandle};
 const ATTR_TTL: Duration = Duration::from_secs(1);
 const ENTRY_TTL: Duration = Duration::from_secs(1);
 
-/// `EIO` — best-fit POSIX errno for "kernel callback returned a
-/// non-zero status."  Refined later if we want to map specific kernel
-/// errors to ENOENT / EACCES / etc.
-const ERRNO_IO: i32 = libc::EIO;
-/// `ENOSYS` — surfaced for ops that depend on `KernelHandle` syscalls
-/// not yet exposed (readdir / unlink / mkdir / rmdir / rename).
-const ERRNO_NOSYS: i32 = libc::ENOSYS;
+/// Raw inode value for the FUSE root.  fuser 0.17 exposes a typed
+/// `INodeNo::ROOT` constant (the `u64` 1), which we unwrap here so
+/// the inode map can use plain `u64` keys.
+const FUSE_ROOT_RAW: u64 = INodeNo::ROOT.0;
+
+/// `EIO` errno wrapper used as the catch-all for "kernel callback
+/// returned a non-zero status."  Refined later if we want to map
+/// specific kernel errors to ENOENT / EACCES / etc.
+fn errno_io() -> Errno {
+    Errno::from_i32(libc::EIO)
+}
+fn errno_enoent() -> Errno {
+    Errno::from_i32(libc::ENOENT)
+}
+fn errno_einval() -> Errno {
+    Errno::from_i32(libc::EINVAL)
+}
+fn errno_nosys() -> Errno {
+    Errno::from_i32(libc::ENOSYS)
+}
 
 pub struct NexusFs {
     kernel: KernelHandle,
@@ -80,19 +93,19 @@ pub struct NexusFs {
 impl NexusFs {
     pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
         let mut inodes = HashMap::new();
-        inodes.insert(FUSE_ROOT_ID, vfs_root.clone());
+        inodes.insert(FUSE_ROOT_RAW, vfs_root.clone());
         Self {
             kernel,
             vfs_root,
             inodes: Mutex::new(inodes),
-            // First allocated inode = root + 1; FUSE_ROOT_ID itself is
-            // reserved.
-            next_inode: AtomicU64::new(FUSE_ROOT_ID + 1),
+            // First allocated inode = root + 1; the root inode itself
+            // is reserved (fuser INodeNo::ROOT == 1).
+            next_inode: AtomicU64::new(FUSE_ROOT_RAW + 1),
         }
     }
 
-    fn path_for(&self, ino: u64) -> Option<String> {
-        self.inodes.lock().unwrap().get(&ino).cloned()
+    fn path_for(&self, ino: INodeNo) -> Option<String> {
+        self.inodes.lock().unwrap().get(&ino.0).cloned()
     }
 
     fn alloc_inode(&self, path: String) -> u64 {
@@ -187,7 +200,7 @@ impl NexusFs {
     /// in `kernel/src/kernel/plugins/mod.rs kernel_cb_sys_stat`);
     /// we hand-roll a tiny parser to avoid pulling `serde_json` into
     /// the cdylib's dependency closure for two fields.
-    fn parse_stat(&self, ino: u64, json: &str) -> Option<FileAttr> {
+    fn parse_stat(&self, ino: INodeNo, json: &str) -> Option<FileAttr> {
         // Kernel callback exports `entry_type` (the SSOT for "what
         // kind of inode this is") rather than a precomputed
         // `is_directory` flag, so dispatch by entry_type instead.
@@ -229,6 +242,14 @@ impl NexusFs {
             flags: 0,
         })
     }
+
+    /// Same sys_stat wrapper but returning a populated FileAttr on
+    /// success.  Centralises the path → callback → parse pipeline so
+    /// lookup / getattr / readdir share one error mapping.
+    fn stat_attr(&self, ino: INodeNo, path: &str) -> Result<FileAttr, Errno> {
+        let json = self.sys_stat(path).map_err(|_| errno_enoent())?;
+        self.parse_stat(ino, &json).ok_or_else(errno_io)
+    }
 }
 
 /// Extract a `u64` from `json` by scanning for `key` and parsing the
@@ -243,99 +264,80 @@ fn json_u64(json: &str, key: &str) -> Option<u64> {
 }
 
 impl Filesystem for NexusFs {
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &std::ffi::OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &std::ffi::OsStr, reply: ReplyEntry) {
         let parent_path = match self.path_for(parent) {
             Some(p) => p,
             None => {
-                reply.error(libc::ENOENT);
+                reply.error(errno_enoent());
                 return;
             }
         };
         let name_str = match name.to_str() {
             Some(s) => s,
             None => {
-                reply.error(libc::EINVAL);
+                reply.error(errno_einval());
                 return;
             }
         };
         let path = join_path(&parent_path, name_str);
-        let json = match self.sys_stat(&path) {
-            Ok(j) => j,
-            Err(_) => {
-                reply.error(libc::ENOENT);
-                return;
-            }
-        };
-        let ino = self.alloc_inode(path.clone());
-        let attr = match self.parse_stat(ino, &json) {
-            Some(a) => a,
-            None => {
-                reply.error(ERRNO_IO);
-                return;
-            }
-        };
-        reply.entry(&ENTRY_TTL, &attr, /* generation */ 0);
+        let ino_raw = self.alloc_inode(path.clone());
+        let ino = INodeNo(ino_raw);
+        match self.stat_attr(ino, &path) {
+            Ok(attr) => reply.entry(&ENTRY_TTL, &attr, Generation(0)),
+            Err(e) => reply.error(e),
+        }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         let path = match self.path_for(ino) {
             Some(p) => p,
             None => {
-                reply.error(libc::ENOENT);
+                reply.error(errno_enoent());
                 return;
             }
         };
-        let json = match self.sys_stat(&path) {
-            Ok(j) => j,
-            Err(_) => {
-                reply.error(libc::ENOENT);
-                return;
-            }
-        };
-        let attr = match self.parse_stat(ino, &json) {
-            Some(a) => a,
-            None => {
-                reply.error(ERRNO_IO);
-                return;
-            }
-        };
-        reply.attr(&ATTR_TTL, &attr);
+        match self.stat_attr(ino, &path) {
+            Ok(attr) => reply.attr(&ATTR_TTL, &attr),
+            Err(e) => reply.error(e),
+        }
     }
 
-    fn open(&mut self, _req: &Request, _ino: u64, _flags: i32, reply: ReplyOpen) {
-        // No per-fd state.  fh=0, flags=0 keeps it stateless.
-        reply.opened(0, 0);
+    fn open(&self, _req: &Request, _ino: INodeNo, _flags: fuser::OpenFlags, reply: ReplyOpen) {
+        // Stateless: no per-fd context.  fuser accepts FileHandle(0)
+        // as the "no handle" sentinel; FopenFlags::empty() opts out
+        // of fuser's caching hints.
+        reply.opened(FileHandle(0), fuser::FopenFlags::empty());
     }
 
     fn read(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        _fh: u64,
+        ino: INodeNo,
+        _fh: FileHandle,
         offset: i64,
         size: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _flags: fuser::AccessFlags,
+        _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
         let path = match self.path_for(ino) {
             Some(p) => p,
             None => {
-                reply.error(libc::ENOENT);
+                reply.error(errno_enoent());
                 return;
             }
         };
         let full = match self.sys_read(&path) {
             Ok(d) => d,
             Err(_) => {
-                reply.error(libc::ENOENT);
+                reply.error(errno_enoent());
                 return;
             }
         };
         // Slice by offset/size.  Once the offset-aware `sys_read`
         // extension lands in KernelHandle, this becomes a direct
-        // callback pass-through and stops reading the whole file
-        // for every page-sized FUSE read.
+        // callback pass-through and stops reading the whole file for
+        // every page-sized FUSE read.
         let start = offset as usize;
         if start >= full.len() {
             reply.data(&[]);
@@ -346,15 +348,15 @@ impl Filesystem for NexusFs {
     }
 
     fn write(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        _fh: u64,
+        ino: INodeNo,
+        _fh: FileHandle,
         offset: i64,
         data: &[u8],
-        _write_flags: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _write_flags: fuser::WriteFlags,
+        _flags: fuser::AccessFlags,
+        _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyWrite,
     ) {
         // First cut: O_TRUNC semantics only.  An offset != 0 write
@@ -363,33 +365,40 @@ impl Filesystem for NexusFs {
         // dropping bytes; CC's task-file workflow always rewrites
         // the whole JSON document so offset==0 is the common path.
         if offset != 0 {
-            reply.error(libc::EIO);
+            reply.error(errno_io());
             return;
         }
         let path = match self.path_for(ino) {
             Some(p) => p,
             None => {
-                reply.error(libc::ENOENT);
+                reply.error(errno_enoent());
                 return;
             }
         };
         match self.sys_write(&path, data) {
             Ok(()) => reply.written(data.len() as u32),
-            Err(_) => reply.error(ERRNO_IO),
+            Err(_) => reply.error(errno_io()),
         }
     }
 
-    fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+    fn flush(
+        &self,
+        _req: &Request,
+        _ino: INodeNo,
+        _fh: FileHandle,
+        _lock_owner: fuser::LockOwner,
+        reply: ReplyEmpty,
+    ) {
         reply.ok();
     }
 
     fn release(
-        &mut self,
+        &self,
         _req: &Request,
-        _ino: u64,
-        _fh: u64,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _ino: INodeNo,
+        _fh: FileHandle,
+        _flags: fuser::AccessFlags,
+        _lock_owner: Option<fuser::LockOwner>,
         _flush: bool,
         reply: ReplyEmpty,
     ) {
@@ -403,66 +412,66 @@ impl Filesystem for NexusFs {
     // crate's docstring as the follow-up nexus-vfs PR.
 
     fn readdir(
-        &mut self,
+        &self,
         _req: &Request,
-        _ino: u64,
-        _fh: u64,
+        _ino: INodeNo,
+        _fh: FileHandle,
         _offset: i64,
         reply: fuser::ReplyDirectory,
     ) {
-        reply.error(ERRNO_NOSYS);
+        reply.error(errno_nosys());
     }
 
     fn mkdir(
-        &mut self,
+        &self,
         _req: &Request,
-        _parent: u64,
+        _parent: INodeNo,
         _name: &std::ffi::OsStr,
         _mode: u32,
         _umask: u32,
         reply: ReplyEntry,
     ) {
-        reply.error(ERRNO_NOSYS);
+        reply.error(errno_nosys());
     }
 
-    fn unlink(&mut self, _req: &Request, _parent: u64, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
-        reply.error(ERRNO_NOSYS);
+    fn unlink(&self, _req: &Request, _parent: INodeNo, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
+        reply.error(errno_nosys());
     }
 
-    fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
-        reply.error(ERRNO_NOSYS);
+    fn rmdir(&self, _req: &Request, _parent: INodeNo, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
+        reply.error(errno_nosys());
     }
 
     fn rename(
-        &mut self,
+        &self,
         _req: &Request,
-        _parent: u64,
+        _parent: INodeNo,
         _name: &std::ffi::OsStr,
-        _newparent: u64,
+        _newparent: INodeNo,
         _newname: &std::ffi::OsStr,
-        _flags: u32,
+        _flags: fuser::RenameFlags,
         reply: ReplyEmpty,
     ) {
-        reply.error(ERRNO_NOSYS);
+        reply.error(errno_nosys());
     }
 
     fn create(
-        &mut self,
+        &self,
         _req: &Request,
-        _parent: u64,
+        _parent: INodeNo,
         _name: &std::ffi::OsStr,
         _mode: u32,
         _umask: u32,
-        _flags: i32,
+        _flags: fuser::AccessFlags,
         reply: fuser::ReplyCreate,
     ) {
-        reply.error(ERRNO_NOSYS);
+        reply.error(errno_nosys());
     }
 
     fn setattr(
-        &mut self,
+        &self,
         _req: &Request,
-        _ino: u64,
+        _ino: INodeNo,
         _mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
@@ -470,14 +479,14 @@ impl Filesystem for NexusFs {
         _atime: Option<fuser::TimeOrNow>,
         _mtime: Option<fuser::TimeOrNow>,
         _ctime: Option<SystemTime>,
-        _fh: Option<u64>,
+        _fh: Option<FileHandle>,
         _crtime: Option<SystemTime>,
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
         _flags: Option<u32>,
         reply: ReplyAttr,
     ) {
-        reply.error(ERRNO_NOSYS);
+        reply.error(errno_nosys());
     }
 }
 

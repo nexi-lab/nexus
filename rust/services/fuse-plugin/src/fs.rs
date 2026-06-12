@@ -86,11 +86,9 @@ fn errno_nosys() -> Errno {
 
 pub struct NexusFs {
     kernel: KernelHandle,
-    /// VFS-path prefix that maps to the FUSE root inode.  Joined with
-    /// child names to produce kernel-side paths.
-    vfs_root: String,
-    /// `inode -> VFS path` registry.  Path lookups populate this; we
-    /// never evict.
+    /// `inode -> VFS path` registry.  Root inode (FUSE_ROOT_RAW) is
+    /// seeded with the operator-supplied `vfs_root` prefix; child
+    /// lookups join from there.  We never evict.
     inodes: Mutex<HashMap<u64, String>>,
     next_inode: AtomicU64,
 }
@@ -98,10 +96,9 @@ pub struct NexusFs {
 impl NexusFs {
     pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
         let mut inodes = HashMap::new();
-        inodes.insert(FUSE_ROOT_RAW, vfs_root.clone());
+        inodes.insert(FUSE_ROOT_RAW, vfs_root);
         Self {
             kernel,
-            vfs_root,
             inodes: Mutex::new(inodes),
             // First allocated inode = root + 1; the root inode itself
             // is reserved (fuser INodeNo::ROOT == 1).

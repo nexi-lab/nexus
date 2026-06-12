@@ -321,7 +321,7 @@ impl Filesystem for NexusFs {
         _fh: FileHandle,
         offset: u64,
         size: u32,
-        _flags: fuser::AccessFlags,
+        _flags: fuser::OpenFlags,
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
@@ -360,7 +360,7 @@ impl Filesystem for NexusFs {
         offset: u64,
         data: &[u8],
         _write_flags: fuser::WriteFlags,
-        _flags: fuser::AccessFlags,
+        _flags: fuser::OpenFlags,
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyWrite,
     ) {

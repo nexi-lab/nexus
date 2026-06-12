@@ -63,6 +63,11 @@ const ENTRY_TTL: Duration = Duration::from_secs(1);
 /// the inode map can use plain `u64` keys.
 const FUSE_ROOT_RAW: u64 = INodeNo::ROOT.0;
 
+/// Raw i32 EIO used by the internal sys_*() C-ABI wrappers (which
+/// return `Result<_, i32>` mirroring the C-side rc).  Trait-level
+/// methods wrap it into the typed `Errno` via `errno_io()`.
+const ERRNO_IO_RAW: i32 = libc::EIO;
+
 /// `EIO` errno wrapper used as the catch-all for "kernel callback
 /// returned a non-zero status."  Refined later if we want to map
 /// specific kernel errors to ENOENT / EACCES / etc.
@@ -119,7 +124,7 @@ impl NexusFs {
     fn sys_stat(&self, path: &str) -> Result<String, i32> {
         let c_path = match CString::new(path) {
             Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO),
+            Err(_) => return Err(ERRNO_IO_RAW),
         };
         let mut out_buf: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
@@ -138,7 +143,7 @@ impl NexusFs {
             let slice = std::slice::from_raw_parts(out_buf, out_len);
             let s = std::str::from_utf8(slice)
                 .map(|s| s.to_string())
-                .map_err(|_| ERRNO_IO);
+                .map_err(|_| ERRNO_IO_RAW);
             nexus_free(out_buf, out_len);
             s?
         };
@@ -150,7 +155,7 @@ impl NexusFs {
     fn sys_read(&self, path: &str) -> Result<Vec<u8>, i32> {
         let c_path = match CString::new(path) {
             Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO),
+            Err(_) => return Err(ERRNO_IO_RAW),
         };
         let mut out_buf: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
@@ -178,7 +183,7 @@ impl NexusFs {
     fn sys_write(&self, path: &str, data: &[u8]) -> Result<(), i32> {
         let c_path = match CString::new(path) {
             Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO),
+            Err(_) => return Err(ERRNO_IO_RAW),
         };
         let rc = unsafe {
             (self.kernel.sys_write)(

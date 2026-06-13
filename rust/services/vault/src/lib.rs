@@ -369,7 +369,9 @@ fn dispatch_grpc(plugin: &VaultPlugin, full_path: &str, payload: &[u8]) -> Resul
         ("nexus.secrets.v1.GenericSecretsService", "ListSecretVersions") => "secret_list_versions",
         ("nexus.secrets.v1.GenericSecretsService", "BatchPutSecrets") => "secret_batch_put",
         ("nexus.secrets.v1.GenericSecretsService", "BatchGetSecrets") => "secret_batch_get",
-        ("nexus.secrets.v1.GenericSecretsService", "DeleteSecretVersion") => "secret_delete_version",
+        ("nexus.secrets.v1.GenericSecretsService", "DeleteSecretVersion") => {
+            "secret_delete_version"
+        }
         ("nexus.secrets.v1.GenericSecretsService", "UpdateSecretDescription") => {
             "secret_update_description"
         }
@@ -410,6 +412,11 @@ declare_service_plugin!("password-vault", VaultPlugin, {
 // happens via the existing v2 symbol — no API version bump needed.
 //
 // Storage is `'static` so the kernel never frees the pointer.
+
+/// # Safety
+///
+/// Pure data lookup — returns a pointer to a `'static` null-terminated
+/// JSON byte slice. No invariants required from the caller.
 #[no_mangle]
 pub unsafe extern "C" fn nexus_plugin_grpc_services() -> *const c_char {
     const SERVICES_JSON: &[u8] = b"[\
@@ -524,11 +531,7 @@ mod dylib_e2e {
     unsafe extern "C" fn noop_rmdir(_: *const c_void, _: *const c_char) -> i32 {
         -1
     }
-    unsafe extern "C" fn noop_rename(
-        _: *const c_void,
-        _: *const c_char,
-        _: *const c_char,
-    ) -> i32 {
+    unsafe extern "C" fn noop_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
         -1
     }
 

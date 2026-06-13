@@ -16,6 +16,7 @@
 //!   /vault/versions/passwords/{title}/{v:010}   → StoredEntry
 //!   /vault/versions/{namespace}/{key}/{v:010}   → StoredEntry
 
+use std::ffi::c_char;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -333,6 +334,22 @@ declare_service_plugin!("password-vault", VaultPlugin, {
     dispatch: dispatch_vault,
 });
 
+// ── Optional Phase P symbol: opt this plugin into cluster gRPC routing ──
+//
+// Exposes the two gRPC service full names hosted by this plugin so
+// `nexusd-cluster` can route external tonic traffic at `/<service>/<method>`
+// into our `nexus_service_dispatch`. See `nexus-plugin-abi`'s
+// `symbols::SERVICE_GRPC_SERVICES` for the contract. Bytes-level dispatch
+// happens via the existing v2 symbol — no API version bump needed.
+//
+// Storage is `'static` so the kernel never frees the pointer.
+#[no_mangle]
+pub unsafe extern "C" fn nexus_plugin_grpc_services() -> *const c_char {
+    const SERVICES_JSON: &[u8] =
+        b"[\"nexus.secrets.v1.GenericSecretsService\",\"nexus.secrets.v1.PasswordVaultService\"]\0";
+    SERVICES_JSON.as_ptr() as *const c_char
+}
+
 // ── Dylib E2E tests — load the compiled cdylib via dlopen ─────────
 //
 // These tests verify the real C ABI boundary: dlopen → symbol lookup →
@@ -421,12 +438,41 @@ mod dylib_e2e {
     ) -> i32 {
         -1
     }
+    unsafe extern "C" fn noop_readdir(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_unlink(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_mkdir(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_rmdir(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_rename(
+        _: *const c_void,
+        _: *const c_char,
+        _: *const c_char,
+    ) -> i32 {
+        -1
+    }
 
     fn dummy_kernel_handle() -> nexus_plugin_abi::KernelHandle {
         nexus_plugin_abi::KernelHandle {
             sys_read: noop_read,
             sys_write: noop_write,
             sys_stat: noop_stat,
+            sys_readdir: noop_readdir,
+            sys_unlink: noop_unlink,
+            sys_mkdir: noop_mkdir,
+            sys_rmdir: noop_rmdir,
+            sys_rename: noop_rename,
             kernel_ptr: std::ptr::null(),
         }
     }
@@ -552,6 +598,18 @@ mod dylib_e2e {
             assert_eq!(
                 CStr::from_ptr(name_fn()).to_str().unwrap(),
                 "password-vault"
+            );
+
+            // ── Phase P opt-in: cluster reads this to route /<svc>/<method>
+            //     gRPC traffic into our nexus_service_dispatch. ──
+            let grpc_fn: libloading::Symbol<nexus_plugin_abi::PluginGrpcServicesFn> = lib
+                .get(nexus_plugin_abi::symbols::SERVICE_GRPC_SERVICES.as_bytes())
+                .expect("plugin_grpc_services");
+            let json = CStr::from_ptr(grpc_fn()).to_str().unwrap();
+            assert_eq!(
+                json,
+                "[\"nexus.secrets.v1.GenericSecretsService\",\
+                 \"nexus.secrets.v1.PasswordVaultService\"]"
             );
         }
     }

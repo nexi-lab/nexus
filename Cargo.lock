@@ -1536,7 +1536,7 @@ source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5ac7d15c3e25e9bfb2d9d64f
 
 [[package]]
 name = "nexus-vault"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "backends",
  "clap",
@@ -1547,7 +1547,9 @@ dependencies = [
  "services",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tonic",
+ "tonic-prost",
  "tracing",
  "tracing-subscriber",
 ]

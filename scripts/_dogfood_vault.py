@@ -174,20 +174,37 @@ def boot_cluster(
     plugin_dir = data_dir / "plugins"
     plugin_dir.mkdir(parents=True, exist_ok=True)
     (plugin_dir / vault_dylib.name).write_bytes(vault_dylib.read_bytes())
+    # The cluster's plugin loader requires `<plugin>.sig` next to the
+    # binary and Ed25519-verifies the dylib bytes against the embedded
+    # `trusted_keys/*.pub`. Carry the sig that ships in the release
+    # archive — the dylib without it is rejected at boot.
+    sig_src = vault_dylib.with_name(vault_dylib.name + ".sig")
+    if sig_src.is_file():
+        (plugin_dir / sig_src.name).write_bytes(sig_src.read_bytes())
 
     port = free_port()
     env = os.environ.copy()
     env["NEXUS_DATA_DIR"] = str(data_dir)
     env["RUST_LOG"] = env.get("RUST_LOG", "warn")
 
+    # `--bind-addr` (not `--bind`) and an explicit `--bootstrap-mode`
+    # are both required for daemon mode; without them the cluster either
+    # rejects the CLI or silently picks a non-ephemeral path. `static`
+    # = single-node, no federation — the right shape for a tempdir-only
+    # ephemeral vault. `--data-dir` keeps every redb file inside the
+    # tempdir so the cluster has no path to anything persistent.
     proc = subprocess.Popen(
         [
             str(nexusd_cluster),
             "--plugin-dir",
             str(plugin_dir),
+            "--data-dir",
+            str(data_dir),
             "--no-tls",
-            "--bind",
+            "--bind-addr",
             f"127.0.0.1:{port}",
+            "--bootstrap-mode",
+            "static",
         ],
         env=env,
         stdout=subprocess.PIPE,

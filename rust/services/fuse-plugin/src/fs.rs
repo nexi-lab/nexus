@@ -29,15 +29,20 @@
 //! * `open` / `release` / `flush` — no-ops; the kernel doesn't carry
 //!   per-fd state.
 //!
-//! ## What surfaces as `ENOSYS` until KernelHandle grows
+//! ## What now works via KernelHandle v2 (nexus-vfs#56)
 //!
-//! `readdir`, `create`, `mkdir`, `unlink`, `rmdir`, `rename`,
-//! `setattr` — every directory-mutating op and any read that depends
-//! on enumeration.  These are tracked in the parent crate's docstring
-//! as the upcoming `nexus-vfs` PR.  Reporting `ENOSYS` rather than a
-//! best-effort fake keeps the operator-visible surface honest: `ls`
-//! over the mount fails loudly until the extension lands, instead of
-//! silently returning an empty directory.
+//! `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `create` — every
+//! directory-mutating op routes through real kernel callbacks added
+//! in `PLUGIN_API_VERSION = 2`.  `create` is composed from `sys_write`
+//! (empty payload) followed by `sys_stat`, which matches the kernel's
+//! own "touch a file" semantics without adding a dedicated callback.
+//!
+//! ## What still surfaces as `ENOSYS`
+//!
+//! `setattr` — chmod/chown/truncate/utimes have no kernel equivalent
+//! yet; permissions are owned by ReBAC and timestamps are
+//! kernel-managed.  Surfacing `ENOSYS` keeps the operator-visible
+//! contract honest until the kernel grows a setattr surface.
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -176,6 +181,80 @@ impl NexusFs {
         Ok(data)
     }
 
+    /// Wrapper around the C `sys_readdir` callback.  Returns the JSON
+    /// array `[{"name":..,"entry_type":..}, ...]` as a `String`.
+    fn sys_readdir(&self, parent_path: &str) -> Result<String, i32> {
+        let c_path = match CString::new(parent_path) {
+            Ok(s) => s,
+            Err(_) => return Err(ERRNO_IO_RAW),
+        };
+        let mut out_buf: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            (self.kernel.sys_readdir)(
+                self.kernel.kernel_ptr,
+                c_path.as_ptr(),
+                &mut out_buf,
+                &mut out_len,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let json = unsafe {
+            let slice = std::slice::from_raw_parts(out_buf, out_len);
+            let s = std::str::from_utf8(slice)
+                .map(|s| s.to_string())
+                .map_err(|_| ERRNO_IO_RAW);
+            nexus_free(out_buf, out_len);
+            s?
+        };
+        Ok(json)
+    }
+
+    /// Wrapper around the C `sys_unlink` callback.
+    fn sys_unlink(&self, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe { (self.kernel.sys_unlink)(self.kernel.kernel_ptr, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    /// Wrapper around the C `sys_mkdir` callback.
+    fn sys_mkdir(&self, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe { (self.kernel.sys_mkdir)(self.kernel.kernel_ptr, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    /// Wrapper around the C `sys_rmdir` callback.
+    fn sys_rmdir(&self, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe { (self.kernel.sys_rmdir)(self.kernel.kernel_ptr, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    /// Wrapper around the C `sys_rename` callback.
+    fn sys_rename(&self, old_path: &str, new_path: &str) -> Result<(), i32> {
+        let c_old = CString::new(old_path).map_err(|_| ERRNO_IO_RAW)?;
+        let c_new = CString::new(new_path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe {
+            (self.kernel.sys_rename)(self.kernel.kernel_ptr, c_old.as_ptr(), c_new.as_ptr())
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
     /// Wrapper around the C `sys_write` callback.
     fn sys_write(&self, path: &str, data: &[u8]) -> Result<(), i32> {
         let c_path = match CString::new(path) {
@@ -263,6 +342,40 @@ fn json_u64(json: &str, key: &str) -> Option<u64> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(after.len());
     after[..end].parse().ok()
+}
+
+/// Parse the `sys_readdir` JSON array into `(name, entry_type)` pairs.
+/// The kernel-side serializer (see `kernel_cb_sys_readdir` in
+/// `kernel/src/kernel/plugins/mod.rs`) hand-rolls a minimal JSON of
+/// shape `[{"name":<escaped>,"entry_type":<u8>}, ...]`, so we parse
+/// the same shape without pulling `serde_json` into the cdylib.  Only
+/// the `"` and `\` escapes the kernel emits are handled.
+fn parse_readdir_entries(json: &str) -> Vec<(String, u64)> {
+    let mut out = Vec::new();
+    let mut rest = json;
+    while let Some((_, after_name)) = rest.split_once("\"name\":\"") {
+        let mut name = String::new();
+        let mut bytes = after_name.chars();
+        loop {
+            match bytes.next() {
+                Some('\\') => match bytes.next() {
+                    Some(c) => name.push(c),
+                    None => return out,
+                },
+                Some('"') => break,
+                Some(c) => name.push(c),
+                None => return out,
+            }
+        }
+        let after_close = bytes.as_str();
+        let entry_type = match json_u64(after_close, "\"entry_type\":") {
+            Some(t) => t,
+            None => return out,
+        };
+        out.push((name, entry_type));
+        rest = after_close;
+    }
+    out
 }
 
 impl Filesystem for NexusFs {
@@ -407,67 +520,226 @@ impl Filesystem for NexusFs {
         reply.ok();
     }
 
-    // ── Ops that need KernelHandle to grow ───────────────────────────
-    //
-    // Surface as ENOSYS until the matching syscall is added to the
-    // plugin ABI's KernelHandle struct.  Tracked in the parent
-    // crate's docstring as the follow-up nexus-vfs PR.
+    // ── KernelHandle v2 ops (PLUGIN_API_VERSION ≥ 2) ────────────────
 
     fn readdir(
         &self,
         _req: &Request,
-        _ino: INodeNo,
+        ino: INodeNo,
         _fh: FileHandle,
-        _offset: u64,
-        reply: fuser::ReplyDirectory,
+        offset: u64,
+        mut reply: fuser::ReplyDirectory,
     ) {
-        reply.error(errno_nosys());
+        let parent_path = match self.path_for(ino) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let json = match self.sys_readdir(&parent_path) {
+            Ok(j) => j,
+            Err(_) => {
+                reply.error(errno_io());
+                return;
+            }
+        };
+        let entries = parse_readdir_entries(&json);
+        // FUSE readdir is a streaming op: each `add` returns true once
+        // the kernel buffer is full, after which we stop and let the
+        // VFS resume from the offset we last reported.  Skipping
+        // `offset` entries handles continuation correctly without
+        // needing a per-fh cursor.
+        const DT_DIR: u64 = 1;
+        for (idx, (name, entry_type)) in entries.into_iter().enumerate().skip(offset as usize) {
+            let child_path = join_path(&parent_path, &name);
+            let child_ino = self.alloc_inode(child_path);
+            let kind = if entry_type == DT_DIR {
+                FileType::Directory
+            } else {
+                FileType::RegularFile
+            };
+            // FUSE's `next_offset` semantics: the next readdir call
+            // resumes at this value, so we return `idx + 1`.
+            if reply.add(INodeNo(child_ino), (idx + 1) as u64, kind, &name) {
+                break;
+            }
+        }
+        reply.ok();
     }
 
     fn mkdir(
         &self,
         _req: &Request,
-        _parent: INodeNo,
-        _name: &std::ffi::OsStr,
+        parent: INodeNo,
+        name: &std::ffi::OsStr,
         _mode: u32,
         _umask: u32,
         reply: ReplyEntry,
     ) {
-        reply.error(errno_nosys());
+        let parent_path = match self.path_for(parent) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let name_str = match name.to_str() {
+            Some(s) => s,
+            None => {
+                reply.error(errno_einval());
+                return;
+            }
+        };
+        let path = join_path(&parent_path, name_str);
+        if self.sys_mkdir(&path).is_err() {
+            reply.error(errno_io());
+            return;
+        }
+        let ino_raw = self.alloc_inode(path.clone());
+        let ino = INodeNo(ino_raw);
+        match self.stat_attr(ino, &path) {
+            Ok(attr) => reply.entry(&ENTRY_TTL, &attr, Generation(0)),
+            Err(e) => reply.error(e),
+        }
     }
 
-    fn unlink(&self, _req: &Request, _parent: INodeNo, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
-        reply.error(errno_nosys());
+    fn unlink(&self, _req: &Request, parent: INodeNo, name: &std::ffi::OsStr, reply: ReplyEmpty) {
+        let parent_path = match self.path_for(parent) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let name_str = match name.to_str() {
+            Some(s) => s,
+            None => {
+                reply.error(errno_einval());
+                return;
+            }
+        };
+        let path = join_path(&parent_path, name_str);
+        match self.sys_unlink(&path) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(errno_io()),
+        }
     }
 
-    fn rmdir(&self, _req: &Request, _parent: INodeNo, _name: &std::ffi::OsStr, reply: ReplyEmpty) {
-        reply.error(errno_nosys());
+    fn rmdir(&self, _req: &Request, parent: INodeNo, name: &std::ffi::OsStr, reply: ReplyEmpty) {
+        let parent_path = match self.path_for(parent) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let name_str = match name.to_str() {
+            Some(s) => s,
+            None => {
+                reply.error(errno_einval());
+                return;
+            }
+        };
+        let path = join_path(&parent_path, name_str);
+        match self.sys_rmdir(&path) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(errno_io()),
+        }
     }
 
     fn rename(
         &self,
         _req: &Request,
-        _parent: INodeNo,
-        _name: &std::ffi::OsStr,
-        _newparent: INodeNo,
-        _newname: &std::ffi::OsStr,
+        parent: INodeNo,
+        name: &std::ffi::OsStr,
+        newparent: INodeNo,
+        newname: &std::ffi::OsStr,
         _flags: fuser::RenameFlags,
         reply: ReplyEmpty,
     ) {
-        reply.error(errno_nosys());
+        let old_parent = match self.path_for(parent) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let new_parent = match self.path_for(newparent) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let old_name = match name.to_str() {
+            Some(s) => s,
+            None => {
+                reply.error(errno_einval());
+                return;
+            }
+        };
+        let new_name = match newname.to_str() {
+            Some(s) => s,
+            None => {
+                reply.error(errno_einval());
+                return;
+            }
+        };
+        let old_path = join_path(&old_parent, old_name);
+        let new_path = join_path(&new_parent, new_name);
+        match self.sys_rename(&old_path, &new_path) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(errno_io()),
+        }
     }
 
     fn create(
         &self,
         _req: &Request,
-        _parent: INodeNo,
-        _name: &std::ffi::OsStr,
+        parent: INodeNo,
+        name: &std::ffi::OsStr,
         _mode: u32,
         _umask: u32,
         _flags: i32,
         reply: fuser::ReplyCreate,
     ) {
-        reply.error(errno_nosys());
+        // Compose create from an empty-payload `sys_write` (touches
+        // the file into existence) + `sys_stat` (returns the populated
+        // FileAttr).  Avoids adding a dedicated `sys_create` callback
+        // — the kernel already treats "write to a non-existent path"
+        // as create-on-write.
+        let parent_path = match self.path_for(parent) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+        let name_str = match name.to_str() {
+            Some(s) => s,
+            None => {
+                reply.error(errno_einval());
+                return;
+            }
+        };
+        let path = join_path(&parent_path, name_str);
+        if self.sys_write(&path, &[]).is_err() {
+            reply.error(errno_io());
+            return;
+        }
+        let ino_raw = self.alloc_inode(path.clone());
+        let ino = INodeNo(ino_raw);
+        match self.stat_attr(ino, &path) {
+            Ok(attr) => reply.created(
+                &ENTRY_TTL,
+                &attr,
+                Generation(0),
+                FileHandle(0),
+                fuser::FopenFlags::empty(),
+            ),
+            Err(e) => reply.error(e),
+        }
     }
 
     fn setattr(
@@ -542,6 +814,39 @@ mod tests {
         assert_eq!(
             json_u64(r#"{"size":12,"entry_type":0}"#, "\"entry_type\":"),
             Some(0)
+        );
+    }
+
+    #[test]
+    fn parse_readdir_entries_empty() {
+        assert_eq!(parse_readdir_entries("[]"), Vec::<(String, u64)>::new());
+    }
+
+    #[test]
+    fn parse_readdir_entries_mixed_kinds() {
+        // Same shape `kernel_cb_sys_readdir` emits.
+        let json = r#"[{"name":"foo.txt","entry_type":0},{"name":"sub","entry_type":1}]"#;
+        let entries = parse_readdir_entries(json);
+        assert_eq!(
+            entries,
+            vec![("foo.txt".to_string(), 0), ("sub".to_string(), 1),]
+        );
+    }
+
+    #[test]
+    fn parse_readdir_entries_handles_escapes() {
+        // Kernel-side serializer escapes `"` → `\"` and `\` → `\\`.
+        // The parser must un-escape them, otherwise lookups against
+        // the resulting path will miss.
+        let json =
+            r#"[{"name":"with \"quote\"","entry_type":0},{"name":"with\\back","entry_type":0}]"#;
+        let entries = parse_readdir_entries(json);
+        assert_eq!(
+            entries,
+            vec![
+                ("with \"quote\"".to_string(), 0),
+                ("with\\back".to_string(), 0),
+            ]
         );
     }
 }

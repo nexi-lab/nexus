@@ -101,20 +101,88 @@ fn errno_nosys() -> Errno {
 
 pub struct NexusFs {
     kernel: KernelHandle,
-    /// `inode -> VFS path` registry.  Root inode (FUSE_ROOT_RAW) is
-    /// seeded with the operator-supplied `vfs_root` prefix; child
-    /// lookups join from there.  We never evict.
-    inodes: Mutex<HashMap<u64, String>>,
+    /// Bidirectional inode↔path index.  The forward map (`ino_to_path`)
+    /// translates a FUSE inode back to the VFS path the kernel
+    /// callbacks expect; the reverse map (`path_to_ino`) lets
+    /// `lookup` return a **stable** inode for a path it has seen
+    /// before — without it every LOOKUP minted a fresh inode and the
+    /// kernel-side FUSE driver couldn't tie its cached dentry to the
+    /// one the next op walked through (rename's `d_move` is the
+    /// canonical case: source dentry got inode A on create, dest
+    /// lookup returned inode B; the rename op's userspace handler ran
+    /// fine but the kernel-side `d_move(A → B)` linked the wrong
+    /// inode and downstream `cat <dest>` surfaced ENOENT despite the
+    /// rename having succeeded kernel-side).  Root inode
+    /// (FUSE_ROOT_RAW) is seeded with the operator-supplied
+    /// `vfs_root` prefix; child paths register on first lookup.  We
+    /// never evict — replacing the counter with a path-cache
+    /// eviction policy is a follow-up.
+    paths: Mutex<PathIndex>,
     next_inode: AtomicU64,
+}
+
+/// Bidirectional inode↔path index — the SSOT for "what does each FUSE
+/// inode refer to right now".  Single mutex so both maps stay in
+/// lockstep; every mutator updates both sides in one critical section.
+struct PathIndex {
+    ino_to_path: HashMap<u64, String>,
+    path_to_ino: HashMap<String, u64>,
+}
+
+impl PathIndex {
+    fn with_root(vfs_root: String) -> Self {
+        let mut ino_to_path = HashMap::new();
+        let mut path_to_ino = HashMap::new();
+        ino_to_path.insert(FUSE_ROOT_RAW, vfs_root.clone());
+        path_to_ino.insert(vfs_root, FUSE_ROOT_RAW);
+        Self {
+            ino_to_path,
+            path_to_ino,
+        }
+    }
+
+    fn lookup_or_register(&mut self, path: &str, mint: impl FnOnce() -> u64) -> u64 {
+        if let Some(&ino) = self.path_to_ino.get(path) {
+            return ino;
+        }
+        let ino = mint();
+        self.ino_to_path.insert(ino, path.to_string());
+        self.path_to_ino.insert(path.to_string(), ino);
+        ino
+    }
+
+    /// Move the inode currently bound to `old_path` over to `new_path`.
+    /// No-op when `old_path` isn't tracked (e.g. the kernel-side
+    /// rename succeeded against a path the FUSE side never looked up,
+    /// which can happen with bulk operators).  Used by the `rename`
+    /// op so subsequent `read` / `getattr` on the d_moved inode walks
+    /// the new path through `sys_*` — otherwise the inode would still
+    /// resolve to `old_path` and every read would surface ENOENT.
+    fn rename(&mut self, old_path: &str, new_path: &str) {
+        let Some(ino) = self.path_to_ino.remove(old_path) else {
+            return;
+        };
+        self.ino_to_path.insert(ino, new_path.to_string());
+        self.path_to_ino.insert(new_path.to_string(), ino);
+    }
+
+    /// Drop the bidirectional mapping for `path`.  Used by `unlink`
+    /// and `rmdir` to release the inode after the kernel-side entry
+    /// is gone — a subsequent `create` at the same path then mints a
+    /// fresh inode instead of reusing one whose previous lifetime
+    /// the kernel may have already forgotten.
+    fn forget(&mut self, path: &str) {
+        if let Some(ino) = self.path_to_ino.remove(path) {
+            self.ino_to_path.remove(&ino);
+        }
+    }
 }
 
 impl NexusFs {
     pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
-        let mut inodes = HashMap::new();
-        inodes.insert(FUSE_ROOT_RAW, vfs_root);
         Self {
             kernel,
-            inodes: Mutex::new(inodes),
+            paths: Mutex::new(PathIndex::with_root(vfs_root)),
             // First allocated inode = root + 1; the root inode itself
             // is reserved (fuser INodeNo::ROOT == 1).
             next_inode: AtomicU64::new(FUSE_ROOT_RAW + 1),
@@ -122,13 +190,18 @@ impl NexusFs {
     }
 
     fn path_for(&self, ino: INodeNo) -> Option<String> {
-        self.inodes.lock().unwrap().get(&ino.0).cloned()
+        self.paths.lock().unwrap().ino_to_path.get(&ino.0).cloned()
     }
 
-    fn alloc_inode(&self, path: String) -> u64 {
-        let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
-        self.inodes.lock().unwrap().insert(ino, path);
-        ino
+    /// Return the existing inode for `path` if we've seen it before,
+    /// otherwise mint a fresh one and register both directions.  See
+    /// the `paths` field docstring for why a stable inode-per-path
+    /// matters for FUSE's dentry/inode tracking.
+    fn inode_for(&self, path: &str) -> u64 {
+        self.paths
+            .lock()
+            .unwrap()
+            .lookup_or_register(path, || self.next_inode.fetch_add(1, Ordering::Relaxed))
     }
 
     /// Wrapper around the C `sys_stat` callback.  Returns the JSON
@@ -439,10 +512,18 @@ impl Filesystem for NexusFs {
             }
         };
         let path = join_path(&parent_path, name_str);
-        let ino_raw = self.alloc_inode(path.clone());
-        let ino = INodeNo(ino_raw);
-        match self.stat_attr(ino, &path) {
-            Ok(attr) => reply.entry(&ENTRY_TTL, &attr, Generation(0)),
+        // Stat first, allocate the inode only on a positive hit so
+        // negative-lookup probes (`mv`'s pre-rename LOOKUP, every
+        // ENOENT path resolution) don't leak path↔inode entries the
+        // FUSE side then has to clean up.
+        match self.sys_stat(&path) {
+            Ok(json) => {
+                let ino = INodeNo(self.inode_for(&path));
+                match self.parse_stat(ino, &json) {
+                    Some(attr) => reply.entry(&ENTRY_TTL, &attr, Generation(0)),
+                    None => reply.error(errno_io()),
+                }
+            }
             // FUSE protocol: a reply.entry with `attr.ino == 0` is a
             // *negative* entry — the kernel records "this name does
             // not exist" for `entry_valid` seconds.  Setting TTL = 0
@@ -604,7 +685,7 @@ impl Filesystem for NexusFs {
         // needing a per-fh cursor.
         for (idx, (name, entry_type)) in entries.into_iter().enumerate().skip(offset as usize) {
             let child_path = join_path(&parent_path, &name);
-            let child_ino = self.alloc_inode(child_path);
+            let child_ino = self.inode_for(&child_path);
             let kind = kind_from_entry_type(entry_type);
             // FUSE's `next_offset` semantics: the next readdir call
             // resumes at this value, so we return `idx + 1`.
@@ -643,7 +724,7 @@ impl Filesystem for NexusFs {
             reply.error(errno_io());
             return;
         }
-        let ino_raw = self.alloc_inode(path.clone());
+        let ino_raw = self.inode_for(&path);
         let ino = INodeNo(ino_raw);
         match self.stat_attr(ino, &path) {
             Ok(attr) => reply.entry(&ENTRY_TTL, &attr, Generation(0)),
@@ -668,7 +749,10 @@ impl Filesystem for NexusFs {
         };
         let path = join_path(&parent_path, name_str);
         match self.sys_unlink(&path) {
-            Ok(()) => reply.ok(),
+            Ok(()) => {
+                self.paths.lock().unwrap().forget(&path);
+                reply.ok();
+            }
             Err(_) => reply.error(errno_io()),
         }
     }
@@ -690,7 +774,10 @@ impl Filesystem for NexusFs {
         };
         let path = join_path(&parent_path, name_str);
         match self.sys_rmdir(&path) {
-            Ok(()) => reply.ok(),
+            Ok(()) => {
+                self.paths.lock().unwrap().forget(&path);
+                reply.ok();
+            }
             Err(_) => reply.error(errno_io()),
         }
     }
@@ -736,7 +823,16 @@ impl Filesystem for NexusFs {
         let old_path = join_path(&old_parent, old_name);
         let new_path = join_path(&new_parent, new_name);
         match self.sys_rename(&old_path, &new_path) {
-            Ok(()) => reply.ok(),
+            Ok(()) => {
+                // Move the inode's path mapping so the d_moved FUSE
+                // dentry (which still points at the old inode) walks
+                // through `sys_read` against the new path instead of
+                // the now-vanished old one — without this, `cat <new>`
+                // after `mv old new` hits ENOENT despite the kernel-
+                // side rename having succeeded.
+                self.paths.lock().unwrap().rename(&old_path, &new_path);
+                reply.ok();
+            }
             Err(_) => reply.error(errno_io()),
         }
     }
@@ -775,7 +871,7 @@ impl Filesystem for NexusFs {
             reply.error(errno_io());
             return;
         }
-        let ino_raw = self.alloc_inode(path.clone());
+        let ino_raw = self.inode_for(&path);
         let ino = INodeNo(ino_raw);
         match self.stat_attr(ino, &path) {
             Ok(attr) => reply.created(

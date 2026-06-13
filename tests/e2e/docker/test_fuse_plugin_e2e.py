@@ -88,9 +88,7 @@ class TestMountLoadedAndReady:
         assert "error" not in result, f"gRPC vfs_stat(/) failed: {result}"
         assert result["result"]["found"], "/ must exist on a fresh cluster"
 
-    def test_mount_point_is_a_fuse_mount(
-        self, topology: fuse_plugin_helpers.FuseTopology
-    ) -> None:
+    def test_mount_point_is_a_fuse_mount(self, topology: fuse_plugin_helpers.FuseTopology) -> None:
         result = runbook_helpers.docker_exec(
             topology.cluster_container,
             ["mountpoint", "-q", topology.mount_point],
@@ -120,13 +118,9 @@ class TestMkdirReaddirRoundTrip:
 
         # readdir must show the entry on the parent listing.
         entries = fuse_plugin_helpers.mount_listdir(topology, "/")
-        assert "alpha-dir" in entries, (
-            f"readdir on / missed `alpha-dir` after mkdir; got {entries}"
-        )
+        assert "alpha-dir" in entries, f"readdir on / missed `alpha-dir` after mkdir; got {entries}"
 
-    def test_nested_mkdir_p_visible(
-        self, topology: fuse_plugin_helpers.FuseTopology
-    ) -> None:
+    def test_nested_mkdir_p_visible(self, topology: fuse_plugin_helpers.FuseTopology) -> None:
         fuse_plugin_helpers.mount_mkdir(topology, "nested/deep/path", parents=True)
         stat = _wait_path_via_grpc(
             topology,
@@ -141,9 +135,7 @@ class TestMkdirReaddirRoundTrip:
 class TestCreateWriteRead:
     """`cat > file` + `cat file` — exercise create + write + read."""
 
-    def test_create_empty_file_visible(
-        self, topology: fuse_plugin_helpers.FuseTopology
-    ) -> None:
+    def test_create_empty_file_visible(self, topology: fuse_plugin_helpers.FuseTopology) -> None:
         fuse_plugin_helpers.mount_write_bytes(topology, "empty.txt", b"")
         stat = _wait_path_via_grpc(topology, topology.vfs_path("empty.txt"), expect_found=True)
         assert not stat["result"]["isDirectory"]
@@ -156,8 +148,7 @@ class TestCreateWriteRead:
         fuse_plugin_helpers.mount_write_bytes(topology, "rw.txt", payload)
         roundtrip = fuse_plugin_helpers.mount_read_bytes(topology, "rw.txt")
         assert roundtrip == payload, (
-            f"mount read != mount write; got len={len(roundtrip)}, "
-            f"expected len={len(payload)}"
+            f"mount read != mount write; got len={len(roundtrip)}, expected len={len(payload)}"
         )
 
     def test_write_via_mount_visible_through_grpc_read(
@@ -192,9 +183,7 @@ class TestRenameUnlinkRmdir:
     def test_rename_moves_file(self, topology: fuse_plugin_helpers.FuseTopology) -> None:
         payload = b"rename target payload"
         fuse_plugin_helpers.mount_write_bytes(topology, "rename-src.txt", payload)
-        _wait_path_via_grpc(
-            topology, topology.vfs_path("rename-src.txt"), expect_found=True
-        )
+        _wait_path_via_grpc(topology, topology.vfs_path("rename-src.txt"), expect_found=True)
 
         fuse_plugin_helpers.mount_rename(topology, "rename-src.txt", "rename-dst.txt")
 
@@ -207,9 +196,7 @@ class TestRenameUnlinkRmdir:
             "but lost the content reference"
         )
 
-    def test_unlink_removes_file(
-        self, topology: fuse_plugin_helpers.FuseTopology
-    ) -> None:
+    def test_unlink_removes_file(self, topology: fuse_plugin_helpers.FuseTopology) -> None:
         fuse_plugin_helpers.mount_write_bytes(topology, "doomed.txt", b"bye")
         _wait_path_via_grpc(topology, topology.vfs_path("doomed.txt"), expect_found=True)
 

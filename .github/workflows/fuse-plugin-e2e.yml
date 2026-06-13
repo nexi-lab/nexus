@@ -128,27 +128,6 @@ jobs:
           cache-from: type=gha,scope=fuse-plugin-cluster
           cache-to: type=gha,scope=fuse-plugin-cluster,mode=max
 
-      - name: Fetch plugin signing key (kernel-dogfood-v1)
-        if: steps.changes.outputs.run == 'true'
-        env:
-          VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "$VAULT_SIGNING_MASTER_KEY" ]; then
-            echo "::error::VAULT_SIGNING_MASTER_KEY secret is not available — cannot fetch the kernel-dogfood-v1 signing key."
-            exit 1
-          fi
-          # Reuses the same sealed-keystore path
-          # release-plugin-reusable.yml takes for signing dylibs at
-          # release-tag time.  See
-          # docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md
-          # for the end-to-end flow.  Pattern (mask + env-set) mirrors
-          # the reusable workflow's `Resolve PLUGIN_SIGNING_PRIVKEY
-          # (vault source)` step verbatim.
-          PRIVKEY=$(python3 scripts/dogfood_keystore_fetch.py --key-name kernel-dogfood-v1)
-          echo "::add-mask::${PRIVKEY}"
-          echo "PLUGIN_SIGNING_PRIVKEY=${PRIVKEY}" >> "$GITHUB_ENV"
-
       - name: Build fuse-plugin + federation-test images
         if: steps.changes.outputs.run == 'true'
         # BUILDX_BUILDER=default forces compose build to use the
@@ -158,9 +137,23 @@ jobs:
         # builder can resolve against the previous step's
         # `load: true` artifact.  See cc-tasks-share-e2e.yml for the
         # same workaround.
+        #
+        # Signs the cdylib with the bootstrap PLUGIN_SIGNING_PRIVKEY
+        # — same key cc-tasks-share-e2e.yml uses, same trust root the
+        # nexusd-cluster image embeds.  The production release path
+        # (signing with kernel-dogfood-v1 via the sealed keystore) is
+        # exercised end-to-end by release-fuse-plugin.yml on actual
+        # `fuse-v*` tags; this suite's job is to regression-guard the
+        # callback wiring, not the signing pipeline (which has its
+        # own paths-filtered workflow + the compliance gate).
         env:
           BUILDX_BUILDER: default
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
         run: |
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available — cannot sign the FUSE plugin (kernel refuses unsigned plugins)."
+            exit 1
+          fi
           docker compose -f dockerfiles/docker-compose.fuse-plugin.yml build \
             cluster test
 

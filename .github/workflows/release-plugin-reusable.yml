@@ -446,7 +446,18 @@ jobs:
         id: checksums
         working-directory: release-assets
         run: |
-          CHECKSUMS=$(sha256sum *.tar.gz *.zip)
+          set -euo pipefail
+          # Glob expansion would fail noisily when a plugin ships
+          # without one of the archive shapes (e.g. fuse-plugin is
+          # linux-only → no .zip). List exactly the files that exist.
+          shopt -s nullglob
+          ARCHIVES=( *.tar.gz *.zip )
+          shopt -u nullglob
+          if [ ${#ARCHIVES[@]} -eq 0 ]; then
+            echo "::error::no archives in release-assets/"
+            exit 1
+          fi
+          CHECKSUMS=$(sha256sum "${ARCHIVES[@]}")
           echo "$CHECKSUMS"
           {
             echo "checksums<<EOF"

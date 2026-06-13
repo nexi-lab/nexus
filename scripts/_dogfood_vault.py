@@ -86,7 +86,12 @@ def shred_bytes(buf: bytes | bytearray) -> None:
 
 
 def read_master_key_from_env(env_var: str = "VAULT_SIGNING_MASTER_KEY") -> bytes:
-    raw = os.environ.get(env_var, "").strip()
+    # Drop ALL whitespace (not just leading/trailing) — secrets pasted
+    # through GitHub UI or shell pipelines occasionally carry embedded
+    # \r, \n, or spaces that survive a plain .strip(). `validate=True`
+    # in the next step rejects any surviving non-base64 char so a
+    # genuinely garbled value still fails loudly.
+    raw = "".join(os.environ.get(env_var, "").split())
     if not raw:
         raise SystemExit(f"{env_var} env var is required")
     try:

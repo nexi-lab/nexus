@@ -327,9 +327,48 @@ impl NexusFs {
     /// Same sys_stat wrapper but returning a populated FileAttr on
     /// success.  Centralises the path → callback → parse pipeline so
     /// lookup / getattr / readdir share one error mapping.
+    ///
+    /// Special case: the mount root (inode == FUSE_ROOT_RAW) always
+    /// returns a synthetic directory FileAttr.  The kernel's
+    /// `sys_stat` is documented to return `None` for trie-resolved
+    /// paths — including DT_MOUNT entries, which is exactly what the
+    /// plugin's `NEXUS_FUSE_VFS_ROOT` maps to.  Without this short-
+    /// circuit, `mountpoint -q` can't validate the mount (its
+    /// `stat()` of the root returns ENOENT), every FUSE op fails the
+    /// initial root lookup, and the mount is effectively unusable.
+    /// The synthetic attr is consistent with the kernel's own DT_MOUNT
+    /// semantics — directory, perm 0755 — so this is honest about
+    /// what the mount root *is* even though sys_stat declines to say so.
     fn stat_attr(&self, ino: INodeNo, path: &str) -> Result<FileAttr, Errno> {
+        if ino.0 == FUSE_ROOT_RAW {
+            return Ok(self.synthetic_root_attr());
+        }
         let json = self.sys_stat(path).map_err(|_| errno_enoent())?;
         self.parse_stat(ino, &json).ok_or_else(errno_io)
+    }
+
+    /// Build the synthetic FileAttr for the FUSE mount root.  See
+    /// `stat_attr` for the kernel-side rationale; this is the
+    /// SSOT for "what does the mount root look like to FUSE".
+    fn synthetic_root_attr(&self) -> FileAttr {
+        let now = SystemTime::now();
+        FileAttr {
+            ino: INodeNo::ROOT,
+            size: 0,
+            blocks: 0,
+            atime: now,
+            mtime: now,
+            ctime: now,
+            crtime: now,
+            kind: FileType::Directory,
+            perm: 0o755,
+            nlink: 2,
+            uid: unsafe { libc::getuid() },
+            gid: unsafe { libc::getgid() },
+            rdev: 0,
+            blksize: 4096,
+            flags: 0,
+        }
     }
 }
 

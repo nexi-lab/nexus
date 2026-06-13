@@ -96,10 +96,11 @@ jobs:
   #   linux:   <dylib_basename>.so
   #   macos:   <dylib_basename>.dylib   (arm64 + x86_64)
   #   windows: <dylib_basename> with the leading `lib` stripped + `.dll`
-  # The job-level `if` filters out platforms not listed in `inputs.platforms`.
-  # Skipped matrix instances complete without spawning a runner.
+  # Every step is gated on `inputs.platforms` so plugins that opt out of
+  # platforms (e.g. nexus-fuse-plugin is Linux-only) spawn a runner but
+  # skip the build work. GitHub Actions does NOT permit `matrix.*` at
+  # job-level `if`; only at step level — so the gate sits on every step.
   build:
-    if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
     name: build / ${{ matrix.artifact_name_suffix }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -127,10 +128,11 @@ jobs:
 
     steps:
       - name: Checkout code
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         uses: actions/checkout@v4
 
       - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix) && runner.os == 'macOS'
         run: |
           set -euo pipefail
           PROTOC_VERSION=3.20.2
@@ -147,7 +149,7 @@ jobs:
           "$HOME/protoc/bin/protoc" --version
 
       - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix) && runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -166,17 +168,20 @@ jobs:
           & $protocExe --version
 
       - name: Install Rust toolchain
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: false
           target: ${{ matrix.target || '' }}
 
       - name: Rust cache
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ inputs.plugin_name }}-${{ matrix.os }}-${{ matrix.target || 'native' }}
 
       - name: Compute dylib filename
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         id: dylib
         shell: bash
         env:
@@ -199,10 +204,12 @@ jobs:
           fi
 
       - name: Build release cdylib
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         run: |
           cargo build --release -p ${{ inputs.plugin_name }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       - name: Check dylib size
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         shell: bash
         env:
           MAX_SIZE_BYTES: ${{ inputs.max_size_bytes }}
@@ -221,6 +228,7 @@ jobs:
           fi
 
       - name: Upload artifact
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.archive_prefix }}-${{ matrix.artifact_name_suffix }}

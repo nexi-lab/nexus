@@ -345,8 +345,10 @@ declare_service_plugin!("password-vault", VaultPlugin, {
 // Storage is `'static` so the kernel never frees the pointer.
 #[no_mangle]
 pub unsafe extern "C" fn nexus_plugin_grpc_services() -> *const c_char {
-    const SERVICES_JSON: &[u8] =
-        b"[\"nexus.secrets.v1.GenericSecretsService\",\"nexus.secrets.v1.PasswordVaultService\"]\0";
+    const SERVICES_JSON: &[u8] = b"[\
+        \"nexus.secrets.v1.GenericSecretsService\",\
+        \"nexus.password_vault.v1.PasswordVaultService\"\
+    ]\0";
     SERVICES_JSON.as_ptr() as *const c_char
 }
 
@@ -609,7 +611,7 @@ mod dylib_e2e {
             assert_eq!(
                 json,
                 "[\"nexus.secrets.v1.GenericSecretsService\",\
-                 \"nexus.secrets.v1.PasswordVaultService\"]"
+                 \"nexus.password_vault.v1.PasswordVaultService\"]"
             );
         }
     }

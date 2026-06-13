@@ -62,6 +62,16 @@ use nexus_plugin_abi::{nexus_free, KernelHandle};
 /// SSOT, so stale entries self-correct within a tick.
 const ATTR_TTL: Duration = Duration::from_secs(1);
 const ENTRY_TTL: Duration = Duration::from_secs(1);
+/// Negative-entry TTL.  Must stay at zero — see `lookup`'s negative
+/// branch for the full rationale: `mv <src> <new>` followed by a sub-
+/// second `cat <new>` would otherwise hit the cached negative entry
+/// from `mv`'s pre-rename LOOKUP(new) probe and surface stale ENOENT
+/// despite the rename having succeeded kernel-side.  A `Notifier`-
+/// based invalidation deadlocks fuser's single-threaded event loop
+/// (the notify message can't dispatch while the only worker is
+/// inside the rename handler), so zero-TTL negatives are the only
+/// race-free option without a dedicated invalidation worker.
+const NEG_ENTRY_TTL: Duration = Duration::ZERO;
 
 /// Raw inode value for the FUSE root.  fuser 0.17 exposes a typed
 /// `INodeNo::ROOT` constant (the `u64` 1), which we unwrap here so
@@ -320,6 +330,33 @@ impl NexusFs {
     }
 }
 
+/// FUSE-protocol negative-entry attr — `attr.ino == 0` signals
+/// "no entry at this name" to the kernel.  Every other field is a
+/// don't-care for negative entries, so we initialise to sane zeros
+/// instead of carrying a separate `Option<FileAttr>` plumbing path.
+/// Paired with `NEG_ENTRY_TTL = Duration::ZERO` in `lookup`'s
+/// Err branch — see the rationale on `NEG_ENTRY_TTL`.
+fn negative_entry_attr() -> FileAttr {
+    let now = SystemTime::now();
+    FileAttr {
+        ino: INodeNo(0),
+        size: 0,
+        blocks: 0,
+        atime: now,
+        mtime: now,
+        ctime: now,
+        crtime: now,
+        kind: FileType::RegularFile,
+        perm: 0,
+        nlink: 0,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 0,
+        flags: 0,
+    }
+}
+
 /// Single SSOT rule mapping kernel `entry_type` values to FUSE
 /// `FileType`.  Both DT_DIR (1) and DT_MOUNT (2) surface as
 /// directories — the kernel's `sys_stat` mount-point synthesis path
@@ -406,7 +443,15 @@ impl Filesystem for NexusFs {
         let ino = INodeNo(ino_raw);
         match self.stat_attr(ino, &path) {
             Ok(attr) => reply.entry(&ENTRY_TTL, &attr, Generation(0)),
-            Err(e) => reply.error(e),
+            // FUSE protocol: a reply.entry with `attr.ino == 0` is a
+            // *negative* entry — the kernel records "this name does
+            // not exist" for `entry_valid` seconds.  Setting TTL = 0
+            // means the kernel doesn't cache the negative at all,
+            // which is the SoT we need: every subsequent LOOKUP for
+            // this name walks back through to `sys_stat` instead of
+            // serving the stale "doesn't exist" answer that `mv`'s
+            // pre-rename probe left behind.  See NEG_ENTRY_TTL.
+            Err(_) => reply.entry(&NEG_ENTRY_TTL, &negative_entry_attr(), Generation(0)),
         }
     }
 

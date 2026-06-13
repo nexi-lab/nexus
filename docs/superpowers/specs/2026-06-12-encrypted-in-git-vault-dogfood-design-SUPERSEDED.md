@@ -1,6 +1,18 @@
 # Plugin Signing Dogfood — encrypted-in-git architecture
 
-**Status:** Draft for review (2026-06-12). Code lands in a follow-up PR after PR #4376 (plumbing) merges.
+> **SUPERSEDED 2026-06-13** by
+> [`2026-06-13-sealed-keystore-dogfood-design.md`](2026-06-13-sealed-keystore-dogfood-design.md).
+>
+> Empirical verification on the para-pc Windows box (2026-06-13) proved
+> the "commit `vault-meta.redb`" approach this doc describes is
+> unbuildable: redb writes a different byte stream on every open+close,
+> so the source tree's committed bytes would diverge from vault state
+> on every CI run. The sealed-keystore design replaces it — commit a
+> JSON of opaque AES-GCM `(nonce, ciphertext)` tuples instead, vault
+> rehydrates them via the new `PutSecretSealed` RPC. Kept for the
+> historical record (and so the discovery rationale stays anchored).
+
+**Status:** SUPERSEDED — see the link above.
 
 **Scope:** How plugin signing keys live in vault when there is no always-on vault server. The plumbing (gRPC client scripts, reusable workflow, compliance gate, vault wrapper) shipped in PR #4376 — this doc covers the architecture choice that turns "scripts that talk to a vault somewhere" into "scripts that boot vault in CI from an encrypted DB in this repo".
 

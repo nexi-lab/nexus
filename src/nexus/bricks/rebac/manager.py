@@ -62,6 +62,7 @@ from nexus.bricks.rebac.graph.bulk_evaluator import (
 from nexus.bricks.rebac.graph.expand import ExpandEngine
 from nexus.bricks.rebac.graph.traversal import PermissionComputer
 from nexus.bricks.rebac.graph.zone_traversal import ZoneAwareTraversal
+from nexus.bricks.rebac.path_patterns import is_path_pattern, path_pattern_candidates
 from nexus.bricks.rebac.path_updater import PathUpdater
 from nexus.bricks.rebac.rebac_tracing import (
     record_check_result,
@@ -1310,25 +1311,34 @@ class ReBACManager:
             # Get permissions for this relation (fail-closed: unknown → [])
             permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
-            # Persist each permission grant immediately
-            for permission in permissions:
-                self.tiger_persist_grant(
-                    subject=subject_tuple,
-                    permission=permission,
-                    resource_type=object_type,
-                    resource_id=object_id,
-                    zone_id=effective_zone,
-                )
+            if is_path_pattern(object_type, object_id):
+                for permission in permissions:
+                    self.tiger_invalidate_cache(
+                        subject_tuple,
+                        permission,
+                        object_type,
+                        effective_zone,
+                    )
+            else:
+                # Persist each permission grant immediately
+                for permission in permissions:
+                    self.tiger_persist_grant(
+                        subject=subject_tuple,
+                        permission=permission,
+                        resource_type=object_type,
+                        resource_id=object_id,
+                        zone_id=effective_zone,
+                    )
 
-            # Leopard-style Directory Grant Expansion
-            # When permission is granted on a directory, expand to all descendants
-            if object_type == "file" and permissions and self._is_directory_path(object_id):
-                self._expand_directory_permission_grant(
-                    subject=subject_tuple,
-                    permissions=permissions,
-                    directory_path=object_id,
-                    zone_id=effective_zone,
-                )
+                # Leopard-style Directory Grant Expansion
+                # When permission is granted on a directory, expand to all descendants
+                if object_type == "file" and permissions and self._is_directory_path(object_id):
+                    self._expand_directory_permission_grant(
+                        subject=subject_tuple,
+                        permissions=permissions,
+                        directory_path=object_id,
+                        zone_id=effective_zone,
+                    )
 
         # Issue #922: Notify boundary cache invalidators
         self._notify_boundary_cache_invalidators(effective_zone, subject, relation, object)
@@ -1421,15 +1431,24 @@ class ReBACManager:
                     # FIX: Default to empty list for unknown relations
                     permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
-                    # Persist each permission grant immediately
-                    for permission in permissions:
-                        self.tiger_persist_grant(
-                            subject=subject_tuple,
-                            permission=permission,
-                            resource_type=object_type,
-                            resource_id=object_id,
-                            zone_id=zone_id,
-                        )
+                    if is_path_pattern(object_type, object_id):
+                        for permission in permissions:
+                            self.tiger_invalidate_cache(
+                                subject_tuple,
+                                permission,
+                                object_type,
+                                zone_id,
+                            )
+                    else:
+                        # Persist each permission grant immediately
+                        for permission in permissions:
+                            self.tiger_persist_grant(
+                                subject=subject_tuple,
+                                permission=permission,
+                                resource_type=object_type,
+                                resource_id=object_id,
+                                zone_id=zone_id,
+                            )
 
             # Issue #919: Notify directory visibility cache invalidators for all affected objects
             for t in tuples:
@@ -1514,7 +1533,13 @@ class ReBACManager:
             # Permission name maps to one or more relations — expand each
             for rel in perm_relations:
                 self._expand_permission_zone_aware(
-                    rel, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+                    rel,
+                    object_entity,
+                    namespace,
+                    zone_id,
+                    subjects,
+                    visited=set(),
+                    depth=0,
                 )
         else:
             # Already a relation name (or unknown) — expand directly
@@ -1533,6 +1558,7 @@ class ReBACManager:
         subjects: set[tuple[str, str]],
         visited: set[tuple[str, str, str]],
         depth: int,
+        allow_single_level_patterns: bool = True,
     ) -> None:
         """Recursively expand permission to find all subjects (zone-scoped)."""
         if depth > self.max_depth:
@@ -1545,7 +1571,12 @@ class ReBACManager:
 
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
-            direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+            direct_subjects = self._get_direct_subjects_zone_aware(
+                permission,
+                obj,
+                zone_id,
+                allow_single_level_patterns=allow_single_level_patterns,
+            )
             for subj in direct_subjects:
                 subjects.add(subj)
             return
@@ -1555,7 +1586,14 @@ class ReBACManager:
             union_relations = namespace.get_union_relations(permission)
             for rel in union_relations:
                 self._expand_permission_zone_aware(
-                    rel, obj, namespace, zone_id, subjects, visited.copy(), depth + 1
+                    rel,
+                    obj,
+                    namespace,
+                    zone_id,
+                    subjects,
+                    visited.copy(),
+                    depth + 1,
+                    allow_single_level_patterns=allow_single_level_patterns,
                 )
             return
 
@@ -1581,29 +1619,46 @@ class ReBACManager:
                             subjects,
                             visited.copy(),
                             depth + 1,
+                            allow_single_level_patterns=False,
                         )
             return
 
         # Direct relation
-        direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+        direct_subjects = self._get_direct_subjects_zone_aware(
+            permission,
+            obj,
+            zone_id,
+            allow_single_level_patterns=allow_single_level_patterns,
+        )
         for subj in direct_subjects:
             subjects.add(subj)
 
     def _get_direct_subjects_zone_aware(
-        self, relation: str, obj: Entity, zone_id: str
+        self,
+        relation: str,
+        obj: Entity,
+        zone_id: str,
+        *,
+        allow_single_level_patterns: bool = True,
     ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object (zone-scoped)."""
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
+            candidates = path_pattern_candidates(
+                obj.entity_type,
+                obj.entity_id,
+                include_single_level=allow_single_level_patterns,
+            )
+            placeholders = ", ".join("?" for _ in candidates)
 
             cursor.execute(
                 self._fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
+                    f"""
+                    SELECT DISTINCT subject_type, subject_id
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
@@ -1611,7 +1666,7 @@ class ReBACManager:
                     zone_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -1702,16 +1757,26 @@ class ReBACManager:
                 if subject_type and subject_id and object_type and object_id:
                     permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
+                    effective_zone = normalize_zone_id(zone_id)
+
                     # Revoke each permission immediately
                     for permission in permissions:
                         try:
-                            self.tiger_persist_revoke(
-                                subject=(subject_type, subject_id),
-                                permission=permission,
-                                resource_type=object_type,
-                                resource_id=object_id,
-                                zone_id=normalize_zone_id(zone_id),
-                            )
+                            if is_path_pattern(object_type, object_id):
+                                self.tiger_invalidate_cache(
+                                    (subject_type, subject_id),
+                                    permission,
+                                    object_type,
+                                    effective_zone,
+                                )
+                            else:
+                                self.tiger_persist_revoke(
+                                    subject=(subject_type, subject_id),
+                                    permission=permission,
+                                    resource_type=object_type,
+                                    resource_id=object_id,
+                                    zone_id=effective_zone,
+                                )
                         except (OperationalError, ProgrammingError) as e:
                             if logger.isEnabledFor(logging.DEBUG):
                                 logger.debug(f"[TIGER] Revoke failed: {e}")
@@ -1802,6 +1867,14 @@ class ReBACManager:
         _logger: Any = None,
     ) -> None:
         """Write-through single permission result to Tiger Cache. Delegates to TupleWriter."""
+        if self._has_matching_path_pattern_tuple(object):
+            if _logger is not None and _logger.isEnabledFor(logging.DEBUG):
+                _logger.debug(
+                    "[TIGER] Skipping write-through for %s:%s; path-pattern tuples may apply",
+                    object[0],
+                    object[1],
+                )
+            return
         self._tuple_writer.tiger_write_through_single(
             subject=subject,
             permission=permission,
@@ -1809,6 +1882,46 @@ class ReBACManager:
             zone_id=zone_id,
             tiger_cache=self._tiger_cache,
         )
+
+    def _has_matching_path_pattern_tuple(self, object: tuple[str, str]) -> bool:
+        object_type, object_id = object
+        pattern_candidates = [
+            candidate
+            for candidate in path_pattern_candidates(object_type, object_id)
+            if is_path_pattern(object_type, candidate)
+        ]
+        if not pattern_candidates:
+            return False
+
+        placeholders = ", ".join("?" for _ in pattern_candidates)
+        try:
+            with self._connection(readonly=True) as conn:
+                cursor = self._create_cursor(conn)
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        f"""
+                        SELECT 1
+                        FROM rebac_tuples
+                        WHERE object_type = ? AND object_id IN ({placeholders})
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        object_type,
+                        *pattern_candidates,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                return cursor.fetchone() is not None
+        except Exception:
+            logger.debug(
+                "[TIGER] Could not check path-pattern tuples for %s:%s; skipping write-through",
+                object_type,
+                object_id,
+                exc_info=True,
+            )
+            return True
 
     def get_cached_permission(
         self,
@@ -2012,12 +2125,12 @@ class ReBACManager:
         permission: str,
         obj: Entity,
         zone_id: str,
-        visited: set[tuple[str, str, str, str, str]],
+        visited: set[tuple[str, str, str, str, str, bool]],
         depth: int,
         start_time: float,
         stats: TraversalStats,
         context: dict[str, Any] | None = None,
-        memo: dict[tuple[str, str, str, str, str], bool] | None = None,
+        memo: dict[tuple[str, str, str, str, str, bool], bool] | None = None,
     ) -> bool:
         """Compute permission with P0-5 limits enforced at each step.
 

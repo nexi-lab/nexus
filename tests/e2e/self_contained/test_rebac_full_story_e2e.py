@@ -70,6 +70,17 @@ class _ServiceBackedFilesystem:
 class _SyncRemoteReBACProxy:
     """RemoteServiceProxy-shaped service: RPC methods return sync values."""
 
+    def rebac_check_batch_sync(
+        self,
+        *,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> list[bool]:
+        assert checks == [
+            (("agent", "alice"), "read", ("file", RESOURCE[1])),
+            (("agent", "bob"), "read", ("file", RESOURCE[1])),
+        ]
+        return [True, False]
+
     def rebac_list_objects(
         self,
         *,
@@ -282,6 +293,28 @@ async def test_rpc_dynamic_viewer_config_and_read_use_persisted_column_config(
     assert filtered == "name,email\nAda,ada@example.com\n"
 
 
+@pytest.mark.asyncio
+async def test_rebac_check_batch_accepts_rpc_list_shaped_checks(
+    rebac_service: ReBACService,
+) -> None:
+    await rebac_service.rebac_create(
+        subject=("agent", "alice"),
+        relation="direct_viewer",
+        object=RESOURCE,
+        zone_id=ZONE_ID,
+    )
+
+    results = await rebac_service.rebac_check_batch(
+        checks=[
+            [["agent", "alice"], "read", list(RESOURCE)],
+            [["agent", "bob"], "read", list(RESOURCE)],
+        ],
+        zone_id=ZONE_ID,
+    )
+
+    assert results == [True, False]
+
+
 def _json_from_output(output: str) -> Any:
     return json.loads(output)
 
@@ -395,6 +428,35 @@ def test_cli_rebac_list_objects_accepts_remote_sync_proxy(
 
     assert listed.exit_code == 0, listed.output
     assert _json_from_output(listed.output)["objects"] == [["file", RESOURCE[1]]]
+
+
+def test_cli_rebac_check_batch_accepts_remote_sync_proxy(
+    remote_cli_runner: CliRunner,
+    tmp_path,
+) -> None:
+    checks_file = tmp_path / "checks.json"
+    checks_file.write_text(
+        json.dumps(
+            [
+                {"subject": ["agent", "alice"], "permission": "read", "object": list(RESOURCE)},
+                {"subject": ["agent", "bob"], "permission": "read", "object": list(RESOURCE)},
+            ]
+        )
+    )
+
+    checked = remote_cli_runner.invoke(
+        rebac_cli.rebac,
+        [
+            "check-batch",
+            str(checks_file),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert checked.exit_code == 0, checked.output
+    assert '"result": true' in checked.output
+    assert '"result": false' in checked.output
 
 
 def test_cli_dynamic_viewer_config_and_read_use_real_service(

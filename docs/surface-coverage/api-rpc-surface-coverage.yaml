@@ -4273,7 +4273,7 @@ operations:
   transports:
     grpc_expose:
       name: get_dynamic_viewer_config
-      source: src/nexus/bricks/rebac/rebac_service.py:1587
+      source: src/nexus/bricks/rebac/rebac_service.py:1597
   profiles:
     lite: supported
     sandbox: supported
@@ -4341,7 +4341,7 @@ operations:
   transports:
     grpc_expose:
       name: get_namespace
-      source: src/nexus/bricks/rebac/rebac_service.py:1073
+      source: src/nexus/bricks/rebac/rebac_service.py:1083
   profiles:
     lite: supported
     sandbox: supported
@@ -4392,7 +4392,7 @@ operations:
   transports:
     grpc_expose:
       name: get_rebac_option
-      source: src/nexus/bricks/rebac/rebac_service.py:981
+      source: src/nexus/bricks/rebac/rebac_service.py:991
   profiles:
     lite: supported
     sandbox: supported
@@ -4601,7 +4601,7 @@ operations:
   transports:
     grpc_expose:
       name: grant_consent
-      source: src/nexus/bricks/rebac/rebac_service.py:1200
+      source: src/nexus/bricks/rebac/rebac_service.py:1210
   profiles:
     lite: supported
     sandbox: supported
@@ -5157,7 +5157,7 @@ operations:
   transports:
     grpc_expose:
       name: list_incoming_shares
-      source: src/nexus/bricks/rebac/rebac_service.py:1529
+      source: src/nexus/bricks/rebac/rebac_service.py:1539
   profiles:
     lite: supported
     sandbox: supported
@@ -5212,7 +5212,7 @@ operations:
   transports:
     grpc_expose:
       name: list_outgoing_shares
-      source: src/nexus/bricks/rebac/rebac_service.py:1479
+      source: src/nexus/bricks/rebac/rebac_service.py:1489
   profiles:
     lite: supported
     sandbox: supported
@@ -5420,7 +5420,7 @@ operations:
   transports:
     grpc_expose:
       name: make_private
-      source: src/nexus/bricks/rebac/rebac_service.py:1282
+      source: src/nexus/bricks/rebac/rebac_service.py:1292
   profiles:
     lite: supported
     sandbox: supported
@@ -5437,7 +5437,7 @@ operations:
   transports:
     grpc_expose:
       name: make_public
-      source: src/nexus/bricks/rebac/rebac_service.py:1263
+      source: src/nexus/bricks/rebac/rebac_service.py:1273
   profiles:
     lite: supported
     sandbox: supported
@@ -5837,7 +5837,7 @@ operations:
   transports:
     grpc_expose:
       name: namespace_delete
-      source: src/nexus/bricks/rebac/rebac_service.py:1118
+      source: src/nexus/bricks/rebac/rebac_service.py:1128
   profiles:
     lite: supported
     sandbox: supported
@@ -5854,7 +5854,7 @@ operations:
   transports:
     grpc_expose:
       name: namespace_list
-      source: src/nexus/bricks/rebac/rebac_service.py:1094
+      source: src/nexus/bricks/rebac/rebac_service.py:1104
   profiles:
     lite: supported
     sandbox: supported
@@ -6905,7 +6905,7 @@ operations:
   transports:
     grpc_expose:
       name: read_with_dynamic_viewer
-      source: src/nexus/bricks/rebac/rebac_service.py:1678
+      source: src/nexus/bricks/rebac/rebac_service.py:1688
   profiles:
     lite: supported
     sandbox: supported
@@ -6958,7 +6958,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_check
-      source: src/nexus/bricks/rebac/rebac_service.py:408
+      source: src/nexus/bricks/rebac/rebac_service.py:427
   profiles:
     lite: supported
     sandbox: supported
@@ -6975,7 +6975,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_check_batch
-      source: src/nexus/bricks/rebac/rebac_service.py:631
+      source: src/nexus/bricks/rebac/rebac_service.py:650
   profiles:
     lite: supported
     sandbox: supported
@@ -7009,7 +7009,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_create
-      source: src/nexus/bricks/rebac/rebac_service.py:193
+      source: src/nexus/bricks/rebac/rebac_service.py:212
   profiles:
     lite: supported
     sandbox: supported
@@ -7026,7 +7026,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_delete
-      source: src/nexus/bricks/rebac/rebac_service.py:746
+      source: src/nexus/bricks/rebac/rebac_service.py:756
   profiles:
     lite: supported
     sandbox: supported
@@ -7043,7 +7043,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_expand
-      source: src/nexus/bricks/rebac/rebac_service.py:495
+      source: src/nexus/bricks/rebac/rebac_service.py:514
   profiles:
     lite: supported
     sandbox: supported
@@ -7060,7 +7060,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_expand_with_privacy
-      source: src/nexus/bricks/rebac/rebac_service.py:1153
+      source: src/nexus/bricks/rebac/rebac_service.py:1163
   profiles:
     lite: supported
     sandbox: supported
@@ -7078,7 +7078,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_explain
-      source: src/nexus/bricks/rebac/rebac_service.py:551
+      source: src/nexus/bricks/rebac/rebac_service.py:570
   profiles:
     lite: supported
     sandbox: supported
@@ -7095,7 +7095,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_list_objects
-      source: src/nexus/bricks/rebac/rebac_service.py:889
+      source: src/nexus/bricks/rebac/rebac_service.py:899
   profiles:
     lite: supported
     sandbox: supported
@@ -7112,7 +7112,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_list_tuples
-      source: src/nexus/bricks/rebac/rebac_service.py:788
+      source: src/nexus/bricks/rebac/rebac_service.py:798
   profiles:
     lite: supported
     sandbox: supported
@@ -7129,7 +7129,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/rebac/tuples
-      source: src/nexus/server/api/v2/routers/rebac.py:167
+      source: src/nexus/server/api/v2/routers/rebac.py:119
   profiles:
     lite: supported
     sandbox: supported
@@ -7198,7 +7198,7 @@ operations:
   transports:
     grpc_expose:
       name: register_namespace
-      source: src/nexus/bricks/rebac/rebac_service.py:1012
+      source: src/nexus/bricks/rebac/rebac_service.py:1022
   profiles:
     lite: supported
     sandbox: supported
@@ -7289,7 +7289,7 @@ operations:
   transports:
     grpc_expose:
       name: revoke_consent
-      source: src/nexus/bricks/rebac/rebac_service.py:1228
+      source: src/nexus/bricks/rebac/rebac_service.py:1238
   profiles:
     lite: supported
     sandbox: supported
@@ -7340,7 +7340,7 @@ operations:
   transports:
     grpc_expose:
       name: revoke_share
-      source: src/nexus/bricks/rebac/rebac_service.py:1391
+      source: src/nexus/bricks/rebac/rebac_service.py:1401
   profiles:
     lite: supported
     sandbox: supported
@@ -7357,7 +7357,7 @@ operations:
   transports:
     grpc_expose:
       name: revoke_share_by_id
-      source: src/nexus/bricks/rebac/rebac_service.py:1455
+      source: src/nexus/bricks/rebac/rebac_service.py:1465
   profiles:
     lite: supported
     sandbox: supported
@@ -8266,7 +8266,7 @@ operations:
   transports:
     grpc_expose:
       name: set_rebac_option
-      source: src/nexus/bricks/rebac/rebac_service.py:944
+      source: src/nexus/bricks/rebac/rebac_service.py:954
   profiles:
     lite: supported
     sandbox: supported
@@ -8317,7 +8317,7 @@ operations:
   transports:
     grpc_expose:
       name: share_with_group
-      source: src/nexus/bricks/rebac/rebac_service.py:1354
+      source: src/nexus/bricks/rebac/rebac_service.py:1364
   profiles:
     lite: supported
     sandbox: supported
@@ -8334,7 +8334,7 @@ operations:
   transports:
     grpc_expose:
       name: share_with_user
-      source: src/nexus/bricks/rebac/rebac_service.py:1317
+      source: src/nexus/bricks/rebac/rebac_service.py:1327
   profiles:
     lite: supported
     sandbox: supported

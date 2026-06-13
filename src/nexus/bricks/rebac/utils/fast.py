@@ -22,6 +22,7 @@ from nexus._rust_compat import compute_permission_single as _compute_permission_
 from nexus._rust_compat import compute_permissions_bulk as _compute_permissions_bulk
 from nexus._rust_compat import expand_subjects as _expand_subjects
 from nexus._rust_compat import list_objects_for_subject as _list_objects_for_subject
+from nexus.bricks.rebac.path_patterns import is_path_pattern
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
@@ -155,6 +156,17 @@ def check_permissions_bulk_with_fallback(
         >>> results = check_permissions_bulk_with_fallback(checks, tuples, configs)
         >>> results[("user", "alice", "read", "file", "doc1")]  # True/False
     """
+    if any(
+        isinstance(t.get("object_type"), str)
+        and isinstance(t.get("object_id"), str)
+        and is_path_pattern(t["object_type"], t["object_id"])
+        for t in tuples
+    ):
+        logger.debug(
+            "Path-pattern tuples detected in bulk permission input; using Python evaluator"
+        )
+        return _check_permissions_bulk_python(checks, tuples, namespace_configs)
+
     if RUST_AVAILABLE and not force_python:
         try:
             import time

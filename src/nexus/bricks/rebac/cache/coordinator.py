@@ -45,6 +45,7 @@ from nexus.bricks.rebac.cache.invalidation_stream import (
 )
 from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
 from nexus.bricks.rebac.domain import RELATION_TO_PERMISSIONS
+from nexus.bricks.rebac.path_patterns import path_pattern_prefix
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -610,6 +611,21 @@ class CacheCoordinator:
                     zone_id,
                 )
 
+            pattern_prefix = path_pattern_prefix(obj.entity_type, obj.entity_id)
+            if pattern_prefix is not None:
+                if self._l1_cache:
+                    self._l1_cache.invalidate_object_prefix(
+                        obj.entity_type,
+                        pattern_prefix,
+                        zone_id,
+                    )
+                if self._boundary_cache and obj.entity_type == "file":
+                    self._boundary_cache.invalidate_path_prefix(
+                        effective_zone_id,
+                        pattern_prefix,
+                    )
+                should_eager_recompute = False
+
             # L2 SQL cache (rebac_check_cache) removed — table no longer exists.
             # Invalidation is now handled entirely by L1 in-memory cache above.
 
@@ -1160,10 +1176,11 @@ class CacheCoordinator:
 
         # Map relation to permissions
         permissions = RELATION_TO_PERMISSIONS.get(relation, [relation])
+        invalidation_object_id = path_pattern_prefix(object_type, object_id) or object_id
 
         def _invoke_boundary(cb: "Callable[..., None]") -> None:
             for permission in permissions:
-                cb(zone_id, subject_type, subject_id, permission, object_id)
+                cb(zone_id, subject_type, subject_id, permission, invalidation_object_id)
 
         self._dispatch_to_layer(
             InvalidationEventType.BOUNDARY,
@@ -1175,7 +1192,7 @@ class CacheCoordinator:
                 "subject_id": subject_id,
                 "relation": relation,
                 "object_type": object_type,
-                "object_id": object_id,
+                "object_id": invalidation_object_id,
                 "permissions": permissions,
             },
             metric_attr="_boundary_invalidations",

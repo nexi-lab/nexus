@@ -144,6 +144,10 @@ my-data/
 /data/*
 !/data/skills
 !/data/skills/**
+# Sealed plugin-signing keystore — `keys.json` holds opaque AES-GCM
+# ciphertexts; pubkeys are plaintext verifying keys. Both are SSOT.
+!/data/vault-signing
+!/data/vault-signing/**
 # Runtime state + credentials that can land anywhere `data_dir:` points to.
 .admin-api-key
 .state.json

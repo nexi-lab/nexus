@@ -13,10 +13,17 @@ Env contract:
   VAULT_ENDPOINT   gRPC endpoint of the cluster running vault.dylib
                    (e.g. "vault-signing.internal:2126").
   VAULT_TOKEN      Bearer token for the vault plugin's auth surface.
+                   Optional when VAULT_INSECURE=1 (no auth on ephemeral
+                   localhost vaults).
+  VAULT_INSECURE   When set to "1", connect without TLS and skip the
+                   bearer token. Used for ephemeral localhost vault
+                   instances spun up by the sealed-keystore dogfood
+                   flow — never use against a real production cluster.
 
 CLI:
-  vault_get_signing_key.py <namespace>/<key>
+  vault_get_signing_key.py [--insecure] <namespace>/<key>
     e.g. vault_get_signing_key.py signing-keys/kernel-dogfood-v1
+  --insecure  Equivalent to VAULT_INSECURE=1.
 
 Prints the value (already base64 of 32 raw Ed25519 priv bytes — same
 format `sign_plugin.py` expects) to stdout with no trailing newline.
@@ -37,6 +44,7 @@ from pathlib import Path
 
 ENDPOINT_ENV = "VAULT_ENDPOINT"
 TOKEN_ENV = "VAULT_TOKEN"
+INSECURE_ENV = "VAULT_INSECURE"
 
 # Repo-relative path to the secrets proto SSOT.
 PROTO_REL = Path("rust/services/proto/nexus/secrets/v1/secrets.proto")
@@ -69,6 +77,9 @@ def _repo_root() -> Path:
 
 def _compile_proto_into(out_dir: Path) -> None:
     """Generate `*_pb2.py` + `*_pb2_grpc.py` for `secrets.proto` into out_dir."""
+    import os
+
+    import grpc_tools
     from grpc_tools import protoc
 
     proto_root = _repo_root() / PROTO_IMPORT_ROOT_REL
@@ -76,10 +87,16 @@ def _compile_proto_into(out_dir: Path) -> None:
     if not proto_file.is_file():
         raise SystemExit(f"proto SSOT missing: {proto_file}")
 
+    # grpc_tools bundles the well-known google protos under _proto/; without
+    # passing this path, secrets.proto's `import "google/protobuf/timestamp.proto"`
+    # fails at compile time.
+    google_proto_root = Path(os.path.dirname(grpc_tools.__file__)) / "_proto"
+
     rc = protoc.main(
         [
             "grpc_tools.protoc",
             f"--proto_path={proto_root}",
+            f"--proto_path={google_proto_root}",
             f"--python_out={out_dir}",
             f"--grpc_python_out={out_dir}",
             str(proto_file),
@@ -94,12 +111,20 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__, file=sys.stderr)
         return 0 if argv and argv[0] in ("-h", "--help") else 2
-    if len(argv) != 1:
+
+    insecure = os.environ.get(INSECURE_ENV, "").strip() == "1"
+    positional: list[str] = []
+    for a in argv:
+        if a == "--insecure":
+            insecure = True
+        else:
+            positional.append(a)
+    if len(positional) != 1:
         raise SystemExit("expected exactly one positional argument: NAMESPACE/KEY")
 
-    namespace, key = _parse_key(argv[0])
+    namespace, key = _parse_key(positional[0])
     endpoint = _require_env(ENDPOINT_ENV)
-    token = _require_env(TOKEN_ENV)
+    token = "" if insecure else _require_env(TOKEN_ENV)
 
     with tempfile.TemporaryDirectory(prefix="vault-get-signing-key-") as td:
         out_dir = Path(td)
@@ -110,10 +135,14 @@ def main(argv: list[str] | None = None) -> int:
 
         from nexus.secrets.v1 import secrets_pb2, secrets_pb2_grpc
 
-        channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials())
+        if insecure:
+            channel = grpc.insecure_channel(endpoint)
+            metadata: tuple[tuple[str, str], ...] = ()
+        else:
+            channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials())
+            metadata = (("authorization", f"Bearer {token}"),)
         stub = secrets_pb2_grpc.GenericSecretsServiceStub(channel)
         req = secrets_pb2.GetSecretRequest(namespace=namespace, key=key)
-        metadata = (("authorization", f"Bearer {token}"),)
         resp = stub.GetSecret(req, metadata=metadata)
 
         # Stdout only, no newline — workflow appends to `$GITHUB_ENV` as

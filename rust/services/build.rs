@@ -26,7 +26,11 @@ fn compile_password_vault_proto() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic_prost_build::configure()
         .build_server(true)
-        .build_client(false) // server-only; clients live in password-agent (Python) and sudowork (TS)
+        // Rust clients are required by `vault`'s gRPC E2E test
+        // (`rust/services/vault/tests/grpc_e2e.rs`). Production
+        // callers remain TS / Python in sudowork + password-agent;
+        // the Rust client stubs are dead code in any normal build.
+        .build_client(true)
         .compile_protos(&[proto], &["proto"])?;
 
     Ok(())
@@ -43,7 +47,7 @@ fn compile_secrets_proto() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic_prost_build::configure()
         .build_server(true)
-        .build_client(false)
+        .build_client(true)
         .compile_protos(&[proto], &["proto"])?;
 
     Ok(())

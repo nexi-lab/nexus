@@ -70,11 +70,13 @@ on:
       PLUGIN_SIGNING_PRIVKEY:
         description: Bootstrap signing privkey (base64 of 32 raw Ed25519 priv bytes). Required when signing_key_source=github-secret.
         required: false
-      VAULT_SIGNING_TOKEN:
-        description: Bearer token for the vault plugin's auth surface. Required when signing_key_source=vault.
-        required: false
-      VAULT_SIGNING_ENDPOINT:
-        description: gRPC endpoint of the cluster running vault.dylib. Required when signing_key_source=vault.
+      VAULT_SIGNING_MASTER_KEY:
+        description: |
+          base64-encoded 32-byte AES-256-GCM master key that sealed
+          every entry under data/vault-signing/keys.json. Required when
+          signing_key_source=vault — the runner spins up an ephemeral
+          vault on 127.0.0.1, rehydrates the committed sealed entries,
+          and GetSecret-decrypts the requested key under this master.
         required: false
       COS_SECRET_ID:
         required: false
@@ -278,28 +280,75 @@ jobs:
         if: inputs.signing_key_source == 'vault'
         run: pip install --quiet grpcio grpcio-tools
 
-      - name: Fetch signing privkey from vault
-        # Pulls the privkey out of the running vault cluster and pipes it
-        # into $GITHUB_ENV so the next step's sign_plugin.py call reads
-        # PLUGIN_SIGNING_PRIVKEY from env exactly like the github-secret path.
-        # ::add-mask:: registers the value as a secret so any subsequent
-        # log line containing it gets redacted.
+      # ── Sealed-keystore dogfood: spin up an ephemeral cluster + vault
+      #    on the runner, hydrate it from the committed keystore, GetSecret
+      #    the requested entry, mask the plaintext, export to env. ──
+      - name: Read NEXUS_VFS_REV from Cargo.toml (vault source only)
+        if: inputs.signing_key_source == 'vault'
+        id: vfs_rev
+        run: |
+          set -euo pipefail
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::failed to parse a nexus-vfs rev out of Cargo.toml"
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Install nexusd-cluster (vault source only)
+        if: inputs.signing_key_source == 'vault'
+        run: |
+          set -euo pipefail
+          cargo install --locked \
+            --git https://github.com/nexi-lab/nexus-vfs \
+            --rev "${{ steps.vfs_rev.outputs.sha }}" \
+            --bin nexusd-cluster nexus-cluster
+          echo "NEXUSD_CLUSTER=$HOME/.cargo/bin/nexusd-cluster" >> "$GITHUB_ENV"
+
+      - name: Download nexus-vault cdylib (vault source only)
         if: inputs.signing_key_source == 'vault'
         env:
-          VAULT_ENDPOINT: ${{ secrets.VAULT_SIGNING_ENDPOINT }}
-          VAULT_TOKEN: ${{ secrets.VAULT_SIGNING_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 50 \
+                --json tagName,createdAt --jq '[.[] | select(.tagName | startswith("vault-v"))] | sort_by(.createdAt) | last | .tagName')
+          if [ -z "$tag" ]; then
+            echo "::error::no vault-v* release found on ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
+          echo "fetching nexus-vault Linux dylib from release ${tag}"
+          mkdir -p vault-bin
+          gh release download "$tag" --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'nexus-vault-linux-x86_64.tar.gz' --dir vault-bin
+          tar -xzf vault-bin/nexus-vault-linux-x86_64.tar.gz -C vault-bin
+          dylib=$(find vault-bin -name 'libnexus_vault.so' -print -quit)
+          if [ -z "$dylib" ]; then
+            echo "::error::libnexus_vault.so missing from ${tag} archive"
+            exit 1
+          fi
+          echo "VAULT_DYLIB_PATH=$(realpath "$dylib")" >> "$GITHUB_ENV"
+
+      - name: Fetch signing privkey from sealed keystore
+        # Boots an ephemeral vault on 127.0.0.1, rehydrates committed
+        # sealed entries, GetSecret returns plaintext bytes. ::add-mask::
+        # registers the value before it lands in $GITHUB_ENV so any
+        # subsequent log line containing it gets redacted.
+        if: inputs.signing_key_source == 'vault'
+        env:
+          VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
           SIGNING_KEY_NAME: ${{ inputs.signing_key_name }}
         run: |
           set -euo pipefail
-          if [ -z "${VAULT_ENDPOINT}" ] || [ -z "${VAULT_TOKEN}" ]; then
-            echo "::error::signing_key_source=vault requires VAULT_SIGNING_ENDPOINT + VAULT_SIGNING_TOKEN secrets on the caller."
+          if [ -z "${VAULT_SIGNING_MASTER_KEY}" ]; then
+            echo "::error::signing_key_source=vault requires the VAULT_SIGNING_MASTER_KEY secret on the caller."
             exit 1
           fi
           if [ -z "${SIGNING_KEY_NAME}" ]; then
-            echo "::error::signing_key_source=vault requires inputs.signing_key_name (e.g. signing-keys/kernel-dogfood-v1)."
+            echo "::error::signing_key_source=vault requires inputs.signing_key_name (e.g. kernel-dogfood-v1)."
             exit 1
           fi
-          PRIVKEY=$(python scripts/vault_get_signing_key.py "${SIGNING_KEY_NAME}")
+          PRIVKEY=$(python scripts/dogfood_keystore_fetch.py --key-name "${SIGNING_KEY_NAME}")
           echo "::add-mask::${PRIVKEY}"
           echo "PLUGIN_SIGNING_PRIVKEY=${PRIVKEY}" >> "$GITHUB_ENV"
 

@@ -1,6 +1,6 @@
 [package]
 name = "nexus-local-connector"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Nexus local-connector plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Wraps `backends::storage::local_connector::LocalConnectorBackend` as a driver dylib so operators can mount a host filesystem path through the kernel's normal VFS surface (and, by extension, through federation)."
 authors = ["Nexus Team"]

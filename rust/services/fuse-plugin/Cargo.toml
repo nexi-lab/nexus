@@ -18,15 +18,16 @@ crate-type = ["cdylib", "rlib"]
 nexus-plugin-abi = { workspace = true }
 
 # `fuser` is the production-quality Rust wrapper around libfuse3 on
-# Linux / macFUSE on macOS.  We pin against the same version that
-# `nexus-fuse` (the legacy standalone daemon) used so familiar
-# semantics carry over.  Windows support is via a separate WinFsp
-# adapter — out of scope for this first-cut plugin.
-[target.'cfg(target_os = "linux")'.dependencies]
+# Linux / macFUSE on macOS.  Same `Filesystem` trait + `spawn_mount2`
+# entrypoint on both platforms, so the cfg-gated Linux/macOS branch
+# below shares one body.  Windows support is via a separate WinFsp
+# adapter (different binding crate, different trait shape) — tracked
+# as a follow-up PR and not gated by this cdylib's build matrix.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 fuser = "0.17"
 # Errno constants for translating kernel-callback failures into POSIX
-# errors that FUSE clients understand.  Linux-only — macFUSE/WinFsp
-# adapters will pull in their own equivalents.
+# errors that FUSE clients understand.  Linux+macOS share libc; the
+# eventual WinFsp adapter pulls in its own equivalents.
 libc = "0.2"
 
 # tracing for diagnostic logs.  Kept opt-in via the cluster binary's

@@ -89,9 +89,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # preserves perms when compose layers volumes / tmpfs on top.
 RUN mkdir -p /plugins /mnt/nexus && chown nexus:nexus /plugins /mnt/nexus
 
-# nexus user needs to be in the `fuse` group on Debian so it can open
-# /dev/fuse without root.  group already exists from the fuse3 package.
-RUN usermod -a -G fuse nexus
+# /dev/fuse is opened by libfuse3 with the container's effective caps;
+# the compose grants SYS_ADMIN + privileged mode + the /dev/fuse
+# device, which collectively short-circuits the per-user permission
+# check that would normally need `fuse` group membership.  No usermod
+# needed — and the `fuse3` package on debian:slim no longer creates
+# the group implicitly under non-interactive apt.
 
 USER nexus
 

@@ -64,6 +64,10 @@ Headscale server (company-managed)
 * Rust toolchain (stable; the cluster binary builds on the `release` profile).
 * Tailscale client installed on both machines.
 * Headscale pre-auth key (from IT) if joining the corporate mesh.
+* **For `cc tasks list` cross-machine workflow** (Step 3g) — operating-system FUSE userspace:
+  * **Linux**: `apt install fuse3 libfuse3-3`.
+  * **macOS**: `brew install --cask macfuse`, then approve the kernel extension in System Settings → Privacy & Security and **reboot** (macFUSE installs are interactive by design — no headless equivalent today).
+  * **Windows**: WinFsp adapter is **not yet shipped** (`fuser` doesn't support Windows; the `winfsp-rs` binding takes a different trait shape, tracked as a follow-up PR).  The signed FUSE plugin dylib still loads on Windows (it compiles to a no-op cdylib so the workspace matrix stays clean) but no mount happens.  Mac↔Win symmetry on the `cc tasks list` flow waits on the WinFsp PR.
 
 ---
 
@@ -334,6 +338,53 @@ nexusd-cluster join <A_node_id>@<A_addr> sharedzone /shared --data-dir ./data --
 After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount), miss locally, fan out to A, and return A's host-fs bytes.  Subsequent reads take Mode A.  Symmetric on A reading `/shared/cc-tasks/B/...`.
 
 This is the substrate the `cc tasks list` cross-machine workflow rides — operator's CC daemon on A drops `~/.claude/tasks/<n>.json` directly to host fs (no Nexus syscall), and a second CC daemon on B reads them through `/shared/cc-tasks/A/<n>.json`.
+
+### Step 3g — Expose the federated VFS as a real OS mount via FUSE
+
+§3f gets the bytes across; `cc tasks list` (which is just `ls ~/.claude/tasks/`) needs the bytes to surface as **real files in the OS filesystem** so plain POSIX tools see them.  The `nexus-fuse-plugin` cdylib does exactly that — it spawns a fuser-backed FUSE event loop in the same process as the kernel and routes POSIX ops through the same `KernelHandle` callbacks the kernel exports to any other plugin.
+
+Drop the signed dylib + `.sig` into `NEXUS_PLUGIN_DIR` (same dir LocalConnector lives in) and set two env vars before launching `nexusd-cluster`:
+
+```bash
+mkdir -p ~/.nexus/plugins
+# Download the latest fuse-v* release for your platform
+gh release download fuse-v0.2.0 \
+    --pattern '*linux-x86_64.tar.gz' \
+    --dir /tmp/      # → libnexus_fuse_plugin.so + .sig
+tar -xzf /tmp/nexus-fuse-plugin-*-linux-x86_64.tar.gz -C ~/.nexus/plugins/
+
+export NEXUS_FUSE_MOUNT_POINT=/mnt/cc-tasks       # absolute path; must exist + be empty
+export NEXUS_FUSE_VFS_ROOT=/shared/cc-tasks       # VFS path the mount root maps to
+
+nexusd-cluster \
+  --plugin-dir ~/.nexus/plugins \
+  --bind-addr 0.0.0.0:2126 \
+  --data-dir ./data \
+  ... # other args from §3f
+```
+
+After the daemon comes up, `mountpoint -q /mnt/cc-tasks` returns 0 and the directory acts as a normal POSIX surface:
+
+```bash
+ls /mnt/cc-tasks/                # → A/  B/  (the two host-fs LocalConnector mounts)
+ls /mnt/cc-tasks/A/              # → A's ~/.claude/tasks/ contents
+echo '{"task":"foo"}' > ~/.claude/tasks/session-x/1.json
+ls /mnt/cc-tasks/A/session-x/    # → 1.json (same machine, via LocalConnector)
+# And on machine B:
+ls /mnt/cc-tasks/A/session-x/    # → 1.json (federation fan-out + LocalConnector on A)
+```
+
+The FUSE plugin and LocalConnector compose without coupling — LocalConnector is the *write* surface (host fs is the SSOT, every write goes there bypassing Nexus), FUSE plugin is the *unified read* surface (`ls` sees both local + remote tasks through the federated VFS).  The cc-tasks-share Docker E2E (`tests/e2e/docker/test_fuse_plugin_e2e.py`) regression-guards every directory-mutating op the plugin wires through KernelHandle v2.
+
+Platform matrix:
+
+| Platform | FUSE userspace | Status |
+|----------|----------------|--------|
+| Linux    | `libfuse3` (`fuse3`) | First-cut. |
+| macOS    | `macFUSE`            | Same source body via cfg gate. |
+| Windows  | `WinFsp`             | Deferred — separate adapter PR. |
+
+The dylib is unsigned-rejected by `PluginLoader::load`; the release pipeline (`.github/workflows/release-fuse-plugin.yml`) signs every dylib it ships against the `kernel-dogfood-v1` key in the sealed in-repo keystore.  See `rust/services/fuse-plugin/README.md` for the operator install + admin RPC surface, and `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md` for the signing trust chain.
 
 ### Step 4 — Smoke (cross-machine byte-exact read)
 

@@ -115,16 +115,8 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             // mapping or read-only mounts set them via the OS-level FUSE
             // mount wrapper, not the plugin.
             let mount_config = fuser::Config::default();
-            // Stash the inode-tracking fs's notifier slot before
-            // handing it to `spawn_mount2` (which consumes it).
-            // After the session comes up, we populate the slot so
-            // directory-mutating ops can invalidate dcache entries
-            // — see `NexusFs::rename` for the prima facie case (mv
-            // + immediate cat racing the FUSE entry cache).
-            let notifier_slot = fs.notifier_slot();
             match fuser::spawn_mount2(fs, &mount_point, &mount_config) {
                 Ok(session) => {
-                    *notifier_slot.lock().unwrap() = Some(session.notifier());
                     // eprintln complements tracing: a dlopen'd cdylib
                     // owns a separate tracing global, so the plugin's
                     // `tracing::info!` calls don't reach the cluster's

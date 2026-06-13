@@ -47,12 +47,12 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use fuser::{
-    Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, Notifier, ReplyAttr,
-    ReplyData, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
+    Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, ReplyAttr, ReplyData,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
 };
 
 use nexus_plugin_abi::{nexus_free, KernelHandle};
@@ -96,15 +96,6 @@ pub struct NexusFs {
     /// lookups join from there.  We never evict.
     inodes: Mutex<HashMap<u64, String>>,
     next_inode: AtomicU64,
-    /// Notifier handle for explicit dcache invalidation.  Populated by
-    /// `set_notifier` after `fuser::spawn_mount2` returns the session
-    /// (chicken-and-egg: `NexusFs` is constructed before the session
-    /// exists).  Used by `rename` to drop the old src + invalidate the
-    /// new dst's negative cache — otherwise `mv` + immediate
-    /// `cat <new>` hits the cached "doesn't exist" from `mv`'s
-    /// pre-rename lookup and surfaces ENOENT despite the kernel-side
-    /// rename having succeeded.
-    notifier: Arc<Mutex<Option<Notifier>>>,
 }
 
 impl NexusFs {
@@ -117,17 +108,7 @@ impl NexusFs {
             // First allocated inode = root + 1; the root inode itself
             // is reserved (fuser INodeNo::ROOT == 1).
             next_inode: AtomicU64::new(FUSE_ROOT_RAW + 1),
-            notifier: Arc::new(Mutex::new(None)),
         }
-    }
-
-    /// Hand off the notifier handle from `fuser::BackgroundSession`
-    /// so directory-mutating ops can punch holes in the kernel-side
-    /// dcache.  Cheap clone (the notifier is a small handle wrapping
-    /// the session's command channel), called once at plugin create
-    /// time right after `spawn_mount2`.
-    pub fn notifier_slot(&self) -> Arc<Mutex<Option<Notifier>>> {
-        Arc::clone(&self.notifier)
     }
 
     fn path_for(&self, ino: INodeNo) -> Option<String> {
@@ -710,29 +691,7 @@ impl Filesystem for NexusFs {
         let old_path = join_path(&old_parent, old_name);
         let new_path = join_path(&new_parent, new_name);
         match self.sys_rename(&old_path, &new_path) {
-            Ok(()) => {
-                // Punch holes in the kernel-side dcache for both
-                // sides — without this, `mv` + immediate `cat <new>`
-                // surfaces ENOENT despite the rename having
-                // succeeded.  `mv` does an LOOKUP on the destination
-                // before issuing the rename op; when that returns
-                // ENOENT the kernel caches the negative entry for
-                // ENTRY_TTL, and the rename op itself doesn't reset
-                // the cache.  Calling `inval_entry(newparent,
-                // newname)` drops the cached negative so the next
-                // LOOKUP routes back to us with a fresh sys_stat.
-                // Same for the old side — without invalidation, `cat
-                // <old>` after the rename would see the stale
-                // positive entry and try to read a path the kernel
-                // no longer knows about (EIO).  Failures here are
-                // best-effort: a missed invalidation manifests as a
-                // sub-second stale lookup, not data corruption.
-                if let Some(notifier) = self.notifier.lock().unwrap().as_ref() {
-                    let _ = notifier.inval_entry(parent, name);
-                    let _ = notifier.inval_entry(newparent, newname);
-                }
-                reply.ok();
-            }
+            Ok(()) => reply.ok(),
             Err(_) => reply.error(errno_io()),
         }
     }

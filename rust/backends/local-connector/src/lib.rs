@@ -163,11 +163,37 @@ mod tests {
         -3
     }
 
+    unsafe extern "C" fn stub_sys_readdir(
+        _: *const c_void,
+        _: *const std::ffi::c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -3
+    }
+
+    unsafe extern "C" fn stub_sys_path(_: *const c_void, _: *const std::ffi::c_char) -> i32 {
+        -3
+    }
+
+    unsafe extern "C" fn stub_sys_rename(
+        _: *const c_void,
+        _: *const std::ffi::c_char,
+        _: *const std::ffi::c_char,
+    ) -> i32 {
+        -3
+    }
+
     fn stub_handle() -> KernelHandle {
         KernelHandle {
             sys_read: stub_sys_read,
             sys_write: stub_sys_write,
             sys_stat: stub_sys_stat,
+            sys_readdir: stub_sys_readdir,
+            sys_unlink: stub_sys_path,
+            sys_mkdir: stub_sys_path,
+            sys_rmdir: stub_sys_path,
+            sys_rename: stub_sys_rename,
             kernel_ptr: std::ptr::null(),
         }
     }

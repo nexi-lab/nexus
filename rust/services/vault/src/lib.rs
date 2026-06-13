@@ -16,6 +16,7 @@
 //!   /vault/versions/passwords/{title}/{v:010}   → StoredEntry
 //!   /vault/versions/{namespace}/{key}/{v:010}   → StoredEntry
 
+use std::ffi::c_char;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -122,6 +123,13 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
 }
 
 fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
+    // Phase P bytes-level gRPC routing. Methods starting with '/' are
+    // full gRPC paths forwarded by `nexus-vfs` `PluginProxyService` —
+    // translate to the legacy short-name arms below so there is exactly
+    // one match table per concern.
+    if method.starts_with('/') {
+        return dispatch_grpc(plugin, method, payload);
+    }
     match method {
         "put_entry" => {
             let req = PutEntryRequest::decode(payload).map_err(|_| -2)?;
@@ -316,8 +324,70 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             resp.encode(&mut buf).map_err(|_| -3)?;
             Ok(buf)
         }
+        "secret_get_sealed" => {
+            let req = secrets_proto::GetSecretRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.get_secret_sealed(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
+        "secret_put_sealed" => {
+            let req = secrets_proto::PutSecretSealedRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.put_secret_sealed(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
         _ => Err(-1), // PluginResult::NotFound
     }
+}
+
+/// Translate a Phase P bytes-level gRPC path into a `dispatch_vault`
+/// legacy method name, then re-enter. Keeping a single match table
+/// per concern avoids duplicating prost-decode + tonic-call boilerplate.
+///
+/// `full_path` is the gRPC `:path` header verbatim, including the
+/// leading `/` (e.g. `/nexus.secrets.v1.GenericSecretsService/PutSecret`).
+fn dispatch_grpc(plugin: &VaultPlugin, full_path: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
+    let path = full_path.trim_start_matches('/');
+    let (service, method) = path.split_once('/').ok_or(-2)?;
+    let legacy = match (service, method) {
+        // GenericSecretsService
+        ("nexus.secrets.v1.GenericSecretsService", "PutSecret") => "secret_put",
+        ("nexus.secrets.v1.GenericSecretsService", "GetSecret") => "secret_get",
+        ("nexus.secrets.v1.GenericSecretsService", "DeleteSecret") => "secret_delete",
+        ("nexus.secrets.v1.GenericSecretsService", "RestoreSecret") => "secret_restore",
+        ("nexus.secrets.v1.GenericSecretsService", "ListSecrets") => "secret_list",
+        ("nexus.secrets.v1.GenericSecretsService", "ListSecretVersions") => "secret_list_versions",
+        ("nexus.secrets.v1.GenericSecretsService", "BatchPutSecrets") => "secret_batch_put",
+        ("nexus.secrets.v1.GenericSecretsService", "BatchGetSecrets") => "secret_batch_get",
+        ("nexus.secrets.v1.GenericSecretsService", "DeleteSecretVersion") => {
+            "secret_delete_version"
+        }
+        ("nexus.secrets.v1.GenericSecretsService", "UpdateSecretDescription") => {
+            "secret_update_description"
+        }
+        ("nexus.secrets.v1.GenericSecretsService", "GetSecretSealed") => "secret_get_sealed",
+        ("nexus.secrets.v1.GenericSecretsService", "PutSecretSealed") => "secret_put_sealed",
+        // PasswordVaultService
+        ("nexus.password_vault.v1.PasswordVaultService", "PutEntry") => "put_entry",
+        ("nexus.password_vault.v1.PasswordVaultService", "GetEntry") => "get_entry",
+        ("nexus.password_vault.v1.PasswordVaultService", "ListEntries") => "list_entries",
+        ("nexus.password_vault.v1.PasswordVaultService", "DeleteEntry") => "delete_entry",
+        ("nexus.password_vault.v1.PasswordVaultService", "RestoreEntry") => "restore_entry",
+        ("nexus.password_vault.v1.PasswordVaultService", "ListVersions") => "list_versions",
+        ("nexus.password_vault.v1.PasswordVaultService", "GenerateTotp") => "generate_totp",
+        _ => return Err(-1), // PluginResult::NotFound
+    };
+    dispatch_vault(plugin, legacy, payload)
 }
 
 fn status_to_plugin_error(status: tonic::Status) -> i32 {
@@ -332,6 +402,29 @@ declare_service_plugin!("password-vault", VaultPlugin, {
     create: create_vault,
     dispatch: dispatch_vault,
 });
+
+// ── Optional Phase P symbol: opt this plugin into cluster gRPC routing ──
+//
+// Exposes the two gRPC service full names hosted by this plugin so
+// `nexusd-cluster` can route external tonic traffic at `/<service>/<method>`
+// into our `nexus_service_dispatch`. See `nexus-plugin-abi`'s
+// `symbols::SERVICE_GRPC_SERVICES` for the contract. Bytes-level dispatch
+// happens via the existing v2 symbol — no API version bump needed.
+//
+// Storage is `'static` so the kernel never frees the pointer.
+
+/// # Safety
+///
+/// Pure data lookup — returns a pointer to a `'static` null-terminated
+/// JSON byte slice. No invariants required from the caller.
+#[no_mangle]
+pub unsafe extern "C" fn nexus_plugin_grpc_services() -> *const c_char {
+    const SERVICES_JSON: &[u8] = b"[\
+        \"nexus.secrets.v1.GenericSecretsService\",\
+        \"nexus.password_vault.v1.PasswordVaultService\"\
+    ]\0";
+    SERVICES_JSON.as_ptr() as *const c_char
+}
 
 // ── Dylib E2E tests — load the compiled cdylib via dlopen ─────────
 //
@@ -421,12 +514,37 @@ mod dylib_e2e {
     ) -> i32 {
         -1
     }
+    unsafe extern "C" fn noop_readdir(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_unlink(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_mkdir(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_rmdir(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn noop_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
+        -1
+    }
 
     fn dummy_kernel_handle() -> nexus_plugin_abi::KernelHandle {
         nexus_plugin_abi::KernelHandle {
             sys_read: noop_read,
             sys_write: noop_write,
             sys_stat: noop_stat,
+            sys_readdir: noop_readdir,
+            sys_unlink: noop_unlink,
+            sys_mkdir: noop_mkdir,
+            sys_rmdir: noop_rmdir,
+            sys_rename: noop_rename,
             kernel_ptr: std::ptr::null(),
         }
     }
@@ -552,6 +670,18 @@ mod dylib_e2e {
             assert_eq!(
                 CStr::from_ptr(name_fn()).to_str().unwrap(),
                 "password-vault"
+            );
+
+            // ── Phase P opt-in: cluster reads this to route /<svc>/<method>
+            //     gRPC traffic into our nexus_service_dispatch. ──
+            let grpc_fn: libloading::Symbol<nexus_plugin_abi::PluginGrpcServicesFn> = lib
+                .get(nexus_plugin_abi::symbols::SERVICE_GRPC_SERVICES.as_bytes())
+                .expect("plugin_grpc_services");
+            let json = CStr::from_ptr(grpc_fn()).to_str().unwrap();
+            assert_eq!(
+                json,
+                "[\"nexus.secrets.v1.GenericSecretsService\",\
+                 \"nexus.password_vault.v1.PasswordVaultService\"]"
             );
         }
     }
@@ -2065,5 +2195,133 @@ mod dispatch_e2e {
         );
 
         println!("\n=== Migration verification PASSED ===");
+    }
+
+    // ── Phase P bytes-level gRPC dispatch ─────────────────────────────
+
+    #[test]
+    fn grpc_path_routes_generic_secrets_put_get() {
+        let (_dir, plugin) = fresh_plugin();
+
+        let put = encode(&secrets_proto::PutSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+            value: "sk-grpc-routed".into(),
+            description: None,
+        });
+        let resp = dispatch_vault(
+            &plugin,
+            "/nexus.secrets.v1.GenericSecretsService/PutSecret",
+            &put,
+        )
+        .unwrap();
+        let put_resp = secrets_proto::PutSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(put_resp.metadata.as_ref().unwrap().current_version, 1);
+
+        let get = encode(&secrets_proto::GetSecretRequest {
+            namespace: "provider:openai".into(),
+            key: "api_key".into(),
+            version: None,
+        });
+        let resp = dispatch_vault(
+            &plugin,
+            "/nexus.secrets.v1.GenericSecretsService/GetSecret",
+            &get,
+        )
+        .unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(got.value, "sk-grpc-routed");
+    }
+
+    #[test]
+    fn grpc_path_routes_password_vault_put_entry() {
+        let (_dir, plugin) = fresh_plugin();
+        let payload = encode(&PutEntryRequest {
+            entry: Some(entry("grpc-routed", "pw", None)),
+            audit: None,
+        });
+        let resp = dispatch_vault(
+            &plugin,
+            "/nexus.password_vault.v1.PasswordVaultService/PutEntry",
+            &payload,
+        )
+        .unwrap();
+        let put_resp = PutEntryResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(put_resp.title, "grpc-routed");
+    }
+
+    #[test]
+    fn grpc_path_routes_sealed_round_trip() {
+        let (_dir, plugin) = fresh_plugin();
+
+        let put = encode(&secrets_proto::PutSecretRequest {
+            namespace: "signing-keys".into(),
+            key: "dogfood".into(),
+            value: "ed25519-bytes".into(),
+            description: None,
+        });
+        dispatch_vault(
+            &plugin,
+            "/nexus.secrets.v1.GenericSecretsService/PutSecret",
+            &put,
+        )
+        .unwrap();
+
+        let get_sealed = encode(&secrets_proto::GetSecretRequest {
+            namespace: "signing-keys".into(),
+            key: "dogfood".into(),
+            version: None,
+        });
+        let resp = dispatch_vault(
+            &plugin,
+            "/nexus.secrets.v1.GenericSecretsService/GetSecretSealed",
+            &get_sealed,
+        )
+        .unwrap();
+        let sealed = secrets_proto::GetSecretSealedResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(sealed.nonce.len(), 12);
+        assert!(!sealed.ciphertext.is_empty());
+
+        let put_sealed = encode(&secrets_proto::PutSecretSealedRequest {
+            namespace: "signing-keys".into(),
+            key: "dogfood-restored".into(),
+            nonce: sealed.nonce,
+            ciphertext: sealed.ciphertext,
+            description: None,
+        });
+        dispatch_vault(
+            &plugin,
+            "/nexus.secrets.v1.GenericSecretsService/PutSecretSealed",
+            &put_sealed,
+        )
+        .unwrap();
+
+        let get = encode(&secrets_proto::GetSecretRequest {
+            namespace: "signing-keys".into(),
+            key: "dogfood-restored".into(),
+            version: None,
+        });
+        let resp = dispatch_vault(
+            &plugin,
+            "/nexus.secrets.v1.GenericSecretsService/GetSecret",
+            &get,
+        )
+        .unwrap();
+        let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
+        assert_eq!(got.value, "ed25519-bytes");
+    }
+
+    #[test]
+    fn grpc_path_unknown_service_returns_not_found() {
+        let (_dir, plugin) = fresh_plugin();
+        let err = dispatch_vault(&plugin, "/some.unknown.Svc/Foo", &[]).unwrap_err();
+        assert_eq!(err, -1);
+    }
+
+    #[test]
+    fn grpc_path_missing_method_returns_invalid_argument() {
+        let (_dir, plugin) = fresh_plugin();
+        let err = dispatch_vault(&plugin, "/no-method-separator-here", &[]).unwrap_err();
+        assert_eq!(err, -2);
     }
 }

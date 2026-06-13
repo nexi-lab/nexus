@@ -1,6 +1,6 @@
 [package]
 name = "nexus-vault"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Nexus vault plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Hosts PasswordVaultService as a dylib plugin with C ABI dispatch."
 authors = ["Nexus Team"]
@@ -48,3 +48,8 @@ tempfile = "3"
 # Linux/macOS/Windows plugin-load regression gap surfaced by SEV
 # nexus-vfs#45.
 libloading = "0.8"
+# Real tonic server + client end-to-end in tests/grpc_e2e.rs — locks
+# in Discovery (2) (vault data layout) + the sealed Get/Put contract
+# under actual network transport.
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic-prost = "0.14"

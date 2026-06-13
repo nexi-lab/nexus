@@ -151,6 +151,11 @@ unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
         sys_read: src.sys_read,
         sys_write: src.sys_write,
         sys_stat: src.sys_stat,
+        sys_readdir: src.sys_readdir,
+        sys_unlink: src.sys_unlink,
+        sys_mkdir: src.sys_mkdir,
+        sys_rmdir: src.sys_rmdir,
+        sys_rename: src.sys_rename,
         kernel_ptr: src.kernel_ptr,
     }
 }

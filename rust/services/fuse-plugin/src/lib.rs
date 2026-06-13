@@ -117,6 +117,14 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             let mount_config = fuser::Config::default();
             match fuser::spawn_mount2(fs, &mount_point, &mount_config) {
                 Ok(session) => {
+                    // eprintln complements tracing: a dlopen'd cdylib
+                    // owns a separate tracing global, so the plugin's
+                    // `tracing::info!` calls don't reach the cluster's
+                    // subscriber.  stderr lands in the daemon's stderr
+                    // regardless, which is what compose / `docker logs`
+                    // capture — the operator's only mount-status SoT
+                    // until the cluster grows a plugin-tracing bridge.
+                    eprintln!("[nexus-fuse-plugin] mount OK at {mount_point}");
                     tracing::info!(
                         target: "nexus::fuse",
                         mount_point = %mount_point,
@@ -125,6 +133,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     *plugin.session.lock().unwrap() = Some(session);
                 }
                 Err(e) => {
+                    eprintln!("[nexus-fuse-plugin] mount FAILED at {mount_point}: {e}");
                     tracing::error!(
                         target: "nexus::fuse",
                         mount_point = %mount_point,
@@ -134,6 +143,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                 }
             }
         } else {
+            eprintln!("[nexus-fuse-plugin] NEXUS_FUSE_MOUNT_POINT not set — no mount performed");
             tracing::warn!(
                 target: "nexus::fuse",
                 "NEXUS_FUSE_MOUNT_POINT not set — plugin loaded but no mount performed"

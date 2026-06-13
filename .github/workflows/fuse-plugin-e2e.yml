@@ -1,0 +1,208 @@
+name: FUSE Plugin E2E
+
+# Runs `tests/e2e/docker/test_fuse_plugin_e2e.py` against the single-
+# node cluster in `dockerfiles/docker-compose.fuse-plugin.yml`.
+#
+# The suite mounts `nexus-fuse-plugin` inside a privileged container
+# (/dev/fuse + SYS_ADMIN + apparmor:unconfined) and exercises every
+# directory-mutating op the plugin wires through KernelHandle v2
+# (mkdir/readdir/create/write/read/rename/unlink/rmdir) via plain
+# POSIX commands.  Each assertion has a mount-side (`docker exec`
+# POSIX) AND a gRPC (`vfs_stat` / `vfs_read`) cross-check, so a
+# regression in either layer surfaces as a mismatch.
+#
+# Independent of cc-tasks-share-e2e.yml and federation-e2e.yml —
+# those cover the LocalConnector dylib + cross-node federation
+# surface.  This one covers the operator-facing FUSE mount surface
+# layered on the same kernel callback ABI.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'dockerfiles/Dockerfile.fuse-plugin'
+      - 'dockerfiles/docker-compose.fuse-plugin.yml'
+      - 'dockerfiles/Dockerfile.nexusd-cluster'
+      - 'dockerfiles/Dockerfile.federation-test'
+      - 'rust/services/fuse-plugin/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tests/e2e/docker/test_fuse_plugin_e2e.py'
+      - 'tests/e2e/docker/fuse_plugin_helpers.py'
+      - 'tests/e2e/docker/runbook_helpers.py'
+      - '.github/workflows/fuse-plugin-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuse-plugin-e2e:
+    name: FUSE Plugin E2E (Docker)
+    runs-on: ubuntu-latest
+    # Cold cache: cluster image build + plugin dylib build + compose
+    # up + the test suite is ~10-12 min on a clean runner.  Warm gha
+    # cache shaves the rust compile.  25 min upper bound matches the
+    # cc-tasks-share suite's budget.
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect FUSE-plugin-relevant changes
+        id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          # Workflow file itself intentionally not in the regex —
+          # editing this YAML alone should not force a full Docker
+          # cluster build for an unrelated change.  Post-merge push
+          # paths above pick it up.
+          if grep -Eq '^(dockerfiles/(Dockerfile\.(fuse-plugin|nexusd-cluster|federation-test)|docker-compose\.fuse-plugin\.yml)|rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_fuse_plugin_e2e|fuse_plugin_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip FUSE Plugin E2E
+        if: steps.changes.outputs.run != 'true'
+        run: |
+          echo "No FUSE-plugin-relevant files changed; reporting required check without running suite."
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Pin SSOT: the nexus-vfs SHA the cluster binary + plugin dylib
+      # compile against lives in `Cargo.toml`'s workspace dep rev.
+      # Parse it once and reuse for the checkout step below.
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        if: steps.changes.outputs.run == 'true'
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved nexus-vfs SHA: $sha"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      # Build the production cluster image first, with a registry
+      # cache.  Both the fuse-plugin image and the federation-test
+      # image FROM nexusd-cluster:latest, so they all stay on one
+      # buildx instance.  `build-contexts` feeds the checked-out
+      # nexus-vfs source tree to the Dockerfile's
+      # `COPY --from=nexus-vfs-src` step.
+      - name: Build nexusd-cluster image
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          load: true
+          tags: nexusd-cluster:latest
+          cache-from: type=gha,scope=fuse-plugin-cluster
+          cache-to: type=gha,scope=fuse-plugin-cluster,mode=max
+
+      - name: Fetch plugin signing key (kernel-dogfood-v1)
+        if: steps.changes.outputs.run == 'true'
+        env:
+          VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VAULT_SIGNING_MASTER_KEY" ]; then
+            echo "::error::VAULT_SIGNING_MASTER_KEY secret is not available — cannot fetch the kernel-dogfood-v1 signing key."
+            exit 1
+          fi
+          # Reuses the same sealed-keystore path
+          # release-plugin-reusable.yml takes for signing dylibs at
+          # release-tag time.  See
+          # docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md
+          # for the end-to-end flow.  Pattern (mask + env-set) mirrors
+          # the reusable workflow's `Resolve PLUGIN_SIGNING_PRIVKEY
+          # (vault source)` step verbatim.
+          PRIVKEY=$(python3 scripts/dogfood_keystore_fetch.py --key-name kernel-dogfood-v1)
+          echo "::add-mask::${PRIVKEY}"
+          echo "PLUGIN_SIGNING_PRIVKEY=${PRIVKEY}" >> "$GITHUB_ENV"
+
+      - name: Build fuse-plugin + federation-test images
+        if: steps.changes.outputs.run == 'true'
+        # BUILDX_BUILDER=default forces compose build to use the
+        # docker-daemon builder rather than the docker-container
+        # builder from setup-buildx-action.  Both downstream images
+        # start `FROM nexusd-cluster:latest`, which only the daemon
+        # builder can resolve against the previous step's
+        # `load: true` artifact.  See cc-tasks-share-e2e.yml for the
+        # same workaround.
+        env:
+          BUILDX_BUILDER: default
+        run: |
+          docker compose -f dockerfiles/docker-compose.fuse-plugin.yml build \
+            cluster test
+
+      - name: Start FUSE plugin cluster
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.fuse-plugin.yml up -d cluster
+          docker compose -f dockerfiles/docker-compose.fuse-plugin.yml ps
+
+      - name: Wait for cluster healthy
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          # Wait for BOTH the gRPC bind AND the FUSE mount.  The
+          # daemon binds 2126 a few seconds before the plugin's
+          # background thread finishes `fuser::spawn_mount2`.
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            if docker exec nexus-fuse-cluster bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' && \
+               docker exec nexus-fuse-cluster mountpoint -q /mnt/nexus 2>/dev/null; then
+              echo "Cluster healthy (gRPC + FUSE mount ready) after ${SECONDS}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for cluster ready (180s)"
+          docker compose -f dockerfiles/docker-compose.fuse-plugin.yml logs --tail=300
+          exit 1
+
+      - name: Run FUSE plugin E2E tests
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.fuse-plugin.yml \
+            run --rm test
+
+      - name: Dump container logs on failure
+        if: failure() && steps.changes.outputs.run == 'true'
+        run: |
+          echo "::group::nexus-fuse-cluster"
+          docker logs nexus-fuse-cluster --tail=400 2>&1 || echo "(no logs)"
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always() && steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.fuse-plugin.yml down -v --remove-orphans || true

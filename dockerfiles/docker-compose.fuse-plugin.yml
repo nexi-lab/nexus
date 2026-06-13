@@ -1,0 +1,159 @@
+# FUSE plugin E2E — single-node cluster mounting itself via FUSE
+# =========================================================================
+# Compose for `tests/e2e/docker/test_fuse_plugin_e2e.py`.
+#
+# Topology: one `nexusd-cluster` daemon with `--plugin-dir /plugins`
+# loading the signed `libnexus_fuse_plugin.so`.  The plugin reads
+# `NEXUS_FUSE_MOUNT_POINT=/mnt/nexus` + `NEXUS_FUSE_VFS_ROOT=/` from
+# the env and spawns a fuser-backed FUSE event loop in a background
+# thread.  After mount, every POSIX op against `/mnt/nexus` flows
+# through the FUSE event loop → KernelHandle callbacks → kernel
+# syscalls — exactly the operator-facing path.
+#
+# Workflow validated end-to-end:
+#
+#   1. `mkdir /mnt/nexus/foo` — kernel `sys_mkdir` callback fires
+#      via the FUSE `mkdir` op + materialises the directory in the
+#      metastore.  `vfs_stat(/foo)` over gRPC sees `entry_type=1`.
+#   2. `touch /mnt/nexus/foo/bar.txt` + `echo … > …` — `create` ops
+#      compose `sys_write(empty) + sys_stat`; subsequent `write`
+#      flushes content.  Content visible via `vfs_read(/foo/bar.txt)`.
+#   3. `ls /mnt/nexus/foo` — kernel `sys_readdir` returns the
+#      JSON-array of `(name, entry_type)` pairs; FUSE renders them.
+#   4. `mv /mnt/nexus/foo/bar.txt /mnt/nexus/foo/baz.txt` — kernel
+#      `sys_rename`.  Old path absent, new path present.
+#   5. `rm /mnt/nexus/foo/baz.txt` + `rmdir /mnt/nexus/foo` — kernel
+#      `sys_unlink` + `sys_rmdir`.  Both paths absent.
+#
+# Each step has a hard cross-check: the POSIX op runs through the
+# mount, and the gRPC `vfs_stat` / `vfs_read` confirms kernel-side
+# state independently.  A regression in the FUSE plugin's callback
+# wiring breaks one half; a regression in the kernel-side callback
+# breaks both.  Either failure surfaces here.
+#
+# Privileged-ish requirement: FUSE needs `/dev/fuse`, `SYS_ADMIN`
+# (so libfuse3 can mount), and unconfined apparmor (the default
+# `docker-default` profile blocks the mount syscall on most distros).
+# This is the minimum viable container profile for a real FUSE mount;
+# anything looser doesn't reach the kernel callback path the plugin
+# wires.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.fuse-plugin.yml up -d cluster
+#   docker compose -f dockerfiles/docker-compose.fuse-plugin.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.fuse-plugin.yml down -v
+
+services:
+  cluster:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.fuse-plugin
+      # Plugin-signing key for the in-build Ed25519 sign step (kernel
+      # rev 67ac07f+ refuses unsigned plugins).  Sourced from the
+      # PLUGIN_SIGNING_PRIVKEY env var on the invoking shell — CI
+      # exports it from the kernel-dogfood-v1 sealed-keystore fetch.
+      secrets:
+        - plugin_signing_key
+    image: nexus-fuse-plugin:latest
+    container_name: nexus-fuse-cluster
+    hostname: cluster
+    # Privileged mode — minimum viable for `/dev/fuse` open + libfuse3
+    # mount syscall.  `cap_add: SYS_ADMIN` + device map + apparmor
+    # unconfined is the documented quartet; `privileged: true` is the
+    # shorter form that subsumes all three.  No host mounts are
+    # exposed inward; the mount lives entirely on a docker tmpfs.
+    privileged: true
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      NEXUS_HOSTNAME: cluster
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: cluster:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      NEXUS_PLUGIN_DIR: /plugins
+      # Plugin reads these at create-time; the FUSE event loop won't
+      # spawn without NEXUS_FUSE_MOUNT_POINT.
+      NEXUS_FUSE_MOUNT_POINT: /mnt/nexus
+      NEXUS_FUSE_VFS_ROOT: /
+      # Single-node bootstrap — no federation, no joiners.  The FUSE
+      # mount lives on the local VFS root only.
+      NEXUS_BOOTSTRAP_MODE: dynamic
+      RUST_LOG: info,nexus_raft=info,nexus::fuse=debug
+    volumes:
+      - fuse_cluster_data:/app/data
+    networks:
+      - nexus-fuse-net
+    healthcheck:
+      # Health probe waits for BOTH the gRPC port AND the FUSE mount —
+      # the daemon binds 2126 a few seconds before the plugin's
+      # background thread completes `fuser::spawn_mount2`.  A premature
+      # "ready" reports green while the mount is still pending and the
+      # test races against it.
+      test:
+        - CMD-SHELL
+        - >
+          timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null &&
+          mountpoint -q /mnt/nexus
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-fuse-test
+    profiles:
+      - run
+    depends_on:
+      cluster:
+        condition: service_healthy
+    # working_dir, PYTHONPATH, PYTEST_ADDOPTS inherited from the
+    # federation-test image — same runner as the cc-tasks-share +
+    # federation-runbook suites.
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NEXUS_FUSE_E2E: "1"
+      # gRPC endpoint for kernel-side cross-checks.  Tests issue
+      # `vfs_stat` / `vfs_read` here independently of the FUSE mount
+      # so a callback regression on either side surfaces.
+      NEXUS_CLUSTER_GRPC: cluster:2126
+      # Container name needed by `docker exec` for in-container POSIX
+      # ops (`mkdir` / `touch` / `mv` / `rm`) against the mount.  The
+      # test runner is a sibling container, not the cluster — issuing
+      # ops via `docker exec` ensures we exercise the in-container
+      # mount, not some host-shared mountpoint.
+      NEXUS_CLUSTER_CONTAINER: nexus-fuse-cluster
+      NEXUS_FUSE_MOUNT_POINT: /mnt/nexus
+    networks:
+      - nexus-fuse-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_fuse_plugin_e2e.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-fuse-net:
+    name: nexus-fuse-net
+    driver: bridge
+
+secrets:
+  plugin_signing_key:
+    environment: PLUGIN_SIGNING_PRIVKEY
+
+volumes:
+  fuse_cluster_data:
+    name: nexus-fuse-cluster-data

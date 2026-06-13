@@ -41,15 +41,20 @@
 //!
 //! ## Platform support
 //!
-//! Linux first (`libfuse3` via the `fuser` crate).  macOS support
-//! piggybacks on `fuser`'s macFUSE backend the moment we add the
-//! `target_os = "macos"` cfg gate.  Windows requires a separate
-//! WinFsp adapter — out of scope for this first cut.
+//! Linux (`libfuse3`) and macOS (`macFUSE`) share one cfg-gated body
+//! — `fuser`'s `Filesystem` trait + `spawn_mount2` work identically
+//! on both.  Operators install the platform-native FUSE userspace
+//! out-of-band (apt `libfuse3-3` / brew `macfuse`) before launching
+//! `nexusd-cluster --plugin-dir`.  Windows shipping waits on a
+//! separate WinFsp adapter — different binding crate (winfsp-rs),
+//! different mount API surface; tracked as a follow-up PR.  On
+//! Windows today the plugin compiles to a no-op cdylib so the
+//! workspace builds cleanly across the matrix.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fs;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::Mutex;
 
 use nexus_plugin_abi::{declare_service_plugin, KernelHandle};
@@ -61,18 +66,18 @@ use nexus_plugin_abi::{declare_service_plugin, KernelHandle};
 /// thread.  On non-Linux targets, holds nothing; the plugin is
 /// effectively a no-op.
 struct FusePlugin {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     session: Mutex<Option<fuser::BackgroundSession>>,
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _phantom: (),
 }
 
 impl FusePlugin {
     fn new() -> Self {
         Self {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             session: Mutex::new(None),
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             _phantom: (),
         }
     }
@@ -90,7 +95,7 @@ impl FusePlugin {
 fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
     let plugin = FusePlugin::new();
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let mount_point = std::env::var("NEXUS_FUSE_MOUNT_POINT").ok();
         if let Some(mount_point) = mount_point {
@@ -112,6 +117,14 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             let mount_config = fuser::Config::default();
             match fuser::spawn_mount2(fs, &mount_point, &mount_config) {
                 Ok(session) => {
+                    // eprintln complements tracing: a dlopen'd cdylib
+                    // owns a separate tracing global, so the plugin's
+                    // `tracing::info!` calls don't reach the cluster's
+                    // subscriber.  stderr lands in the daemon's stderr
+                    // regardless, which is what compose / `docker logs`
+                    // capture — the operator's only mount-status SoT
+                    // until the cluster grows a plugin-tracing bridge.
+                    eprintln!("[nexus-fuse-plugin] mount OK at {mount_point}");
                     tracing::info!(
                         target: "nexus::fuse",
                         mount_point = %mount_point,
@@ -120,6 +133,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     *plugin.session.lock().unwrap() = Some(session);
                 }
                 Err(e) => {
+                    eprintln!("[nexus-fuse-plugin] mount FAILED at {mount_point}: {e}");
                     tracing::error!(
                         target: "nexus::fuse",
                         mount_point = %mount_point,
@@ -129,6 +143,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                 }
             }
         } else {
+            eprintln!("[nexus-fuse-plugin] NEXUS_FUSE_MOUNT_POINT not set — no mount performed");
             tracing::warn!(
                 target: "nexus::fuse",
                 "NEXUS_FUSE_MOUNT_POINT not set — plugin loaded but no mount performed"
@@ -145,7 +160,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
 /// kernel guarantees the underlying state lives at least as long as
 /// any plugin holding a clone (loader holds the `Arc<Kernel>` via the
 /// `DylibRustService` it stores).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
     KernelHandle {
         sys_read: src.sys_read,
@@ -174,7 +189,7 @@ unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
 fn dispatch_fuse(svc: &FusePlugin, method: &str, _payload: &[u8]) -> Result<Vec<u8>, i32> {
     match method {
         "status" => {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 let mounted = svc.session.lock().unwrap().is_some();
                 Ok(if mounted {
@@ -183,14 +198,14 @@ fn dispatch_fuse(svc: &FusePlugin, method: &str, _payload: &[u8]) -> Result<Vec<
                     b"unmounted".to_vec()
                 })
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 let _ = svc;
                 Ok(b"unsupported-platform".to_vec())
             }
         }
         "unmount" => {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 let session = svc.session.lock().unwrap().take();
                 if session.is_some() {
@@ -202,7 +217,7 @@ fn dispatch_fuse(svc: &FusePlugin, method: &str, _payload: &[u8]) -> Result<Vec<
                     Ok(b"not-mounted".to_vec())
                 }
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 let _ = svc;
                 Ok(b"unsupported-platform".to_vec())

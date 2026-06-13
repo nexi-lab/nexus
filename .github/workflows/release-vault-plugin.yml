@@ -14,6 +14,15 @@ on:
   push:
     tags:
       - "vault-v*"
+  # Manual dispatch fallback. Used when a tag push fails to trigger
+  # the workflow (observed on vault-v0.1.3 — the first tag pushed after
+  # the wrapper refactor at 9be4ded4b). Pass the target tag verbatim.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. vault-v0.1.3)"
+        required: true
+        type: string
 
 permissions:
   contents: write

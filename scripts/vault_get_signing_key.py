@@ -69,6 +69,9 @@ def _repo_root() -> Path:
 
 def _compile_proto_into(out_dir: Path) -> None:
     """Generate `*_pb2.py` + `*_pb2_grpc.py` for `secrets.proto` into out_dir."""
+    import os
+
+    import grpc_tools
     from grpc_tools import protoc
 
     proto_root = _repo_root() / PROTO_IMPORT_ROOT_REL
@@ -76,10 +79,16 @@ def _compile_proto_into(out_dir: Path) -> None:
     if not proto_file.is_file():
         raise SystemExit(f"proto SSOT missing: {proto_file}")
 
+    # grpc_tools bundles the well-known google protos under _proto/; without
+    # passing this path, secrets.proto's `import "google/protobuf/timestamp.proto"`
+    # fails at compile time.
+    google_proto_root = Path(os.path.dirname(grpc_tools.__file__)) / "_proto"
+
     rc = protoc.main(
         [
             "grpc_tools.protoc",
             f"--proto_path={proto_root}",
+            f"--proto_path={google_proto_root}",
             f"--python_out={out_dir}",
             f"--grpc_python_out={out_dir}",
             str(proto_file),

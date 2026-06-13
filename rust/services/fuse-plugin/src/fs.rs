@@ -282,26 +282,13 @@ impl NexusFs {
     /// we hand-roll a tiny parser to avoid pulling `serde_json` into
     /// the cdylib's dependency closure for two fields.
     fn parse_stat(&self, ino: INodeNo, json: &str) -> Option<FileAttr> {
-        // Kernel callback exports `entry_type` (the SSOT for "what
-        // kind of inode this is") rather than a precomputed
-        // `is_directory` flag, so dispatch by entry_type instead.
-        // DT_DIR (1) is the only directory variant; everything else
-        // (DT_REG / DT_MOUNT / DT_PIPE / DT_STREAM /
-        // DT_EXTERNAL_STORAGE / DT_LINK) maps to a regular-file
-        // surface for FUSE callers.  DT_MOUNT would deserve a
-        // directory surface here once the FUSE layer learns how to
-        // traverse mount points; for now treating it as a regular
-        // file is consistent with the kernel returning miss on
-        // readdir against a mount root.
+        // Kernel exports `entry_type` (the SSOT for "what kind of
+        // inode this is"); `kind_from_entry_type` is the single rule
+        // that maps it to a FUSE FileType.
         let size = json_u64(json, "\"size\":")?;
         let entry_type = json_u64(json, "\"entry_type\":")?;
-        const DT_DIR: u64 = 1;
-        let kind = if entry_type == DT_DIR {
-            FileType::Directory
-        } else {
-            FileType::RegularFile
-        };
-        let is_dir = entry_type == DT_DIR;
+        let kind = kind_from_entry_type(entry_type);
+        let is_dir = kind == FileType::Directory;
         // FUSE wants a complete FileAttr; fields we don't pull from
         // sys_stat default to zero / now / 0644.
         let now = SystemTime::now();
@@ -330,6 +317,26 @@ impl NexusFs {
     fn stat_attr(&self, ino: INodeNo, path: &str) -> Result<FileAttr, Errno> {
         let json = self.sys_stat(path).map_err(|_| errno_enoent())?;
         self.parse_stat(ino, &json).ok_or_else(errno_io)
+    }
+}
+
+/// Single SSOT rule mapping kernel `entry_type` values to FUSE
+/// `FileType`.  Both DT_DIR (1) and DT_MOUNT (2) surface as
+/// directories — the kernel's `sys_stat` mount-point synthesis path
+/// (kernel/src/kernel/io.rs §3.5) explicitly emits DT_MOUNT with
+/// `is_directory: true` + `mode: 0o755`, so FUSE must treat them the
+/// same or `mountpoint -q` / `cd <mount>` / `readdir` all break at
+/// the mount root.  Every other `entry_type` (DT_REG / DT_LINK /
+/// DT_PIPE / DT_STREAM / DT_EXTERNAL_STORAGE) maps to RegularFile —
+/// the most conservative choice for kinds the FUSE layer doesn't
+/// (yet) have first-class handling for.
+fn kind_from_entry_type(entry_type: u64) -> FileType {
+    const DT_DIR: u64 = 1;
+    const DT_MOUNT: u64 = 2;
+    if entry_type == DT_DIR || entry_type == DT_MOUNT {
+        FileType::Directory
+    } else {
+        FileType::RegularFile
     }
 }
 
@@ -550,15 +557,10 @@ impl Filesystem for NexusFs {
         // VFS resume from the offset we last reported.  Skipping
         // `offset` entries handles continuation correctly without
         // needing a per-fh cursor.
-        const DT_DIR: u64 = 1;
         for (idx, (name, entry_type)) in entries.into_iter().enumerate().skip(offset as usize) {
             let child_path = join_path(&parent_path, &name);
             let child_ino = self.alloc_inode(child_path);
-            let kind = if entry_type == DT_DIR {
-                FileType::Directory
-            } else {
-                FileType::RegularFile
-            };
+            let kind = kind_from_entry_type(entry_type);
             // FUSE's `next_offset` semantics: the next readdir call
             // resumes at this value, so we return `idx + 1`.
             if reply.add(INodeNo(child_ino), (idx + 1) as u64, kind, &name) {
@@ -831,6 +833,27 @@ mod tests {
             entries,
             vec![("foo.txt".to_string(), 0), ("sub".to_string(), 1),]
         );
+    }
+
+    #[test]
+    fn kind_from_entry_type_mount_and_dir_are_directories() {
+        // DT_DIR (1) and DT_MOUNT (2) — same FUSE surface.  Kernel
+        // io.rs §3.5 synthesizes mount roots as DT_MOUNT with
+        // `is_directory: true`, so this mapping is the SSOT for
+        // "FUSE root is a directory" — without it `mountpoint -q`
+        // fails the moment fuser hands off to the plugin.
+        assert_eq!(kind_from_entry_type(1), FileType::Directory);
+        assert_eq!(kind_from_entry_type(2), FileType::Directory);
+    }
+
+    #[test]
+    fn kind_from_entry_type_regular_for_everything_else() {
+        // DT_REG (0), DT_LINK (3), DT_PIPE (5+), DT_STREAM,
+        // DT_EXTERNAL_STORAGE — all map to RegularFile until the
+        // FUSE layer grows first-class handling.
+        assert_eq!(kind_from_entry_type(0), FileType::RegularFile);
+        assert_eq!(kind_from_entry_type(3), FileType::RegularFile);
+        assert_eq!(kind_from_entry_type(99), FileType::RegularFile);
     }
 
     #[test]

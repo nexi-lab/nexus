@@ -37,6 +37,27 @@ fn unix_ms_to_proto_ts(ms: u64) -> prost_types::Timestamp {
     }
 }
 
+/// Reject non-loopback callers on sealed Get/Put.
+///
+/// The sealed variants expose vault's internal AEAD bytes — they
+/// bypass the master-key seal/open and so they must not leak outside
+/// the host. Loopback peers (`127.0.0.1` / `::1`) are trusted; absence
+/// of peer info — in-process tonic calls and FFI dispatches forwarded
+/// by `nexus-vfs` `PluginProxyService` — is also accepted because the
+/// caller's environment is responsible for binding the outer gRPC
+/// listener to loopback when sealed traffic is allowed at all. Any
+/// other peer is rejected with `PERMISSION_DENIED`.
+fn require_localhost_caller<T>(req: &Request<T>) -> Result<(), Status> {
+    if let Some(addr) = req.remote_addr() {
+        if !addr.ip().is_loopback() {
+            return Err(Status::permission_denied(
+                "sealed Get/Put are restricted to loopback callers",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn index_to_metadata(ns: &str, key: &str, idx: &SecretIndex) -> SecretMetadata {
     SecretMetadata {
         namespace: ns.to_string(),
@@ -239,6 +260,115 @@ impl GenericSecretsServiceImpl {
             .ok_or_else(|| PasswordVaultError::NotFound(format!("{namespace}/{key}")))?;
         let stored = self.inner.storage.list_versions(namespace, key)?;
         Ok((stored, idx))
+    }
+
+    /// Internal sealed-put — store an already-sealed `(nonce, ciphertext)`
+    /// pair as a new version, skipping the AES-GCM seal step. The caller
+    /// is responsible for producing bytes that the configured master key
+    /// can later decrypt via the standard `do_get` path.
+    ///
+    /// Used by the encrypted-in-git dogfood keystore: CI rehydrates
+    /// committed sealed blobs into vault state so the master-key-driven
+    /// `GetSecret` then returns plaintext to the signing pipeline.
+    pub(crate) fn do_put_sealed(
+        &self,
+        namespace: &str,
+        key: &str,
+        nonce: &[u8],
+        ciphertext: &[u8],
+        description: Option<&str>,
+    ) -> Result<SecretMetadata, Status> {
+        if namespace.is_empty() {
+            return Err(Status::invalid_argument("namespace is required"));
+        }
+        if key.is_empty() {
+            return Err(Status::invalid_argument("key is required"));
+        }
+        if nonce.len() != 12 {
+            return Err(Status::invalid_argument("nonce must be exactly 12 bytes"));
+        }
+        if ciphertext.is_empty() {
+            return Err(Status::invalid_argument("ciphertext is required"));
+        }
+
+        let mut nonce_arr = [0u8; 12];
+        nonce_arr.copy_from_slice(nonce);
+
+        let current = self.inner.storage.get_index(namespace, key)?;
+        let now = now_unix_ms();
+        let next_version = current.as_ref().map_or(1, |idx| idx.current_version + 1);
+
+        let stored = StoredEntry {
+            version: next_version,
+            created_at_ms: now,
+            nonce: nonce_arr,
+            ciphertext: ciphertext.to_vec(),
+        };
+        self.inner
+            .storage
+            .put_version(namespace, key, next_version, &stored)?;
+
+        let idx = SecretIndex {
+            current_version: next_version,
+            deleted_at_ms: None,
+            description: description
+                .map(|d| d.to_string())
+                .or_else(|| current.as_ref().map(|c| c.description.clone()))
+                .unwrap_or_default(),
+            created_at_ms: current.as_ref().map_or(now, |c| c.created_at_ms),
+            updated_at_ms: now,
+        };
+        self.inner.storage.set_index(namespace, key, &idx)?;
+
+        Ok(index_to_metadata(namespace, key, &idx))
+    }
+
+    /// Internal sealed-get — return the raw `(nonce, ciphertext, version)`
+    /// for a stored version, skipping the AES-GCM open step.
+    ///
+    /// The returned bytes are opaque to the caller; only a vault instance
+    /// holding the same master key can decrypt them through `do_get`.
+    pub(crate) fn do_get_sealed(
+        &self,
+        namespace: &str,
+        key: &str,
+        version: Option<i32>,
+    ) -> Result<([u8; 12], Vec<u8>, i32), Status> {
+        if namespace.is_empty() {
+            return Err(Status::invalid_argument("namespace is required"));
+        }
+        if key.is_empty() {
+            return Err(Status::invalid_argument("key is required"));
+        }
+
+        let idx = self
+            .inner
+            .storage
+            .get_index(namespace, key)?
+            .ok_or_else(|| PasswordVaultError::NotFound(format!("{namespace}/{key}")))?;
+
+        let version_to_read = match version {
+            None => {
+                if idx.deleted_at_ms.is_some() {
+                    return Err(PasswordVaultError::NotFound(format!("{namespace}/{key}")).into());
+                }
+                idx.current_version
+            }
+            Some(v) if v < 0 => {
+                return Err(Status::invalid_argument("version must be >= 0"));
+            }
+            Some(v) => v as u32,
+        };
+
+        let stored = self
+            .inner
+            .storage
+            .get_version(namespace, key, version_to_read)?
+            .ok_or_else(|| {
+                PasswordVaultError::NotFound(format!("{namespace}/{key}/v{version_to_read}"))
+            })?;
+
+        Ok((stored.nonce, stored.ciphertext, stored.version as i32))
     }
 
     /// Internal list metadata — returns `(namespace, key, SecretIndex)` triples.
@@ -450,6 +580,41 @@ impl GenericSecretsService for GenericSecretsServiceImpl {
             key: req.key,
             version: req.version,
             deleted: true,
+        }))
+    }
+
+    async fn get_secret_sealed(
+        &self,
+        req: Request<GetSecretRequest>,
+    ) -> Result<Response<GetSecretSealedResponse>, Status> {
+        require_localhost_caller(&req)?;
+        let req = req.into_inner();
+        let (nonce, ciphertext, version) =
+            self.do_get_sealed(&req.namespace, &req.key, req.version)?;
+        Ok(Response::new(GetSecretSealedResponse {
+            namespace: req.namespace,
+            key: req.key,
+            nonce: nonce.to_vec(),
+            ciphertext,
+            version,
+        }))
+    }
+
+    async fn put_secret_sealed(
+        &self,
+        req: Request<PutSecretSealedRequest>,
+    ) -> Result<Response<PutSecretResponse>, Status> {
+        require_localhost_caller(&req)?;
+        let req = req.into_inner();
+        let metadata = self.do_put_sealed(
+            &req.namespace,
+            &req.key,
+            &req.nonce,
+            &req.ciphertext,
+            req.description.as_deref(),
+        )?;
+        Ok(Response::new(PutSecretResponse {
+            metadata: Some(metadata),
         }))
     }
 
@@ -1131,5 +1296,177 @@ mod tests {
             secrets.secrets[0].description.as_deref(),
             Some("updated desc")
         );
+    }
+
+    // ── Sealed Get/Put tests ──────────────────────────────────────────
+
+    /// Put plaintext, fetch the sealed `(nonce, ciphertext)`, then write
+    /// it back under a fresh `(namespace, key)` via PutSecretSealed.
+    /// Standard GetSecret on the new key must return the original
+    /// plaintext — proves the master key still owns the seal contract.
+    #[tokio::test]
+    async fn sealed_round_trip_via_put_sealed_then_get() {
+        let svc = fresh_service();
+
+        svc.put_secret(Request::new(PutSecretRequest {
+            namespace: "signing-keys".into(),
+            key: "kernel-dogfood-v1".into(),
+            value: "ed25519-privkey-bytes".into(),
+            description: Some("dogfood signing".into()),
+        }))
+        .await
+        .unwrap();
+
+        let sealed = svc
+            .get_secret_sealed(Request::new(GetSecretRequest {
+                namespace: "signing-keys".into(),
+                key: "kernel-dogfood-v1".into(),
+                version: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(sealed.nonce.len(), 12);
+        assert!(!sealed.ciphertext.is_empty());
+        assert_eq!(sealed.version, 1);
+
+        svc.put_secret_sealed(Request::new(PutSecretSealedRequest {
+            namespace: "signing-keys".into(),
+            key: "kernel-dogfood-v1-restored".into(),
+            nonce: sealed.nonce,
+            ciphertext: sealed.ciphertext,
+            description: Some("rehydrated".into()),
+        }))
+        .await
+        .unwrap();
+
+        let got = svc
+            .get_secret(Request::new(GetSecretRequest {
+                namespace: "signing-keys".into(),
+                key: "kernel-dogfood-v1-restored".into(),
+                version: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.value, "ed25519-privkey-bytes");
+    }
+
+    /// Sealed bytes from `GetSecretSealed` must NOT equal plaintext
+    /// (basic sanity that the data is actually encrypted under the
+    /// master key).
+    #[tokio::test]
+    async fn sealed_get_returns_opaque_bytes() {
+        let svc = fresh_service();
+        svc.put_secret(Request::new(PutSecretRequest {
+            namespace: "ns".into(),
+            key: "k".into(),
+            value: "plaintext-marker-abc123".into(),
+            description: None,
+        }))
+        .await
+        .unwrap();
+
+        let sealed = svc
+            .get_secret_sealed(Request::new(GetSecretRequest {
+                namespace: "ns".into(),
+                key: "k".into(),
+                version: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!sealed
+            .ciphertext
+            .windows("plaintext-marker-abc123".len())
+            .any(|w| w == b"plaintext-marker-abc123"));
+    }
+
+    #[tokio::test]
+    async fn sealed_put_rejects_short_nonce() {
+        let svc = fresh_service();
+        let err = svc
+            .put_secret_sealed(Request::new(PutSecretSealedRequest {
+                namespace: "ns".into(),
+                key: "k".into(),
+                nonce: vec![0u8; 8],
+                ciphertext: vec![1u8; 32],
+                description: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    /// A non-loopback peer must be rejected before the sealed handler
+    /// touches storage — covers the dogfood threat model where vault's
+    /// outer gRPC bind is loopback-only but a misconfiguration would
+    /// otherwise expose the master-key bypass.
+    #[tokio::test]
+    async fn sealed_handlers_reject_non_loopback_peer() {
+        use tonic::transport::server::TcpConnectInfo;
+
+        let svc = fresh_service();
+        svc.put_secret(Request::new(PutSecretRequest {
+            namespace: "ns".into(),
+            key: "k".into(),
+            value: "v".into(),
+            description: None,
+        }))
+        .await
+        .unwrap();
+
+        let mut get_req = Request::new(GetSecretRequest {
+            namespace: "ns".into(),
+            key: "k".into(),
+            version: None,
+        });
+        get_req.extensions_mut().insert(TcpConnectInfo {
+            local_addr: Some("0.0.0.0:8080".parse().unwrap()),
+            remote_addr: Some("203.0.113.7:51000".parse().unwrap()),
+        });
+        let err = svc.get_secret_sealed(get_req).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+
+        let mut put_req = Request::new(PutSecretSealedRequest {
+            namespace: "ns".into(),
+            key: "k".into(),
+            nonce: vec![0u8; 12],
+            ciphertext: vec![1u8; 32],
+            description: None,
+        });
+        put_req.extensions_mut().insert(TcpConnectInfo {
+            local_addr: Some("0.0.0.0:8080".parse().unwrap()),
+            remote_addr: Some("203.0.113.7:51000".parse().unwrap()),
+        });
+        let err = svc.put_secret_sealed(put_req).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn sealed_handlers_allow_loopback_peer() {
+        use tonic::transport::server::TcpConnectInfo;
+
+        let svc = fresh_service();
+        svc.put_secret(Request::new(PutSecretRequest {
+            namespace: "ns".into(),
+            key: "k".into(),
+            value: "v".into(),
+            description: None,
+        }))
+        .await
+        .unwrap();
+
+        let mut get_req = Request::new(GetSecretRequest {
+            namespace: "ns".into(),
+            key: "k".into(),
+            version: None,
+        });
+        get_req.extensions_mut().insert(TcpConnectInfo {
+            local_addr: Some("127.0.0.1:8080".parse().unwrap()),
+            remote_addr: Some("127.0.0.1:51000".parse().unwrap()),
+        });
+        let resp = svc.get_secret_sealed(get_req).await.unwrap().into_inner();
+        assert_eq!(resp.nonce.len(), 12);
     }
 }

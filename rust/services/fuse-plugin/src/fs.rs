@@ -829,10 +829,7 @@ mod tests {
         let entries = parse_readdir_entries(json);
         assert_eq!(
             entries,
-            vec![
-                ("foo.txt".to_string(), 0),
-                ("sub".to_string(), 1),
-            ]
+            vec![("foo.txt".to_string(), 0), ("sub".to_string(), 1),]
         );
     }
 
@@ -841,7 +838,8 @@ mod tests {
         // Kernel-side serializer escapes `"` → `\"` and `\` → `\\`.
         // The parser must un-escape them, otherwise lookups against
         // the resulting path will miss.
-        let json = r#"[{"name":"with \"quote\"","entry_type":0},{"name":"with\\back","entry_type":0}]"#;
+        let json =
+            r#"[{"name":"with \"quote\"","entry_type":0},{"name":"with\\back","entry_type":0}]"#;
         let entries = parse_readdir_entries(json);
         assert_eq!(
             entries,

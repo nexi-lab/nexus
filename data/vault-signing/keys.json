@@ -1,1 +1,8 @@
-{}
+{
+  "kernel-dogfood-v1": {
+    "ciphertext": "MstEIrXkO/PGCOmTr9M9yeHZOB/ZA1MZploDlMrWEyWAuB8WTh6wtWa0SHOjqpALN1R/iR4+wBT4tIgy",
+    "description": "kernel team dogfood signing root v1",
+    "namespace": "signing-keys",
+    "nonce": "+9Ouo7AxPCkcI4XJ"
+  }
+}

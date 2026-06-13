@@ -130,6 +130,69 @@ def has_signing_path(
     return False, None
 
 
+def check_trust_root_mirror(root: Path) -> tuple[bool, list[str]]:
+    """Verify each `data/vault-signing/pubkeys/*.pub` has a matching
+    `include_bytes!` entry under `TRUSTED_KEY_FILES` in nexus-vfs's
+    `rust/kernel/src/kernel/plugins/loader.rs` at the workspace-pinned
+    rev.
+
+    A signed plugin only loads if the kernel embeds the matching
+    verifying key. The keystore here and the embedded set in nexus-vfs
+    are two halves of the same SSOT — drift = silent dlopen rejection
+    at runtime. Fail-soft on fetch errors; transient network issues
+    shouldn't take down a CI gate.
+
+    Returns (ok, messages).
+    """
+    pubkeys_dir = root / "data" / "vault-signing" / "pubkeys"
+    if not pubkeys_dir.is_dir():
+        return True, ["[SKIP] no data/vault-signing/pubkeys/; mirror check has nothing to do"]
+
+    local_names = sorted(p.stem for p in pubkeys_dir.glob("*.pub"))
+    if not local_names:
+        return True, ["[SKIP] no pubkeys/*.pub locally; mirror check has nothing to do"]
+
+    cargo = root / "Cargo.toml"
+    text = cargo.read_text(encoding="utf-8")
+    m = re.search(r'nexus-plugin-abi[^\n]*rev\s*=\s*"([a-f0-9]{40})"', text)
+    if not m:
+        return True, [
+            "[SKIP] cannot parse nexus-vfs rev from Cargo.toml; mirror check inconclusive"
+        ]
+    rev = m.group(1)
+
+    url = (
+        f"https://raw.githubusercontent.com/nexi-lab/nexus-vfs/{rev}"
+        "/rust/kernel/src/kernel/plugins/loader.rs"
+    )
+    try:
+        import urllib.error
+        import urllib.request
+
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            loader_text = resp.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return True, [f"[SKIP] fetch of nexus-vfs loader.rs failed ({exc}); fail-soft per design"]
+
+    # `include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/trusted_keys/<name>.pub"))`
+    # The path is the only place the pubkey name appears in source — match it.
+    referenced = set(re.findall(r'/trusted_keys/([^"]+)\.pub"', loader_text))
+    messages: list[str] = []
+    missing: list[str] = []
+    for name in local_names:
+        if name in referenced:
+            messages.append(f"[ OK ] pubkey '{name}.pub' mirrored in nexus-vfs@{rev[:7]}")
+        else:
+            missing.append(name)
+            messages.append(
+                f"[FAIL] pubkey '{name}.pub' NOT in nexus-vfs@{rev[:7]} TRUSTED_KEY_FILES\n"
+                f"       Drop the same file under nexus-vfs/rust/kernel/trusted_keys/\n"
+                f"       and append an include_bytes! entry to TRUSTED_KEY_FILES, then bump\n"
+                f"       this repo's Cargo.toml pin to a rev that contains both edits."
+            )
+    return not missing, messages
+
+
 def main() -> int:
     root = _repo_root()
     cdylibs = find_cdylib_packages(root)
@@ -155,6 +218,11 @@ def main() -> int:
                 f"    Cluster's PluginLoader::load rejects unsigned dylibs at boot.\n"
             )
 
+    print()
+    mirror_ok, mirror_msgs = check_trust_root_mirror(root)
+    for line in mirror_msgs:
+        print(line)
+
     if failures:
         sys.stderr.write(
             "Plugin signing compliance check FAILED.\n"
@@ -164,7 +232,14 @@ def main() -> int:
             sys.stderr.write(line + "\n")
         return 1
 
-    print(f"\nAll {len(cdylibs)} cdylib(s) have a signing path.")
+    if not mirror_ok:
+        sys.stderr.write(
+            "Plugin signing compliance check FAILED.\n"
+            "One or more pubkeys lack a matching entry in the nexus-vfs trust root.\n"
+        )
+        return 1
+
+    print(f"\nAll {len(cdylibs)} cdylib(s) have a signing path; trust-root mirror is in sync.")
     return 0
 
 

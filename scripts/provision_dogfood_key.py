@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -110,8 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--vault-token",
-        required=True,
-        help="Admin bearer token for the vault plugin's auth surface.",
+        default="",
+        help="Admin bearer token for the vault plugin's auth surface. Required unless --insecure.",
+    )
+    p.add_argument(
+        "--insecure",
+        action="store_true",
+        default=os.environ.get("VAULT_INSECURE", "").strip() == "1",
+        help=(
+            "Connect without TLS and skip the bearer token. Use only for ephemeral "
+            "localhost vault instances (sealed-keystore dogfood flow). Equivalent to "
+            "VAULT_INSECURE=1 in env."
+        ),
     )
     p.add_argument(
         "--key-name",
@@ -135,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional description recorded with the vault secret metadata.",
     )
     args = p.parse_args(argv)
+
+    if not args.insecure and not args.vault_token:
+        raise SystemExit("--vault-token is required unless --insecure is set")
 
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -166,9 +180,13 @@ def main(argv: list[str] | None = None) -> int:
 
         from nexus.secrets.v1 import secrets_pb2, secrets_pb2_grpc
 
-        channel = grpc.secure_channel(args.vault_endpoint, grpc.ssl_channel_credentials())
+        if args.insecure:
+            channel = grpc.insecure_channel(args.vault_endpoint)
+            metadata: tuple[tuple[str, str], ...] = ()
+        else:
+            channel = grpc.secure_channel(args.vault_endpoint, grpc.ssl_channel_credentials())
+            metadata = (("authorization", f"Bearer {args.vault_token}"),)
         stub = secrets_pb2_grpc.GenericSecretsServiceStub(channel)
-        metadata = (("authorization", f"Bearer {args.vault_token}"),)
 
         # Store.
         put_req = secrets_pb2.PutSecretRequest(

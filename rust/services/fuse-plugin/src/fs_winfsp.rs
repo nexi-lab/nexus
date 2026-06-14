@@ -398,7 +398,21 @@ impl FileSystemContext for NexusWinFsp {
         if marker.is_none() {
             let json = kernel_callbacks::sys_readdir(&self.kernel, &context.path)
                 .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
-            let entries = parse_readdir(&json);
+            let mut entries = parse_readdir(&json);
+            // WinFsp's `FspFileSystemReadDirectoryBuffer` continues
+            // an enumeration by name-comparison against the caller's
+            // `marker`: it returns entries whose name lexicographically
+            // follows the marker, and signals EOF (0 bytes written)
+            // when the marker is past the last entry.  That contract
+            // assumes the buffer's entries are SORTED — without that
+            // invariant the continuation walks the buffer's insertion
+            // order and can re-emit the trailing entry indefinitely
+            // (observed on CI: `rmdir /S /Q` recursive enumeration
+            // hung 10 s+ because readdir kept handing back the last
+            // probe.json instead of EOF).  Kernel `sys_readdir`
+            // returns metastore insertion order, not sorted, so the
+            // sort happens here at the WinFsp ABI boundary.
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
 
             // Single batched sys_stat for sizes — KernelHandle v3's
             // `sys_stat_batch` (nexus-vfs#60) does one FFI hop + one

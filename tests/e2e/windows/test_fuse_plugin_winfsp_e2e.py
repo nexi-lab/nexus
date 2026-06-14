@@ -37,8 +37,9 @@ invalidation in the same call chain a real operator hits.
 
 ## Cross-layer pattern
 
-Same pattern `tests/e2e/docker/test_fuse_plugin_e2e.py` uses on
-Linux.  A plugin that silently drops writes still passes the
+Same pattern `tests/e2e/docker/test_cc_tasks_share_e2e.py` uses on
+Linux (the Linux Docker FUSE coverage now lives inside that
+combined federation + LocalConnector + FUSE suite).  A plugin that silently drops writes still passes the
 mount round-trip but fails the gRPC size check.  A kernel-side
 `sys_readdir` JSON escape regression fails `dir` through the mount
 but `vfs_stat` on the entry passes.  Triangulates the failing

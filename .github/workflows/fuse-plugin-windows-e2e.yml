@@ -12,9 +12,10 @@ name: FUSE Plugin Windows E2E
 # via plain `cmd.exe` commands with a gRPC `vfs_stat` / `vfs_read`
 # cross-check at every step.
 #
-# Cross-layer pattern matches `fuse-plugin-e2e.yml` (Linux Docker
-# E2E) so a regression on either the plugin or the kernel side
-# surfaces as a mismatch rather than a silent pass.
+# Cross-layer pattern matches `cc-tasks-share-e2e.yml` (Linux Docker
+# E2E covering FUSE + LocalConnector + federation) so a regression
+# on either the plugin or the kernel side surfaces as a mismatch
+# rather than a silent pass.
 
 on:
   workflow_dispatch:
@@ -173,7 +174,7 @@ jobs:
           cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll ~/.nexus/plugins/
           cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll.sig ~/.nexus/plugins/
 
-      - name: Launch nexusd-cluster + mount FUSE plugin at Z:
+      - name: "Launch nexusd-cluster + mount FUSE plugin at Z:"
         if: steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |

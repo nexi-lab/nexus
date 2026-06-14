@@ -139,12 +139,16 @@ nexus-vfs PR.
 
 ## Regression coverage
 
-`tests/e2e/docker/test_fuse_plugin_e2e.py` mounts the signed dylib
-inside a privileged Linux container and exercises every v2 op via
-plain POSIX commands, with a gRPC `vfs_stat` / `vfs_read`
-cross-check at every step.  Runs in CI on every change to the
-plugin source, the plugin-abi pin, the Dockerfile, or the test
-itself — see `.github/workflows/fuse-plugin-e2e.yml`.
+`tests/e2e/docker/test_cc_tasks_share_e2e.py` mounts the signed dylib
+on both founder + joiner inside privileged Linux containers and
+exercises every v3 op via plain POSIX commands, with a gRPC
+`vfs_stat` / `vfs_read` cross-check at every step.  The FUSE
+workflows compose with LocalConnector + federation so the full Mac↔Win
+`cc tasks list` chain — FUSE → kernel → DT_MOUNT routing → federation
+fan-out → peer LocalConnector → host fs — has byte-exact regression
+guard.  Runs in CI on every change to the plugin source, the
+plugin-abi pin, the Dockerfile, or the test itself — see
+`.github/workflows/cc-tasks-share-e2e.yml`.
 
 Architectural decisions live in
 `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md`

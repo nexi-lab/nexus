@@ -117,7 +117,16 @@ def _cmd(
 ) -> subprocess.CompletedProcess[str]:
     """Run a `cmd.exe /c` command — the kernel-level path operator
     tools take.  Avoid PowerShell here because PS cmdlets sometimes
-    route through their own caches that mask FUSE behaviours."""
+    route through their own caches that mask FUSE behaviours.
+
+    NB: Do NOT use this for payload writes — Python's `subprocess`
+    on Windows escapes embedded `"` to `\\"` via `list2cmdline`,
+    so a JSON payload routed through `cmd.exe /c echo` ends up with
+    escaped quotes in the file.  Use :func:`_write_file` for content
+    writes; it goes through `open()` on the FUSE-mounted path, which
+    still exercises the WinFsp write callback but bypasses cmd.exe's
+    quoting jungle.
+    """
     full = ["cmd.exe", "/c"] + args
     return subprocess.run(
         full,
@@ -126,6 +135,18 @@ def _cmd(
         timeout=timeout,
         check=check,
     )
+
+
+def _write_file(mount_path: str, payload: str) -> None:
+    """Write ``payload`` byte-exact to ``mount_path`` through Python's
+    ``open()``.  The path lives on a WinFsp-mounted drive letter so
+    the underlying OS write syscall still fires the FUSE plugin's
+    `write` callback — same code path the operator triggers when a
+    real tool (`vim`, `tar`, `git`) writes to the mount.  Byte-exact
+    because Python writes the bytes verbatim, no shell layer.
+    """
+    with open(mount_path, "w", encoding="utf-8", newline="") as f:
+        f.write(payload)
 
 
 def _vfs_stat(grpc_target: str, path: str) -> dict:
@@ -232,7 +253,7 @@ class TestSessionLifecycle:
             # surfaces here, not 100 lines down.
             for name, payload in task_payloads.items():
                 rel = f"{sess_rel}/{name}"
-                _cmd(["echo", payload, ">", topology.mount_path(rel)])
+                _write_file(topology.mount_path(rel), payload)
                 kernel_stat = _wait_path_via_grpc(
                     topology, topology.vfs_path(rel), expect_found=True
                 )
@@ -321,7 +342,7 @@ class TestMidSessionRename:
             # rename's source.  Without these, the rename op has
             # nothing to do.
             _cmd(["mkdir", sess_mount])
-            _cmd(["echo", payload, ">", topology.mount_path(old_rel)])
+            _write_file(topology.mount_path(old_rel), payload)
 
             # Step 3: kernel-side check.  Confirms step 2 actually
             # wrote bytes; if sys_write silently dropped them the
@@ -391,7 +412,7 @@ class TestCrossLayerWriteIntegrity:
             _cmd(["mkdir", sess_mount])
 
             # Step 2: write through the mount — the system under test.
-            _cmd(["echo", payload, ">", topology.mount_path(file_rel)])
+            _write_file(topology.mount_path(file_rel), payload)
 
             # Step 3: kernel-side stat check.  Requires step 2 to
             # have actually committed bytes; a write that returned

@@ -16,13 +16,15 @@ filesystem tool can talk to without a single client-side rewrite.
 |----------|---------------------|---------------------------------------------|
 | Linux    | `libfuse3` (`fuse3`) | First-cut.  Production-ready.              |
 | macOS    | `macFUSE`           | Same `fuser` body via cfg gate.            |
-| Windows  | `WinFsp`            | Deferred — separate binding crate + adapter. |
+| Windows  | `WinFsp` (`winfsp` crate) | First-cut.  Cfg-gated under `target_os = "windows"`. |
 
 `fuser`'s `Filesystem` trait and `spawn_mount2` are identical on
-Linux + macOS, so the same source services both. Windows shipping
-waits on a WinFsp-rs adapter (different crate, different trait
-shape) — tracked as a follow-up PR. On Windows today the plugin
-compiles to a no-op cdylib so the workspace matrix stays clean.
+Linux + macOS, so the same source body (`src/fs.rs`) services both.
+Windows takes a different shape: WinFsp's `FileSystemContext` trait
++ `FileSystemHost` mount lifecycle live in `src/fs_winfsp.rs`,
+sharing the same path-translation + inode-tracking + kernel-callback
+helpers (`crate::kernel_callbacks`, `crate::path_index`) with the
+fuser path.
 
 ## Operator install
 
@@ -39,6 +41,16 @@ brew install --cask macfuse
 # Then approve the macFUSE kernel extension in System Settings →
 # Privacy & Security and reboot.  macFUSE installs are interactive
 # by design; there's no headless equivalent today.
+```
+
+```powershell
+# Windows (Chocolatey, as Administrator)
+choco install winfsp -y
+# WinFsp installs winfsp-x64.dll under
+# C:\Program Files (x86)\WinFsp\bin\ and registers the .sys driver.
+# `nexus-fuse-plugin` loads winfsp-x64.dll lazily via /DELAYLOAD so
+# the daemon boots even when the runtime isn't installed; the mount
+# itself fails at create-time with a clear error in that case.
 ```
 
 Drop the signed dylib + `.sig` from the latest `fuse-v*` release into
@@ -63,8 +75,8 @@ The plugin reads two env vars at `create` time:
 
 | Var                       | Required | Default | Meaning                                                                 |
 |---------------------------|----------|---------|-------------------------------------------------------------------------|
-| `NEXUS_FUSE_MOUNT_POINT`  | Yes      | —       | Absolute path on the local filesystem where the FUSE mount is published. |
-| `NEXUS_FUSE_VFS_ROOT`     | No       | `/`     | VFS-path prefix that maps to the FUSE root inode.  Joined with child names to produce kernel-side paths. |
+| `NEXUS_FUSE_MOUNT_POINT`  | Yes      | —       | Mount target.  Linux / macOS: absolute path (`/mnt/cc-tasks`).  Windows: drive letter (`Z:`) or directory path; the runner reserves the letter for the lifetime of the cluster process. |
+| `NEXUS_FUSE_VFS_ROOT`     | No       | `/`     | VFS-path prefix that maps to the FUSE mount root.  Joined with child names to produce kernel-side paths. |
 
 Without `NEXUS_FUSE_MOUNT_POINT` the plugin loads but performs no
 mount — useful for the kernel's `--plugin-dir` scanning to validate

@@ -1,6 +1,6 @@
 [package]
 name = "nexus-vault"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Nexus vault plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Hosts PasswordVaultService as a dylib plugin with C ABI dispatch."
 authors = ["Nexus Team"]

@@ -187,48 +187,50 @@ jobs:
           cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll ~/.nexus/plugins/
           cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll.sig ~/.nexus/plugins/
 
-      - name: "Launch nexusd-cluster + mount FUSE plugin at M:"
+      - name: "Run FUSE plugin Windows E2E (daemon + tests, single step)"
         if: steps.changes.outputs.run == 'true'
         shell: pwsh
+        env:
+          NEXUS_FUSE_WINDOWS_E2E: "1"
+          NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
+          NEXUS_FUSE_MOUNT_POINT: "M:"
         run: |
-          # Spawn nexusd-cluster as a real Windows process via
-          # Start-Process so it survives this pwsh session's exit —
-          # `Start-Job` ties the daemon to the spawning pwsh process
-          # (the job table is per-pwsh), and GHA spawns a fresh pwsh
-          # per step, so by the time the next step runs the daemon
-          # has already been reaped.  Start-Process detaches cleanly;
-          # stdout + stderr go to nexusd.log which the wait/dump
-          # steps tail.  PID file persists for teardown.
+          # CONSOLIDATED SINGLE STEP: launch daemon → wait → tests → teardown.
+          #
+          # Why one step: GHA tracks each step's process tree in a Windows
+          # Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` set.  When
+          # the step's pwsh exits, the OS terminates EVERY process in the
+          # job — child processes can't escape via -NoNewWindow=false,
+          # -WindowStyle Hidden, Start-Job, or any other PowerShell flag.
+          # Prior commits (79697ba5e diagnostics → 30beadf52
+          # -WindowStyle Hidden) confirmed: `procAlive=False` from iter=1
+          # even after switching window styles.  The ONLY way to keep
+          # the daemon alive for tests is to keep everything in the same
+          # step's pwsh process tree.
           $datadir = "$env:USERPROFILE\.nexus\data"
           $plugindir = "$env:USERPROFILE\.nexus\plugins"
           New-Item -ItemType Directory -Force -Path $datadir | Out-Null
+
           # WinFsp install puts `winfsp-x64.dll` at
-          # `C:\Program Files (x86)\WinFsp\bin\` but does NOT add the
-          # dir to system PATH.  The FUSE plugin DLL has
-          # `winfsp-x64.dll` in its static import table — Windows
-          # `LoadLibraryExW` walks the standard search path (exe
-          # dir → system32 → CWD → PATH), so without WinFsp on PATH
-          # the plugin load fails with error 126 ("module not found")
-          # BEFORE the plugin's own code can call winfsp::winfsp_init
-          # (which would dlopen WinFsp via the registry-derived path).
-          # Prepending here is the minimum-surface fix; the daemon
-          # inherits this PATH via Start-Process and the plugin loads.
+          # `C:\Program Files (x86)\WinFsp\bin\` but the installer does
+          # NOT add the dir to system PATH.  The FUSE plugin DLL has
+          # `winfsp-x64.dll` in its static import table, so Windows
+          # `LoadLibraryExW` walks exe-dir → System32 → CWD → PATH at
+          # plugin load time and fails with error 126 ("module not
+          # found") if none resolves it.  Prepending here is the
+          # minimum-surface fix; the daemon inherits this PATH.
           $env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
-          # Pre-flight: confirm M: is free.  windows-latest images
-          # have been observed to pre-map Z: (Azure-side automatic
-          # share) — a WinFsp mount on a busy letter then silently
-          # shadows or is shadowed by the existing mount, and the
-          # wait step's `Test-Path` never reports True.  M: is not
-          # in the standard windows-latest auto-map.  If this trips,
-          # the runner image changed; pick the next free letter
-          # from the diagnostic.
+
+          # Pre-flight: confirm M: is free.  If a future runner image
+          # starts mapping M:, pick the next free letter.
           $existing = Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }
           Write-Host "Existing FS drives: $($existing -join ', ')"
           if ($existing -contains "M") {
             Write-Error "Drive M is already mapped on this runner.  Pick another letter."
             exit 1
           }
-          # Env vars the plugin reads at create-time — Start-Process
+
+          # Env the FUSE plugin reads at create-time.  Start-Process
           # inherits these from the current pwsh session.
           $env:NEXUS_PLUGIN_DIR = $plugindir
           $env:NEXUS_FUSE_MOUNT_POINT = "M:"
@@ -237,19 +239,10 @@ jobs:
           $env:NEXUS_NO_TLS = "true"
           $env:NEXUS_DATA_DIR = $datadir
           $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
-          # `-NoNewWindow` ties the child to the parent pwsh's
-          # console.  GHA spawns a fresh pwsh per step, so when
-          # this step's pwsh exits, the OS detaches the console
-          # and sends `CTRL_CLOSE_EVENT` to every process attached
-          # to it — the daemon dies before the next step can probe
-          # it.  Diagnostic on commit 79697ba5e proved this: by
-          # the wait step's first iteration (~2 s after launch),
-          # `procAlive` was already False even though the plugin
-          # had logged `mount OK at M:`.  Use `-WindowStyle Hidden`
-          # to give the daemon its own (hidden) console — the
-          # child's lifecycle becomes independent of the parent
-          # pwsh's exit.  `Start-Process`'s redirect flags work
-          # with either window mode.
+
+          # Spawn daemon as child of THIS pwsh — it lives until we
+          # stop it (or until this pwsh exits at end of step, which
+          # is also when teardown runs).
           $proc = Start-Process -FilePath nexusd-cluster `
             -ArgumentList @(
               "--plugin-dir", $plugindir,
@@ -260,18 +253,14 @@ jobs:
             ) `
             -RedirectStandardOutput nexusd.log `
             -RedirectStandardError nexusd.err.log `
-            -WindowStyle Hidden `
+            -NoNewWindow `
             -PassThru
-          $proc.Id | Out-File -FilePath nexusd.pid -Encoding ascii
           Write-Host "nexusd-cluster started, pid=$($proc.Id)"
 
-      - name: Wait for cluster + drive letter ready
-        if: steps.changes.outputs.run == 'true'
-        shell: pwsh
-        run: |
-          $nexusdPid = if (Test-Path nexusd.pid) { Get-Content nexusd.pid } else { $null }
+          # Wait for gRPC + drive letter ready, with diagnostics.
           $deadline = (Get-Date).AddSeconds(180)
           $iter = 0
+          $ready = $false
           while ((Get-Date) -lt $deadline) {
             $iter++
             $grpcOK = $false
@@ -282,61 +271,45 @@ jobs:
               $tcp.Close()
             } catch { }
             $driveOK = Test-Path "M:\"
-            $procOK = $false
-            if ($nexusdPid -and (Get-Process -Id $nexusdPid -ErrorAction SilentlyContinue)) {
-              $procOK = $true
-            }
+            $procAlive = ($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue))
             if ($grpcOK -and $driveOK) {
               Write-Host "Cluster healthy (gRPC + M:\\ drive mounted) after iter=$iter"
-              exit 0
+              $ready = $true
+              break
             }
-            # Surface diagnostics every 10 iterations (~20s) so a wedge
-            # is visible in the log without spamming every poll.
             if (($iter % 10) -eq 1) {
-              Write-Host "iter=$iter grpcOK=$grpcOK driveOK=$driveOK procAlive=$procOK pid=$nexusdPid"
+              Write-Host "iter=$iter grpcOK=$grpcOK driveOK=$driveOK procAlive=$procAlive pid=$($proc.Id)"
             }
             Start-Sleep -Seconds 2
           }
-          Write-Error "::error::Timed out waiting for cluster ready (180s) grpcOK=$grpcOK driveOK=$driveOK procAlive=$procOK"
-          Write-Host "=== Final state ==="
-          Write-Host "Drives: $((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }) -join ', ')"
-          Write-Host "Process alive: $(if (Get-Process -Id $nexusdPid -ErrorAction SilentlyContinue) {'YES'} else {'NO (exited)'})"
-          if (Test-Path nexusd.log) { Get-Content nexusd.log -Tail 200 }
-          if (Test-Path nexusd.err.log) { Get-Content nexusd.err.log -Tail 200 }
-          exit 1
 
-      - name: Run FUSE plugin Windows E2E tests
-        if: steps.changes.outputs.run == 'true'
-        env:
-          NEXUS_FUSE_WINDOWS_E2E: "1"
-          NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
-          NEXUS_FUSE_MOUNT_POINT: "M:"
-        run: |
-          set -euo pipefail
-          pip install -e .
-          pytest tests/e2e/windows/test_fuse_plugin_winfsp_e2e.py -v --no-header -o "addopts="
-
-      - name: Dump cluster logs on failure
-        if: failure() && steps.changes.outputs.run == 'true'
-        shell: pwsh
-        run: |
-          if (Test-Path nexusd.log) {
-            Write-Host "=== nexusd.log (last 400 lines) ==="
-            Get-Content nexusd.log -Tail 400
+          $testRc = 1
+          try {
+            if (-not $ready) {
+              Write-Error "::error::Timed out waiting for cluster ready (180s)"
+              Write-Host "Drives: $((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }) -join ', ')"
+              Write-Host "Process alive: $(if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {'YES'} else {'NO (exited)'})"
+            } else {
+              pip install -e .
+              if ($LASTEXITCODE -ne 0) {
+                Write-Error "::error::pip install -e . failed (exit=$LASTEXITCODE)"
+              } else {
+                pytest tests/e2e/windows/test_fuse_plugin_winfsp_e2e.py -v --no-header -o "addopts="
+                $testRc = $LASTEXITCODE
+              }
+            }
+          } finally {
+            # Teardown: stop daemon + dump logs.  Always runs even if
+            # tests fail or wait timed out — guarantees logs reach
+            # the CI viewer regardless.
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            if (Test-Path nexusd.log) {
+              Write-Host "=== nexusd.log (last 400 lines) ==="
+              Get-Content nexusd.log -Tail 400
+            }
+            if (Test-Path nexusd.err.log) {
+              Write-Host "=== nexusd.err.log (last 400 lines) ==="
+              Get-Content nexusd.err.log -Tail 400
+            }
           }
-          if (Test-Path nexusd.err.log) {
-            Write-Host "=== nexusd.err.log (last 400 lines) ==="
-            Get-Content nexusd.err.log -Tail 400
-          }
-
-      - name: Tear down
-        if: always() && steps.changes.outputs.run == 'true'
-        shell: pwsh
-        run: |
-          # `$pid` is a read-only automatic PowerShell variable (the
-          # current pwsh process PID) — assigning to it throws.  Use
-          # a distinct name for the daemon PID we read from disk.
-          if (Test-Path nexusd.pid) {
-            $nexusdPid = Get-Content nexusd.pid
-            Stop-Process -Id $nexusdPid -Force -ErrorAction SilentlyContinue
-          }
+          exit $testRc

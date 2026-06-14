@@ -533,6 +533,14 @@ mod dylib_e2e {
     unsafe extern "C" fn noop_rmdir(_: *const c_void, _: *const c_char) -> i32 {
         -1
     }
+    unsafe extern "C" fn noop_stat_batch(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -1
+    }
     unsafe extern "C" fn noop_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
         -1
     }
@@ -547,6 +555,7 @@ mod dylib_e2e {
             sys_mkdir: noop_mkdir,
             sys_rmdir: noop_rmdir,
             sys_rename: noop_rename,
+            sys_stat_batch: noop_stat_batch,
             kernel_ptr: std::ptr::null(),
         }
     }

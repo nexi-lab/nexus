@@ -370,6 +370,17 @@ impl FileSystemContext for NexusWinFsp {
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let entries = parse_readdir(&json);
 
+        // Single batched sys_stat for sizes — KernelHandle v3's
+        // `sys_stat_batch` (nexus-vfs#60) does one FFI hop + one
+        // kernel pass instead of N round-trips.  Aligned 1:1 with
+        // `entries` order so the index walk below matches up.
+        let child_paths: Vec<String> = entries
+            .iter()
+            .map(|(name, _)| join_path(&context.path, name))
+            .collect();
+        let sizes = kernel_callbacks::sys_stat_batch(&self.kernel, &child_paths)
+            .unwrap_or_else(|_| vec![None; entries.len()]);
+
         // `DirBuffer` is the WinFsp helper that serialises a stream
         // of `DirInfo` entries into the variable-length wire format
         // and writes it into the callback's `buffer` slice.  We feed
@@ -379,28 +390,21 @@ impl FileSystemContext for NexusWinFsp {
         let mut session = dir_buffer
             .acquire(marker.is_none(), None)
             .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-        for (name, entry_type) in entries {
-            let attrs = if entry_type == DT_DIR || entry_type == DT_MOUNT {
+        for (idx, (name, entry_type)) in entries.into_iter().enumerate() {
+            let attrs = if is_dir_entry(entry_type) {
                 FILE_ATTRIBUTE_DIRECTORY
             } else {
                 FILE_ATTRIBUTE_NORMAL
             };
-            // sys_stat for size on each entry — the cc-tasks-share
-            // workflow has tens of files per dir so the round-trips
-            // are tolerable; an offset-aware sys_readdir that
-            // emitted sizes would let us skip these stats in a
-            // follow-up.
-            let child_path = join_path(&context.path, &name);
-            let size = kernel_callbacks::sys_stat(&self.kernel, &child_path)
-                .ok()
-                .and_then(|j| parse_stat(&j).map(|(s, _)| s))
-                .unwrap_or(0);
+            // sys_stat_batch returns aligned `Option<(size, entry_type)>`;
+            // unwrap to 0 for stat-misses so the entry still surfaces.
+            let size = sizes.get(idx).copied().flatten().map(|(s, _)| s).unwrap_or(0);
 
             let mut info: DirInfo = DirInfo::new();
             info.set_name(std::ffi::OsStr::new(&name))
                 .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
             let fi = info.file_info_mut();
-            Self::populate_file_info(fi, size, entry_type == DT_DIR || entry_type == DT_MOUNT);
+            Self::populate_file_info(fi, size, is_dir_entry(entry_type));
             fi.file_attributes = attrs;
             session
                 .write(&mut info)

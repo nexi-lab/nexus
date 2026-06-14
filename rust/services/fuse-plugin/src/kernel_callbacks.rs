@@ -142,6 +142,121 @@ pub fn sys_rmdir(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
     Ok(())
 }
 
+/// Wrapper around the C `sys_stat_batch` callback (v3+).  Takes a
+/// slice of paths and returns a `Vec<Option<(size, entry_type)>>`
+/// aligned with the input.  `None` slots correspond to paths the
+/// kernel could not stat (the per-path `Option<StatResult>` in
+/// `kernel::stat_batch`).
+///
+/// Replaces N × `sys_stat` round-trips with one FFI hop + one
+/// kernel pass — used by the WinFsp adapter's `read_directory` to
+/// populate `FileInfo.file_size` for every entry without paying
+/// per-entry stat cost.
+pub fn sys_stat_batch(
+    kernel: &KernelHandle,
+    paths: &[String],
+) -> Result<Vec<Option<(u64, u64)>>, i32> {
+    // Hand-roll the input JSON array of path strings — same minimal
+    // pattern the kernel-side input parser handles, mirror of the
+    // readdir output side (escape `\` and `"`).
+    let mut input = String::from("[");
+    let mut first = true;
+    for p in paths {
+        if !first {
+            input.push(',');
+        }
+        first = false;
+        input.push('"');
+        for ch in p.chars() {
+            match ch {
+                '"' => input.push_str("\\\""),
+                '\\' => input.push_str("\\\\"),
+                c => input.push(c),
+            }
+        }
+        input.push('"');
+    }
+    input.push(']');
+    let c_input = CString::new(input).map_err(|_| ERRNO_IO_RAW)?;
+    let mut out_buf: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    let rc = unsafe {
+        (kernel.sys_stat_batch)(
+            kernel.kernel_ptr,
+            c_input.as_ptr(),
+            &mut out_buf,
+            &mut out_len,
+        )
+    };
+    if rc != 0 {
+        return Err(rc);
+    }
+    let json = consume_string_out(out_buf, out_len)?;
+    Ok(parse_stat_batch_output(&json))
+}
+
+/// Parse the `sys_stat_batch` output JSON.  Shape per slot:
+///
+/// * `[<size>, <entry_type>]` → `Some((size, entry_type))`
+/// * `null`                   → `None`
+///
+/// Returns an empty vec on malformed input — same fail-soft posture
+/// as [`parse_readdir`].
+fn parse_stat_batch_output(json: &str) -> Vec<Option<(u64, u64)>> {
+    let mut out = Vec::new();
+    // Strip exactly one outer `[ ... ]` pair — `trim_*_matches` would
+    // chew through `[[` / `]]` at the boundaries with adjacent pairs.
+    let trimmed = json.trim();
+    let mut rest = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    while !rest.is_empty() {
+        rest = rest.trim_start_matches(',').trim_start();
+        if let Some(after) = rest.strip_prefix("null") {
+            out.push(None);
+            rest = after;
+            continue;
+        }
+        let Some(after_open) = rest.strip_prefix('[') else {
+            return out;
+        };
+        let Some(size) = json_u64_at_head(after_open) else {
+            return out;
+        };
+        // Walk past the `<size>,` to the entry_type.
+        let after_size = match after_open.split_once(',') {
+            Some((_, r)) => r.trim_start(),
+            None => return out,
+        };
+        let Some(entry_type) = json_u64_at_head(after_size) else {
+            return out;
+        };
+        // Walk to the closing `]` of this pair.
+        let after_pair = match after_size.split_once(']') {
+            Some((_, r)) => r,
+            None => return out,
+        };
+        out.push(Some((size, entry_type)));
+        rest = after_pair;
+    }
+    out
+}
+
+/// Parse a leading non-negative integer from `s`, returning `None`
+/// when `s` doesn't start with digits.  Companion to [`json_u64`]
+/// which scans for a keyed value; this one's for already-positioned
+/// numeric literals.
+fn json_u64_at_head(s: &str) -> Option<u64> {
+    let end = s
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(s.len());
+    if end == 0 {
+        return None;
+    }
+    s[..end].parse().ok()
+}
+
 /// Wrapper around the C `sys_rename` callback.
 pub fn sys_rename(kernel: &KernelHandle, old_path: &str, new_path: &str) -> Result<(), i32> {
     let c_old = CString::new(old_path).map_err(|_| ERRNO_IO_RAW)?;
@@ -296,5 +411,27 @@ mod tests {
     #[test]
     fn parse_readdir_empty() {
         assert_eq!(parse_readdir("[]"), Vec::<(String, u64)>::new());
+    }
+
+    #[test]
+    fn parse_stat_batch_output_mixed() {
+        // Kernel side mirrors `[<size>,<entry_type>]` per slot, with
+        // `null` for paths it couldn't stat.
+        let json = "[[12,0],[4096,1],null,[65536,0]]";
+        let parsed = parse_stat_batch_output(json);
+        assert_eq!(
+            parsed,
+            vec![
+                Some((12u64, 0u64)),
+                Some((4096, 1)),
+                None,
+                Some((65536, 0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_stat_batch_output_empty() {
+        assert_eq!(parse_stat_batch_output("[]"), Vec::<Option<(u64, u64)>>::new());
     }
 }

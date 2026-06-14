@@ -248,9 +248,7 @@ fn parse_stat_batch_output(json: &str) -> Vec<Option<(u64, u64)>> {
 /// which scans for a keyed value; this one's for already-positioned
 /// numeric literals.
 fn json_u64_at_head(s: &str) -> Option<u64> {
-    let end = s
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(s.len());
+    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {
         return None;
     }
@@ -397,7 +395,8 @@ mod tests {
 
     #[test]
     fn parse_readdir_handles_escapes() {
-        let json = r#"[{"name":"with \"quote\"","entry_type":0},{"name":"with\\back","entry_type":0}]"#;
+        let json =
+            r#"[{"name":"with \"quote\"","entry_type":0},{"name":"with\\back","entry_type":0}]"#;
         let entries = parse_readdir(json);
         assert_eq!(
             entries,
@@ -421,17 +420,15 @@ mod tests {
         let parsed = parse_stat_batch_output(json);
         assert_eq!(
             parsed,
-            vec![
-                Some((12u64, 0u64)),
-                Some((4096, 1)),
-                None,
-                Some((65536, 0)),
-            ]
+            vec![Some((12u64, 0u64)), Some((4096, 1)), None, Some((65536, 0)),]
         );
     }
 
     #[test]
     fn parse_stat_batch_output_empty() {
-        assert_eq!(parse_stat_batch_output("[]"), Vec::<Option<(u64, u64)>>::new());
+        assert_eq!(
+            parse_stat_batch_output("[]"),
+            Vec::<Option<(u64, u64)>>::new()
+        );
     }
 }

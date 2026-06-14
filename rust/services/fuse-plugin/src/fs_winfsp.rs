@@ -53,11 +53,6 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use widestring::U16CStr;
-use winfsp::filesystem::{
-    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
-    OpenFileInfo, VolumeInfo, WideNameInfo,
-};
-use winfsp::FspError;
 use windows_sys::Win32::Foundation::{
     NTSTATUS, STATUS_DIRECTORY_NOT_EMPTY, STATUS_INVALID_DEVICE_REQUEST, STATUS_NOT_A_DIRECTORY,
     STATUS_OBJECT_NAME_NOT_FOUND,
@@ -65,6 +60,11 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
 };
+use winfsp::filesystem::{
+    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext,
+    ModificationDescriptor, OpenFileInfo, VolumeInfo, WideNameInfo,
+};
+use winfsp::FspError;
 
 use nexus_plugin_abi::KernelHandle;
 
@@ -222,8 +222,10 @@ impl FileSystemContext for NexusWinFsp {
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> Result<FileSecurity, FspError> {
         let path = Self::to_kernel_path(file_name);
-        let json = kernel_callbacks::sys_stat(&self.kernel, &path).map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
-        let (_size, entry_type) = parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        let json = kernel_callbacks::sys_stat(&self.kernel, &path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let (_size, entry_type) =
+            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
         let is_dir = is_dir_entry(entry_type);
         let attrs = if is_dir {
             FILE_ATTRIBUTE_DIRECTORY
@@ -274,7 +276,8 @@ impl FileSystemContext for NexusWinFsp {
         let path = Self::to_kernel_path(file_name);
         let is_dir = (create_options & FILE_DIRECTORY_FILE) != 0;
         if is_dir {
-            kernel_callbacks::sys_mkdir(&self.kernel, &path).map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+            kernel_callbacks::sys_mkdir(&self.kernel, &path)
+                .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         } else {
             // Compose create from empty-payload sys_write — same
             // pattern the fuser side uses; the kernel treats
@@ -398,7 +401,12 @@ impl FileSystemContext for NexusWinFsp {
             };
             // sys_stat_batch returns aligned `Option<(size, entry_type)>`;
             // unwrap to 0 for stat-misses so the entry still surfaces.
-            let size = sizes.get(idx).copied().flatten().map(|(s, _)| s).unwrap_or(0);
+            let size = sizes
+                .get(idx)
+                .copied()
+                .flatten()
+                .map(|(s, _)| s)
+                .unwrap_or(0);
 
             let mut info: DirInfo = DirInfo::new();
             info.set_name(std::ffi::OsStr::new(&name))
@@ -491,12 +499,7 @@ impl FileSystemContext for NexusWinFsp {
         Ok(())
     }
 
-    fn cleanup(
-        &self,
-        _context: &Self::FileContext,
-        _file_name: Option<&U16CStr>,
-        _flags: u32,
-    ) {
+    fn cleanup(&self, _context: &Self::FileContext, _file_name: Option<&U16CStr>, _flags: u32) {
         // No per-handle state to release on cleanup.  The actual
         // delete (when `set_delete(true)` was called earlier) ran
         // synchronously in `set_delete`; WinFsp's `cleanup` is just

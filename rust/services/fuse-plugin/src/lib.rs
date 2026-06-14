@@ -216,7 +216,8 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     Ok(()) => match winfsp::host::FileSystemHost::<
                         fs_winfsp::NexusWinFsp,
                         winfsp::host::CoarseGuard,
-                    >::start(&mut host) {
+                    >::start(&mut host)
+                    {
                         Ok(()) => {
                             eprintln!("[nexus-fuse-plugin] mount OK at {mount_point}");
                             tracing::info!(

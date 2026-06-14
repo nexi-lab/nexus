@@ -687,5 +687,4 @@ mod tests {
         assert_eq!(kind_from_entry_type(3), FileType::RegularFile);
         assert_eq!(kind_from_entry_type(99), FileType::RegularFile);
     }
-
 }

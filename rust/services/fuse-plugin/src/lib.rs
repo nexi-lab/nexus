@@ -51,6 +51,11 @@
 //! Windows today the plugin compiles to a no-op cdylib so the
 //! workspace builds cleanly across the matrix.
 
+// `path_index` is platform-agnostic — both the fuser-based fs
+// (Linux/macOS) and the WinFsp-based fs_winfsp (Windows) consume it.
+// No cfg gate.
+mod path_index;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fs;
 

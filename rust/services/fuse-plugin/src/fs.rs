@@ -44,7 +44,6 @@
 //! kernel-managed.  Surfacing `ENOSYS` keeps the operator-visible
 //! contract honest until the kernel grows a setattr surface.
 
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -56,6 +55,8 @@ use fuser::{
 };
 
 use nexus_plugin_abi::{nexus_free, KernelHandle};
+
+use crate::path_index::PathIndex;
 
 /// Cache TTL for kernel-attributes returned to FUSE.  Set to 1 second
 /// to mirror typical NFS defaults; the kernel-side metastore is the
@@ -101,88 +102,22 @@ fn errno_nosys() -> Errno {
 
 pub struct NexusFs {
     kernel: KernelHandle,
-    /// Bidirectional inode↔path index.  The forward map (`ino_to_path`)
-    /// translates a FUSE inode back to the VFS path the kernel
-    /// callbacks expect; the reverse map (`path_to_ino`) lets
-    /// `lookup` return a **stable** inode for a path it has seen
-    /// before — without it every LOOKUP minted a fresh inode and the
-    /// kernel-side FUSE driver couldn't tie its cached dentry to the
-    /// one the next op walked through (rename's `d_move` is the
-    /// canonical case: source dentry got inode A on create, dest
-    /// lookup returned inode B; the rename op's userspace handler ran
-    /// fine but the kernel-side `d_move(A → B)` linked the wrong
-    /// inode and downstream `cat <dest>` surfaced ENOENT despite the
-    /// rename having succeeded kernel-side).  Root inode
-    /// (FUSE_ROOT_RAW) is seeded with the operator-supplied
-    /// `vfs_root` prefix; child paths register on first lookup.  We
-    /// never evict — replacing the counter with a path-cache
-    /// eviction policy is a follow-up.
+    /// Bidirectional inode↔path index shared with the Windows
+    /// adapter.  See [`crate::path_index`] for the design rationale
+    /// (stable inode-per-path, rename remaps, unlink/rmdir release).
+    /// Root inode (`FUSE_ROOT_RAW`) is seeded with the operator-
+    /// supplied `vfs_root` prefix; child paths register on first
+    /// lookup.  We never evict — replacing the counter with a path-
+    /// cache eviction policy is a follow-up.
     paths: Mutex<PathIndex>,
     next_inode: AtomicU64,
-}
-
-/// Bidirectional inode↔path index — the SSOT for "what does each FUSE
-/// inode refer to right now".  Single mutex so both maps stay in
-/// lockstep; every mutator updates both sides in one critical section.
-struct PathIndex {
-    ino_to_path: HashMap<u64, String>,
-    path_to_ino: HashMap<String, u64>,
-}
-
-impl PathIndex {
-    fn with_root(vfs_root: String) -> Self {
-        let mut ino_to_path = HashMap::new();
-        let mut path_to_ino = HashMap::new();
-        ino_to_path.insert(FUSE_ROOT_RAW, vfs_root.clone());
-        path_to_ino.insert(vfs_root, FUSE_ROOT_RAW);
-        Self {
-            ino_to_path,
-            path_to_ino,
-        }
-    }
-
-    fn lookup_or_register(&mut self, path: &str, mint: impl FnOnce() -> u64) -> u64 {
-        if let Some(&ino) = self.path_to_ino.get(path) {
-            return ino;
-        }
-        let ino = mint();
-        self.ino_to_path.insert(ino, path.to_string());
-        self.path_to_ino.insert(path.to_string(), ino);
-        ino
-    }
-
-    /// Move the inode currently bound to `old_path` over to `new_path`.
-    /// No-op when `old_path` isn't tracked (e.g. the kernel-side
-    /// rename succeeded against a path the FUSE side never looked up,
-    /// which can happen with bulk operators).  Used by the `rename`
-    /// op so subsequent `read` / `getattr` on the d_moved inode walks
-    /// the new path through `sys_*` — otherwise the inode would still
-    /// resolve to `old_path` and every read would surface ENOENT.
-    fn rename(&mut self, old_path: &str, new_path: &str) {
-        let Some(ino) = self.path_to_ino.remove(old_path) else {
-            return;
-        };
-        self.ino_to_path.insert(ino, new_path.to_string());
-        self.path_to_ino.insert(new_path.to_string(), ino);
-    }
-
-    /// Drop the bidirectional mapping for `path`.  Used by `unlink`
-    /// and `rmdir` to release the inode after the kernel-side entry
-    /// is gone — a subsequent `create` at the same path then mints a
-    /// fresh inode instead of reusing one whose previous lifetime
-    /// the kernel may have already forgotten.
-    fn forget(&mut self, path: &str) {
-        if let Some(ino) = self.path_to_ino.remove(path) {
-            self.ino_to_path.remove(&ino);
-        }
-    }
 }
 
 impl NexusFs {
     pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
         Self {
             kernel,
-            paths: Mutex::new(PathIndex::with_root(vfs_root)),
+            paths: Mutex::new(PathIndex::with_root(FUSE_ROOT_RAW, vfs_root)),
             // First allocated inode = root + 1; the root inode itself
             // is reserved (fuser INodeNo::ROOT == 1).
             next_inode: AtomicU64::new(FUSE_ROOT_RAW + 1),
@@ -190,7 +125,7 @@ impl NexusFs {
     }
 
     fn path_for(&self, ino: INodeNo) -> Option<String> {
-        self.paths.lock().unwrap().ino_to_path.get(&ino.0).cloned()
+        self.paths.lock().unwrap().path_for(ino.0)
     }
 
     /// Return the existing inode for `path` if we've seen it before,

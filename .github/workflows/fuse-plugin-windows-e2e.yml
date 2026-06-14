@@ -237,6 +237,19 @@ jobs:
           $env:NEXUS_NO_TLS = "true"
           $env:NEXUS_DATA_DIR = $datadir
           $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
+          # `-NoNewWindow` ties the child to the parent pwsh's
+          # console.  GHA spawns a fresh pwsh per step, so when
+          # this step's pwsh exits, the OS detaches the console
+          # and sends `CTRL_CLOSE_EVENT` to every process attached
+          # to it — the daemon dies before the next step can probe
+          # it.  Diagnostic on commit 79697ba5e proved this: by
+          # the wait step's first iteration (~2 s after launch),
+          # `procAlive` was already False even though the plugin
+          # had logged `mount OK at M:`.  Use `-WindowStyle Hidden`
+          # to give the daemon its own (hidden) console — the
+          # child's lifecycle becomes independent of the parent
+          # pwsh's exit.  `Start-Process`'s redirect flags work
+          # with either window mode.
           $proc = Start-Process -FilePath nexusd-cluster `
             -ArgumentList @(
               "--plugin-dir", $plugindir,
@@ -247,7 +260,7 @@ jobs:
             ) `
             -RedirectStandardOutput nexusd.log `
             -RedirectStandardError nexusd.err.log `
-            -NoNewWindow `
+            -WindowStyle Hidden `
             -PassThru
           $proc.Id | Out-File -FilePath nexusd.pid -Encoding ascii
           Write-Host "nexusd-cluster started, pid=$($proc.Id)"

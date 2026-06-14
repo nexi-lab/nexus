@@ -290,11 +290,17 @@ jobs:
               Write-Host "Drives: $((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }) -join ', ')"
               Write-Host "Process alive: $(if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {'YES'} else {'NO (exited)'})"
             } else {
-              pip install -e .
+              python -m pip install -e .
               if ($LASTEXITCODE -ne 0) {
                 Write-Error "::error::pip install -e . failed (exit=$LASTEXITCODE)"
               } else {
-                pytest tests/e2e/windows/test_fuse_plugin_winfsp_e2e.py -v --no-header -o "addopts="
+                # `python -m pytest` instead of plain `pytest` — pwsh
+                # doesn't auto-include `<python>/Scripts/` (where pip
+                # drops console scripts) on PATH the way bash + venv
+                # activation do, so the bare command isn't found.
+                # Invoking through `python -m` resolves via Python's
+                # own module path, no PATH wrangling needed.
+                python -m pytest tests/e2e/windows/test_fuse_plugin_winfsp_e2e.py -v --no-header -o "addopts="
                 $testRc = $LASTEXITCODE
               }
             }

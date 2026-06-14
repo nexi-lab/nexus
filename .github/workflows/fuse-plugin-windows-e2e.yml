@@ -270,7 +270,10 @@ jobs:
         if: always() && steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
+          # `$pid` is a read-only automatic PowerShell variable (the
+          # current pwsh process PID) — assigning to it throws.  Use
+          # a distinct name for the daemon PID we read from disk.
           if (Test-Path nexusd.pid) {
-            $pid = Get-Content nexusd.pid
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            $nexusdPid = Get-Content nexusd.pid
+            Stop-Process -Id $nexusdPid -Force -ErrorAction SilentlyContinue
           }

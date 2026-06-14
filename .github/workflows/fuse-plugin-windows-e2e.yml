@@ -134,7 +134,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo install --locked \
-            --git https://github.com/nexi-lab/services/nexus-vfs \
+            --git https://github.com/nexi-lab/nexus-vfs \
             --rev "$REV" \
             --bin nexusd-cluster nexus-cluster
         # `cargo install` lands the binary in `$CARGO_HOME/bin` which

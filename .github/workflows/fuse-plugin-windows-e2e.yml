@@ -182,30 +182,40 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
-          $env:NEXUS_PLUGIN_DIR = "$env:USERPROFILE\.nexus\plugins"
+          # Spawn nexusd-cluster as a real Windows process via
+          # Start-Process so it survives this pwsh session's exit —
+          # `Start-Job` ties the daemon to the spawning pwsh process
+          # (the job table is per-pwsh), and GHA spawns a fresh pwsh
+          # per step, so by the time the next step runs the daemon
+          # has already been reaped.  Start-Process detaches cleanly;
+          # stdout + stderr go to nexusd.log which the wait/dump
+          # steps tail.  PID file persists for teardown.
+          $datadir = "$env:USERPROFILE\.nexus\data"
+          $plugindir = "$env:USERPROFILE\.nexus\plugins"
+          New-Item -ItemType Directory -Force -Path $datadir | Out-Null
+          # Env vars the plugin reads at create-time — Start-Process
+          # inherits these from the current pwsh session.
+          $env:NEXUS_PLUGIN_DIR = $plugindir
           $env:NEXUS_FUSE_MOUNT_POINT = "Z:"
           $env:NEXUS_FUSE_VFS_ROOT = "/"
           $env:NEXUS_BIND_ADDR = "0.0.0.0:2126"
           $env:NEXUS_NO_TLS = "true"
-          $env:NEXUS_DATA_DIR = "$env:USERPROFILE\.nexus\data"
+          $env:NEXUS_DATA_DIR = $datadir
           $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
-          # Spawn the daemon in a background job so the workflow step
-          # can move on to the wait + tests.  pwsh job stdout/err
-          # land in the job log under "Receive-Job nexusd" on
-          # failure.
-          $job = Start-Job -Name nexusd -ScriptBlock {
-            param($plugindir, $mountpoint, $vfsroot, $bind, $datadir)
-            $env:NEXUS_PLUGIN_DIR = $plugindir
-            $env:NEXUS_FUSE_MOUNT_POINT = $mountpoint
-            $env:NEXUS_FUSE_VFS_ROOT = $vfsroot
-            $env:NEXUS_BIND_ADDR = $bind
-            $env:NEXUS_NO_TLS = "true"
-            $env:NEXUS_DATA_DIR = $datadir
-            $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
-            nexusd-cluster --plugin-dir $plugindir --bind-addr $bind --data-dir $datadir --no-tls --bootstrap-mode dynamic
-          } -ArgumentList $env:NEXUS_PLUGIN_DIR, "Z:", "/", "0.0.0.0:2126", "$env:USERPROFILE\.nexus\data"
-          # Persist the job ID for later teardown.
-          $job.Id | Out-File -FilePath nexusd.jobid -Encoding ascii
+          $proc = Start-Process -FilePath nexusd-cluster `
+            -ArgumentList @(
+              "--plugin-dir", $plugindir,
+              "--bind-addr", "0.0.0.0:2126",
+              "--data-dir", $datadir,
+              "--no-tls",
+              "--bootstrap-mode", "dynamic"
+            ) `
+            -RedirectStandardOutput nexusd.log `
+            -RedirectStandardError nexusd.err.log `
+            -NoNewWindow `
+            -PassThru
+          $proc.Id | Out-File -FilePath nexusd.pid -Encoding ascii
+          Write-Host "nexusd-cluster started, pid=$($proc.Id)"
 
       - name: Wait for cluster + drive letter ready
         if: steps.changes.outputs.run == 'true'
@@ -228,7 +238,8 @@ jobs:
             Start-Sleep -Seconds 2
           }
           Write-Error "::error::Timed out waiting for cluster ready (180s)"
-          Receive-Job -Name nexusd
+          if (Test-Path nexusd.log) { Get-Content nexusd.log -Tail 200 }
+          if (Test-Path nexusd.err.log) { Get-Content nexusd.err.log -Tail 200 }
           exit 1
 
       - name: Run FUSE plugin Windows E2E tests
@@ -246,15 +257,20 @@ jobs:
         if: failure() && steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
-          Receive-Job -Name nexusd | Tee-Object -FilePath nexusd.log
-          if (Test-Path nexusd.log) { Get-Content nexusd.log -Tail 400 }
+          if (Test-Path nexusd.log) {
+            Write-Host "=== nexusd.log (last 400 lines) ==="
+            Get-Content nexusd.log -Tail 400
+          }
+          if (Test-Path nexusd.err.log) {
+            Write-Host "=== nexusd.err.log (last 400 lines) ==="
+            Get-Content nexusd.err.log -Tail 400
+          }
 
       - name: Tear down
         if: always() && steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
-          if (Test-Path nexusd.jobid) {
-            $jid = Get-Content nexusd.jobid
-            Stop-Job -Id $jid -ErrorAction SilentlyContinue
-            Remove-Job -Id $jid -ErrorAction SilentlyContinue
+          if (Test-Path nexusd.pid) {
+            $pid = Get-Content nexusd.pid
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
           }

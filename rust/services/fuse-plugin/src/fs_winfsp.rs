@@ -61,8 +61,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
 };
 use winfsp::filesystem::{
-    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
-    VolumeInfo, WideNameInfo,
+    DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo, VolumeInfo,
+    WideNameInfo,
 };
 use winfsp::FspError;
 
@@ -111,6 +111,14 @@ pub struct NexusFileContext {
     /// `read_directory` can short-circuit on non-directories
     /// without a kernel round-trip.
     is_dir: bool,
+    /// Per-handle DirBuffer for directory enumeration.  WinFsp
+    /// calls `read_directory` repeatedly with `marker` for
+    /// continuation; the buffer must persist across calls so
+    /// subsequent reads resume from the marker instead of
+    /// re-populating from scratch (which would loop the first
+    /// entry forever — observed locally as `ls Y:\` repeating
+    /// `probe.json` 65 times before the test runner gave up).
+    dir_buffer: std::sync::Mutex<winfsp::filesystem::DirBuffer>,
 }
 
 /// The Windows-side filesystem context.  `Send` + `Sync` because
@@ -225,7 +233,7 @@ impl FileSystemContext for NexusWinFsp {
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (_size, entry_type) =
-            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            parse_stat(&json).ok_or(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
         let is_dir = is_dir_entry(entry_type);
         let attrs = if is_dir {
             FILE_ATTRIBUTE_DIRECTORY
@@ -250,11 +258,15 @@ impl FileSystemContext for NexusWinFsp {
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (size, entry_type) =
-            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            parse_stat(&json).ok_or(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
         let is_dir = is_dir_entry(entry_type);
         self.inode_for(&path);
         Self::populate_file_info(file_info.as_mut(), size, is_dir);
-        Ok(NexusFileContext { path, is_dir })
+        Ok(NexusFileContext {
+            path,
+            is_dir,
+            dir_buffer: std::sync::Mutex::new(winfsp::filesystem::DirBuffer::new()),
+        })
     }
 
     fn close(&self, _context: Self::FileContext) {
@@ -288,13 +300,14 @@ impl FileSystemContext for NexusWinFsp {
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (size, entry_type) =
-            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            parse_stat(&json).ok_or(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
         let parsed_is_dir = is_dir_entry(entry_type);
         self.inode_for(&path);
         Self::populate_file_info(file_info.as_mut(), size, parsed_is_dir);
         Ok(NexusFileContext {
             path,
             is_dir: parsed_is_dir,
+            dir_buffer: std::sync::Mutex::new(winfsp::filesystem::DirBuffer::new()),
         })
     }
 
@@ -306,7 +319,7 @@ impl FileSystemContext for NexusWinFsp {
         let json = kernel_callbacks::sys_stat(&self.kernel, &context.path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (size, entry_type) =
-            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            parse_stat(&json).ok_or(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
         let is_dir = is_dir_entry(entry_type);
         Self::populate_file_info(file_info, size, is_dir);
         Ok(())
@@ -369,56 +382,65 @@ impl FileSystemContext for NexusWinFsp {
         if !context.is_dir {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
         }
-        let json = kernel_callbacks::sys_readdir(&self.kernel, &context.path)
-            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
-        let entries = parse_readdir(&json);
-
-        // Single batched sys_stat for sizes — KernelHandle v3's
-        // `sys_stat_batch` (nexus-vfs#60) does one FFI hop + one
-        // kernel pass instead of N round-trips.  Aligned 1:1 with
-        // `entries` order so the index walk below matches up.
-        let child_paths: Vec<String> = entries
-            .iter()
-            .map(|(name, _)| join_path(&context.path, name))
-            .collect();
-        let sizes = kernel_callbacks::sys_stat_batch(&self.kernel, &child_paths)
-            .unwrap_or_else(|_| vec![None; entries.len()]);
-
-        // `DirBuffer` is the WinFsp helper that serialises a stream
-        // of `DirInfo` entries into the variable-length wire format
-        // and writes it into the callback's `buffer` slice.  We feed
-        // it `marker` so it can skip entries the kernel has already
-        // received on a previous call (continuation).
-        let dir_buffer = DirBuffer::new();
-        let session = dir_buffer
-            .acquire(marker.is_none(), None)
+        let dir_buffer = context
+            .dir_buffer
+            .lock()
             .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-        for (idx, (name, entry_type)) in entries.into_iter().enumerate() {
-            let attrs = if is_dir_entry(entry_type) {
-                FILE_ATTRIBUTE_DIRECTORY
-            } else {
-                FILE_ATTRIBUTE_NORMAL
-            };
-            // sys_stat_batch returns aligned `Option<(size, entry_type)>`;
-            // unwrap to 0 for stat-misses so the entry still surfaces.
-            let size = sizes
-                .get(idx)
-                .copied()
-                .flatten()
-                .map(|(s, _)| s)
-                .unwrap_or(0);
 
-            let mut info: DirInfo = DirInfo::new();
-            info.set_name(std::ffi::OsStr::new(&name))
+        // `marker.is_none()` is WinFsp's signal that this is the
+        // first read_directory call for this open handle — populate
+        // the per-handle DirBuffer once.  Subsequent calls (marker
+        // present) skip straight to the `read` step below, which
+        // resumes from where the prior call left off.  Filling on
+        // every call would feed WinFsp the first entry forever and
+        // turn `ls` into an infinite loop (verified locally before
+        // this fix).
+        if marker.is_none() {
+            let json = kernel_callbacks::sys_readdir(&self.kernel, &context.path)
+                .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+            let entries = parse_readdir(&json);
+
+            // Single batched sys_stat for sizes — KernelHandle v3's
+            // `sys_stat_batch` (nexus-vfs#60) does one FFI hop + one
+            // kernel pass instead of N round-trips.  Aligned 1:1 with
+            // `entries` order so the index walk below matches up.
+            let child_paths: Vec<String> = entries
+                .iter()
+                .map(|(name, _)| join_path(&context.path, name))
+                .collect();
+            let sizes = kernel_callbacks::sys_stat_batch(&self.kernel, &child_paths)
+                .unwrap_or_else(|_| vec![None; entries.len()]);
+
+            let session = dir_buffer
+                .acquire(true, None)
                 .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-            let fi = info.file_info_mut();
-            Self::populate_file_info(fi, size, is_dir_entry(entry_type));
-            fi.file_attributes = attrs;
-            session
-                .write(&mut info)
-                .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            for (idx, (name, entry_type)) in entries.into_iter().enumerate() {
+                let attrs = if is_dir_entry(entry_type) {
+                    FILE_ATTRIBUTE_DIRECTORY
+                } else {
+                    FILE_ATTRIBUTE_NORMAL
+                };
+                // sys_stat_batch returns aligned `Option<(size, entry_type)>`;
+                // unwrap to 0 for stat-misses so the entry still surfaces.
+                let size = sizes
+                    .get(idx)
+                    .copied()
+                    .flatten()
+                    .map(|(s, _)| s)
+                    .unwrap_or(0);
+
+                let mut info: DirInfo = DirInfo::new();
+                info.set_name(std::ffi::OsStr::new(&name))
+                    .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+                let fi = info.file_info_mut();
+                Self::populate_file_info(fi, size, is_dir_entry(entry_type));
+                fi.file_attributes = attrs;
+                session
+                    .write(&mut info)
+                    .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            }
+            drop(session);
         }
-        drop(session);
         let written = dir_buffer.read(marker, buffer);
         Ok(written)
     }

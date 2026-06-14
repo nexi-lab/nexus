@@ -16,6 +16,8 @@
 //!   /vault/versions/passwords/{title}/{v:010}   → StoredEntry
 //!   /vault/versions/{namespace}/{key}/{v:010}   → StoredEntry
 
+pub mod idle;
+
 use std::ffi::c_char;
 use std::path::PathBuf;
 use std::sync::Arc;

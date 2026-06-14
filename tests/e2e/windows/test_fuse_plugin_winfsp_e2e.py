@@ -111,7 +111,9 @@ def session_name() -> str:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _cmd(args: list[str], *, check: bool = True, timeout: float = 30) -> subprocess.CompletedProcess[str]:
+def _cmd(
+    args: list[str], *, check: bool = True, timeout: float = 30
+) -> subprocess.CompletedProcess[str]:
     """Run a `cmd.exe /c` command — the kernel-level path operator
     tools take.  Avoid PowerShell here because PS cmdlets sometimes
     route through their own caches that mask FUSE behaviours."""
@@ -127,16 +129,19 @@ def _cmd(args: list[str], *, check: bool = True, timeout: float = 30) -> subproc
 
 def _vfs_stat(grpc_target: str, path: str) -> dict:
     from tests.e2e.docker import runbook_helpers
+
     return runbook_helpers.vfs_stat(grpc_target, path)
 
 
 def _vfs_read(grpc_target: str, path: str) -> dict:
     from tests.e2e.docker import runbook_helpers
+
     return runbook_helpers.vfs_read(grpc_target, path)
 
 
 def _decode_content(read_result: dict) -> bytes:
     from tests.e2e.docker import runbook_helpers
+
     return runbook_helpers.decode_content(read_result)
 
 
@@ -206,9 +211,7 @@ class TestSanity:
 
 
 class TestSessionLifecycle:
-    def test_create_session_write_read_cleanup(
-        self, topology: Topology, session_name: str
-    ) -> None:
+    def test_create_session_write_read_cleanup(self, topology: Topology, session_name: str) -> None:
         sess_rel = f".claude/tasks/{session_name}"
         sess_mount = topology.mount_path(sess_rel)
         task_payloads = {
@@ -219,12 +222,8 @@ class TestSessionLifecycle:
         try:
             # Step 1: mkdir session dir — sys_mkdir.
             _cmd(["mkdir", sess_mount])
-            stat = _wait_path_via_grpc(
-                topology, topology.vfs_path(sess_rel), expect_found=True
-            )
-            assert stat["result"]["isDirectory"], (
-                f"session dir not seen as dir by kernel: {stat}"
-            )
+            stat = _wait_path_via_grpc(topology, topology.vfs_path(sess_rel), expect_found=True)
+            assert stat["result"]["isDirectory"], f"session dir not seen as dir by kernel: {stat}"
 
             # Step 2: write N tasks — N × sys_write.  Each write
             # depends on the parent dir from step 1; we verify each
@@ -340,9 +339,7 @@ class TestMidSessionRename:
             # sides of the rename.  draft.json must be ENOENT;
             # in-progress.json must exist with the same size old had.
             _wait_path_via_grpc(topology, topology.vfs_path(old_rel), expect_found=False)
-            new_stat = _wait_path_via_grpc(
-                topology, topology.vfs_path(new_rel), expect_found=True
-            )
+            new_stat = _wait_path_via_grpc(topology, topology.vfs_path(new_rel), expect_found=True)
             assert new_stat["result"]["size"] == old_size, (
                 f"rename moved metadata but lost bytes\n"
                 f"  old size: {old_size}\n"
@@ -382,9 +379,7 @@ class TestMidSessionRename:
 
 
 class TestCrossLayerWriteIntegrity:
-    def test_mount_write_visible_through_grpc(
-        self, topology: Topology, session_name: str
-    ) -> None:
+    def test_mount_write_visible_through_grpc(self, topology: Topology, session_name: str) -> None:
         sess_rel = f".claude/tasks/{session_name}"
         sess_mount = topology.mount_path(sess_rel)
         file_rel = f"{sess_rel}/cross-layer.json"
@@ -402,13 +397,9 @@ class TestCrossLayerWriteIntegrity:
             # SUCCESS but never reached the metastore would surface
             # size=0 here while mount-side `type` would still serve
             # the buffer from WinFsp's cache.
-            stat = _wait_path_via_grpc(
-                topology, topology.vfs_path(file_rel), expect_found=True
-            )
+            stat = _wait_path_via_grpc(topology, topology.vfs_path(file_rel), expect_found=True)
             assert stat["result"]["size"] > 0, (
-                f"plugin reported sys_write success but kernel sees "
-                f"size=0\n"
-                f"  vfs_stat: {stat}"
+                f"plugin reported sys_write success but kernel sees size=0\n  vfs_stat: {stat}"
             )
 
             # Step 4: kernel-side byte-exact read — the SSOT.

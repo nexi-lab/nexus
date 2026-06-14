@@ -74,7 +74,10 @@ impl PathIndex {
     /// Look up the path bound to an inode, returning a clone so the
     /// caller can drop its outer lock before issuing the kernel
     /// callback (avoids holding the index mutex across an FFI call
-    /// that may take milliseconds on a cold path).
+    /// that may take milliseconds on a cold path).  Only the fuser
+    /// branch's `fs.rs` uses this — WinFsp passes the path verbatim
+    /// on every callback, so the Windows build doesn't reach for it.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn path_for(&self, ino: u64) -> Option<String> {
         self.ino_to_path.get(&ino).cloned()
     }

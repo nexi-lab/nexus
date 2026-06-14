@@ -61,8 +61,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
 };
 use winfsp::filesystem::{
-    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext,
-    ModificationDescriptor, OpenFileInfo, VolumeInfo, WideNameInfo,
+    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
+    VolumeInfo, WideNameInfo,
 };
 use winfsp::FspError;
 
@@ -389,8 +389,8 @@ impl FileSystemContext for NexusWinFsp {
         // and writes it into the callback's `buffer` slice.  We feed
         // it `marker` so it can skip entries the kernel has already
         // received on a previous call (continuation).
-        let mut dir_buffer = DirBuffer::new();
-        let mut session = dir_buffer
+        let dir_buffer = DirBuffer::new();
+        let session = dir_buffer
             .acquire(marker.is_none(), None)
             .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
         for (idx, (name, entry_type)) in entries.into_iter().enumerate() {

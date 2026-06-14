@@ -16,8 +16,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Server;
 
+use nexus_vault::idle::{wait_for_shutdown, IdleTracker, ShutdownReason};
 use services::generic_secrets::proto::generic_secrets_service_server::GenericSecretsServiceServer;
 use services::generic_secrets::GenericSecretsServiceImpl;
 use services::password_vault::proto::password_vault_service_server::PasswordVaultServiceServer;
@@ -48,6 +50,36 @@ struct Args {
     /// Defaults to `<data_dir>/vault/master.key` if unset.
     #[arg(long, env = "NEXUS_VAULT_MASTER_KEY")]
     master_key_path: Option<PathBuf>,
+
+    /// Shut down when idle for this many seconds (0 = disabled).
+    ///
+    /// Use this on hosts whose `--data-dir` lives on file-level cloud-synced
+    /// storage (Dropbox / OneDrive / iCloud / Syncthing / NFS). The OS holds
+    /// exclusive locks on `vault-meta.redb` while the daemon runs; a
+    /// long-running daemon starves the sync client. With this set, the
+    /// daemon exits when traffic has been quiet long enough that the sync
+    /// client can publish a clean state. Forward note: this is an interim
+    /// story until nexus-vfs federation supplants file-level cloud sync.
+    ///
+    /// Should be set higher than the longest expected RPC duration. Typical
+    /// values: 30 (interactive on-demand), 300 (back-to-back batch).
+    #[arg(long, env = "NEXUS_VAULT_IDLE_SHUTDOWN_SECONDS", default_value_t = 0)]
+    idle_shutdown_seconds: u64,
+}
+
+/// gRPC interceptor that marks the shared `IdleTracker` active on every
+/// inbound request. Cheap (a single `Relaxed` atomic store) and stateless.
+#[derive(Clone)]
+struct BumpInterceptor(IdleTracker);
+
+impl tonic::service::Interceptor for BumpInterceptor {
+    fn call(
+        &mut self,
+        req: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
+        self.0.bump();
+        Ok(req)
+    }
 }
 
 #[tokio::main]
@@ -124,18 +156,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(
         vault_dir = %vault_dir.display(),
         bind_addr = %args.bind_addr,
+        idle_shutdown_seconds = args.idle_shutdown_seconds,
         "starting nexusd-vault"
     );
 
+    let tracker = IdleTracker::new();
+    let pwd_intercepted = InterceptedService::new(
+        PasswordVaultServiceServer::new(svc),
+        BumpInterceptor(tracker.clone()),
+    );
+    let sec_intercepted = InterceptedService::new(
+        GenericSecretsServiceServer::new(secrets_svc),
+        BumpInterceptor(tracker.clone()),
+    );
+
+    let signal = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install SIGINT handler");
+    };
+    let idle_shutdown_seconds = args.idle_shutdown_seconds;
+    let shutdown_fut = async move {
+        match wait_for_shutdown(tracker, signal, idle_shutdown_seconds).await {
+            ShutdownReason::Signal => tracing::info!("shutdown signal received"),
+            ShutdownReason::Idle { idle_for_secs } => {
+                tracing::info!(idle_for_secs, "idle threshold reached — initiating shutdown");
+            }
+        }
+    };
+
     Server::builder()
-        .add_service(PasswordVaultServiceServer::new(svc))
-        .add_service(GenericSecretsServiceServer::new(secrets_svc))
-        .serve_with_shutdown(args.bind_addr, async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("install SIGINT handler");
-            tracing::info!("shutdown signal received");
-        })
+        .add_service(pwd_intercepted)
+        .add_service(sec_intercepted)
+        .serve_with_shutdown(args.bind_addr, shutdown_fut)
         .await?;
 
     tracing::info!("nexusd-vault exited cleanly");

@@ -1,0 +1,255 @@
+name: FUSE Plugin Windows E2E
+
+# Runs `tests/e2e/windows/test_fuse_plugin_winfsp_e2e.py` against a
+# real WinFsp mount on a `windows-latest` runner.
+#
+# Unlike the Linux E2E (which uses Docker because /dev/fuse fits the
+# container model), this suite runs natively — WinFsp is a Windows
+# kernel driver and there's no equivalent container surface.  The
+# runner installs WinFsp via chocolatey, builds nexusd-cluster + the
+# signed FUSE plugin dylib, mounts the plugin at a drive letter, and
+# exercises every WinFsp callback the v3 KernelHandle adapter wires
+# via plain `cmd.exe` commands with a gRPC `vfs_stat` / `vfs_read`
+# cross-check at every step.
+#
+# Cross-layer pattern matches `fuse-plugin-e2e.yml` (Linux Docker
+# E2E) so a regression on either the plugin or the kernel side
+# surfaces as a mismatch rather than a silent pass.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'rust/services/fuse-plugin/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tests/e2e/windows/**'
+      - '.github/workflows/fuse-plugin-windows-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuse-plugin-windows-e2e:
+    name: FUSE Plugin Windows E2E
+    runs-on: windows-latest
+    # Cold cache: cluster + plugin build + WinFsp install + test
+    # suite is ~15 min; 30 min upper bound matches the Linux E2E's
+    # budget with margin for Windows-specific overhead (slower disk).
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect Windows-FUSE-relevant changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          if grep -Eq '^(rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/windows/)' /tmp/changed_files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip — no relevant changes
+        if: steps.changes.outputs.run != 'true'
+        run: |
+          echo "No FUSE-plugin-relevant Windows changes; reporting required check without running suite."
+
+      # WinFsp is the Windows kernel-side userspace-filesystem driver
+      # the plugin depends on at runtime.  Chocolatey's `winfsp`
+      # package installs the .sys driver + the userspace DLL.  The
+      # /VERYSILENT switch skips the GUI installer's UAC dance — fine
+      # because the runner already runs as Administrator.
+      - name: Install WinFsp
+        if: steps.changes.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          choco install winfsp -y --no-progress
+          # Verify the driver landed.
+          if (-not (Test-Path 'C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll')) {
+            Write-Error "WinFsp install did not place winfsp-x64.dll"
+            exit 1
+          }
+
+      # windows-latest has LLVM preinstalled at C:\Program Files\LLVM
+      # — winfsp-sys's build script needs libclang via LIBCLANG_PATH.
+      - name: Verify LLVM present (LIBCLANG_PATH)
+        if: steps.changes.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) {
+            Write-Error "Expected libclang.dll at C:\Program Files\LLVM\bin\ (windows-latest preinstall)"
+            exit 1
+          }
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Install Rust toolchain
+        if: steps.changes.outputs.run == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Rust cache
+        if: steps.changes.outputs.run == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fuse-plugin-windows-e2e
+
+      # SSOT: the nexus-vfs SHA the cluster binary compiles against
+      # lives in `Cargo.toml`'s workspace dep rev.  Extract once,
+      # reuse below for nexusd-cluster install.
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        if: steps.changes.outputs.run == 'true'
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Install nexusd-cluster from nexus-vfs (pinned)
+        if: steps.changes.outputs.run == 'true'
+        env:
+          REV: ${{ steps.vfs_rev.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cargo install --locked \
+            --git https://github.com/nexi-lab/services/nexus-vfs \
+            --rev "$REV" \
+            --bin nexusd-cluster nexus-cluster
+        # `cargo install` lands the binary in `$CARGO_HOME/bin` which
+        # is already on $PATH for subsequent steps via setup-rust-
+        # toolchain.
+
+      - name: Build + sign FUSE plugin dylib
+        if: steps.changes.outputs.run == 'true'
+        env:
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available — cannot sign the FUSE plugin"
+            exit 1
+          fi
+          # cargo install of nexusd-cluster from upstream brings its
+          # own protoc inside the build environment; for the plugin
+          # cargo invocation below, set PROTOC explicitly to avoid
+          # picking up a different version from $PATH.
+          export PROTOC="$(which protoc 2>/dev/null || true)"
+          if [ -z "$PROTOC" ]; then
+            choco install protoc -y --no-progress
+            export PROTOC="C:/ProgramData/chocolatey/lib/protoc/tools/bin/protoc.exe"
+          fi
+          cargo build --release -p nexus-fuse-plugin --target x86_64-pc-windows-msvc
+          # Windows dylib filename: strip the `lib` prefix, .dll
+          # extension.  Sign in-place per sign_plugin.py contract.
+          python scripts/sign_plugin.py \
+            target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll
+
+      - name: Prepare plugin dir
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.nexus/plugins
+          cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll ~/.nexus/plugins/
+          cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll.sig ~/.nexus/plugins/
+
+      - name: Launch nexusd-cluster + mount FUSE plugin at Z:
+        if: steps.changes.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          $env:NEXUS_PLUGIN_DIR = "$env:USERPROFILE\.nexus\plugins"
+          $env:NEXUS_FUSE_MOUNT_POINT = "Z:"
+          $env:NEXUS_FUSE_VFS_ROOT = "/"
+          $env:NEXUS_BIND_ADDR = "0.0.0.0:2126"
+          $env:NEXUS_NO_TLS = "true"
+          $env:NEXUS_DATA_DIR = "$env:USERPROFILE\.nexus\data"
+          $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
+          # Spawn the daemon in a background job so the workflow step
+          # can move on to the wait + tests.  pwsh job stdout/err
+          # land in the job log under "Receive-Job nexusd" on
+          # failure.
+          $job = Start-Job -Name nexusd -ScriptBlock {
+            param($plugindir, $mountpoint, $vfsroot, $bind, $datadir)
+            $env:NEXUS_PLUGIN_DIR = $plugindir
+            $env:NEXUS_FUSE_MOUNT_POINT = $mountpoint
+            $env:NEXUS_FUSE_VFS_ROOT = $vfsroot
+            $env:NEXUS_BIND_ADDR = $bind
+            $env:NEXUS_NO_TLS = "true"
+            $env:NEXUS_DATA_DIR = $datadir
+            $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
+            nexusd-cluster --plugin-dir $plugindir --bind-addr $bind --data-dir $datadir --no-tls --bootstrap-mode dynamic
+          } -ArgumentList $env:NEXUS_PLUGIN_DIR, "Z:", "/", "0.0.0.0:2126", "$env:USERPROFILE\.nexus\data"
+          # Persist the job ID for later teardown.
+          $job.Id | Out-File -FilePath nexusd.jobid -Encoding ascii
+
+      - name: Wait for cluster + drive letter ready
+        if: steps.changes.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddSeconds(180)
+          while ((Get-Date) -lt $deadline) {
+            $grpcOK = $false
+            try {
+              $tcp = New-Object Net.Sockets.TcpClient
+              $tcp.Connect("127.0.0.1", 2126)
+              if ($tcp.Connected) { $grpcOK = $true }
+              $tcp.Close()
+            } catch { }
+            $driveOK = Test-Path "Z:\"
+            if ($grpcOK -and $driveOK) {
+              Write-Host "Cluster healthy (gRPC + Z:\\ drive mounted)"
+              exit 0
+            }
+            Start-Sleep -Seconds 2
+          }
+          Write-Error "::error::Timed out waiting for cluster ready (180s)"
+          Receive-Job -Name nexusd
+          exit 1
+
+      - name: Run FUSE plugin Windows E2E tests
+        if: steps.changes.outputs.run == 'true'
+        env:
+          NEXUS_FUSE_WINDOWS_E2E: "1"
+          NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
+          NEXUS_FUSE_MOUNT_POINT: "Z:"
+        run: |
+          set -euo pipefail
+          pip install -e .
+          pytest tests/e2e/windows/test_fuse_plugin_winfsp_e2e.py -v --no-header -o "addopts="
+
+      - name: Dump cluster logs on failure
+        if: failure() && steps.changes.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          Receive-Job -Name nexusd | Tee-Object -FilePath nexusd.log
+          if (Test-Path nexusd.log) { Get-Content nexusd.log -Tail 400 }
+
+      - name: Tear down
+        if: always() && steps.changes.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          if (Test-Path nexusd.jobid) {
+            $jid = Get-Content nexusd.jobid
+            Stop-Job -Id $jid -ErrorAction SilentlyContinue
+            Remove-Job -Id $jid -ErrorAction SilentlyContinue
+          }

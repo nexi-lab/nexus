@@ -196,71 +196,161 @@ class TestStackReadiness:
 class TestSingleNodeOperatorSurface:
     """Bytes round-trip through every surface a single node exposes.
 
-    Five-step workflow mirroring the operator's day-1 path:
+    Two operator-facing workflows.  Both cross-check FUSE + gRPC +
+    host-fs simultaneously so a regression in any layer surfaces at
+    a specific step.
 
-      1. CC drops a task JSON in ``~/.claude/tasks/`` — host fs write.
-      2. ``vfs_read`` over gRPC sees those bytes — LocalConnector
-         backend resolves the path.  Required by step 3: confirms the
-         metadata path exists before we exercise FUSE which composes
-         on top of it.
-      3. ``cat /mnt/cc-tasks/founder/<rel>`` via FUSE returns the same
-         bytes — the FUSE event loop's read callback walks all the
-         way down to the LocalConnector.
-      4. CC updates the JSON via the FUSE mount (``cat > <path>``).
-         Output: the FUSE write callback fires sys_write through
-         KernelHandle v3.  Required by step 5.
-      5. ``/host/tasks/<rel>`` shows the new bytes — SSOT preserved
-         end-to-end.  A regression in FUSE's write callback or the
-         LocalConnector's write impl breaks this.
+    Caveat the workflow shape locks down: LocalConnector is
+    lazy-materialise — host-fs-only writes (bytes on disk, no
+    sys_write through Nexus) are visible via ``vfs_read`` (the
+    backend's ``read`` falls through to disk) but NOT via
+    ``vfs_stat`` (the kernel returns metastore-only).  Since FUSE
+    ``lookup`` calls ``sys_stat``, host-fs-only files are
+    ENOENT-on-lookup through the mount.  This is by design — making
+    FUSE see arbitrary host-fs changes needs LocalConnector
+    background scan or inotify, tracked separately.  Workflow 1
+    exercises the path that does work (write through Nexus → all
+    surfaces see it).  Workflow 2 pins the lazy-fallthrough property
+    via the gRPC surface explicitly.
     """
 
-    def test_host_write_then_grpc_then_fuse_then_write_back(
+    def test_fuse_write_visible_at_grpc_and_host_fs_then_host_overwrite_visible_via_fuse(
         self, topology: CcTasksTopology, api_key: str, ready_node: None
     ) -> None:
+        """6-step: FUSE write materialises metadata + bytes; host overwrite stays visible.
+
+        Once the path is materialised in the kernel metastore via FUSE
+        write, subsequent host-fs overwrites (same-size payload) ARE
+        visible via FUSE read — the metastore lookup hits, sys_read
+        falls through to the LocalConnector backend, and the backend
+        reads disk.  Same-size constraint is the LocalConnector
+        lazy-materialise contract; size-mismatched overwrite would
+        truncate at the cached metadata size.
+        """
         session = _new_session()
         relpath = f"/{session}/1.json"
-        initial = b'{"task":"first","step":"host-write"}'
-        updated = b'{"task":"first","step":"fuse-overwrite"}'
+        initial = b'{"task":"first","step":"fuse-write-X"}'
+        overwrite = b'{"task":"first","step":"host-rewrite"}'
+        # Same byte length keeps the metastore-cached size honest
+        # against the LocalConnector backend bytes.
+        assert len(initial) == len(overwrite), (
+            f"test bug: initial({len(initial)}) != overwrite({len(overwrite)})"
+        )
         vfs_path = topology.founder_vfs_path(relpath)
         mount_path = topology.mount_path_for_vfs(vfs_path)
 
         try:
-            # Step 1: host-fs write (Claude Code analogue).
-            cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, initial)
+            # Step 1: FUSE write — sys_write fires, kernel materialises
+            # metadata, LocalConnector writes through to host fs.
+            # FUSE `cat >` does not auto-mkdir; create parent first.
+            cc_tasks_share_helpers.mount_mkdir(
+                topology.founder_container,
+                topology.mount_path_for_vfs(topology.founder_vfs_path(f"/{session}")),
+            )
+            cc_tasks_share_helpers.mount_write_bytes(
+                topology.founder_container, mount_path, initial
+            )
 
-            # Step 2: gRPC vfs_read sees the bytes via LocalConnector.
+            # Step 2: gRPC vfs_read sees the bytes.  Confirms the
+            # sys_write reached the LocalConnector backend.
             grpc_read = runbook_helpers.vfs_read(topology.founder_grpc, vfs_path, api_key=api_key)
             assert "error" not in grpc_read, f"gRPC vfs_read failed: {grpc_read}"
             assert runbook_helpers.decode_content(grpc_read) == initial, (
-                "LocalConnector backend did not surface host-fs bytes via gRPC — "
-                "SSOT property broken at the gRPC surface"
+                "FUSE-write bytes did not round-trip via gRPC vfs_read"
             )
 
-            # Step 3: FUSE mount read returns the same bytes —
-            # the chain FUSE → kernel → DT_MOUNT → LocalConnector → host fs.
-            fuse_read = cc_tasks_share_helpers.mount_read_bytes(
+            # Step 3: SSOT — host fs has the bytes.  LocalConnector is
+            # not a copy; bytes live at /host/tasks/<rel> directly.
+            host_bytes = cc_tasks_share_helpers.host_task_read(topology.founder_container, relpath)
+            assert host_bytes == initial, (
+                f"host fs has {host_bytes!r}, expected {initial!r} — "
+                "FUSE write or LocalConnector write impl dropped bytes"
+            )
+
+            # Step 4: host-fs overwrite (Claude Code rewriting the JSON
+            # in place).  Same-size payload preserves the metastore
+            # size cache.
+            cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, overwrite)
+
+            # Step 5: gRPC vfs_read sees the new bytes — LocalConnector
+            # backend re-reads from disk each call.
+            grpc_after = runbook_helpers.vfs_read(topology.founder_grpc, vfs_path, api_key=api_key)
+            assert "error" not in grpc_after, (
+                f"gRPC vfs_read after host overwrite failed: {grpc_after}"
+            )
+            assert runbook_helpers.decode_content(grpc_after) == overwrite
+
+            # Step 6: FUSE read also sees the new bytes — metadata
+            # was materialised in step 1 so lookup succeeds; sys_read
+            # falls through to the backend.
+            fuse_after = cc_tasks_share_helpers.mount_read_bytes(
                 topology.founder_container, mount_path
             )
-            assert fuse_read == initial, (
-                f"FUSE mount surfaced {fuse_read!r}, expected {initial!r} — "
-                "either FUSE read callback or downstream routing dropped bytes"
-            )
-
-            # Step 4: overwrite via FUSE mount — exercises the write
-            # callback through KernelHandle v3.
-            cc_tasks_share_helpers.mount_write_bytes(
-                topology.founder_container, mount_path, updated
-            )
-
-            # Step 5: host fs shows the new bytes — SSOT preserved
-            # through the full stack.
-            after_bytes = cc_tasks_share_helpers.host_task_read(topology.founder_container, relpath)
-            assert after_bytes == updated, (
-                f"host fs has {after_bytes!r}, expected {updated!r} — "
-                "FUSE write callback or LocalConnector write impl dropped bytes"
+            assert fuse_after == overwrite, (
+                f"FUSE read after host overwrite got {fuse_after!r}, "
+                f"expected {overwrite!r} — sys_read should fall through "
+                "to LocalConnector backend regardless of metastore cache"
             )
         finally:
-            # Cleanup: rm via host fs (FUSE may not be up at teardown).
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+    def test_host_write_visible_via_grpc_but_not_via_fuse_lookup(
+        self, topology: CcTasksTopology, api_key: str, ready_node: None
+    ) -> None:
+        """3-step: pins the lazy-materialise LocalConnector contract.
+
+        For a path that has NEVER been written through Nexus, host-fs
+        bytes are reachable via ``vfs_read`` (the backend falls through
+        to disk) but ``vfs_stat`` returns ``found=False`` (no
+        metastore entry).  This is the contract every consumer needs
+        to know about — FUSE ``lookup`` calls ``sys_stat`` and so
+        ``cat /mnt/cc-tasks/<rel>`` returns ENOENT until something
+        materialises the path.
+
+        Step 3 asserts the gap exists *today* so a future change that
+        adds eager scan or inotify-driven materialise to LocalConnector
+        will rotate this test from xfail-style to positive coverage.
+        """
+        session = _new_session()
+        relpath = f"/{session}/host-only.json"
+        payload = b'{"task":"host-only","substrate":"lazy"}'
+        vfs_path = topology.founder_vfs_path(relpath)
+        mount_path = topology.mount_path_for_vfs(vfs_path)
+
+        try:
+            # Step 1: pure host-fs write.  Bypasses every Nexus syscall.
+            cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, payload)
+
+            # Step 2: gRPC vfs_read returns the bytes — backend
+            # fall-through SSOT.
+            grpc_read = runbook_helpers.vfs_read(topology.founder_grpc, vfs_path, api_key=api_key)
+            assert "error" not in grpc_read, f"gRPC vfs_read failed: {grpc_read}"
+            assert runbook_helpers.decode_content(grpc_read) == payload, (
+                "LocalConnector lazy-read fallthrough broken — "
+                "vfs_read should serve bytes from /host/tasks regardless "
+                "of metastore state"
+            )
+
+            # Step 3: gRPC vfs_stat returns found=False (no metastore
+            # entry).  FUSE lookup-via-sys_stat returns ENOENT.  Both
+            # are the same expected gap.
+            grpc_stat = runbook_helpers.vfs_stat(topology.founder_grpc, vfs_path, api_key=api_key)
+            assert grpc_stat["result"]["found"] is False, (
+                "LocalConnector materialised host-fs path eagerly — "
+                "scan/inotify added?  Rotate this test from gap-coverage "
+                "to positive coverage and remove the gap caveats."
+            )
+            assert not cc_tasks_share_helpers.mount_path_exists(
+                topology.founder_container, mount_path
+            ), (
+                "FUSE lookup surfaced host-fs-only path — sys_stat "
+                "fell through to backend?  Rotate this test."
+            )
+        finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,
                 ["rm", "-rf", f"/host/tasks/{session}"],
@@ -274,13 +364,20 @@ class TestSingleNodeOperatorSurface:
 class TestSessionLifecycleViaFuse:
     """One session's worth of operator ops, all through the FUSE mount.
 
-    Seven-step workflow exercises every dir-mutating FUSE callback the
-    KernelHandle v3 plugin wires.  The data flow is sequential — step
-    N can't observe correct state unless step N-1 actually did what
-    its assertion claimed.
+    Six-step workflow exercises the dir-mutating FUSE callbacks the
+    KernelHandle v3 plugin wires AND the LocalConnector backend
+    implements: mkdir, write (creates file), readdir, read, unlink,
+    rmdir.
+
+    ``rename`` is **not** in this workflow — LocalConnector backend has
+    no ``rename`` impl today (only ``read`` + ``write``), so FUSE
+    ``mv`` against a LocalConnector-mounted path returns EIO.  The
+    FUSE adapter's rename callback is exercised in the WinFsp suite
+    against an in-memory backend; adding it here needs a LocalConnector
+    rename impl, tracked separately.
     """
 
-    def test_mkdir_write_ls_read_rename_unlink_rmdir(
+    def test_mkdir_write_ls_read_unlink_rmdir(
         self, topology: CcTasksTopology, api_key: str, ready_node: None
     ) -> None:
         session = _new_session()
@@ -331,41 +428,8 @@ class TestSessionLifecycleViaFuse:
                     f"FUSE read of {name} returned {roundtrip!r}, expected {payload!r}"
                 )
 
-            # Step 5: rename one file via FUSE.  Depends on (2).
-            old_name, payload = files[0]
-            new_name = "renamed.json"
-            cc_tasks_share_helpers.mount_rename(
-                topology.founder_container,
-                f"{session_mount}/{old_name}",
-                f"{session_mount}/{new_name}",
-            )
-            # Old path absent + new path present + content preserved.
-            _wait_path_via_grpc(
-                topology,
-                topology.founder_grpc,
-                f"{session_vfs}/{old_name}",
-                api_key,
-                expect_found=False,
-            )
-            _wait_path_via_grpc(
-                topology,
-                topology.founder_grpc,
-                f"{session_vfs}/{new_name}",
-                api_key,
-                expect_found=True,
-            )
-            renamed_bytes = cc_tasks_share_helpers.mount_read_bytes(
-                topology.founder_container, f"{session_mount}/{new_name}"
-            )
-            assert renamed_bytes == payload, (
-                "rename via FUSE preserved path but lost bytes — sys_rename "
-                "moved metadata but lost content reference"
-            )
-
-            # Step 6: unlink every file via FUSE.  Depends on (5)
-            # because we need the renamed name in the unlink set.
-            remaining = [(new_name, payload)] + [(n, p) for n, p in files[1:]]
-            for name, _ in remaining:
+            # Step 5: unlink every file via FUSE.  Depends on (2).
+            for name, _ in files:
                 cc_tasks_share_helpers.mount_unlink(
                     topology.founder_container, f"{session_mount}/{name}"
                 )
@@ -374,7 +438,7 @@ class TestSessionLifecycleViaFuse:
                 == []
             ), "directory not empty after sys_unlink batch — unlink callback dropped one"
 
-            # Step 7: rmdir the now-empty session dir.  Depends on (6).
+            # Step 6: rmdir the now-empty session dir.  Depends on (5).
             cc_tasks_share_helpers.mount_rmdir(topology.founder_container, session_mount)
             _wait_path_via_grpc(
                 topology,
@@ -385,6 +449,56 @@ class TestSessionLifecycleViaFuse:
             )
         finally:
             # Belt-and-suspenders: blow away any residue via host fs.
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+    def test_rename_via_fuse_on_localconnector_returns_eio(
+        self, topology: CcTasksTopology, api_key: str, ready_node: None
+    ) -> None:
+        """3-step: pins the LocalConnector ``rename`` gap.
+
+        Plant a FUSE-write so metadata + bytes exist, ``mv`` it via the
+        mount, assert the move fails with a non-zero exit (the FUSE
+        adapter correctly surfaces the backend EIO).  Test rotates to
+        positive coverage when LocalConnector grows a real ``rename``
+        impl — flip ``check=False`` to ``check=True`` and add the
+        before/after presence assertions.
+        """
+        session = _new_session()
+        session_vfs = topology.founder_vfs_path(f"/{session}")
+        session_mount = topology.mount_path_for_vfs(session_vfs)
+        src_mount = f"{session_mount}/src.json"
+        dst_mount = f"{session_mount}/dst.json"
+
+        try:
+            # Step 1: stage a FUSE-written file (mkdir + write).
+            cc_tasks_share_helpers.mount_mkdir(topology.founder_container, session_mount)
+            cc_tasks_share_helpers.mount_write_bytes(
+                topology.founder_container, src_mount, b'{"task":"rename-target"}'
+            )
+
+            # Step 2: attempt rename via FUSE — expect failure.
+            result = runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["mv", src_mount, dst_mount],
+                check=False,
+            )
+            assert result.rc != 0, (
+                "mv via FUSE succeeded — did LocalConnector grow a rename "
+                "impl?  Rotate this test from gap-coverage to positive coverage."
+            )
+
+            # Step 3: source still present, destination still absent.
+            assert cc_tasks_share_helpers.mount_path_exists(
+                topology.founder_container, src_mount
+            ), "rename failed AND lost the source — torn intermediate state"
+            assert not cc_tasks_share_helpers.mount_path_exists(
+                topology.founder_container, dst_mount
+            ), "rename failed yet partial destination created — sys_rename should be atomic"
+        finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,
                 ["rm", "-rf", f"/host/tasks/{session}"],
@@ -535,16 +649,23 @@ class TestCrossNodeFuseFederationWorkflow:
     """Mac↔Win ``cc tasks list`` analogue — full chain through FUSE+fed.
 
     Six-step workflow flows founder→joiner→founder via the operator-
-    facing FUSE mount surface end-to-end.  Pins both the lazy-observe
-    substrate (nexus-vfs#46) AND the FUSE plugin's correctness when
-    its reads cross a federation boundary.
+    facing FUSE mount surface end-to-end.  Pins the FUSE plugin's
+    correctness when its reads cross a federation boundary AND the
+    raft-replicated metadata + last_writer_address routing the joiner
+    needs to fetch bytes from founder's host fs.
 
-    The substrate without FUSE was already covered by the prior
-    ``TestCrossNodeLazyMaterialization`` (now folded in here);
-    the FUSE layer on top is the operator-facing chain we ship.
+    Mode: writes go through the FUSE mount (not direct host fs) so
+    sys_write materialises kernel metadata + last_writer_address.
+    Without that, joiner has no DT_FILE entry to look up and FUSE
+    `cat` returns ENOENT before sys_read can fan out (the
+    LocalConnector lazy-materialise gap pinned in
+    ``TestSingleNodeOperatorSurface.test_host_write_visible_via_grpc_but_not_via_fuse_lookup``).
+    The Mac↔Win operator workflow's write-through-FUSE shape matches
+    this — the FUSE mount IS the write surface, not just the read
+    surface.
     """
 
-    def test_founder_host_write_visible_via_joiner_fuse_then_symmetric(
+    def test_founder_fuse_write_visible_via_joiner_fuse_then_symmetric(
         self,
         topology: CcTasksTopology,
         api_key: str,
@@ -559,37 +680,41 @@ class TestCrossNodeFuseFederationWorkflow:
         founder_mount = topology.mount_path_for_vfs(founder_vfs)
 
         try:
-            # Step 1: Claude Code on founder writes a task JSON
-            # directly to host fs.  No Nexus syscall — no metadata,
-            # no last_writer_address.
-            cc_tasks_share_helpers.host_task_write(
-                topology.founder_container, relpath, founder_payload
+            # Step 1: founder writes the task JSON via its FUSE mount.
+            # `cat > /mnt/cc-tasks/founder/<rel>` triggers sys_write
+            # which (a) writes bytes through LocalConnector to founder's
+            # host fs and (b) materialises metadata in founder's
+            # metastore with last_writer_address=founder.  Parent dir
+            # is created first — FUSE `cat >` does not auto-mkdir.
+            cc_tasks_share_helpers.mount_mkdir(
+                topology.founder_container,
+                topology.mount_path_for_vfs(topology.founder_vfs_path(f"/{session}")),
+            )
+            cc_tasks_share_helpers.mount_write_bytes(
+                topology.founder_container, founder_mount, founder_payload
             )
 
             # Step 2: sanity — bytes are physically on founder's host
-            # fs.  Pins the "no Nexus involvement" precondition.
-            sanity = cc_tasks_share_helpers.host_task_read(topology.founder_container, relpath)
-            assert sanity == founder_payload, (
-                "host-fs direct write to founder didn't land — workflow precondition failed"
+            # fs (SSOT) AND metastore has the entry.  Establishes the
+            # workflow precondition both for SSOT and for raft replay.
+            founder_host_bytes = cc_tasks_share_helpers.host_task_read(
+                topology.founder_container, relpath
+            )
+            assert founder_host_bytes == founder_payload, (
+                "founder FUSE write did not reach host fs — workflow precondition failed"
+            )
+            founder_stat = runbook_helpers.vfs_stat(
+                topology.founder_grpc, founder_vfs, api_key=api_key
+            )
+            assert founder_stat["result"]["found"], (
+                f"founder metadata missing after FUSE write — sys_write didn't "
+                f"propose? stat={founder_stat}"
             )
 
-            # Step 3: joiner's first FUSE read — the whole chain end
-            # to end.  `cat /mnt/cc-tasks/founder/<rel>` flows
-            # FUSE driver → plugin event loop → sys_read → DT_MOUNT
-            # routing → federation fan-out via peer_client.fetch →
-            # founder's BlobFetcher → founder's LocalConnector →
-            # founder's host fs.  Bytes return AND observe fires.
-            joiner_fuse_first = cc_tasks_share_helpers.mount_read_bytes(
-                topology.joiner_container, founder_mount
-            )
-            assert joiner_fuse_first == founder_payload, (
-                f"joiner FUSE first-read saw {joiner_fuse_first!r}, expected "
-                f"{founder_payload!r} — cross-node fan-out via FUSE broken"
-            )
-
-            # Step 4: wait for raft to replicate metadata that founder's
-            # `observe` proposed during step 3.  Required by step 5:
-            # the fast path needs last_writer_address.
+            # Step 3: wait for raft to replicate metadata to joiner.
+            # Required by steps 4+5: joiner's FUSE lookup needs the
+            # metastore entry, and the fast-path read needs
+            # last_writer_address.
             runbook_helpers.wait_nodes_caught_up(
                 [topology.founder_grpc, topology.joiner_grpc],
                 "sharedzone",
@@ -597,47 +722,49 @@ class TestCrossNodeFuseFederationWorkflow:
                 timeout=30,
                 probe_path=founder_vfs,
             )
-            stat_after = runbook_helpers.vfs_stat(
+            joiner_stat = runbook_helpers.vfs_stat(
                 topology.joiner_grpc, founder_vfs, api_key=api_key, timeout=10
             )
-            stat_result = stat_after.get("result") or {}
+            stat_result = joiner_stat.get("result") or {}
             assert stat_result.get("found"), (
-                f"joiner metadata not materialised after fan-out — observe never "
-                f"fired or raft never replicated. stat={stat_after}"
+                f"joiner metadata not replicated after raft catchup — stat={joiner_stat}"
             )
             last_writer = stat_result.get("lastWriterAddress") or ""
             assert "founder" in last_writer, (
                 f"last_writer_address should point at founder, got {last_writer!r}. "
-                "Either observe ran on the wrong node or self_address wasn't wired."
+                "sys_write didn't capture self_address?"
             )
 
-            # Step 5: joiner's second FUSE read — fast path via
-            # try_remote_fetch + last_writer_address.  Same bytes, but
-            # routed differently inside the kernel.
-            joiner_fuse_second = cc_tasks_share_helpers.mount_read_bytes(
+            # Step 4: joiner FUSE read — the whole chain end to end.
+            # `cat /mnt/cc-tasks/founder/<rel>` flows: FUSE driver →
+            # plugin event loop → sys_stat (metastore hit, replicated) →
+            # sys_read → DT_MOUNT routes to LocalConnector → joiner's
+            # backend says not-local → federation try_remote_fetch via
+            # last_writer_address → founder's BlobFetcher → founder's
+            # LocalConnector → founder's host fs.
+            joiner_fuse_read = cc_tasks_share_helpers.mount_read_bytes(
                 topology.joiner_container, founder_mount
             )
-            assert joiner_fuse_second == founder_payload, (
-                f"joiner FUSE fast-path read saw {joiner_fuse_second!r}, expected "
-                f"{founder_payload!r} — metadata-driven fetch broken"
+            assert joiner_fuse_read == founder_payload, (
+                f"joiner FUSE cross-node read got {joiner_fuse_read!r}, "
+                f"expected {founder_payload!r} — federation fan-out via "
+                "FUSE broken"
             )
 
-            # Step 6: symmetric — joiner writes via FUSE, founder reads
-            # via FUSE.  Same chain in reverse: `cat > /mnt/cc-tasks/
-            # joiner/<rel>` on joiner triggers LocalConnector write +
-            # observe; founder reads via FUSE → cross-node fan-out →
-            # joiner's bytes.
+            # Step 5: symmetric — joiner writes via FUSE under joiner's
+            # namespace; founder reads via FUSE.  Same chain reversed.
             rev_relpath = f"/{session}/rev.json"
             rev_payload = b'{"task":"cross-node-fuse","source":"joiner"}'
             joiner_vfs = topology.joiner_vfs_path(rev_relpath)
             joiner_mount = topology.mount_path_for_vfs(joiner_vfs)
 
+            cc_tasks_share_helpers.mount_mkdir(
+                topology.joiner_container,
+                topology.mount_path_for_vfs(topology.joiner_vfs_path(f"/{session}")),
+            )
             cc_tasks_share_helpers.mount_write_bytes(
                 topology.joiner_container, joiner_mount, rev_payload
             )
-
-            # Sanity for reverse: bytes on joiner's host fs.  FUSE
-            # write → kernel sys_write → LocalConnector → host fs.
             joiner_host_bytes = cc_tasks_share_helpers.host_task_read(
                 topology.joiner_container, rev_relpath
             )
@@ -645,9 +772,16 @@ class TestCrossNodeFuseFederationWorkflow:
                 f"joiner FUSE write did not reach host fs: got {joiner_host_bytes!r}"
             )
 
-            # Founder reads via its FUSE mount — cross-node fan-out
-            # in the reverse direction.  No special-casing of founder
-            # as leader: the substrate must work both ways identically.
+            # Step 6: founder FUSE read via the reverse fan-out.  No
+            # special-casing of founder as leader — the substrate must
+            # work both ways identically.
+            runbook_helpers.wait_nodes_caught_up(
+                [topology.founder_grpc, topology.joiner_grpc],
+                "sharedzone",
+                api_key=api_key,
+                timeout=30,
+                probe_path=joiner_vfs,
+            )
             founder_fuse_read = cc_tasks_share_helpers.mount_read_bytes(
                 topology.founder_container, joiner_mount
             )

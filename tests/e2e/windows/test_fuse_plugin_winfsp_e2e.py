@@ -202,12 +202,32 @@ class TestSanity:
         assert result["result"]["found"], "/ must exist on a fresh cluster"
 
     def test_mount_drive_letter_routable(self, topology: Topology) -> None:
-        """`dir` returns 0 — proves WinFsp routed an op into the plugin.
-        Content is workflow tests' job."""
-        result = _cmd(["dir", f"{topology.mount_letter}\\"], check=False)
-        assert result.returncode == 0, (
-            f"`dir {topology.mount_letter}\\` failed rc={result.returncode}: "
-            f"stderr={result.stderr}\n"
+        """Prove WinFsp routed an op into the plugin without depending on
+        directory content.
+
+        Earlier shape ran `dir <mount>\\` and asserted rc=0.  That fails
+        on an empty mount: Windows `dir` returns rc=1 with stdout
+        `File Not Found` for an accessible-but-empty directory, which
+        is indistinguishable at the rc level from `dir` failing because
+        the path doesn't exist.  Use `Test-Path -PathType Container`
+        instead — a single PowerShell call that returns `True` iff the
+        drive letter is mounted and reachable, `False` otherwise.
+        Doesn't depend on the mount having any entries.
+        """
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Test-Path -Path '{topology.mount_letter}\\' -PathType Container",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.stdout.strip().lower() == "true", (
+            f"`Test-Path {topology.mount_letter}\\` returned {result.stdout!r} "
+            f"(stderr={result.stderr!r}).\n"
             f"Likely causes: WinFsp service not running, dylib not "
             f"signed, or the cluster's mount step failed silently."
         )

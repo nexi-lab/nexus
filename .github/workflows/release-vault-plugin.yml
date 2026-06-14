@@ -41,12 +41,23 @@ jobs:
       # Stricter than the reusable's 8 MiB default; tightens regression
       # detection for the only plugin where we've measured a stable size.
       max_size_bytes: 7864320
+      # Also ship the standalone `nexusd-vault` binary. It hosts the same
+      # services as the cdylib over loopback gRPC and is used by clients
+      # (e.g. password-agent) that spawn vault on-demand outside a cluster.
+      binary_basename: nexusd-vault
+      # 8 MiB — release binary observed at ~5 MB; budget gives ~60% headroom.
+      binary_max_size_bytes: 8388608
       release_description: |
-        Vault dylib plugin for nexusd-cluster.
+        Vault dylib plugin for nexusd-cluster, plus the `nexusd-vault`
+        standalone binary for out-of-cluster deployments.
 
         ### Included services
         - **GenericSecretsService** — namespace:key encrypted KV with versioning, soft-delete, and batch operations
         - **PasswordVaultService** — password manager with TOTP, search, and bulk migration
+
+        ### Artifacts
+        - `nexus-vault-<platform>.tar.gz` / `.zip` — cdylib plugin loaded by `nexusd-cluster --plugin-dir`
+        - `nexusd-vault-<platform>.tar.gz` / `.zip` — standalone gRPC daemon; loopback-only, optional `--idle-shutdown-seconds` flag for cloud-sync hosts
     secrets:
       PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
       COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}

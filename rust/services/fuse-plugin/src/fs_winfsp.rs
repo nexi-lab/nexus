@@ -382,6 +382,15 @@ impl FileSystemContext for NexusWinFsp {
         if !context.is_dir {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
         }
+        let marker_dbg = marker
+            .inner()
+            .map(|s| String::from_utf16_lossy(s))
+            .unwrap_or_else(|| "<none>".to_string());
+        let buf_len = buffer.len();
+        eprintln!(
+            "[winfsp] read_directory path={} marker={} buffer_len={}",
+            context.path, marker_dbg, buf_len
+        );
         let dir_buffer = context
             .dir_buffer
             .lock()
@@ -399,6 +408,11 @@ impl FileSystemContext for NexusWinFsp {
             let json = kernel_callbacks::sys_readdir(&self.kernel, &context.path)
                 .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
             let mut entries = parse_readdir(&json);
+            eprintln!(
+                "[winfsp] read_directory POPULATE path={} entries={:?}",
+                context.path,
+                entries.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+            );
             // WinFsp's `FspFileSystemReadDirectoryBuffer` continues
             // an enumeration by name-comparison against the caller's
             // `marker`: it returns entries whose name lexicographically
@@ -456,6 +470,10 @@ impl FileSystemContext for NexusWinFsp {
             drop(session);
         }
         let written = dir_buffer.read(marker, buffer);
+        eprintln!(
+            "[winfsp] read_directory RETURN path={} marker={} written={}",
+            context.path, marker_dbg, written
+        );
         Ok(written)
     }
 

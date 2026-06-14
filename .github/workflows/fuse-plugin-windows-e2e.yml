@@ -187,7 +187,7 @@ jobs:
           cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll ~/.nexus/plugins/
           cp target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll.sig ~/.nexus/plugins/
 
-      - name: "Launch nexusd-cluster + mount FUSE plugin at Z:"
+      - name: "Launch nexusd-cluster + mount FUSE plugin at M:"
         if: steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
@@ -214,10 +214,24 @@ jobs:
           # Prepending here is the minimum-surface fix; the daemon
           # inherits this PATH via Start-Process and the plugin loads.
           $env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
+          # Pre-flight: confirm M: is free.  windows-latest images
+          # have been observed to pre-map Z: (Azure-side automatic
+          # share) — a WinFsp mount on a busy letter then silently
+          # shadows or is shadowed by the existing mount, and the
+          # wait step's `Test-Path` never reports True.  M: is not
+          # in the standard windows-latest auto-map.  If this trips,
+          # the runner image changed; pick the next free letter
+          # from the diagnostic.
+          $existing = Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }
+          Write-Host "Existing FS drives: $($existing -join ', ')"
+          if ($existing -contains "M") {
+            Write-Error "Drive M is already mapped on this runner.  Pick another letter."
+            exit 1
+          }
           # Env vars the plugin reads at create-time — Start-Process
           # inherits these from the current pwsh session.
           $env:NEXUS_PLUGIN_DIR = $plugindir
-          $env:NEXUS_FUSE_MOUNT_POINT = "Z:"
+          $env:NEXUS_FUSE_MOUNT_POINT = "M:"
           $env:NEXUS_FUSE_VFS_ROOT = "/"
           $env:NEXUS_BIND_ADDR = "0.0.0.0:2126"
           $env:NEXUS_NO_TLS = "true"
@@ -242,8 +256,11 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
+          $nexusdPid = if (Test-Path nexusd.pid) { Get-Content nexusd.pid } else { $null }
           $deadline = (Get-Date).AddSeconds(180)
+          $iter = 0
           while ((Get-Date) -lt $deadline) {
+            $iter++
             $grpcOK = $false
             try {
               $tcp = New-Object Net.Sockets.TcpClient
@@ -251,14 +268,26 @@ jobs:
               if ($tcp.Connected) { $grpcOK = $true }
               $tcp.Close()
             } catch { }
-            $driveOK = Test-Path "Z:\"
+            $driveOK = Test-Path "M:\"
+            $procOK = $false
+            if ($nexusdPid -and (Get-Process -Id $nexusdPid -ErrorAction SilentlyContinue)) {
+              $procOK = $true
+            }
             if ($grpcOK -and $driveOK) {
-              Write-Host "Cluster healthy (gRPC + Z:\\ drive mounted)"
+              Write-Host "Cluster healthy (gRPC + M:\\ drive mounted) after iter=$iter"
               exit 0
+            }
+            # Surface diagnostics every 10 iterations (~20s) so a wedge
+            # is visible in the log without spamming every poll.
+            if (($iter % 10) -eq 1) {
+              Write-Host "iter=$iter grpcOK=$grpcOK driveOK=$driveOK procAlive=$procOK pid=$nexusdPid"
             }
             Start-Sleep -Seconds 2
           }
-          Write-Error "::error::Timed out waiting for cluster ready (180s)"
+          Write-Error "::error::Timed out waiting for cluster ready (180s) grpcOK=$grpcOK driveOK=$driveOK procAlive=$procOK"
+          Write-Host "=== Final state ==="
+          Write-Host "Drives: $((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }) -join ', ')"
+          Write-Host "Process alive: $(if (Get-Process -Id $nexusdPid -ErrorAction SilentlyContinue) {'YES'} else {'NO (exited)'})"
           if (Test-Path nexusd.log) { Get-Content nexusd.log -Tail 200 }
           if (Test-Path nexusd.err.log) { Get-Content nexusd.err.log -Tail 200 }
           exit 1
@@ -268,7 +297,7 @@ jobs:
         env:
           NEXUS_FUSE_WINDOWS_E2E: "1"
           NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
-          NEXUS_FUSE_MOUNT_POINT: "Z:"
+          NEXUS_FUSE_MOUNT_POINT: "M:"
         run: |
           set -euo pipefail
           pip install -e .

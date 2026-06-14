@@ -491,8 +491,12 @@ impl FileSystemContext for NexusWinFsp {
     ) -> Result<(), FspError> {
         let old_path = Self::to_kernel_path(file_name);
         let new_path = Self::to_kernel_path(new_file_name);
-        kernel_callbacks::sys_rename(&self.kernel, &old_path, &new_path)
-            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let res = kernel_callbacks::sys_rename(&self.kernel, &old_path, &new_path);
+        eprintln!(
+            "[winfsp] rename old={} new={} result={:?}",
+            old_path, new_path, res
+        );
+        res.map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         self.paths.lock().unwrap().rename(&old_path, &new_path);
         Ok(())
     }
@@ -500,9 +504,14 @@ impl FileSystemContext for NexusWinFsp {
     fn set_delete(
         &self,
         context: &Self::FileContext,
-        _file_name: &U16CStr,
+        file_name: &U16CStr,
         delete_file: bool,
     ) -> Result<(), FspError> {
+        let file_name_str = file_name.to_string_lossy();
+        eprintln!(
+            "[winfsp] set_delete file_name={} ctx_path={} ctx_is_dir={} delete_file={}",
+            file_name_str, context.path, context.is_dir, delete_file
+        );
         if !delete_file {
             return Ok(());
         }
@@ -511,6 +520,10 @@ impl FileSystemContext for NexusWinFsp {
         } else {
             kernel_callbacks::sys_unlink(&self.kernel, &context.path)
         };
+        eprintln!(
+            "[winfsp] set_delete path={} sys_result={:?}",
+            context.path, res
+        );
         match res {
             Ok(()) => {
                 self.paths.lock().unwrap().forget(&context.path);

@@ -111,14 +111,23 @@ pub struct NexusFileContext {
     /// `read_directory` can short-circuit on non-directories
     /// without a kernel round-trip.
     is_dir: bool,
-    /// Per-handle DirBuffer for directory enumeration.  WinFsp
-    /// calls `read_directory` repeatedly with `marker` for
-    /// continuation; the buffer must persist across calls so
-    /// subsequent reads resume from the marker instead of
-    /// re-populating from scratch (which would loop the first
-    /// entry forever — observed locally as `ls Y:\` repeating
-    /// `probe.json` 65 times before the test runner gave up).
+    /// Per-handle DirBuffer that we re-populate on every
+    /// `read_directory` call with entries strictly past the
+    /// caller's marker.  We pass marker=None to `dir_buffer.read`
+    /// since the buffer already only contains the entries WinFsp
+    /// is asking for — relying on `FspFileSystemReadDirectoryBuffer`'s
+    /// internal marker-skip semantics doesn't actually skip the
+    /// matching entry (verified via eprintln diagnostics on CI
+    /// run 27512551448: 200 consecutive calls with
+    /// `marker=cross-layer.json` each returned 146 bytes of
+    /// `cross-layer.json` instead of EOF).
     dir_buffer: std::sync::Mutex<winfsp::filesystem::DirBuffer>,
+    /// Cached sorted entry list, populated on the first
+    /// `read_directory` call and reused on every continuation.
+    /// `(name, entry_type, size)` triples — the size comes from
+    /// the v3 `sys_stat_batch` call so we don't pay N round-trips.
+    /// Sorted by name so marker-comparison works correctly.
+    entries: std::sync::Mutex<Option<Vec<(String, u64, u64)>>>,
 }
 
 /// The Windows-side filesystem context.  `Send` + `Sync` because
@@ -266,6 +275,7 @@ impl FileSystemContext for NexusWinFsp {
             path,
             is_dir,
             dir_buffer: std::sync::Mutex::new(winfsp::filesystem::DirBuffer::new()),
+            entries: std::sync::Mutex::new(None),
         })
     }
 
@@ -308,6 +318,7 @@ impl FileSystemContext for NexusWinFsp {
             path,
             is_dir: parsed_is_dir,
             dir_buffer: std::sync::Mutex::new(winfsp::filesystem::DirBuffer::new()),
+            entries: std::sync::Mutex::new(None),
         })
     }
 
@@ -382,98 +393,92 @@ impl FileSystemContext for NexusWinFsp {
         if !context.is_dir {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
         }
-        let marker_dbg = marker
-            .inner()
-            .map(|s| String::from_utf16_lossy(s))
-            .unwrap_or_else(|| "<none>".to_string());
-        let buf_len = buffer.len();
-        eprintln!(
-            "[winfsp] read_directory path={} marker={} buffer_len={}",
-            context.path, marker_dbg, buf_len
-        );
-        let dir_buffer = context
-            .dir_buffer
+        let marker_str = marker.inner().map(String::from_utf16_lossy);
+
+        // Cache the sorted entry list on the FIRST call, reuse on
+        // every continuation.  `sys_readdir` returns metastore-
+        // insertion order; we sort by name once so the marker
+        // comparison below works deterministically.
+        let mut entries_guard = context
+            .entries
             .lock()
             .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-
-        // `marker.is_none()` is WinFsp's signal that this is the
-        // first read_directory call for this open handle — populate
-        // the per-handle DirBuffer once.  Subsequent calls (marker
-        // present) skip straight to the `read` step below, which
-        // resumes from where the prior call left off.  Filling on
-        // every call would feed WinFsp the first entry forever and
-        // turn `ls` into an infinite loop (verified locally before
-        // this fix).
-        if marker.is_none() {
+        if entries_guard.is_none() {
             let json = kernel_callbacks::sys_readdir(&self.kernel, &context.path)
                 .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
-            let mut entries = parse_readdir(&json);
-            eprintln!(
-                "[winfsp] read_directory POPULATE path={} entries={:?}",
-                context.path,
-                entries.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
-            );
-            // WinFsp's `FspFileSystemReadDirectoryBuffer` continues
-            // an enumeration by name-comparison against the caller's
-            // `marker`: it returns entries whose name lexicographically
-            // follows the marker, and signals EOF (0 bytes written)
-            // when the marker is past the last entry.  That contract
-            // assumes the buffer's entries are SORTED — without that
-            // invariant the continuation walks the buffer's insertion
-            // order and can re-emit the trailing entry indefinitely
-            // (observed on CI: `rmdir /S /Q` recursive enumeration
-            // hung 10 s+ because readdir kept handing back the last
-            // probe.json instead of EOF).  Kernel `sys_readdir`
-            // returns metastore insertion order, not sorted, so the
-            // sort happens here at the WinFsp ABI boundary.
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut raw = parse_readdir(&json);
+            raw.sort_by(|a, b| a.0.cmp(&b.0));
 
-            // Single batched sys_stat for sizes — KernelHandle v3's
-            // `sys_stat_batch` (nexus-vfs#60) does one FFI hop + one
-            // kernel pass instead of N round-trips.  Aligned 1:1 with
-            // `entries` order so the index walk below matches up.
-            let child_paths: Vec<String> = entries
+            // Batched sys_stat for sizes — KernelHandle v3
+            // `sys_stat_batch` collapses N FFI hops into one.
+            let child_paths: Vec<String> = raw
                 .iter()
                 .map(|(name, _)| join_path(&context.path, name))
                 .collect();
             let sizes = kernel_callbacks::sys_stat_batch(&self.kernel, &child_paths)
-                .unwrap_or_else(|_| vec![None; entries.len()]);
+                .unwrap_or_else(|_| vec![None; raw.len()]);
 
-            let session = dir_buffer
-                .acquire(true, None)
-                .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-            for (idx, (name, entry_type)) in entries.into_iter().enumerate() {
-                let attrs = if is_dir_entry(entry_type) {
-                    FILE_ATTRIBUTE_DIRECTORY
-                } else {
-                    FILE_ATTRIBUTE_NORMAL
-                };
-                // sys_stat_batch returns aligned `Option<(size, entry_type)>`;
-                // unwrap to 0 for stat-misses so the entry still surfaces.
-                let size = sizes
-                    .get(idx)
-                    .copied()
-                    .flatten()
-                    .map(|(s, _)| s)
-                    .unwrap_or(0);
-
-                let mut info: DirInfo = DirInfo::new();
-                info.set_name(std::ffi::OsStr::new(&name))
-                    .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-                let fi = info.file_info_mut();
-                Self::populate_file_info(fi, size, is_dir_entry(entry_type));
-                fi.file_attributes = attrs;
-                session
-                    .write(&mut info)
-                    .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
-            }
-            drop(session);
+            let cached: Vec<(String, u64, u64)> = raw
+                .into_iter()
+                .enumerate()
+                .map(|(idx, (name, entry_type))| {
+                    let size = sizes
+                        .get(idx)
+                        .copied()
+                        .flatten()
+                        .map(|(s, _)| s)
+                        .unwrap_or(0);
+                    (name, entry_type, size)
+                })
+                .collect();
+            *entries_guard = Some(cached);
         }
+        let cached = entries_guard.as_ref().expect("just populated");
+
+        // Filter entries STRICTLY past the marker — name > marker.
+        // We then populate the per-call DirBuffer with only those,
+        // and read with `marker=None` so `FspFileSystemReadDirectoryBuffer`
+        // returns everything we just wrote.  This sidesteps the
+        // observed WinFsp marker-skip bug where reading with the
+        // matching marker re-emits the entry indefinitely.
+        let filtered: Vec<&(String, u64, u64)> = match marker_str.as_deref() {
+            Some(m) => cached
+                .iter()
+                .filter(|(name, _, _)| name.as_str() > m)
+                .collect(),
+            None => cached.iter().collect(),
+        };
+
+        let dir_buffer = context
+            .dir_buffer
+            .lock()
+            .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        let session = dir_buffer
+            .acquire(true, None)
+            .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        for (name, entry_type, size) in filtered {
+            let attrs = if is_dir_entry(*entry_type) {
+                FILE_ATTRIBUTE_DIRECTORY
+            } else {
+                FILE_ATTRIBUTE_NORMAL
+            };
+            let mut info: DirInfo = DirInfo::new();
+            info.set_name(std::ffi::OsStr::new(name))
+                .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            let fi = info.file_info_mut();
+            Self::populate_file_info(fi, *size, is_dir_entry(*entry_type));
+            fi.file_attributes = attrs;
+            session
+                .write(&mut info)
+                .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        }
+        drop(session);
+        // Pass the caller's marker through.  The buffer already
+        // contains only entries strictly past it, so even if
+        // `FspFileSystemReadDirectoryBuffer` includes the matching-
+        // marker entry (which our diagnostics showed is what it does
+        // in practice), there's nothing in the buffer to wrong-emit.
         let written = dir_buffer.read(marker, buffer);
-        eprintln!(
-            "[winfsp] read_directory RETURN path={} marker={} written={}",
-            context.path, marker_dbg, written
-        );
         Ok(written)
     }
 

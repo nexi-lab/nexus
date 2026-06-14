@@ -17,6 +17,13 @@ crate-type = ["cdylib", "rlib"]
 # The `declare_service_plugin!` macro + KernelHandle live here.
 nexus-plugin-abi = { workspace = true }
 
+# tracing for diagnostic logs on every target.  Kept opt-in via the
+# cluster binary's RUST_LOG so the plugin is silent by default.
+# MUST stay above any target-specific table — TOML inline tables
+# extend until the next `[...]` header, so anything below a
+# `[target.'cfg(...)']` line silently picks up that platform gate.
+tracing = "0.1"
+
 # `fuser` is the production-quality Rust wrapper around libfuse3 on
 # Linux / macFUSE on macOS.  Same `Filesystem` trait + `spawn_mount2`
 # entrypoint on both platforms, so the cfg-gated Linux/macOS branch
@@ -51,7 +58,3 @@ widestring = "1"
 # from the WinFsp trait methods (FUSE-side gets `Errno`, WinFsp-side
 # gets `STATUS_*` codes).
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
-
-# tracing for diagnostic logs.  Kept opt-in via the cluster binary's
-# RUST_LOG so the plugin is silent by default.
-tracing = "0.1"

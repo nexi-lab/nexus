@@ -59,6 +59,9 @@ mod path_index;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fs;
 
+#[cfg(target_os = "windows")]
+mod fs_winfsp;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::Mutex;
 

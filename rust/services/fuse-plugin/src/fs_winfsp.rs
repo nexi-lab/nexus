@@ -1,0 +1,728 @@
+//! `NexusWinFsp` — `winfsp::filesystem::FileSystemContext` impl that
+//! translates Windows IRP_MJ_xxx ops into Nexus kernel syscalls via
+//! the `KernelHandle` callback table.  The Windows analogue of
+//! [`crate::fs::NexusFs`] (which serves the fuser-based Linux + macOS
+//! mount path).
+//!
+//! ## Path translation
+//!
+//! WinFsp passes `&U16CStr` (UTF-16 wide strings) with backslash
+//! separators (`\foo\bar`); the kernel callbacks take UTF-8
+//! `*const c_char` with forward slashes (`/foo/bar`).  Every op
+//! converts at the FFI boundary via [`to_kernel_path`].
+//!
+//! ## `FileContext`
+//!
+//! WinFsp's `FileContext` associated type is the user-defined value
+//! bound to each open handle.  We carry the kernel-side path plus a
+//! cached `is_dir` bit so `read_directory` / `read` / `write` don't
+//! have to re-walk `sys_stat` on every call.
+//!
+//! ## What's covered, what's stubbed
+//!
+//! Covered v2 ops (route through the KernelHandle v2 callbacks
+//! nexus-vfs#56 added):
+//!
+//! ```text
+//! WinFsp method        →  KernelHandle callback
+//! ────────────────────    ────────────────────────
+//! open / get_file_info →  sys_stat
+//! read                 →  sys_read
+//! write                →  sys_write
+//! create               →  sys_write(empty)+sys_stat  (file)
+//!                         sys_mkdir                  (dir)
+//! rename               →  sys_rename
+//! set_delete + cleanup →  sys_unlink / sys_rmdir
+//! read_directory       →  sys_readdir
+//! ```
+//!
+//! Stubbed because there's no kernel-side analogue today (ReBAC owns
+//! permissions; timestamps are kernel-managed):
+//!
+//! * `get_security_by_name` / `get_security` / `set_security` —
+//!   return "read+write+everyone" SDDL stub.  ReBAC at the kernel
+//!   layer is the SoT for access policy.
+//! * `set_basic_info` (chmod/chown/utimes) — accept silently, no-op.
+//! * `set_file_size` — accept silently; sys_write handles allocation
+//!   implicitly on the next write.
+//! * Reparse points / extended attributes / streams — return
+//!   `STATUS_INVALID_DEVICE_REQUEST` via the trait defaults.
+
+use std::ffi::CString;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::SystemTime;
+
+use widestring::U16CStr;
+use winfsp::filesystem::{
+    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
+    OpenFileInfo, VolumeInfo, WideNameInfo,
+};
+use winfsp::FspError;
+use windows_sys::Win32::Foundation::{
+    NTSTATUS, STATUS_DIRECTORY_NOT_EMPTY, STATUS_INVALID_DEVICE_REQUEST, STATUS_NOT_A_DIRECTORY,
+    STATUS_OBJECT_NAME_NOT_FOUND,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
+};
+
+use nexus_plugin_abi::{nexus_free, KernelHandle};
+
+use crate::path_index::PathIndex;
+
+/// Sentinel root inode for the Windows mount.  WinFsp has no
+/// protocol-level root constant — the inode space is entirely ours.
+/// Pinned to `1` to mirror fuser's `INodeNo::ROOT.0` so the index's
+/// invariants are identical across platforms (purely a debugging
+/// affordance; nothing in the on-wire surface ever sees this).
+const WINFSP_ROOT_INODE: u64 = 1;
+
+/// Internal C-ABI rc used by the `sys_*` wrappers.  Surfaced as
+/// `STATUS_INVALID_DEVICE_REQUEST` at the trait boundary when we
+/// can't translate to a more specific NTSTATUS.
+const ERRNO_IO_RAW: i32 = -3;
+/// C-ABI rc the kernel returns for "no such file/directory" (matches
+/// fuser side's mapping convention).
+const ERRNO_NOT_FOUND: i32 = -1;
+
+/// DT_DIR / DT_MOUNT both render as Windows `FILE_ATTRIBUTE_DIRECTORY`.
+/// Mirrors `kind_from_entry_type` in fs.rs but emits Windows attrs
+/// instead of fuser `FileType`.
+const DT_DIR: u64 = 1;
+const DT_MOUNT: u64 = 2;
+
+/// `FILE_DIRECTORY_FILE` from `winnt.h` — the create-option flag a
+/// CreateFile2 call sets when the caller wants a directory rather
+/// than a regular file.  Not re-exported by `windows-sys` 0.52 so
+/// we inline the constant.
+const FILE_DIRECTORY_FILE: u32 = 0x00000001;
+
+/// Map a `sys_*` C-ABI rc into the closest NTSTATUS code WinFsp
+/// understands.  Keep this table tight — surfacing
+/// `STATUS_INVALID_DEVICE_REQUEST` for unknown errors makes the
+/// failure visible in Event Viewer instead of silently mapped to
+/// `STATUS_SUCCESS`.
+fn errno_to_status(rc: i32) -> NTSTATUS {
+    match rc {
+        ERRNO_NOT_FOUND => STATUS_OBJECT_NAME_NOT_FOUND,
+        _ => STATUS_INVALID_DEVICE_REQUEST,
+    }
+}
+
+/// Per-handle state — what WinFsp's `FileContext` associated type
+/// resolves to.  Carries the kernel-side path string so the hot path
+/// doesn't re-translate from WideCString on every op.
+pub struct NexusFileContext {
+    /// Forward-slash kernel-side path corresponding to the open
+    /// handle, e.g. `/shared/cc-tasks/mac/session-1/1.json`.
+    path: String,
+    /// Cached from the open-time `sys_stat`.  Used so
+    /// `read_directory` can short-circuit on non-directories
+    /// without a kernel round-trip.
+    is_dir: bool,
+}
+
+/// The Windows-side filesystem context.  `Send` + `Sync` because
+/// every field is internally synchronised: `KernelHandle` is a
+/// `repr(C)` bag of `extern "C"` fn pointers (trivially shareable),
+/// `paths` is a `Mutex<PathIndex>`, `next_inode` is atomic.
+pub struct NexusWinFsp {
+    kernel: KernelHandle,
+    paths: Mutex<PathIndex>,
+    next_inode: AtomicU64,
+}
+
+// SAFETY: see struct doc — every field is `Send + Sync` either by
+// type or by interior mutability.  `KernelHandle` carries a
+// `*const c_void` kernel pointer whose `Send + Sync` is asserted by
+// the kernel-side contract (it lives at least as long as the
+// plugin).
+unsafe impl Send for NexusWinFsp {}
+unsafe impl Sync for NexusWinFsp {}
+
+impl NexusWinFsp {
+    pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
+        Self {
+            kernel,
+            paths: Mutex::new(PathIndex::with_root(WINFSP_ROOT_INODE, vfs_root)),
+            next_inode: AtomicU64::new(WINFSP_ROOT_INODE + 1),
+        }
+    }
+
+    /// Convert a WinFsp wide path (UTF-16, backslash separators) into
+    /// the kernel-side path (UTF-8, forward-slash separators).
+    /// `\` → `/` is the only transformation; WinFsp already strips
+    /// the drive letter / mount point prefix before handing the path
+    /// to the filesystem.
+    fn to_kernel_path(win_path: &U16CStr) -> String {
+        let s = win_path.to_string_lossy();
+        if s == "\\" {
+            "/".to_string()
+        } else {
+            s.replace('\\', "/")
+        }
+    }
+
+    // ── KernelHandle callback wrappers ──────────────────────────────
+    //
+    // Same shape as fs.rs's wrappers — just inlined here so the
+    // WinFsp adapter is self-contained.  Each `sys_*` returns
+    // `Result<_, i32>` mirroring the kernel C-ABI rc; the trait
+    // methods convert that to `FspError` via `errno_to_status`.
+
+    fn sys_stat(&self, path: &str) -> Result<String, i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let mut out_buf: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            (self.kernel.sys_stat)(
+                self.kernel.kernel_ptr,
+                c_path.as_ptr(),
+                &mut out_buf,
+                &mut out_len,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let json = unsafe {
+            let slice = std::slice::from_raw_parts(out_buf, out_len);
+            let s = std::str::from_utf8(slice)
+                .map(|s| s.to_string())
+                .map_err(|_| ERRNO_IO_RAW);
+            nexus_free(out_buf, out_len);
+            s?
+        };
+        Ok(json)
+    }
+
+    fn sys_read(&self, path: &str) -> Result<Vec<u8>, i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let mut out_buf: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            (self.kernel.sys_read)(
+                self.kernel.kernel_ptr,
+                c_path.as_ptr(),
+                &mut out_buf,
+                &mut out_len,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let data = unsafe {
+            let slice = std::slice::from_raw_parts(out_buf, out_len);
+            let v = slice.to_vec();
+            nexus_free(out_buf, out_len);
+            v
+        };
+        Ok(data)
+    }
+
+    fn sys_write(&self, path: &str, data: &[u8]) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe {
+            (self.kernel.sys_write)(
+                self.kernel.kernel_ptr,
+                c_path.as_ptr(),
+                data.as_ptr(),
+                data.len(),
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    fn sys_readdir(&self, parent_path: &str) -> Result<String, i32> {
+        let c_path = CString::new(parent_path).map_err(|_| ERRNO_IO_RAW)?;
+        let mut out_buf: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            (self.kernel.sys_readdir)(
+                self.kernel.kernel_ptr,
+                c_path.as_ptr(),
+                &mut out_buf,
+                &mut out_len,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let json = unsafe {
+            let slice = std::slice::from_raw_parts(out_buf, out_len);
+            let s = std::str::from_utf8(slice)
+                .map(|s| s.to_string())
+                .map_err(|_| ERRNO_IO_RAW);
+            nexus_free(out_buf, out_len);
+            s?
+        };
+        Ok(json)
+    }
+
+    fn sys_unlink(&self, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe { (self.kernel.sys_unlink)(self.kernel.kernel_ptr, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    fn sys_mkdir(&self, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe { (self.kernel.sys_mkdir)(self.kernel.kernel_ptr, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    fn sys_rmdir(&self, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe { (self.kernel.sys_rmdir)(self.kernel.kernel_ptr, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    fn sys_rename(&self, old_path: &str, new_path: &str) -> Result<(), i32> {
+        let c_old = CString::new(old_path).map_err(|_| ERRNO_IO_RAW)?;
+        let c_new = CString::new(new_path).map_err(|_| ERRNO_IO_RAW)?;
+        let rc = unsafe {
+            (self.kernel.sys_rename)(self.kernel.kernel_ptr, c_old.as_ptr(), c_new.as_ptr())
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        Ok(())
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────
+
+    /// Allocate a stable inode for `path`.  Same SSOT rules the fuser
+    /// side uses (see `crate::path_index`).
+    fn inode_for(&self, path: &str) -> u64 {
+        self.paths
+            .lock()
+            .unwrap()
+            .lookup_or_register(path, || self.next_inode.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Populate WinFsp's `FileInfo` from a parsed sys_stat JSON.
+    /// `FileInfo` is a thin `repr(C)` struct over WinFsp's wire-level
+    /// `FSP_FSCTL_FILE_INFO` — public fields, no setter methods.
+    fn populate_file_info(info: &mut FileInfo, size: u64, is_dir: bool) {
+        let attrs: u32 = if is_dir {
+            FILE_ATTRIBUTE_DIRECTORY
+        } else {
+            FILE_ATTRIBUTE_NORMAL
+        };
+        info.file_attributes = attrs;
+        info.file_size = size;
+        info.allocation_size = size;
+        // Timestamps: kernel doesn't expose them yet, so synthesise
+        // "now" for every call.  Operators see the file's mtime
+        // update on every read which is a minor UX wart but doesn't
+        // break the `cc tasks list` workflow (cc-side reads use
+        // content + path, not stat-mtime).  Track the real time in a
+        // follow-up when sys_stat starts emitting modified_at_ms.
+        let now = systime_to_ft(SystemTime::now());
+        info.creation_time = now;
+        info.last_access_time = now;
+        info.last_write_time = now;
+        info.change_time = now;
+        info.index_number = 0;
+    }
+}
+
+/// Convert a `SystemTime` to Windows FILETIME (100-ns ticks since
+/// 1601-01-01 UTC).  WinFsp's `FileInfo::set_*_time` takes this
+/// representation directly.
+fn systime_to_ft(t: SystemTime) -> u64 {
+    const UNIX_EPOCH_IN_FILETIME: u64 = 116_444_736_000_000_000;
+    let unix_nanos = t
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    UNIX_EPOCH_IN_FILETIME + (unix_nanos / 100)
+}
+
+/// Extract `(size, is_dir)` from the kernel's sys_stat JSON.  The
+/// shape is documented under `kernel_cb_sys_stat` in
+/// `nexus-vfs/rust/kernel/src/kernel/plugins/mod.rs`.  We hand-roll a
+/// tiny parser to keep `serde_json` out of the cdylib dep closure.
+fn parse_stat(json: &str) -> Option<(u64, bool)> {
+    let size = json_u64(json, "\"size\":")?;
+    let entry_type = json_u64(json, "\"entry_type\":")?;
+    let is_dir = entry_type == DT_DIR || entry_type == DT_MOUNT;
+    Some((size, is_dir))
+}
+
+/// Same scan-for-key parser the fuser side uses.  Kept inline here
+/// rather than shared because the call sites are platform-specific
+/// (different stat field consumption) and the helper is 6 lines.
+fn json_u64(json: &str, key: &str) -> Option<u64> {
+    let after = json.split_once(key)?.1.trim_start();
+    let end = after
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(after.len());
+    after[..end].parse().ok()
+}
+
+/// Parse the sys_readdir JSON array into `(name, entry_type)` pairs.
+/// Same shape `parse_readdir_entries` consumes on the fuser side.
+fn parse_readdir(json: &str) -> Vec<(String, u64)> {
+    let mut out = Vec::new();
+    let mut rest = json;
+    while let Some((_, after_name)) = rest.split_once("\"name\":\"") {
+        let mut name = String::new();
+        let mut bytes = after_name.chars();
+        loop {
+            match bytes.next() {
+                Some('\\') => match bytes.next() {
+                    Some(c) => name.push(c),
+                    None => return out,
+                },
+                Some('"') => break,
+                Some(c) => name.push(c),
+                None => return out,
+            }
+        }
+        let after_close = bytes.as_str();
+        let entry_type = match json_u64(after_close, "\"entry_type\":") {
+            Some(t) => t,
+            None => return out,
+        };
+        out.push((name, entry_type));
+        rest = after_close;
+    }
+    out
+}
+
+/// Join a parent VFS path and a child file name into the canonical
+/// `parent/child` form the kernel expects.  Same shape as fs.rs's
+/// `join_path` — kept inline since the function is one branch.
+fn join_path(parent: &str, name: &str) -> String {
+    if parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{}/{}", parent.trim_end_matches('/'), name)
+    }
+}
+
+impl FileSystemContext for NexusWinFsp {
+    type FileContext = NexusFileContext;
+
+    fn get_security_by_name(
+        &self,
+        file_name: &U16CStr,
+        _security_descriptor: Option<&mut [std::os::raw::c_void]>,
+        _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
+    ) -> Result<FileSecurity, FspError> {
+        let path = Self::to_kernel_path(file_name);
+        let json = self.sys_stat(&path).map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let (_size, is_dir) = parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        let attrs = if is_dir {
+            FILE_ATTRIBUTE_DIRECTORY
+        } else {
+            FILE_ATTRIBUTE_NORMAL
+        };
+        Ok(FileSecurity {
+            attributes: attrs,
+            reparse: false,
+            sz_security_descriptor: 0,
+        })
+    }
+
+    fn open(
+        &self,
+        file_name: &U16CStr,
+        _create_options: u32,
+        _granted_access: u32,
+        file_info: &mut OpenFileInfo,
+    ) -> Result<Self::FileContext, FspError> {
+        let path = Self::to_kernel_path(file_name);
+        let json = self
+            .sys_stat(&path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let (size, is_dir) =
+            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        self.inode_for(&path);
+        Self::populate_file_info(file_info.as_mut(), size, is_dir);
+        Ok(NexusFileContext { path, is_dir })
+    }
+
+    fn close(&self, _context: Self::FileContext) {
+        // No per-handle resources to release.
+    }
+
+    fn create(
+        &self,
+        file_name: &U16CStr,
+        create_options: u32,
+        _granted_access: u32,
+        _file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
+        _security_descriptor: Option<&[std::os::raw::c_void]>,
+        _allocation_size: u64,
+        _extra_buffer: Option<&[u8]>,
+        _extra_buffer_is_reparse_point: bool,
+        file_info: &mut OpenFileInfo,
+    ) -> Result<Self::FileContext, FspError> {
+        let path = Self::to_kernel_path(file_name);
+        let is_dir = (create_options & FILE_DIRECTORY_FILE) != 0;
+        if is_dir {
+            self.sys_mkdir(&path).map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        } else {
+            // Compose create from empty-payload sys_write — same
+            // pattern the fuser side uses; the kernel treats
+            // "write-to-nonexistent-path" as create-on-write.
+            self.sys_write(&path, &[])
+                .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        }
+        let json = self
+            .sys_stat(&path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let (size, parsed_is_dir) =
+            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        self.inode_for(&path);
+        Self::populate_file_info(file_info.as_mut(), size, parsed_is_dir);
+        Ok(NexusFileContext {
+            path,
+            is_dir: parsed_is_dir,
+        })
+    }
+
+    fn get_file_info(
+        &self,
+        context: &Self::FileContext,
+        file_info: &mut FileInfo,
+    ) -> Result<(), FspError> {
+        let json = self
+            .sys_stat(&context.path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let (size, is_dir) =
+            parse_stat(&json).ok_or_else(|| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        Self::populate_file_info(file_info, size, is_dir);
+        Ok(())
+    }
+
+    fn read(
+        &self,
+        context: &Self::FileContext,
+        buffer: &mut [u8],
+        offset: u64,
+    ) -> Result<u32, FspError> {
+        if context.is_dir {
+            return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
+        }
+        let full = self
+            .sys_read(&context.path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let start = offset as usize;
+        if start >= full.len() {
+            return Ok(0);
+        }
+        let n = (full.len() - start).min(buffer.len());
+        buffer[..n].copy_from_slice(&full[start..start + n]);
+        Ok(n as u32)
+    }
+
+    fn write(
+        &self,
+        context: &Self::FileContext,
+        buffer: &[u8],
+        offset: u64,
+        _write_to_eof: bool,
+        _constrained_io: bool,
+        file_info: &mut FileInfo,
+    ) -> Result<u32, FspError> {
+        if context.is_dir {
+            return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
+        }
+        // First cut: O_TRUNC semantics — `sys_write` rewrites the
+        // whole file.  An offset != 0 write surfaces as
+        // STATUS_INVALID_DEVICE_REQUEST until the offset-aware kernel
+        // callback lands; CC's task-file workflow always rewrites the
+        // whole JSON document so offset==0 is the common path.
+        if offset != 0 {
+            return Err(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST));
+        }
+        self.sys_write(&context.path, buffer)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        // Refresh file_info with the new size.
+        Self::populate_file_info(file_info, buffer.len() as u64, false);
+        Ok(buffer.len() as u32)
+    }
+
+    fn read_directory(
+        &self,
+        context: &Self::FileContext,
+        _pattern: Option<&U16CStr>,
+        marker: DirMarker<'_>,
+        buffer: &mut [u8],
+    ) -> Result<u32, FspError> {
+        if !context.is_dir {
+            return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
+        }
+        let json = self
+            .sys_readdir(&context.path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        let entries = parse_readdir(&json);
+
+        // `DirBuffer` is the WinFsp helper that serialises a stream
+        // of `DirInfo` entries into the variable-length wire format
+        // and writes it into the callback's `buffer` slice.  We feed
+        // it `marker` so it can skip entries the kernel has already
+        // received on a previous call (continuation).
+        let mut dir_buffer = DirBuffer::new();
+        let mut session = dir_buffer
+            .acquire(marker.is_none(), None)
+            .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        for (name, entry_type) in entries {
+            let attrs = if entry_type == DT_DIR || entry_type == DT_MOUNT {
+                FILE_ATTRIBUTE_DIRECTORY
+            } else {
+                FILE_ATTRIBUTE_NORMAL
+            };
+            // sys_stat for size on each entry — the cc-tasks-share
+            // workflow has tens of files per dir so the round-trips
+            // are tolerable; an offset-aware sys_readdir that
+            // emitted sizes would let us skip these stats in a
+            // follow-up.
+            let child_path = join_path(&context.path, &name);
+            let size = self
+                .sys_stat(&child_path)
+                .ok()
+                .and_then(|j| parse_stat(&j).map(|(s, _)| s))
+                .unwrap_or(0);
+
+            let mut info: DirInfo = DirInfo::new();
+            info.set_name(std::ffi::OsStr::new(&name))
+                .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+            let fi = info.file_info_mut();
+            Self::populate_file_info(fi, size, entry_type == DT_DIR || entry_type == DT_MOUNT);
+            fi.file_attributes = attrs;
+            session
+                .write(&mut info)
+                .map_err(|_| FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST))?;
+        }
+        drop(session);
+        let written = dir_buffer.read(marker, buffer);
+        Ok(written)
+    }
+
+    fn rename(
+        &self,
+        _context: &Self::FileContext,
+        file_name: &U16CStr,
+        new_file_name: &U16CStr,
+        _replace_if_exists: bool,
+    ) -> Result<(), FspError> {
+        let old_path = Self::to_kernel_path(file_name);
+        let new_path = Self::to_kernel_path(new_file_name);
+        self.sys_rename(&old_path, &new_path)
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        self.paths.lock().unwrap().rename(&old_path, &new_path);
+        Ok(())
+    }
+
+    fn set_delete(
+        &self,
+        context: &Self::FileContext,
+        _file_name: &U16CStr,
+        delete_file: bool,
+    ) -> Result<(), FspError> {
+        if !delete_file {
+            return Ok(());
+        }
+        let res = if context.is_dir {
+            self.sys_rmdir(&context.path)
+        } else {
+            self.sys_unlink(&context.path)
+        };
+        match res {
+            Ok(()) => {
+                self.paths.lock().unwrap().forget(&context.path);
+                Ok(())
+            }
+            // Kernel surfaces ENOTEMPTY for non-empty dirs as -3
+            // (Internal); without a dedicated errno we map any rmdir
+            // failure to STATUS_DIRECTORY_NOT_EMPTY which is the
+            // operator-visible expectation.
+            Err(_) if context.is_dir => Err(FspError::NTSTATUS(STATUS_DIRECTORY_NOT_EMPTY)),
+            Err(rc) => Err(FspError::NTSTATUS(errno_to_status(rc))),
+        }
+    }
+
+    fn set_basic_info(
+        &self,
+        _context: &Self::FileContext,
+        _file_attributes: u32,
+        _creation_time: u64,
+        _last_access_time: u64,
+        _last_write_time: u64,
+        _last_change_time: u64,
+        file_info: &mut FileInfo,
+    ) -> Result<(), FspError> {
+        // chmod/utimes/etc. — no kernel surface today.  Accept
+        // silently so explorer.exe doesn't error out, but the values
+        // never leave the kernel side (ReBAC owns access policy).
+        // Repopulate file_info with whatever the current state is.
+        Self::populate_file_info(file_info, 0, false);
+        Ok(())
+    }
+
+    fn set_file_size(
+        &self,
+        context: &Self::FileContext,
+        new_size: u64,
+        _set_allocation_size: bool,
+        file_info: &mut FileInfo,
+    ) -> Result<(), FspError> {
+        // Pre-allocation hint.  We don't track allocation precisely
+        // — sys_write handles the actual allocation on next write —
+        // so just update file_info to keep the kernel-side caller
+        // happy.
+        Self::populate_file_info(file_info, new_size, context.is_dir);
+        Ok(())
+    }
+
+    fn cleanup(
+        &self,
+        _context: &Self::FileContext,
+        _file_name: Option<&U16CStr>,
+        _flags: u32,
+    ) {
+        // No per-handle state to release on cleanup.  The actual
+        // delete (when `set_delete(true)` was called earlier) ran
+        // synchronously in `set_delete`; WinFsp's `cleanup` is just
+        // the hook to finalise deferred work, of which we have none.
+    }
+
+    fn flush(
+        &self,
+        _context: Option<&Self::FileContext>,
+        _file_info: &mut FileInfo,
+    ) -> Result<(), FspError> {
+        // sys_write is synchronous through to the metastore commit;
+        // nothing to flush at the FUSE layer.
+        Ok(())
+    }
+
+    fn get_volume_info(&self, out: &mut VolumeInfo) -> Result<(), FspError> {
+        // Placeholder figures — the cc-tasks-share workflow is many
+        // small files; surface a generously sized notional volume so
+        // `dir` / `Get-Volume` don't surface 0 bytes free and confuse
+        // operators.  Track free/used precisely in a follow-up when
+        // the kernel grows a sys_statfs callback.
+        out.total_size = 1 << 40;
+        out.free_size = 1 << 39;
+        let _ = out.set_volume_label("NexusVFS");
+        Ok(())
+    }
+}

@@ -55,6 +55,16 @@ on:
         required: false
         type: number
         default: 8388608   # 8 MiB
+      binary_basename:
+        description: 'Optional standalone binary name (e.g. `nexusd-vault`). When set, the build job also picks `target/release/<binary_basename>[.exe]` and the package job ships it as a separate signed archive (`<binary_basename>-<platform>.tar.gz` / `.zip`) alongside the cdylib. Leave empty for plugins that have no [[bin]] target.'
+        required: false
+        type: string
+        default: ""
+      binary_max_size_bytes:
+        description: Per-platform max binary size in bytes. Only consulted when `binary_basename` is set. Same regression-budget motivation as `max_size_bytes`.
+        required: false
+        type: number
+        default: 8388608   # 8 MiB
       platforms:
         description: 'JSON array of platform suffixes to build. Plugins that don''t support all 4 platforms (e.g. nexus-fuse-plugin is Linux-only) shrink the matrix here. Valid entries: linux-x86_64, macos-arm64, macos-x86_64, windows-x86_64.'
         required: false
@@ -273,6 +283,60 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # ── Optional standalone binary (gated on `binary_basename` input) ────
+      # `cargo build --release -p <plugin_name>` above also compiles the
+      # package's `[[bin]]` target if it has one, so we just pick the
+      # resulting executable from target/release/. Shipped as a separate
+      # signed archive so consumers who only want the cdylib don't have to
+      # download the binary.
+      - name: Compute binary filename
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix) && inputs.binary_basename != ''
+        id: binary
+        shell: bash
+        env:
+          BASENAME: ${{ inputs.binary_basename }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            name="${BASENAME}.exe"
+          else
+            name="${BASENAME}"
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ matrix.target }}" ]; then
+            echo "path=target/${{ matrix.target }}/release/${name}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=target/release/${name}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check binary size
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix) && inputs.binary_basename != ''
+        shell: bash
+        env:
+          MAX_SIZE_BYTES: ${{ inputs.binary_max_size_bytes }}
+          BIN_PATH: ${{ steps.binary.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            actual=$(stat -f '%z' "$BIN_PATH")
+          else
+            actual=$(stat -c '%s' "$BIN_PATH")
+          fi
+          echo "Binary size: $actual bytes (max: $MAX_SIZE_BYTES)"
+          if [ "$actual" -gt "$MAX_SIZE_BYTES" ]; then
+            echo "::error::${{ inputs.binary_basename }} ${{ matrix.artifact_name_suffix }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
+            exit 1
+          fi
+
+      - name: Upload binary artifact
+        if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix) && inputs.binary_basename != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.binary_basename }}-${{ matrix.artifact_name_suffix }}
+          path: ${{ steps.binary.outputs.path }}
+          if-no-files-found: error
+          retention-days: 1
+
   # ── Package, sign, upload ──────────────────────────────────────────────────
   # Downloads all 4 dylibs, signs each (privkey source per `signing_key_source`),
   # packages into tar.gz / zip, uploads to COS at <cos_subdir>/v<version>/.
@@ -302,6 +366,13 @@ jobs:
         with:
           path: artifacts
           pattern: ${{ inputs.archive_prefix }}-*
+
+      - name: Download binary build artifacts
+        if: inputs.binary_basename != ''
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: ${{ inputs.binary_basename }}-*
 
       - name: Set up Python for signing
         uses: actions/setup-python@v5
@@ -416,6 +487,7 @@ jobs:
         env:
           PREFIX: ${{ inputs.archive_prefix }}
           BASENAME: ${{ inputs.dylib_basename }}
+          BINARY_BASENAME: ${{ inputs.binary_basename }}
         run: |
           set -euo pipefail
           win_dll="${BASENAME#lib}.dll"
@@ -430,6 +502,19 @@ jobs:
               *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
             esac
           done
+          # Binaries (gated on binary_basename input). Same Ed25519
+          # contract as the cdylib — sign_plugin.py is file-agnostic.
+          if [ -n "${BINARY_BASENAME}" ]; then
+            for art_dir in artifacts/${BINARY_BASENAME}-*/; do
+              [ -d "$art_dir" ] || continue
+              suffix=$(basename "$art_dir" | sed "s/^${BINARY_BASENAME}-//")
+              case "$suffix" in
+                linux-*|macos-*) files+=("${art_dir}${BINARY_BASENAME}") ;;
+                windows-*)       files+=("${art_dir}${BINARY_BASENAME}.exe") ;;
+                *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
+              esac
+            done
+          fi
           if [ "${#files[@]}" -eq 0 ]; then
             echo "::error::no plugin artifacts found under artifacts/${PREFIX}-*"
             exit 1
@@ -444,6 +529,7 @@ jobs:
         env:
           PREFIX: ${{ inputs.archive_prefix }}
           BASENAME: ${{ inputs.dylib_basename }}
+          BINARY_BASENAME: ${{ inputs.binary_basename }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
@@ -473,6 +559,31 @@ jobs:
               *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
             esac
           done
+
+          # Binaries (gated on binary_basename input). Separate per-platform
+          # archive so cdylib-only consumers don't have to download the binary.
+          # Same sig-bundled-with-payload shape as dylib archives.
+          if [ -n "${BINARY_BASENAME}" ]; then
+            for art_dir in artifacts/${BINARY_BASENAME}-*/; do
+              [ -d "$art_dir" ] || continue
+              suffix=$(basename "$art_dir" | sed "s/^${BINARY_BASENAME}-//")
+              case "$suffix" in
+                linux-*|macos-*)
+                  cp "${art_dir}${BINARY_BASENAME}" "${BINARY_BASENAME}"
+                  cp "${art_dir}${BINARY_BASENAME}.sig" "${BINARY_BASENAME}.sig"
+                  tar -czf "release-assets/${BINARY_BASENAME}-${suffix}.tar.gz" "${BINARY_BASENAME}" "${BINARY_BASENAME}.sig"
+                  rm "${BINARY_BASENAME}" "${BINARY_BASENAME}.sig"
+                  ;;
+                windows-*)
+                  cp "${art_dir}${BINARY_BASENAME}.exe" "${BINARY_BASENAME}.exe"
+                  cp "${art_dir}${BINARY_BASENAME}.exe.sig" "${BINARY_BASENAME}.exe.sig"
+                  zip "release-assets/${BINARY_BASENAME}-${suffix}.zip" "${BINARY_BASENAME}.exe" "${BINARY_BASENAME}.exe.sig"
+                  rm "${BINARY_BASENAME}.exe" "${BINARY_BASENAME}.exe.sig"
+                  ;;
+                *) echo "::error::unknown platform suffix '$suffix' under $art_dir" ; exit 1 ;;
+              esac
+            done
+          fi
 
           echo "=== release-assets ==="
           ls -lh release-assets/

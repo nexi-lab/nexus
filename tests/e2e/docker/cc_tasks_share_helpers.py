@@ -1,23 +1,33 @@
 """Shared helpers for the cc-tasks-share E2E suite.
 
 Sits next to :mod:`tests.e2e.docker.runbook_helpers` and reuses every
-gRPC primitive from it.  Only the helpers distinct to this suite live
-here:
+gRPC primitive from it.  This module groups three layers of helpers,
+matching the three plugin layers each node carries:
 
 * Topology — founder + joiner sharing a `sharedzone`.  Each node
   mounts its own LocalConnector backend at a hostname-namespaced
-  path under `/shared/cc-tasks/`.
-* `host_task_write` / `host_task_read` / `host_task_symlink` — read
-  / write / plant a symlink inside either container's `/host/tasks`
-  named volume via ``docker exec``.  These verify the LocalConnector's
-  "host fs is the SSOT" property: after a `vfs_write` through gRPC,
-  the bytes are physically present at `/host/tasks/<rel>` and vice
-  versa.
+  path under ``/shared/cc-tasks/`` AND publishes that federated path
+  back as a real OS mount via the FUSE plugin at ``/mnt/cc-tasks``.
 
-The host-fs helpers are container-parameterised: pass
-`topology.founder_container` or `topology.joiner_container` to
+* Host-fs (``/host/tasks/``) helpers — ``host_task_write`` /
+  ``host_task_read`` / ``host_task_symlink``.  These read / write
+  bytes at the LocalConnector's ``local_root``, i.e. the operator's
+  ``~/.claude/tasks/`` analogue.  The LocalConnector's SSOT property
+  says: after a ``vfs_write`` through gRPC, the bytes are physically
+  present at ``/host/tasks/<rel>`` and vice versa.
+
+* FUSE mount (``/mnt/cc-tasks``) helpers — ``mount_mkdir`` /
+  ``mount_listdir`` / ``mount_write_bytes`` / etc.  These exercise
+  the operator-facing OS-mount surface: a plain POSIX ``mkdir`` or
+  ``cat`` inside the container flows through the kernel FUSE driver
+  → ``nexus-fuse-plugin``'s background event loop → KernelHandle v3
+  callbacks → the LocalConnector backend → the host fs.  The full
+  Mac↔Win ``cc tasks list`` path, byte-for-byte.
+
+Every helper is container-parameterised: pass
+``topology.founder_container`` or ``topology.joiner_container`` to
 target either node, which is the shape the cross-node workflow tests
-(`TestCrossNodeLazyMaterialization`) need.
+need to flow data founder→joiner or joiner→founder.
 """
 
 from __future__ import annotations
@@ -41,15 +51,16 @@ class CcTasksTopology:
     joiner_container: str
     local_connector_zone: str
     local_connector_vfs_root: str
+    fuse_mount_point: str
+    fuse_vfs_root: str
 
     def vfs_path(self, relpath: str) -> str:
         """Compose the gRPC path under the *founder's* mount root.
 
-        Used by the single-node substrate tests
-        (`TestLocalConnectorThroughVFS`) where every write happens on
-        founder.  Cross-node tests compose their own per-node paths
-        with explicit hostname namespacing so the data flow between
-        nodes is unambiguous.
+        Used by the single-node substrate tests where every write
+        happens on founder.  Cross-node tests compose their own
+        per-node paths with explicit hostname namespacing so the
+        data flow between nodes is unambiguous.
         """
         if not relpath.startswith("/"):
             relpath = "/" + relpath
@@ -67,6 +78,25 @@ class CcTasksTopology:
             relpath = "/" + relpath
         return f"/shared/cc-tasks/joiner{relpath}"
 
+    def mount_path_for_vfs(self, vfs_path: str) -> str:
+        """Convert a federated VFS path to the FUSE mount-side path.
+
+        The FUSE plugin publishes ``fuse_vfs_root`` as ``fuse_mount_point``,
+        so ``/shared/cc-tasks/founder/abc/1.json`` shows up at
+        ``/mnt/cc-tasks/founder/abc/1.json`` on either node.  Used by
+        the cross-layer workflows to assert the same bytes are visible
+        through every surface.
+        """
+        root = self.fuse_vfs_root.rstrip("/")
+        if not vfs_path.startswith(root + "/") and vfs_path != root:
+            pytest.fail(
+                f"mount_path_for_vfs: {vfs_path!r} is not under fuse_vfs_root={root!r}; "
+                "either the test composed the wrong path or fuse_vfs_root drifted from "
+                "the compose's NEXUS_FUSE_VFS_ROOT."
+            )
+        relative = vfs_path[len(root) :] or "/"
+        return f"{self.fuse_mount_point.rstrip('/')}{relative}"
+
 
 def topology_from_env() -> CcTasksTopology:
     return CcTasksTopology(
@@ -78,6 +108,8 @@ def topology_from_env() -> CcTasksTopology:
         local_connector_vfs_root=os.environ.get(
             "NEXUS_LOCAL_CONNECTOR_VFS_ROOT", "/shared/cc-tasks/founder"
         ),
+        fuse_mount_point=os.environ.get("NEXUS_FUSE_MOUNT_POINT", "/mnt/cc-tasks"),
+        fuse_vfs_root=os.environ.get("NEXUS_FUSE_VFS_ROOT", "/shared/cc-tasks"),
     )
 
 
@@ -150,3 +182,112 @@ def host_task_symlink(container: str, link_relpath: str, target_relpath: str) ->
     parent = os.path.dirname(link_full) or "/"
     runbook_helpers.docker_exec(container, ["mkdir", "-p", parent], check=True)
     runbook_helpers.docker_exec(container, ["ln", "-sf", target_relpath, link_full], check=True)
+
+
+# ---------------------------------------------------------------------------
+# FUSE mount (`/mnt/cc-tasks`) POSIX ops, anchored at the mount point.
+#
+# Every helper here calls `docker exec` against the chosen container so
+# the op flows through the in-container kernel + FUSE driver — the path
+# the nexus-fuse-plugin actually wires.  Running ops on the host would
+# either bypass the mount or exercise a different libfuse3 build
+# entirely, neither of which exercises the plugin under test.
+#
+# Args: `container` = nexus-cc-tasks-founder or nexus-cc-tasks-joiner;
+#       `mount_path` = absolute path under /mnt/cc-tasks (compose with
+#                      `topology.mount_path_for_vfs(vfs_path)`).
+# ---------------------------------------------------------------------------
+def mount_mkdir(container: str, mount_path: str, *, parents: bool = False) -> None:
+    """``mkdir [-p] <mount_path>`` — triggers the FUSE ``mkdir`` op."""
+    cmd = ["mkdir"]
+    if parents:
+        cmd.append("-p")
+    cmd.append(mount_path)
+    runbook_helpers.docker_exec(container, cmd, check=True)
+
+
+def mount_rmdir(container: str, mount_path: str) -> None:
+    """``rmdir <mount_path>`` — triggers the FUSE ``rmdir`` op."""
+    runbook_helpers.docker_exec(container, ["rmdir", mount_path], check=True)
+
+
+def mount_unlink(container: str, mount_path: str) -> None:
+    """``rm <mount_path>`` — triggers the FUSE ``unlink`` op."""
+    runbook_helpers.docker_exec(container, ["rm", mount_path], check=True)
+
+
+def mount_rename(container: str, old_mount_path: str, new_mount_path: str) -> None:
+    """``mv <old> <new>`` — triggers the FUSE ``rename`` op."""
+    runbook_helpers.docker_exec(container, ["mv", old_mount_path, new_mount_path], check=True)
+
+
+def mount_listdir(container: str, mount_path: str) -> list[str]:
+    """``ls -1 <mount_path>`` — triggers the FUSE ``readdir`` op.
+
+    Returns the entry names sorted for stable assertions.  An empty
+    directory returns ``[]`` (not a one-element list with empty string).
+    """
+    result = runbook_helpers.docker_exec(container, ["ls", "-1", mount_path], check=True)
+    return sorted(line for line in result.stdout.splitlines() if line)
+
+
+def mount_write_bytes(container: str, mount_path: str, data: bytes) -> None:
+    """Write ``data`` to ``<container>:<mount_path>`` via FUSE.
+
+    Bytes-preserving — runs through ``docker exec -i ... sh -c 'cat >
+    <path>'`` so binary content round-trips exactly.  The ``cat``
+    triggers ``create`` (file didn't exist) + ``write`` (the payload),
+    both routing through the plugin's KernelHandle v3 callbacks.
+    """
+    proc = subprocess.run(
+        ["docker", "exec", "-i", container, "sh", "-c", f"cat > {mount_path}"],
+        input=data,
+        capture_output=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            f"mount_write_bytes({container}, {mount_path}) failed (rc={proc.returncode}): "
+            f"stderr={proc.stderr.decode(errors='replace')}"
+        )
+
+
+def mount_read_bytes(container: str, mount_path: str) -> bytes:
+    """Read ``<container>:<mount_path>`` byte-exact via ``docker exec ... cat``."""
+    proc = subprocess.run(
+        ["docker", "exec", container, "cat", mount_path],
+        capture_output=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            f"mount_read_bytes({container}, {mount_path}) failed (rc={proc.returncode}): "
+            f"stderr={proc.stderr.decode(errors='replace')}"
+        )
+    return proc.stdout
+
+
+def mount_path_exists(container: str, mount_path: str) -> bool:
+    """``test -e <mount_path>`` — surface the kernel's view of existence.
+
+    Returns ``True`` when the in-container kernel-side FUSE driver
+    reports the path exists at the moment of the call.  Used in
+    negative assertions (after ``unlink`` / ``rmdir``) where the test
+    must observe the absence, not just the lack of a positive signal.
+    """
+    proc = subprocess.run(
+        ["docker", "exec", container, "test", "-e", mount_path],
+        capture_output=True,
+        timeout=10,
+    )
+    return proc.returncode == 0
+
+
+def mount_is_fuse_mountpoint(container: str, mount_path: str) -> bool:
+    """``mountpoint -q <mount_path>`` — true if FUSE finished mounting."""
+    proc = subprocess.run(
+        ["docker", "exec", container, "mountpoint", "-q", mount_path],
+        capture_output=True,
+        timeout=10,
+    )
+    return proc.returncode == 0

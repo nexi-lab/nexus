@@ -73,10 +73,7 @@ struct Args {
 struct BumpInterceptor(IdleTracker);
 
 impl tonic::service::Interceptor for BumpInterceptor {
-    fn call(
-        &mut self,
-        req: tonic::Request<()>,
-    ) -> Result<tonic::Request<()>, tonic::Status> {
+    fn call(&mut self, req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
         self.0.bump();
         Ok(req)
     }
@@ -180,7 +177,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match wait_for_shutdown(tracker, signal, idle_shutdown_seconds).await {
             ShutdownReason::Signal => tracing::info!("shutdown signal received"),
             ShutdownReason::Idle { idle_for_secs } => {
-                tracing::info!(idle_for_secs, "idle threshold reached — initiating shutdown");
+                tracing::info!(
+                    idle_for_secs,
+                    "idle threshold reached — initiating shutdown"
+                );
             }
         }
     };

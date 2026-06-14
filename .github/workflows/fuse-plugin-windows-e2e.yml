@@ -107,6 +107,15 @@ jobs:
         with:
           cache: false
 
+      # Match pyproject.toml's `requires-python = ">=3.14"`.  Without
+      # this, windows-latest's default Python (3.13.x today) rejects
+      # `pip install -e .` with ERROR: requires a different Python.
+      - name: Install Python 3.14
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
       - name: Rust cache
         if: steps.changes.outputs.run == 'true'
         uses: Swatinem/rust-cache@v2
@@ -193,6 +202,18 @@ jobs:
           $datadir = "$env:USERPROFILE\.nexus\data"
           $plugindir = "$env:USERPROFILE\.nexus\plugins"
           New-Item -ItemType Directory -Force -Path $datadir | Out-Null
+          # WinFsp install puts `winfsp-x64.dll` at
+          # `C:\Program Files (x86)\WinFsp\bin\` but does NOT add the
+          # dir to system PATH.  The FUSE plugin DLL has
+          # `winfsp-x64.dll` in its static import table — Windows
+          # `LoadLibraryExW` walks the standard search path (exe
+          # dir → system32 → CWD → PATH), so without WinFsp on PATH
+          # the plugin load fails with error 126 ("module not found")
+          # BEFORE the plugin's own code can call winfsp::winfsp_init
+          # (which would dlopen WinFsp via the registry-derived path).
+          # Prepending here is the minimum-surface fix; the daemon
+          # inherits this PATH via Start-Process and the plugin loads.
+          $env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
           # Env vars the plugin reads at create-time — Start-Process
           # inherits these from the current pwsh session.
           $env:NEXUS_PLUGIN_DIR = $plugindir

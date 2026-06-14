@@ -151,7 +151,10 @@ pub fn sys_rmdir(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
 /// Replaces N × `sys_stat` round-trips with one FFI hop + one
 /// kernel pass — used by the WinFsp adapter's `read_directory` to
 /// populate `FileInfo.file_size` for every entry without paying
-/// per-entry stat cost.
+/// per-entry stat cost.  Linux/macOS FUSE traverses one entry at a
+/// time so this batch path is Windows-only consumer territory —
+/// hence the cfg-conditional dead-code allow.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn sys_stat_batch(
     kernel: &KernelHandle,
     paths: &[String],
@@ -202,6 +205,7 @@ pub fn sys_stat_batch(
 ///
 /// Returns an empty vec on malformed input — same fail-soft posture
 /// as [`parse_readdir`].
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn parse_stat_batch_output(json: &str) -> Vec<Option<(u64, u64)>> {
     let mut out = Vec::new();
     // Strip exactly one outer `[ ... ]` pair — `trim_*_matches` would
@@ -246,7 +250,9 @@ fn parse_stat_batch_output(json: &str) -> Vec<Option<(u64, u64)>> {
 /// Parse a leading non-negative integer from `s`, returning `None`
 /// when `s` doesn't start with digits.  Companion to [`json_u64`]
 /// which scans for a keyed value; this one's for already-positioned
-/// numeric literals.
+/// numeric literals.  Helper of [`parse_stat_batch_output`] — same
+/// Windows-only callsite, same dead-code allow.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn json_u64_at_head(s: &str) -> Option<u64> {
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {

@@ -79,11 +79,6 @@ const NEG_ENTRY_TTL: Duration = Duration::ZERO;
 /// the inode map can use plain `u64` keys.
 const FUSE_ROOT_RAW: u64 = INodeNo::ROOT.0;
 
-/// Raw i32 EIO used by the internal sys_*() C-ABI wrappers (which
-/// return `Result<_, i32>` mirroring the C-side rc).  Trait-level
-/// methods wrap it into the typed `Errno` via `errno_io()`.
-const ERRNO_IO_RAW: i32 = libc::EIO;
-
 /// `EIO` errno wrapper used as the catch-all for "kernel callback
 /// returned a non-zero status."  Refined later if we want to map
 /// specific kernel errors to ENOENT / EACCES / etc.

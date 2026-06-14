@@ -163,6 +163,10 @@ jobs:
           cargo build --release -p nexus-fuse-plugin --target x86_64-pc-windows-msvc
           # Windows dylib filename: strip the `lib` prefix, .dll
           # extension.  Sign in-place per sign_plugin.py contract.
+          # sign_plugin.py imports `cryptography` for Ed25519 — the
+          # windows-latest runner has Python but not the wheel, so
+          # install it before invoking the signer.
+          python -m pip install --quiet cryptography
           python scripts/sign_plugin.py \
             target/x86_64-pc-windows-msvc/release/nexus_fuse_plugin.dll
 

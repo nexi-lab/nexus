@@ -290,9 +290,14 @@ jobs:
               Write-Host "Drives: $((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name }) -join ', ')"
               Write-Host "Process alive: $(if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {'YES'} else {'NO (exited)'})"
             } else {
-              python -m pip install -e .
+              # `[test]` extra pulls pytest + pytest-asyncio
+              # (defined in pyproject.toml [project.optional-dependencies]).
+              # Plain `pip install -e .` excludes them because they
+              # are dev deps, not runtime; the test step then fails
+              # at `python -m pytest` with "No module named pytest".
+              python -m pip install -e ".[test]"
               if ($LASTEXITCODE -ne 0) {
-                Write-Error "::error::pip install -e . failed (exit=$LASTEXITCODE)"
+                Write-Error "::error::pip install -e .[test] failed (exit=$LASTEXITCODE)"
               } else {
                 # `python -m pytest` instead of plain `pytest` — pwsh
                 # doesn't auto-include `<python>/Scripts/` (where pip

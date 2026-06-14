@@ -169,6 +169,30 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
           & $protocExe --version
 
+      # The `fuser` crate's build.rs requires pkg-config to find
+      # libfuse3 (Linux — the cluster image installs `libfuse3-dev`
+      # already) or macFUSE (macOS — runners don't have it).  macFUSE
+      # ships as a Cask; `--no-quarantine` skips Gatekeeper's GUI
+      # prompt so CI can install non-interactively.  The kernel
+      # extension load still needs sudo at runtime on the operator's
+      # machine — that's fine, build-time only needs the framework
+      # headers + pkg-config file, which the cask drops at
+      # /Library/Frameworks/macfuse.framework + /usr/local/lib/
+      # pkgconfig/fuse.pc.  Gated on the plugin name so vault /
+      # local-connector releases don't pay the install cost.
+      - name: Install macFUSE (nexus-fuse-plugin only)
+        if: |
+          contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
+            && runner.os == 'macOS'
+            && inputs.plugin_name == 'nexus-fuse-plugin'
+        run: |
+          set -euo pipefail
+          brew install --no-quarantine --cask macfuse
+          # Verify the framework + pkg-config file are where fuser's
+          # build.rs expects to find them.
+          ls -d /Library/Frameworks/macfuse.framework
+          pkg-config --modversion fuse
+
       - name: Install Rust toolchain
         if: contains(fromJSON(inputs.platforms), matrix.artifact_name_suffix)
         uses: actions-rust-lang/setup-rust-toolchain@v1

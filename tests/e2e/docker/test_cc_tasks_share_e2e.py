@@ -70,34 +70,42 @@ def api_key() -> str:
 
 @pytest.fixture(scope="module")
 def ready_node(topology: CcTasksTopology, api_key: str) -> None:
-    """Gate on the daemon's `--mount-driver` loop having installed the mount.
+    """Gate on EVERY plugin layer being up on BOTH nodes.
 
-    Two gates: (a) the LocalConnector mount at ``/shared/cc-tasks/founder``
-    answers ``vfs_stat`` without a routing error; (b) the FUSE plugin
-    has finished ``fuser::spawn_mount2`` so ``/mnt/cc-tasks`` is a real
-    mount point.  The compose's healthcheck guards (b) for both nodes,
-    but we keep a polling backstop here for the rare race where the
-    test container observes "healthy" the instant before the mount
-    point appears.
+    Three gates per node: (a) gRPC reachable, (b) the LocalConnector
+    mount answers ``vfs_stat`` without a routing error, (c) the FUSE
+    plugin has finished ``fuser::spawn_mount2`` so ``/mnt/cc-tasks``
+    is a real mount point.  The compose healthcheck guards all three
+    but docker compose's ``depends_on: service_healthy`` can race the
+    test container's start on GHA runners (the FUSE mount may take a
+    few seconds longer than the gRPC port to come up on the second
+    boot after the bootstrap-entrypoint's MODE=restart switch).  The
+    polling backstop here absorbs that race; TestStackReadiness's
+    snapshot assertion can stay simple.
+
+    Joiner is included because TestStackReadiness asserts on joiner's
+    FUSE mount too.  60 s budget per node matches the compose
+    healthcheck's 24 retries × 5 s interval cap.
     """
-    runbook_helpers.wait_healthy([topology.founder_grpc])
-    deadline = time.time() + 60
-    while time.time() < deadline:
-        stat = runbook_helpers.vfs_stat(
-            topology.founder_grpc,
-            topology.local_connector_vfs_root,
-            api_key=api_key,
-            timeout=5,
-        )
-        if "error" not in stat and cc_tasks_share_helpers.mount_is_fuse_mountpoint(
-            topology.founder_container, topology.fuse_mount_point
-        ):
-            return
-        time.sleep(0.5)
-    pytest.fail(
-        f"founder substrate never became reachable on {topology.founder_grpc} within 60s — "
-        f"check --mount-driver and FUSE plugin boot logs"
-    )
+    runbook_helpers.wait_healthy([topology.founder_grpc, topology.joiner_grpc])
+    nodes = [
+        (topology.founder_grpc, topology.founder_container, topology.founder_vfs_path("/")),
+        (topology.joiner_grpc, topology.joiner_container, topology.joiner_vfs_path("/")),
+    ]
+    for grpc, container, vfs_root in nodes:
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            stat = runbook_helpers.vfs_stat(grpc, vfs_root, api_key=api_key, timeout=5)
+            if "error" not in stat and cc_tasks_share_helpers.mount_is_fuse_mountpoint(
+                container, topology.fuse_mount_point
+            ):
+                break
+            time.sleep(0.5)
+        else:
+            pytest.fail(
+                f"{container} substrate never became reachable on {grpc} within 60s — "
+                f"check --mount-driver and FUSE plugin boot logs"
+            )
 
 
 def _wait_path_via_grpc(

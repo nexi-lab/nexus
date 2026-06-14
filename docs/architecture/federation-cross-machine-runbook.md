@@ -67,7 +67,7 @@ Headscale server (company-managed)
 * **For `cc tasks list` cross-machine workflow** (Step 3g) — operating-system FUSE userspace:
   * **Linux**: `apt install fuse3 libfuse3-3`.
   * **macOS**: `brew install --cask macfuse`, then approve the kernel extension in System Settings → Privacy & Security and **reboot** (macFUSE installs are interactive by design — no headless equivalent today).
-  * **Windows**: `choco install winfsp -y` (Administrator PowerShell).  WinFsp is the Windows kernel-side userspace-filesystem driver `nexus-fuse-plugin` consumes via the `winfsp` Rust crate (different binding from `fuser`, but the same KernelHandle ABI surface).  The driver installs at `C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll`; the plugin dylib loads it lazily via `/DELAYLOAD` so the daemon still boots when the runtime is absent — the mount itself surfaces a clear error in that case rather than blocking startup.
+  * **Windows**: `choco install winfsp -y` (Administrator PowerShell) or `winget install --id WinFsp.WinFsp --silent`.  WinFsp is the Windows kernel-side userspace-filesystem driver `nexus-fuse-plugin` consumes via the `winfsp` Rust crate (different binding from `fuser`, but the same KernelHandle ABI surface).  The driver installs at `C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll` but the installer does NOT add that dir to system PATH.  Before launching the daemon, prepend it: `$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"`.  Without this, the plugin DLL load fails at `LoadLibraryExW` with error 126 ("module not found") because the static import on `winfsp-x64.dll` can't be resolved.
 
 ---
 

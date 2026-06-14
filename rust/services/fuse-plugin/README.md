@@ -44,13 +44,22 @@ brew install --cask macfuse
 ```
 
 ```powershell
-# Windows (Chocolatey, as Administrator)
+# Windows (Chocolatey or winget, as Administrator)
 choco install winfsp -y
+# OR
+winget install --id WinFsp.WinFsp --silent --accept-package-agreements
+#
 # WinFsp installs winfsp-x64.dll under
-# C:\Program Files (x86)\WinFsp\bin\ and registers the .sys driver.
-# `nexus-fuse-plugin` loads winfsp-x64.dll lazily via /DELAYLOAD so
-# the daemon boots even when the runtime isn't installed; the mount
-# itself fails at create-time with a clear error in that case.
+# `C:\Program Files (x86)\WinFsp\bin\` and registers the .sys driver,
+# but does NOT add that directory to system PATH.  The plugin DLL has
+# `winfsp-x64.dll` in its static import table, so Windows
+# `LoadLibraryExW` walks exe-dir → system32 → CWD → PATH at plugin
+# load time and fails with error 126 ("module not found") when none
+# of those resolves it.  Prepend the WinFsp bin dir to PATH for the
+# shell that launches the daemon — Start-Process / spawn inherits it:
+#
+$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
+nexusd-cluster --plugin-dir $env:USERPROFILE\.nexus\plugins ...
 ```
 
 Drop the signed dylib + `.sig` from the latest `fuse-v*` release into

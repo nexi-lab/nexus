@@ -284,9 +284,24 @@ def mount_path_exists(container: str, mount_path: str) -> bool:
 
 
 def mount_is_fuse_mountpoint(container: str, mount_path: str) -> bool:
-    """``mountpoint -q <mount_path>`` — true if FUSE finished mounting."""
+    """True if ``<mount_path>`` is a live FUSE mount inside ``<container>``.
+
+    Uses ``/proc/mounts`` (the kernel SSOT) rather than ``mountpoint(1)``.
+    ``mountpoint -q`` falsely returns rc=1 on FUSE mounts that compare
+    st_dev with their parent dir under certain layered-FS configurations
+    (Docker overlay2 + libfuse3 + Linux 5.x has been observed locally on
+    Windows + GHA ubuntu-latest).  ``/proc/mounts`` always reflects
+    reality the moment ``fuser::spawn_mount2`` returns.
+    """
     proc = subprocess.run(
-        ["docker", "exec", container, "mountpoint", "-q", mount_path],
+        [
+            "docker",
+            "exec",
+            container,
+            "sh",
+            "-c",
+            f"grep -qE ' {mount_path} fuse' /proc/mounts",
+        ],
         capture_output=True,
         timeout=10,
     )

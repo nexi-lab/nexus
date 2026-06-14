@@ -137,12 +137,17 @@ services:
       # Gate on BOTH the gRPC port AND the FUSE mount.  The daemon
       # binds 2126 a few seconds before the FUSE plugin's background
       # thread completes `fuser::spawn_mount2`; reporting "healthy" on
-      # gRPC alone races the test runner against the mount.
+      # gRPC alone races the test runner against the mount.  Use
+      # /proc/mounts (kernel SSOT) instead of `mountpoint -q` — the
+      # latter falsely returns rc=1 against FUSE mounts under
+      # Docker overlay2 + libfuse3 (observed on Windows Docker AND
+      # GHA ubuntu-latest); /proc/mounts always reflects the truth
+      # the moment fuser::spawn_mount2 returns.
       test:
         - CMD-SHELL
         - >
           timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null &&
-          mountpoint -q /mnt/cc-tasks
+          grep -qE ' /mnt/cc-tasks fuse' /proc/mounts
       interval: 5s
       timeout: 5s
       retries: 24

@@ -70,42 +70,59 @@ def api_key() -> str:
 
 @pytest.fixture(scope="module")
 def ready_node(topology: CcTasksTopology, api_key: str) -> None:
-    """Gate on EVERY plugin layer being up on BOTH nodes.
+    """Gate on cluster boot + FUSE mount for both nodes; LocalConnector for founder.
 
-    Three gates per node: (a) gRPC reachable, (b) the LocalConnector
-    mount answers ``vfs_stat`` without a routing error, (c) the FUSE
-    plugin has finished ``fuser::spawn_mount2`` so ``/mnt/cc-tasks``
-    is a real mount point.  The compose healthcheck guards all three
-    but docker compose's ``depends_on: service_healthy`` can race the
-    test container's start on GHA runners (the FUSE mount may take a
-    few seconds longer than the gRPC port to come up on the second
-    boot after the bootstrap-entrypoint's MODE=restart switch).  The
-    polling backstop here absorbs that race; TestStackReadiness's
-    snapshot assertion can stay simple.
+    Three gates per node: (a) gRPC reachable, (b) FUSE plugin has
+    finished ``fuser::spawn_mount2`` so ``/mnt/cc-tasks`` is a real
+    mount point, (c) founder-only — the LocalConnector mount answers
+    ``vfs_stat`` (founder's first boot installs it via
+    ``NEXUS_FEDERATION_ZONES`` env).
 
-    Joiner is included because TestStackReadiness asserts on joiner's
-    FUSE mount too.  60 s budget per node matches the compose
+    Joiner deliberately does **not** wait on the LocalConnector mount
+    here: joiner's first boot logs ``skipping --mount-driver: target
+    zone not loaded`` because ``sharedzone`` only lands after the
+    runbook §3b offline join (the ``joined_cluster`` fixture).
+    Tests that need joiner's LocalConnector chain (cross-node
+    workflows + TestStackReadiness's step 2) MUST depend on
+    ``joined_cluster``, which gates on joiner's post-join
+    ``--mount-driver`` replay.  60 s budget matches the compose
     healthcheck's 24 retries × 5 s interval cap.
     """
     runbook_helpers.wait_healthy([topology.founder_grpc, topology.joiner_grpc])
-    nodes = [
-        (topology.founder_grpc, topology.founder_container, topology.founder_vfs_path("/")),
-        (topology.joiner_grpc, topology.joiner_container, topology.joiner_vfs_path("/")),
-    ]
-    for grpc, container, vfs_root in nodes:
-        deadline = time.time() + 60
-        while time.time() < deadline:
-            stat = runbook_helpers.vfs_stat(grpc, vfs_root, api_key=api_key, timeout=5)
-            if "error" not in stat and cc_tasks_share_helpers.mount_is_fuse_mountpoint(
-                container, topology.fuse_mount_point
-            ):
-                break
-            time.sleep(0.5)
-        else:
-            pytest.fail(
-                f"{container} substrate never became reachable on {grpc} within 60s — "
-                f"check --mount-driver and FUSE plugin boot logs"
-            )
+
+    # Founder: full triplet — gRPC + LocalConnector + FUSE.
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        stat = runbook_helpers.vfs_stat(
+            topology.founder_grpc,
+            topology.founder_vfs_path("/"),
+            api_key=api_key,
+            timeout=5,
+        )
+        if "error" not in stat and cc_tasks_share_helpers.mount_is_fuse_mountpoint(
+            topology.founder_container, topology.fuse_mount_point
+        ):
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail(
+            f"founder substrate never became reachable on {topology.founder_grpc} within 60s — "
+            "check --mount-driver and FUSE plugin boot logs"
+        )
+
+    # Joiner: gRPC + FUSE only.  LocalConnector check is `joined_cluster`'s job.
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        root_stat = runbook_helpers.vfs_stat(topology.joiner_grpc, "/", api_key=api_key, timeout=5)
+        if "error" not in root_stat and cc_tasks_share_helpers.mount_is_fuse_mountpoint(
+            topology.joiner_container, topology.fuse_mount_point
+        ):
+            return
+        time.sleep(0.5)
+    pytest.fail(
+        f"joiner substrate never became reachable on {topology.joiner_grpc} within 60s — "
+        "gRPC up + FUSE mount mounted is what we need (LocalConnector waits for join)"
+    )
 
 
 def _wait_path_via_grpc(
@@ -152,10 +169,19 @@ class TestStackReadiness:
     on the prior — without (1) we can't probe (2), and without (2) the
     FUSE plugin's create-time bind to ``/shared/cc-tasks`` would have
     failed.
+
+    Depends on ``joined_cluster`` because joiner's LocalConnector
+    mount only lands after the runbook §3b offline join replays
+    ``--mount-driver`` against the post-join data dir.  Asserting on
+    joiner's LocalConnector before that would always fail.
     """
 
     def test_full_stack_responds_on_both_nodes(
-        self, topology: CcTasksTopology, api_key: str, ready_node: None
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        ready_node: None,
+        joined_cluster: dict,
     ) -> None:
         # Step 1: gRPC reachable on both nodes — daemons booted.
         for grpc in (topology.founder_grpc, topology.joiner_grpc):

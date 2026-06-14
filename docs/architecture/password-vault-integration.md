@@ -85,6 +85,40 @@ etc.) to the existing `PasswordVaultService` gRPC trait impl with
 protobuf-encoded payloads. Zero logic changes from the trait impl —
 the plugin is a deployment wrapper only.
 
+## Cloud-sync-friendly deployments (interim)
+
+The standalone `nexusd-vault` binary (the `[[bin]]` target of
+`rust/services/vault/`) is the alternative to the in-cluster plugin
+path above. It hosts the same `PasswordVaultService` +
+`GenericSecretsService` over loopback gRPC, with no cluster machinery —
+suited to thin-client integrations that spawn the daemon on-demand
+for a short burst of RPCs.
+
+One concrete motivator: hosting `--data-dir` on file-level
+cloud-synced storage (Dropbox / OneDrive / iCloud / Syncthing / NFS).
+The OS holds exclusive locks on `vault-meta.redb` while the daemon
+runs, and a long-running daemon starves the sync client. The
+standalone binary exposes `--idle-shutdown-seconds N` (also via
+`NEXUS_VAULT_IDLE_SHUTDOWN_SECONDS`) so the daemon exits when traffic
+has been quiet for N seconds, releasing locks for the sync client to
+publish a clean state.
+
+```
+nexusd-vault \
+  --data-dir /Users/you/Dropbox/vault-data \
+  --idle-shutdown-seconds 30
+```
+
+Default is `0` (disabled) — current behavior is preserved. Set it
+higher than the longest expected RPC; typical values are 30
+(interactive on-demand) and 300 (back-to-back batch).
+
+> **Forward note.** This is an interim story. Once nexus-vfs
+> federation is generally available, vault data should ride federation
+> replication directly — file-level cloud sync becomes unnecessary
+> and the `--idle-shutdown-seconds` flag becomes irrelevant. This
+> section will be removed at that time.
+
 ## Rust implementation placement
 
 The service logic lives at `rust/services/src/password_vault/`.

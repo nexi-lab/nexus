@@ -309,18 +309,29 @@ class TestSessionLifecycle:
                     f"  actual body:        {body!r}"
                 )
 
-            # Step 5: del each task — N × sys_unlink.  Depends on every
-            # task existing (asserted in step 4).
+            # Step 5: unlink each task — N × sys_unlink.  Depends on every
+            # task existing (asserted in step 4).  Goes through Python's
+            # os.remove → DeleteFileW (the standard Win32 delete path
+            # every Python/JS/native operator tool hits).  `cmd /c del`
+            # would also exercise sys_unlink in principle, but the trace
+            # captured on CI run 27523642801 proved cmd's del exits rc=0
+            # without ever opening the file with DELETE access on a
+            # WinFsp drive (only readattrs probes fire) — a cmd-builtin
+            # idiosyncrasy that's invisible to operators using normal
+            # filesystem APIs.  os.remove is what `cc tasks delete` uses
+            # under the hood, so this is the real operator path.
             for name in task_payloads:
-                _cmd(["del", topology.mount_path(f"{sess_rel}/{name}")])
+                os.remove(topology.mount_path(f"{sess_rel}/{name}"))
                 _wait_path_via_grpc(
                     topology, topology.vfs_path(f"{sess_rel}/{name}"), expect_found=False
                 )
 
             # Step 6: rmdir session — sys_rmdir.  Depends on every task
             # being gone (asserted in step 5) — sys_rmdir surfaces
-            # STATUS_DIRECTORY_NOT_EMPTY otherwise.
-            _cmd(["rmdir", sess_mount])
+            # STATUS_DIRECTORY_NOT_EMPTY otherwise.  os.rmdir maps to
+            # RemoveDirectoryW for the same operator-path reason as
+            # step 5.
+            os.rmdir(sess_mount)
             _wait_path_via_grpc(topology, topology.vfs_path(sess_rel), expect_found=False)
         finally:
             # Defensive: any mid-step failure should still try to
@@ -374,8 +385,12 @@ class TestMidSessionRename:
 
             # Step 4: rename through the mount — sys_rename +
             # PathIndex remap.  This is the depended-on op for
-            # everything below.
-            _cmd(["move", topology.mount_path(old_rel), topology.mount_path(new_rel)])
+            # everything below.  os.rename → MoveFileExW is the
+            # Windows operator path (same reason as the unlink switch
+            # in `test_create_session_write_read_cleanup` — cmd's
+            # `move` builtin doesn't actually fire a rename syscall
+            # on a WinFsp drive in some configurations).
+            os.rename(topology.mount_path(old_rel), topology.mount_path(new_rel))
 
             # Step 5+6: symmetric kernel-side cross-check on both
             # sides of the rename.  draft.json must be ENOENT;

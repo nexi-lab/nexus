@@ -316,11 +316,11 @@ jobs:
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             if (Test-Path nexusd.log) {
               Write-Host "=== nexusd.log (last 400 lines) ==="
-              Get-Content nexusd.log -Tail 400
+              Get-Content nexusd.log -Tail 4000
             }
             if (Test-Path nexusd.err.log) {
               Write-Host "=== nexusd.err.log (last 400 lines) ==="
-              Get-Content nexusd.err.log -Tail 400
+              Get-Content nexusd.err.log -Tail 4000
             }
           }
           exit $testRc

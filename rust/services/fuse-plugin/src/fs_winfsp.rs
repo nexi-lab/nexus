@@ -250,6 +250,7 @@ impl FileSystemContext for NexusWinFsp {
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> Result<FileSecurity, FspError> {
         let path = Self::to_kernel_path(file_name);
+        eprintln!("[winfsp] get_security_by_name path={:?}", path);
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (_size, entry_type) =
@@ -276,8 +277,11 @@ impl FileSystemContext for NexusWinFsp {
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
         eprintln!(
-            "[winfsp] open path={} create_opts=0x{:x} granted=0x{:x}",
-            path, create_options, granted_access
+            "[winfsp] open path={:?} create_opts=0x{:x} granted=0x{:x} raw_widebytes={}",
+            path,
+            create_options,
+            granted_access,
+            file_name.len()
         );
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
@@ -312,6 +316,10 @@ impl FileSystemContext for NexusWinFsp {
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
+        eprintln!(
+            "[winfsp] create path={:?} create_opts=0x{:x}",
+            path, create_options
+        );
         let is_dir = (create_options & FILE_DIRECTORY_FILE) != 0;
         if is_dir {
             kernel_callbacks::sys_mkdir(&self.kernel, &path)

@@ -270,11 +270,15 @@ impl FileSystemContext for NexusWinFsp {
     fn open(
         &self,
         file_name: &U16CStr,
-        _create_options: u32,
-        _granted_access: u32,
+        create_options: u32,
+        granted_access: u32,
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
+        eprintln!(
+            "[winfsp] open path={} create_opts=0x{:x} granted=0x{:x}",
+            path, create_options, granted_access
+        );
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (size, entry_type) =
@@ -528,6 +532,10 @@ impl FileSystemContext for NexusWinFsp {
         _file_name: &U16CStr,
         delete_file: bool,
     ) -> Result<(), FspError> {
+        eprintln!(
+            "[winfsp] set_delete path={} is_dir={} delete_file={}",
+            context.path, context.is_dir, delete_file
+        );
         // Per winfsp 0.13's `set_delete` contract: do NOT actually
         // delete here.  Stage the intent on the FileContext; the
         // real `sys_unlink` / `sys_rmdir` happens in `cleanup` when
@@ -594,6 +602,15 @@ impl FileSystemContext for NexusWinFsp {
     }
 
     fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, flags: u32) {
+        eprintln!(
+            "[winfsp] cleanup path={} is_dir={} flags={} staged={}",
+            context.path,
+            context.is_dir,
+            flags,
+            context
+                .delete_on_cleanup
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
         // Real delete happens here, per winfsp 0.13's contract.
         // Two signals can trigger it: the staged `delete_on_cleanup`
         // flag set by `set_delete` for the FileDispositionInformation
@@ -616,17 +633,12 @@ impl FileSystemContext for NexusWinFsp {
         } else {
             kernel_callbacks::sys_unlink(&self.kernel, &context.path)
         };
+        eprintln!(
+            "[winfsp] cleanup deleted path={} is_dir={} result={:?}",
+            context.path, context.is_dir, res
+        );
         if res.is_ok() {
             self.paths.lock().unwrap().forget(&context.path);
-        }
-        // cleanup() can't fail in WinFsp's API — log the rc and
-        // move on.  A failed delete here means a real bug; surface
-        // it via stderr so the daemon log captures it.
-        if let Err(rc) = res {
-            eprintln!(
-                "[winfsp] cleanup delete failed path={} is_dir={} rc={}",
-                context.path, context.is_dir, rc
-            );
         }
     }
 

@@ -341,11 +341,7 @@ impl FileSystemContext for NexusWinFsp {
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
-        winfsp_diag!(
-            "create path={:?} create_opts=0x{:x}",
-            path,
-            create_options
-        );
+        winfsp_diag!("create path={:?} create_opts=0x{:x}", path, create_options);
         let is_dir = (create_options & FILE_DIRECTORY_FILE) != 0;
         if is_dir {
             kernel_callbacks::sys_mkdir(&self.kernel, &path)
@@ -568,12 +564,7 @@ impl FileSystemContext for NexusWinFsp {
         // means the next round either confirms the upstream open()
         // is rejecting the rename intent OR pinpoints what error
         // sys_rename surfaces if we do get this far.
-        winfsp_diag!(
-            "rename old={} new={} result={:?}",
-            old_path,
-            new_path,
-            res
-        );
+        winfsp_diag!("rename old={} new={} result={:?}", old_path, new_path, res);
         res.map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         self.paths.lock().unwrap().rename(&old_path, &new_path);
         Ok(())

@@ -230,22 +230,11 @@ class TestStackReadiness:
 class TestSingleNodeOperatorSurface:
     """Bytes round-trip through every surface a single node exposes.
 
-    Two operator-facing workflows.  Both cross-check FUSE + gRPC +
-    host-fs simultaneously so a regression in any layer surfaces at
-    a specific step.
-
-    Caveat the workflow shape locks down: LocalConnector is
-    lazy-materialise — host-fs-only writes (bytes on disk, no
-    sys_write through Nexus) are visible via ``vfs_read`` (the
-    backend's ``read`` falls through to disk) but NOT via
-    ``vfs_stat`` (the kernel returns metastore-only).  Since FUSE
-    ``lookup`` calls ``sys_stat``, host-fs-only files are
-    ENOENT-on-lookup through the mount.  This is by design — making
-    FUSE see arbitrary host-fs changes needs LocalConnector
-    background scan or inotify, tracked separately.  Workflow 1
-    exercises the path that does work (write through Nexus → all
-    surfaces see it).  Workflow 2 pins the lazy-fallthrough property
-    via the gRPC surface explicitly.
+    One operator-facing workflow: write through Nexus (FUSE mount) →
+    all surfaces (FUSE read, gRPC, host-fs) see the same bytes, and
+    same-size host-fs overwrites stay visible through FUSE because
+    the kernel metastore already has the entry and sys_read falls
+    through to the LocalConnector backend on each call.
     """
 
     def test_fuse_write_visible_at_grpc_and_host_fs_then_host_overwrite_visible_via_fuse(
@@ -257,8 +246,8 @@ class TestSingleNodeOperatorSurface:
         write, subsequent host-fs overwrites (same-size payload) ARE
         visible via FUSE read — the metastore lookup hits, sys_read
         falls through to the LocalConnector backend, and the backend
-        reads disk.  Same-size constraint is the LocalConnector
-        lazy-materialise contract; size-mismatched overwrite would
+        reads disk.  Same-size constraint reflects the
+        materialised-once contract; size-mismatched overwrite would
         truncate at the cached metadata size.
         """
         session = _new_session()
@@ -332,65 +321,6 @@ class TestSingleNodeOperatorSurface:
                 check=False,
             )
 
-    def test_host_write_visible_via_grpc_but_not_via_fuse_lookup(
-        self, topology: CcTasksTopology, api_key: str, ready_node: None
-    ) -> None:
-        """3-step: pins the lazy-materialise LocalConnector contract.
-
-        For a path that has NEVER been written through Nexus, host-fs
-        bytes are reachable via ``vfs_read`` (the backend falls through
-        to disk) but ``vfs_stat`` returns ``found=False`` (no
-        metastore entry).  This is the contract every consumer needs
-        to know about — FUSE ``lookup`` calls ``sys_stat`` and so
-        ``cat /mnt/cc-tasks/<rel>`` returns ENOENT until something
-        materialises the path.
-
-        Step 3 asserts the gap exists *today* so a future change that
-        adds eager scan or inotify-driven materialise to LocalConnector
-        will rotate this test from xfail-style to positive coverage.
-        """
-        session = _new_session()
-        relpath = f"/{session}/host-only.json"
-        payload = b'{"task":"host-only","substrate":"lazy"}'
-        vfs_path = topology.founder_vfs_path(relpath)
-        mount_path = topology.mount_path_for_vfs(vfs_path)
-
-        try:
-            # Step 1: pure host-fs write.  Bypasses every Nexus syscall.
-            cc_tasks_share_helpers.host_task_write(topology.founder_container, relpath, payload)
-
-            # Step 2: gRPC vfs_read returns the bytes — backend
-            # fall-through SSOT.
-            grpc_read = runbook_helpers.vfs_read(topology.founder_grpc, vfs_path, api_key=api_key)
-            assert "error" not in grpc_read, f"gRPC vfs_read failed: {grpc_read}"
-            assert runbook_helpers.decode_content(grpc_read) == payload, (
-                "LocalConnector lazy-read fallthrough broken — "
-                "vfs_read should serve bytes from /host/tasks regardless "
-                "of metastore state"
-            )
-
-            # Step 3: gRPC vfs_stat returns found=False (no metastore
-            # entry).  FUSE lookup-via-sys_stat returns ENOENT.  Both
-            # are the same expected gap.
-            grpc_stat = runbook_helpers.vfs_stat(topology.founder_grpc, vfs_path, api_key=api_key)
-            assert grpc_stat["result"]["found"] is False, (
-                "LocalConnector materialised host-fs path eagerly — "
-                "scan/inotify added?  Rotate this test from gap-coverage "
-                "to positive coverage and remove the gap caveats."
-            )
-            assert not cc_tasks_share_helpers.mount_path_exists(
-                topology.founder_container, mount_path
-            ), (
-                "FUSE lookup surfaced host-fs-only path — sys_stat "
-                "fell through to backend?  Rotate this test."
-            )
-        finally:
-            runbook_helpers.docker_exec(
-                topology.founder_container,
-                ["rm", "-rf", f"/host/tasks/{session}"],
-                check=False,
-            )
-
 
 # ---------------------------------------------------------------------------
 # Workflow 3: full session lifecycle through the FUSE mount.
@@ -401,14 +331,8 @@ class TestSessionLifecycleViaFuse:
     Six-step workflow exercises the dir-mutating FUSE callbacks the
     KernelHandle v3 plugin wires AND the LocalConnector backend
     implements: mkdir, write (creates file), readdir, read, unlink,
-    rmdir.
-
-    ``rename`` is **not** in this workflow — LocalConnector backend has
-    no ``rename`` impl today (only ``read`` + ``write``), so FUSE
-    ``mv`` against a LocalConnector-mounted path returns EIO.  The
-    FUSE adapter's rename callback is exercised in the WinFsp suite
-    against an in-memory backend; adding it here needs a LocalConnector
-    rename impl, tracked separately.
+    rmdir.  The FUSE adapter's ``rename`` callback itself is exercised
+    in the WinFsp Windows E2E suite against an in-memory backend.
     """
 
     def test_mkdir_write_ls_read_unlink_rmdir(
@@ -483,56 +407,6 @@ class TestSessionLifecycleViaFuse:
             )
         finally:
             # Belt-and-suspenders: blow away any residue via host fs.
-            runbook_helpers.docker_exec(
-                topology.founder_container,
-                ["rm", "-rf", f"/host/tasks/{session}"],
-                check=False,
-            )
-
-    def test_rename_via_fuse_on_localconnector_returns_eio(
-        self, topology: CcTasksTopology, api_key: str, ready_node: None
-    ) -> None:
-        """3-step: pins the LocalConnector ``rename`` gap.
-
-        Plant a FUSE-write so metadata + bytes exist, ``mv`` it via the
-        mount, assert the move fails with a non-zero exit (the FUSE
-        adapter correctly surfaces the backend EIO).  Test rotates to
-        positive coverage when LocalConnector grows a real ``rename``
-        impl — flip ``check=False`` to ``check=True`` and add the
-        before/after presence assertions.
-        """
-        session = _new_session()
-        session_vfs = topology.founder_vfs_path(f"/{session}")
-        session_mount = topology.mount_path_for_vfs(session_vfs)
-        src_mount = f"{session_mount}/src.json"
-        dst_mount = f"{session_mount}/dst.json"
-
-        try:
-            # Step 1: stage a FUSE-written file (mkdir + write).
-            cc_tasks_share_helpers.mount_mkdir(topology.founder_container, session_mount)
-            cc_tasks_share_helpers.mount_write_bytes(
-                topology.founder_container, src_mount, b'{"task":"rename-target"}'
-            )
-
-            # Step 2: attempt rename via FUSE — expect failure.
-            result = runbook_helpers.docker_exec(
-                topology.founder_container,
-                ["mv", src_mount, dst_mount],
-                check=False,
-            )
-            assert result.rc != 0, (
-                "mv via FUSE succeeded — did LocalConnector grow a rename "
-                "impl?  Rotate this test from gap-coverage to positive coverage."
-            )
-
-            # Step 3: source still present, destination still absent.
-            assert cc_tasks_share_helpers.mount_path_exists(
-                topology.founder_container, src_mount
-            ), "rename failed AND lost the source — torn intermediate state"
-            assert not cc_tasks_share_helpers.mount_path_exists(
-                topology.founder_container, dst_mount
-            ), "rename failed yet partial destination created — sys_rename should be atomic"
-        finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,
                 ["rm", "-rf", f"/host/tasks/{session}"],
@@ -690,10 +564,6 @@ class TestCrossNodeFuseFederationWorkflow:
 
     Mode: writes go through the FUSE mount (not direct host fs) so
     sys_write materialises kernel metadata + last_writer_address.
-    Without that, joiner has no DT_FILE entry to look up and FUSE
-    `cat` returns ENOENT before sys_read can fan out (the
-    LocalConnector lazy-materialise gap pinned in
-    ``TestSingleNodeOperatorSurface.test_host_write_visible_via_grpc_but_not_via_fuse_lookup``).
     The Mac↔Win operator workflow's write-through-FUSE shape matches
     this — the FUSE mount IS the write surface, not just the read
     surface.

@@ -194,6 +194,11 @@ jobs:
           NEXUS_FUSE_WINDOWS_E2E: "1"
           NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
           NEXUS_FUSE_MOUNT_POINT: "M:"
+          # Unlocks `winfsp_diag!(...)` in the plugin — production
+          # daemons leave this unset and pay zero per-callback cost.
+          # CI sets it so the full per-call trace stream lands in
+          # nexusd.err.log, which the next step uploads as an artifact.
+          NEXUS_FUSE_PLUGIN_TRACE: "1"
         run: |
           # CONSOLIDATED SINGLE STEP: launch daemon → wait → tests → teardown.
           #
@@ -314,13 +319,32 @@ jobs:
             # tests fail or wait timed out — guarantees logs reach
             # the CI viewer regardless.
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            # Console preview only — the full files go up as an
+            # artifact in the next step, byte-exact, no Tail
+            # truncation interfering with the sudocode IO stream.
             if (Test-Path nexusd.log) {
-              Write-Host "=== nexusd.log (last 400 lines) ==="
-              Get-Content nexusd.log -Tail 4000
+              Write-Host "=== nexusd.log (last 200 lines — full file in artifact) ==="
+              Get-Content nexusd.log -Tail 200
             }
             if (Test-Path nexusd.err.log) {
-              Write-Host "=== nexusd.err.log (last 400 lines) ==="
-              Get-Content nexusd.err.log -Tail 4000
+              Write-Host "=== nexusd.err.log (last 200 lines — full file in artifact) ==="
+              Get-Content nexusd.err.log -Tail 200
             }
           }
           exit $testRc
+
+      # Always-uploaded so failure forensics aren't subject to GHA's
+      # per-step log truncation (~4 MB) OR PowerShell `Get-Content
+      # -Tail`'s line-count cap.  The artifact is the full byte-
+      # exact daemon stdio, downloadable from the workflow run page
+      # for as long as the artifact retention policy keeps it.
+      - name: Upload daemon logs as artifact
+        if: always() && steps.changes.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexusd-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            nexusd.log
+            nexusd.err.log
+          if-no-files-found: warn
+          retention-days: 14

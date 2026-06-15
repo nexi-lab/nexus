@@ -71,6 +71,31 @@ use nexus_plugin_abi::KernelHandle;
 use crate::kernel_callbacks::{self, parse_readdir, parse_stat, DT_DIR, DT_MOUNT};
 use crate::path_index::{join_path, PathIndex};
 
+/// Diagnostic-trace gate, cached from `NEXUS_FUSE_PLUGIN_TRACE` at first
+/// call.  Production daemons leave the env var unset → every
+/// `winfsp_diag!` call is a single atomic load that branches to noop, so
+/// the per-callback overhead is zero in the steady state.  CI sets the
+/// var to enable the per-callback stderr trace stream (file uploaded as
+/// a workflow artifact, full byte-exact).
+///
+/// Why eprintln and not `tracing::debug!`: the plugin is dlopen'd as a
+/// cdylib and owns a separate `tracing` global, so the cluster's
+/// subscriber doesn't see plugin tracing events.  stderr lands in
+/// nexusd.err.log regardless — the operator's only observable channel.
+fn winfsp_trace_enabled() -> bool {
+    use std::sync::OnceLock;
+    static CELL: OnceLock<bool> = OnceLock::new();
+    *CELL.get_or_init(|| std::env::var_os("NEXUS_FUSE_PLUGIN_TRACE").is_some())
+}
+
+macro_rules! winfsp_diag {
+    ($fmt:literal $($args:tt)*) => {
+        if $crate::fs_winfsp::winfsp_trace_enabled() {
+            eprintln!(concat!("[winfsp] ", $fmt) $($args)*);
+        }
+    };
+}
+
 /// Sentinel root inode for the Windows mount.  WinFsp has no
 /// protocol-level root constant — the inode space is entirely ours.
 /// Pinned to `1` to mirror fuser's `INodeNo::ROOT.0` so the index's
@@ -250,7 +275,7 @@ impl FileSystemContext for NexusWinFsp {
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> Result<FileSecurity, FspError> {
         let path = Self::to_kernel_path(file_name);
-        eprintln!("[winfsp] get_security_by_name path={:?}", path);
+        winfsp_diag!("get_security_by_name path={:?}", path);
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         let (_size, entry_type) =
@@ -276,7 +301,7 @@ impl FileSystemContext for NexusWinFsp {
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
-        eprintln!(
+        winfsp_diag!(
             "[winfsp] open path={:?} create_opts=0x{:x} granted=0x{:x} raw_widebytes={}",
             path,
             create_options,
@@ -316,9 +341,10 @@ impl FileSystemContext for NexusWinFsp {
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
-        eprintln!(
+        winfsp_diag!(
             "[winfsp] create path={:?} create_opts=0x{:x}",
-            path, create_options
+            path,
+            create_options
         );
         let is_dir = (create_options & FILE_DIRECTORY_FILE) != 0;
         if is_dir {
@@ -525,9 +551,11 @@ impl FileSystemContext for NexusWinFsp {
         // means the next round either confirms the upstream open()
         // is rejecting the rename intent OR pinpoints what error
         // sys_rename surfaces if we do get this far.
-        eprintln!(
+        winfsp_diag!(
             "[winfsp] rename old={} new={} result={:?}",
-            old_path, new_path, res
+            old_path,
+            new_path,
+            res
         );
         res.map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         self.paths.lock().unwrap().rename(&old_path, &new_path);
@@ -540,9 +568,11 @@ impl FileSystemContext for NexusWinFsp {
         _file_name: &U16CStr,
         delete_file: bool,
     ) -> Result<(), FspError> {
-        eprintln!(
+        winfsp_diag!(
             "[winfsp] set_delete path={} is_dir={} delete_file={}",
-            context.path, context.is_dir, delete_file
+            context.path,
+            context.is_dir,
+            delete_file
         );
         // Per winfsp 0.13's `set_delete` contract: do NOT actually
         // delete here.  Stage the intent on the FileContext; the
@@ -610,7 +640,7 @@ impl FileSystemContext for NexusWinFsp {
     }
 
     fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, flags: u32) {
-        eprintln!(
+        winfsp_diag!(
             "[winfsp] cleanup path={} is_dir={} flags={} staged={}",
             context.path,
             context.is_dir,
@@ -641,9 +671,11 @@ impl FileSystemContext for NexusWinFsp {
         } else {
             kernel_callbacks::sys_unlink(&self.kernel, &context.path)
         };
-        eprintln!(
+        winfsp_diag!(
             "[winfsp] cleanup deleted path={} is_dir={} result={:?}",
-            context.path, context.is_dir, res
+            context.path,
+            context.is_dir,
+            res
         );
         if res.is_ok() {
             self.paths.lock().unwrap().forget(&context.path);

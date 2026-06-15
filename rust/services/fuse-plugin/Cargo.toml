@@ -2,7 +2,7 @@
 name = "nexus-fuse-plugin"
 version = "0.1.0"
 edition = "2021"
-description = "Nexus FUSE service plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Spawns a fuser-based FUSE event loop on /dev/fuse and translates POSIX filesystem ops into Nexus kernel syscalls via the plugin-abi KernelHandle, in-process. Mirrors the `nexus-vault` shape so signing/release pipelines apply identically."
+description = "Nexus FUSE service plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. On Linux / macOS spawns a fuser-based event loop on /dev/fuse (libfuse3) or macFUSE. On Windows spawns a WinFsp FileSystemHost. Either path translates OS filesystem ops into Nexus kernel syscalls via the plugin-abi KernelHandle, in-process. Mirrors the `nexus-vault` shape so signing/release pipelines apply identically."
 authors = ["Nexus Team"]
 publish = false
 
@@ -17,19 +17,44 @@ crate-type = ["cdylib", "rlib"]
 # The `declare_service_plugin!` macro + KernelHandle live here.
 nexus-plugin-abi = { workspace = true }
 
+# tracing for diagnostic logs on every target.  Kept opt-in via the
+# cluster binary's RUST_LOG so the plugin is silent by default.
+# MUST stay above any target-specific table — TOML inline tables
+# extend until the next `[...]` header, so anything below a
+# `[target.'cfg(...)']` line silently picks up that platform gate.
+tracing = "0.1"
+
 # `fuser` is the production-quality Rust wrapper around libfuse3 on
 # Linux / macFUSE on macOS.  Same `Filesystem` trait + `spawn_mount2`
 # entrypoint on both platforms, so the cfg-gated Linux/macOS branch
-# below shares one body.  Windows support is via a separate WinFsp
-# adapter (different binding crate, different trait shape) — tracked
-# as a follow-up PR and not gated by this cdylib's build matrix.
+# below shares one body.  Windows support sits in a separate WinFsp
+# adapter (different binding crate, different trait shape) — gated
+# under the `cfg(target_os = "windows")` block below.
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 fuser = "0.17"
 # Errno constants for translating kernel-callback failures into POSIX
 # errors that FUSE clients understand.  Linux+macOS share libc; the
-# eventual WinFsp adapter pulls in its own equivalents.
+# WinFsp adapter pulls in `windows_sys` for its NTSTATUS equivalents.
 libc = "0.2"
 
-# tracing for diagnostic logs.  Kept opt-in via the cluster binary's
-# RUST_LOG so the plugin is silent by default.
-tracing = "0.1"
+# `winfsp` is the Rust binding around the WinFsp Windows user-space
+# filesystem framework.  Different trait shape from fuser
+# (`FileSystemContext` + `FileSystemHost` instead of `Filesystem` +
+# `spawn_mount2`), different name semantics (UTF-16 wide strings vs
+# `&OsStr`), and Windows security descriptor surface (we stub to
+# read/write/everyone — ReBAC owns access policy at the kernel layer).
+# winfsp-rs ships with a bundled import library so no WinFsp SDK is
+# needed at build time; the runtime DLL must be installed on the
+# operator's machine before launching nexusd-cluster.
+[target.'cfg(target_os = "windows")'.dependencies]
+winfsp = "0.13"
+# `widestring` for U16CStr ↔ String path conversion at the FFI
+# boundary — winfsp's trait takes UTF-16 wide strings everywhere,
+# kernel callbacks take CStr.  Pinned to the same major rev winfsp
+# itself depends on so there is one wide-string crate in the
+# dependency closure.
+widestring = "1"
+# `windows-sys` for NTSTATUS constants used in `Result::Err` returns
+# from the WinFsp trait methods (FUSE-side gets `Errno`, WinFsp-side
+# gets `STATUS_*` codes).
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

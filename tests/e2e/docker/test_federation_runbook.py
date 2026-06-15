@@ -750,6 +750,21 @@ class TestRestartReplay:
         docker_restart(topology.joiner_container)
         wait_healthy([topology.joiner_grpc])
 
+        # gRPC-alive ≠ raft-caught-up — joiner's metastore replay can
+        # lag the health-port flip on a freshly-restarted container.
+        # Without this gate the post-restart read can hit a window
+        # where the daemon answers RPCs but hasn't re-applied the
+        # log entry the test wrote pre-restart, surfacing as a
+        # spurious FILE_NOT_FOUND.  Same primitive the pre-restart
+        # phase uses for "all nodes caught up to the same index".
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+            probe_path=path,
+        )
+
         rd = vfs_read(
             topology.joiner_grpc,
             path,

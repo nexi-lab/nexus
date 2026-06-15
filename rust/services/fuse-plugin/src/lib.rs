@@ -51,25 +51,37 @@
 //! Windows today the plugin compiles to a no-op cdylib so the
 //! workspace builds cleanly across the matrix.
 
+// `kernel_callbacks` and `path_index` are platform-agnostic — both
+// the fuser-based fs (Linux/macOS) and the WinFsp-based fs_winfsp
+// (Windows) consume them.  No cfg gate.
+mod kernel_callbacks;
+mod path_index;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fs;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod fs_winfsp;
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::Mutex;
 
 use nexus_plugin_abi::{declare_service_plugin, KernelHandle};
 
 /// Plugin state held between `create` and `destroy`.
 ///
-/// On Linux, owns the `fuser::BackgroundSession` driving the FUSE
-/// event loop — dropping it sends an unmount + joins the worker
-/// thread.  On non-Linux targets, holds nothing; the plugin is
-/// effectively a no-op.
+/// * Linux / macOS — owns the `fuser::BackgroundSession` driving the
+///   FUSE event loop.  Dropping sends an unmount + joins the worker
+///   thread.
+/// * Windows — owns the `winfsp::host::FileSystemHost` driving the
+///   WinFsp dispatcher.  Dropping sends `stop()` + un-mounts.
 struct FusePlugin {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     session: Mutex<Option<fuser::BackgroundSession>>,
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    _phantom: (),
+    #[cfg(target_os = "windows")]
+    host: Mutex<
+        Option<winfsp::host::FileSystemHost<fs_winfsp::NexusWinFsp, winfsp::host::CoarseGuard>>,
+    >,
 }
 
 impl FusePlugin {
@@ -77,8 +89,8 @@ impl FusePlugin {
         Self {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             session: Mutex::new(None),
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            _phantom: (),
+            #[cfg(target_os = "windows")]
+            host: Mutex::new(None),
         }
     }
 }
@@ -91,7 +103,7 @@ impl FusePlugin {
 /// alternative (returning null from `create`) would block the
 /// nexusd-cluster boot path on a recoverable mount failure, which
 /// over-couples plugin lifecycle to operator-environment correctness.
-#[allow(unused_variables)] // _kernel unused on non-Linux until those targets land
+#[allow(unused_variables)] // _kernel unused on unsupported targets
 fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
     let plugin = FusePlugin::new();
 
@@ -151,6 +163,112 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // winfsp_init_or_die loads winfsp-x64.dll and binds the
+        // function-pointer table. Idempotent — calling it twice on
+        // the same process is a no-op. Required before any
+        // FileSystemHost::new call. Panics if WinFsp isn't installed
+        // on the operator's machine, which is the only mount-time
+        // failure mode we can't recover from.
+        if let Err(e) = winfsp::winfsp_init() {
+            eprintln!("[nexus-fuse-plugin] WinFsp init FAILED: {e:?} — is WinFsp installed?");
+            tracing::error!(
+                target: "nexus::fuse",
+                error = ?e,
+                "WinFsp init failed; plugin will report status=unmounted"
+            );
+            return Box::new(plugin);
+        }
+
+        let mount_point = std::env::var("NEXUS_FUSE_MOUNT_POINT").ok();
+        if let Some(mount_point) = mount_point {
+            let vfs_root = std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
+
+            // SAFETY: same lifetime contract as the Linux branch —
+            // KernelHandle's pointers remain valid for the plugin's
+            // lifetime, and the FileSystemHost holds NexusWinFsp only
+            // while the dispatcher runs (destroy stops it first).
+            let kernel_clone = unsafe { kernel_handle_clone(_kernel) };
+            let fs = fs_winfsp::NexusWinFsp::new(kernel_clone, vfs_root);
+
+            // Reasonable defaults for the cc-tasks-share workflow.
+            // Operators who need different VolumeParams (sector size,
+            // case-sensitivity, etc.) override via the OS-level mount
+            // wrapper or a follow-up env var.
+            let mut volume_params = winfsp::host::VolumeParams::new();
+            volume_params
+                .filesystem_name("NexusVFS")
+                .prefix("")
+                .case_preserved_names(true)
+                .case_sensitive_search(true)
+                .unicode_on_disk(true)
+                .persistent_acls(false)
+                .reparse_points(false)
+                .named_streams(false);
+
+            match winfsp::host::FileSystemHost::new(volume_params, fs) {
+                Ok(mut host) => match host.mount(&mount_point) {
+                    // CoarseGuard is the default guard strategy on
+                    // FileSystemHost<T> but the impl trees overlap so
+                    // `.start()` is ambiguous; reach the
+                    // CoarseGuard-specific start via UFCS.
+                    Ok(()) => match winfsp::host::FileSystemHost::<
+                        fs_winfsp::NexusWinFsp,
+                        winfsp::host::CoarseGuard,
+                    >::start(&mut host)
+                    {
+                        Ok(()) => {
+                            eprintln!("[nexus-fuse-plugin] mount OK at {mount_point}");
+                            tracing::info!(
+                                target: "nexus::fuse",
+                                mount_point = %mount_point,
+                                "WinFsp dispatcher started"
+                            );
+                            *plugin.host.lock().unwrap() = Some(host);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[nexus-fuse-plugin] WinFsp start FAILED at {mount_point}: {e:?}"
+                            );
+                            tracing::error!(
+                                target: "nexus::fuse",
+                                mount_point = %mount_point,
+                                error = ?e,
+                                "WinFsp dispatcher start failed"
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!(
+                            "[nexus-fuse-plugin] WinFsp mount FAILED at {mount_point}: {e:?}"
+                        );
+                        tracing::error!(
+                            target: "nexus::fuse",
+                            mount_point = %mount_point,
+                            error = ?e,
+                            "WinFsp mount() failed"
+                        );
+                    }
+                },
+                Err(e) => {
+                    eprintln!("[nexus-fuse-plugin] WinFsp FileSystemHost::new FAILED: {e:?}");
+                    tracing::error!(
+                        target: "nexus::fuse",
+                        error = ?e,
+                        "WinFsp FileSystemHost::new failed"
+                    );
+                }
+            }
+        } else {
+            eprintln!("[nexus-fuse-plugin] NEXUS_FUSE_MOUNT_POINT not set — no mount performed");
+            tracing::warn!(
+                target: "nexus::fuse",
+                "NEXUS_FUSE_MOUNT_POINT not set — plugin loaded but no mount performed"
+            );
+        }
+    }
+
     Box::new(plugin)
 }
 
@@ -160,7 +278,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
 /// kernel guarantees the underlying state lives at least as long as
 /// any plugin holding a clone (loader holds the `Arc<Kernel>` via the
 /// `DylibRustService` it stores).
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
     KernelHandle {
         sys_read: src.sys_read,
@@ -171,6 +289,7 @@ unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
         sys_mkdir: src.sys_mkdir,
         sys_rmdir: src.sys_rmdir,
         sys_rename: src.sys_rename,
+        sys_stat_batch: src.sys_stat_batch,
         kernel_ptr: src.kernel_ptr,
     }
 }

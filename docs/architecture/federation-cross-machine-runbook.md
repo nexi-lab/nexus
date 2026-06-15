@@ -67,7 +67,7 @@ Headscale server (company-managed)
 * **For `cc tasks list` cross-machine workflow** (Step 3g) — operating-system FUSE userspace:
   * **Linux**: `apt install fuse3 libfuse3-3`.
   * **macOS**: `brew install --cask macfuse`, then approve the kernel extension in System Settings → Privacy & Security and **reboot** (macFUSE installs are interactive by design — no headless equivalent today).
-  * **Windows**: WinFsp adapter is **not yet shipped** (`fuser` doesn't support Windows; the `winfsp-rs` binding takes a different trait shape, tracked as a follow-up PR).  The signed FUSE plugin dylib still loads on Windows (it compiles to a no-op cdylib so the workspace matrix stays clean) but no mount happens.  Mac↔Win symmetry on the `cc tasks list` flow waits on the WinFsp PR.
+  * **Windows**: `choco install winfsp -y` (Administrator PowerShell) or `winget install --id WinFsp.WinFsp --silent`.  WinFsp is the Windows kernel-side userspace-filesystem driver `nexus-fuse-plugin` consumes via the `winfsp` Rust crate (different binding from `fuser`, but the same KernelHandle ABI surface).  The driver installs at `C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll` but the installer does NOT add that dir to system PATH.  Before launching the daemon, prepend it: `$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"`.  Without this, the plugin DLL load fails at `LoadLibraryExW` with error 126 ("module not found") because the static import on `winfsp-x64.dll` can't be resolved.
 
 ---
 
@@ -374,7 +374,7 @@ ls /mnt/cc-tasks/A/session-x/    # → 1.json (same machine, via LocalConnector)
 ls /mnt/cc-tasks/A/session-x/    # → 1.json (federation fan-out + LocalConnector on A)
 ```
 
-The FUSE plugin and LocalConnector compose without coupling — LocalConnector is the *write* surface (host fs is the SSOT, every write goes there bypassing Nexus), FUSE plugin is the *unified read* surface (`ls` sees both local + remote tasks through the federated VFS).  The cc-tasks-share Docker E2E (`tests/e2e/docker/test_fuse_plugin_e2e.py`) regression-guards every directory-mutating op the plugin wires through KernelHandle v2.
+The FUSE plugin and LocalConnector compose without coupling — LocalConnector is the *write* surface (host fs is the SSOT, every write goes there bypassing Nexus), FUSE plugin is the *unified read* surface (`ls` sees both local + remote tasks through the federated VFS).  The cc-tasks-share Docker E2E (`tests/e2e/docker/test_cc_tasks_share_e2e.py`) regression-guards the full chain — FUSE op → KernelHandle v3 callback → DT_MOUNT routing → federation fan-out (when crossing nodes) → peer LocalConnector → host fs — as longer cross-layer workflows on a founder + joiner topology.
 
 Platform matrix:
 
@@ -382,7 +382,7 @@ Platform matrix:
 |----------|----------------|--------|
 | Linux    | `libfuse3` (`fuse3`) | First-cut. |
 | macOS    | `macFUSE`            | Same source body via cfg gate. |
-| Windows  | `WinFsp`             | Deferred — separate adapter PR. |
+| Windows  | `WinFsp`             | First-cut.  `winfsp` crate, cfg-gated under `target_os = "windows"`; `NEXUS_FUSE_MOUNT_POINT` accepts a drive letter (`Z:`) or directory path. |
 
 The dylib is unsigned-rejected by `PluginLoader::load`; the release pipeline (`.github/workflows/release-fuse-plugin.yml`) signs every dylib it ships against the `kernel-dogfood-v1` key in the sealed in-repo keystore.  See `rust/services/fuse-plugin/README.md` for the operator install + admin RPC surface, and `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md` for the signing trust chain.
 

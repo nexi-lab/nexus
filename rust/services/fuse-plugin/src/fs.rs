@@ -44,8 +44,6 @@
 //! kernel-managed.  Surfacing `ENOSYS` keeps the operator-visible
 //! contract honest until the kernel grows a setattr surface.
 
-use std::collections::HashMap;
-use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -55,7 +53,10 @@ use fuser::{
     ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
 };
 
-use nexus_plugin_abi::{nexus_free, KernelHandle};
+use nexus_plugin_abi::KernelHandle;
+
+use crate::kernel_callbacks::{self, parse_readdir, parse_stat as parse_stat_json};
+use crate::path_index::{join_path, PathIndex};
 
 /// Cache TTL for kernel-attributes returned to FUSE.  Set to 1 second
 /// to mirror typical NFS defaults; the kernel-side metastore is the
@@ -78,11 +79,6 @@ const NEG_ENTRY_TTL: Duration = Duration::ZERO;
 /// the inode map can use plain `u64` keys.
 const FUSE_ROOT_RAW: u64 = INodeNo::ROOT.0;
 
-/// Raw i32 EIO used by the internal sys_*() C-ABI wrappers (which
-/// return `Result<_, i32>` mirroring the C-side rc).  Trait-level
-/// methods wrap it into the typed `Errno` via `errno_io()`.
-const ERRNO_IO_RAW: i32 = libc::EIO;
-
 /// `EIO` errno wrapper used as the catch-all for "kernel callback
 /// returned a non-zero status."  Refined later if we want to map
 /// specific kernel errors to ENOENT / EACCES / etc.
@@ -101,88 +97,22 @@ fn errno_nosys() -> Errno {
 
 pub struct NexusFs {
     kernel: KernelHandle,
-    /// Bidirectional inode↔path index.  The forward map (`ino_to_path`)
-    /// translates a FUSE inode back to the VFS path the kernel
-    /// callbacks expect; the reverse map (`path_to_ino`) lets
-    /// `lookup` return a **stable** inode for a path it has seen
-    /// before — without it every LOOKUP minted a fresh inode and the
-    /// kernel-side FUSE driver couldn't tie its cached dentry to the
-    /// one the next op walked through (rename's `d_move` is the
-    /// canonical case: source dentry got inode A on create, dest
-    /// lookup returned inode B; the rename op's userspace handler ran
-    /// fine but the kernel-side `d_move(A → B)` linked the wrong
-    /// inode and downstream `cat <dest>` surfaced ENOENT despite the
-    /// rename having succeeded kernel-side).  Root inode
-    /// (FUSE_ROOT_RAW) is seeded with the operator-supplied
-    /// `vfs_root` prefix; child paths register on first lookup.  We
-    /// never evict — replacing the counter with a path-cache
-    /// eviction policy is a follow-up.
+    /// Bidirectional inode↔path index shared with the Windows
+    /// adapter.  See [`crate::path_index`] for the design rationale
+    /// (stable inode-per-path, rename remaps, unlink/rmdir release).
+    /// Root inode (`FUSE_ROOT_RAW`) is seeded with the operator-
+    /// supplied `vfs_root` prefix; child paths register on first
+    /// lookup.  We never evict — replacing the counter with a path-
+    /// cache eviction policy is a follow-up.
     paths: Mutex<PathIndex>,
     next_inode: AtomicU64,
-}
-
-/// Bidirectional inode↔path index — the SSOT for "what does each FUSE
-/// inode refer to right now".  Single mutex so both maps stay in
-/// lockstep; every mutator updates both sides in one critical section.
-struct PathIndex {
-    ino_to_path: HashMap<u64, String>,
-    path_to_ino: HashMap<String, u64>,
-}
-
-impl PathIndex {
-    fn with_root(vfs_root: String) -> Self {
-        let mut ino_to_path = HashMap::new();
-        let mut path_to_ino = HashMap::new();
-        ino_to_path.insert(FUSE_ROOT_RAW, vfs_root.clone());
-        path_to_ino.insert(vfs_root, FUSE_ROOT_RAW);
-        Self {
-            ino_to_path,
-            path_to_ino,
-        }
-    }
-
-    fn lookup_or_register(&mut self, path: &str, mint: impl FnOnce() -> u64) -> u64 {
-        if let Some(&ino) = self.path_to_ino.get(path) {
-            return ino;
-        }
-        let ino = mint();
-        self.ino_to_path.insert(ino, path.to_string());
-        self.path_to_ino.insert(path.to_string(), ino);
-        ino
-    }
-
-    /// Move the inode currently bound to `old_path` over to `new_path`.
-    /// No-op when `old_path` isn't tracked (e.g. the kernel-side
-    /// rename succeeded against a path the FUSE side never looked up,
-    /// which can happen with bulk operators).  Used by the `rename`
-    /// op so subsequent `read` / `getattr` on the d_moved inode walks
-    /// the new path through `sys_*` — otherwise the inode would still
-    /// resolve to `old_path` and every read would surface ENOENT.
-    fn rename(&mut self, old_path: &str, new_path: &str) {
-        let Some(ino) = self.path_to_ino.remove(old_path) else {
-            return;
-        };
-        self.ino_to_path.insert(ino, new_path.to_string());
-        self.path_to_ino.insert(new_path.to_string(), ino);
-    }
-
-    /// Drop the bidirectional mapping for `path`.  Used by `unlink`
-    /// and `rmdir` to release the inode after the kernel-side entry
-    /// is gone — a subsequent `create` at the same path then mints a
-    /// fresh inode instead of reusing one whose previous lifetime
-    /// the kernel may have already forgotten.
-    fn forget(&mut self, path: &str) {
-        if let Some(ino) = self.path_to_ino.remove(path) {
-            self.ino_to_path.remove(&ino);
-        }
-    }
 }
 
 impl NexusFs {
     pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
         Self {
             kernel,
-            paths: Mutex::new(PathIndex::with_root(vfs_root)),
+            paths: Mutex::new(PathIndex::with_root(FUSE_ROOT_RAW, vfs_root)),
             // First allocated inode = root + 1; the root inode itself
             // is reserved (fuser INodeNo::ROOT == 1).
             next_inode: AtomicU64::new(FUSE_ROOT_RAW + 1),
@@ -190,7 +120,7 @@ impl NexusFs {
     }
 
     fn path_for(&self, ino: INodeNo) -> Option<String> {
-        self.paths.lock().unwrap().ino_to_path.get(&ino.0).cloned()
+        self.paths.lock().unwrap().path_for(ino.0)
     }
 
     /// Return the existing inode for `path` if we've seen it before,
@@ -204,160 +134,6 @@ impl NexusFs {
             .lookup_or_register(path, || self.next_inode.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// Wrapper around the C `sys_stat` callback.  Returns the JSON
-    /// payload as a `String` on success.
-    fn sys_stat(&self, path: &str) -> Result<String, i32> {
-        let c_path = match CString::new(path) {
-            Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO_RAW),
-        };
-        let mut out_buf: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let rc = unsafe {
-            (self.kernel.sys_stat)(
-                self.kernel.kernel_ptr,
-                c_path.as_ptr(),
-                &mut out_buf,
-                &mut out_len,
-            )
-        };
-        if rc != 0 {
-            return Err(rc);
-        }
-        let json = unsafe {
-            let slice = std::slice::from_raw_parts(out_buf, out_len);
-            let s = std::str::from_utf8(slice)
-                .map(|s| s.to_string())
-                .map_err(|_| ERRNO_IO_RAW);
-            nexus_free(out_buf, out_len);
-            s?
-        };
-        Ok(json)
-    }
-
-    /// Wrapper around the C `sys_read` callback.  Returns the full
-    /// file content as a `Vec<u8>`; callers slice for offset/size.
-    fn sys_read(&self, path: &str) -> Result<Vec<u8>, i32> {
-        let c_path = match CString::new(path) {
-            Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO_RAW),
-        };
-        let mut out_buf: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let rc = unsafe {
-            (self.kernel.sys_read)(
-                self.kernel.kernel_ptr,
-                c_path.as_ptr(),
-                &mut out_buf,
-                &mut out_len,
-            )
-        };
-        if rc != 0 {
-            return Err(rc);
-        }
-        let data = unsafe {
-            let slice = std::slice::from_raw_parts(out_buf, out_len);
-            let v = slice.to_vec();
-            nexus_free(out_buf, out_len);
-            v
-        };
-        Ok(data)
-    }
-
-    /// Wrapper around the C `sys_readdir` callback.  Returns the JSON
-    /// array `[{"name":..,"entry_type":..}, ...]` as a `String`.
-    fn sys_readdir(&self, parent_path: &str) -> Result<String, i32> {
-        let c_path = match CString::new(parent_path) {
-            Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO_RAW),
-        };
-        let mut out_buf: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let rc = unsafe {
-            (self.kernel.sys_readdir)(
-                self.kernel.kernel_ptr,
-                c_path.as_ptr(),
-                &mut out_buf,
-                &mut out_len,
-            )
-        };
-        if rc != 0 {
-            return Err(rc);
-        }
-        let json = unsafe {
-            let slice = std::slice::from_raw_parts(out_buf, out_len);
-            let s = std::str::from_utf8(slice)
-                .map(|s| s.to_string())
-                .map_err(|_| ERRNO_IO_RAW);
-            nexus_free(out_buf, out_len);
-            s?
-        };
-        Ok(json)
-    }
-
-    /// Wrapper around the C `sys_unlink` callback.
-    fn sys_unlink(&self, path: &str) -> Result<(), i32> {
-        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-        let rc = unsafe { (self.kernel.sys_unlink)(self.kernel.kernel_ptr, c_path.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    }
-
-    /// Wrapper around the C `sys_mkdir` callback.
-    fn sys_mkdir(&self, path: &str) -> Result<(), i32> {
-        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-        let rc = unsafe { (self.kernel.sys_mkdir)(self.kernel.kernel_ptr, c_path.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    }
-
-    /// Wrapper around the C `sys_rmdir` callback.
-    fn sys_rmdir(&self, path: &str) -> Result<(), i32> {
-        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-        let rc = unsafe { (self.kernel.sys_rmdir)(self.kernel.kernel_ptr, c_path.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    }
-
-    /// Wrapper around the C `sys_rename` callback.
-    fn sys_rename(&self, old_path: &str, new_path: &str) -> Result<(), i32> {
-        let c_old = CString::new(old_path).map_err(|_| ERRNO_IO_RAW)?;
-        let c_new = CString::new(new_path).map_err(|_| ERRNO_IO_RAW)?;
-        let rc = unsafe {
-            (self.kernel.sys_rename)(self.kernel.kernel_ptr, c_old.as_ptr(), c_new.as_ptr())
-        };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    }
-
-    /// Wrapper around the C `sys_write` callback.
-    fn sys_write(&self, path: &str, data: &[u8]) -> Result<(), i32> {
-        let c_path = match CString::new(path) {
-            Ok(s) => s,
-            Err(_) => return Err(ERRNO_IO_RAW),
-        };
-        let rc = unsafe {
-            (self.kernel.sys_write)(
-                self.kernel.kernel_ptr,
-                c_path.as_ptr(),
-                data.as_ptr(),
-                data.len(),
-            )
-        };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    }
-
     /// Parse the JSON payload `sys_stat` returns into a `FileAttr`.
     /// The kernel-side shape is `StatResult` (see
     /// `kernel/src/kernel/mod.rs StatResult` and the JSON serializer
@@ -368,8 +144,7 @@ impl NexusFs {
         // Kernel exports `entry_type` (the SSOT for "what kind of
         // inode this is"); `kind_from_entry_type` is the single rule
         // that maps it to a FUSE FileType.
-        let size = json_u64(json, "\"size\":")?;
-        let entry_type = json_u64(json, "\"entry_type\":")?;
+        let (size, entry_type) = parse_stat_json(json)?;
         let kind = kind_from_entry_type(entry_type);
         let is_dir = kind == FileType::Directory;
         // FUSE wants a complete FileAttr; fields we don't pull from
@@ -398,7 +173,7 @@ impl NexusFs {
     /// success.  Centralises the path → callback → parse pipeline so
     /// lookup / getattr / readdir share one error mapping.
     fn stat_attr(&self, ino: INodeNo, path: &str) -> Result<FileAttr, Errno> {
-        let json = self.sys_stat(path).map_err(|_| errno_enoent())?;
+        let json = kernel_callbacks::sys_stat(&self.kernel, path).map_err(|_| errno_enoent())?;
         self.parse_stat(ino, &json).ok_or_else(errno_io)
     }
 }
@@ -441,58 +216,11 @@ fn negative_entry_attr() -> FileAttr {
 /// the most conservative choice for kinds the FUSE layer doesn't
 /// (yet) have first-class handling for.
 fn kind_from_entry_type(entry_type: u64) -> FileType {
-    const DT_DIR: u64 = 1;
-    const DT_MOUNT: u64 = 2;
-    if entry_type == DT_DIR || entry_type == DT_MOUNT {
+    if entry_type == kernel_callbacks::DT_DIR || entry_type == kernel_callbacks::DT_MOUNT {
         FileType::Directory
     } else {
         FileType::RegularFile
     }
-}
-
-/// Extract a `u64` from `json` by scanning for `key` and parsing the
-/// digits that follow.  Returns `None` if the key isn't present or
-/// the value isn't a non-negative integer.
-fn json_u64(json: &str, key: &str) -> Option<u64> {
-    let after = json.split_once(key)?.1.trim_start();
-    let end = after
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(after.len());
-    after[..end].parse().ok()
-}
-
-/// Parse the `sys_readdir` JSON array into `(name, entry_type)` pairs.
-/// The kernel-side serializer (see `kernel_cb_sys_readdir` in
-/// `kernel/src/kernel/plugins/mod.rs`) hand-rolls a minimal JSON of
-/// shape `[{"name":<escaped>,"entry_type":<u8>}, ...]`, so we parse
-/// the same shape without pulling `serde_json` into the cdylib.  Only
-/// the `"` and `\` escapes the kernel emits are handled.
-fn parse_readdir_entries(json: &str) -> Vec<(String, u64)> {
-    let mut out = Vec::new();
-    let mut rest = json;
-    while let Some((_, after_name)) = rest.split_once("\"name\":\"") {
-        let mut name = String::new();
-        let mut bytes = after_name.chars();
-        loop {
-            match bytes.next() {
-                Some('\\') => match bytes.next() {
-                    Some(c) => name.push(c),
-                    None => return out,
-                },
-                Some('"') => break,
-                Some(c) => name.push(c),
-                None => return out,
-            }
-        }
-        let after_close = bytes.as_str();
-        let entry_type = match json_u64(after_close, "\"entry_type\":") {
-            Some(t) => t,
-            None => return out,
-        };
-        out.push((name, entry_type));
-        rest = after_close;
-    }
-    out
 }
 
 impl Filesystem for NexusFs {
@@ -516,7 +244,7 @@ impl Filesystem for NexusFs {
         // negative-lookup probes (`mv`'s pre-rename LOOKUP, every
         // ENOENT path resolution) don't leak path↔inode entries the
         // FUSE side then has to clean up.
-        match self.sys_stat(&path) {
+        match kernel_callbacks::sys_stat(&self.kernel, &path) {
             Ok(json) => {
                 let ino = INodeNo(self.inode_for(&path));
                 match self.parse_stat(ino, &json) {
@@ -575,7 +303,7 @@ impl Filesystem for NexusFs {
                 return;
             }
         };
-        let full = match self.sys_read(&path) {
+        let full = match kernel_callbacks::sys_read(&self.kernel, &path) {
             Ok(d) => d,
             Err(_) => {
                 reply.error(errno_enoent());
@@ -623,7 +351,7 @@ impl Filesystem for NexusFs {
                 return;
             }
         };
-        match self.sys_write(&path, data) {
+        match kernel_callbacks::sys_write(&self.kernel, &path, data) {
             Ok(()) => reply.written(data.len() as u32),
             Err(_) => reply.error(errno_io()),
         }
@@ -670,14 +398,14 @@ impl Filesystem for NexusFs {
                 return;
             }
         };
-        let json = match self.sys_readdir(&parent_path) {
+        let json = match kernel_callbacks::sys_readdir(&self.kernel, &parent_path) {
             Ok(j) => j,
             Err(_) => {
                 reply.error(errno_io());
                 return;
             }
         };
-        let entries = parse_readdir_entries(&json);
+        let entries = parse_readdir(&json);
         // FUSE readdir is a streaming op: each `add` returns true once
         // the kernel buffer is full, after which we stop and let the
         // VFS resume from the offset we last reported.  Skipping
@@ -720,7 +448,7 @@ impl Filesystem for NexusFs {
             }
         };
         let path = join_path(&parent_path, name_str);
-        if self.sys_mkdir(&path).is_err() {
+        if kernel_callbacks::sys_mkdir(&self.kernel, &path).is_err() {
             reply.error(errno_io());
             return;
         }
@@ -748,7 +476,7 @@ impl Filesystem for NexusFs {
             }
         };
         let path = join_path(&parent_path, name_str);
-        match self.sys_unlink(&path) {
+        match kernel_callbacks::sys_unlink(&self.kernel, &path) {
             Ok(()) => {
                 self.paths.lock().unwrap().forget(&path);
                 reply.ok();
@@ -773,7 +501,7 @@ impl Filesystem for NexusFs {
             }
         };
         let path = join_path(&parent_path, name_str);
-        match self.sys_rmdir(&path) {
+        match kernel_callbacks::sys_rmdir(&self.kernel, &path) {
             Ok(()) => {
                 self.paths.lock().unwrap().forget(&path);
                 reply.ok();
@@ -822,7 +550,7 @@ impl Filesystem for NexusFs {
         };
         let old_path = join_path(&old_parent, old_name);
         let new_path = join_path(&new_parent, new_name);
-        match self.sys_rename(&old_path, &new_path) {
+        match kernel_callbacks::sys_rename(&self.kernel, &old_path, &new_path) {
             Ok(()) => {
                 // Move the inode's path mapping so the d_moved FUSE
                 // dentry (which still points at the old inode) walks
@@ -867,7 +595,7 @@ impl Filesystem for NexusFs {
             }
         };
         let path = join_path(&parent_path, name_str);
-        if self.sys_write(&path, &[]).is_err() {
+        if kernel_callbacks::sys_write(&self.kernel, &path, &[]).is_err() {
             reply.error(errno_io());
             return;
         }
@@ -907,21 +635,12 @@ impl Filesystem for NexusFs {
     }
 }
 
-/// Join a parent VFS path and a child file name into the canonical
-/// `parent/child` form the kernel expects.  Strips trailing slashes
-/// from `parent` so `/` + `foo` == `/foo` (not `//foo`).
-fn join_path(parent: &str, name: &str) -> String {
-    if parent == "/" {
-        format!("/{name}")
-    } else {
-        let p = parent.trim_end_matches('/');
-        format!("{p}/{name}")
-    }
-}
+// `join_path` moved to `crate::path_index` — both adapters share it.
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path_index::join_path;
 
     #[test]
     fn join_path_root() {
@@ -938,43 +657,10 @@ mod tests {
         assert_eq!(join_path("/a/b/", "c"), "/a/b/c");
     }
 
-    #[test]
-    fn json_u64_extracts_size() {
-        assert_eq!(
-            json_u64(r#"{"size":12345,"entry_type":0}"#, "\"size\":"),
-            Some(12345)
-        );
-    }
-
-    #[test]
-    fn json_u64_extracts_entry_type() {
-        // Directory entry — kernel reports entry_type=1 (DT_DIR).
-        assert_eq!(
-            json_u64(r#"{"size":4096,"entry_type":1}"#, "\"entry_type\":"),
-            Some(1)
-        );
-        // Regular file — entry_type=0 (DT_REG).
-        assert_eq!(
-            json_u64(r#"{"size":12,"entry_type":0}"#, "\"entry_type\":"),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn parse_readdir_entries_empty() {
-        assert_eq!(parse_readdir_entries("[]"), Vec::<(String, u64)>::new());
-    }
-
-    #[test]
-    fn parse_readdir_entries_mixed_kinds() {
-        // Same shape `kernel_cb_sys_readdir` emits.
-        let json = r#"[{"name":"foo.txt","entry_type":0},{"name":"sub","entry_type":1}]"#;
-        let entries = parse_readdir_entries(json);
-        assert_eq!(
-            entries,
-            vec![("foo.txt".to_string(), 0), ("sub".to_string(), 1),]
-        );
-    }
+    // `json_u64` / `parse_readdir` / `parse_stat` tests moved with
+    // their implementations into `crate::kernel_callbacks`.  The
+    // FUSE-side glue tests below stay here because they touch
+    // fuser's `FileType` SoT.
 
     #[test]
     fn kind_from_entry_type_mount_and_dir_are_directories() {
@@ -995,22 +681,5 @@ mod tests {
         assert_eq!(kind_from_entry_type(0), FileType::RegularFile);
         assert_eq!(kind_from_entry_type(3), FileType::RegularFile);
         assert_eq!(kind_from_entry_type(99), FileType::RegularFile);
-    }
-
-    #[test]
-    fn parse_readdir_entries_handles_escapes() {
-        // Kernel-side serializer escapes `"` → `\"` and `\` → `\\`.
-        // The parser must un-escape them, otherwise lookups against
-        // the resulting path will miss.
-        let json =
-            r#"[{"name":"with \"quote\"","entry_type":0},{"name":"with\\back","entry_type":0}]"#;
-        let entries = parse_readdir_entries(json);
-        assert_eq!(
-            entries,
-            vec![
-                ("with \"quote\"".to_string(), 0),
-                ("with\\back".to_string(), 0),
-            ]
-        );
     }
 }

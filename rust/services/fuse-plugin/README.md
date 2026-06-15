@@ -16,13 +16,15 @@ filesystem tool can talk to without a single client-side rewrite.
 |----------|---------------------|---------------------------------------------|
 | Linux    | `libfuse3` (`fuse3`) | First-cut.  Production-ready.              |
 | macOS    | `macFUSE`           | Same `fuser` body via cfg gate.            |
-| Windows  | `WinFsp`            | Deferred — separate binding crate + adapter. |
+| Windows  | `WinFsp` (`winfsp` crate) | First-cut.  Cfg-gated under `target_os = "windows"`. |
 
 `fuser`'s `Filesystem` trait and `spawn_mount2` are identical on
-Linux + macOS, so the same source services both. Windows shipping
-waits on a WinFsp-rs adapter (different crate, different trait
-shape) — tracked as a follow-up PR. On Windows today the plugin
-compiles to a no-op cdylib so the workspace matrix stays clean.
+Linux + macOS, so the same source body (`src/fs.rs`) services both.
+Windows takes a different shape: WinFsp's `FileSystemContext` trait
++ `FileSystemHost` mount lifecycle live in `src/fs_winfsp.rs`,
+sharing the same path-translation + inode-tracking + kernel-callback
+helpers (`crate::kernel_callbacks`, `crate::path_index`) with the
+fuser path.
 
 ## Operator install
 
@@ -39,6 +41,25 @@ brew install --cask macfuse
 # Then approve the macFUSE kernel extension in System Settings →
 # Privacy & Security and reboot.  macFUSE installs are interactive
 # by design; there's no headless equivalent today.
+```
+
+```powershell
+# Windows (Chocolatey or winget, as Administrator)
+choco install winfsp -y
+# OR
+winget install --id WinFsp.WinFsp --silent --accept-package-agreements
+#
+# WinFsp installs winfsp-x64.dll under
+# `C:\Program Files (x86)\WinFsp\bin\` and registers the .sys driver,
+# but does NOT add that directory to system PATH.  The plugin DLL has
+# `winfsp-x64.dll` in its static import table, so Windows
+# `LoadLibraryExW` walks exe-dir → system32 → CWD → PATH at plugin
+# load time and fails with error 126 ("module not found") when none
+# of those resolves it.  Prepend the WinFsp bin dir to PATH for the
+# shell that launches the daemon — Start-Process / spawn inherits it:
+#
+$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
+nexusd-cluster --plugin-dir $env:USERPROFILE\.nexus\plugins ...
 ```
 
 Drop the signed dylib + `.sig` from the latest `fuse-v*` release into
@@ -63,8 +84,8 @@ The plugin reads two env vars at `create` time:
 
 | Var                       | Required | Default | Meaning                                                                 |
 |---------------------------|----------|---------|-------------------------------------------------------------------------|
-| `NEXUS_FUSE_MOUNT_POINT`  | Yes      | —       | Absolute path on the local filesystem where the FUSE mount is published. |
-| `NEXUS_FUSE_VFS_ROOT`     | No       | `/`     | VFS-path prefix that maps to the FUSE root inode.  Joined with child names to produce kernel-side paths. |
+| `NEXUS_FUSE_MOUNT_POINT`  | Yes      | —       | Mount target.  Linux / macOS: absolute path (`/mnt/cc-tasks`).  Windows: drive letter (`Z:`) or directory path; the runner reserves the letter for the lifetime of the cluster process. |
+| `NEXUS_FUSE_VFS_ROOT`     | No       | `/`     | VFS-path prefix that maps to the FUSE mount root.  Joined with child names to produce kernel-side paths. |
 
 Without `NEXUS_FUSE_MOUNT_POINT` the plugin loads but performs no
 mount — useful for the kernel's `--plugin-dir` scanning to validate
@@ -127,12 +148,16 @@ nexus-vfs PR.
 
 ## Regression coverage
 
-`tests/e2e/docker/test_fuse_plugin_e2e.py` mounts the signed dylib
-inside a privileged Linux container and exercises every v2 op via
-plain POSIX commands, with a gRPC `vfs_stat` / `vfs_read`
-cross-check at every step.  Runs in CI on every change to the
-plugin source, the plugin-abi pin, the Dockerfile, or the test
-itself — see `.github/workflows/fuse-plugin-e2e.yml`.
+`tests/e2e/docker/test_cc_tasks_share_e2e.py` mounts the signed dylib
+on both founder + joiner inside privileged Linux containers and
+exercises every v3 op via plain POSIX commands, with a gRPC
+`vfs_stat` / `vfs_read` cross-check at every step.  The FUSE
+workflows compose with LocalConnector + federation so the full Mac↔Win
+`cc tasks list` chain — FUSE → kernel → DT_MOUNT routing → federation
+fan-out → peer LocalConnector → host fs — has byte-exact regression
+guard.  Runs in CI on every change to the plugin source, the
+plugin-abi pin, the Dockerfile, or the test itself — see
+`.github/workflows/cc-tasks-share-e2e.yml`.
 
 Architectural decisions live in
 `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md`

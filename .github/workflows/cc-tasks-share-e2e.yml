@@ -2,26 +2,35 @@ name: cc-tasks-share E2E
 
 # Runs `tests/e2e/docker/test_cc_tasks_share_e2e.py` against the
 # founder + joiner cluster in
-# `dockerfiles/docker-compose.cc-tasks-share.yml`.  The suite has two
-# layers:
+# `dockerfiles/docker-compose.cc-tasks-share.yml`.  The suite covers
+# the full operator-facing chain — three plugin layers per node:
 #
-#   * `TestLocalConnectorThroughVFS` — single-node substrate: each
-#     daemon loads `libnexus_local_connector.so` via `--plugin-dir`,
-#     `--mount-driver` lands the LocalConnector backend, and the
-#     host-fs SSOT property holds end-to-end through the gRPC vfs_*
-#     surface.
+#   * LocalConnector driver dylib (host-fs SSOT for `~/.claude/tasks/`),
+#   * FUSE service dylib (publishes `/shared/cc-tasks` as `/mnt/cc-tasks`),
+#   * raft-replicated zone state + lazy-observe metadata for cross-
+#     node visibility,
 #
-#   * `TestCrossNodeLazyMaterialization` — the actual cc-tasks-share
-#     workflow: founder CC writes a task JSON directly to host fs
-#     (no Nexus syscall), joiner's first vfs_read fans out to founder
-#     via `peer_client.fetch`, founder's `BlobFetcher::read`
-#     materialises metadata via the lazy observe substrate
-#     (nexus-vfs#46), and joiner's second read takes the
-#     `try_remote_fetch` fast path with `last_writer_address`.
+# arranged as longer workflows per the integration-test-generator
+# standard (3+ steps with hard causal data flow between them):
+#
+#   * `TestStackReadiness` — gates that all three layers are up
+#     on both nodes.
+#   * `TestSingleNodeOperatorSurface` — host write → gRPC read →
+#     FUSE read → FUSE write → host SSOT check.
+#   * `TestSessionLifecycleViaFuse` — mkdir → write × N → ls → read
+#     × N → rename → unlink × N → rmdir, all through the FUSE mount.
+#   * `TestSymlinkEscapeAtAllLayers` — symlink-escape rejected via
+#     gRPC AND via FUSE.
+#   * `TestCrossNodeFuseFederationWorkflow` — Mac↔Win analogue:
+#     founder host write → joiner FUSE read (cold fan-out) →
+#     metadata replicated → joiner FUSE read (fast path) → joiner
+#     FUSE write → founder FUSE read (reverse fan-out).
+#   * `TestCrossNodeConcurrentBurst` — N parallel FUSE writes on
+#     founder → joiner's FUSE listdir + per-file read sees them all.
 #
 # Independent of federation-e2e.yml — that suite covers the lower-tier
 # 3-voter HA surface; this one covers the dylib + operator-mount +
-# cross-node-passthrough surface layered on top.
+# cross-node-passthrough + FUSE surface layered on top.
 
 on:
   workflow_dispatch:
@@ -33,6 +42,8 @@ on:
       - 'dockerfiles/Dockerfile.nexusd-cluster'
       - 'dockerfiles/Dockerfile.federation-test'
       - 'rust/backends/local-connector/**'
+      - 'rust/services/fuse-plugin/**'
+      - 'rust/plugin-abi/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'tests/e2e/docker/test_cc_tasks_share_e2e.py'
@@ -76,7 +87,7 @@ jobs:
           # editing this YAML alone should not force a full Docker
           # cluster build for an unrelated change.  Post-merge push
           # paths above pick it up.
-          if grep -Eq '^(dockerfiles/(Dockerfile\.(local-connector-plugin|nexusd-cluster|federation-test)|docker-compose\.cc-tasks-share\.yml)|rust/backends/local-connector/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_cc_tasks_share_e2e|cc_tasks_share_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
+          if grep -Eq '^(dockerfiles/(Dockerfile\.(local-connector-plugin|nexusd-cluster|federation-test)|docker-compose\.cc-tasks-share\.yml)|rust/(backends/local-connector|services/fuse-plugin|plugin-abi)/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_cc_tasks_share_e2e|cc_tasks_share_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

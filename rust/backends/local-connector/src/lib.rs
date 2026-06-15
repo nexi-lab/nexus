@@ -184,6 +184,15 @@ mod tests {
         -3
     }
 
+    unsafe extern "C" fn stub_sys_stat_batch(
+        _: *const c_void,
+        _: *const std::ffi::c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -3
+    }
+
     fn stub_handle() -> KernelHandle {
         KernelHandle {
             sys_read: stub_sys_read,
@@ -194,6 +203,7 @@ mod tests {
             sys_mkdir: stub_sys_path,
             sys_rmdir: stub_sys_path,
             sys_rename: stub_sys_rename,
+            sys_stat_batch: stub_sys_stat_batch,
             kernel_ptr: std::ptr::null(),
         }
     }

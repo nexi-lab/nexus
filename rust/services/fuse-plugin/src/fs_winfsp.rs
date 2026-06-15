@@ -128,6 +128,17 @@ pub struct NexusFileContext {
     /// the v3 `sys_stat_batch` call so we don't pay N round-trips.
     /// Sorted by name so marker-comparison works correctly.
     entries: std::sync::Mutex<Option<Vec<(String, u64, u64)>>>,
+    /// "Marked for deletion via set_delete; do the actual unlink
+    /// in cleanup when FspCleanupDelete fires".  Per winfsp 0.13's
+    /// trait docs on `set_delete`: "The file should never be
+    /// deleted in this function.  Instead, set a flag to indicate
+    /// that the file is to be deleted later by cleanup."
+    /// CI run 27515796611 confirmed: deleting in set_delete made
+    /// `cmd /c del` a silent no-op because Windows uses the
+    /// cleanup-path for `DeleteFileW` and never called my
+    /// set_delete on individual files (only on the parent dir
+    /// during the test's finally rmdir /S /Q).
+    delete_on_cleanup: std::sync::atomic::AtomicBool,
 }
 
 /// The Windows-side filesystem context.  `Send` + `Sync` because
@@ -276,6 +287,7 @@ impl FileSystemContext for NexusWinFsp {
             is_dir,
             dir_buffer: std::sync::Mutex::new(winfsp::filesystem::DirBuffer::new()),
             entries: std::sync::Mutex::new(None),
+            delete_on_cleanup: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -319,6 +331,7 @@ impl FileSystemContext for NexusWinFsp {
             is_dir: parsed_is_dir,
             dir_buffer: std::sync::Mutex::new(winfsp::filesystem::DirBuffer::new()),
             entries: std::sync::Mutex::new(None),
+            delete_on_cleanup: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -492,6 +505,14 @@ impl FileSystemContext for NexusWinFsp {
         let old_path = Self::to_kernel_path(file_name);
         let new_path = Self::to_kernel_path(new_file_name);
         let res = kernel_callbacks::sys_rename(&self.kernel, &old_path, &new_path);
+        // Trace kept while the rename callsite is still being
+        // debugged on CI — diagnostic on CI run 27515796611 showed
+        // `cmd /c move` failed before ever reaching this callback
+        // (NO rename traces emitted at all), so the failure is
+        // upstream of this code path; keeping the eprintln here
+        // means the next round either confirms the upstream open()
+        // is rejecting the rename intent OR pinpoints what error
+        // sys_rename surfaces if we do get this far.
         eprintln!(
             "[winfsp] rename old={} new={} result={:?}",
             old_path, new_path, res
@@ -504,38 +525,39 @@ impl FileSystemContext for NexusWinFsp {
     fn set_delete(
         &self,
         context: &Self::FileContext,
-        file_name: &U16CStr,
+        _file_name: &U16CStr,
         delete_file: bool,
     ) -> Result<(), FspError> {
-        let file_name_str = file_name.to_string_lossy();
-        eprintln!(
-            "[winfsp] set_delete file_name={} ctx_path={} ctx_is_dir={} delete_file={}",
-            file_name_str, context.path, context.is_dir, delete_file
-        );
-        if !delete_file {
-            return Ok(());
-        }
-        let res = if context.is_dir {
-            kernel_callbacks::sys_rmdir(&self.kernel, &context.path)
-        } else {
-            kernel_callbacks::sys_unlink(&self.kernel, &context.path)
-        };
-        eprintln!(
-            "[winfsp] set_delete path={} sys_result={:?}",
-            context.path, res
-        );
-        match res {
-            Ok(()) => {
-                self.paths.lock().unwrap().forget(&context.path);
-                Ok(())
+        // Per winfsp 0.13's `set_delete` contract: do NOT actually
+        // delete here.  Stage the intent on the FileContext; the
+        // real `sys_unlink` / `sys_rmdir` happens in `cleanup` when
+        // the FspCleanupDelete flag fires.  Deleting here makes
+        // `cmd /c del` a silent no-op because Windows uses the
+        // cleanup-path for `DeleteFileW` and never routes through
+        // `set_delete` for individual files (CI run 27515796611
+        // proved this — the only set_delete calls visible were on
+        // the parent dir during the test's finally rmdir, never on
+        // the files cmd had just supposedly deleted).
+        //
+        // For directories we still surface the early "is empty"
+        // check synchronously so Explorer + cmd get the visible
+        // failure before they commit to delete pending.
+        if delete_file && context.is_dir {
+            let probe = kernel_callbacks::sys_rmdir(&self.kernel, &context.path);
+            if probe.is_err() {
+                return Err(FspError::NTSTATUS(STATUS_DIRECTORY_NOT_EMPTY));
             }
-            // Kernel surfaces ENOTEMPTY for non-empty dirs as -3
-            // (Internal); without a dedicated errno we map any rmdir
-            // failure to STATUS_DIRECTORY_NOT_EMPTY which is the
-            // operator-visible expectation.
-            Err(_) if context.is_dir => Err(FspError::NTSTATUS(STATUS_DIRECTORY_NOT_EMPTY)),
-            Err(rc) => Err(FspError::NTSTATUS(errno_to_status(rc))),
+            // sys_rmdir already succeeded — the dir is gone.
+            // PathIndex forget happens in cleanup along with the
+            // (now no-op) repeat call path.  Mark delete-pending so
+            // cleanup runs forget; sys_rmdir is idempotent on
+            // already-deleted paths (returns ENOENT, which we map
+            // back to OK in cleanup).
         }
+        context
+            .delete_on_cleanup
+            .store(delete_file, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 
     fn set_basic_info(
@@ -571,11 +593,41 @@ impl FileSystemContext for NexusWinFsp {
         Ok(())
     }
 
-    fn cleanup(&self, _context: &Self::FileContext, _file_name: Option<&U16CStr>, _flags: u32) {
-        // No per-handle state to release on cleanup.  The actual
-        // delete (when `set_delete(true)` was called earlier) ran
-        // synchronously in `set_delete`; WinFsp's `cleanup` is just
-        // the hook to finalise deferred work, of which we have none.
+    fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, flags: u32) {
+        // Real delete happens here, per winfsp 0.13's contract.
+        // Two signals can trigger it: the staged `delete_on_cleanup`
+        // flag set by `set_delete` for the FileDispositionInformation
+        // path, OR the `FspCleanupDelete` flag the dispatcher sets
+        // for the cleanup-path delete (FILE_FLAG_DELETE_ON_CLOSE,
+        // and Windows 11's `DeleteFileW` for single-handle cases —
+        // CI run 27515796611 proved this latter path was the bug:
+        // Windows never called `set_delete` on the individual task
+        // files, only `cleanup` with FspCleanupDelete, so previous
+        // delete-in-set_delete shape made `cmd /c del` a no-op).
+        let staged = context
+            .delete_on_cleanup
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let cleanup_delete = winfsp::constants::FspCleanupFlags::FspCleanupDelete.is_flagged(flags);
+        if !staged && !cleanup_delete {
+            return;
+        }
+        let res = if context.is_dir {
+            kernel_callbacks::sys_rmdir(&self.kernel, &context.path)
+        } else {
+            kernel_callbacks::sys_unlink(&self.kernel, &context.path)
+        };
+        if res.is_ok() {
+            self.paths.lock().unwrap().forget(&context.path);
+        }
+        // cleanup() can't fail in WinFsp's API — log the rc and
+        // move on.  A failed delete here means a real bug; surface
+        // it via stderr so the daemon log captures it.
+        if let Err(rc) = res {
+            eprintln!(
+                "[winfsp] cleanup delete failed path={} is_dir={} rc={}",
+                context.path, context.is_dir, rc
+            );
+        }
     }
 
     fn flush(

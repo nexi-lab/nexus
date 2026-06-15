@@ -302,7 +302,7 @@ impl FileSystemContext for NexusWinFsp {
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
         winfsp_diag!(
-            "[winfsp] open path={:?} create_opts=0x{:x} granted=0x{:x} raw_widebytes={}",
+            "open path={:?} create_opts=0x{:x} granted=0x{:x} raw_widebytes={}",
             path,
             create_options,
             granted_access,
@@ -342,7 +342,7 @@ impl FileSystemContext for NexusWinFsp {
     ) -> Result<Self::FileContext, FspError> {
         let path = Self::to_kernel_path(file_name);
         winfsp_diag!(
-            "[winfsp] create path={:?} create_opts=0x{:x}",
+            "create path={:?} create_opts=0x{:x}",
             path,
             create_options
         );
@@ -424,6 +424,12 @@ impl FileSystemContext for NexusWinFsp {
         // STATUS_INVALID_DEVICE_REQUEST until the offset-aware kernel
         // callback lands; CC's task-file workflow always rewrites the
         // whole JSON document so offset==0 is the common path.
+        winfsp_diag!(
+            "write path={} offset={} len={}",
+            context.path,
+            offset,
+            buffer.len()
+        );
         if offset != 0 {
             return Err(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST));
         }
@@ -445,6 +451,12 @@ impl FileSystemContext for NexusWinFsp {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
         }
         let marker_str = marker.inner().map(String::from_utf16_lossy);
+        winfsp_diag!(
+            "read_directory path={} marker={:?} buffer_cap={}",
+            context.path,
+            marker_str,
+            buffer.len()
+        );
 
         // Cache the sorted entry list on the FIRST call, reuse on
         // every continuation.  `sys_readdir` returns metastore-
@@ -530,6 +542,11 @@ impl FileSystemContext for NexusWinFsp {
         // marker entry (which our diagnostics showed is what it does
         // in practice), there's nothing in the buffer to wrong-emit.
         let written = dir_buffer.read(marker, buffer);
+        winfsp_diag!(
+            "read_directory done path={} written_bytes={}",
+            context.path,
+            written
+        );
         Ok(written)
     }
 
@@ -552,7 +569,7 @@ impl FileSystemContext for NexusWinFsp {
         // is rejecting the rename intent OR pinpoints what error
         // sys_rename surfaces if we do get this far.
         winfsp_diag!(
-            "[winfsp] rename old={} new={} result={:?}",
+            "rename old={} new={} result={:?}",
             old_path,
             new_path,
             res
@@ -569,7 +586,7 @@ impl FileSystemContext for NexusWinFsp {
         delete_file: bool,
     ) -> Result<(), FspError> {
         winfsp_diag!(
-            "[winfsp] set_delete path={} is_dir={} delete_file={}",
+            "set_delete path={} is_dir={} delete_file={}",
             context.path,
             context.is_dir,
             delete_file
@@ -641,7 +658,7 @@ impl FileSystemContext for NexusWinFsp {
 
     fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, flags: u32) {
         winfsp_diag!(
-            "[winfsp] cleanup path={} is_dir={} flags={} staged={}",
+            "cleanup path={} is_dir={} flags={} staged={}",
             context.path,
             context.is_dir,
             flags,
@@ -672,7 +689,7 @@ impl FileSystemContext for NexusWinFsp {
             kernel_callbacks::sys_unlink(&self.kernel, &context.path)
         };
         winfsp_diag!(
-            "[winfsp] cleanup deleted path={} is_dir={} result={:?}",
+            "cleanup deleted path={} is_dir={} result={:?}",
             context.path,
             context.is_dir,
             res

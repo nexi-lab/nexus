@@ -49,12 +49,14 @@ stitching.
 
 - New request param `expand` on `POST /api/v2/search/query`: enum `none` (default) |
   `macro`. Default → response byte-identical to today.
-- When `expand=macro`, each hit gains an additive `macroText` field
-  (`macro_text` internally → `macroText` over the API), plus `macroLineStart` /
-  `macroLineEnd` for the covered line span. The short `chunkText` stays as the matched
-  snippet / citation anchor.
-- Additive field in the shared `nexus-client` `SearchHit` schema. Ranking,
-  `gbrain_eval`, and existing callers are unaffected.
+- When `expand=macro`, each hit gains additive `macro_text` plus `macro_line_start` /
+  `macro_line_end` fields. These are emitted **snake_case** by the server, consistent
+  with the existing `/api/v2/search/query` response (which is snake_case throughout —
+  there is no camelCase serializer server-side). The TypeScript `nexus-client` SDK is
+  what surfaces them to Koodle as `macroText` / `macroLineStart` / `macroLineEnd`. The
+  short `chunk_text` stays as the matched snippet / citation anchor.
+- Additive field in `_serialize_search_result` and the shared `nexus-client` schema.
+  Ranking, `gbrain_eval`, and existing callers are unaffected.
 
 ## Consumer context
 
@@ -95,9 +97,11 @@ Components:
      run the expansion algorithm per anchor → attach `macro_text` + line span. All
      sub-steps are pure functions.
 
-2. **Backend fetchers** (thin, one per profile): `PgNeighborFetcher`,
-   `SqliteNeighborFetcher` implement `fetch_ranges` as a single batched SQL. They resolve
-   `path → path_id` internally; the algorithm never sees storage identity.
+2. **Backend `fetch_ranges`** (thin, one per profile): `PgVectorBackend` and
+   `SqliteVecBackend` each implement the `NeighborFetcher` protocol via a `fetch_ranges`
+   method — a single batched SQL. They resolve `path → path_id` (Postgres) / scope by
+   `path` (SQLite) internally; the algorithm never sees storage identity. The daemon
+   passes whichever backend matches the active profile as the fetcher.
 
 3. **Daemon wiring** — one call site after page aggregation, behind the `expand` flag.
    No algorithm logic in `daemon.py`.
@@ -163,10 +167,11 @@ search**:
   by `chunk_index`.
 - SQLite (SANDBOX): same shape, SQLite dialect.
 
-Open implementation detail to verify during planning: confirm the SANDBOX chunk store
-persists `chunk_tokens` / `line_start` / `heading_prefix` (the Postgres `document_chunks`
-writer in `chunk_store.py` does). If its table is leaner, the migration adds those columns
-there too.
+Resolved during planning: the SANDBOX store is the sqlite-vec `nexus_vec` table, which
+persists only `path`, `chunk_index`, `chunk_text` (not `chunk_tokens` / `line_start` /
+`line_end` / `heading_prefix`). The plan therefore adds those as auxiliary columns to the
+`nexus_vec` side-write and bumps the store schema version (triggering a SANDBOX rebuild
+via the existing dim/embedder-mismatch rebuild path), for full fidelity in both profiles.
 
 ## Migration (persist `heading_prefix`)
 
@@ -223,7 +228,8 @@ truncation/fallback counter, consistent with existing daemon instrumentation.
 - [ ] `heading_prefix` persisted (migration); both profiles; graceful NULL degradation.
 - [ ] Code forward-bias path.
 - [ ] Adaptive section sizing + small-section dedup.
-- [ ] `macroText` (+ line span) returned additively; `chunkText` unchanged.
+- [ ] `macro_text` (+ `macro_line_start`/`macro_line_end`) returned additively;
+  `chunk_text` unchanged.
 - [ ] No `recall@5` / `NDCG@5` change on `gbrain_eval.py`.
 - [ ] Context-quality delta measured on `gbrain_eval.py` + `longmemeval`.
 - [ ] Works in FULL (pgvector) and SANDBOX (sqlite-vec).

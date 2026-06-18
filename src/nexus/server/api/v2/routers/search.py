@@ -180,6 +180,11 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     context = getattr(result, "context", None)
     if context is not None:
         out["context"] = context
+    macro_text = getattr(result, "macro_text", None)
+    if macro_text is not None:
+        out["macro_text"] = macro_text
+        out["macro_line_start"] = getattr(result, "macro_line_start", None)
+        out["macro_line_end"] = getattr(result, "macro_line_end", None)
     return out
 
 

@@ -418,10 +418,10 @@ class SqliteVecBackend:
                     f"path text, "
                     f"chunk_text text, "
                     f"chunk_index integer, "
-                    f"chunk_tokens integer, "
-                    f"line_start integer, "
-                    f"line_end integer, "
-                    f"heading_prefix text"
+                    f"+chunk_tokens integer, "
+                    f"+line_start integer, "
+                    f"+line_end integer, "
+                    f"+heading_prefix text"
                     f");"
                 )
                 conn.commit()

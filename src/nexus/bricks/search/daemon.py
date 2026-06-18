@@ -47,6 +47,8 @@ from sqlalchemy import text as sa_text
 
 from nexus.bricks.search import consumer_metrics
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
+from nexus.bricks.search.config import get_env_bool as _get_env_bool
+from nexus.bricks.search.config import get_env_int as _get_env_int
 from nexus.bricks.search.mutation_events import (
     SearchMutationEvent,
     SearchMutationOp,
@@ -286,6 +288,21 @@ class DaemonConfig:
     mutation_unresolved_permanent_attempts: int = 3
     mutation_unresolved_transient_attempts: int = 30
     mutation_parked_max_entries: int = 200
+
+    # Macro-chunk (neighbor-context) expansion knobs (Issue #4398).
+    # When search() is called with expand="macro", each result is expanded
+    # into its surrounding section bounded by a token budget and a window of
+    # neighbor chunks. Configured via environment variables so operators can
+    # tune without a code change.
+    macro_chunk_tokens: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_MACRO_CHUNK_TOKENS", 1024)
+    )
+    macro_chunk_window: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_MACRO_CHUNK_WINDOW", 8)
+    )
+    macro_chunk_code_forward_bias: bool = field(
+        default_factory=lambda: _get_env_bool("NEXUS_SEARCH_MACRO_CHUNK_FORWARD_BIAS", True)
+    )
 
 
 class SearchDaemon:
@@ -1736,6 +1753,34 @@ class SearchDaemon:
                     exc,
                 )
 
+    async def _apply_macro_expansion(
+        self,
+        results: Any,
+        *,
+        expand: str,
+        zone_id: str,
+    ) -> None:
+        """Best-effort: when expand=='macro', attach macro_text to each result by
+        stitching neighbor chunks via the active vector backend. No-op when
+        disabled, no results, or no vector backend (Issue #4398)."""
+        if expand != "macro" or not results or self._vector_backend is None:
+            return
+        from nexus.bricks.search.macro_chunk import ExpansionConfig, expand_results
+
+        cfg = ExpansionConfig(
+            token_budget=self.config.macro_chunk_tokens,
+            window=self.config.macro_chunk_window,
+            code_forward_bias=self.config.macro_chunk_code_forward_bias,
+        )
+        _t0 = time.perf_counter()
+        await expand_results(results, self._vector_backend, cfg, zone_id=zone_id)
+        timing = self.last_search_timing
+        timing["macro_expand_ms"] = (time.perf_counter() - _t0) * 1000.0
+        timing["macro_expanded_count"] = sum(
+            1 for r in results if getattr(r, "macro_text", None) is not None
+        )
+        self.last_search_timing = timing
+
     async def search(
         self,
         query: str,
@@ -1745,9 +1790,10 @@ class SearchDaemon:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         zone_id: str | None = None,
+        expand: str = "none",
     ) -> list[SearchResult]:
         if zone_id is None:
-            return await self._search_on_current_loop(
+            results = await self._search_on_current_loop(
                 query,
                 search_type=search_type,
                 limit=limit,
@@ -1756,19 +1802,23 @@ class SearchDaemon:
                 fusion_method=fusion_method,
                 zone_id=zone_id,
             )
+        else:
 
-        async def _work() -> list[SearchResult]:
-            return await self._search_on_current_loop(
-                query,
-                search_type=search_type,
-                limit=limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                fusion_method=fusion_method,
-                zone_id=zone_id,
-            )
+            async def _work() -> list[SearchResult]:
+                return await self._search_on_current_loop(
+                    query,
+                    search_type=search_type,
+                    limit=limit,
+                    path_filter=path_filter,
+                    alpha=alpha,
+                    fusion_method=fusion_method,
+                    zone_id=zone_id,
+                )
 
-        return await self._run_on_owner_loop(_work)
+            results = await self._run_on_owner_loop(_work)
+
+        await self._apply_macro_expansion(results, expand=expand, zone_id=zone_id or ROOT_ZONE_ID)
+        return results
 
     async def _search_on_current_loop(
         self,

@@ -301,6 +301,7 @@ async def search_query(
     path: str | None = Query(None, description="Optional path prefix filter"),
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
+    expand: str = Query("none", description="Context expansion: none or macro"),
     rerank: bool | None = Query(  # noqa: ARG001
         None, description="Override reranker (true/false, default: use config)"
     ),
@@ -342,6 +343,12 @@ async def search_query(
             detail=f"Invalid fusion method: {fusion}. Must be 'rrf', 'weighted', or 'rrf_weighted'",
         )
 
+    if expand not in ("none", "macro"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid expand: {expand}. Must be 'none' or 'macro'",
+        )
+
     if graph_mode not in ("none", "low", "high", "dual", "auto"):
         raise HTTPException(
             status_code=400,
@@ -352,6 +359,7 @@ async def search_query(
 
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---
+        # NOTE: expand= is single-zone only; federated path does not support it.
         if federated:
             return await _handle_federated_search(
                 q=q,
@@ -375,6 +383,7 @@ async def search_query(
             alpha=alpha,
             fusion_method=fusion,
             graph_mode=graph_mode,
+            expand=expand,
             auth_result=auth_result,
             search_daemon=search_daemon,
             async_session_factory=async_session_factory,
@@ -396,6 +405,7 @@ async def _handle_single_zone_search(
     alpha: float,
     fusion_method: str,
     graph_mode: str,
+    expand: str,
     auth_result: dict[str, Any],
     search_daemon: Any,
     async_session_factory: Any,
@@ -515,6 +525,7 @@ async def _handle_single_zone_search(
             alpha=alpha,
             fusion_method=fusion_method,
             zone_id=zone_id,
+            expand=expand,
         )
 
         # Prefer the request-local snapshot carried by SearchDaemon results.

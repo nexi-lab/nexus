@@ -47,6 +47,7 @@ import weakref
 from collections.abc import Sequence
 from typing import Any
 
+from nexus.bricks.search.macro_chunk import ChunkRow
 from nexus.bricks.search.results import BaseSearchResult
 
 logger = logging.getLogger(__name__)
@@ -383,47 +384,33 @@ class SqliteVecBackend:
                 existing = _read_existing_dim(conn)
                 if existing is not None and existing != self._embedding_dim:
                     raise _dim_mismatch(existing, race=False)
-                # Rebuild trigger (Issue #4398): if the table exists but
-                # predates the macro-chunk aux columns, drop it so the
-                # CREATE below recreates it with the new schema. The vec
-                # table rows will repopulate on reindex; the meta table
-                # (nexus_vec_meta) is preserved so embedder-identity
-                # validation still works correctly after the rebuild.
-                existing_sql_row = conn.execute(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
-                    (_VEC_TABLE,),
-                ).fetchone()
-                if (
-                    existing_sql_row
-                    and existing_sql_row[0]
-                    and "heading_prefix" not in existing_sql_row[0]
-                ):
-                    logger.warning(
-                        "Rebuilding '%s': existing table predates macro-chunk metadata "
-                        "columns; dropping and recreating (index will repopulate on reindex).",
-                        _VEC_TABLE,
-                    )
-                    conn.execute(f"DROP TABLE {_VEC_TABLE}")
-                    conn.commit()
+
                 # Create vec0 virtual table; embedding dim is fixed at
                 # init time (sqlite-vec requirement). Auxiliary columns
                 # carry zone isolation + result rendering data. The four
                 # macro-chunk columns (chunk_tokens, line_start, line_end,
                 # heading_prefix) support fetch_ranges neighbor expansion
                 # (Issue #4398 T7).
-                conn.execute(
-                    f"CREATE VIRTUAL TABLE IF NOT EXISTS {_VEC_TABLE} USING vec0("
-                    f"embedding float[{self._embedding_dim}], "
-                    f"zone_id text, "
-                    f"path text, "
-                    f"chunk_text text, "
-                    f"chunk_index integer, "
-                    f"+chunk_tokens integer, "
-                    f"+line_start integer, "
-                    f"+line_end integer, "
-                    f"+heading_prefix text"
-                    f");"
-                )
+                # NOTE: on a legacy old-schema DB (no heading_prefix), this
+                # CREATE IF NOT EXISTS is a no-op — the old table survives
+                # intact until embedder identity is validated (Fix 1: we
+                # only DROP after confirming identity matches).
+                def _create_vec_table() -> None:
+                    conn.execute(
+                        f"CREATE VIRTUAL TABLE IF NOT EXISTS {_VEC_TABLE} USING vec0("
+                        f"embedding float[{self._embedding_dim}], "
+                        f"zone_id text, "
+                        f"path text, "
+                        f"chunk_text text, "
+                        f"chunk_index integer, "
+                        f"+chunk_tokens integer, "
+                        f"+line_start integer, "
+                        f"+line_end integer, "
+                        f"+heading_prefix text"
+                        f");"
+                    )
+
+                _create_vec_table()
                 conn.commit()
                 # Codex review R2 (high): post-check — re-read the
                 # schema after CREATE to catch the race where a
@@ -508,6 +495,30 @@ class SqliteVecBackend:
                             or stored_model == self._embedding_model
                         )
                         raise _embedder_mismatch(stored_kind, stored_model, race=race_now)
+                # Fix 1 (Issue #4398): Rebuild old-schema table AFTER identity is
+                # confirmed-ours. For a legacy DB with the same dim but missing
+                # heading_prefix, the CREATE IF NOT EXISTS above was a no-op (old
+                # schema survived). Now that identity is validated, it is safe to
+                # DROP and recreate with the new schema. Rows repopulate on reindex.
+                rebuild_sql_row = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (_VEC_TABLE,),
+                ).fetchone()
+                if (
+                    rebuild_sql_row
+                    and rebuild_sql_row[0]
+                    and "heading_prefix" not in rebuild_sql_row[0]
+                ):
+                    logger.warning(
+                        "Rebuilding '%s': existing table predates macro-chunk metadata "
+                        "columns; dropping and recreating (index will repopulate on reindex). "
+                        "Embedder identity confirmed — data destruction is safe.",
+                        _VEC_TABLE,
+                    )
+                    conn.execute(f"DROP TABLE {_VEC_TABLE}")
+                    conn.commit()
+                    _create_vec_table()
+                    conn.commit()
                 return conn
 
             self._conn = await self._run_native(_open)
@@ -1015,8 +1026,8 @@ class SqliteVecBackend:
     async def fetch_ranges(
         self,
         spans: list[tuple[str, int, int]],
-        zone_id: str,
-    ) -> list[Any]:
+        zone_id: str | None,
+    ) -> list[ChunkRow]:
         """Return ChunkRow objects for all chunks in the given (path, lo, hi) spans.
 
         Implements the NeighborFetcher protocol consumed by the macro-chunk
@@ -1031,8 +1042,6 @@ class SqliteVecBackend:
             return []
         await self.startup()
         conn = self._require_conn()
-
-        from nexus.bricks.search.macro_chunk import ChunkRow
 
         def _fetch() -> list[ChunkRow]:
             out: list[ChunkRow] = []

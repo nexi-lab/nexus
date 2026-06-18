@@ -1772,7 +1772,14 @@ class SearchDaemon:
             window=self.config.macro_chunk_window,
             code_forward_bias=self.config.macro_chunk_code_forward_bias,
         )
+        _t0 = time.perf_counter()
         await expand_results(results, self._vector_backend, cfg, zone_id=zone_id)
+        timing = self.last_search_timing
+        timing["macro_expand_ms"] = (time.perf_counter() - _t0) * 1000.0
+        timing["macro_expanded_count"] = sum(
+            1 for r in results if getattr(r, "macro_text", None) is not None
+        )
+        self.last_search_timing = timing
 
     async def search(
         self,

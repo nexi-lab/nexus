@@ -74,3 +74,61 @@ async def test_expand_missing_anchor_leaves_result_untouched():
 async def test_expand_empty_results_noop():
     fetcher = _FakeFetcher([])
     assert await expand_results([], fetcher, ExpansionConfig()) == []
+
+
+class _RaisingFetcher:
+    async def fetch_ranges(self, spans, zone_id):
+        raise RuntimeError("fetch failed")
+
+
+@pytest.mark.asyncio
+async def test_expand_fetch_failure_returns_results_unexpanded():
+    """Fetch-level error: expand_results catches and returns results unexpanded."""
+    fetcher = _RaisingFetcher()
+    res = [_Result("/a.md", 1), _Result("/b.md", 2)]
+    out = await expand_results(res, fetcher, ExpansionConfig())
+    assert len(out) == 2
+    assert out[0].macro_text is None
+    assert out[1].macro_text is None
+
+
+class _PartialRaisingFetcher:
+    """Returns good rows for one path, malformed rows (text=None) for another."""
+
+    def __init__(self, good_path, bad_path):
+        self.good_path = good_path
+        self.bad_path = bad_path
+
+    async def fetch_ranges(self, spans, zone_id):
+        rows = []
+        for path, lo, hi in spans:
+            if path == self.good_path:
+                rows.extend(
+                    [_row(i, path=path, heading="A", ls=i + 1, le=i + 1) for i in range(lo, hi + 1)]
+                )
+            elif path == self.bad_path:
+                rows.extend(
+                    [
+                        ChunkRow(
+                            path=path,
+                            chunk_index=i,
+                            text=None,  # malformed: will fail on "\n".join()
+                            tokens=10,
+                            line_start=None,
+                            line_end=None,
+                            heading_prefix="A",
+                        )
+                        for i in range(lo, hi + 1)
+                    ]
+                )
+        return rows
+
+
+@pytest.mark.asyncio
+async def test_expand_per_result_error_is_isolated():
+    """Per-result error: good result still expands; bad result left untouched."""
+    fetcher = _PartialRaisingFetcher(good_path="/good.md", bad_path="/bad.md")
+    res = [_Result("/good.md", 1), _Result("/bad.md", 1)]
+    out = await expand_results(res, fetcher, ExpansionConfig(token_budget=1024, window=8))
+    assert out[0].macro_text is not None  # good result expanded
+    assert out[1].macro_text is None  # bad result untouched

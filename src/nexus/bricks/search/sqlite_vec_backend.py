@@ -1069,4 +1069,5 @@ class SqliteVecBackend:
             return out
 
         async with self._get_loop_lock(self._op_locks):
-            return await self._run_native(_fetch)
+            rows: list[ChunkRow] = await self._run_native(_fetch)
+            return rows

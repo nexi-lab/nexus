@@ -583,6 +583,10 @@ class IndexingPipeline:
                         "path": canonical_path,
                         "text": chunk.text,
                         "chunk_index": i,
+                        "chunk_tokens": chunk.tokens,
+                        "line_start": chunk.line_start,
+                        "line_end": chunk.line_end,
+                        "heading_prefix": chunk.heading_prefix,
                     }
                     for i, chunk in enumerate(doc.chunks)
                 ]

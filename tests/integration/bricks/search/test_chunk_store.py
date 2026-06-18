@@ -93,3 +93,22 @@ async def test_chunk_store_strips_null_bytes_before_insert() -> None:
     assert rows[0]["chunk_text"] == "alphabetagamma"
     assert "\x00" not in rows[0]["chunk_context"]
     assert rows[0]["chunk_context"] == "ctxwithnuls"
+
+
+@pytest.mark.asyncio
+async def test_chunk_store_writes_heading_prefix() -> None:
+    session = AsyncMock()
+    ctx = AsyncMock()
+    ctx.__aenter__.return_value = session
+    ctx.__aexit__.return_value = False
+    store = ChunkStore(async_session_factory=MagicMock(return_value=ctx), db_type="sqlite")
+
+    await store.replace_document_chunks(
+        "pid-1",
+        [ChunkRecord(chunk_text="hi", chunk_tokens=1, heading_prefix="## H")],
+    )
+    # the INSERT params for the last execute include heading_prefix
+    insert_call = session.execute.await_args_list[-1]
+    params = insert_call.args[1]
+    rows = params if isinstance(params, list) else [params]
+    assert any(p.get("heading_prefix") == "## H" for p in rows)

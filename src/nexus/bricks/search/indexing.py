@@ -536,6 +536,7 @@ class IndexingPipeline:
                 end_offset=chunk.end_offset,
                 line_start=chunk.line_start,
                 line_end=chunk.line_end,
+                heading_prefix=chunk.heading_prefix,
                 embedding=embeddings[i] if embeddings else None,
                 embedding_model=embedding_model,
                 chunk_context=doc.context_jsons[i] if doc.context_jsons else None,

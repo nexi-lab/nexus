@@ -765,7 +765,7 @@ async def test_sqlite_fetch_ranges_returns_rows_with_metadata(sqlite_vec_backend
     rows = await sqlite_vec_backend.fetch_ranges([("/ws/doc.md", 0, 2)], zone_id="z1")
     idxs = sorted(r.chunk_index for r in rows)
     assert idxs == [0, 1, 2]
-    assert rows[0].heading_prefix is not None or rows[0].heading_prefix is None  # column present
+    assert rows[0].heading_prefix is None or isinstance(rows[0].heading_prefix, str)  # metadata column present + typed
     assert rows[0].tokens >= 0
 ```
 

@@ -230,19 +230,25 @@ class PgVectorBackend:
             return []
 
         clauses: list[str] = []
-        params: dict = {"zone_id": zone_id}
+        params: dict[str, Any] = {}
         for i, (path, lo, hi) in enumerate(spans):
             clauses.append(f"(fp.virtual_path = :p{i} AND c.chunk_index BETWEEN :lo{i} AND :hi{i})")
             params[f"p{i}"] = path
             params[f"lo{i}"] = lo
             params[f"hi{i}"] = hi
 
+        if zone_id is not None:
+            zone_predicate = "fp.zone_id = :zone_id AND "
+            params["zone_id"] = zone_id
+        else:
+            zone_predicate = ""
+
         sql = text(
             "SELECT fp.virtual_path AS path, c.chunk_index, c.chunk_text, "
             "       c.chunk_tokens, c.line_start, c.line_end, c.heading_prefix "
             "FROM document_chunks c "
             "JOIN file_paths fp ON c.path_id = fp.path_id "
-            "WHERE fp.zone_id = :zone_id AND fp.deleted_at IS NULL "
+            "WHERE " + zone_predicate + "fp.deleted_at IS NULL "
             "  AND (" + " OR ".join(clauses) + ") "
             "ORDER BY fp.virtual_path, c.chunk_index"
         )

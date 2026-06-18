@@ -63,9 +63,10 @@ async def pg_engine_macro() -> AsyncIterator[AsyncEngine]:
                 )
                 """)
             )
+            await conn.execute(text("DROP TABLE IF EXISTS document_chunks CASCADE"))
             await conn.execute(
                 text("""
-                CREATE TABLE IF NOT EXISTS document_chunks (
+                CREATE TABLE document_chunks (
                     chunk_id       TEXT PRIMARY KEY,
                     path_id        TEXT NOT NULL REFERENCES file_paths(path_id) ON DELETE CASCADE,
                     chunk_index    INTEGER NOT NULL,

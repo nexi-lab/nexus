@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from nexus.bricks.search.macro_chunk import ChunkRow
 from nexus.bricks.search.results import BaseSearchResult
 
 # ---------------------------------------------------------------------------
@@ -196,6 +197,68 @@ class PgVectorBackend:
                 chunk_index=int(r["chunk_index"]),
                 vector_score=float(r["score"]),
                 zone_id=zone_id,
+            )
+            for r in rows
+        ]
+
+    # -------------------------------------------------------------------------
+    # Neighbor fetch — NeighborFetcher protocol (macro-chunk expansion, T6)
+    # -------------------------------------------------------------------------
+
+    async def fetch_ranges(
+        self, spans: Sequence[tuple[str, int, int]], zone_id: str | None
+    ) -> list[ChunkRow]:
+        """Fetch contiguous chunk ranges from Postgres for macro-chunk expansion.
+
+        Satisfies the ``NeighborFetcher`` protocol defined in
+        ``nexus.bricks.search.macro_chunk``. Called by ``expand_results`` with a
+        merged, de-overlapped list of (path, lo, hi) spans and returns all
+        matching rows ordered by path then chunk_index.
+
+        Args:
+            spans: Sequence of ``(virtual_path, lo_index, hi_index)`` tuples
+                specifying which chunks to fetch (inclusive on both ends).
+            zone_id: Zone filter — only chunks belonging to this zone are
+                returned. Pass ``None`` to skip zone filtering (not recommended
+                in production; useful for testing).
+
+        Returns:
+            List of ``ChunkRow`` ordered by ``virtual_path``, ``chunk_index``.
+            Rows with NULL ``chunk_tokens`` are returned with ``tokens=0``.
+        """
+        if not spans:
+            return []
+
+        clauses: list[str] = []
+        params: dict = {"zone_id": zone_id}
+        for i, (path, lo, hi) in enumerate(spans):
+            clauses.append(f"(fp.virtual_path = :p{i} AND c.chunk_index BETWEEN :lo{i} AND :hi{i})")
+            params[f"p{i}"] = path
+            params[f"lo{i}"] = lo
+            params[f"hi{i}"] = hi
+
+        sql = text(
+            "SELECT fp.virtual_path AS path, c.chunk_index, c.chunk_text, "
+            "       c.chunk_tokens, c.line_start, c.line_end, c.heading_prefix "
+            "FROM document_chunks c "
+            "JOIN file_paths fp ON c.path_id = fp.path_id "
+            "WHERE fp.zone_id = :zone_id AND fp.deleted_at IS NULL "
+            "  AND (" + " OR ".join(clauses) + ") "
+            "ORDER BY fp.virtual_path, c.chunk_index"
+        )
+
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(sql, params)).mappings().all()
+
+        return [
+            ChunkRow(
+                path=r["path"],
+                chunk_index=int(r["chunk_index"]),
+                text=r["chunk_text"],
+                tokens=int(r["chunk_tokens"] or 0),
+                line_start=r["line_start"],
+                line_end=r["line_end"],
+                heading_prefix=r["heading_prefix"],
             )
             for r in rows
         ]

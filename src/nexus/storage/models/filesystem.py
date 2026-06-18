@@ -147,6 +147,7 @@ class DocumentChunkModel(Base):
 
     line_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     line_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    heading_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
 

@@ -8,9 +8,12 @@ stitched text as ``macro_text``.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 _CODE_EXTENSIONS = (
     ".c",
@@ -152,3 +155,47 @@ def _stitch(by_index: dict[int, ChunkRow], lo: int, hi: int) -> tuple[str, int |
     starts = [r.line_start for r in rows if r.line_start is not None]
     ends = [r.line_end for r in rows if r.line_end is not None]
     return text, (min(starts) if starts else None), (max(ends) if ends else None)
+
+
+async def expand_results(
+    results: list,
+    fetcher: NeighborFetcher,
+    cfg: ExpansionConfig,
+    zone_id: str | None = None,
+) -> list:
+    """Attach macro_text/macro_line_start/macro_line_end to each result. Best-effort."""
+    if not results:
+        return results
+
+    spans = [
+        (r.path, max(0, r.chunk_index - cfg.window), r.chunk_index + cfg.window) for r in results
+    ]
+    try:
+        rows = await fetcher.fetch_ranges(merge_spans(spans), zone_id)
+    except Exception:
+        logger.warning("macro-chunk fetch failed; returning unexpanded", exc_info=True)
+        return results
+
+    by_path: dict[str, dict[int, ChunkRow]] = {}
+    for row in rows:
+        by_path.setdefault(row.path, {})[row.chunk_index] = row
+
+    section_cache: dict[tuple[str, int, int], tuple[str, int | None, int | None]] = {}
+    for r in results:
+        by_index = by_path.get(r.path)
+        if not by_index or r.chunk_index not in by_index:
+            continue  # gap — leave chunk_text as-is
+        try:
+            s_lo, s_hi = _section_bounds(by_index, r.chunk_index)
+            key = (r.path, s_lo, s_hi)
+            if key not in section_cache:
+                w_lo, w_hi = _window_for_anchor(by_index, r.chunk_index, cfg, _is_code_path(r.path))
+                section_cache[key] = _stitch(by_index, w_lo, w_hi)
+            text, ls, le = section_cache[key]
+            r.macro_text = text
+            r.macro_line_start = ls
+            r.macro_line_end = le
+        except Exception:
+            logger.warning("macro-chunk expansion failed for %s", r.path, exc_info=True)
+            continue
+    return results

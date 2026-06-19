@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v0.8</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v0.9</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
@@ -51,6 +51,18 @@
   <p>This is not just a micro-task platform. It's a vehicle for <strong>AI-assisted labor adoption at scale</strong>.</p>
   <p>Today, AI tools are primarily used by knowledge workers. Most of the workforce has never experienced AI augmentation in their daily work. This platform changes that: sellers earn money completing micro-tasks, and in the process, they <strong>learn to collaborate with an AI copilot</strong> &mdash; understanding tasks, generating content, producing proof of work. The skills they develop &mdash; prompt crafting, AI-assisted writing, tool delegation &mdash; transfer directly to their own careers.</p>
   <p><strong>The economic incentive (earning points) funds the education (learning AI-assisted work).</strong> The platform simultaneously solves the buyer's need for scalable task completion and the seller's need for accessible AI skill-building. This is meaningful at a societal level: lowering the barrier to AI adoption for the broader labor force, not just the tech elite.</p>
+
+  <h4 style="color:var(--purple);margin-top:1.2rem">Agent-native matching vs traditional RTB</h4>
+  <p>Online advertising uses Real-Time Bidding (RTB): a 3rd-party exchange matches buyer and seller in ~100ms. This system works for ads but fails for labor &mdash; the platform controls all matching power, takes a large rake, and has no understanding of task content. Agent-native matching is fundamentally different:</p>
+  <table>
+    <tr><th>Dimension</th><th>RTB (traditional)</th><th>Agent-native (sudowork)</th></tr>
+    <tr><td>Matching power</td><td>Centralized exchange (platform decides)</td><td>Buyer &amp; seller agents negotiate directly (P2P)</td></tr>
+    <tr><td>Task decomposition</td><td>Impossible &mdash; platform doesn't understand task content</td><td>Agent decomposes complex tasks into micro-tasks (understands content)</td></tr>
+    <tr><td>Verification</td><td>3rd-party platform, limited visibility</td><td>Local agent verifies (L1 trust zone, full content access)</td></tr>
+    <tr><td>Task granularity</td><td>Coarse (one ad impression = one unit)</td><td>Fine-grained &rarr; better liquidity (agent can split/merge)</td></tr>
+    <tr><td>Seller learning</td><td>None &mdash; seller is a passive slot</td><td>Agent teaches seller AI skills through collaboration</td></tr>
+  </table>
+  <p><strong>The seller's agent learns preferences over time.</strong> Unlike RTB's cold matching where every impression is independent, sudowork accumulates knowledge about its human: what tasks they excel at, preferred working hours, quality patterns, domain expertise. This local learning (entirely within L1) means task selection improves with use &mdash; the agent becomes a better advocate for its human, not just a task router.</p>
 </div>
 
 <div class="toc">
@@ -583,8 +595,49 @@ sequenceDiagram
   <p><em>Note: Buyback rate and policy details require legal consultation before launch. Recorded here as design option.</em></p>
 </div>
 
+<h3>AI Efficiency by Task Type</h3>
+<div class="card">
+  <p>AI value varies by scenario. The table below maps where AI helps most &mdash; at the <strong>transaction layer</strong> (negotiation, verification, settlement) vs the <strong>execution layer</strong> (doing the actual work).</p>
+  <table>
+    <tr><th>Task type</th><th>Transaction layer (AI value)</th><th>Execution layer (AI value)</th><th>Notes</th></tr>
+    <tr>
+      <td>Data labeling (Scenario A)</td>
+      <td style="color:var(--green)">High &mdash; auto-verify format, spot-check accuracy</td>
+      <td style="color:var(--green)">High &mdash; AI pre-labels, human corrects</td>
+      <td>AI adds value at both layers. Strongest use case.</td>
+    </tr>
+    <tr>
+      <td>Social engagement (Scenario B)</td>
+      <td style="color:var(--green)">High &mdash; auto-verify screenshots, comment relevance</td>
+      <td style="color:var(--orange)">Medium &mdash; AI drafts comment, human performs action</td>
+      <td>Execution is physical (app interaction); AI assists but can't replace.</td>
+    </tr>
+    <tr>
+      <td>Content writing</td>
+      <td style="color:var(--green)">High &mdash; auto-check plagiarism, tone, length</td>
+      <td style="color:var(--green)">High &mdash; AI drafts, human edits</td>
+      <td>Pure cyber task. AI can handle most of execution.</td>
+    </tr>
+    <tr>
+      <td>Survey / questionnaire</td>
+      <td style="color:var(--orange)">Medium &mdash; completeness check</td>
+      <td style="color:var(--red)">Low &mdash; requires genuine human opinion</td>
+      <td>AI should NOT fabricate survey responses. Helps with task routing only.</td>
+    </tr>
+    <tr>
+      <td>Code review / testing</td>
+      <td style="color:var(--green)">High &mdash; auto-run tests, diff review</td>
+      <td style="color:var(--green)">High &mdash; AI generates tests, finds bugs</td>
+      <td>Strongest AI leverage. Both layers fully automatable.</td>
+    </tr>
+  </table>
+  <p><strong>Design implication</strong>: The protocol is task-type-agnostic, but the <em>platform guidance</em> should steer sellers toward task types where AI leverage is highest &mdash; maximizing both earnings efficiency and AI skill development.</p>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="s8">8. Open Questions</h2>
+
+<p style="font-size:0.9rem;color:#8b949e"><em>Resolved items removed in v0.9: "Timeout on buyer non-response" (→ §5 B+, contract-negotiated auto-accept), "Multi-revision contracts" (→ §4, agent-to-agent negotiate <code>max_revisions</code>, no platform limit).</em></p>
 
 <ol>
   <li>
@@ -592,32 +645,28 @@ sequenceDiagram
     <div class="pref">Start with B. The server API cost is one endpoint (<code>POST /transfer</code> with signature verification). Reputation alone (D) is too weak for strangers. B gives real guarantees from day one.</div>
   </li>
   <li>
-    <strong>Timeout on buyer non-response</strong>: Auto-accept or auto-refund after N hours?
-    <div class="pref">Auto-accept after 72h (contract-configurable). Rationale: seller did the work and delivered; buyer silence should not punish the seller. Buyer's AI will notify the human well before timeout.</div>
-  </li>
-  <li>
     <strong>Dispute resolution</strong>: P2P reputation or platform arbitration?
     <div class="pref">P2P reputation for v1. Platform arbitration is a v2 feature that requires sudoprivacy to build an arbitration team/process. Signed contracts + audit logs provide evidence if disputes escalate outside the system.</div>
   </li>
   <li>
     <strong>Points transfer API</strong>: Does sudoprivacy already support user-to-user transfers?
-    <div class="pref">Likely not &mdash; current system is charge (pay sudoprivacy) and consume (use LLM). Need one new endpoint: <code>POST /api/v1/transfer</code> with dual-sig verification. Minimal surface.</div>
+    <div class="pref">Confirmed: no transfer API exists. Current system is charge (pay sudoprivacy) and consume (use LLM) only. Need new endpoint: <code>POST /api/v1/transfer</code> with dual-signature verification. The transfer must accept <code>(release_msg + buyer_sig + seller_sig)</code>, verify both Ed25519 signatures against the contract terms, and atomically move points between accounts. Minimal surface &mdash; one new endpoint, no escrow state.</div>
   </li>
   <li>
-    <strong>Discovery</strong>: How do buyers find sellers?
-    <div class="pref">Out of scope for v0.1. Start with direct P2P (buyer sends contract offer to a known seller). Marketplace/broadcast is a v2 feature. Focus on the settlement protocol first.</div>
-  </li>
-  <li>
-    <strong>Multi-revision contracts</strong>: How many rounds before auto-settle?
-    <div class="pref">Contract-level config with default max_revisions=2. After max revisions exhausted, buyer must accept or dispute &mdash; can't keep requesting changes indefinitely. Protects seller from scope creep.</div>
+    <strong>Discovery / Marketplace</strong>: How do buyers find sellers?
+    <div class="pref">Direct P2P for v1 (buyer sends contract offer to a known seller). Marketplace is a v2 feature. Confirmed: no marketplace code exists in nexus (checked git history). Need to build from scratch &mdash; task listing, search, seller profiles, category taxonomy. This is a significant build, separate from the settlement protocol.</div>
   </li>
   <li>
     <strong>Partial delivery / milestone payments</strong>: Split large tasks?
     <div class="pref">v2. For v1, one contract = one deliverable = one payment. Large tasks can be manually split into multiple contracts. Milestone support adds complexity (partial signatures, partial releases) that isn't needed for MVP.</div>
   </li>
   <li>
-    <strong>Cross-platform</strong>: Seller uses non-sudowork tool?
-    <div class="pref">Out of scope. Both parties must use sudowork for v1 &mdash; the protocol relies on local trust zone (L1) properties that only hold for sudowork instances. Cross-platform would need a standard protocol (A2A?) which is premature.</div>
+    <strong>Cross-platform</strong>: Seller uses non-sudowork tools (browser, Douyin app, labeling tools)?
+    <div class="pref">Not "both parties must use sudowork" &mdash; rather, integrate external task tools into sudowork via MCP servers and ai-dev-browser. The seller's sudowork orchestrates: it drives the browser for Douyin interactions, launches labeling tools, captures screenshots &mdash; all within the seller's L1 trust zone. The protocol still requires sudowork-to-sudowork communication (L2), but the <em>execution</em> tools are extensible. MCP makes this plug-and-play: each new tool type is just a new MCP server, no protocol changes needed.</div>
+  </li>
+  <li>
+    <strong>Points buyback mechanism</strong>: How do sellers convert earned points to real currency?
+    <div class="pref">Stable-price buyback at 5-10% of original charge price (see §7A). Key open items: (a) legal classification &mdash; "partial refund" framing vs "currency exchange" risk, needs legal review; (b) buyback rate stability &mdash; fixed rate or floating with usage metrics; (c) minimum threshold &mdash; avoid micro-withdrawals that cost more to process than they're worth; (d) frequency limits &mdash; daily/weekly caps to manage cash flow. Policy risk is real: if regulators classify points as a financial instrument, compliance burden increases significantly. Precedent: Steam Wallet, Apple App Store credits have similar refund mechanisms.</div>
   </li>
 </ol>
 
@@ -625,6 +674,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v0.9 (2026-06-19) &mdash; Resolved ShareOne comments: removed timeout + multi-revision from open questions (already resolved in §5 B+ and §4). Confirmed no transfer API exists (need new endpoint). Confirmed no marketplace code in nexus (build from scratch). Cross-platform answer: integrate tools via MCP/ai-dev-browser, not require non-sudowork. Added RTB comparison and seller agent preference learning to "Why this matters". Added AI efficiency by task type table to §7A. Added points buyback as formal open question with policy risk analysis.<br>
   v0.8 (2026-06-19) &mdash; Title updated to "AI-Assisted Micro-Task". Added "Why this matters" positioning: economic incentive funds AI skill education, societal impact of broadening AI adoption beyond knowledge workers.<br>
   v0.7 (2026-06-19) &mdash; Added §7A Economics: E2E cost model for Douyin micro-task, AI-assist micro-task platform positioning, seller AI investment rationale, China market benchmarks, points stable-price buyback mechanism.<br>
   v0.6 (2026-06-19) &mdash; Delivery diagram with human actors + sync/async line distinction.<br>

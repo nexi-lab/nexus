@@ -160,41 +160,38 @@ A2A messaging, audit trace, cross-instance transport.</p>
 <h2 id="system-overview">1. System Overview</h2>
 
 <pre class="mermaid">
-graph TB
-    subgraph sudowork["sudowork (Electron)"]
-        renderer["Renderer (React UI)"]
-        main["Main Process"]
-        renderer <-->|IPC| main
+graph TD
+    subgraph sw["sudowork (Electron)"]
+        direction LR
+        renderer["Renderer (React UI)"] <-->|IPC| mainproc["Main Process"]
     end
 
-    subgraph host["sudocode-host"]
-        subgraph kernel["Embedded Rust Kernel"]
-            vfs["VFSRouter &middot; DCache &middot; Metastore(redb)"]
-            pipes["PipeManager &middot; StreamManager"]
-            hooks["AuditHook &middot; AgentStatusResolver &middot; AgentRegistry"]
-        end
+    sw -->|"gRPC (VFS port)"| grpc
 
-        subgraph services["Services rlib"]
-            mas["ManagedAgentService"]
-            acp["AcpService"]
-            spawn["SpawnTask&lt;Kernel&gt;"]
-        end
-
-        subgraph agents["Agent Tasks (N tokio tasks)"]
-            task1["KernelFsBackend&lt;K&gt; + ConversationRuntime"]
-            task2["cwd = /proc/&lbrace;pid&rbrace;/workspace"]
-        end
-
+    subgraph host["sudocode-host (one process per host)"]
         grpc["gRPC server (VFS port)"]
 
-        services -->|"spawn via DI seam"| agents
-        kernel --- services
-        kernel --- agents
-        kernel --- grpc
-    end
+        subgraph kernel["Embedded Rust Kernel"]
+            vfs["VFSRouter · DCache · Metastore"]
+            pipes["PipeManager · StreamManager"]
+            hooks["AuditHook · AgentRegistry"]
+        end
 
-    main -->|"gRPC (VFS port)"| grpc
-    sudowork -->|"gRPC (VFS port)"| grpc
+        subgraph svc["Services rlib"]
+            mas["ManagedAgentService"]
+            acp["AcpService"]
+            spawn["SpawnTask‹Kernel›"]
+        end
+
+        subgraph tasks["Agent Tasks (N tokio tasks)"]
+            agent["KernelFsBackend‹K› + ConversationRuntime<br/>cwd = /proc/{pid}/workspace"]
+        end
+
+        grpc --- kernel
+        kernel --- svc
+        kernel --- tasks
+        svc -->|"spawn via DI seam"| tasks
+    end
 </pre>
 
 <h3>Constraints</h3>
@@ -390,11 +387,11 @@ sequenceDiagram
 
 <pre class="mermaid">
 graph LR
-    E["Element / FluffyChat / Cinny"] -->|"HTTP REST + JSON"| A["services::matrix_adapter"]
-    A -->|"in-process Rust"| K["nexus kernel"]
-    K --- S1["sys_read / sys_write"]
-    K --- S2["stream_read_batch"]
-    K --- S3["on chat-with-me DT_STREAMs"]
+    E["Element / FluffyChat / Cinny"]
+    A["services::matrix_adapter"]
+    K["nexus kernel<br/><em>sys_read · sys_write · stream_read_batch</em><br/>on chat-with-me DT_STREAMs"]
+
+    E -->|"HTTP REST + JSON"| A -->|"in-process Rust"| K
 </pre>
 
 <h4>Endpoint scope</h4>

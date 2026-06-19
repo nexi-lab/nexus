@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>P2P Task Settlement — Design Document</title>
+<title>P2P AI-Assisted Micro-Task Settlement — Design Document</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
   :root { --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --border: #30363d; --card: #161b22; --green: #3fb950; --orange: #d29922; --red: #f85149; --purple: #bc8cff; }
@@ -40,11 +40,18 @@
 </head>
 <body>
 
-<h1>P2P Task Settlement <span class="status status-draft">DRAFT v0.7</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v0.8</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
-  Buyer posts a task, Seller does the work, settlement in sudowork points.
+  Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
 </p>
+
+<div class="card">
+  <div class="card-title">Why this matters</div>
+  <p>This is not just a micro-task platform. It's a vehicle for <strong>AI-assisted labor adoption at scale</strong>.</p>
+  <p>Today, AI tools are primarily used by knowledge workers. Most of the workforce has never experienced AI augmentation in their daily work. This platform changes that: sellers earn money completing micro-tasks, and in the process, they <strong>learn to collaborate with an AI copilot</strong> &mdash; understanding tasks, generating content, producing proof of work. The skills they develop &mdash; prompt crafting, AI-assisted writing, tool delegation &mdash; transfer directly to their own careers.</p>
+  <p><strong>The economic incentive (earning points) funds the education (learning AI-assisted work).</strong> The platform simultaneously solves the buyer's need for scalable task completion and the seller's need for accessible AI skill-building. This is meaningful at a societal level: lowering the barrier to AI adoption for the broader labor force, not just the tech elite.</p>
+</div>
 
 <div class="toc">
   <strong>Table of Contents</strong>
@@ -618,6 +625,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v0.8 (2026-06-19) &mdash; Title updated to "AI-Assisted Micro-Task". Added "Why this matters" positioning: economic incentive funds AI skill education, societal impact of broadening AI adoption beyond knowledge workers.<br>
   v0.7 (2026-06-19) &mdash; Added §7A Economics: E2E cost model for Douyin micro-task, AI-assist micro-task platform positioning, seller AI investment rationale, China market benchmarks, points stable-price buyback mechanism.<br>
   v0.6 (2026-06-19) &mdash; Delivery diagram with human actors + sync/async line distinction.<br>
   v0.5 (2026-06-19) &mdash; No forced human-in-the-loop. AI-first verification, human async optional.<br>

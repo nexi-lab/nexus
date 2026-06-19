@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P Task Settlement <span class="status status-draft">DRAFT v0.2</span></h1>
+<h1>P2P Task Settlement <span class="status status-draft">DRAFT v0.3</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Buyer posts a task, Seller does the work, settlement in sudowork points.
@@ -54,6 +54,7 @@
     <li><a href="#s3">3. AI as Advocate (Trust Zone Alignment)</a></li>
     <li><a href="#s4">4. Contract Lifecycle</a></li>
     <li><a href="#s5">5. The Escrow Problem</a></li>
+    <li><a href="#s5a">5A. Reputation System</a></li>
     <li><a href="#s6">6. Delivery via VFS</a></li>
     <li><a href="#s7">7. Scenarios</a></li>
     <li><a href="#s8">8. Open Questions</a></li>
@@ -257,7 +258,32 @@ flowchart LR
   <p style="color:var(--red)"><strong>Con</strong>: Buyer can refuse to sign (hostage problem). Mitigated by timeout + reputation.</p>
 </div>
 
-<div class="pref">Option B. Server as verifier aligns with L3 (limited trust). The "buyer refuses to sign" problem is solvable with timeout auto-accept + reputation damage, which are simpler than building a trustworthy escrow system.</div>
+<div class="pref">Option B + Pre-commitment (see below). Server as verifier aligns with L3 (limited trust).</div>
+
+<h3>Option B+: Buyer Pre-commitment (addresses low-trust markets)</h3>
+<div class="card">
+  <p><strong>Problem</strong>: In low-end labor markets, reputation is weak. Buyer can refuse to sign the release (hostage problem). "Timeout + reputation" is insufficient when participants have no reputation to lose.</p>
+  <p><strong>Solution</strong>: When both parties sign the contract (<code>agreed</code>), buyer <em>also</em> signs a <strong>conditional release</strong>:</p>
+  <pre style="color:var(--fg);font-size:0.85rem;margin:0.5rem 0">
+  {
+    "type": "conditional_release",
+    "contract_id": "...",
+    "amount": 500,
+    "to_seller": "seller_user_id",
+    "condition": "delivery_submitted AND NOT rejected_within_timeout",
+    "timeout_hours": 72,
+    "buyer_signature": "ed25519:..."
+  }</pre>
+  <p>This pre-signed message is stored on the server at contract creation time.</p>
+  <p><strong>Settlement paths</strong>:</p>
+  <ul>
+    <li><strong>Buyer accepts</strong> &rarr; buyer signs explicit release &rarr; immediate transfer</li>
+    <li><strong>Buyer silent for 72h</strong> &rarr; server executes pre-signed conditional release automatically</li>
+    <li><strong>Buyer rejects</strong> &rarr; must actively reject before timeout with reason &rarr; seller can revise</li>
+    <li><strong>Seller delivers garbage</strong> &rarr; buyer has 72h window to reject</li>
+  </ul>
+  <p style="color:var(--green)"><strong>Key insight</strong>: Server still isn't an arbiter &mdash; it only executes a commitment the buyer <em>already signed</em>. No unilateral power. The buyer bound themselves at contract creation time.</p>
+</div>
 
 <h3>Option C: Hash-Locked Transfer (HTLC-inspired)</h3>
 <div class="card">
@@ -277,6 +303,46 @@ flowchart LR
   <div class="card-title">Recommendation</div>
   <p><strong>Start with Option B (dual-signature)</strong>. It's not much harder than D, but provides real cryptographic guarantees. Server needs only one new endpoint: <code>POST /transfer</code> that verifies dual signatures. Option D as fallback for communities that don't need formal contracts.</p>
 </div>
+
+<!-- ============================================================ -->
+<h2 id="s5a">5A. Reputation System (reuse from nexus)</h2>
+
+<p>Nexus previously had a full reputation service (deleted in PR #2600 as dead code, 759 lines). The math model is well-designed and directly reusable.</p>
+
+<h3>Prior art: Bayesian Beta reputation model</h3>
+<div class="card">
+  <div class="card-title">reputation_math.py (deleted, recoverable from git)</div>
+  <ul>
+    <li><strong>Model</strong>: Beta(alpha, beta) distribution per dimension. <code>score = alpha / (alpha + beta)</code>. Prior Beta(1,1) = 0.5 (no information).</li>
+    <li><strong>4 dimensions</strong>: reliability (30%), quality (30%), timeliness (20%), fairness (20%) &mdash; weighted composite.</li>
+    <li><strong>Time decay</strong>: Exponential with 30-day half-life. Recent events weigh more.</li>
+    <li><strong>Confidence</strong>: Logarithmic scale &mdash; 0 observations = 0.0, 10 obs = 0.71, 100 obs = 0.82.</li>
+    <li><strong>Federation-safe</strong>: No process-local caches. Reads go to storage directly.</li>
+  </ul>
+</div>
+
+<h3>Adaptation for P2P task settlement</h3>
+<table>
+  <tr><th>Aspect</th><th>Original</th><th>Adapted</th></tr>
+  <tr><td>Who rates whom</td><td>Agent &rarr; Agent</td><td>Agent &rarr; Agent (aligned with their human via L1 trust zone)</td></tr>
+  <tr><td>Storage</td><td>PostgreSQL (RecordStore)</td><td>VFS files (JSON, CAS-addressed) &mdash; <em>everything is a file</em></td></tr>
+  <tr><td>Distribution</td><td>Federation-safe (database reads)</td><td>Inherits nexus-vfs Raft consensus for replicated reputation data</td></tr>
+  <tr><td>Dimensions</td><td>reliability, quality, timeliness, fairness</td><td>Same 4 dimensions map perfectly to task settlement</td></tr>
+</table>
+
+<div class="card">
+  <div class="card-title">VFS storage layout</div>
+  <pre style="color:var(--fg);font-size:0.85rem">
+  /reputation/{user_id}/score.json       # materialized composite score
+  /reputation/{user_id}/events/           # individual feedback events (append-only)
+  /reputation/{user_id}/events/{event_id}.json
+  </pre>
+  <p>Each event is CAS-addressed &mdash; tamper-evident. Composite score is recomputable from events.</p>
+</div>
+
+<p><strong>Human-AI alignment for rating</strong>: The agent submits feedback on behalf of its human. The alignment process (how much the human reviews vs delegates to AI) is a local L1 decision &mdash; out of protocol scope. The protocol only requires that the feedback is signed by the agent's key, which the human controls.</p>
+
+<div class="pref">Reuse <code>reputation_math.py</code> pure functions (Beta scoring + time decay + composite). Replace ORM storage with VFS JSON files. The 4-dimension model (reliability, quality, timeliness, fairness) maps perfectly to task settlement feedback.</div>
 
 <!-- ============================================================ -->
 <h2 id="s6">6. Delivery via VFS</h2>
@@ -411,6 +477,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v0.3 (2026-06-19) &mdash; Added Buyer Pre-commitment (Option B+) to close hostage problem in low-trust markets. Added §5A Reputation System reuse from nexus (Bayesian Beta model, VFS storage).<br>
   v0.2 (2026-06-19) &mdash; Revised trust diagram (our/their perspective), real scenarios (data labeling + Douyin engagement), escrow preference (Option B), initial preferences on all open questions.<br>
   v0.1 (2026-06-19) &mdash; Initial draft.<br>
   <br>

@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v0.9</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.0</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
@@ -595,6 +595,47 @@ sequenceDiagram
   <p><em>Note: Buyback rate and policy details require legal consultation before launch. Recorded here as design option.</em></p>
 </div>
 
+<h3>Points Leverage: 10-20x Value Amplification</h3>
+<div class="card">
+  <div class="card-title">Why tokens are worth more than cash to sellers</div>
+  <p>The buyback rate (5-10%) creates a <strong>10-20x leverage effect</strong> that naturally drives AI adoption:</p>
+  <table>
+    <tr><th>Seller choice</th><th>Points value</th><th>Effective value</th><th>Multiplier</th></tr>
+    <tr>
+      <td>Use points for AI (sudowork)</td>
+      <td>50 points from task</td>
+      <td>&#165;0.50 worth of AI compute</td>
+      <td style="color:var(--green)"><strong>1x face value</strong></td>
+    </tr>
+    <tr>
+      <td>Cash out (buyback)</td>
+      <td>50 points from task</td>
+      <td>&#165;0.025-0.05 cash</td>
+      <td style="color:var(--red)">0.05-0.1x face value</td>
+    </tr>
+  </table>
+  <p><strong>The economics</strong>: Model provider subsidies (e.g. DSV4 pricing) mean the platform's actual compute cost is far below the charge rate. This cost gap is passed to sellers as amplified AI value &mdash; 50 points buys &#165;0.50 of AI compute that costs the platform perhaps &#165;0.05. The buyback rate (&#165;0.025-0.05) roughly matches the platform's real cost, so it's sustainable.</p>
+  <p><strong>The flywheel</strong>: Sellers who use points for AI get 10-20x more value than cashing out &rarr; they learn AI skills &rarr; they discover AI's value for their own work &rarr; they buy their own points &rarr; organic growth. The economic incentive and the education mission are the same mechanism.</p>
+  <div class="warn">
+    <strong>Critical assumption</strong>: This leverage only works if AI is genuinely useful to sellers. If sellers can't find value in AI-assisted work, they'll want to cash out (and get very little). The platform must ensure sudowork delivers real value in the seller's L1 trust zone &mdash; task understanding, skill development, career-transferable AI literacy.
+  </div>
+</div>
+
+<h3>Target Market: University Students &amp; Fresh Graduates (China)</h3>
+<div class="card">
+  <p>Initial seller pool: <strong>university students and fresh graduates</strong> (&#22823;&#23398;&#29983;/&#24212;&#23626;&#29983;). This demographic is uniquely aligned with the platform on multiple dimensions:</p>
+  <table>
+    <tr><th>Dimension</th><th>Why it aligns</th></tr>
+    <tr><td><strong>Supply volume</strong></td><td>China's university enrollment is at a historic high (~11.7M graduates in 2025), while youth employment rates are at historic lows. Largest available micro-task labor pool.</td></tr>
+    <tr><td><strong>AI willingness</strong></td><td>Digital natives, highest willingness to learn and use AI tools. Crucially: more willing to accept <em>tokens as compensation</em> because they'll actually use the AI &mdash; the 10-20x leverage (use vs cash out) works best for users who value AI access.</td></tr>
+    <tr><td><strong>Time flexibility</strong></td><td>Flexible schedules, can do micro-tasks between classes or during free time. Ideal for async, variable-volume task flows.</td></tr>
+    <tr><td><strong>Low opportunity cost</strong></td><td>Student wages are low; &#165;4-10/hour effective rate from micro-tasks is competitive with part-time alternatives (tutoring, food delivery).</td></tr>
+    <tr><td><strong>Maximum career ROI</strong></td><td>AI skills learned now compound over an entire career. A graduating student who can prompt-craft, delegate to AI, and verify AI output has a tangible competitive advantage in the job market.</td></tr>
+    <tr><td><strong>Network effects</strong></td><td>Campus social networks drive organic word-of-mouth. One student showing AI-assisted earnings to roommates creates viral adoption within dorms and departments.</td></tr>
+  </table>
+  <p><strong>The pitch to students</strong>: "Earn money doing micro-tasks. Your AI copilot helps you work faster and learn skills employers want. The points you earn buy more AI &mdash; 10-20x more value than cashing out."</p>
+</div>
+
 <h3>AI Efficiency by Task Type</h3>
 <div class="card">
   <p>AI value varies by scenario. The table below maps where AI helps most &mdash; at the <strong>transaction layer</strong> (negotiation, verification, settlement) vs the <strong>execution layer</strong> (doing the actual work).</p>
@@ -674,6 +715,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v1.0 (2026-06-19) &mdash; Points leverage: 10-20x value amplification analysis (use AI vs cash out). Target market: university students &amp; fresh graduates (supply volume, AI willingness, career ROI, network effects). Token acceptance insight: students accept tokens because they value AI access.<br>
   v0.9 (2026-06-19) &mdash; Resolved ShareOne comments: removed timeout + multi-revision from open questions (already resolved in §5 B+ and §4). Confirmed no transfer API exists (need new endpoint). Confirmed no marketplace code in nexus (build from scratch). Cross-platform answer: integrate tools via MCP/ai-dev-browser, not require non-sudowork. Added RTB comparison and seller agent preference learning to "Why this matters". Added AI efficiency by task type table to §7A. Added points buyback as formal open question with policy risk analysis.<br>
   v0.8 (2026-06-19) &mdash; Title updated to "AI-Assisted Micro-Task". Added "Why this matters" positioning: economic incentive funds AI skill education, societal impact of broadening AI adoption beyond knowledge workers.<br>
   v0.7 (2026-06-19) &mdash; Added §7A Economics: E2E cost model for Douyin micro-task, AI-assist micro-task platform positioning, seller AI investment rationale, China market benchmarks, points stable-price buyback mechanism.<br>

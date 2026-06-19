@@ -161,7 +161,7 @@ graph TB
   <tr><td>Negotiation</td><td>Evaluate counter-offers, flag risks</td><td>Assess feasibility, suggest fair pricing</td></tr>
   <tr><td>Execution</td><td>&mdash;</td><td>Do the work (labeling, browsing, coding, etc.)</td></tr>
   <tr><td>Delivery</td><td>&mdash;</td><td>Package deliverables, pre-check against criteria</td></tr>
-  <tr><td>Verification</td><td>Automated checks + human confirmation</td><td>&mdash;</td></tr>
+  <tr><td>Verification</td><td>AI auto-checks against criteria (human may review async &mdash; local preference, not protocol-enforced)</td><td>&mdash;</td></tr>
   <tr><td>Dispute</td><td>Gather evidence for buyer's position</td><td>Gather evidence for seller's position</td></tr>
 </table>
 
@@ -277,10 +277,10 @@ flowchart LR
   <p>This pre-signed message is stored on the server at contract creation time.</p>
   <p><strong>Settlement paths</strong>:</p>
   <ul>
-    <li><strong>Buyer accepts</strong> &rarr; buyer signs explicit release &rarr; immediate transfer</li>
-    <li><strong>Buyer silent for 72h</strong> &rarr; server executes pre-signed conditional release automatically</li>
-    <li><strong>Buyer rejects</strong> &rarr; must actively reject before timeout with reason &rarr; seller can revise</li>
-    <li><strong>Seller delivers garbage</strong> &rarr; buyer has 72h window to reject</li>
+    <li><strong>AI auto-accepts</strong> &rarr; buyer's AI checks criteria, signs explicit release &rarr; immediate transfer (no human wait)</li>
+    <li><strong>AI or human rejects</strong> &rarr; must actively reject before timeout with reason &rarr; seller can revise</li>
+    <li><strong>No response for 72h</strong> &rarr; server executes pre-signed conditional release automatically</li>
+    <li><strong>Human async override</strong> &rarr; human can intervene at any point before timeout (local preference, e.g. "notify me for contracts &gt;100 points")</li>
   </ul>
   <p style="color:var(--green)"><strong>Key insight</strong>: Server still isn't an arbiter &mdash; it only executes a commitment the buyer <em>already signed</em>. No unilateral power. The buyer bound themselves at contract creation time.</p>
   <div class="warn">
@@ -403,8 +403,8 @@ sequenceDiagram
     S->>FED: replicate to buyer's zone
     FED->>BVFS: P2P delivery
     B->>BVFS: read + verify CAS hash
-    B->>B: AI acceptance check
-    B->>B: Human confirms
+    B->>B: AI auto-acceptance check (per criteria)
+    Note over B: Human may review async (local preference)<br/>No forced human-in-the-loop<br/>Timeout auto-executes if no response
 </pre>
 
 <!-- ============================================================ -->

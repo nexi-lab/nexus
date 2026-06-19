@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2P AI-Assisted Micro-Task Settlement — Design Document</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root { --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --border: #30363d; --card: #161b22; --green: #3fb950; --orange: #d29922; --red: #f85149; --purple: #bc8cff; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.7; padding: 2rem; max-width: 960px; margin: 0 auto; }
+  h1 { color: var(--accent); font-size: 2rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+  h2 { color: var(--accent); font-size: 1.5rem; margin: 2.5rem 0 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { color: var(--purple); font-size: 1.2rem; margin: 1.5rem 0 0.5rem; }
+  p, li { margin-bottom: 0.6rem; }
+  ul, ol { padding-left: 1.5rem; }
+  .subtitle { color: #8b949e; font-size: 0.95rem; margin-bottom: 2rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem 1.5rem; margin: 1rem 0; }
+  .card-title { color: var(--green); font-weight: 600; margin-bottom: 0.5rem; }
+  .warn { border-left: 3px solid var(--orange); padding-left: 1rem; margin: 1rem 0; }
+  .danger { border-left: 3px solid var(--red); padding-left: 1rem; margin: 1rem 0; }
+  .pref { border-left: 3px solid var(--green); padding-left: 1rem; margin: 0.5rem 0; font-size: 0.9rem; }
+  .pref::before { content: "PREFERENCE: "; color: var(--green); font-weight: 700; font-size: 0.8rem; }
+  .open-q { background: #1c2128; border: 1px dashed var(--orange); border-radius: 6px; padding: 1rem 1.2rem; margin: 1rem 0; }
+  .open-q::before { content: "OPEN QUESTION"; display: block; color: var(--orange); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--border); padding: 0.5rem 0.8rem; text-align: left; }
+  th { background: var(--card); color: var(--accent); }
+  code { background: #1c2128; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
+  .mermaid { margin: 1.5rem 0; text-align: center; }
+  .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.8rem; font-weight: 600; }
+  .status-draft { background: #1c2128; color: var(--orange); border: 1px solid var(--orange); }
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ul { list-style: none; padding-left: 1rem; }
+  .toc > ul { padding-left: 0; }
+  .version-info { color: #8b949e; font-size: 0.85rem; margin-top: 3rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.0</span></h1>
+<p class="subtitle">
+  A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
+  Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
+</p>
+
+<div class="card">
+  <div class="card-title">Why this matters</div>
+  <p>This is not just a micro-task platform. It's a vehicle for <strong>AI-assisted labor adoption at scale</strong>.</p>
+  <p>Today, AI tools are primarily used by knowledge workers. Most of the workforce has never experienced AI augmentation in their daily work. This platform changes that: sellers earn money completing micro-tasks, and in the process, they <strong>learn to collaborate with an AI copilot</strong> &mdash; understanding tasks, generating content, producing proof of work. The skills they develop &mdash; prompt crafting, AI-assisted writing, tool delegation &mdash; transfer directly to their own careers.</p>
+  <p><strong>The economic incentive (earning points) funds the education (learning AI-assisted work).</strong> The platform simultaneously solves the buyer's need for scalable task completion and the seller's need for accessible AI skill-building. This is meaningful at a societal level: lowering the barrier to AI adoption for the broader labor force, not just the tech elite.</p>
+
+  <h4 style="color:var(--purple);margin-top:1.2rem">Agent-native matching vs traditional RTB</h4>
+  <p>Online advertising uses Real-Time Bidding (RTB): a 3rd-party exchange matches buyer and seller in ~100ms. This system works for ads but fails for labor &mdash; the platform controls all matching power, takes a large rake, and has no understanding of task content. Agent-native matching is fundamentally different:</p>
+  <table>
+    <tr><th>Dimension</th><th>RTB (traditional)</th><th>Agent-native (sudowork)</th></tr>
+    <tr><td>Matching power</td><td>Centralized exchange (platform decides)</td><td>Buyer &amp; seller agents negotiate directly (P2P)</td></tr>
+    <tr><td>Task decomposition</td><td>Impossible &mdash; platform doesn't understand task content</td><td>Agent decomposes complex tasks into micro-tasks (understands content)</td></tr>
+    <tr><td>Verification</td><td>3rd-party platform, limited visibility</td><td>Local agent verifies (L1 trust zone, full content access)</td></tr>
+    <tr><td>Task granularity</td><td>Coarse (one ad impression = one unit)</td><td>Fine-grained &rarr; better liquidity (agent can split/merge)</td></tr>
+    <tr><td>Seller learning</td><td>None &mdash; seller is a passive slot</td><td>Agent teaches seller AI skills through collaboration</td></tr>
+  </table>
+  <p><strong>The seller's agent learns preferences over time.</strong> Unlike RTB's cold matching where every impression is independent, sudowork accumulates knowledge about its human: what tasks they excel at, preferred working hours, quality patterns, domain expertise. This local learning (entirely within L1) means task selection improves with use &mdash; the agent becomes a better advocate for its human, not just a task router.</p>
+</div>
+
+<div class="toc">
+  <strong>Table of Contents</strong>
+  <ul>
+    <li><a href="#s1">1. Three-Layer Trust Model</a></li>
+    <li><a href="#s2">2. Roles: Buyer &amp; Seller</a></li>
+    <li><a href="#s3">3. AI as Advocate (Trust Zone Alignment)</a></li>
+    <li><a href="#s4">4. Contract Lifecycle</a></li>
+    <li><a href="#s5">5. The Escrow Problem</a></li>
+    <li><a href="#s5a">5A. Reputation System</a></li>
+    <li><a href="#s6">6. Delivery via VFS</a></li>
+    <li><a href="#s7">7. Scenarios</a></li>
+    <li><a href="#s7a">7A. Economics: Cost Model</a></li>
+    <li><a href="#s8">8. Open Questions</a></li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. Three-Layer Trust Model</h2>
+
+<p>Every participant sees the same three trust layers. The diagram is drawn from <strong>your</strong> perspective &mdash; you could be either Buyer or Seller. The counterparty is always "them".</p>
+
+<pre class="mermaid">
+graph TB
+    subgraph L1["L1 &mdash; My Trust Zone (Complete Trust)"]
+        ME["Me (Human)"]
+        MYSW["My sudowork"]
+        ME ---|"I paid for my points, my AI works for me"| MYSW
+    end
+
+    subgraph L2["L2 &mdash; Peer Zone (Zero Trust)"]
+        THEM["Their sudowork"]
+    end
+
+    subgraph L3["L3 &mdash; Platform (Limited Trust)"]
+        SRV["sudoprivacy server<br/>(points ledger)"]
+    end
+
+    MYSW -.->|"negotiate / deliver / verify"| THEM
+    MYSW -.->|"points balance"| SRV
+    THEM -.->|"points balance"| SRV
+
+    style L1 fill:#1a2e1a,stroke:#3fb950,stroke-width:2px
+    style L2 fill:#2e1a1a,stroke:#f85149,stroke-width:2px
+    style L3 fill:#2e2a1a,stroke:#d29922,stroke-width:2px
+</pre>
+
+<p><strong>Example</strong>: If I'm the Buyer posting a data-labeling task, then "My sudowork" helps me draft the task and verify deliverables. "Their sudowork" is the Seller's agent that does the work. Roles are symmetric &mdash; if I'm the Seller, the diagram flips.</p>
+
+<table>
+  <tr>
+    <th>Layer</th><th>Who</th><th>Trust Level</th><th>Design Implication</th>
+  </tr>
+  <tr>
+    <td><strong>L1: My Trust Zone</strong></td>
+    <td>Me &harr; My sudowork</td>
+    <td style="color:var(--green)">Complete</td>
+    <td>Runs locally, acts 100% in my interest. I paid for the points, my AI is my agent. All secrets, strategies, acceptance logic stay local.</td>
+  </tr>
+  <tr>
+    <td><strong>L2: Peer Zone</strong></td>
+    <td>My sudowork &harr; Their sudowork</td>
+    <td style="color:var(--red)">Zero</td>
+    <td>Counterparty could cheat. Need cryptographic signatures, hash commitments. Every message must be verifiable. No shared state without proof.</td>
+  </tr>
+  <tr>
+    <td><strong>L3: Platform</strong></td>
+    <td>Me &harr; sudoprivacy server</td>
+    <td style="color:var(--orange)">Limited</td>
+    <td>I deposited money (bought points). Server holds the ledger. I want it to be a <strong>witness/verifier</strong>, not a <strong>decider</strong>. It should not have unilateral power over my funds.</td>
+  </tr>
+</table>
+
+<div class="card">
+  <div class="card-title">Design Principle</div>
+  <p>Minimize L3 (server) involvement. Maximize L1 (local) intelligence. Make L2 (peer) interactions cryptographically verifiable. The server is a <strong>witness</strong>, not an <strong>arbiter</strong>.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. Roles: Buyer &amp; Seller</h2>
+
+<table>
+  <tr><th>Role</th><th>Who</th><th>What they do</th></tr>
+  <tr>
+    <td><strong>Buyer</strong> (买家)</td>
+    <td>Posts and pays for the task</td>
+    <td>Defines task, acceptance criteria, price. Their sudowork assists with verification.</td>
+  </tr>
+  <tr>
+    <td><strong>Seller</strong> (劳动者/卖家)</td>
+    <td>Does the work</td>
+    <td>Accepts the task, executes, delivers. Their sudowork assists with execution and advocates for fair payment.</td>
+  </tr>
+</table>
+
+<p>Both roles are symmetric in trust structure: each has their own L1 trust zone, and the other party is always L2 (zero trust).</p>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. AI as Advocate (Trust Zone Alignment)</h2>
+
+<div class="card">
+  <div class="card-title">Interest Alignment Principle</div>
+  <p>Each sudowork instance is <strong>fully aligned with its human's interest</strong>. The human paid real money for the points powering that sudowork &mdash; so the AI and the human are economically bound.</p>
+  <ul>
+    <li><strong>Buyer's sudowork</strong>: optimizes for quality verification, fair pricing, detecting incomplete work</li>
+    <li><strong>Seller's sudowork</strong>: optimizes for meeting acceptance criteria efficiently, advocating for fair compensation, protecting against unreasonable rejection</li>
+  </ul>
+  <p>This adversarial alignment is <em>by design</em> &mdash; it produces fair outcomes the same way buyer/seller negotiation does in real markets.</p>
+</div>
+
+<p><strong>AI involvement at each stage:</strong></p>
+<table>
+  <tr><th>Stage</th><th>Buyer's AI</th><th>Seller's AI</th></tr>
+  <tr><td>Task posting</td><td>Draft clear requirements + acceptance criteria</td><td>&mdash;</td></tr>
+  <tr><td>Negotiation</td><td>Evaluate counter-offers, flag risks</td><td>Assess feasibility, suggest fair pricing</td></tr>
+  <tr><td>Execution</td><td>&mdash;</td><td>Do the work (labeling, browsing, coding, etc.)</td></tr>
+  <tr><td>Delivery</td><td>&mdash;</td><td>Package deliverables, pre-check against criteria</td></tr>
+  <tr><td>Verification</td><td>AI auto-checks against criteria (human may review async &mdash; local preference, not protocol-enforced)</td><td>&mdash;</td></tr>
+  <tr><td>Dispute</td><td>Gather evidence for buyer's position</td><td>Gather evidence for seller's position</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. Contract Lifecycle</h2>
+
+<pre class="mermaid">
+flowchart LR
+    A([Draft]) -->|seller proposes| B([Negotiating])
+    B -->|counter-offers| B
+    B -->|both sign| C([Agreed])
+    B -->|withdraw| X([Cancelled])
+    C -->|start work| D([InProgress])
+    D -->|submit| E([Delivered])
+    E -->|approve| F([Accepted])
+    E -->|request changes| G([Revision])
+    G -->|resubmit| E
+    E -->|disagree| H([Disputed])
+    H -->|seller wins| F
+    H -->|buyer wins| I([Refunded])
+    F -->|transfer points| J([Settled])
+    I -->|return points| J
+
+    style A fill:#1c2128,stroke:#8b949e
+    style C fill:#1a2e1a,stroke:#3fb950
+    style F fill:#1a2e1a,stroke:#3fb950
+    style J fill:#1a2e1a,stroke:#3fb950
+    style X fill:#2e1a1a,stroke:#f85149
+    style H fill:#2e2a1a,stroke:#d29922
+</pre>
+
+<h3>Contract Data Structure (sketch)</h3>
+<div class="card">
+<pre style="color:var(--fg);font-size:0.85rem">
+{
+  "contract_id": "sha256(canonical_json(terms))",
+  "version": 1,
+  "status": "agreed",
+
+  "buyer": {
+    "user_id": "...",
+    "public_key": "ed25519:...",
+    "signature": "..."
+  },
+  "seller": {
+    "user_id": "...",
+    "public_key": "ed25519:...",
+    "signature": "..."
+  },
+
+  "terms": {
+    "title": "Label 1000 images for object detection",
+    "description": "...",
+    "acceptance_criteria": [
+      "All 1000 images labeled",
+      "Bounding boxes in COCO format",
+      "Accuracy spot-check > 95%"
+    ],
+    "price_points": 500,
+    "deadline_utc": "2026-07-15T00:00:00Z",
+    "max_revisions": 2,
+    "auto_accept_timeout_hours": 72
+  },
+
+  "delivery": {
+    "cas_hash": null,
+    "delivered_at": null,
+    "vfs_path": "/contracts/{id}/deliverables/"
+  },
+
+  "audit_log": []
+}
+</pre>
+</div>
+
+<p>Both parties sign <code>terms</code>. Once <code>status=agreed</code>, terms are immutable. <code>contract_id = sha256(canonical_json(terms))</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. The Escrow Problem</h2>
+
+<p>Points live on sudoprivacy's server. Settlement <em>must</em> touch the server. The question: <strong>how much power does the server have?</strong></p>
+
+<h3>Option A: Server-Held Escrow</h3>
+<div class="card">
+  <p><strong>How</strong>: Buyer calls <code>server.lock(amount, contract_hash)</code>. Server holds points until <code>server.release()</code> or timeout.</p>
+  <p style="color:var(--green)"><strong>Pro</strong>: Seller has guarantee &mdash; points locked, buyer can't spend elsewhere.</p>
+  <p style="color:var(--red)"><strong>Con</strong>: Server has unilateral release power. Buyer could hack release API. Compromised server = stolen funds. Contradicts L3 (limited trust).</p>
+</div>
+
+<h3>Option B: Dual-Signature Settlement (no server escrow) <span style="color:var(--green)">&star; preferred</span></h3>
+<div class="card">
+  <p><strong>How</strong>: No escrow. On acceptance, buyer signs a <code>release(contract_id, amount, to_seller)</code> message. Seller submits <code>(release_msg + buyer_sig + seller_sig)</code> to server's <code>transfer</code> API. Server verifies both signatures, executes transfer.</p>
+  <p style="color:var(--green)"><strong>Pro</strong>: Server is a <strong>signature verifier</strong>, not a decider. Can't forge signatures. Can't move funds unilaterally. Minimal trust.</p>
+  <p style="color:var(--red)"><strong>Con</strong>: Buyer can refuse to sign (hostage problem). Mitigated by timeout + reputation.</p>
+</div>
+
+<div class="pref">Option B + Pre-commitment (see below). Server as verifier aligns with L3 (limited trust).</div>
+
+<h3>Option B+: Buyer Pre-commitment (addresses low-trust markets)</h3>
+<div class="card">
+  <p><strong>Problem</strong>: In low-end labor markets, reputation is weak. Buyer can refuse to sign the release (hostage problem). "Timeout + reputation" is insufficient when participants have no reputation to lose.</p>
+  <p><strong>Solution</strong>: When both parties sign the contract (<code>agreed</code>), buyer <em>also</em> signs a <strong>conditional release</strong>:</p>
+  <pre style="color:var(--fg);font-size:0.85rem;margin:0.5rem 0">
+  {
+    "type": "conditional_release",
+    "contract_id": "...",
+    "amount": 500,
+    "to_seller": "seller_user_id",
+    "condition": "delivery_submitted AND NOT rejected_within_timeout",
+    "timeout_hours": 72,
+    "buyer_signature": "ed25519:..."
+  }</pre>
+  <p>This pre-signed message is stored on the server at contract creation time.</p>
+  <p><strong>Settlement paths</strong>:</p>
+  <ul>
+    <li><strong>AI auto-accepts</strong> &rarr; buyer's AI checks criteria, signs explicit release &rarr; immediate transfer (no human wait)</li>
+    <li><strong>AI or human rejects</strong> &rarr; must actively reject before timeout with reason &rarr; seller can revise</li>
+    <li><strong>No response for 72h</strong> &rarr; server executes pre-signed conditional release automatically</li>
+    <li><strong>Human async override</strong> &rarr; human can intervene at any point before timeout (local preference, e.g. "notify me for contracts &gt;100 points")</li>
+  </ul>
+  <p style="color:var(--green)"><strong>Key insight</strong>: Server still isn't an arbiter &mdash; it only executes a commitment the buyer <em>already signed</em>. No unilateral power. The buyer bound themselves at contract creation time.</p>
+  <div class="warn">
+    <strong>Clarification</strong>: The <code>timeout_hours</code> value is NOT set by the server. It comes from <code>contract.terms.auto_accept_timeout_hours</code>, which is negotiated and agreed upon by both buyer and seller before signing. The server merely reads the timeout from the buyer's pre-signed conditional release &mdash; it makes zero business decisions.
+  </div>
+</div>
+
+<h3>Option C: Hash-Locked Transfer (HTLC-inspired)</h3>
+<div class="card">
+  <p><strong>How</strong>: Buyer creates hash-locked commitment: "pay N points to whoever reveals preimage of H". Seller delivers + reveals preimage. Automatic.</p>
+  <p style="color:var(--green)"><strong>Pro</strong>: Atomic &mdash; delivery and payment cryptographically linked.</p>
+  <p style="color:var(--red)"><strong>Con</strong>: Only works for objectively verifiable deliverables (file hash). Can't handle quality verification ("labeled but poorly"). Overly complex.</p>
+</div>
+
+<h3>Option D: Reputation-First (MVP fallback)</h3>
+<div class="card">
+  <p><strong>How</strong>: No escrow, no crypto. Buyer pays after acceptance via transfer API. Trust from reputation + signed contract history.</p>
+  <p style="color:var(--green)"><strong>Pro</strong>: Simplest. No server changes. Works for trusted communities.</p>
+  <p style="color:var(--red)"><strong>Con</strong>: No guarantee. Only works with social trust.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">Recommendation</div>
+  <p><strong>Start with Option B (dual-signature)</strong>. It's not much harder than D, but provides real cryptographic guarantees. Server needs only one new endpoint: <code>POST /transfer</code> that verifies dual signatures. Option D as fallback for communities that don't need formal contracts.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s5a">5A. Reputation System (reuse from nexus)</h2>
+
+<p>Nexus previously had a full reputation service (deleted in PR #2600 as dead code, 759 lines). The math model is well-designed and directly reusable.</p>
+
+<h3>Prior art: Bayesian Beta reputation model</h3>
+<div class="card">
+  <div class="card-title">reputation_math.py (deleted, recoverable from git)</div>
+  <ul>
+    <li><strong>Model</strong>: Beta(alpha, beta) distribution per dimension. <code>score = alpha / (alpha + beta)</code>. Prior Beta(1,1) = 0.5 (no information).</li>
+    <li><strong>4 dimensions</strong>: reliability (30%), quality (30%), timeliness (20%), fairness (20%) &mdash; weighted composite.</li>
+    <li><strong>Time decay</strong>: Exponential with 30-day half-life. Recent events weigh more.</li>
+    <li><strong>Confidence</strong>: Logarithmic scale &mdash; 0 observations = 0.0, 10 obs = 0.71, 100 obs = 0.82.</li>
+    <li><strong>Federation-safe</strong>: No process-local caches. Reads go to storage directly.</li>
+  </ul>
+</div>
+
+<h3>Role in the system: marketplace signal, NOT settlement enforcement</h3>
+
+<div class="card">
+  <div class="card-title">Two independent mechanisms, two different problems</div>
+  <table>
+    <tr><th>Mechanism</th><th>Solves</th><th>Nature</th></tr>
+    <tr><td><strong>Pre-commitment + dual-sig</strong> (&sect;5)</td><td>This transaction won't be cheated</td><td>Hard guarantee (cryptographic)</td></tr>
+    <tr><td><strong>Reputation</strong> (&sect;5A)</td><td>Pick a reliable counterparty next time</td><td>Soft signal (statistical)</td></tr>
+  </table>
+  <p>Reputation does <strong>not</strong> participate in settlement logic. It doesn't gate payments, doesn't override pre-commitments, doesn't resolve disputes. It's a <strong>dashboard metric</strong> visible on the marketplace &mdash; helps buyers choose sellers and sellers choose buyers. The two systems are intentionally decoupled.</p>
+</div>
+
+<h3>Bilateral: both buyer AND seller are rated</h3>
+<table>
+  <tr><th>Dimension</th><th>Rating Seller</th><th>Rating Buyer</th></tr>
+  <tr><td><strong>Reliability</strong> (30%)</td><td>Delivers on time, doesn't ghost</td><td>Responds to delivery on time, doesn't ghost</td></tr>
+  <tr><td><strong>Quality</strong> (30%)</td><td>Deliverable meets acceptance criteria</td><td>Requirements are clear and fair</td></tr>
+  <tr><td><strong>Timeliness</strong> (20%)</td><td>Completes before deadline</td><td>Accepts/rejects within timeout</td></tr>
+  <tr><td><strong>Fairness</strong> (20%)</td><td>Reasonable pricing, honest work</td><td>Doesn't maliciously reject, doesn't underpay</td></tr>
+</table>
+<p>Buyer reputation matters as much as seller reputation &mdash; sellers need to know if a buyer is trustworthy before accepting a task. Same model as ride-sharing (driver rates passenger, passenger rates driver).</p>
+
+<h3>Adaptation for P2P task settlement</h3>
+<table>
+  <tr><th>Aspect</th><th>Original (deleted nexus code)</th><th>Adapted</th></tr>
+  <tr><td>Who rates whom</td><td>Agent &rarr; Agent</td><td>Agent &rarr; Agent, bilateral (both buyer and seller rated)</td></tr>
+  <tr><td>Storage</td><td>PostgreSQL (RecordStore)</td><td>VFS files (JSON, CAS-addressed) &mdash; <em>everything is a file</em></td></tr>
+  <tr><td>Distribution</td><td>Federation-safe (database reads)</td><td>Inherits nexus-vfs Raft consensus for replicated reputation data</td></tr>
+  <tr><td>Dimensions</td><td>reliability, quality, timeliness, fairness</td><td>Same 4 dimensions, applied bilaterally</td></tr>
+</table>
+
+<div class="card">
+  <div class="card-title">VFS storage layout</div>
+  <pre style="color:var(--fg);font-size:0.85rem">
+  /reputation/{user_id}/score.json       # materialized composite score
+  /reputation/{user_id}/events/           # individual feedback events (append-only)
+  /reputation/{user_id}/events/{event_id}.json
+  </pre>
+  <p>Each event is CAS-addressed &mdash; tamper-evident. Composite score is recomputable from events.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">Agent rates on behalf of human (L1 alignment)</div>
+  <p>The agent submits feedback on behalf of its human. This is <strong>not autonomous AI scoring</strong> &mdash; the agent acts within the L1 trust zone, aligned with its human's interests (the human paid for the points powering the agent).</p>
+  <p>How much the human reviews vs delegates to the AI is a <strong>local preference</strong>: some users will review every rating, others will let their AI handle routine feedback. This alignment process is entirely within L1 &mdash; out of protocol scope. The protocol only requires that feedback is signed by the agent's key, which the human controls.</p>
+</div>
+
+<div class="pref">Reuse <code>reputation_math.py</code> pure functions (Beta scoring + time decay + composite). Replace ORM with VFS JSON. Bilateral rating (buyer + seller). Reputation is a marketplace signal only &mdash; does not gate settlement.</div>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. Delivery via VFS</h2>
+
+<p>Initial scope: <strong>cyber deliverables only</strong> (data files, screenshots, interaction proofs). Physical goods out of scope.</p>
+
+<div class="card">
+  <div class="card-title">nexus-vfs primitives for delivery</div>
+  <table>
+    <tr><th>Primitive</th><th>Use</th></tr>
+    <tr><td><code>CAS</code></td><td>Deliverable hash = content commitment. Tamper-evident.</td></tr>
+    <tr><td><code>VFS paths</code></td><td><code>/contracts/{id}/deliverables/</code> &mdash; structured workspace</td></tr>
+    <tr><td><code>Federation</code></td><td>P2P transfer between buyer/seller nodes</td></tr>
+    <tr><td><code>DT_STREAM</code></td><td>Append-only audit log for state changes</td></tr>
+  </table>
+</div>
+
+<p><strong>Delivery flow</strong>:</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant HS as Seller (Human)
+    participant S as Seller's sudowork
+    participant SVFS as Seller's nexus-vfs
+    participant FED as Federation P2P
+    participant BVFS as Buyer's nexus-vfs
+    participant B as Buyer's sudowork
+    participant HB as Buyer (Human)
+
+    HS-->>S: task done (async)
+    S->>SVFS: sys_write deliverables
+    SVFS-->>S: CAS hash
+    S->>FED: replicate to buyer's zone
+    FED->>BVFS: P2P delivery
+    B->>BVFS: read + verify CAS hash
+    B->>B: AI auto-accept check (per criteria)
+    B-->>HB: notify result (async, non-blocking)
+    Note over B,HB: Human may override before timeout<br/>(local preference, not protocol-enforced)
+    alt AI accepts
+        B->>FED: sign release
+    else AI rejects
+        B->>FED: reject + reason
+        FED->>S: revision request
+    else No response within timeout
+        Note over FED: Server executes buyer's<br/>pre-signed conditional release
+    end
+</pre>
+<p style="font-size:0.85rem;color:#8b949e"><strong>Legend</strong>: solid arrows (&#8594;) = synchronous machine-to-machine. Dashed arrows (&#8674;) = async notification to human, does not block the flow.</p>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. Scenarios</h2>
+
+<p><em>Two real-world scenarios that stress-test different aspects of the protocol.</em></p>
+
+<h3>Scenario A: Data Labeling</h3>
+<div class="card">
+  <p><strong>Buyer</strong>: "Label 1000 images for object detection. Bounding boxes in COCO format. 500 points."</p>
+  <p><strong>Seller</strong>: Data labeler. Accepts, labels images (possibly with AI assistance), delivers labeled dataset.</p>
+  <p><strong>Acceptance criteria</strong>:</p>
+  <ul>
+    <li>All 1000 images labeled (count check &mdash; machine-verifiable)</li>
+    <li>COCO JSON format valid (schema check &mdash; machine-verifiable)</li>
+    <li>Accuracy &gt; 95% on 50-image spot check (quality check &mdash; AI-assisted, human-confirmed)</li>
+  </ul>
+  <p><strong>Delivery</strong>: COCO JSON + labeled images in VFS. CAS hash covers the entire dataset.</p>
+  <p><strong>Stress tests</strong>:</p>
+  <ul>
+    <li><strong>Verification</strong>: Mix of machine-verifiable (count, format) and subjective (accuracy) criteria. Buyer's AI can automate the first two; spot-check needs AI + human.</li>
+    <li><strong>Volume</strong>: Large deliverable (1000 images). CAS chunking + federation handles transfer.</li>
+    <li><strong>Partial quality</strong>: What if 900/1000 are good but 100 are sloppy? Revision or partial payment?</li>
+  </ul>
+</div>
+
+<h3>Scenario B: Social Media Engagement (Douyin)</h3>
+<div class="card">
+  <p><strong>Buyer</strong>: Brand/creator wants organic engagement. "Visit my Douyin profile, browse 3+ videos, follow if interested, like 1-2 videos, leave a genuine comment. 10 points."</p>
+  <p><strong>Seller</strong>: Real person with a Douyin account. Their sudowork guides them through the task.</p>
+  <p><strong>Acceptance criteria</strong>:</p>
+  <ul>
+    <li>Profile visited (screenshot or interaction proof)</li>
+    <li>&ge;3 videos watched (view duration proof)</li>
+    <li>Follow action completed (follower count delta or screenshot)</li>
+    <li>1-2 likes placed</li>
+    <li>1 genuine comment left (not spam, contextually relevant)</li>
+  </ul>
+  <p><strong>Delivery</strong>: Interaction proof bundle (screenshots, timestamps) in VFS.</p>
+  <p><strong>Stress tests</strong>:</p>
+  <ul>
+    <li><strong>Non-reversibility</strong>: Unlike code, the seller can't "un-follow" easily. The work has real-world side effects. Even if the seller loses interest later, the follow/like probably persists &mdash; buyer gets long-term value.</li>
+    <li><strong>Proof of action</strong>: How to prove the engagement happened? Screenshots can be faked. Need to think about attestation &mdash; perhaps browser automation logs from sudowork's ai-dev-browser?</li>
+    <li><strong>Genuine-ness</strong>: The comment must be "genuine" &mdash; this is inherently subjective. Buyer's AI can check if the comment is contextually relevant to the video content, but ultimately human judgment.</li>
+    <li><strong>Interest alignment</strong>: If the seller genuinely finds the content interesting, they become a long-term follower (win-win). If not, they still did the task but won't engage further. Either outcome is acceptable &mdash; the buyer is paying for <em>initial exposure</em>, not permanent commitment.</li>
+    <li><strong>Micro-task economics</strong>: 10 points per task = very small. Need efficient contract negotiation (templates?) and low-friction settlement. Can't have heavyweight crypto for micro-payments.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <div class="card-title">Design implications from scenarios</div>
+  <ul>
+    <li><strong>Mixed verification</strong>: Protocol must support both machine-verifiable and human-judged criteria, explicitly marked in the contract.</li>
+    <li><strong>Proof types</strong>: Different tasks need different proof mechanisms &mdash; CAS hash for data files, screenshots/logs for actions. Protocol should be proof-type-agnostic.</li>
+    <li><strong>Micro-task support</strong>: Scenario B (10 points) needs lightweight contracts. Perhaps template-based "task types" to skip negotiation for standard tasks.</li>
+    <li><strong>Non-digital side effects</strong>: Some deliverables (social engagement) have real-world consequences that outlive the contract. Interesting but not a protocol-level concern.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s7a">7A. Economics: End-to-End Cost Model</h2>
+
+<p>Using Scenario B (Douyin engagement) as the reference micro-task. Prices in CNY.</p>
+
+<h3>Positioning: AI-Assisted Micro-Task Platform</h3>
+<div class="card">
+  <p>This is not just another crowdsourcing platform. The differentiator: <strong>every seller has an AI copilot</strong> (sudowork) that helps them understand tasks, execute efficiently, and generate delivery proofs. This lowers the skill floor &mdash; more people can do more types of work &mdash; and raises quality (AI pre-checks deliverables before submission).</p>
+  <p>The platform simultaneously serves as an <strong>adoption vehicle for AI-assisted labor</strong>: sellers who start using sudowork for micro-tasks naturally discover its value for their own work, driving organic growth.</p>
+</div>
+
+<h3>Per-Task Cost Breakdown (Scenario B: Douyin engagement)</h3>
+
+<table>
+  <tr><th>Item</th><th>Who pays</th><th>Estimate</th><th>Notes</th></tr>
+  <tr>
+    <td>Task payment (seller's labor)</td>
+    <td>Buyer</td>
+    <td>&#165;0.30 &ndash; 0.50</td>
+    <td>Market rate for social engagement micro-tasks (comparable to existing platforms)</td>
+  </tr>
+  <tr>
+    <td>Buyer's AI cost (post task + verify)</td>
+    <td>Buyer (own tokens)</td>
+    <td>&lt; &#165;0.01</td>
+    <td>~1K tokens input + ~100 output on DSV4. Negligible.</td>
+  </tr>
+  <tr>
+    <td>Seller's AI cost (understand task + generate comment + proof)</td>
+    <td>Seller (own tokens)</td>
+    <td>&lt; &#165;0.01</td>
+    <td>~500-1K tokens on DSV4. Seller's own investment.</td>
+  </tr>
+  <tr>
+    <td>Protocol overhead (signatures + VFS ops)</td>
+    <td>Both (local compute)</td>
+    <td>~0</td>
+    <td>Ed25519 sign &lt; 1ms, VFS write &lt; 5&micro;s. No network cost for P2P local ops.</td>
+  </tr>
+  <tr>
+    <td>Server transfer API (settlement)</td>
+    <td>Platform</td>
+    <td>~0</td>
+    <td>One HTTP call per contract. Platform operational cost.</td>
+  </tr>
+  <tr>
+    <td><strong>Buyer total cost</strong></td>
+    <td></td>
+    <td><strong>&#165;0.30 &ndash; 0.51</strong></td>
+    <td>Task payment + own AI. AI cost &lt; 2% of task payment.</td>
+  </tr>
+  <tr>
+    <td><strong>Seller net income</strong></td>
+    <td></td>
+    <td><strong>&#165;0.29 &ndash; 0.49</strong></td>
+    <td>Task payment minus own AI cost. AI cost &lt; 2%.</td>
+  </tr>
+</table>
+
+<div class="card">
+  <div class="card-title">Key insight: AI cost is negligible for micro-tasks</div>
+  <p>At DSV4 pricing (~$0.27/M input, ~$1.10/M output via SudoRouter), a simple task consumes &lt; 2000 tokens total &mdash; less than &#165;0.01. Against a &#165;0.30-0.50 task payment, AI overhead is <strong>&lt; 2%</strong>. The economics work.</p>
+</div>
+
+<h3>AI Assistance: Seller's Investment Decision</h3>
+<div class="card">
+  <p>The seller's AI tokens are <strong>the seller's own investment</strong>, not the platform's cost. How much AI help to use is a <strong>local optimization</strong> within the seller's L1 trust zone:</p>
+  <ul>
+    <li><strong>High-skill seller</strong>: Does most work manually, uses AI minimally (saves tokens, keeps more profit)</li>
+    <li><strong>Low-skill seller</strong>: Relies heavily on AI guidance (spends more tokens, but can complete tasks they otherwise couldn't)</li>
+    <li><strong>Model choice</strong>: Each seller picks their own model. Simple tasks &rarr; DSV4 or similar cheap model. The protocol doesn't mandate a model.</li>
+  </ul>
+  <p>This creates a <strong>natural market for AI-assisted labor</strong>: the platform makes AI assistance accessible and economically viable for micro-work, driving adoption.</p>
+</div>
+
+<h3>Market Context (China)</h3>
+<table>
+  <tr><th>Benchmark</th><th>Price</th></tr>
+  <tr><td>Ant Microwork (蚂蚁微客) simple task</td><td>&#165;0.10 &ndash; 0.50/task</td></tr>
+  <tr><td>Douyin follow (grey market)</td><td>&#165;0.05 &ndash; 0.20/follow</td></tr>
+  <tr><td>Douyin like (grey market)</td><td>&#165;0.02 &ndash; 0.10/like</td></tr>
+  <tr><td>Minimum hourly wage (varies by city)</td><td>&#165;15 &ndash; 25/hour</td></tr>
+  <tr><td>Our Scenario B (3-5 min task)</td><td>&#165;0.30 &ndash; 0.50/task &asymp; &#165;4-10/hour effective</td></tr>
+</table>
+<p>Pricing is competitive with existing micro-task platforms. The value-add is AI assistance + cryptographic settlement guarantees + no platform rake on the task payment itself.</p>
+
+<h3>Points Liquidity: Stable-Price Buyback</h3>
+<div class="card">
+  <p>Sellers earn points but need real currency. sudowork offers a <strong>stable-price buyback</strong> at 5-10% of the original charge price.</p>
+  <ul>
+    <li><strong>Framing</strong>: "refund" or "credit redemption" &mdash; not "exchange" or "withdrawal" (avoids financial instrument classification)</li>
+    <li><strong>Mechanism</strong>: Seller requests buyback &rarr; sudoprivacy credits the amount to seller's payment method at the published buyback rate</li>
+    <li><strong>Rate example</strong>: Charge rate &#165;1 = 100 points. Buyback rate: 100 points = &#165;0.05-0.10</li>
+    <li><strong>Policy risk</strong>: Needs legal review. Framing as "partial refund of unused credits" rather than "currency exchange" is safer. Many game platforms (Steam, Apple) have similar credit refund mechanisms.</li>
+  </ul>
+  <p><em>Note: Buyback rate and policy details require legal consultation before launch. Recorded here as design option.</em></p>
+</div>
+
+<h3>Points Leverage: 10-20x Value Amplification</h3>
+<div class="card">
+  <div class="card-title">Why tokens are worth more than cash to sellers</div>
+  <p>The buyback rate (5-10%) creates a <strong>10-20x leverage effect</strong> that naturally drives AI adoption:</p>
+  <table>
+    <tr><th>Seller choice</th><th>Points value</th><th>Effective value</th><th>Multiplier</th></tr>
+    <tr>
+      <td>Use points for AI (sudowork)</td>
+      <td>50 points from task</td>
+      <td>&#165;0.50 worth of AI compute</td>
+      <td style="color:var(--green)"><strong>1x face value</strong></td>
+    </tr>
+    <tr>
+      <td>Cash out (buyback)</td>
+      <td>50 points from task</td>
+      <td>&#165;0.025-0.05 cash</td>
+      <td style="color:var(--red)">0.05-0.1x face value</td>
+    </tr>
+  </table>
+  <p><strong>The economics</strong>: Model provider subsidies (e.g. DSV4 pricing) mean the platform's actual compute cost is far below the charge rate. This cost gap is passed to sellers as amplified AI value &mdash; 50 points buys &#165;0.50 of AI compute that costs the platform perhaps &#165;0.05. The buyback rate (&#165;0.025-0.05) roughly matches the platform's real cost, so it's sustainable.</p>
+  <p><strong>The flywheel</strong>: Sellers who use points for AI get 10-20x more value than cashing out &rarr; they learn AI skills &rarr; they discover AI's value for their own work &rarr; they buy their own points &rarr; organic growth. The economic incentive and the education mission are the same mechanism.</p>
+  <div class="warn">
+    <strong>Critical assumption</strong>: This leverage only works if AI is genuinely useful to sellers. If sellers can't find value in AI-assisted work, they'll want to cash out (and get very little). The platform must ensure sudowork delivers real value in the seller's L1 trust zone &mdash; task understanding, skill development, career-transferable AI literacy.
+  </div>
+</div>
+
+<h3>Target Market: University Students &amp; Fresh Graduates (China)</h3>
+<div class="card">
+  <p>Initial seller pool: <strong>university students and fresh graduates</strong> (&#22823;&#23398;&#29983;/&#24212;&#23626;&#29983;). This demographic is uniquely aligned with the platform on multiple dimensions:</p>
+  <table>
+    <tr><th>Dimension</th><th>Why it aligns</th></tr>
+    <tr><td><strong>Supply volume</strong></td><td>China's university enrollment is at a historic high (~11.7M graduates in 2025), while youth employment rates are at historic lows. Largest available micro-task labor pool.</td></tr>
+    <tr><td><strong>AI willingness</strong></td><td>Digital natives, highest willingness to learn and use AI tools. Crucially: more willing to accept <em>tokens as compensation</em> because they'll actually use the AI &mdash; the 10-20x leverage (use vs cash out) works best for users who value AI access.</td></tr>
+    <tr><td><strong>Time flexibility</strong></td><td>Flexible schedules, can do micro-tasks between classes or during free time. Ideal for async, variable-volume task flows.</td></tr>
+    <tr><td><strong>Low opportunity cost</strong></td><td>Student wages are low; &#165;4-10/hour effective rate from micro-tasks is competitive with part-time alternatives (tutoring, food delivery).</td></tr>
+    <tr><td><strong>Maximum career ROI</strong></td><td>AI skills learned now compound over an entire career. A graduating student who can prompt-craft, delegate to AI, and verify AI output has a tangible competitive advantage in the job market.</td></tr>
+    <tr><td><strong>Network effects</strong></td><td>Campus social networks drive organic word-of-mouth. One student showing AI-assisted earnings to roommates creates viral adoption within dorms and departments.</td></tr>
+  </table>
+  <p><strong>The pitch to students</strong>: "Earn money doing micro-tasks. Your AI copilot helps you work faster and learn skills employers want. The points you earn buy more AI &mdash; 10-20x more value than cashing out."</p>
+</div>
+
+<h3>AI Efficiency by Task Type</h3>
+<div class="card">
+  <p>AI value varies by scenario. The table below maps where AI helps most &mdash; at the <strong>transaction layer</strong> (negotiation, verification, settlement) vs the <strong>execution layer</strong> (doing the actual work).</p>
+  <table>
+    <tr><th>Task type</th><th>Transaction layer (AI value)</th><th>Execution layer (AI value)</th><th>Notes</th></tr>
+    <tr>
+      <td>Data labeling (Scenario A)</td>
+      <td style="color:var(--green)">High &mdash; auto-verify format, spot-check accuracy</td>
+      <td style="color:var(--green)">High &mdash; AI pre-labels, human corrects</td>
+      <td>AI adds value at both layers. Strongest use case.</td>
+    </tr>
+    <tr>
+      <td>Social engagement (Scenario B)</td>
+      <td style="color:var(--green)">High &mdash; auto-verify screenshots, comment relevance</td>
+      <td style="color:var(--orange)">Medium &mdash; AI drafts comment, human performs action</td>
+      <td>Execution is physical (app interaction); AI assists but can't replace.</td>
+    </tr>
+    <tr>
+      <td>Content writing</td>
+      <td style="color:var(--green)">High &mdash; auto-check plagiarism, tone, length</td>
+      <td style="color:var(--green)">High &mdash; AI drafts, human edits</td>
+      <td>Pure cyber task. AI can handle most of execution.</td>
+    </tr>
+    <tr>
+      <td>Survey / questionnaire</td>
+      <td style="color:var(--orange)">Medium &mdash; completeness check</td>
+      <td style="color:var(--red)">Low &mdash; requires genuine human opinion</td>
+      <td>AI should NOT fabricate survey responses. Helps with task routing only.</td>
+    </tr>
+    <tr>
+      <td>Code review / testing</td>
+      <td style="color:var(--green)">High &mdash; auto-run tests, diff review</td>
+      <td style="color:var(--green)">High &mdash; AI generates tests, finds bugs</td>
+      <td>Strongest AI leverage. Both layers fully automatable.</td>
+    </tr>
+  </table>
+  <p><strong>Design implication</strong>: The protocol is task-type-agnostic, but the <em>platform guidance</em> should steer sellers toward task types where AI leverage is highest &mdash; maximizing both earnings efficiency and AI skill development.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. Open Questions</h2>
+
+<p style="font-size:0.9rem;color:#8b949e"><em>Resolved items removed in v0.9: "Timeout on buyer non-response" (→ §5 B+, contract-negotiated auto-accept), "Multi-revision contracts" (→ §4, agent-to-agent negotiate <code>max_revisions</code>, no platform limit).</em></p>
+
+<ol>
+  <li>
+    <strong>Escrow model</strong>: Start with B (dual-signature) or D (reputation)?
+    <div class="pref">Start with B. The server API cost is one endpoint (<code>POST /transfer</code> with signature verification). Reputation alone (D) is too weak for strangers. B gives real guarantees from day one.</div>
+  </li>
+  <li>
+    <strong>Dispute resolution</strong>: P2P reputation or platform arbitration?
+    <div class="pref">P2P reputation for v1. Platform arbitration is a v2 feature that requires sudoprivacy to build an arbitration team/process. Signed contracts + audit logs provide evidence if disputes escalate outside the system.</div>
+  </li>
+  <li>
+    <strong>Points transfer API</strong>: Does sudoprivacy already support user-to-user transfers?
+    <div class="pref">Confirmed: no transfer API exists. Current system is charge (pay sudoprivacy) and consume (use LLM) only. Need new endpoint: <code>POST /api/v1/transfer</code> with dual-signature verification. The transfer must accept <code>(release_msg + buyer_sig + seller_sig)</code>, verify both Ed25519 signatures against the contract terms, and atomically move points between accounts. Minimal surface &mdash; one new endpoint, no escrow state.</div>
+  </li>
+  <li>
+    <strong>Discovery / Marketplace</strong>: How do buyers find sellers?
+    <div class="pref">Direct P2P for v1 (buyer sends contract offer to a known seller). Marketplace is a v2 feature. Confirmed: no marketplace code exists in nexus (checked git history). Need to build from scratch &mdash; task listing, search, seller profiles, category taxonomy. This is a significant build, separate from the settlement protocol.</div>
+  </li>
+  <li>
+    <strong>Partial delivery / milestone payments</strong>: Split large tasks?
+    <div class="pref">v2. For v1, one contract = one deliverable = one payment. Large tasks can be manually split into multiple contracts. Milestone support adds complexity (partial signatures, partial releases) that isn't needed for MVP.</div>
+  </li>
+  <li>
+    <strong>Cross-platform</strong>: Seller uses non-sudowork tools (browser, Douyin app, labeling tools)?
+    <div class="pref">Not "both parties must use sudowork" &mdash; rather, integrate external task tools into sudowork via MCP servers and ai-dev-browser. The seller's sudowork orchestrates: it drives the browser for Douyin interactions, launches labeling tools, captures screenshots &mdash; all within the seller's L1 trust zone. The protocol still requires sudowork-to-sudowork communication (L2), but the <em>execution</em> tools are extensible. MCP makes this plug-and-play: each new tool type is just a new MCP server, no protocol changes needed.</div>
+  </li>
+  <li>
+    <strong>Points buyback mechanism</strong>: How do sellers convert earned points to real currency?
+    <div class="pref">Stable-price buyback at 5-10% of original charge price (see §7A). Key open items: (a) legal classification &mdash; "partial refund" framing vs "currency exchange" risk, needs legal review; (b) buyback rate stability &mdash; fixed rate or floating with usage metrics; (c) minimum threshold &mdash; avoid micro-withdrawals that cost more to process than they're worth; (d) frequency limits &mdash; daily/weekly caps to manage cash flow. Policy risk is real: if regulators classify points as a financial instrument, compliance burden increases significantly. Precedent: Steam Wallet, Apple App Store credits have similar refund mechanisms.</div>
+  </li>
+</ol>
+
+<!-- ============================================================ -->
+
+<div class="version-info">
+  <strong>Document history</strong><br>
+  v1.0 (2026-06-19) &mdash; Points leverage: 10-20x value amplification analysis (use AI vs cash out). Target market: university students &amp; fresh graduates (supply volume, AI willingness, career ROI, network effects). Token acceptance insight: students accept tokens because they value AI access.<br>
+  v0.9 (2026-06-19) &mdash; Resolved ShareOne comments: removed timeout + multi-revision from open questions (already resolved in §5 B+ and §4). Confirmed no transfer API exists (need new endpoint). Confirmed no marketplace code in nexus (build from scratch). Cross-platform answer: integrate tools via MCP/ai-dev-browser, not require non-sudowork. Added RTB comparison and seller agent preference learning to "Why this matters". Added AI efficiency by task type table to §7A. Added points buyback as formal open question with policy risk analysis.<br>
+  v0.8 (2026-06-19) &mdash; Title updated to "AI-Assisted Micro-Task". Added "Why this matters" positioning: economic incentive funds AI skill education, societal impact of broadening AI adoption beyond knowledge workers.<br>
+  v0.7 (2026-06-19) &mdash; Added §7A Economics: E2E cost model for Douyin micro-task, AI-assist micro-task platform positioning, seller AI investment rationale, China market benchmarks, points stable-price buyback mechanism.<br>
+  v0.6 (2026-06-19) &mdash; Delivery diagram with human actors + sync/async line distinction.<br>
+  v0.5 (2026-06-19) &mdash; No forced human-in-the-loop. AI-first verification, human async optional.<br>
+  v0.4 (2026-06-19) &mdash; Clarified auto-execute terms come from negotiate (not server). Reputation: bilateral (buyer + seller), marketplace signal only (not settlement enforcement), agent rates on behalf of human (L1 alignment).<br>
+  v0.3 (2026-06-19) &mdash; Added Buyer Pre-commitment (Option B+) to close hostage problem in low-trust markets. Added §5A Reputation System reuse from nexus (Bayesian Beta model, VFS storage).<br>
+  v0.2 (2026-06-19) &mdash; Revised trust diagram (our/their perspective), real scenarios (data labeling + Douyin engagement), escrow preference (Option B), initial preferences on all open questions.<br>
+  v0.1 (2026-06-19) &mdash; Initial draft.<br>
+  <br>
+  <strong>Authors</strong>: elfenlieds7 (product/architecture), Claude Opus 4.6 (design assistance)<br>
+  <strong>Repo</strong>: <code>nexi-lab/nexus/docs/architecture/p2p-task-settlement.html</code>
+</div>
+
+<script>mermaid.initialize({ theme: 'dark', themeVariables: { primaryColor: '#1f6feb', primaryTextColor: '#c9d1d9', lineColor: '#8b949e', secondaryColor: '#161b22' } });</script>
+</body>
+</html>

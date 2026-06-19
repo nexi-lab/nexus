@@ -226,9 +226,15 @@ class TestServerHealth:
 
 
 class TestEventsCLI:
-    """Test `nexus events` commands against real server."""
+    """Test `nexus events` CLI behavior with this HTTP-only fixture.
 
-    def test_events_replay_json(self, cli_server):
+    The events CLI is backed by gRPC Call RPC. This fixture intentionally
+    starts only FastAPI routers, so these checks assert the CLI reports the
+    missing gRPC surface clearly instead of hanging or silently succeeding
+    against the wrong transport.
+    """
+
+    def test_events_replay_json_reports_missing_grpc(self, cli_server):
         result = _run_cli(
             "events",
             "replay",
@@ -237,11 +243,10 @@ class TestEventsCLI:
             api_key=cli_server["api_key"],
             env=cli_server["env"],
         )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        data = json.loads(result.stdout)
-        assert "events" in data
+        assert result.returncode == 1
+        assert "gRPC server unavailable" in result.stdout
 
-    def test_events_replay_rich(self, cli_server):
+    def test_events_replay_rich_reports_missing_grpc(self, cli_server):
         result = _run_cli(
             "events",
             "replay",
@@ -249,7 +254,8 @@ class TestEventsCLI:
             api_key=cli_server["api_key"],
             env=cli_server["env"],
         )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        assert result.returncode == 1
+        assert "gRPC server unavailable" in result.stdout
 
 
 # =============================================================================
@@ -309,13 +315,14 @@ class TestSnapshotCLI:
 class TestExchangeCLI:
     """Test `nexus exchange` Phase 2 stubs.
 
-    These commands don't call the server; they print 'not yet available'.
+    These commands don't call the server; they return structured
+    ``not_implemented`` JSON.
     """
 
     def test_exchange_list(self, cli_server):
         result = _run_cli_no_server("exchange", "list", env=cli_server["env"])
         assert result.returncode == 0
-        assert "not yet available" in result.stdout
+        assert json.loads(result.stdout)["data"]["status"] == "not_implemented"
 
     def test_exchange_create(self, cli_server):
         result = _run_cli_no_server(
@@ -327,14 +334,14 @@ class TestExchangeCLI:
             env=cli_server["env"],
         )
         assert result.returncode == 0
-        assert "not yet available" in result.stdout
+        assert json.loads(result.stdout)["data"]["status"] == "not_implemented"
 
     def test_exchange_show(self, cli_server):
         result = _run_cli_no_server("exchange", "show", "offer-123", env=cli_server["env"])
         assert result.returncode == 0
-        assert "not yet available" in result.stdout
+        assert json.loads(result.stdout)["data"]["status"] == "not_implemented"
 
     def test_exchange_cancel(self, cli_server):
         result = _run_cli_no_server("exchange", "cancel", "offer-123", env=cli_server["env"])
         assert result.returncode == 0
-        assert "not yet available" in result.stdout
+        assert json.loads(result.stdout)["data"]["status"] == "not_implemented"

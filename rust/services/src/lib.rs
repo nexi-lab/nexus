@@ -1,6 +1,6 @@
 //! `services` — kernel-adjacent service-tier impls (parallel-layers crate).
 //!
-//! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §1, services sit
+//! Per `KERNEL-ARCHITECTURE.md (nexus-vfs)` §1, services sit
 //! parallel to the kernel: they consume kernel primitives (syscalls,
 //! `NativeInterceptHook`, `PathResolver`, `ServiceRegistry`) without
 //! adding new kernel surface.  The line between "kernel primitive"
@@ -18,8 +18,7 @@
 //!   audit/           — AuditHook (NativeInterceptHook) + factory
 //!   managed_agent/   — ManagedAgentService (mailbox + workspace hooks
 //!                      plus session lifecycle for AgentKind::MANAGED)
-//!   permission/      — PermissionHook scaffolding (§11; dead today)
-//!   python/          — `#[cfg(feature = "python")]` PyO3 sub-module
+//!   tasks/           — durable task queue engine (fjall-backed)
 //! ```
 //!
 //! ## Hard invariant: `services` ⊥ `backends`
@@ -40,40 +39,29 @@
 //!                          +--- backends     (peer; never crosses to services)
 //! ```
 
-// Rust-native authentication providers (ApiKeyAuth / NoAuth / JwtAuth).
-// Always compiled — no feature gate. The transport tier consumes
-// `Arc<dyn AuthProvider>` to resolve bearer tokens without PyO3.
-pub mod auth;
-
 // AcpService — subprocess + ACP-over-stdio host for
-// `AgentKind::UNMANAGED` agents (claude / codex / …).  Currently
-// pyo3-laden internally, so the per-service gate also requires the
-// `python` feature; once the pyo3-coupling is unwound it becomes
-// `service-acp`-only.
-#[cfg(all(feature = "service-acp", feature = "python"))]
+// `AgentKind::UNMANAGED` agents (claude / codex / gemini / …).
+#[cfg(feature = "service-acp")]
 pub mod acp;
 #[cfg(feature = "service-agents")]
 pub mod agents;
 #[cfg(feature = "service-audit")]
 pub mod audit;
+// AuditNode — consumer-side collect/gather service for an audit-only
+// federation node. Bootstraps its own zone + joins production zones as
+// raft learners, then polls each zone's /audit/traces/ stream and
+// appends copies into its local zone. Reuses audit::prepare_stream_only.
+#[cfg(feature = "service-audit-node")]
+pub mod audit_node;
 // ManagedAgentService — first Rust-flavoured service. Owns the
 // chat-with-me mailbox stamping hook, the workspace-boundary
 // teaching hook, and the `start_session_v1` / `cancel_v1` /
 // `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
 #[cfg(feature = "service-managed-agent")]
 pub mod managed_agent;
-// `tasks` lives in this crate so the runtime ships a single Python
-// wheel; `services::python::register` exposes the PyTaskEngine /
-// PyTaskRecord / PyQueueStats pyclasses.  Internal pyo3 use today, so
-// the per-service gate also requires `python`.
-#[cfg(all(feature = "service-tasks", feature = "python"))]
+// Durable task queue engine (fjall-backed).
+#[cfg(feature = "service-tasks")]
 pub mod tasks;
-// `permission` is gated behind the `python` feature because its only
-// caller path is `Python::attach(...)` → `PermissionChecker.check(...)`
-// (the slow path).  Pure-Rust builds (e.g. WASM, raft-witness) drop it.
-// Kernel registration of §11 PermissionHook is scaffolded here only.
-#[cfg(all(feature = "service-permission", feature = "python"))]
-pub mod permission;
 // Matrix Client-Server v3 adapter — exposes nexus chat-with-me
 // DT_STREAMs as Matrix rooms so stock chat clients (Element /
 // FluffyChat / Cinny) participate in nexus conversations through the
@@ -82,6 +70,15 @@ pub mod permission;
 // here lands skeleton + auth (`login` / `logout` / `whoami`).
 #[cfg(feature = "service-matrix-adapter")]
 pub mod matrix_adapter;
-
-#[cfg(feature = "python")]
-pub mod python;
+// PasswordVaultService — domain-wrapper gRPC service over the password
+// vault (namespace="passwords"). Phase 1 Rust impl per #3923 integration
+// doc. Hosted by the `vault` service-plugin dylib (`rust/services/vault/`),
+// NOT by `cluster` — federation hygiene. Clients: password-agent
+// (Python), sudowork-2 (TypeScript).
+#[cfg(feature = "service-password-vault")]
+pub mod password_vault;
+// GenericSecretsService — namespace:key encrypted KV store with versioning,
+// soft-delete, and batch operations. Shares AES-256-GCM crypto and kernel
+// mount with PasswordVaultService. Loaded as part of the vault cdylib plugin.
+#[cfg(feature = "service-generic-secrets")]
+pub mod generic_secrets;

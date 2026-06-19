@@ -8,35 +8,9 @@ import re
 
 from sqlalchemy.orm import Session
 
-from nexus.bricks.auth.constants import PERSONAL_EMAIL_DOMAINS, RESERVED_ZONE_IDS
+from nexus.bricks.auth.constants import RESERVED_ZONE_IDS
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.models import ZoneModel
-
-
-def is_personal_email_domain(domain: str) -> bool:
-    """Check if email domain is a personal/free email provider."""
-    return domain.lower() in PERSONAL_EMAIL_DOMAINS
-
-
-def get_zone_strategy_from_email(
-    email: str,
-) -> tuple[str, str, str | None, bool]:
-    """Determine zone strategy based on email domain.
-
-    Returns:
-        Tuple of (base_slug, zone_name_base, domain, is_personal).
-    """
-    if "@" not in email:
-        return "user", "user", None, True
-
-    username, domain = email.split("@", 1)
-    domain = domain.lower()
-
-    if is_personal_email_domain(domain):
-        return username, username, domain, True
-    else:
-        domain_slug = domain.replace(".", "-")
-        company_name = domain.split(".")[0].replace("-", " ").title()
-        return domain_slug, company_name, domain, False
 
 
 def validate_zone_id(zone_id: str) -> tuple[bool, str | None]:
@@ -133,7 +107,7 @@ def create_zone(
         domain=domain,
         description=description,
         settings=settings,
-        phase="Active",
+        phase=ZonePhase.ACTIVE,
         finalizers="[]",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),

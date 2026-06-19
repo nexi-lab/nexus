@@ -207,7 +207,7 @@ class ShareLinkService:
             # Determine resource type
             resource_type = "file"
             if self._nexus_fs.access(normalized_path):
-                stat = self._nexus_fs._kernel.sys_stat(normalized_path, ROOT_ZONE_ID)
+                stat = self._nexus_fs.sys_stat(normalized_path)
                 if stat and stat.get("is_directory", False):
                     resource_type = "directory"
 

@@ -3,11 +3,10 @@
 After the cutover, the Python ``services.acp`` package is gone. The
 dispatch consumer + any other in-process callers that need to fire an
 ACP call go through this adapter, which talks to the Rust
-``AcpService`` through the generic
-``nexus_runtime.nx_kernel_dispatch_rust_call`` primitive.
+``AcpService`` through the kernel's gRPC ``_call`` dispatch primitive.
 
-No HTTP loopback — the dispatch path stays in-process and releases the
-GIL while the Rust ``call_agent`` runs the subprocess + ACP session.
+The dispatch path goes through the nexus-cluster process where the Rust
+``call_agent`` runs the subprocess + ACP session.
 """
 
 from __future__ import annotations
@@ -78,15 +77,14 @@ class AcpAdapter:
             metadata=body.get("metadata") or {},
         )
 
-    def _dispatch(self, method: str, payload: bytes) -> bytes:
-        import nexus_runtime
-
-        # Goes through the same Kernel::dispatch_rust_call lookup the
-        # tonic Call handler uses -- single dispatch primitive, no
-        # per-service shortcut. None means the registered service
-        # rejected the lookup; surface as RuntimeError because the
-        # dispatch_consumer's worker spawn would be broken by that.
-        result = nexus_runtime.nx_kernel_dispatch_rust_call(self._kernel, "acp", method, payload)
+    def _dispatch(self, method: str, payload: bytes) -> Any:
+        # Dispatch via the kernel's gRPC Call RPC. The kernel client
+        # routes to the same Kernel::dispatch_rust_call lookup that the
+        # tonic Call handler uses.
+        _call = getattr(self._kernel, "_call", None)
+        if _call is None:
+            raise RuntimeError("ACP dispatch requires nexus-cluster gRPC — use KernelClient._call")
+        result = _call(f"acp/{method}", payload)
         if result is None:
-            raise RuntimeError("AcpService not installed (call nx_acp_install first)")
+            raise RuntimeError("AcpService not installed on the cluster process")
         return result

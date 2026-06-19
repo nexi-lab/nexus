@@ -61,7 +61,10 @@ class TestInsecureChannelLoopbackValidation:
         src_path = (
             Path(__file__).resolve().parents[3] / "src" / "nexus" / "remote" / "rpc_transport.py"
         )
-        source = src_path.read_text()
+        # Explicit utf-8: the source file contains non-ASCII (em-dashes,
+        # box-drawing comment rules); read_text() would otherwise default
+        # to the platform locale encoding and fail on non-UTF-8 boxes.
+        source = src_path.read_text(encoding="utf-8")
         assert "Insecure gRPC channel refused" in source, (
             "The insecure channel refusal check was removed from rpc_transport.py"
         )

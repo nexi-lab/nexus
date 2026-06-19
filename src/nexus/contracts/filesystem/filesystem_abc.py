@@ -119,7 +119,6 @@ class NexusFilesystem(Protocol):
     def sys_lock(
         self,
         path: str,
-        mode: str = "exclusive",
         ttl: float = 30.0,
         max_holders: int = 1,
         *,
@@ -132,7 +131,7 @@ class NexusFilesystem(Protocol):
 
     # ── Watch ──────────────────────────────────────────────────────
 
-    async def sys_watch(
+    def sys_watch(
         self,
         path: str,
         timeout: float = 30.0,

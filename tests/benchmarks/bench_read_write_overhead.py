@@ -47,6 +47,16 @@ class TestReadBulkSequentialBaseline:
         assert all(v is not None for v in result.values())
 
 
+@pytest.mark.benchmark_file_ops
+class TestListLocalDirectory:
+    """Directory list latency for local workspace file surfaces (Issue #4127)."""
+
+    def test_sys_readdir_many_files(self, benchmark, populated_nexus):
+        nx = populated_nexus
+        result = benchmark(lambda: nx.sys_readdir("/many_files", recursive=False))
+        assert len(result) >= 100
+
+
 # =============================================================================
 # WRITE NEW-VS-EXISTING OVERHEAD
 # =============================================================================
@@ -86,6 +96,23 @@ class TestWriteExistingFile:
 
         result = benchmark(write_existing)
         assert "content_id" in result
+
+
+@pytest.mark.benchmark_file_ops
+class TestWriteBatchThroughput:
+    """Batch write throughput for agent-local edits (Issue #4127)."""
+
+    def test_write_batch_100(self, benchmark, benchmark_nexus):
+        nx = benchmark_nexus
+        counter = [0]
+
+        def write_batch():
+            counter[0] += 1
+            files = [(f"/batch_{counter[0]}/file_{i:04d}.txt", b"content") for i in range(100)]
+            return nx.write_batch(files)
+
+        result = benchmark(write_batch)
+        assert len(result) == 100
 
 
 # =============================================================================
@@ -138,14 +165,14 @@ class TestReadPlusStat:
 
 @pytest.mark.benchmark_file_ops
 class TestRouteOverhead:
-    """Benchmark Python router vs Rust sys_read for the same path."""
+    """Benchmark path metadata lookup vs Rust sys_read for the same path."""
 
     def test_python_route_time(self, benchmark, populated_nexus):
-        """Benchmark the Python router.route() call directly."""
+        """Benchmark the current metadata routing/stat lookup."""
         nx = populated_nexus
 
         def route_only():
-            return nx.router.route("/test_small.bin")
+            return nx.sys_stat("/test_small.bin")
 
         result = benchmark(route_only)
         assert result is not None
@@ -159,3 +186,86 @@ class TestRouteOverhead:
 
         result = benchmark(sys_read)
         assert len(result) == 1024
+
+
+# =============================================================================
+# Issue #4133: FS surface benchmarks (guidance, not CI gates)
+# =============================================================================
+
+
+@pytest.mark.benchmark_file_ops
+class TestRangeRead:
+    """read_range slice vs whole-file read (Issue #4133)."""
+
+    def test_read_range_64k_of_1mb(self, benchmark, benchmark_nexus):
+        nx = benchmark_nexus
+        nx.write("/rr.bin", b"z" * (1024 * 1024))
+        result = benchmark(lambda: nx.read_range("/rr.bin", 0, 65536))
+        assert len(result) == 65536
+
+
+@pytest.mark.benchmark_file_ops
+class TestStatBulkVsSequential:
+    """stat_bulk(100) vs N x stat (Issue #4133)."""
+
+    def test_stat_bulk_100(self, benchmark, populated_nexus):
+        nx = populated_nexus
+        paths = [f"/many_files/file_{i:04d}.txt" for i in range(100)]
+        result = benchmark(lambda: nx.stat_bulk(paths))
+        assert len(result) == 100
+
+
+@pytest.mark.benchmark_file_ops
+class TestTypedVsGenericRead:
+    """Typed nx.read vs Rust sys_read baseline (Issue #4133)."""
+
+    def test_typed_read(self, benchmark, populated_nexus):
+        nx = populated_nexus
+        result = benchmark(lambda: nx.read("/many_files/file_0000.txt"))
+        assert result is not None
+
+
+@pytest.mark.benchmark_file_ops
+class TestLockAcquireRelease:
+    """sys_lock + sys_unlock round-trip (Issue #4133, control plane)."""
+
+    def test_lock_cycle(self, benchmark, benchmark_nexus):
+        nx = benchmark_nexus
+        nx.write("/lk.txt", b"x")
+
+        def cycle():
+            lid = nx.sys_lock("/lk.txt")
+            if lid:
+                nx.sys_unlock("/lk.txt", lock_id=lid)
+            return lid
+
+        benchmark(cycle)
+
+
+@pytest.mark.benchmark_file_ops
+class TestSandboxBootIndexerInitialWalk:
+    """Initial workspace indexing duration for sandbox startup (Issue #4127)."""
+
+    def test_boot_indexer_walk_100_files(self, benchmark, tmp_path):
+        from nexus.core.boot_indexer import BootIndexer
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        for i in range(100):
+            (workspace / f"file_{i:04d}.txt").write_text(f"content {i}", encoding="utf-8")
+
+        class _SearchDaemon:
+            indexed = 0
+
+            def index_file(self, path):
+                self.indexed += 1
+
+        daemon = _SearchDaemon()
+
+        def walk():
+            daemon.indexed = 0
+            indexer = BootIndexer(workspace, daemon, {"status": "indexing"})
+            indexer._walk_and_index()
+            return daemon.indexed
+
+        assert benchmark(walk) == 100

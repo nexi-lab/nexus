@@ -563,6 +563,9 @@ _DOCKER_SEED_SCRIPT = """\
 import json, os, sys
 sys.path.insert(0, '/app/src')
 db_url = os.environ.get('NEXUS_DATABASE_URL', '')
+# Issue #4238: accept the canonical postgres:// scheme.
+if db_url.startswith('postgres://'):
+    db_url = 'postgresql://' + db_url[len('postgres://'):]
 if not db_url:
     print('0')
     sys.exit(0)
@@ -1183,6 +1186,9 @@ _DOCKER_DELETE_PERMS_SCRIPT = """\
 import json, os, sys
 sys.path.insert(0, '/app/src')
 db_url = os.environ.get('NEXUS_DATABASE_URL', '')
+# Issue #4238: accept the canonical postgres:// scheme.
+if db_url.startswith('postgres://'):
+    db_url = 'postgresql://' + db_url[len('postgres://'):]
 if not db_url:
     print('0')
     sys.exit(0)
@@ -1491,6 +1497,9 @@ _DOCKER_SEED_CHUNKS_SCRIPT = """\
 import json, os, sys, uuid
 from datetime import datetime, timezone
 db_url = os.environ.get('NEXUS_DATABASE_URL', '')
+# Issue #4238: accept the canonical postgres:// scheme.
+if db_url.startswith('postgres://'):
+    db_url = 'postgresql://' + db_url[len('postgres://'):]
 if not db_url:
     print('0')
     sys.exit(0)

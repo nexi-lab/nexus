@@ -36,7 +36,6 @@ class AuthBrickManifest(BrickManifest):
     optional_modules: tuple[str, ...] = (
         "nexus.bricks.auth.providers.oidc",
         "nexus.bricks.auth.providers.database_key",
-        "nexus.bricks.auth.service",
     )
 
 

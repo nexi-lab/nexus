@@ -22,7 +22,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.storage.models import Base
 from tests.testkit.auth import TEST_CONTEXT
-from tests.testkit.metadata import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -62,8 +61,10 @@ def session_factory(db_path: Any) -> Any:
 def api_keys(session_factory: Any) -> dict[str, Any]:
     """Create admin + normal API keys for the test."""
     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.storage.models import ZoneModel
 
     with session_factory() as session:
+        session.merge(ZoneModel(zone_id=ROOT_ZONE_ID, name="root", phase="Active"))
         admin_key_id, admin_raw = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="e2e-admin",
@@ -106,7 +107,7 @@ async def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) 
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-identity-e2e-")
     backend = CASLocalBackend(root_path=tmpdir)
-    metadata_store = DictMetastore()
+    metadata_store = str(tmp_path / f"identity_metastore_{uuid.uuid4().hex[:8]}")
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
 
     nx = create_nexus_fs(
@@ -133,7 +134,8 @@ async def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) 
 
     yield application
 
-    metadata_store.close()
+    if hasattr(metadata_store, "close"):
+        metadata_store.close()
     record_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 

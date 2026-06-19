@@ -31,12 +31,29 @@ def normalize_path(path: str) -> str:
     return path
 
 
+def _admin_bypass_enabled(
+    auth_result: dict[str, Any],
+    operation_context: Any | None,
+    permission_enforcer: Any,
+) -> bool:
+    """Return true only for configured admin bypass subjects."""
+    allow_admin_bypass = getattr(permission_enforcer, "allow_admin_bypass", False)
+    if not isinstance(allow_admin_bypass, bool) or not allow_admin_bypass:
+        return False
+    if bool(auth_result.get("is_admin", False)):
+        return True
+    if isinstance(operation_context, dict):
+        return bool(operation_context.get("is_admin", False))
+    return bool(getattr(operation_context, "is_admin", False))
+
+
 def apply_rebac_filter(
     results: list[Any],
     permission_enforcer: Any | None,
     auth_result: dict[str, Any],
     zone_id: str,
     path_extractor: Any | None = None,
+    operation_context: Any | None = None,
 ) -> tuple[list[Any], float]:
     """Apply ReBAC file-level permission filtering to search results.
 
@@ -49,11 +66,16 @@ def apply_rebac_filter(
         zone_id: Zone ID for ReBAC scope.
         path_extractor: Callable ``(result) -> str`` that extracts the file
             path from a result element.  Defaults to ``lambda r: r.path``.
+        operation_context: Optional OperationContext.  When supplied, use the
+            same ``filter_list`` permission chain as filesystem list/read
+            operations so inherited directory grants behave identically.
     """
     if permission_enforcer is None:
         return results, 0.0
 
-    if not hasattr(permission_enforcer, "filter_search_results"):
+    use_filter_list = operation_context is not None and hasattr(permission_enforcer, "filter_list")
+    use_search_filter = hasattr(permission_enforcer, "filter_search_results")
+    if not use_filter_list and not use_search_filter:
         return results, 0.0
 
     if path_extractor is None:
@@ -61,6 +83,8 @@ def apply_rebac_filter(
 
     user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
     is_admin = bool(auth_result.get("is_admin", False))
+    if _admin_bypass_enabled(auth_result, operation_context, permission_enforcer):
+        return results, 0.0
 
     # Two-pass: deduplicate paths for the permission check, then filter
     # the original ordered list against the permitted set.
@@ -75,12 +99,15 @@ def apply_rebac_filter(
             unique_abs_paths.append(abs_path)
 
     filter_start = time.perf_counter()
-    permitted_abs = permission_enforcer.filter_search_results(
-        unique_abs_paths,
-        user_id=user_id,
-        zone_id=zone_id,
-        is_admin=is_admin,
-    )
+    if use_filter_list:
+        permitted_abs = permission_enforcer.filter_list(unique_abs_paths, operation_context)
+    else:
+        permitted_abs = permission_enforcer.filter_search_results(
+            unique_abs_paths,
+            user_id=user_id,
+            zone_id=zone_id,
+            is_admin=is_admin,
+        )
     filter_ms = (time.perf_counter() - filter_start) * 1000
 
     logger.debug(

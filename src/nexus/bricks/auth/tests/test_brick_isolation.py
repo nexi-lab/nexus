@@ -9,7 +9,6 @@ Verifies that the auth brick:
 import contextlib
 import importlib
 import sys
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -164,20 +163,3 @@ def test_auth_constants_available() -> None:
     assert isinstance(RESERVED_ZONE_IDS, frozenset)
     assert "gmail.com" in PERSONAL_EMAIL_DOMAINS
     assert "admin" in RESERVED_ZONE_IDS
-
-
-@pytest.mark.asyncio
-async def test_auth_service_with_mock_provider() -> None:
-    """AuthService works with a mock provider (no real DB)."""
-    from nexus.bricks.auth.service import AuthService
-    from nexus.bricks.auth.types import AuthResult
-
-    mock_provider = MagicMock()
-    mock_provider.authenticate = AsyncMock(
-        return_value=AuthResult(authenticated=True, subject_id="mock_user")
-    )
-
-    service = AuthService(provider=mock_provider)
-    result = await service.authenticate("fake-token")
-    assert result.authenticated is True
-    assert result.subject_id == "mock_user"

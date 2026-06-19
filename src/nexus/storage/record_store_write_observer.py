@@ -28,10 +28,13 @@ Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.record_store import RecordStoreABC
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +58,84 @@ class RecordStoreWriteObserver:
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
+        # NexusFS handle for publishing versioning-history snapshot entries
+        # (`/__sys__/versioning/{path_hash}/{op_id}.bin` pointing at the OLD
+        # content_id). Attached post-kernel-boot — the observer is created
+        # in Tier 1 (pre-NexusFS) so the kernel can be wired with it.
+        self._nexus_fs: Any = None
 
         # Post-flush hooks: called after successful commit (Issue #2978)
         # Same interface as the OBSERVE-phase RecordStoreWriteObserver so the factory
         # can wire extraction hooks regardless of which observer is active.
         self._post_flush_hooks: list = []
+
+    def attach_filesystem(self, nexus_fs: "NexusFS") -> None:
+        """Attach the NexusFS handle once the kernel tier exists.
+
+        Enables versioning snapshot-on-write — see ``_snapshot_old_content``.
+        Without it, audit logging still works; only the snapshot publishing
+        is skipped (TimeTravelService historical reads degrade to NotFound).
+        """
+        self._nexus_fs = nexus_fs
+
+    def _snapshot_old_content(
+        self,
+        operation_id: str,
+        path: str,
+        old_metadata: dict[str, Any] | None,
+    ) -> None:
+        """Publish a versioning snapshot pointing at the OLD content_id.
+
+        Creates a metadata-only entry at
+        ``/__sys__/versioning/{path_hash}/{operation_id}.bin`` whose
+        ``content_id`` references the same CAS object as the pre-write
+        content. No byte copy — CAS already holds the bytes; the entry
+        is both an access path for TimeTravelService and a GC root that
+        keeps the old object alive.
+
+        Best-effort: a failure here doesn't abort the write. The audit
+        log already carries snapshot_hash; only TimeTravelService /
+        OperationUndoService historical reads for THIS op_id degrade.
+
+        No-op when:
+            * NexusFS not yet attached (early boot)
+            * old_metadata is missing or has no content_id (new file)
+            * the write IS a snapshot publish (skip recursive cases)
+        """
+        if self._nexus_fs is None or old_metadata is None:
+            return
+        old_content_id = old_metadata.get("content_id")
+        if not old_content_id:
+            return
+        from nexus.contracts.versioning_path import (
+            VERSIONING_PATH_PREFIX,
+            versioning_snapshot_path,
+        )
+
+        if path.startswith(VERSIONING_PATH_PREFIX + "/"):
+            return
+
+        snap_path = versioning_snapshot_path(path, operation_id)
+        try:
+            from nexus.contracts.types import OperationContext
+
+            sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            self._nexus_fs.sys_setattr(
+                snap_path,
+                context=sys_ctx,
+                entry_type=0,
+                content_id=old_content_id,
+                size=int(old_metadata.get("size") or 0),
+                mime_type=old_metadata.get("mime_type"),
+                version=int(old_metadata.get("version") or 1),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Versioning snapshot for op %s on %s failed (best-effort): %s",
+                operation_id,
+                path,
+                exc,
+            )
 
     def register_post_flush_hook(self, hook: object) -> None:
         """Register a callback invoked after each successful write commit.
@@ -135,7 +211,7 @@ class RecordStoreWriteObserver:
         try:
             with self._session_factory() as session:
                 urn = self._build_urn(path, zone_id)
-                OperationLogger(session).log_operation(
+                operation_id = OperationLogger(session).log_operation(
                     operation_type="write",
                     path=path,
                     zone_id=zone_id,
@@ -149,6 +225,11 @@ class RecordStoreWriteObserver:
                 )
                 VersionRecorder(session).record_write(metadata, is_new=is_new)
                 session.commit()
+
+            # Versioning snapshot — published AFTER the audit row commits so
+            # a snapshot-write failure can't leave operation_log referencing
+            # a snapshot that does not exist.
+            self._snapshot_old_content(operation_id, path, old_metadata)
 
             # Post-flush hooks: extraction, lineage, etc. (Issue #2978, #3417)
             self._run_post_flush_hooks(
@@ -300,7 +381,7 @@ class RecordStoreWriteObserver:
         try:
             with self._session_factory() as session:
                 urn = self._build_urn(path, zone_id)
-                OperationLogger(session).log_operation(
+                operation_id = OperationLogger(session).log_operation(
                     operation_type="delete",
                     path=path,
                     zone_id=zone_id,
@@ -315,6 +396,11 @@ class RecordStoreWriteObserver:
                 VersionRecorder(session).record_delete(path)
                 AspectService(session).soft_delete_entity_aspects(urn)
                 session.commit()
+
+            # Versioning snapshot — captures the deleted content so
+            # OperationUndoService can restore it via sys_read of the
+            # snapshot path. ``metadata`` here IS the pre-delete metadata.
+            self._snapshot_old_content(operation_id, path, metadata)
         except Exception as e:
             self._handle_error("delete", path, e)
 

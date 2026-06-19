@@ -61,6 +61,19 @@ class PortabilityFSProtocol(Protocol):
         direct access NexusFS no longer exposes."""
         ...
 
+    def sys_readdir(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        """List a directory subtree via the §2.2 syscall surface.
+
+        Returns detail dicts when ``details=True``, plain path strings
+        otherwise. Used by ZoneExportService to enumerate a zone."""
+        ...
+
     def write(self, path: str, buf: bytes, **kwargs: Any) -> dict[str, Any]:
         """Write file content. Used by import_zone to restore blobs."""
         ...

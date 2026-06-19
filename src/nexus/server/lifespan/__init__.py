@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
+from nexus.server.lifespan._async_engines import adispose_async_engines
 from nexus.server.lifespan.services_container import LifespanServices
 from nexus.server.lifespan.zone_runners import shutdown_zone_runners
 
@@ -145,6 +146,62 @@ def _apply_boot_tweaks() -> None:
     gc.set_threshold(50_000, 10)
 
 
+def _ensure_lifespan_record_store(app: "FastAPI", svc: LifespanServices) -> None:
+    """Create a shared RecordStore when create_app() only supplied database_url.
+
+    ``create_app(database_url=...)`` enables DB-backed routers and the search
+    daemon, but there is not always a NexusFS-owned ``_record_store`` to expose
+    on ``app.state``. Build one shared store here so routers, path-context
+    stores, and the daemon all use the same schema/bootstrap path.
+    """
+    if svc.record_store is not None or not svc.database_url:
+        return
+
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    record_store = SQLAlchemyRecordStore(db_url=svc.database_url)
+    app.state.record_store = record_store
+    app.state.session_factory = record_store.session_factory
+    app.state.read_session_factory = record_store.read_session_factory
+    try:
+        app.state.async_session_factory = record_store.async_session_factory
+    except NotImplementedError:
+        app.state.async_session_factory = None
+    try:
+        app.state.async_read_session_factory = record_store.async_read_session_factory
+    except NotImplementedError:
+        app.state.async_read_session_factory = None
+    app.state._lifespan_owned_record_store = record_store
+
+    svc.record_store = record_store
+    svc.session_factory = record_store.session_factory
+    svc.sql_engine = record_store.engine
+
+    logger.info("RecordStore initialized from create_app(database_url=...)")
+
+
+async def _close_lifespan_record_store(app: "FastAPI") -> None:
+    record_store = getattr(app.state, "_lifespan_owned_record_store", None)
+    if record_store is None:
+        return
+
+    aclose = getattr(record_store, "aclose", None)
+    if callable(aclose):
+        try:
+            await aclose()
+        except Exception:
+            logger.warning("lifespan-owned record_store.aclose failed", exc_info=True)
+
+    close = getattr(record_store, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.warning("lifespan-owned record_store.close failed", exc_info=True)
+
+    app.state._lifespan_owned_record_store = None
+
+
 async def _idle_trimmer() -> None:
     """Background task: every 60s, gc.collect() + malloc_trim(0) (Issue #3997).
 
@@ -167,44 +224,6 @@ async def _idle_trimmer() -> None:
             logger.exception("idle_trimmer iteration failed")
 
 
-async def _flush_write_buffer_for_shutdown(app: "FastAPI") -> None:
-    """Drain buffered file writes before slower service teardown starts."""
-    nexus_fs = getattr(app.state, "nexus_fs", None)
-    if nexus_fs is None:
-        logger.debug("Shutdown write buffer flush skipped: no NexusFS on app.state")
-        return
-
-    kernel = getattr(nexus_fs, "_kernel", None)
-    flush = getattr(kernel, "flush_write_buffer", None) if kernel is not None else None
-    if flush is None:
-        flush = getattr(nexus_fs, "flush_write_buffer", None)
-    if flush is None:
-        logger.debug("Shutdown write buffer flush skipped: no flush method available")
-        return
-
-    dirty_count = getattr(kernel, "write_buffer_dirty_count", None) if kernel is not None else None
-    dirty_before = dirty_count() if dirty_count is not None else None
-    try:
-        if kernel is not None and getattr(kernel, "flush_write_buffer", None) is not None:
-            result = flush(None, None)
-        else:
-            loop = asyncio.get_running_loop()
-            zone_id = getattr(nexus_fs, "_zone_id", None)
-            result = await loop.run_in_executor(None, flush, None, zone_id)
-        dirty_after = dirty_count() if dirty_count is not None else None
-        logger.info(
-            "Shutdown write buffer flush completed: flushed=%s failed=%s dirty_before=%s "
-            "dirty_after=%s errors=%s",
-            getattr(result, "flushed", None),
-            getattr(result, "failed", None),
-            dirty_before,
-            dirty_after,
-            getattr(result, "errors", None),
-        )
-    except Exception:
-        logger.exception("Shutdown write buffer flush failed")
-
-
 @asynccontextmanager
 async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -222,6 +241,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     from nexus.server.lifespan.search import shutdown_search, startup_search
     from nexus.server.lifespan.services import shutdown_services, startup_services
     from nexus.server.lifespan.uploads import startup_uploads
+    from nexus.server.lifespan.vfs_grpc import shutdown_vfs_grpc, startup_vfs_grpc
 
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
@@ -252,6 +272,9 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         # raises RuntimeError if called from within a running event loop (Python
         # 3.10+). Running in a thread executor gives it a loop-free context.
         await asyncio.get_event_loop().run_in_executor(None, nx.bootstrap)
+        svc = LifespanServices.from_app(app)
+
+    _ensure_lifespan_record_store(app, svc)
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it
@@ -294,6 +317,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # parallel-layers PR — `nexus.bricks.ipc` removed; PR #3912 ships
     # the Rust replacement.
 
+    await startup_vfs_grpc(app)
     _done(StartupPhase.GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
@@ -311,8 +335,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # --- Shutdown (reverse order) ---
     logger.info("Shutting down FastAPI Nexus server...")
 
-    await _flush_write_buffer_for_shutdown(app)
-
     # Cancel all background tasks first
     for task in bg_tasks:
         if task and not task.done():
@@ -322,9 +344,11 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
+    await shutdown_vfs_grpc(app)
     await shutdown_approvals(app, svc)
     await shutdown_search(app, svc)
     await shutdown_services(app, svc)
+    await _close_lifespan_record_store(app)
     await shutdown_realtime(app, svc)
     await shutdown_zone_runners(app, svc)
 
@@ -344,12 +368,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         # dispatching aclose to a worker thread. Async engines hold asyncpg
         # connections bound to this loop; disposing them from another thread
         # raises "Future attached to a different loop".
-        adispose = getattr(app.state.nexus_fs, "adispose_async_engines", None)
-        if adispose is not None:
-            try:
-                await adispose()
-            except Exception:
-                logger.debug("adispose_async_engines failed", exc_info=True)
+        await adispose_async_engines(app.state.nexus_fs)
 
         close_fn = getattr(app.state.nexus_fs, "aclose", None)
         if close_fn is None:

@@ -13,7 +13,6 @@ Implements ``LeaseManagerProtocol`` with:
 Architecture:
     - ``LocalLeaseManager``: Single-process mode (this file)
     - ``LeaseManagerProtocol``: ``contracts/protocols/lease.py``
-    - Service owner: ``services/lifecycle/lease_service.py``
 
 References:
     - DFUSE paper: https://arxiv.org/abs/2503.18191

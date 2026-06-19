@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -66,6 +67,27 @@ def check(name: str, condition: bool, detail: str = "") -> None:
             msg += f" — {detail}"
         print(msg, flush=True)
     results.append((name, condition, detail))
+
+
+def _status_json_reachable(stdout: str) -> tuple[bool, str]:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        return False, f"invalid status JSON: {exc}"
+
+    data = payload.get("data", {})
+    if not isinstance(data, dict):
+        return False, "status JSON missing data object"
+
+    reachable = data.get("server_reachable") is True
+    health = data.get("server_health")
+    healthy = health == "healthy" or (
+        isinstance(health, dict) and health.get("status") == "healthy"
+    )
+    if reachable or healthy:
+        return True, ""
+
+    return False, (f"server_reachable={data.get('server_reachable')!r}, server_health={health!r}")
 
 
 def cli(
@@ -182,11 +204,8 @@ def main() -> None:
 
     step("nexus status --json")
     r = cli("status", "--json")
-    check(
-        "nexus status",
-        "server_reachable" in r.stdout or "healthy" in r.stdout.lower(),
-        r.stdout[:200] if r.returncode != 0 else "",
-    )
+    status_ok, status_detail = _status_json_reachable(r.stdout)
+    check("nexus status", r.returncode == 0 and status_ok, status_detail)
 
     step("nexus ls /workspace/demo")
     r = cli("ls", "/workspace/demo")

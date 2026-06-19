@@ -62,6 +62,7 @@ from nexus.bricks.rebac.graph.bulk_evaluator import (
 from nexus.bricks.rebac.graph.expand import ExpandEngine
 from nexus.bricks.rebac.graph.traversal import PermissionComputer
 from nexus.bricks.rebac.graph.zone_traversal import ZoneAwareTraversal
+from nexus.bricks.rebac.path_patterns import is_path_pattern, path_pattern_candidates
 from nexus.bricks.rebac.path_updater import PathUpdater
 from nexus.bricks.rebac.rebac_tracing import (
     record_check_result,
@@ -95,6 +96,18 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 
 logger = logging.getLogger(__name__)
+
+
+# Round-10 review (codex HIGH): sentinel distinguishing "filter unset"
+# from the meaningful filter value ``None`` (= match only direct tuples
+# whose ``subject_relation IS NULL``). Used by ``rebac_list_tuples``.
+class _Unset:
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
 
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
@@ -417,10 +430,6 @@ class ReBACManager:
             lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(path, zone_id),
         )
 
-        # NamespaceManager: optional (profile-gated), created on demand via
-        # create_namespace_manager() when namespace brick is enabled.
-        self._namespace_manager: "Any | None" = None
-
     # ── Public property accessors for internalized sub-components ────
 
     @property
@@ -432,27 +441,6 @@ class ReBACManager:
     def dir_visibility_cache(self) -> Any:
         """DirectoryVisibilityCache — O(1) directory permission lookups."""
         return self._dir_visibility_cache
-
-    @property
-    def namespace_manager(self) -> Any:
-        """NamespaceManager — per-subject namespace visibility (may be None if not created)."""
-        return self._namespace_manager
-
-    def create_namespace_manager(self, record_store: Any = None) -> Any:
-        """Create and attach the NamespaceManager (profile-gated, call when namespace brick is enabled).
-
-        Args:
-            record_store: RecordStoreABC for L3 persistent view store. If None, L3 is disabled.
-
-        Returns:
-            The newly created NamespaceManager instance.
-        """
-        from nexus.bricks.rebac.namespace_factory import (
-            create_namespace_manager as _create_ns_manager,
-        )
-
-        self._namespace_manager = _create_ns_manager(self, record_store)
-        return self._namespace_manager
 
     def _create_invalidation_stream(self) -> Any:
         """Create the DT_STREAM for ordered intra-zone invalidation."""
@@ -997,13 +985,21 @@ class ReBACManager:
         """
         start_time = time.perf_counter()
 
-        # Try Rust acceleration first (has proper memoization, prevents timeout)
-        try:
-            from nexus.bricks.rebac.utils.fast import (
-                check_permission_single_rust,
-            )
+        # Try Rust acceleration first (has proper memoization, prevents timeout).
+        # Issue #4240: gate on `is_rust_available()` so we don't raise + catch +
+        # log WARNING on every permission decision when nexus_runtime is
+        # permanently absent (the kernel runs as a separate process now —
+        # `_rust_compat.py` ships None sentinels). The warning fired ~5x per
+        # /api/v2/search/query and pointed operators at a non-fix
+        # (`cargo build -p nexus-cluster` does not install a Python extension).
+        from nexus.bricks.rebac.utils.fast import is_rust_available
 
-            if context is None:
+        if is_rust_available() and context is None:
+            try:
+                from nexus.bricks.rebac.utils.fast import (
+                    check_permission_single_rust,
+                )
+
                 # Fetch tuples and namespace configs for Rust.
                 # CROSS-ZONE FIX: Pass subject to include cross-zone shares.
                 tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
@@ -1030,9 +1026,12 @@ class ReBACManager:
                     return result
                 logger.debug("Skipping Rust permission check for conditional ReBAC tuples")
 
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
-            # Fall through to Python implementation
+            except (RuntimeError, ValueError) as e:
+                # Reached only when Rust was advertised available but a
+                # runtime call failed — that IS exceptional, so keep the
+                # warning. The hot path (no Rust ever) is gated above.
+                logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
+                # Fall through to Python implementation
 
         # Fallback to Python implementation
         result = self._compute_permission_zone_aware_with_limits(
@@ -1198,33 +1197,6 @@ class ReBACManager:
                 return True
         return False
 
-    def register_namespace_invalidator(
-        self,
-        callback_id: str,
-        callback: Any,
-    ) -> None:
-        """Register a namespace cache invalidation callback (Issue #1244).
-
-        Delegates to CacheCoordinator. Called on every rebac_write/rebac_delete
-        to immediately invalidate the affected subject's dcache entries.
-
-        Args:
-            callback_id: Unique identifier for this callback
-            callback: Function(subject_type, subject_id, zone_id)
-        """
-        self._cache_coordinator.register_namespace_invalidator(callback_id, callback)
-
-    def unregister_namespace_invalidator(self, callback_id: str) -> bool:
-        """Unregister a namespace cache invalidation callback.
-
-        Args:
-            callback_id: ID of callback to remove
-
-        Returns:
-            True if callback was found and removed, False otherwise
-        """
-        return self._cache_coordinator.unregister_namespace_invalidator(callback_id)
-
     def _notify_dir_visibility_invalidators(
         self,
         zone_id: str,
@@ -1339,36 +1311,40 @@ class ReBACManager:
             # Get permissions for this relation (fail-closed: unknown → [])
             permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
-            # Persist each permission grant immediately
-            for permission in permissions:
-                self.tiger_persist_grant(
-                    subject=subject_tuple,
-                    permission=permission,
-                    resource_type=object_type,
-                    resource_id=object_id,
-                    zone_id=effective_zone,
-                )
+            if is_path_pattern(object_type, object_id):
+                for permission in permissions:
+                    self.tiger_invalidate_cache(
+                        subject_tuple,
+                        permission,
+                        object_type,
+                        effective_zone,
+                    )
+            else:
+                # Persist each permission grant immediately
+                for permission in permissions:
+                    self.tiger_persist_grant(
+                        subject=subject_tuple,
+                        permission=permission,
+                        resource_type=object_type,
+                        resource_id=object_id,
+                        zone_id=effective_zone,
+                    )
 
-            # Leopard-style Directory Grant Expansion
-            # When permission is granted on a directory, expand to all descendants
-            if object_type == "file" and permissions and self._is_directory_path(object_id):
-                self._expand_directory_permission_grant(
-                    subject=subject_tuple,
-                    permissions=permissions,
-                    directory_path=object_id,
-                    zone_id=effective_zone,
-                )
+                # Leopard-style Directory Grant Expansion
+                # When permission is granted on a directory, expand to all descendants
+                if object_type == "file" and permissions and self._is_directory_path(object_id):
+                    self._expand_directory_permission_grant(
+                        subject=subject_tuple,
+                        permissions=permissions,
+                        directory_path=object_id,
+                        zone_id=effective_zone,
+                    )
 
         # Issue #922: Notify boundary cache invalidators
         self._notify_boundary_cache_invalidators(effective_zone, subject, relation, object)
 
         # Issue #919: Notify directory visibility cache invalidators
         self._notify_dir_visibility_invalidators(effective_zone, object)
-
-        # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
-        self._cache_coordinator.notify_namespace_invalidators(
-            effective_zone, subject[0], subject[1]
-        )
 
         # Invalidate L1 permission cache for affected subject and object
         # This ensures subsequent rebac_check_bulk calls see the new permission
@@ -1455,15 +1431,24 @@ class ReBACManager:
                     # FIX: Default to empty list for unknown relations
                     permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
-                    # Persist each permission grant immediately
-                    for permission in permissions:
-                        self.tiger_persist_grant(
-                            subject=subject_tuple,
-                            permission=permission,
-                            resource_type=object_type,
-                            resource_id=object_id,
-                            zone_id=zone_id,
-                        )
+                    if is_path_pattern(object_type, object_id):
+                        for permission in permissions:
+                            self.tiger_invalidate_cache(
+                                subject_tuple,
+                                permission,
+                                object_type,
+                                zone_id,
+                            )
+                    else:
+                        # Persist each permission grant immediately
+                        for permission in permissions:
+                            self.tiger_persist_grant(
+                                subject=subject_tuple,
+                                permission=permission,
+                                resource_type=object_type,
+                                resource_id=object_id,
+                                zone_id=zone_id,
+                            )
 
             # Issue #919: Notify directory visibility cache invalidators for all affected objects
             for t in tuples:
@@ -1548,7 +1533,13 @@ class ReBACManager:
             # Permission name maps to one or more relations — expand each
             for rel in perm_relations:
                 self._expand_permission_zone_aware(
-                    rel, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+                    rel,
+                    object_entity,
+                    namespace,
+                    zone_id,
+                    subjects,
+                    visited=set(),
+                    depth=0,
                 )
         else:
             # Already a relation name (or unknown) — expand directly
@@ -1567,6 +1558,7 @@ class ReBACManager:
         subjects: set[tuple[str, str]],
         visited: set[tuple[str, str, str]],
         depth: int,
+        allow_single_level_patterns: bool = True,
     ) -> None:
         """Recursively expand permission to find all subjects (zone-scoped)."""
         if depth > self.max_depth:
@@ -1579,7 +1571,12 @@ class ReBACManager:
 
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
-            direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+            direct_subjects = self._get_direct_subjects_zone_aware(
+                permission,
+                obj,
+                zone_id,
+                allow_single_level_patterns=allow_single_level_patterns,
+            )
             for subj in direct_subjects:
                 subjects.add(subj)
             return
@@ -1589,7 +1586,14 @@ class ReBACManager:
             union_relations = namespace.get_union_relations(permission)
             for rel in union_relations:
                 self._expand_permission_zone_aware(
-                    rel, obj, namespace, zone_id, subjects, visited.copy(), depth + 1
+                    rel,
+                    obj,
+                    namespace,
+                    zone_id,
+                    subjects,
+                    visited.copy(),
+                    depth + 1,
+                    allow_single_level_patterns=allow_single_level_patterns,
                 )
             return
 
@@ -1615,29 +1619,46 @@ class ReBACManager:
                             subjects,
                             visited.copy(),
                             depth + 1,
+                            allow_single_level_patterns=False,
                         )
             return
 
         # Direct relation
-        direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+        direct_subjects = self._get_direct_subjects_zone_aware(
+            permission,
+            obj,
+            zone_id,
+            allow_single_level_patterns=allow_single_level_patterns,
+        )
         for subj in direct_subjects:
             subjects.add(subj)
 
     def _get_direct_subjects_zone_aware(
-        self, relation: str, obj: Entity, zone_id: str
+        self,
+        relation: str,
+        obj: Entity,
+        zone_id: str,
+        *,
+        allow_single_level_patterns: bool = True,
     ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object (zone-scoped)."""
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
+            candidates = path_pattern_candidates(
+                obj.entity_type,
+                obj.entity_id,
+                include_single_level=allow_single_level_patterns,
+            )
+            placeholders = ", ".join("?" for _ in candidates)
 
             cursor.execute(
                 self._fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
+                    f"""
+                    SELECT DISTINCT subject_type, subject_id
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
@@ -1645,7 +1666,7 @@ class ReBACManager:
                     zone_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -1736,16 +1757,26 @@ class ReBACManager:
                 if subject_type and subject_id and object_type and object_id:
                     permissions = RELATION_TO_PERMISSIONS.get(relation, [])
 
+                    effective_zone = normalize_zone_id(zone_id)
+
                     # Revoke each permission immediately
                     for permission in permissions:
                         try:
-                            self.tiger_persist_revoke(
-                                subject=(subject_type, subject_id),
-                                permission=permission,
-                                resource_type=object_type,
-                                resource_id=object_id,
-                                zone_id=normalize_zone_id(zone_id),
-                            )
+                            if is_path_pattern(object_type, object_id):
+                                self.tiger_invalidate_cache(
+                                    (subject_type, subject_id),
+                                    permission,
+                                    object_type,
+                                    effective_zone,
+                                )
+                            else:
+                                self.tiger_persist_revoke(
+                                    subject=(subject_type, subject_id),
+                                    permission=permission,
+                                    resource_type=object_type,
+                                    resource_id=object_id,
+                                    zone_id=effective_zone,
+                                )
                         except (OperationalError, ProgrammingError) as e:
                             if logger.isEnabledFor(logging.DEBUG):
                                 logger.debug(f"[TIGER] Revoke failed: {e}")
@@ -1776,13 +1807,6 @@ class ReBACManager:
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
             self._notify_dir_visibility_invalidators(normalize_zone_id(zone_id), object_tuple)
-
-            # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
-            self._cache_coordinator.notify_namespace_invalidators(
-                normalize_zone_id(zone_id),
-                tuple_info["subject_type"],
-                tuple_info["subject_id"],
-            )
 
             # Invalidate L1 permission cache for affected subject and object
             if self._l1_cache is not None:
@@ -1843,6 +1867,14 @@ class ReBACManager:
         _logger: Any = None,
     ) -> None:
         """Write-through single permission result to Tiger Cache. Delegates to TupleWriter."""
+        if self._has_matching_path_pattern_tuple(object):
+            if _logger is not None and _logger.isEnabledFor(logging.DEBUG):
+                _logger.debug(
+                    "[TIGER] Skipping write-through for %s:%s; path-pattern tuples may apply",
+                    object[0],
+                    object[1],
+                )
+            return
         self._tuple_writer.tiger_write_through_single(
             subject=subject,
             permission=permission,
@@ -1850,6 +1882,46 @@ class ReBACManager:
             zone_id=zone_id,
             tiger_cache=self._tiger_cache,
         )
+
+    def _has_matching_path_pattern_tuple(self, object: tuple[str, str]) -> bool:
+        object_type, object_id = object
+        pattern_candidates = [
+            candidate
+            for candidate in path_pattern_candidates(object_type, object_id)
+            if is_path_pattern(object_type, candidate)
+        ]
+        if not pattern_candidates:
+            return False
+
+        placeholders = ", ".join("?" for _ in pattern_candidates)
+        try:
+            with self._connection(readonly=True) as conn:
+                cursor = self._create_cursor(conn)
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        f"""
+                        SELECT 1
+                        FROM rebac_tuples
+                        WHERE object_type = ? AND object_id IN ({placeholders})
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        object_type,
+                        *pattern_candidates,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                return cursor.fetchone() is not None
+        except Exception:
+            logger.debug(
+                "[TIGER] Could not check path-pattern tuples for %s:%s; skipping write-through",
+                object_type,
+                object_id,
+                exc_info=True,
+            )
+            return True
 
     def get_cached_permission(
         self,
@@ -2015,15 +2087,15 @@ class ReBACManager:
         """Get current zone revision for consistency during expansion."""
         if self._version_store is not None:
             return get_zone_revision_for_grant(self._version_store, zone_id)
-        return 0
+        return self._repo.get_zone_revision(zone_id)
 
     def _get_directory_descendants(self, directory_path: str, zone_id: str) -> list[str]:
         """Get all file paths under a directory."""
         return self._directory_expander.get_directory_descendants(directory_path, zone_id)
 
-    def set_metadata_store(self, metadata_store: Any) -> None:
-        """Set the metadata store reference for directory queries."""
-        self._directory_expander.set_metadata_store(metadata_store)
+    def set_nexus_fs(self, nexus_fs: Any) -> None:
+        """Set the NexusFS reference for directory queries."""
+        self._directory_expander.set_nexus_fs(nexus_fs)
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.
@@ -2053,12 +2125,12 @@ class ReBACManager:
         permission: str,
         obj: Entity,
         zone_id: str,
-        visited: set[tuple[str, str, str, str, str]],
+        visited: set[tuple[str, str, str, str, str, bool]],
         depth: int,
         start_time: float,
         stats: TraversalStats,
         context: dict[str, Any] | None = None,
-        memo: dict[tuple[str, str, str, str, str], bool] | None = None,
+        memo: dict[tuple[str, str, str, str, str, bool], bool] | None = None,
     ) -> bool:
         """Compute permission with P0-5 limits enforced at each step.
 
@@ -2113,7 +2185,8 @@ class ReBACManager:
         """
         if self._version_store is not None:
             return increment_version_token(self._version_store, zone_id)
-        return "v0"
+        revision = self._repo.get_zone_revision(zone_id)
+        return f"v{revision}"
 
     def _get_cached_check_zone_aware_bounded(
         self,
@@ -2243,25 +2316,32 @@ class ReBACManager:
             f"[LIST-OBJECTS] Namespace configs: file relations={len(namespace_configs.get('file', {}).get('relations', {}))} permissions={len(namespace_configs.get('file', {}).get('permissions', {}))}"
         )
 
-        # Try Rust implementation first (much faster)
-        try:
-            result = list_objects_for_subject_rust(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission=permission,
-                object_type=object_type,
-                tuples=tuples,
-                namespace_configs=namespace_configs,
-                path_prefix=path_prefix,
-                limit=limit,
-                offset=offset,
-            )
-            elapsed = (time.perf_counter() - start_time) * 1000
-            logger.debug(f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms")
-            return result
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
-            # Fall through to Python implementation
+        # Try Rust implementation first (much faster). Issue #4240: gate on
+        # `is_rust_available()` to avoid the per-call raise+log when the
+        # Rust extension is permanently unavailable (kernel-as-subprocess).
+        from nexus.bricks.rebac.utils.fast import is_rust_available
+
+        if is_rust_available():
+            try:
+                result = list_objects_for_subject_rust(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    object_type=object_type,
+                    tuples=tuples,
+                    namespace_configs=namespace_configs,
+                    path_prefix=path_prefix,
+                    limit=limit,
+                    offset=offset,
+                )
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.debug(
+                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
+                )
+                return result
+            except (RuntimeError, ValueError) as e:
+                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+                # Fall through to Python implementation
 
         # Python fallback implementation
         return self._rebac_list_objects_python(
@@ -2283,6 +2363,13 @@ class ReBACManager:
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
+        *,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        subject_relation: Any = _UNSET,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        zone_id: str | None = None,
         **_kw: Any,
     ) -> list[dict[str, Any]]:
         """List relationship tuples matching optional filters.
@@ -2292,22 +2379,55 @@ class ReBACManager:
         to find tuple IDs for targeted deletion.
 
         Args:
-            subject: Optional (type, id) filter.
+            subject: Optional (type, id) full-subject filter (shortcut for
+                both ``subject_type`` and ``subject_id``).
             relation: Optional single relation filter.
-            object: Optional (type, id) filter.
+            object: Optional (type, id) full-object filter (shortcut for
+                both ``object_type`` and ``object_id``).
             relation_in: Optional list of relations to match.
+            subject_type / subject_id: Optional individual subject filters
+                (Issue #4242 — operators want ``?subject_id=admin`` alone).
+            subject_relation: Optional userset-as-subject filter.
+                Round-10 review (codex HIGH): the default ``_UNSET``
+                means "don't filter on this column". Passing the
+                explicit value ``None`` means "match only direct
+                tuples whose ``subject_relation IS NULL``" — required
+                for DELETE to avoid accidentally removing a parallel
+                userset-as-subject tuple that shares (subject, relation,
+                object, zone). Passing a string filters to that exact
+                userset relation.
+            object_type / object_id: Optional individual object filters.
+            zone_id: Optional zone filter.
 
         Returns:
             List of tuple dicts with keys: tuple_id, subject_type,
-            subject_id, relation, object_type, object_id, zone_id.
+            subject_id, subject_relation, relation, object_type,
+            object_id, zone_id.
         """
         fix = self._fix_sql_placeholders
         clauses: list[str] = []
         params: list[Any] = []
 
+        # Tuple shortcuts override individual kwargs.
         if subject is not None:
-            clauses.append("subject_type = ? AND subject_id = ?")
-            params.extend(subject)
+            subject_type, subject_id = subject
+        if object is not None:
+            object_type, object_id = object
+
+        if subject_type is not None:
+            clauses.append("subject_type = ?")
+            params.append(subject_type)
+        if subject_id is not None:
+            clauses.append("subject_id = ?")
+            params.append(subject_id)
+        # Round-10 fix: explicit subject_relation filter — distinguishes
+        # ``None`` (filter to direct tuples) from ``_UNSET`` (no filter).
+        if subject_relation is not _UNSET:
+            if subject_relation is None:
+                clauses.append("subject_relation IS NULL")
+            else:
+                clauses.append("subject_relation = ?")
+                params.append(subject_relation)
         if relation is not None:
             clauses.append("relation = ?")
             params.append(relation)
@@ -2315,14 +2435,20 @@ class ReBACManager:
             placeholders = ", ".join("?" for _ in relation_in)
             clauses.append(f"relation IN ({placeholders})")
             params.extend(relation_in)
-        if object is not None:
-            clauses.append("object_type = ? AND object_id = ?")
-            params.extend(object)
+        if object_type is not None:
+            clauses.append("object_type = ?")
+            params.append(object_type)
+        if object_id is not None:
+            clauses.append("object_id = ?")
+            params.append(object_id)
+        if zone_id is not None:
+            clauses.append("zone_id = ?")
+            params.append(zone_id)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = fix(
-            f"SELECT tuple_id, subject_type, subject_id, relation, "
-            f"object_type, object_id, zone_id "
+            f"SELECT tuple_id, subject_type, subject_id, subject_relation, "
+            f"relation, object_type, object_id, zone_id "
             f"FROM rebac_tuples WHERE {where}"
         )
 
@@ -2334,6 +2460,11 @@ class ReBACManager:
                     "tuple_id": row["tuple_id"],
                     "subject_type": row["subject_type"],
                     "subject_id": row["subject_id"],
+                    "subject_relation": (
+                        row.get("subject_relation")
+                        if hasattr(row, "get")
+                        else row["subject_relation"]
+                    ),
                     "relation": row["relation"],
                     "object_type": row["object_type"],
                     "object_id": row["object_id"],

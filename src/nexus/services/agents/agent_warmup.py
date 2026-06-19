@@ -54,7 +54,6 @@ class AgentWarmupService:
 
     Args:
         agent_registry: AgentRegistry for state queries and transitions.
-        namespace_manager: Optional NamespaceManager for mount resolution.
         enabled_bricks: Set of brick names enabled in this deployment.
         cache_store: Optional CacheStoreABC for cache warming.
         mcp_config: Optional MCP server configuration.
@@ -63,13 +62,11 @@ class AgentWarmupService:
     def __init__(
         self,
         agent_registry: Any,
-        namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,
         mcp_config: dict[str, Any] | None = None,
     ) -> None:
         self._agent_registry = agent_registry
-        self._namespace_manager = namespace_manager
         self._enabled_bricks = enabled_bricks or frozenset()
         self._cache_store = cache_store
         self._mcp_config = mcp_config
@@ -170,7 +167,6 @@ class AgentWarmupService:
             agent_id=agent_id,
             agent_record=record,
             agent_registry=self._agent_registry,
-            namespace_manager=self._namespace_manager,
             enabled_bricks=self._enabled_bricks,
             cache_store=self._cache_store,
             mcp_config=self._mcp_config,

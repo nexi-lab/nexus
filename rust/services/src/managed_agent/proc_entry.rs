@@ -148,26 +148,13 @@ pub(crate) fn unregister_proc_entry<K: KernelAbi>(kernel: &K, desc: &AgentDescri
 fn create_dt_dir<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), String> {
     kernel
         .sys_setattr(
-            path,
-            DT_DIR,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
-            /* io_profile */ "memory",
-            /* zone_id */ "root",
-            /* is_external */ false,
-            /* capacity */ 0,
-            /* read_fd */ None,
-            /* write_fd */ None,
-            /* mime_type */ None,
-            /* modified_at_ms */ None,
-            /* content_id */ None,
-            /* size */ None,
-            /* version */ None,
-            /* created_at_ms */ None,
-            /* link_target */ None,
-            /* source */ None,
+            path, DT_DIR, /* backend_name */ "", /* backend */ None,
+            /* metastore */ None, /* raft_backend */ None,
+            /* io_profile */ "memory", /* zone_id */ "root",
+            /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
+            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
+            /* content_id */ None, /* size */ None, /* version */ None,
+            /* created_at_ms */ None, /* link_target */ None, /* source */ None,
             /* remote_metastore */ None,
         )
         .map(|_| ())
@@ -211,27 +198,13 @@ fn create_dt_stream<K: KernelAbi>(
 ) -> Result<(), String> {
     kernel
         .sys_setattr(
-            path,
-            DT_STREAM,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
-            io_profile,
-            /* zone_id */ "root",
-            /* is_external */ false,
-            capacity,
-            /* read_fd */ None,
-            /* write_fd */ None,
-            /* mime_type */ None,
-            /* modified_at_ms */ None,
-            /* content_id */ None,
-            /* size */ None,
-            /* version */ None,
-            /* created_at_ms */ None,
-            /* link_target */ None,
-            /* source */ None,
-            /* remote_metastore */ None,
+            path, DT_STREAM, /* backend_name */ "", /* backend */ None,
+            /* metastore */ None, /* raft_backend */ None, io_profile,
+            /* zone_id */ "root", /* is_external */ false, capacity,
+            /* read_fd */ None, /* write_fd */ None, /* mime_type */ None,
+            /* modified_at_ms */ None, /* content_id */ None, /* size */ None,
+            /* version */ None, /* created_at_ms */ None, /* link_target */ None,
+            /* source */ None, /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_STREAM at {path:?} io_profile={io_profile:?}): {e:?}"))
@@ -241,35 +214,31 @@ fn create_dt_stream<K: KernelAbi>(
 mod tests {
     use super::*;
     use kernel::core::agents::registry::{AgentKind, AgentState, RepoMount};
+    use kernel::kernel::convenience::KernelConvenience;
     use kernel::kernel::Kernel;
+    use kernel::ROOT_ZONE_ID;
 
     fn dir_exists(kernel: &Kernel, path: &str) -> bool {
         kernel
-            .metastore_get(path)
-            .ok()
-            .flatten()
+            .sys_stat(path, ROOT_ZONE_ID)
             .is_some_and(|e| e.entry_type == DT_DIR as u8)
     }
 
     fn link_target(kernel: &Kernel, path: &str) -> Option<String> {
         kernel
-            .metastore_get(path)
-            .ok()
-            .flatten()
+            .sys_stat(path, ROOT_ZONE_ID)
             .filter(|e| e.entry_type == DT_LINK as u8)
             .and_then(|e| e.link_target)
     }
 
     fn stream_exists(kernel: &Kernel, path: &str) -> bool {
         kernel
-            .metastore_get(path)
-            .ok()
-            .flatten()
+            .sys_stat(path, ROOT_ZONE_ID)
             .is_some_and(|e| e.entry_type == DT_STREAM as u8)
     }
 
     fn entry_present(kernel: &Kernel, path: &str) -> bool {
-        kernel.metastore_get(path).ok().flatten().is_some()
+        kernel.access(path, ROOT_ZONE_ID)
     }
 
     #[test]

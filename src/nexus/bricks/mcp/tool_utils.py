@@ -18,8 +18,8 @@ References:
     - MiniScope: mechanical enforcement > prompt-based
 """
 
-import asyncio
 import functools
+import inspect
 import logging
 from typing import Any
 
@@ -127,7 +127,7 @@ def handle_tool_errors(operation: str) -> Any:
             )
 
     def decorator(fn: Any) -> Any:
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> str:

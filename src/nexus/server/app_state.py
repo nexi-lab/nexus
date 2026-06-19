@@ -49,7 +49,6 @@ class NexusAppState:
     # === Flattened from NexusFS (replaces private attr access) ===
     rebac_manager: Any = None
     entity_registry: Any = None
-    namespace_manager: Any = None
     event_bus: Any = None
     write_observer: Any = None
     permission_enforcer: Any = None
@@ -79,7 +78,6 @@ class NexusAppState:
     task_write_hook: Any = None
     task_dispatch_consumer: Any = None
     workflow_engine: Any = None
-    workflow_dispatch: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None
@@ -182,7 +180,10 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
 
     All services accessed via ServiceRegistry.
     """
-    # Direct NexusFS attrs
+    # Permission enforcer: fetched via public service() API.
+    # When permissions are disabled the service is never registered,
+    # so service("permission_enforcer") already returns None — no need
+    # to read the private _perm_config attribute across the boundary.
     app.state.permission_enforcer = (
         nexus_fs.service("permission_enforcer") if hasattr(nexus_fs, "service") else None
     )

@@ -10,6 +10,9 @@ from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 5.0
+DEFAULT_HANDSHAKE_CONNECT_TIMEOUT_SECONDS = 2.0
+
 
 @dataclass(frozen=True)
 class HubZoneGrant:
@@ -26,9 +29,18 @@ class HubSession:
 class FederationHandshake:
     """Authenticates to a Nexus hub and discovers the caller's zone grants."""
 
-    def __init__(self, hub_url: str, token: str) -> None:
+    def __init__(
+        self,
+        hub_url: str,
+        token: str,
+        *,
+        timeout: float = DEFAULT_HANDSHAKE_TIMEOUT_SECONDS,
+        connect_timeout: float = DEFAULT_HANDSHAKE_CONNECT_TIMEOUT_SECONDS,
+    ) -> None:
         self._hub_url = hub_url
         self._token = token
+        self._timeout = timeout
+        self._connect_timeout = connect_timeout
 
     def run(self) -> HubSession:
         """Connect to hub, call federation_client_whoami, return HubSession.
@@ -38,11 +50,19 @@ class FederationHandshake:
             HandshakeConnectionError: Hub is unreachable.
         """
         try:
-            transport = RPCTransport(self._hub_url, auth_token=self._token)
+            transport = RPCTransport(
+                self._hub_url,
+                auth_token=self._token,
+                timeout=self._timeout,
+                connect_timeout=self._connect_timeout,
+            )
         except ValueError as exc:
             raise HandshakeConnectionError(str(exc)) from exc
         try:
-            result = transport.call_rpc("federation_client_whoami")
+            result = transport.call_rpc(
+                "federation_client_whoami",
+                read_timeout=self._timeout,
+            )
         except NexusError as exc:
             if getattr(exc, "status_code", None) == 401:
                 raise HandshakeAuthError(str(exc)) from exc

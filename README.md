@@ -6,15 +6,15 @@
   <img alt="Nexus" src="assets/logo.png" width="180">
 </picture>
 
-### The filesystem & context plane for AI agents
+### Distributed VFS for multi-agent systems
 
-Give every agent one place to read, write, search, remember, and collaborate — from a single-file script to a fleet of thousands.
+The infrastructure layer that decides how agents coexist — storage, communication, permissions, coordination.
 
 [![CI](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/nexus-ai-fs?color=blue)](https://pypi.org/project/nexus-ai-fs/)
 [![nexus-fs](https://img.shields.io/pypi/v/nexus-fs?label=nexus-fs&color=blue)](https://pypi.org/project/nexus-fs/)
 [![@nexus-ai-fs/tui](https://img.shields.io/npm/v/@nexus-ai-fs/tui?label=@nexus-ai-fs/tui&color=blue)](https://www.npmjs.com/package/@nexus-ai-fs/tui)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-community-5865F2?logo=discord&logoColor=white)](https://discord.gg/nexus)
 
@@ -24,97 +24,198 @@ Give every agent one place to read, write, search, remember, and collaborate —
 
 ---
 
-## Why Nexus
+## Why Nexus exists
 
-Every agent framework gives you tool calling. None gives you a shared filesystem. Without one, agents duplicate files, lose context between runs, step on each other's writes, and can't discover what's already been built.
+The hard problem isn't making one agent work. It's making many agents work together reliably across nodes.
 
-Nexus fixes this. One VFS-style interface — start embedded in a single Python process, scale to a daemon-backed deployment with auth, permissions, federation, and multi-tenant isolation. No code changes.
+Agent harnesses (LangGraph, CrewAI, AutoGen) decide **what** agents do — tool calls, chains, memory loops. Nexus is the layer underneath that handles **how** agents coexist: shared storage, permission boundaries, inter-agent messaging, distributed coordination. A distributed VFS kernel — like Linux for AI agents — providing the primitives every harness needs:
 
-## How it works
+**Steering engineering** — infrastructure that sets boundaries and rules so agents operate safely at scale:
+- Permission boundaries (ReBAC) — agents only touch what they're allowed to
+- Data sovereignty (zone isolation, local-first, encrypted-at-rest) — data never leaves its zone without explicit policy; cross-zone computation uses privacy-preserving protocols
+- IPC primitives (DT_PIPE ~0.5us, DT_STREAM append-only log) — zero-copy inter-agent messaging
+- Process isolation (ProcessTable, workspace boundaries) — agent crashes don't cascade
+- Distributed coordination (Raft consensus, advisory locks) — multi-node without split-brain
 
+**Context engineering** — infrastructure that gives agents the right information at the right time:
+- Unified VFS namespace — all data under one path tree, not scattered APIs
+- Semantic search (BM25S + pgvector + section-aware grep) — precise context retrieval
+- CAS dedup + content chunking — efficient storage and retrieval at scale
+- Federation reads — transparent cross-node data access, agents don't need to know where data lives
+
+**Production distributed topology** — a full IT infrastructure for agent organizations:
+
+| Node role | Profile | What it does |
+|---|---|---|
+| **Hub** | `full` | Central server — Postgres, Dragonfly, all 35+ bricks, auth, search |
+| **Worker** | `sandbox` | Agent execution sandbox — SQLite + BM25S, zero external deps |
+| **Gateway** | `remote` | Thin RPC client — zero local storage, routes to hub |
+| **Auditor** | `cluster` + audit | Centralized audit log — every operation across all nodes |
+| **Federation peer** | `cloud` | Full + Raft consensus + multi-tenant — spans data centers |
+| **Edge** | `lite` / `embedded` | Pi, Jetson, MCU — local-first with federation sync |
+
+These compose like corporate IT: gateway nodes front the traffic, hubs serve the workload, workers run agents in isolation, auditors watch everything, federation peers replicate across regions. One binary, different profiles.
+
+One interface. Start embedded in a single Python process, scale to a federated cluster across data centers. No code changes.
+
+> *Built by [SudoWork](https://github.com/sudoprivacy/sudowork) — we focus on making agents deliver quality work, with token economy.*
+
+## Architecture
+
+### Deployment stack
+
+```mermaid
+graph TD
+    subgraph Applications
+        SW[sudowork]
+        CD[Codex Desktop]
+        CA[custom apps]
+    end
+
+    subgraph Agent_Harness ["Agent Harness (open ecosystem, hook-compatible)"]
+        SC[sudocode / sudocode-host]
+        GC[Gemini CLI]
+        CX[Codex CLI]
+        AH[any agent]
+    end
+
+    subgraph Infra ["Infra Layer (one per node)"]
+        NX["NEXUS (distributed VFS: storage, IPC, permissions, coordination, data sovereignty)"]
+        SR["SUDOROUTER (unified LLM access + confidential computing: Claude, GPT, Gemini, local models)"]
+    end
+
+    SW --> SC
+    CD --> CX
+    CA --> AH
+    SC --> NX
+    GC --> NX
+    CX --> NX
+    AH --> NX
+    SC -.->|direct| SR
+    NX -->|as backend| SR
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  BRICKS (runtime-loadable)                                              │
-│  ReBAC · Auth · Agents · Delegation · Search · Memory · Governance      │
-│  Workflows · Pay · MCP · Snapshots · Catalog · Identity · 25+ more      │
-└─────────────────────────────────────────────────────────────────────────┘
-                              ↓ protocol interface
-┌─────────────────────────────────────────────────────────────────────────┐
-│  KERNEL                                                                 │
-│  VFS · Metastore · ObjectStore · Syscall dispatch · Pipes ·             │
-│  Lock manager · Three-phase write (LSM hooks) · CAS dedup              │
-└─────────────────────────────────────────────────────────────────────────┘
-                              ↓ dependency injection
-┌─────────────────────────────────────────────────────────────────────────┐
-│  DRIVERS                                                                │
-│  redb · PostgreSQL (pgvector) · S3 · GCS · Dragonfly · Zoekt · gRPC    │
-└─────────────────────────────────────────────────────────────────────────┘
+
+Agents don't need to integrate Nexus directly. The **hook layer** (Node.js `fs` interception / Python `open` patching) transparently routes any agent's file I/O through Nexus syscalls — the agent gets federation, A2A, collaboration, approval hooks, and security for free without changing a line of code. **SudoRouter** provides unified model access (any agent, any model, no provider lock-in) with confidential computing for privacy-preserving inference and training; agents reach it either through Nexus (as a mounted backend) or directly.
+
+### Nexus internals
+
+```mermaid
+graph TD
+    subgraph Bricks ["Bricks (runtime-loadable, 35+)"]
+        B[ReBAC · Auth · Agents · Search · MCP · Pay · Governance · 25+ more]
+    end
+
+    subgraph Kernel ["Kernel (pure Rust, ~5 MB binary)"]
+        K[VFS · Syscall dispatch · CAS · Pipes · Streams · Locks · FileWatcher · Permission gate · Raft]
+    end
+
+    subgraph Drivers ["Drivers (hot-swappable)"]
+        D[redb · PostgreSQL · S3 · GCS · Dragonfly · BM25S · SudoRouter · gRPC]
+    end
+
+    B -->|protocol interface| K
+    K -->|dependency injection| D
 ```
 
-**Kernel** never changes. **Drivers** swap at config time. **Bricks** mount and unmount at runtime — like `insmod`/`rmmod` for an AI filesystem.
+**Kernel** is pure Rust — a ~5 MB static binary (`nexusd-cluster`) with 14 syscalls and zero Python dependency. Never changes.
 
-## Requirements
+**Drivers** swap at mount time via `sys_setattr`. Hot-plug any storage or LLM backend without restart.
 
-- **Python 3.14+** (Nexus dropped support for 3.12/3.13 in vNEXT). Bare-metal
-  `pip install nexus` requires a Rust toolchain because `pdf-inspector` builds
-  from sdist until upstream ships cp314 wheels. The official Docker image
-  ships Rust and handles this automatically.
+**Bricks** mount and unmount at runtime via `service_enlist` / `service_swap` — like `insmod`/`rmmod` for an AI filesystem.
 
-## Get started in 30 seconds
+<details>
+<summary><strong>Services (bricks) — 30 runtime-loadable capabilities</strong></summary>
 
-### Option A: Docker (recommended)
+| Category | Services |
+|---|---|
+| **Security & Privacy** | ReBAC (Zanzibar-style permissions), Auth (API key, OAuth, mTLS), Delegation (SSH-style scoped access), Identity (DID + verifiable credentials), Encrypted Storage (AES-256-GCM), Zone data isolation |
+| **Search & Context** | Keyword search (BM25S), Semantic search (pgvector), Section-aware grep, Content parsing (50+ formats via pdf-inspector), Catalog (schema extraction) |
+| **Agent Runtime** | Agent Registry, Agent Runtime (subprocess + managed), IPC (DT_PIPE + DT_STREAM), Sandbox (Docker isolation), Task Manager |
+| **Collaboration** | Share Links (capability URLs), Workspace boundaries, A2A Protocol, MCP (30+ tools, mount external MCP servers) |
+| **Data Management** | Versioning, Snapshots (atomic multi-file), Portability (import/export), Memory (persistent + consolidation), Access Manifests |
+| **Operations** | Pay (credit ledger + policies), Governance (fraud detection, trust scores), Workflows (trigger/condition/action), Observability, Scheduler (fair-share + priority) |
+| **Integration** | Discovery (dynamic tool selection), Upload (TUS resumable), Federation (cross-zone Raft) |
+
+</details>
+
+<details>
+<summary><strong>Drivers — 15 hot-swappable backends</strong></summary>
+
+| Category | Drivers |
+|---|---|
+| **Storage** | PathLocal (filesystem), CAS-Local (content-addressed), S3, GCS, Remote (gRPC proxy) |
+| **Database** | PostgreSQL (pgvector), redb (embedded ordered KV) |
+| **Cache** | Dragonfly / Redis |
+| **Search** | BM25S (keyword), Zoekt (code search, optional) |
+| **Connectors** | Gmail, Google Drive, Slack, X/Twitter, Hacker News, Nostr, CLI |
+| **LLM** | SudoRouter (unified: Claude, GPT, Gemini, local models) |
+
+</details>
+
+## Get started
+
+### Run Nexus
+
+Two ways to start a Nexus node — `nexus` (managed Docker stack) or `nexusd` (direct daemon):
 
 ```bash
-pip install nexus-ai-fs                       # CLI + SDK
-nexus init --preset demo                       # writes nexus.yaml + nexus-stack.yml
-nexus up                                       # pulls image, starts Nexus + Postgres + Dragonfly + Zoekt
-eval $(nexus env)                              # load connection vars into your shell
-```
-
-Open `http://localhost:2026`. That's it.
-
-### Option B: Embedded (no Docker)
-
-```bash
+# Managed stack (Nexus + Postgres + Dragonfly via Docker)
 pip install nexus-ai-fs
+nexus init --preset shared
+nexus up
+eval $(nexus env)
+
+# Direct daemon (single process, no Docker)
+nexusd --port 2026 --data-dir ./nexus-data
 ```
+
+### Use Nexus
+
+Once running, interact via SDK, CLI, or TUI:
+
+```python
+# SDK
+import asyncio, nexus
+
+async def main():
+    nx = await nexus.connect()                    # connects to running nexusd
+    await nx.write("/hello.txt", b"hello world")
+    print((await nx.read("/hello.txt")).decode())
+    nx.close()
+
+asyncio.run(main())
+```
+
+```bash
+# CLI (RPC client — talks to running nexusd via gRPC)
+nexus write /hello.txt "hello world"
+nexus cat /hello.txt
+nexus ls /
+nexus grep "TODO" -f "**/*.py"
+nexus search query "hello" --mode hybrid
+```
+
+```bash
+# TUI
+bunx @nexus-ai-fs/tui                                        # connects to localhost:2026
+bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key KEY # connect to remote
+```
+
+### Embedded (no daemon)
+
+For scripts and notebooks — in-process, zero infrastructure:
 
 ```python
 import asyncio, nexus
 
 async def main():
     nx = await nexus.connect(config={"data_dir": "./my-data"})
-
     await nx.write("/notes/meeting.md", b"# Q3 Planning\n- Ship Nexus 1.0")
     print((await nx.read("/notes/meeting.md")).decode())
-
     nx.close()
 
 asyncio.run(main())
 ```
-
-### Option C: CLI
-
-```bash
-nexus write /hello.txt "hello world"
-nexus cat /hello.txt
-nexus ls /
-nexus search query "hello" --mode hybrid
-nexus versions history /hello.txt
-```
-
-### Terminal UI
-
-The TUI is a separate TypeScript package built on OpenTUI:
-
-```bash
-bunx @nexus-ai-fs/tui                                        # published package, connects to localhost:2026
-bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key KEY # connect to remote instance
-cd packages/nexus-api-client && npm install && npm run build && cd -  # build sibling dependency once in a fresh checkout
-cd packages/nexus-tui && bun install && bun run src/index.tsx          # local development from this repo
-```
-
-File explorer, API inspector, monitoring dashboard, agent lifecycle management, and more — all from your terminal.
 
 ## What you get
 
@@ -123,25 +224,20 @@ File explorer, API inspector, monitoring dashboard, agent lifecycle management, 
 | **Filesystem** | POSIX-style read/write/mkdir/ls with CAS dedup | Shared workspace — no more temp files |
 | **Versioning** | Every write creates an immutable version | Rollback mistakes, diff changes, audit trails |
 | **Snapshots** | Atomic multi-file transactions | Commit or rollback a batch of changes together |
-| **Search** | Keyword + semantic + hybrid, powered by Zoekt + pgvector | Find anything by content or meaning |
+| **Search** | BM25S + semantic + hybrid + section-aware grep | Find anything by content, meaning, or structure |
 | **Memory** | Persistent agent memory with consolidation + versioning | Remember across runs and sessions |
 | **Delegation** | SSH-style agent-to-agent permission narrowing | Safely sub-delegate work with scoped access |
 | **ReBAC** | Relationship-based access control (Google Zanzibar model) | Fine-grained per-file, per-agent permissions |
 | **MCP** | Mount external MCP servers, expose Nexus as 30+ MCP tools | Bridge any tool ecosystem |
-| **Workflows** | Trigger → condition → action pipelines | Automate file processing, notifications, etc. |
+| **Workflows** | Trigger / condition / action pipelines | Automate file processing, notifications, etc. |
 | **Governance** | Fraud detection, collusion rings, trust scores | Safety rails for autonomous agent fleets |
 | **Pay** | Credit ledger with reserves, policies, approvals | Metered compute for multi-tenant deployments |
-| **IPC** | Inbox-based inter-agent messaging via pipes | Agents talk to each other without polling |
+| **IPC** | DT_PIPE (FIFO) + DT_STREAM (append-only log) | Sub-microsecond inter-agent messaging |
 | **Federation** | Multi-zone Raft consensus with mTLS TOFU | Span data centers without a central coordinator |
+| **Data Sovereignty** | Zone isolation, local-first, AES-256-GCM encrypted storage | Data stays in its zone; cross-zone ops use privacy-preserving computation |
+| **Sandbox** | Docker-backed execution environments | Isolated code execution per agent |
 
-<details>
-<summary><strong>All bricks and system services →</strong></summary>
-
-**Bricks (runtime-loadable):** Access Manifests · Auth (API key, OAuth, mTLS) · Catalog (schema extraction) · Context Manifests · Delegation · Discovery · Identity (DID + credentials) · IPC (pipes) · MCP · Mount · Parsers (50+ formats via pdf-inspector) · Pay · Portability (import/export) · ReBAC · Sandbox (Docker) · Search · Share Links (capability URLs) · Snapshots · Task Manager · TUS Uploads (resumable) · Versioning · Workflows · Workspace
-
-**System services:** Agent Registry · Agent Runtime · Event Bus · Event Log · Namespace · Scheduler (fair-share, priority tiers) · Sync · Lifecycle
-
-</details>
+See [Services and Drivers](#nexus-internals) for the full categorized list.
 
 ## Framework integrations
 
@@ -157,62 +253,39 @@ Every major agent framework works out of the box:
 | **E2B** | Cloud sandbox execution | [examples/e2b/](examples/e2b/) |
 | **CLI** | 40+ shell demos covering every feature | [examples/cli/](examples/cli/) |
 
-## Deployment options
+## Deployment
 
-| Mode | What | Who it's for |
+Two binaries, inspired by the `docker`/`dockerd` convention:
+
+| Binary | What | Lifecycle |
 |---|---|---|
-| **Embedded** | `nexus.connect()` — in-process, zero infrastructure | Scripts, notebooks, single-agent apps |
-| **Shared daemon** | `nexus init --preset shared && nexus up` | Teams, multi-agent systems, staging |
-| **Federation** | Multi-zone Raft consensus across data centers | Production fleets, edge deployments |
+| **`nexusd`** | Node daemon — manages storage, serves gRPC/HTTP, participates in federation | Long-running (SIGTERM to stop) |
+| **`nexus`** | CLI client — file ops, search, admin, status via gRPC to a running `nexusd` | Invocation-style (exits when done) |
+
+### Running `nexusd`
+
+```bash
+# Direct daemon
+nexusd --port 2026 --data-dir /var/lib/nexus
+
+# With explicit profile + federation
+nexusd --profile full --host 0.0.0.0 --join peer1:2026 --zone us-west
+
+# Managed Docker stack (Nexus + Postgres + Dragonfly)
+nexus init --preset shared && nexus up
+```
 
 ### `nexus init` presets
 
 | Preset | Services | Auth | Use case |
 |---|---|---|---|
 | `local` | None (embedded) | None | Single-process scripts, notebooks |
-| `shared` | Nexus + Postgres + Dragonfly + Zoekt | Static API key | Team dev, multi-agent staging |
+| `shared` | Nexus + Postgres + Dragonfly | Static API key | Team dev, multi-agent staging |
 | `demo` | Same as shared | Database-backed | Demos, seed data, evaluation |
 
-```bash
-# Embedded (no Docker)
-nexus init                                    # writes nexus.yaml for local embedded mode
+### Embedded mode (no daemon)
 
-# Shared daemon
-nexus init --preset shared                    # writes nexus.yaml + nexus-stack.yml
-nexus up                                      # pulls image, starts stack, waits for health
-eval $(nexus env)                             # load NEXUS_URL, NEXUS_API_KEY, etc.
-
-# Demo with seed data
-nexus init --preset demo && nexus up
-
-# Add optional services
-nexus init --preset shared --with nats --with mcp --with frontend
-
-# GPU acceleration
-nexus init --preset shared --accelerator cuda
-
-# Pin to a specific version
-nexus init --preset shared --image-tag 0.9.4
-
-# Build from local source (for contributors)
-nexus up --build                              # build + tag as nexus:local-{hash}
-nexus up                                      # reuses local build (no pull)
-nexus up --pull                               # discard local build, pull from remote
-
-# Stack lifecycle
-nexus stop                                    # pause containers (fast, no teardown)
-nexus start                                   # resume paused containers (fast)
-nexus down                                    # stop and remove containers
-nexus logs                                    # tail logs
-nexus restart                                 # down + up
-nexus upgrade                                 # pull latest image for your channel
-
-# Environment variables
-nexus env                                     # print export statements for your shell
-nexus env --json                              # machine-readable
-nexus env --dotenv > .env                     # write .env file
-nexus run python my_agent.py                  # run command with env vars injected
-```
+For scripts and notebooks, `nexus.connect(config={"data_dir": ...})` runs an in-process instance with zero infrastructure. See [Get started](#get-started).
 
 ### Docker image
 
@@ -238,26 +311,38 @@ Four pillars, separated by access pattern — not by domain:
 
 The kernel starts with just a Metastore. Everything else is layered on without changing a line of kernel code.
 
-### Cold tiering (Issue #3406)
+## Performance
 
-Sealed CAS volumes are automatically uploaded to S3/GCS when they go quiet, cutting cold storage costs by ~80%. The local redb index is retained for O(1) lookups; reads use a single HTTP range request.
+### Agent-level: context engineering
 
-Add to your `nexus.yaml`:
+Nexus Dynamic Discovery vs loading all tools into the LLM context (POC on [BFCL benchmark](https://gorilla.cs.berkeley.edu/leaderboard.html)):
 
-```yaml
-tiering:
-  enabled: true
-  quiet_period: 3600          # seconds before a sealed volume is tiered
-  min_volume_size: 104857600  # 100 MB minimum
-  cloud_backend: s3           # or gcs
-  cloud_bucket: my-bucket
-```
+| Metric | Static (all tools in context) | Nexus Dynamic Discovery |
+|---|---|---|
+| Irrelevance detection accuracy | 40-80% | **100%** |
+| Token consumption (65 tools) | ~276K | **~61K (78% reduction)** |
+| Hallucination on irrelevant tools | frequent | **zero** |
+| ECCA-R (cost per reliable answer) | high | **2x better** |
 
-Features: write-ahead crash recovery, LRU volume cache with burst detection, streaming downloads (no full-volume RAM buffering), automatic rehydration for burst read patterns.
+Dynamic Discovery only loads relevant tools on demand via score-based search, so the LLM sees a clean context instead of 65+ tool definitions. Details: [nexus-benchmarks](https://github.com/nexi-lab/nexus-benchmarks).
 
-**Credentials**: AWS env vars / `~/.aws/credentials` / IAM role for S3, or Application Default Credentials for GCS.
+### Kernel-level: steering overhead is negligible
 
-**`nexus-fs` (slim package)**: Tiering requires `nexus-ai-fs` (full package). The slim `nexus-fs` package excludes `nexus/services/` where the tiering service lives. If using `nexus-fs`, install cloud extras separately: `pip install nexus-fs[s3]` or `nexus-fs[gcs]`.
+Kernel syscall latency (pure Rust, PathLocal + redb, Apple M-series):
+
+| Syscall | Latency | What's included |
+|---|---|---|
+| `sys_stat` | **~727 ns** | redb lookup + permission lease check |
+| `sys_read` 1 KB | **~3.4 us** | permission + CAS resolve + hook dispatch + I/O |
+| `sys_readdir` 100 entries | **~68 us** | metastore + backend merge |
+| `sys_rename` | **~6.6 us** | atomic metastore + backend |
+
+The full steering stack (permission check, CAS resolution, hook dispatch, metastore lookup) adds < 2 us to a read. An LLM call takes 100-1000 ms. The infrastructure is invisible at agent-interaction timescales.
+
+## Requirements
+
+- **Python 3.14+** for the SDK and CLI
+- **Rust toolchain** only needed for building from source (the Docker image and `nexusd-cluster` binary ship pre-built)
 
 ## Contributing
 
@@ -271,17 +356,6 @@ uv run pytest tests/
 
 For semantic search work: `uv sync --extra semantic-search`
 
-**After cloning, pulling, or switching branches that touch `rust/`**, rebuild the Rust extensions:
-
-```bash
-just setup        # rebuild all crates (requires: cargo install just)
-just doctor       # verify the binary matches current source
-```
-
-Or per-crate: `maturin develop --release -m rust/nexus_kernel/Cargo.toml`
-
-> **Why?** `PYTHONPATH=src` only affects pure-Python imports. Native extensions (`nexus_kernel.so`) resolve via site-packages and must be explicitly rebuilt after Rust changes. A stale binary imports silently but fails at runtime with a cryptic `AttributeError`. See [#3712](https://github.com/nexi-lab/nexus/issues/3712).
-
 Claude Code users: see `CLAUDE.md` (local-only, not committed) for the full contributor guide.
 
 ## Troubleshooting
@@ -293,34 +367,8 @@ Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus
 
 </details>
 
-<details>
-<summary><code>AttributeError: 'Kernel' object has no attribute '...'</code></summary>
-
-The installed `nexus_kernel` binary is stale. Rebuild:
-
-```bash
-just setup
-# or: maturin develop --release -m rust/nexus_kernel/Cargo.toml
-```
-
-</details>
-
-<details>
-<summary><code>maturin develop</code> fails at the repo root</summary>
-
-Point maturin at a crate manifest: `maturin develop --release -m rust/nexus_kernel/Cargo.toml`
-
-</details>
-
-<details>
-<summary><code>faiss-cpu</code> resolution fails</summary>
-
-Only install semantic search extras on platforms with compatible `txtai`/`faiss-cpu` wheels: `pip install "nexus-ai-fs[semantic-search]"`
-
-</details>
-
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
-Built by [Nexi Labs](https://github.com/nexi-lab).
+Built by [SudoWork](https://github.com/sudoprivacy/sudowork).

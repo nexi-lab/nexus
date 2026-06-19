@@ -40,12 +40,12 @@ Follow-up coverage
     auth pipeline at gRPC time.
 
     Production wiring exercised:
-      1. HTTP POST /api/v2/auth/keys (admin api-key) → AuthService key
+      1. HTTP POST /api/v2/auth/keys (admin api-key) → AuthProvider key
          registry → returns a non-admin user API key.
       2. HTTP POST /api/v2/rebac/tuples (admin api-key) →
          ReBACManager.rebac_write → tuple persisted in postgres.
       3. gRPC ListPending with the non-admin user key →
-         ReBACCapabilityAuth.authorize → AuthService.authenticate(token)
+         ReBACCapabilityAuth.authorize → AuthProvider.authenticate(token)
          resolves to the new user → rebac_check(("user", subject_id),
          "read", ("approvals", "global")) returns True via the granted
          viewer relation → ListPending returns 200.
@@ -320,7 +320,7 @@ class TestFollowupE2E:
           1. Mint a non-admin user API key via
              ``POST /api/v2/auth/keys`` (admin api-key bearer). This
              registers a real subject in the daemon's auth store that
-             the standard auth pipeline (``AuthService.authenticate``)
+             the standard auth pipeline (``AuthProvider.authenticate``)
              will resolve at gRPC time.
           2. Grant ``(user, <new-user-id>) -- viewer -> (approvals,
              global)`` via ``POST /api/v2/rebac/tuples``. The ``viewer``

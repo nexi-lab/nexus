@@ -75,10 +75,10 @@ def _get_or_open_kernel(redb_path: str) -> Any:
         existing = _KERNEL_CACHE.get(redb_path)
         if existing is not None:
             return existing
-        from nexus_runtime import PyKernel
+        from nexus.remote.kernel_client import KernelClient
 
-        kernel = PyKernel()
-        kernel.set_metastore_path(redb_path)
+        kernel = KernelClient(metadata_path=redb_path)
+        kernel.open()
         _KERNEL_CACHE[redb_path] = kernel
         return kernel
 

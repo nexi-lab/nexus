@@ -1,0 +1,44 @@
+name: Plugin Signing Compliance
+
+# Per-PR gate that asserts every cdylib in the workspace has a release
+# workflow which signs it. New cdylibs without a signing path get red CI
+# at PR time — much cheaper than discovering at operator-install time that
+# the cluster's PluginLoader::load rejects the unsigned binary.
+#
+# Make this a REQUIRED check on `develop` branch protection once the
+# workspace passes (i.e. after both vault and localconnect have release
+# workflows on the reusable).
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "rust/**/Cargo.toml"
+      - ".github/workflows/release-*.yml"
+      - ".github/workflows/plugin-signing-compliance.yml"
+      - "scripts/check_plugin_signing_compliance.py"
+      - "scripts/sign_plugin.py"
+  pull_request:
+    paths:
+      - "rust/**/Cargo.toml"
+      - ".github/workflows/release-*.yml"
+      - ".github/workflows/plugin-signing-compliance.yml"
+      - "scripts/check_plugin_signing_compliance.py"
+      - "scripts/sign_plugin.py"
+
+jobs:
+  check:
+    name: every cdylib has a signed-release workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Run compliance check
+        run: python scripts/check_plugin_signing_compliance.py

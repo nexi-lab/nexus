@@ -111,7 +111,6 @@ async def test_fingerprintless_l2_ttl_fallback_expires_between_buckets(
         nexus_fs=nexus_fs,
         mode=_Mode.BINARY,
         context=None,
-        namespace_manager=None,
         cache=cache,
         local_disk_cache=local_disk_cache,
         readahead=None,

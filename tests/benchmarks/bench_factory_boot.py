@@ -301,21 +301,14 @@ class TestPerTierBreakdown:
             "permission_enforcer",
             "write_observer",
             # Former-kernel degradable
-            "dir_visibility_cache",
-            "hierarchy_manager",
             "deferred_permission_buffer",
-            "workspace_registry",
             "mount_manager",
-            "workspace_manager",
             # Original system services
-            "eviction_manager",
-            "namespace_manager",
-            "async_namespace_manager",
-            "async_vfs_router",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
-            "context_branch_service",
+            "scheduler_service",
+            "event_signal",
         }
         assert set(result.keys()) == expected_keys, (
             f"System tier key mismatch. "

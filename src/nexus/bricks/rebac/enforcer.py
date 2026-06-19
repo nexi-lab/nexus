@@ -69,7 +69,6 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
     from nexus.bricks.rebac.hotspot_detector import HotspotDetector
     from nexus.bricks.rebac.manager import ReBACManager
-    from nexus.bricks.rebac.namespace_manager import NamespaceManager
     from nexus.bricks.rebac.permissions_enhanced import AuditStore
 
 logger = logging.getLogger(__name__)
@@ -130,8 +129,6 @@ class PermissionEnforcer:
         # Issue #921: Hotspot detection for proactive cache prefetching
         hotspot_detector: "HotspotDetector | None" = None,
         enable_hotspot_tracking: bool = True,
-        # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
-        namespace_manager: "NamespaceManager | None" = None,
         # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
         agent_registry: Any = None,
     ):
@@ -151,16 +148,12 @@ class PermissionEnforcer:
             enable_boundary_cache: Enable boundary caching (default: True)
             hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
             enable_hotspot_tracking: Enable hotspot tracking (default: True)
-            namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
             agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: ReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
         self.dlc = dlc  # DLC for routing + backend refs
-
-        # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
-        self.namespace_manager: NamespaceManager | None = namespace_manager
 
         # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
         self.agent_registry = agent_registry
@@ -576,20 +569,6 @@ class PermissionEnforcer:
                 # Zone not in token's allow-list
                 self._emit_zone_access_block(context, path, permission_str, "zone_not_in_allowlist")
                 return False
-
-        # Issue #1239: Namespace visibility check (Agent OS Phase 0)
-        # Unmounted paths are invisible (404 Not Found), not denied (403 Forbidden).
-        # This runs AFTER admin/system bypass (admins see everything) and BEFORE
-        # fine-grained ReBAC check (defense in depth).
-        if self.namespace_manager is not None:
-            subject = context.get_subject()
-            if not self.namespace_manager.is_visible(subject, path, context.zone_id):
-                from nexus.contracts.exceptions import NexusFileNotFoundError
-
-                raise NexusFileNotFoundError(
-                    path=path,
-                    message="Path not found",  # Intentionally vague — path is invisible
-                )
 
         # Issue #1240 / #1445: Stale-session detection (Agent OS Phase 1)
         check_stale_session(self.agent_registry, context)
@@ -1203,13 +1182,6 @@ class PermissionEnforcer:
             if not paths:
                 return []
 
-        # Issue #1239 + #1244: Namespace pre-filter
-        if self.namespace_manager is not None:
-            subject = context.get_subject()
-            paths = self.namespace_manager.filter_visible(subject, paths, context.zone_id)
-            if not paths:
-                return []
-
         # Use strategy chain if rebac_manager supports bulk checks
         if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
             overall_start = time.time()
@@ -1263,12 +1235,11 @@ class PermissionEnforcer:
     ) -> list[str]:
         """Filter search result paths by read permission via bulk check.
 
-        Unlike filter_list(), this method:
-        1. Skips the NamespaceManager pre-filter (search paths lack mount entries)
-        2. Uses compute_permissions_bulk with fresh graph (unique tuple_version)
-           to check only the N search result paths — O(N) not O(total_zone_tuples)
+        Unlike filter_list(), this method resolves direct and inherited
+        grants through rebac_check_bulk() for only the N search result
+        paths — O(N * path depth), deduped.
 
-        Performance: 1 SQL query + 1 Rust graph build + N permission checks.
+        Performance: 1 bulk permission pass over the returned result paths.
         Scales with search result count, NOT zone size.
 
         Args:
@@ -1306,34 +1277,21 @@ class PermissionEnforcer:
         user_id: str,
         zone_id: str,
     ) -> list[str]:
-        """Check only the given paths via Rust bulk permission check.
-
-        Uses a unique tuple_version (time_ns) to force a fresh graph build,
-        bypassing the stale GRAPH_CACHE bug in compute_permissions_bulk.
-        """
-        import time as time_module
-
-        from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
+        """Check only the given paths via the authoritative ReBAC bulk path."""
+        from nexus.bricks.rebac.permission_filter_chain import _dedupe_checks_by_path
 
         assert self.rebac_manager is not None  # caller already checked
 
-        # Fetch tuples for zone (1 SQL query) — includes cross-zone for user
-        tuples = self.rebac_manager._fetch_tuples_for_zone(
-            zone_id, include_cross_zone_for_user=user_id
-        )
-        namespace_configs = self.rebac_manager._get_namespace_configs_dict()
-
-        # Build checks: [(subject, permission, object), ...]
         subject = ("user", user_id)
-        checks = [(subject, "read", ("file", p)) for p in paths]
+        checks_by_path, checks = _dedupe_checks_by_path(subject, paths)
+        # rebac_check_bulk is graph-fresh on its own: BulkPermissionChecker
+        # forces a fresh Rust graph per call (tuple_version = time_ns()), so
+        # the process-global GRAPH_CACHE cannot leak stale results across call
+        # sites. A separate freshness workaround here would be redundant.
+        results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
 
-        # Use unique tuple_version to force fresh Rust graph (bypass stale cache)
-        results = check_permissions_bulk_with_fallback(
-            checks=checks,
-            tuples=tuples,
-            namespace_configs=namespace_configs,
-            tuple_version=time_module.time_ns(),
-        )
-
-        # results is dict[(subj_type, subj_id, perm, obj_type, obj_id) -> bool]
-        return [p for p in paths if results.get(("user", user_id, "read", "file", p), False)]
+        return [
+            path
+            for path in paths
+            if any(results.get(check, False) for check in checks_by_path[path])
+        ]

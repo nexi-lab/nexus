@@ -56,15 +56,6 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     # Issue #809/#810: Stop DT_PIPE consumers
     await _shutdown_pipe_consumers(app)
 
-    # Issue #625: Stop workflow dispatch consumer
-    wds = app.state.workflow_dispatch
-    if wds is not None:
-        try:
-            await wds.stop()
-            logger.info("Workflow dispatch service stopped")
-        except Exception as e:
-            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
-
     # Stop Task Queue runner (Issue #574)
     task_runner = app.state.task_runner
     if task_runner:
@@ -162,7 +153,6 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
 
         app.state.agent_warmup_service = AgentWarmupService(
             agent_registry=agent_registry,
-            namespace_manager=svc.namespace_manager,
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             cache_store=getattr(app.state, "cache_brick", None),
             mcp_config=None,
@@ -200,7 +190,7 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
                     MetastoreSettingsStore,
                 )
 
-                _identity_settings_store = MetastoreSettingsStore(svc.nexus_fs._kernel)
+                _identity_settings_store = MetastoreSettingsStore(svc.nexus_fs)
             except Exception:
                 pass
             _identity_oauth_crypto = OAuthCrypto(
@@ -214,6 +204,9 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             )
             # Inject into NexusFS for register_agent integration
             svc.nexus_fs._key_service = app.state.key_service
+            agent_rpc = svc.nexus_fs.service("agent_rpc")
+            if agent_rpc is not None:
+                agent_rpc._key_service = app.state.key_service
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
@@ -298,8 +291,6 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
     if app.state.delegation_service is not None:
         # Wire system-tier dependencies that weren't available during factory boot
         deleg = app.state.delegation_service
-        if getattr(deleg, "_namespace_manager", None) is None:
-            deleg._namespace_manager = svc.namespace_manager
         if getattr(deleg, "_agent_registry", None) is None:
             deleg._agent_registry = app.state.agent_registry
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
@@ -324,6 +315,11 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
 
 def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
+    if "sandbox" not in (svc.enabled_bricks or frozenset()):
+        app.state.sandbox_auth_service = None
+        logger.debug("[SANDBOX-AUTH] Skipped — sandbox brick is disabled")
+        return
+
     if svc.nexus_fs and not app.state.agent_registry:
         logger.info(
             "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
@@ -364,36 +360,10 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
         # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
         sandbox_mgr.wire_router()
 
-        # Get NamespaceManager if available (best-effort)
-        namespace_manager = None
-        sync_rebac = svc.rebac_manager
-        if sync_rebac:
-            try:
-                from nexus.bricks.rebac.namespace_factory import (
-                    create_namespace_manager,
-                )
-
-                ns_record_store = svc.record_store
-                namespace_manager = create_namespace_manager(
-                    rebac_manager=sync_rebac,
-                    record_store=ns_record_store,
-                )
-                # Wire event-driven invalidation for sandbox namespace (Issue #1244)
-                sync_rebac.register_namespace_invalidator(
-                    "sandbox_namespace_dcache",
-                    lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
-                )
-            except Exception as e:
-                logger.info(
-                    "[SANDBOX-AUTH] NamespaceManager not available (%s), "
-                    "sandbox mount tables will be empty",
-                    e,
-                )
-
         app.state.sandbox_auth_service = SandboxAuthService(
             agent_registry=app.state.agent_registry,
             sandbox_manager=sandbox_mgr,
-            namespace_manager=namespace_manager,
+            rebac_manager=svc.rebac_manager,
             event_log=app.state.agent_event_log,
             budget_enforcement=False,
         )
@@ -584,15 +554,6 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
     # Expose on app.state so routers can access without reaching into NexusFS
     app.state.workflow_engine = engine
-
-    # Issue #625: Start workflow dispatch consumer (DT_PIPE → workflow engine)
-    wds = app.state.workflow_dispatch
-    if wds is not None:
-        try:
-            await wds.start()
-            logger.info("Workflow dispatch service started")
-        except Exception as e:
-            logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:

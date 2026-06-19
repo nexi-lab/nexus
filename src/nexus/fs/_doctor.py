@@ -97,22 +97,11 @@ def check_nexus_fs_version() -> DoctorCheckResult:
 
 def check_nexus_runtime_version() -> DoctorCheckResult:
     """Check nexus-kernel (Rust/pyo3) availability."""
-    try:
-        import nexus_runtime
-
-        version = getattr(nexus_runtime, "__version__", "unknown")
-        return DoctorCheckResult(
-            name="nexus-kernel",
-            status=DoctorStatus.PASS,
-            message=f"v{version}",
-        )
-    except ImportError:
-        return DoctorCheckResult(
-            name="nexus-kernel",
-            status=DoctorStatus.NOT_INSTALLED,
-            message="Rust accelerator not installed (optional)",
-            install_cmd="pip install nexus-pyo3",
-        )
+    return DoctorCheckResult(
+        name="nexus-kernel",
+        status=DoctorStatus.NOT_INSTALLED,
+        message="nexus_runtime removed — kernel runs via gRPC",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -184,3 +184,46 @@ def test_get_children_returns_direct_children_only(registry):
     # Agent has no children
     agent_children = registry.get_children("agent", "agent_1")
     assert len(agent_children) == 0
+
+
+# ---------------------------------------------------------------------------
+# register_entity_if_absent — insert provenance (#4352 review round 3)
+# ---------------------------------------------------------------------------
+
+
+def test_register_if_absent_reports_created(registry):
+    entity, created = registry.register_entity_if_absent("zone", "acme")
+    assert created is True
+    assert entity.entity_id == "acme"
+
+
+def test_register_if_absent_reports_existing(registry):
+    registry.register_entity("zone", "acme")
+    entity, created = registry.register_entity_if_absent("zone", "acme")
+    assert created is False
+    assert entity.entity_id == "acme"
+
+
+def test_register_if_absent_lost_insert_race_reports_existing(registry, monkeypatch):
+    """If a concurrent request inserts the row between our existence check and
+    our insert, the PK conflict must resolve to (existing row, created=False) —
+    not an exception, and never created=True (which would let a compensation
+    path delete the other request's row)."""
+    registry.register_entity("zone", "acme")
+
+    # Simulate the stale pre-read: the existence check misses the
+    # concurrently-inserted row exactly once.
+    orig_get = EntityRegistry.get_entity
+    calls = {"n": 0}
+
+    def stale_first_read(self, entity_type, entity_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return orig_get(self, entity_type, entity_id)
+
+    monkeypatch.setattr(EntityRegistry, "get_entity", stale_first_read)
+
+    entity, created = registry.register_entity_if_absent("zone", "acme")
+    assert created is False
+    assert entity.entity_id == "acme"

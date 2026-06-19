@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
+from nexus.bricks.rebac.graph._operators import dispatch_relation_operators
+from nexus.bricks.rebac.path_patterns import path_pattern_candidates
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -164,32 +166,17 @@ class PermissionComputer:
                 )
             return self.has_direct_relation(subject, permission, obj, context, zone_id)
 
-        # Handle union (OR of multiple relations)
-        if namespace.has_union(permission):
-            return self._check_union(
-                subject, permission, obj, namespace, visited, depth, context, zone_id
-            )
-
-        # Handle intersection (AND of multiple relations)
-        if namespace.has_intersection(permission):
-            intersection_relations = namespace.get_intersection_relations(permission)
-            # ALL relations must be true
-            for rel in intersection_relations:
-                if not self.compute_permission(
-                    subject, rel, obj, visited.copy(), depth + 1, context, zone_id
-                ):
-                    return False  # If any relation is False, whole intersection is False
-            return True  # All relations were True
-
-        # Handle exclusion (NOT relation - this implements DENY semantics)
-        if namespace.has_exclusion(permission):
-            excluded_rel = namespace.get_exclusion_relation(permission)
-            if excluded_rel:
-                # Must NOT have the excluded relation
-                return not self.compute_permission(
-                    subject, excluded_rel, obj, visited.copy(), depth + 1, context, zone_id
-                )
-            return False
+        # Handle union/intersection/exclusion via shared dispatch
+        rel_op_result = dispatch_relation_operators(
+            namespace,
+            permission,
+            obj.entity_type,
+            lambda rel: self.compute_permission(
+                subject, rel, obj, visited.copy(), depth + 1, context, zone_id
+            ),
+        )
+        if rel_op_result is not None:
+            return rel_op_result
 
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
@@ -247,109 +234,94 @@ class PermissionComputer:
         context: dict[str, Any] | None,
         zone_id: str | None,
     ) -> bool:
-        """Check permission via usersets defined in namespace."""
-        usersets = namespace.get_permission_usersets(permission)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "  [depth=%d] Permission '%s' expands to usersets: %s",
-                depth,
-                permission,
-                usersets,
+        """Check permission via usersets defined in namespace.
+
+        Round-7 review (codex HIGH): inspect the raw permission def and
+        apply correct AND for intersection, NOT for exclusion, OR for
+        list/union, with fail-closed for empty operands and unknown
+        shapes. Previously routed everything through
+        ``get_permission_usersets()`` which flattens intersection/
+        exclusion to a list and iterated with OR — over-granted.
+        Mirrors bulk_evaluator + ZoneAwareTraversal round-4..6 fixes.
+        """
+        perm_def = namespace.config.get("permissions", {}).get(permission)
+
+        def _all_nonempty_strings(items: Any) -> bool:
+            return (
+                isinstance(items, list)
+                and len(items) > 0
+                and all(isinstance(m, str) and m for m in items)
             )
 
-        for i, userset in enumerate(usersets):
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] Checking userset '%s'...",
-                    depth,
-                    i + 1,
-                    len(usersets),
-                    userset,
+        def _try_or(members: list[str]) -> bool:
+            for member in members:
+                if self.compute_permission(
+                    subject, member, obj, visited.copy(), depth + 1, context, zone_id
+                ):
+                    return True
+            return False
+
+        if isinstance(perm_def, list):
+            if not _all_nonempty_strings(perm_def):
+                logger.warning(
+                    "compute_permission: empty/invalid list for '%s' in %s; failing closed",
+                    permission,
+                    obj.entity_type,
                 )
-            result = self.compute_permission(
-                subject, userset, obj, visited.copy(), depth + 1, context, zone_id
-            )
-            if result:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "  [depth=%d] [%d/%d] GRANTED via userset '%s'",
-                        depth,
-                        i + 1,
-                        len(usersets),
-                        userset,
+                return False
+            return _try_or(list(perm_def))
+
+        if isinstance(perm_def, dict):
+            if "union" in perm_def:
+                if not _all_nonempty_strings(perm_def["union"]):
+                    logger.warning(
+                        "compute_permission: empty/invalid union for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
                     )
-                return True
-            elif logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] DENIED for userset '%s'",
-                    depth,
-                    i + 1,
-                    len(usersets),
-                    userset,
-                )
+                    return False
+                return _try_or(list(perm_def["union"]))
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "  [depth=%d] ALL %d usersets DENIED - permission DENIED",
-                depth,
-                len(usersets),
-            )
-        return False
-
-    def _check_union(
-        self,
-        subject: Entity,
-        permission: str,
-        obj: Entity,
-        namespace: "NamespaceConfig",
-        visited: set[tuple[str, str, str, str, str]],
-        depth: int,
-        context: dict[str, Any] | None,
-        zone_id: str | None,
-    ) -> bool:
-        """Check permission via union of relations."""
-        union_relations = namespace.get_union_relations(permission)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "  [depth=%d] Relation '%s' is UNION of: %s",
-                depth,
-                permission,
-                union_relations,
-            )
-
-        for i, rel in enumerate(union_relations):
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] Checking union relation '%s'...",
-                    depth,
-                    i + 1,
-                    len(union_relations),
-                    rel,
-                )
-            result = self.compute_permission(
-                subject, rel, obj, visited.copy(), depth + 1, context, zone_id
-            )
-            if result:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "  [depth=%d] [%d/%d] GRANTED via union relation '%s'",
-                        depth,
-                        i + 1,
-                        len(union_relations),
-                        rel,
+            if "intersection" in perm_def:
+                if not _all_nonempty_strings(perm_def["intersection"]):
+                    logger.warning(
+                        "compute_permission: empty/invalid intersection for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
                     )
+                    return False
+                for member in perm_def["intersection"]:
+                    if not self.compute_permission(
+                        subject, member, obj, visited.copy(), depth + 1, context, zone_id
+                    ):
+                        return False
                 return True
-            elif logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "  [depth=%d] [%d/%d] DENIED for union relation '%s'",
-                    depth,
-                    i + 1,
-                    len(union_relations),
-                    rel,
+
+            if "exclusion" in perm_def:
+                excluded = perm_def.get("exclusion")
+                if not isinstance(excluded, str) or not excluded:
+                    logger.warning(
+                        "compute_permission: empty/invalid exclusion for '%s' in %s; failing closed",
+                        permission,
+                        obj.entity_type,
+                    )
+                    return False
+                return not self.compute_permission(
+                    subject, excluded, obj, visited.copy(), depth + 1, context, zone_id
                 )
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("  [depth=%d] ALL union relations DENIED", depth)
+            # Unknown dict operator — fail closed.
+            logger.warning(
+                "compute_permission: unknown permission operator for '%s' in %s; failing closed (keys=%s)",
+                permission,
+                obj.entity_type,
+                list(perm_def.keys()),
+            )
+            return False
+
+        # Permission defined but in an unrecognized shape — fail closed.
+        if perm_def is not None:
+            return False
         return False
 
     def _check_tuple_to_userset(
@@ -541,8 +513,8 @@ class PermissionComputer:
             cursor = self._repo.create_cursor(conn)
 
             # Check 1: Direct concrete subject (subject_relation IS NULL)
-            row = self._query_direct_tuple(cursor, subject, relation, obj, zone_id)
-            if row:
+            rows = self._query_direct_tuple(cursor, subject, relation, obj, zone_id)
+            for row in rows:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
                         "    Found direct tuple for %s -> %s -> %s", subject, relation, obj
@@ -563,6 +535,25 @@ class PermissionComputer:
             # Check 3: Userset-as-subject grants
             return self._check_userset_grants(cursor, subject, relation, obj, context, zone_id)
 
+    def _object_id_candidates(
+        self,
+        obj: Entity,
+    ) -> tuple[str, tuple[str, ...], dict[str, int]]:
+        candidates = tuple(path_pattern_candidates(obj.entity_type, obj.entity_id))
+        placeholders = ", ".join("?" for _ in candidates)
+        candidate_index = {candidate: idx for idx, candidate in enumerate(candidates)}
+        return placeholders, candidates, candidate_index
+
+    def _rows_by_candidate_priority(
+        self,
+        rows: list[dict[str, Any]],
+        candidate_index: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        return sorted(
+            rows,
+            key=lambda row: candidate_index.get(row["object_id"], len(candidate_index)),
+        )
+
     def _query_direct_tuple(
         self,
         cursor: Any,
@@ -570,25 +561,25 @@ class PermissionComputer:
         relation: str,
         obj: Entity,
         zone_id: str | None,
-    ) -> dict[str, Any] | None:
-        """Query for a direct concrete subject tuple."""
+    ) -> list[dict[str, Any]]:
+        """Query for direct concrete subject tuples."""
         now_iso = datetime.now(UTC).isoformat()
         fix = self._repo.fix_sql_placeholders
+        placeholders, candidates, candidate_index = self._object_id_candidates(obj)
 
         if zone_id is None:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND subject_relation IS NULL
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at >= ?)
                       AND zone_id IS NULL
-                    LIMIT 1
                     """
                 ),
                 (
@@ -596,24 +587,23 @@ class PermissionComputer:
                     subject.entity_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     now_iso,
                 ),
             )
         else:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND subject_relation IS NULL
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at >= ?)
                       AND zone_id = ?
-                    LIMIT 1
                     """
                 ),
                 (
@@ -621,14 +611,14 @@ class PermissionComputer:
                     subject.entity_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     now_iso,
                     zone_id,
                 ),
             )
 
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        rows = [dict(row) for row in cursor.fetchall()]
+        return self._rows_by_candidate_priority(rows, candidate_index)
 
     def _evaluate_tuple_conditions(
         self,
@@ -671,18 +661,19 @@ class PermissionComputer:
         wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
         now_iso = datetime.now(UTC).isoformat()
         fix = self._repo.fix_sql_placeholders
+        placeholders, candidates, candidate_index = self._object_id_candidates(obj)
 
         if zone_id is None:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND subject_relation IS NULL
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at >= ?)
                       AND zone_id IS NULL
                     """
@@ -692,21 +683,21 @@ class PermissionComputer:
                     wildcard_entity.entity_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     now_iso,
                 ),
             )
         else:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND subject_relation IS NULL
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at >= ?)
                       AND zone_id = ?
                     """
@@ -716,14 +707,15 @@ class PermissionComputer:
                     wildcard_entity.entity_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     now_iso,
                     zone_id,
                 ),
             )
 
-        for row in cursor.fetchall():
-            result = self._evaluate_tuple_conditions(dict(row), context)
+        rows = [dict(row) for row in cursor.fetchall()]
+        for row in self._rows_by_candidate_priority(rows, candidate_index):
+            result = self._evaluate_tuple_conditions(row, context)
             if result is not None:
                 return result
 
@@ -731,14 +723,14 @@ class PermissionComputer:
         if zone_id is not None:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND subject_relation IS NULL
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
@@ -747,12 +739,13 @@ class PermissionComputer:
                     wildcard_entity.entity_id,
                     relation,
                     obj.entity_type,
-                    obj.entity_id,
+                    *candidates,
                     now_iso,
                 ),
             )
-            for row in cursor.fetchall():
-                result = self._evaluate_tuple_conditions(dict(row), context)
+            rows = [dict(row) for row in cursor.fetchall()]
+            for row in self._rows_by_candidate_priority(rows, candidate_index):
+                result = self._evaluate_tuple_conditions(row, context)
                 if result is None:
                     continue
                 if logger.isEnabledFor(logging.DEBUG):
@@ -777,41 +770,44 @@ class PermissionComputer:
         """Check userset-as-subject grants (e.g., group:eng#member)."""
         now_iso = datetime.now(UTC).isoformat()
         fix = self._repo.fix_sql_placeholders
+        placeholders, candidates, candidate_index = self._object_id_candidates(obj)
 
         if zone_id is None:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE zone_id IS NULL
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND subject_relation IS NOT NULL
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
-                (relation, obj.entity_type, obj.entity_id, now_iso),
+                (relation, obj.entity_type, *candidates, now_iso),
             )
         else:
             cursor.execute(
                 fix(
-                    """
+                    f"""
                     SELECT tuple_id, subject_type, subject_id, subject_relation,
                            relation, object_type, object_id, conditions, expires_at
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND relation = ?
-                      AND object_type = ? AND object_id = ?
+                      AND object_type = ? AND object_id IN ({placeholders})
                       AND subject_relation IS NOT NULL
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
-                (zone_id, relation, obj.entity_type, obj.entity_id, now_iso),
+                (zone_id, relation, obj.entity_type, *candidates, now_iso),
             )
 
-        userset_grants = [dict(row) for row in cursor.fetchall()]
+        userset_grants = self._rows_by_candidate_priority(
+            [dict(row) for row in cursor.fetchall()], candidate_index
+        )
         for grant in userset_grants:
             set_type = grant["subject_type"]
             set_id = grant["subject_id"]

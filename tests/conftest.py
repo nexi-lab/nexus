@@ -31,9 +31,9 @@ if str(_src_path) not in sys.path:
 # ---------------------------------------------------------------------------
 if os.environ.get("NEXUS_RUST_EDITABLE") == "1":
     try:
-        import maturin_import_hook
+        pass  # maturin-import-hook removed
 
-        maturin_import_hook.install()
+        # kernel runs as nexus-cluster binary
     except ImportError:
         pass  # maturin-import-hook not installed — skip (warn below)
 

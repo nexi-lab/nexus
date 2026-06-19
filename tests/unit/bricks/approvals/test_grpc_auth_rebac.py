@@ -75,7 +75,7 @@ def _ctx(metadata: tuple[tuple[str, str], ...]) -> tuple[_FakeContext, "grpc.aio
 
 
 class _FakeAuth:
-    """Minimal AuthService stand-in: returns whatever was queued for a token."""
+    """Minimal AuthProvider stand-in: returns whatever was queued for a token."""
 
     def __init__(self, results: dict[str, AuthResult]) -> None:
         self._results = results

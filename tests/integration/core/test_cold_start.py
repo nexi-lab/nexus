@@ -38,7 +38,6 @@ class TestColdStartImports:
         from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
         from nexus.contracts.protocols.permission_enforcer import PermissionEnforcerProtocol
         from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
         from nexus.contracts.wirable_fs import WirableFS
         from nexus.core.protocols import VFSCoreProtocol
 
@@ -47,7 +46,6 @@ class TestColdStartImports:
             ReBACBrickProtocol,
             PermissionEnforcerProtocol,
             EntityRegistryProtocol,
-            WorkspaceManagerProtocol,
             WirableFS,
             Describable,
             VFSCoreProtocol,

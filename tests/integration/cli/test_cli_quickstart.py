@@ -9,22 +9,10 @@ from click.testing import CliRunner
 
 from nexus.cli.commands import LazyCommandGroup, register_all_commands
 from nexus.cli.main import main
-from nexus.raft import zone_manager
 
 
-def test_local_cli_quickstart_persists_across_invocations(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_local_cli_quickstart_persists_across_invocations(tmp_path: Path) -> None:
     """The local CLI quickstart should work from a source checkout."""
-
-    def _raise_missing_full_build(*args, **kwargs):
-        raise RuntimeError(
-            "ZoneManager requires PyO3 build with --features full. "
-            "Build with: maturin develop -m rust/raft/Cargo.toml --features full"
-        )
-
-    monkeypatch.setattr(zone_manager, "ZoneManager", _raise_missing_full_build)
 
     runner = CliRunner()
     workspace = tmp_path / "cli-demo"

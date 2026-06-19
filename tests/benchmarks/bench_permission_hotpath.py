@@ -14,6 +14,7 @@ Run with:
 
 import statistics
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -528,4 +529,80 @@ class TestTigerCacheWriteThroughput:
 
         assert stats["ops_per_sec"] > 100_000, (
             f"add_to_bitmap throughput too low: {stats['ops_per_sec']:,.0f} ops/s (target >100k)"
+        )
+
+
+# ============================================================================
+# Benchmark 5 — MCP tool namespace filtering cached path
+# ============================================================================
+
+
+class TestMCPToolNamespaceFiltering:
+    """Measure cached MCP tools/list filtering through ReBAC-derived grants."""
+
+    def test_cached_tool_list_filtering_latency(self) -> None:
+        from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
+
+        visible_tools = {f"tool_{i}" for i in range(32)}
+        all_tools = [SimpleNamespace(name=f"tool_{i}") for i in range(64)]
+        subject = ("agent", "bench_agent")
+
+        rebac = MagicMock()
+        rebac.get_zone_revision.return_value = 0
+        rebac.rebac_list_objects.return_value = [
+            ("file", f"/tools/{name}") for name in sorted(visible_tools)
+        ]
+        middleware = ToolNamespaceMiddleware(rebac_manager=rebac, zone_id=ZONE_ID)
+
+        # Warm the ReBAC-derived visible tool set. The measured path below is
+        # the per-tools/list cache hit plus O(n) membership filtering.
+        assert middleware._get_visible_tools(subject) == frozenset(visible_tools)
+
+        def _filter_once() -> list[Any]:
+            visible = middleware._get_visible_tools(subject)
+            return [tool for tool in all_tools if tool.name in visible]
+
+        for _ in range(WARMUP_ITERATIONS):
+            assert len(_filter_once()) == len(visible_tools)
+
+        stats = _measure_ops(_filter_once, iterations=5_000)
+        _report("MCP tools/list cached filter", stats)
+
+        assert stats["p99_us"] < 1_000.0, (
+            f"MCP tools/list cached filter too slow: p99={stats['p99_us']:.1f}us (target <1000us)"
+        )
+        rebac.rebac_list_objects.assert_called_once()
+
+
+# ============================================================================
+# Benchmark 6 — read-only remote-zone write fast-fail
+# ============================================================================
+
+
+class TestRemoteZoneDeniedWriteFastFail:
+    """Measure read-only hub-zone write denial before transport mutation."""
+
+    def test_readonly_remote_zone_write_fast_fails_before_transport_call(self) -> None:
+        from nexus.backends.storage.remote_zone import RemoteZoneBackend
+        from nexus.contracts.exceptions import ZoneReadOnlyError
+
+        transport = MagicMock()
+        backend = RemoteZoneBackend(zone_id="company", transport=transport, permission="r")
+
+        def _deny_once() -> None:
+            try:
+                backend.write_content(b"blocked")
+            except ZoneReadOnlyError:
+                return
+            raise AssertionError("read-only zone write unexpectedly succeeded")
+
+        for _ in range(WARMUP_ITERATIONS):
+            _deny_once()
+
+        stats = _measure_ops(_deny_once, iterations=5_000)
+        _report("Remote zone read-only write fast-fail", stats)
+
+        assert transport.method_calls == []
+        assert stats["p99_us"] < 1_000.0, (
+            f"read-only remote zone denial too slow: p99={stats['p99_us']:.1f}us (target <1000us)"
         )

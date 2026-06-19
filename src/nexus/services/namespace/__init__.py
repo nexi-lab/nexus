@@ -1,15 +1,11 @@
-"""Namespace fork service domain — SYSTEM tier (Issue #1273).
+"""Namespace descendant-access checking — ReBAC visibility helper.
 
-Agent namespace forking for speculative execution.
-Plan 9 ``rfork(RFNAMEG)`` inspired: fork, explore, merge or discard.
+Hierarchical directory navigation: a subject can see a parent directory
+if it has access to any descendant (even if deeply nested).
 """
 
-from nexus.services.namespace.agent_namespace import AgentNamespace
 from nexus.services.namespace.descendant_access import DescendantAccessChecker
-from nexus.services.namespace.namespace_fork_service import AgentNamespaceForkService
 
 __all__ = [
-    "AgentNamespace",
-    "AgentNamespaceForkService",
     "DescendantAccessChecker",
 ]

@@ -116,6 +116,11 @@ class ContentMixin:
                 the Rust kernel's ``pipe_read_blocking`` releases the GIL
                 but a 5 s wait per empty poll still starves uvicorn's
                 accept loop. Issue #3699.
+
+                DT_REG ignores ``timeout_ms`` entirely: per-type dispatch
+                lives in ``rust/kernel/src/kernel/io.rs`` (lines 255–305) —
+                only DT_PIPE / DT_STREAM consult it. Regular-file reads
+                never pay the IPC wait budget regardless of this value.
         """
 
         start = time.perf_counter()
@@ -151,10 +156,27 @@ class ContentMixin:
             # in which case ``self._kernel`` is None.
             if self._kernel is None:
                 raise NexusFileNotFoundError(path)
+            if getattr(self._kernel, "requires_python_hooks", False) and self._kernel.hook_count(
+                "read"
+            ):
+                from nexus.contracts.vfs_hooks import ReadHookContext
+
+                zone_id, agent_id, _ = self._get_context_identity(context)
+                self._kernel.dispatch_pre_hooks(
+                    "read",
+                    ReadHookContext(
+                        path=path,
+                        context=context,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                    ),
+                )
             _rust_ctx = self._build_rust_ctx(context, _is_admin)
             # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
             # The caller's `offset` param doubles as the stream cursor position.
             # ``timeout_ms=0`` from the caller selects O_NONBLOCK (Issue #3699).
+            # Per-type dispatch lives in rust/kernel/src/kernel/io.rs:255-305 —
+            # DT_PIPE/DT_STREAM consult ``timeout_ms``, DT_REG ignores it.
             _timeout_ms = 5000 if timeout_ms is None else int(timeout_ms)
             result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
 
@@ -266,8 +288,7 @@ class ContentMixin:
         # Small-batch fast path: <=4 paths → sequential sys_read (no batch overhead).
         # Avoids permission-check batching, metadata batching, and logging for tiny requests.
         if len(paths) <= 4:
-            zone_id, agent_id, is_admin = self._get_context_identity(context)
-            _rust_ctx = self._build_rust_ctx(context, is_admin)
+            zone_id, agent_id, is_admin, _rust_ctx = self._prepare_rust_ctx(context)
             for path in paths:
                 try:
                     result = self._kernel.sys_read(path, _rust_ctx)
@@ -322,8 +343,7 @@ class ContentMixin:
         # Read allowed files via Rust kernel sys_read (single path per call).
         # Rust kernel handles: validate → route → dcache → metastore → backend read.
         read_start = time.time()
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # Batch metadata lookup (needed for return_metadata=True)
         batch_meta: dict[str, dict[str, Any] | None] | None = None
@@ -884,6 +904,22 @@ class ContentMixin:
         # keeps the original caller identity intact end-to-end.
         _ = _zone_perms_grants_write  # kept as a hook for future propagation work
 
+        if getattr(self._kernel, "requires_python_hooks", False) and self._kernel.hook_count(
+            "write"
+        ):
+            from nexus.contracts.vfs_hooks import WriteHookContext
+
+            old_metadata = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+            self._kernel.dispatch_pre_hooks(
+                "write",
+                WriteHookContext(
+                    path=path,
+                    content=buf,
+                    context=context,
+                    old_metadata=old_metadata,
+                ),
+            )
+
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
         # Tier 1 sys_write: Rust handles create-on-write (implicit create
@@ -1040,147 +1076,6 @@ class ContentMixin:
             return self.write(path, new_content, context=context)
         finally:
             self.unlock(lock_id, path, context=context)
-
-    def _write_buffer_flush_target(
-        self,
-        path: str | None = None,
-        zone_id: str | None = None,
-        context: OperationContext | None = None,
-    ) -> tuple[str | None, str]:
-        effective_path = self._validate_path(path) if path is not None else None
-        effective_zone = zone_id or self._zone_id
-
-        caller_zone, _, is_admin = self._get_context_identity(context)
-        zone_perms = self._context_zone_perms(context)
-        if caller_zone == ROOT_ZONE_ID and len(zone_perms) > 1 and not is_admin:
-            target_zone = self._embedded_zone(effective_path)
-            requested_zone = zone_id if zone_id and zone_id != self._zone_id else None
-            if target_zone and requested_zone and target_zone != requested_zone:
-                from nexus.contracts.exceptions import AccessDeniedError
-
-                raise AccessDeniedError(
-                    f"Path zone {target_zone!r} does not match requested zone {requested_zone!r}",
-                    effective_path,
-                )
-            target_zone = target_zone or requested_zone
-            if target_zone is None:
-                from nexus.contracts.exceptions import AccessDeniedError
-
-                raise AccessDeniedError(
-                    "Multi-zone write buffer flush requires zone_id or zone-scoped path",
-                    effective_path,
-                )
-            self._require_write_buffer_zone(context, target_zone)
-            from nexus.lib.zone_scoping import scope_single_path
-
-            prefix = f"/zone/{target_zone}"
-            effective_path = (
-                prefix
-                if effective_path is None
-                else scope_single_path(effective_path, prefix, target_zone)
-            )
-            effective_zone = self._zone_id
-            return effective_path, effective_zone
-
-        if caller_zone and caller_zone != ROOT_ZONE_ID:
-            self._require_write_buffer_zone(context, caller_zone)
-            from nexus.lib.zone_scoping import scope_single_path
-
-            prefix = f"/zone/{caller_zone}"
-            effective_path = (
-                prefix
-                if effective_path is None
-                else scope_single_path(effective_path, prefix, caller_zone)
-            )
-            effective_zone = self._zone_id
-
-        return effective_path, effective_zone
-
-    def _context_zone_perms(
-        self, context: OperationContext | dict | None
-    ) -> tuple[tuple[str, str], ...]:
-        if context is None:
-            context = self._resolve_cred(None)
-        raw = (
-            context.get("zone_perms", ())
-            if isinstance(context, dict)
-            else getattr(context, "zone_perms", ())
-        )
-        return tuple((str(zone), str(perms)) for zone, perms in raw or ())
-
-    def _require_write_buffer_zone(
-        self,
-        context: OperationContext | dict | None,
-        requested_zone: str,
-    ) -> None:
-        caller_zone, _, is_admin = self._get_context_identity(context)
-        if is_admin:
-            return
-        zone_perms = self._context_zone_perms(context)
-        if zone_perms:
-            for zone, perms in zone_perms:
-                if zone == requested_zone and ("w" in perms or "x" in perms):
-                    return
-            from nexus.contracts.exceptions import AccessDeniedError
-
-            raise AccessDeniedError(
-                f"Write buffer flush requires write access to zone {requested_zone!r}",
-            )
-        if caller_zone == requested_zone or (
-            caller_zone == ROOT_ZONE_ID and requested_zone == ROOT_ZONE_ID
-        ):
-            return
-        from nexus.contracts.exceptions import AccessDeniedError
-
-        raise AccessDeniedError(
-            f"Write buffer flush zone {requested_zone!r} is outside caller zone {caller_zone!r}",
-        )
-
-    @staticmethod
-    def _embedded_zone(path: str | None) -> str | None:
-        if path is None:
-            return None
-        if path.startswith("/zone/"):
-            tail = path.removeprefix("/zone/")
-            return tail.split("/", 1)[0] or None
-        if path.startswith("/tenant:"):
-            tail = path.removeprefix("/tenant:")
-            return tail.split("/", 1)[0] or None
-        return None
-
-    def flush_write_buffer(
-        self,
-        path: str | None = None,
-        zone_id: str | None = None,
-        *,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Force buffered kernel writes to backend/metastore."""
-        effective_path, effective_zone = self._write_buffer_flush_target(path, zone_id, context)
-        result = self._kernel.flush_write_buffer(effective_path, effective_zone)
-        return {
-            "flushed": int(getattr(result, "flushed", 0)),
-            "failed": int(getattr(result, "failed", 0)),
-            "errors": list(getattr(result, "errors", [])),
-        }
-
-    def fsync(
-        self,
-        path: str,
-        *,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Flush buffered writes for one path."""
-        return self.flush_write_buffer(path, self._zone_id, context=context)
-
-    def sync(
-        self,
-        zone_id: str | None = None,
-        *,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Flush buffered writes for this filesystem zone."""
-        return self.flush_write_buffer(None, zone_id or self._zone_id, context=context)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(
@@ -1429,12 +1324,18 @@ class ContentMixin:
         from nexus.utils.edit_engine import EditEngine
         from nexus.utils.edit_engine import EditOperation as EditOp
 
-        # Read current content with metadata (via Tier 2 convenience)
-        result = self.read(path, context=context, return_metadata=True)
-        assert isinstance(result, dict), "Expected dict when return_metadata=True"
+        # edit() operates on DT_REG: sys_read returns bytes per the Tier 1
+        # contract (syscall-design.md §2). Non-OCC paths skip the sys_stat
+        # round trip — only the if_match branch needs content_id.
+        content_bytes = self.sys_read(path, context=context)
+        assert isinstance(content_bytes, bytes), (
+            "edit() requires DT_REG (sys_read should return bytes)"
+        )
 
-        content_bytes: bytes = result["content"]
-        current_content_id = result.get("content_id")
+        current_content_id: str | None = None
+        if if_match is not None:
+            meta = self.sys_stat(path, context=context)
+            current_content_id = meta.get("content_id") if meta else None
 
         # Check content_id if provided (optimistic concurrency control)
         if if_match is not None and current_content_id != if_match:
@@ -1603,7 +1504,7 @@ class ContentMixin:
             validated_path = self._validate_path(path)
             validated_files.append((validated_path, content))
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
         paths = [p for p, _ in validated_files]
 
         # #4005 round-10: write_batch is a public mutation entrypoint and
@@ -1622,7 +1523,7 @@ class ContentMixin:
             for _p in sorted(set(paths)):
                 _stack.enter_context(_occ_path_lock(_p))
             return self._write_batch_locked(
-                validated_files, paths, context, zone_id, agent_id, is_admin
+                validated_files, paths, context, zone_id, agent_id, _rust_ctx
             )
 
     def _write_batch_locked(
@@ -1632,10 +1533,10 @@ class ContentMixin:
         context: OperationContext | None,
         zone_id: str | None,
         agent_id: str | None,
-        is_admin: bool,
+        _rust_ctx: object,
     ) -> list[dict[str, Any]]:
         """Inner write_batch body — caller holds _occ_path_lock for every path."""
-        # Get existing metadata for pre-hooks and is_new detection
+        # Get existing metadata for pre-hooks
         existing_metadata = dict(
             zip(paths, self._kernel.stat_batch(list(paths), ROOT_ZONE_ID), strict=True)
         )
@@ -1655,74 +1556,39 @@ class ContentMixin:
                 ),
             )
 
-        # ── KERNEL: Rust batch write (validate + route + lock + write + metastore + dcache) ──
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
-        rust_results = self._kernel.sys_write_batch(validated_files, _rust_ctx)
+        # ── KERNEL: Rust Tier 2 write_batch (create-or-overwrite per item) ──
+        # Tier 2 write_batch composes Tier 2 write() per-item, which handles
+        # create-on-miss + OBSERVE dispatch automatically. No Python fallback needed.
+        rust_results = self._kernel.write_batch(validated_files, _rust_ctx)
 
         now = datetime.now(UTC)
         metadata_list: list[FileMetadata] = []
         results: list[dict[str, Any]] = []
 
-        for i, (path, content) in enumerate(validated_files):
+        for i, (path, _content) in enumerate(validated_files):
             r = rust_results[i]
-            if r.hit:
-                io_metrics.record_write_backend_rpc()
-                results.append(
-                    {
-                        "content_id": r.content_id,
-                        "version": r.version,
-                        "gen": r.gen,
-                        "modified_at": now,
-                        "size": r.size,
-                    }
+            io_metrics.record_write_backend_rpc()
+            results.append(
+                {
+                    "content_id": r.content_id,
+                    "version": r.version,
+                    "gen": r.gen,
+                    "modified_at": now,
+                    "size": r.size,
+                }
+            )
+            metadata_list.append(
+                FileMetadata(
+                    path=path,
+                    size=r.size,
+                    content_id=r.content_id,
+                    version=r.version,
+                    gen=r.gen,
+                    zone_id=zone_id or ROOT_ZONE_ID,
                 )
-                metadata_list.append(
-                    FileMetadata(
-                        path=path,
-                        size=r.size,
-                        content_id=r.content_id,
-                        version=r.version,
-                        gen=r.gen,
-                        zone_id=zone_id or ROOT_ZONE_ID,
-                    )
-                )
-            else:
-                # Fallback: Rust batch missed (new file — doesn't exist in
-                # metastore yet). Use Tier 2 self.write() which composes
-                # create-on-write + sys_write, so new files are created via
-                # route-scoped metastore put. The raw sys_write alone returns
-                # a miss (hit=false) without creating the file (POSIX write(2)
-                # contract: file must already exist).
-                #
-                # self.write() dispatches its own post-hooks for this single
-                # file — the batch post-hook below will also fire, but that
-                # is harmless (write_batch hooks expect per-item metadata
-                # that is already in metadata_list regardless).
-                wr = self.write(path, content, context=context)
-                results.append(
-                    {
-                        "content_id": wr.get("content_id", ""),
-                        "version": wr.get("version", 1),
-                        "gen": wr.get("gen", 0),
-                        "modified_at": now,
-                        "size": wr.get("size", len(content)),
-                    }
-                )
-                metadata_list.append(
-                    FileMetadata(
-                        path=path,
-                        size=wr.get("size", len(content)),
-                        content_id=wr.get("content_id", ""),
-                        version=wr.get("version", 1),
-                        gen=wr.get("gen", 0),
-                        zone_id=zone_id or ROOT_ZONE_ID,
-                    )
-                )
+            )
 
-        # Rust sys_write_batch already persisted metadata (commit_metadata per-mount
-        # + ms.put_batch for global items) and updated dcache. No Python put needed.
-
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        # POST-INTERCEPT: batch post-hooks
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
@@ -1732,13 +1598,6 @@ class ContentMixin:
             "write_batch",
             WriteBatchHookContext(items=items, context=context, zone_id=zone_id, agent_id=agent_id),
         )
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        for metadata in metadata_list:
-            old_meta = existing_metadata.get(metadata.path)
-            _ = old_meta is None  # is_new removed with notify
-
-        # Issue #1682: Hierarchy tuples + owner grants moved to post_write_batch hooks.
 
         return results
 
@@ -1762,7 +1621,7 @@ class ContentMixin:
         """
         Read multiple files in a single round-trip for improved performance.
 
-        Uses the Rust kernel's parallel sys_read_batch (rayon par_iter) for all
+        Uses the Rust kernel's parallel read_batch (rayon par_iter) for all
         paths, then a single metadata.get_batch() call — no N+1 queries.
 
         Args:
@@ -1813,8 +1672,7 @@ class ContentMixin:
         # Validate all paths up-front — invalid paths always raise, even in partial mode.
         validated_paths: list[str] = [self._validate_path(p) for p in paths]
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # PRE-INTERCEPT: batch permission check via shared helper.
         allowed_set = self._batch_permission_check(validated_paths, context)
@@ -1866,7 +1724,7 @@ class ContentMixin:
         # Rust kernel surfaces per-item error_kind instead of collapsing all
         # failures to data=None (legacy behaviour).
         rust_results = (
-            self._kernel.sys_read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
+            self._kernel.read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
             if allowed_paths
             else []
         )
@@ -1879,7 +1737,7 @@ class ContentMixin:
         # Finding #1 — we must fire them per-item so batch semantics match single read().
         _has_read_hooks = self._kernel.hook_count("read") > 0
 
-        # Map allowed_paths → rust_results (same order, guaranteed by sys_read_batch).
+        # Map allowed_paths → rust_results (same order, guaranteed by read_batch).
         allowed_iter = iter(rust_results)
 
         # Cumulative byte counter — tracks actual bytes loaded across both the
@@ -1897,7 +1755,7 @@ class ContentMixin:
             meta = batch_meta.get(path)
 
             # Task 10 — explicit per-item error_kind from new kernel ABI.
-            # The new sys_read_batch (tuple-shape) surfaces "not_found",
+            # The new read_batch (tuple-shape) surfaces "not_found",
             # "permission_denied", "invalid_path", "io_error" directly instead
             # of collapsing them to data=None.  Handle before the legacy
             # data=None fallback so the correct exception / error key is used.
@@ -1937,7 +1795,7 @@ class ContentMixin:
                     continue
 
             if r.data is None:
-                # Finding #2 — sys_read_batch returns data=None not only for missing CAS
+                # Finding #2 — read_batch returns data=None not only for missing CAS
                 # files but also for: DT_PIPE / DT_STREAM entries, backend read errors,
                 # lock timeouts, route misses, and external connector paths.  A bare
                 # data=None must not be treated as "file not found" for all of these.

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.models._base import Base, uuid_pk
 
 if TYPE_CHECKING:
@@ -372,7 +373,7 @@ class ZoneModel(Base):
     @property
     def is_active(self) -> bool:
         """Backward-compatible property: Active phase means active."""
-        return self.phase == "Active"
+        return self.phase == ZonePhase.ACTIVE
 
     @property
     def parsed_finalizers(self) -> list[str]:

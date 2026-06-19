@@ -1,5 +1,5 @@
 """Unified filesystem implementation for Nexus."""
-# Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
+# Kernel interface unification — see KERNEL-ARCHITECTURE.md "User Contract — Syscall Interface"
 
 import builtins
 import contextlib
@@ -253,75 +253,27 @@ class NexusFS(  # type: ignore[misc]
 
             self._transport_pool = _RPCTransportPool()
 
-        # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
+        # ── Kernel (gRPC client to nexus-cluster) ──
         # Constructed BEFORE DriverLifecycleCoordinator so DLC sees the
         # kernel from birth (VFSRouter is the Rust SSOT for routing).
-        from nexus._rust_compat import RUST_AVAILABLE
-
         self._kernel = None
-        if RUST_AVAILABLE:
-            try:
-                if _provided_kernel is not None:
-                    # Caller already owns a kernel (typically from
-                    # ``nexus.connect()`` or a previous NexusFS) — reuse
-                    # it rather than constructing a parallel one. We
-                    # assume ``set_metastore_path`` is already in place
-                    # if ``_metastore_path`` is None.
-                    self._kernel = _provided_kernel
-                    if _metastore_path is not None:
-                        self._kernel.set_metastore_path(str(_metastore_path))
-                else:
-                    from nexus_runtime import PyKernel as _Kernel
-
-                    self._kernel = _Kernel()
-                    # Start write-buffer background flusher (production only).
-                    # Test kernels skip this — see make_test_nexus.
-                    self._kernel.start_write_buffer_flusher(250)
-                    # Phase 4 (full): drain federation's blob-fetcher
-                    # slot + install real `PeerBlobClient` (idempotent).
-                    # Log on failure so a stale wheel surfaces in the
-                    # logs rather than silently disabling federation.
-                    # Skip federation wiring during pytest — parallel xdist
-                    # workers compete for the same gRPC port causing 8+ min
-                    # hangs. Federation is an integration-level concern; unit
-                    # tests pass a pre-built kernel via _provided_kernel instead.
-                    if "pytest" not in __import__("sys").modules:
-                        try:
-                            import nexus_runtime as _nk
-
-                            _nk.install_federation_wiring(self._kernel)
-                            _nk.install_transport_wiring(self._kernel)
-                        except Exception as _wiring_exc:
-                            logger.warning(
-                                "install_transport_wiring/install_federation_wiring "
-                                "failed (federation peer-blob fetch will fall back "
-                                "to Noop): %s",
-                                _wiring_exc,
-                            )
-                    # Wire redb metastore — ALL reads and writes go through
-                    # Rust redb. When the caller handed us a path, open
-                    # against it. When ``None`` was passed, fall back to a
-                    # tempfile redb (suitable for fixtures that don't care
-                    # about on-disk persistence).
-                    if _metastore_path is None:
-                        import os
-                        import tempfile
-
-                        fd, tmp_path = tempfile.mkstemp(suffix=".redb")
-                        os.close(fd)
-                        _metastore_path = tmp_path
-
+        try:
+            if _provided_kernel is not None:
+                # Caller already owns a kernel (typically from
+                # ``nexus.connect()`` or a previous NexusFS) — reuse
+                # it rather than constructing a parallel one.
+                self._kernel = _provided_kernel
+                if _metastore_path is not None:
                     self._kernel.set_metastore_path(str(_metastore_path))
-                    # All kernel wiring that depends on other NexusFS attributes
-                    # (_mount_table, _vfs_lock_manager) is deferred to after
-                    # __init__ completes — see "Deferred kernel wiring" block below.
-            except Exception as exc:
-                import logging as _logging
+            else:
+                from nexus.remote.kernel_client import KernelClient
 
-                _logging.getLogger(__name__).warning(
-                    "Kernel init failed — falling back to Python path: %s", exc
-                )
-                self._kernel = None
+                _meta = str(_metastore_path) if _metastore_path else None
+                self._kernel = KernelClient(metadata_path=_meta)
+                self._kernel.open()
+        except Exception as exc:
+            logger.warning("Kernel init failed — falling back to kernel=None: %s", exc)
+            self._kernel = None
 
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
@@ -330,14 +282,11 @@ class NexusFS(  # type: ignore[misc]
             kernel=self._kernel,
         )
 
-        # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.
+        # Deferred kernel wiring: bind mount table after all attributes exist.
         if self._kernel is not None:
             _mt = getattr(self._driver_coordinator, "_mount_table", None)
             if _mt is not None:
                 _mt.bind_kernel(self._kernel)
-            _vfs_rust = getattr(getattr(self, "_vfs_lock_manager", None), "_rust", None)
-            if _vfs_rust is not None:
-                self._kernel.set_vfs_lock(_vfs_rust)
 
         logger.info(
             "IPC primitives initialized: DriverCoordinator (self_address=%s)",
@@ -349,6 +298,12 @@ class NexusFS(  # type: ignore[misc]
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
         self._event_bus: Any = None
+        # Process-local mirror of Python service instances.  In subprocess
+        # kernel mode, KernelClient.service_enlist() is intentionally a no-op
+        # because Python objects cannot be stored inside the Rust process.
+        # Keep them visible to in-process callers and RPC discovery here.
+        self._local_services: dict[str, Any] = {}
+        self._local_service_exports: dict[str, tuple[str, ...]] = {}
         # Hook specs for enlisted services (duck-typed hook_spec() capture)
         self._hook_specs: dict[str, Any] = {}
         # Lifecycle state — set by link() / initialize() / bootstrap()
@@ -433,6 +388,9 @@ class NexusFS(  # type: ignore[misc]
         Returns the service instance, or ``None`` if not registered.
         Delegates to Rust kernel ServiceRegistry.
         """
+        local_services = getattr(self, "_local_services", {})
+        if name in local_services:
+            return local_services[name]
         if self._kernel is None:
             return None
         return self._kernel.service_lookup(name)
@@ -458,16 +416,24 @@ class NexusFS(  # type: ignore[misc]
         timeout_ms = int(timeout * 1000)
 
         # Unregister old hooks
+        local_services = getattr(self, "_local_services", {})
         old_spec = self._hook_specs.get(name)
         if old_spec is None:
-            old_instance = self._kernel.service_lookup(name)
+            old_instance = local_services.get(name)
+            if old_instance is None and self._kernel is not None:
+                old_instance = self._kernel.service_lookup(name)
             if old_instance is not None and _declares_hook_spec(old_instance):
                 old_spec = old_instance.hook_spec()
         if old_spec is not None:
             _unregister_hooks_for_spec(self, old_spec)
 
         # Rust side: drain + replace
-        self._kernel.service_swap(name, new_instance, list(exports), timeout_ms)
+        if self._kernel is not None:
+            self._kernel.service_swap(name, new_instance, list(exports), timeout_ms)
+        local_services[name] = new_instance
+        local_exports = getattr(self, "_local_service_exports", None)
+        if local_exports is not None:
+            local_exports[name] = tuple(exports)
 
         # Register new hooks
         new_spec = hook_spec
@@ -478,14 +444,6 @@ class NexusFS(  # type: ignore[misc]
         elif name in self._hook_specs:
             del self._hook_specs[name]
         _register_hooks_for_spec(self, self._hook_specs.get(name))
-
-    @property
-    def namespace_manager(self) -> Any | None:
-        """Public accessor for the NamespaceManager (via ServiceRegistry)."""
-        _pe = self.service("permission_enforcer")
-        if _pe is not None:
-            return getattr(_pe, "namespace_manager", None)
-        return None
 
     @property
     def config(self) -> Any | None:
@@ -501,7 +459,6 @@ class NexusFS(  # type: ignore[misc]
     def sys_lock(
         self,
         path: str,
-        mode: str = "exclusive",
         ttl: float = 30.0,
         max_holders: int = 1,
         lock_id: str | None = None,
@@ -509,6 +466,8 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None = None,
     ) -> str | None:
         """Acquire or extend advisory lock (POSIX fcntl(F_SETLK)).
+
+        `max_holders == 1` is a mutex; `max_holders > 1` is a counting semaphore.
 
         When lock_id is None: try-acquire a new lock.
         When lock_id is provided: extend TTL of an existing lock (heartbeat).
@@ -520,7 +479,6 @@ class NexusFS(  # type: ignore[misc]
         return self._kernel.sys_lock(
             path,
             lock_id=lock_id or "",
-            mode=mode,
             max_holders=max_holders,
             ttl_secs=int(ttl),
         )
@@ -608,83 +566,6 @@ class NexusFS(  # type: ignore[misc]
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
     # sys_watch is in nexus_fs_watch.py (WatchMixin)
-
-    def workspace_snapshot(
-        self,
-        workspace_path: str | None = None,
-        description: str | None = None,
-        tags: builtins.list[str] | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_snapshot(
-            workspace_path=workspace_path,
-            description=description,
-            tags=tags,
-        )
-
-    def workspace_restore(
-        self,
-        snapshot_number: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_restore(
-            snapshot_number=snapshot_number,
-            workspace_path=workspace_path,
-        )
-
-    def workspace_log(
-        self,
-        workspace_path: str | None = None,
-        limit: int = 100,
-    ) -> builtins.list[dict[str, Any]]:
-        return self._workspace_rpc_service.workspace_log(
-            workspace_path=workspace_path,
-            limit=limit,
-        )
-
-    def workspace_diff(
-        self,
-        snapshot_1: int,
-        snapshot_2: int,
-        workspace_path: str | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.workspace_diff(
-            snapshot_1=snapshot_1,
-            snapshot_2=snapshot_2,
-            workspace_path=workspace_path,
-        )
-
-    # --- Workspace Registry (→ _workspace_rpc_service) ---
-
-    def register_workspace(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: Any | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.register_workspace(
-            path=path,
-            name=name,
-            description=description,
-            created_by=created_by,
-            tags=tags,
-            metadata=metadata,
-            session_id=session_id,
-            ttl=ttl,
-        )
-
-    def unregister_workspace(self, path: str) -> bool:
-        return self._workspace_rpc_service.unregister_workspace(path=path)
-
-    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
-        return self._workspace_rpc_service.list_workspaces(context=context)
-
-    def get_workspace_info(self, path: str) -> dict | None:
-        return self._workspace_rpc_service.get_workspace_info(path=path)
 
     # --- Sandbox Operations (→ _sandbox_rpc_service) ---
 
@@ -846,8 +727,8 @@ class NexusFS(  # type: ignore[misc]
         cannot run on an already-active loop. The FastAPI lifespan dispatches
         this via ``run_in_executor`` for that reason. To dispose async DB
         engines on the lifespan loop (Issue #3775), call
-        :meth:`adispose_async_engines` *before* dispatching ``aclose`` to a
-        worker thread.
+        :func:`nexus.server.lifespan._async_engines.adispose_async_engines`
+        *before* dispatching ``aclose`` to a worker thread.
         """
         # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
         self.shutdown()
@@ -862,48 +743,14 @@ class NexusFS(  # type: ignore[misc]
             self._hook_specs.clear()
         self.close()
 
-    async def adispose_async_engines(self) -> None:
-        """Dispose record store's async DB engines on the current loop (Issue #3775).
-
-        Async engines hold asyncpg connections whose pending futures are
-        bound to the loop that created the pool. Disposing via
-        ``sync_engine.dispose()`` from a worker thread (where ``close()`` runs)
-        await-only's into a different loop, producing
-        ``RuntimeError: Future attached to a different loop`` and leaks
-        connections (asyncpg ``InternalClientError``).
-
-        Disposes **only** the async engines. The record store stays attached
-        and its sync engine usable so that ``NexusFS.close()`` callbacks
-        (e.g. write observer ``flush_sync``) can still write through the sync
-        ``session_factory``. Sync engine teardown happens later in
-        ``record_store.close()`` *after* those callbacks have run.
-
-        FastAPI lifespan must await this on its own loop before dispatching
-        ``aclose`` to a worker thread. Failure preserves the store and is
-        logged at warning level; the subsequent sync ``close()`` will still
-        run callbacks and attempt best-effort sync dispose of the (still
-        live) async engine — better than silently orphaning the store.
-        """
-        if self._record_store is None:
-            return
-        aclose_fn = getattr(self._record_store, "aclose", None)
-        if aclose_fn is None:
-            return  # legacy store without aclose — close() will handle sync dispose
-        try:
-            await aclose_fn()
-        except Exception:
-            logger.warning(
-                "record_store.aclose failed; sync close() will attempt fallback",
-                exc_info=True,
-            )
-
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close Rust buffer."""
+        """Destroy DT_PIPE — sys_unlink on the pipe path."""
 
         with contextlib.suppress(Exception):
-            self._kernel.destroy_pipe(path)
+            rust_ctx = self._build_rust_ctx(None, True)
+            self._kernel.sys_unlink(path, rust_ctx)
         return {}
 
     # ------------------------------------------------------------------
@@ -917,21 +764,26 @@ class NexusFS(  # type: ignore[misc]
     # add event-loop ping-pong without buying anything.
 
     def pipe_create(self, path: str, capacity: int = 65_536) -> None:
-        """Create a DT_PIPE in the kernel registry.
+        """Create a DT_PIPE via sys_setattr."""
+        from nexus.contracts.metadata import DT_PIPE
 
-        Sync passthrough to ``Kernel.create_pipe``.
-        """
-        self._kernel.create_pipe(path, capacity)
+        self.sys_setattr(path, entry_type=DT_PIPE, capacity=capacity)
 
     def pipe_close(self, path: str) -> None:
         """Mark a DT_PIPE as closed (signals EOF to readers, keeps registry entry)."""
         self._kernel.close_pipe(path)
 
     def has_pipe(self, path: str) -> bool:
-        """Check if a DT_PIPE exists in the kernel registry."""
+        """Check if a DT_PIPE exists via sys_stat."""
+        from nexus.contracts.metadata import DT_PIPE
+
         if self._kernel is None:
             return False
-        return self._kernel.has_pipe(path)
+        try:
+            stat = self._kernel.sys_stat(path, self._zone_id)
+            return stat.get("entry_type") == DT_PIPE
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Tier 2 public sync stream methods (kernel passthroughs)
@@ -943,14 +795,22 @@ class NexusFS(  # type: ignore[misc]
     # offset-based replay — async wrapping would just add ping-pong.
 
     def stream_create(self, path: str, capacity: int = 65_536) -> None:
-        """Create a DT_STREAM in the kernel registry."""
-        self._kernel.create_stream(path, capacity)
+        """Create a DT_STREAM via sys_setattr."""
+        from nexus.contracts.metadata import DT_STREAM
+
+        self.sys_setattr(path, entry_type=DT_STREAM, capacity=capacity)
 
     def has_stream(self, path: str) -> bool:
-        """Check if a DT_STREAM exists in the kernel registry."""
+        """Check if a DT_STREAM exists via sys_stat."""
+        from nexus.contracts.metadata import DT_STREAM
+
         if self._kernel is None:
             return False
-        return self._kernel.has_stream(path)
+        try:
+            stat = self._kernel.sys_stat(path, self._zone_id)
+            return stat.get("entry_type") == DT_STREAM
+        except Exception:
+            return False
 
     def stream_read_at_blocking(self, path: str, offset: int, timeout_ms: int) -> tuple[bytes, int]:
         """Blocking offset-based stream read. Returns (chunk, next_offset).
@@ -962,15 +822,18 @@ class NexusFS(  # type: ignore[misc]
         return (bytes(_data), _next)
 
     def stream_write_nowait(self, path: str, data: bytes) -> int:
-        """Non-blocking stream append. Returns byte offset."""
-        return self._kernel.stream_write_nowait(path, data)
+        """Non-blocking stream append via sys_write. Returns byte offset."""
+        rust_ctx = self._build_rust_ctx(None, True)
+        result = self._kernel.sys_write(path, rust_ctx, data)
+        return result.size
 
     def stream_read_at(self, path: str, offset: int) -> tuple[bytes, int] | None:
-        """Non-blocking offset-based stream read. Returns (chunk, next_offset) or None."""
-        _result = self._kernel.stream_read_at(path, offset)
-        if _result is None:
+        """Non-blocking offset-based stream read via sys_read. Returns (chunk, next_offset) or None."""
+        rust_ctx = self._build_rust_ctx(None, True)
+        result = self._kernel.sys_read(path, rust_ctx, timeout_ms=0, offset=offset)
+        if result.data is None or result.data == b"":
             return None
-        return (bytes(_result[0]), _result[1])
+        return (bytes(result.data), result.stream_next_offset or (offset + len(result.data)))
 
     def stream_collect_all(self, path: str) -> bytes:
         """Collect all message payloads from a DT_STREAM, concatenated.
@@ -985,47 +848,36 @@ class NexusFS(  # type: ignore[misc]
         self._kernel.close_stream(path)
 
     def stream_destroy(self, path: str) -> None:
-        """Destroy a DT_STREAM — close kernel buffer + custom backend cleanup.
-
-        Sync alternative to ``await sys_unlink(path)``.
-        """
+        """Destroy a DT_STREAM — close kernel buffer + custom backend cleanup."""
         self._stream_destroy(path)
 
     def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_STREAM — nowait hot path + Rust blocking slow path (GIL-free)."""
+        """Read from DT_STREAM via sys_read with timeout for blocking slow path."""
         # Hot path: try nowait first (zero GIL)
-        _result = self._kernel.stream_read_at(path, offset)
-        if _result is not None:
-            return bytes(_result[0])
+        result = self.stream_read_at(path, offset)
+        if result is not None:
+            return result[0]
 
-        # Slow path: block in Rust, release GIL
+        # Slow path: block in Rust, release GIL (30s timeout)
         _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
         return bytes(_data)
 
     def _stream_write(self, path: str, data: bytes) -> int:
-        """Write to DT_STREAM — non-blocking via Rust kernel (condvar wakes readers), returns byte offset."""
-        return self._kernel.stream_write_nowait(path, data)
+        """Write to DT_STREAM via sys_write."""
+        rust_ctx = self._build_rust_ctx(None, True)
+        result = self._kernel.sys_write(path, rust_ctx, data)
+        return result.size
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_STREAM — close Rust buffer."""
+        """Destroy DT_STREAM via sys_unlink."""
 
         with contextlib.suppress(Exception):
-            self._kernel.destroy_stream(path)
+            rust_ctx = self._build_rust_ctx(None, True)
+            self._kernel.sys_unlink(path, rust_ctx)
         return {}
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
-        flush_error: Exception | None = None
-
-        def _after_flush_cleanup(label: str, close_fn: Callable[[], None]) -> None:
-            if flush_error is None:
-                close_fn()
-                return
-            try:
-                close_fn()
-            except Exception as exc:
-                logger.debug("close: %s failed after write buffer flush failure: %s", label, exc)
-
         # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
         # Runs BEFORE pipe/IPC close so callbacks can drain pipe buffers
         # (Issue #3399: piped write observer needs to flush before buffers clear).
@@ -1040,22 +892,14 @@ class NexusFS(  # type: ignore[misc]
         if self._kernel is not None:
             self._kernel.service_close_all()
 
-        # Final durability barrier: callbacks/services may write during close.
-        if self._kernel is not None:
-            try:
-                self._kernel.flush_write_buffer(None, None)
-            except Exception as exc:
-                flush_error = exc
-                logger.error("close: write buffer flush failed: %s", exc, exc_info=True)
-
         # Close IPC primitives — Rust kernel (§4.2)
         # _kernel is None in remote connection mode (no local kernel)
         if self._kernel is not None:
-            _after_flush_cleanup("close_all_pipes", self._kernel.close_all_pipes)
-            _after_flush_cleanup("close_all_streams", self._kernel.close_all_streams)
+            self._kernel.close_all_pipes()
+            self._kernel.close_all_streams()
         # Close transport pool (persistent gRPC connections)
         if hasattr(self, "_transport_pool") and self._transport_pool is not None:
-            _after_flush_cleanup("transport_pool.close_all", self._transport_pool.close_all)
+            self._transport_pool.close_all()
 
         # Metadata store close is a no-op — kernel manages the redb
         # lifecycle via ``release_metastores`` below.
@@ -1065,7 +909,7 @@ class NexusFS(  # type: ignore[misc]
         # process-lifetime tests that open the same redb path in a second
         # NexusFS hit ``Database already open. Cannot acquire lock.`` (Issue
         # #3765 Cat-5/6). ``release_metastores`` is idempotent.
-        if self._kernel is not None and flush_error is None:
+        if self._kernel is not None:
             try:
                 _release = getattr(self._kernel, "release_metastores", None)
                 if _release is not None:
@@ -1084,7 +928,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Close record store (Services layer SQL connections)
         if self._record_store is not None:
-            _after_flush_cleanup("record_store.close", self._record_store.close)
+            self._record_store.close()
 
         # Close process-local runtime resources owned by this NexusFS.
         while self._runtime_closeables:
@@ -1096,9 +940,6 @@ class NexusFS(  # type: ignore[misc]
                 close_fn()
             except Exception as e:
                 logger.debug("Failed to close runtime resource %s: %s", type(resource).__name__, e)
-
-        if flush_error is not None:
-            raise flush_error
 
     def __enter__(self) -> "NexusFS":
         """Context manager entry."""
@@ -1113,7 +954,6 @@ class NexusFS(  # type: ignore[misc]
     def lock(
         self,
         path: str,
-        mode: str = "exclusive",
         timeout: float = 30.0,
         ttl: float = 60.0,
         max_holders: int = 1,
@@ -1122,6 +962,7 @@ class NexusFS(  # type: ignore[misc]
     ) -> str | None:
         """Acquire lock with blocking wait (Tier 2 over sys_lock).
 
+        `max_holders == 1` is a mutex; `max_holders > 1` is a counting semaphore.
         Retries sys_lock() until acquired or timeout.
         Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
         """
@@ -1131,7 +972,6 @@ class NexusFS(  # type: ignore[misc]
         while True:
             lock_id = self.sys_lock(
                 path,
-                mode=mode,
                 ttl=ttl,
                 max_holders=max_holders,
                 context=context,

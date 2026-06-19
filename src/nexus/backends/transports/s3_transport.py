@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -57,6 +58,39 @@ class S3Transport:
 
     transport_name: str = "s3"
 
+    @staticmethod
+    def _resolve_effective_endpoint(endpoint_url: str | None) -> str | None:
+        """Effective S3 endpoint: explicit arg, else botocore's global endpoint env
+        vars (AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL), which boto3 honors even
+        without an explicit arg. Pure (no boto3) so the resolution is unit-testable.
+        """
+        return (
+            endpoint_url
+            or os.environ.get("AWS_ENDPOINT_URL_S3")
+            or os.environ.get("AWS_ENDPOINT_URL")
+        )
+
+    @staticmethod
+    def _resolve_region(
+        explicit_region: str | None,
+        session_region: str | None,
+        effective_endpoint: str | None,
+    ) -> str | None:
+        """Resolve the SigV4 region. AWS precedence: an explicit region, then
+        AWS_REGION, then whatever ``boto3.Session`` resolved (AWS_DEFAULT_REGION,
+        AWS_PROFILE, ~/.aws/config — passed in as ``session_region``). AWS_REGION is
+        checked here because botocore's ``Session.region_name`` does NOT reflect it
+        (only AWS_DEFAULT_REGION does). A custom endpoint still needs a region, so
+        only fall back to "auto" (which R2 requires) when nothing else resolves —
+        never silently override a configured region. Pure (no boto3) for testing.
+        """
+        return (
+            explicit_region
+            or os.environ.get("AWS_REGION")
+            or session_region
+            or ("auto" if effective_endpoint else None)
+        )
+
     def __init__(
         self,
         bucket_name: str,
@@ -67,10 +101,14 @@ class S3Transport:
         credentials_path: str | None = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
+        *,
+        endpoint_url: str | None = None,
+        signature_version: str = "s3v4",
     ) -> None:
         self.bucket_name = bucket_name
         self._operation_timeout = operation_timeout
         self._upload_timeout = upload_timeout
+        self.endpoint_url = self._resolve_effective_endpoint(endpoint_url)
 
         if boto3 is None or Config is None:
             raise BackendError(
@@ -83,6 +121,7 @@ class S3Transport:
             boto_config = Config(
                 retries={"max_attempts": 3, "mode": "adaptive"},
                 max_pool_connections=25,
+                signature_version=signature_version,
             )
 
             session_kwargs: dict[str, Any] = {}
@@ -103,7 +142,18 @@ class S3Transport:
                     session_kwargs["aws_session_token"] = creds["aws_session_token"]
 
             session = boto3.Session(**session_kwargs)
-            self.s3_client = session.client("s3", config=boto_config)
+
+            resolved_region = self._resolve_region(
+                region_name, session.region_name, self.endpoint_url
+            )
+            self.region_name = resolved_region
+
+            client_kwargs: dict[str, Any] = {"config": boto_config}
+            if endpoint_url:
+                client_kwargs["endpoint_url"] = endpoint_url
+            if resolved_region:
+                client_kwargs["region_name"] = resolved_region
+            self.s3_client = session.client("s3", **client_kwargs)
 
         except Exception as e:
             raise BackendError(
@@ -457,17 +507,6 @@ class S3Transport:
 
     # === S3-Specific Extras (not part of Transport protocol) ===
 
-    def generate_presigned_url(
-        self, key: str, expires_in: int = 3600, method: str = "get_object"
-    ) -> str:
-        """Generate a presigned URL for direct download/upload."""
-        url: str = self.s3_client.generate_presigned_url(
-            method,
-            Params={"Bucket": self.bucket_name, "Key": key},
-            ExpiresIn=expires_in,
-        )
-        return url
-
     def init_multipart(
         self,
         key: str,
@@ -549,6 +588,33 @@ class S3Transport:
                 backend="s3",
                 path=key,
             ) from e
+
+    def get_mtime(self, key: str) -> float:
+        """Return the object's last-modified time as epoch seconds.
+
+        Used by ``CasGcService._list_keys_fallback`` to enforce the grace
+        period for unreferenced blobs. Returns 0.0 on any error (HeadObject
+        failure, missing/malformed ``LastModified``) to signal "timestamp
+        unknown". The GC fallback treats a non-positive mtime as a skip — it
+        will NOT delete a blob whose age it cannot establish — so a transient
+        HeadObject error never causes a fresh blob to be collected.
+        """
+        try:
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
+        except BotoClientError:
+            return 0.0
+        last_modified = response.get("LastModified")
+        if last_modified is None:
+            return 0.0
+        try:
+            return float(last_modified.timestamp())
+        except Exception:
+            logger.debug(
+                "get_mtime: unexpected LastModified type %s for %s",
+                type(last_modified).__name__,
+                key,
+            )
+            return 0.0
 
     def fingerprint(self, key: str) -> str:
         """Return a stable object fingerprint without downloading content."""

@@ -5,8 +5,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-
 logger = logging.getLogger(__name__)
 
 
@@ -129,19 +127,29 @@ def _boot_post_kernel_services(
     # so this late binding is safe.
     rebac_manager = services.get("rebac_manager")
     if rebac_manager is not None:
-        try:
-            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
-                MetastoreNamespaceStore,
+        if getattr(getattr(nx, "_kernel", None), "requires_python_hooks", False):
+            logger.debug(
+                "[BOOT:WIRED] ReBAC namespace + version stores left SQL-backed "
+                "(subprocess kernel VFS misses are too expensive)"
             )
-            from nexus.bricks.rebac.consistency.metastore_version_store import (
-                MetastoreVersionStore,
-            )
+        else:
+            try:
+                from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+                    MetastoreNamespaceStore,
+                )
+                from nexus.bricks.rebac.consistency.metastore_version_store import (
+                    MetastoreVersionStore,
+                )
 
-            rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
-            rebac_manager._version_store = MetastoreVersionStore(nx)
-            logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)
+                rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
+                rebac_manager._version_store = MetastoreVersionStore(nx)
+                # DirectoryExpander descendant queries go through sys_readdir on
+                # this NexusFS handle (Tier 1 syscall, not a kernel primitive).
+                if hasattr(rebac_manager, "set_nexus_fs"):
+                    rebac_manager.set_nexus_fs(nx)
+                logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
+            except Exception as exc:
+                logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)
 
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.
@@ -372,20 +380,30 @@ def _boot_post_kernel_services(
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_init_cred: Any = nx._init_cred
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
-    workspace_rpc_service: Any = None
-    try:
-        from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
 
-        workspace_rpc_service = WorkspaceRPCService(
-            workspace_manager=services["workspace_manager"],
-            workspace_registry=services["workspace_registry"],
-            vfs=nx,
-            default_context=_nx_init_cred,
-            snapshot_service=services.get("snapshot_service"),
+    # --- Tiger Cache Manager (moved from _system.py — initialize()'s
+    #     resource-map sync lists via NexusFS.sys_readdir) ---
+    try:
+        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        _tiger_cache_manager = TigerCacheManager(
+            rebac_manager=services.get("rebac_manager"),
+            nexus_fs=nx,
+            default_zone_id=getattr(_nx_init_cred, "zone_id", None) or ROOT_ZONE_ID,
         )
-        logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
+        # Issue #4342: initialize() may leave a tiger-init-sync daemon thread
+        # (and optionally the queue worker) running past boot; stop both at
+        # NexusFS.close() like the other factory-spawned workers
+        # (_lifecycle.py write observer / delivery worker). Registered BEFORE
+        # initialize() so a close() racing the bounded boot wait still owns
+        # the sync thread (stop_worker is terminal — a resumed initialize
+        # cannot restart background work afterwards).
+        nx._close_callbacks.append(_tiger_cache_manager.stop_worker)
+        _tiger_cache_manager.initialize()
+        logger.debug("[BOOT:WIRED] TigerCacheManager created")
     except Exception as exc:
-        logger.warning("[BOOT:WIRED] WorkspaceRPCService unavailable: %s", exc)
+        logger.warning("[BOOT:WIRED] TigerCacheManager unavailable: %s", exc)
 
     agent_rpc_service: Any = None
     try:
@@ -404,7 +422,6 @@ def _boot_post_kernel_services(
 
                 agent_warmup_service = AgentWarmupService(
                     agent_registry=_agent_registry,
-                    namespace_manager=services.get("async_namespace_manager"),
                     enabled_bricks=services.get("enabled_bricks", frozenset()),
                     cache_store=getattr(services.get("cache_brick"), "cache_store", None),
                     mcp_config=None,
@@ -460,7 +477,6 @@ def _boot_post_kernel_services(
 
                 agent_warmup_service = AgentWarmupService(
                     agent_registry=_agent_reg,
-                    namespace_manager=services.get("async_namespace_manager"),
                     enabled_bricks=services.get("enabled_bricks", frozenset()),
                     cache_store=getattr(services.get("cache_brick"), "cache_store", None),
                     mcp_config=None,
@@ -492,68 +508,18 @@ def _boot_post_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:WIRED] EvictionManager unavailable: %s", exc)
 
-    # AcpService is owned by the Rust kernel. Install once, then late-bind
-    # the Python AgentRegistry (still Python this PR -- planned migration
-    # tracked separately) and the permission-lease termination callback.
+    # AcpService + ManagedAgentService installation is now managed internally
+    # by the nexus-cluster process. The Rust kernel installs these services
+    # during its own boot sequence — no Python-side PyO3 calls needed.
     if _agent_reg is not None:
-        try:
-            import nexus_runtime
-
-            _kernel_handle = getattr(nx, "_kernel", None)
-            if _kernel_handle is not None:
-                # ManagedAgentService — registers the chat-with-me +
-                # workspace-boundary hooks and enlists the service into
-                # ServiceRegistry. Must run before any AgentKind::MANAGED
-                # agent spawns.
-                nexus_runtime.nx_managed_agent_install(_kernel_handle)
-                logger.debug("[BOOT:WIRED] ManagedAgentService (Rust) installed")
-                # AcpService — host for AgentKind::UNMANAGED agents
-                # (subprocess + ACP-over-stdio). Late-binds the Python
-                # AgentRegistry behind the trait so call_agent can
-                # spawn / kill / list pids until the AgentRegistry
-                # SSOT migration to Rust lands.
-                nexus_runtime.nx_acp_install(_kernel_handle, ROOT_ZONE_ID)
-                nexus_runtime.nx_acp_set_agent_registry(_kernel_handle, _agent_reg)
-                logger.debug("[BOOT:WIRED] AcpService (Rust) installed")
-                _perm_lease_table = getattr(nx, "_permission_lease_table", None)
-                if _perm_lease_table is not None:
-                    nexus_runtime.nx_acp_register_on_terminate(
-                        _kernel_handle,
-                        "perm-lease-revoke",
-                        _perm_lease_table.invalidate_agent,
-                    )
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] managed_agent / acp Rust install failed: %s", exc)
-
-    user_provisioning_service: Any = None
-    try:
-        from nexus.services.lifecycle.user_provisioning import UserProvisioningService
-
-        user_provisioning_service = UserProvisioningService(
-            vfs=nx,
-            session_factory=_nx_session_factory,
-            entity_registry=services.get("entity_registry"),
-            api_key_creator=services.get("api_key_creator"),
-            backend=_root_backend,
-            rebac_manager=services.get("rebac_manager"),
-            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
-            rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
-            rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
-            register_workspace_fn=(
-                workspace_rpc_service.register_workspace if workspace_rpc_service else None
-            ),
-            register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
-            list_cache=getattr(nx, "_list_cache", None),
-            exists_cache=getattr(nx, "_exists_cache", None),
+        logger.debug(
+            "[BOOT:WIRED] AcpService + ManagedAgentService managed internally by nexus-cluster"
         )
-        logger.debug("[BOOT:WIRED] UserProvisioningService created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] UserProvisioningService unavailable: %s", exc)
 
     sandbox_rpc_service: Any = None
     if _on("sandbox"):
         try:
-            from nexus.sandbox.sandbox_rpc_service import SandboxRPCService
+            from nexus.bricks.sandbox.sandbox_rpc_service import SandboxRPCService
 
             sandbox_rpc_service = SandboxRPCService(
                 session_factory=_nx_session_factory,
@@ -587,7 +553,7 @@ def _boot_post_kernel_services(
             if _rebac_for_dc
             else None,
             permission_enforcer=services.get("permission_enforcer"),
-            metadata_store=nx._kernel,
+            nexus_fs=nx,
         )
         logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
     except Exception as exc:
@@ -601,7 +567,7 @@ def _boot_post_kernel_services(
 
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
-                backend=_root_backend,
+                nexus_fs=nx,
                 default_zone_id=getattr(_nx_init_cred, "zone_id", None),
             )
             logger.debug("[BOOT:WIRED] TimeTravelService created")
@@ -621,7 +587,6 @@ def _boot_post_kernel_services(
                 delete_fn=nx.sys_unlink,
                 rename_fn=nx.sys_rename,
                 exists_fn=nx.access,
-                fallback_backend=getattr(nx, "backend", None),
             )
             operations_service = OperationsService(
                 session_factory=_nx_session_factory,
@@ -641,9 +606,7 @@ def _boot_post_kernel_services(
         "share_link_service": share_link_service,
         "time_travel_service": time_travel_service,
         "operations_service": operations_service,
-        "workspace_rpc_service": workspace_rpc_service,
         "agent_rpc_service": agent_rpc_service,
-        "user_provisioning_service": user_provisioning_service,
         "sandbox_rpc_service": sandbox_rpc_service,
         "metadata_export_service": metadata_export_service,
         "descendant_checker": descendant_checker,

@@ -1,0 +1,1685 @@
+# ruff: noqa: ARG002
+"""gRPC kernel client — replaces in-process PyKernel (nexus_runtime.so).
+
+All profiles (embedded, full, cloud) now use this client to communicate
+with the Rust kernel running as a separate `nexus-cluster` process.
+The REMOTE profile already used gRPC via RPCTransport; this module
+generalizes that pattern for local deployments where the kernel process
+is spawned as a subprocess.
+
+The KernelClient exposes the same method surface that Python code
+previously called on PyKernel. Under the hood, typed RPCs are used for
+content-heavy operations (Read/Write/Delete/BatchRead) and the generic
+Call RPC for metadata/service operations.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import shutil
+import signal
+import subprocess
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import IO, Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rpc_types import RPCErrorCode
+from nexus.lib.rpc_codec import decode_rpc_message
+from nexus.remote.rpc_transport import RPCTransport
+
+logger = logging.getLogger(__name__)
+
+# Default port for local kernel subprocess.
+_DEFAULT_LOCAL_PORT = 2126
+_KERNEL_BINARY_ENV = "NEXUS_KERNEL_BINARY"
+_KERNEL_BINARY_CANDIDATES = ("nexus-cluster", "nexusd-cluster")
+_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX = ".kernel"
+# The kernel's metastore override env name has flip-flopped across
+# nexus-vfs revs: NEXUS_METASTORE_PATH (b04e0683, the original PR #43
+# wiring) -> NEXUS_KERNEL_METASTORE_PATH (67ac07f hardened reland) ->
+# NEXUS_METASTORE_PATH again (e68353c, 12ab8e8 reverted the reland).
+# We export BOTH names with the same value so every rev in circulation
+# honors the override; whichever name a given kernel reads, the answer
+# is identical. Both are treated as caller intent on the way in and
+# both are stripped when this client manages storage.
+_KERNEL_METASTORE_ENV = "NEXUS_KERNEL_METASTORE_PATH"
+_LEGACY_METASTORE_ENV = "NEXUS_METASTORE_PATH"
+_METASTORE_ENVS = (_KERNEL_METASTORE_ENV, _LEGACY_METASTORE_ENV)
+
+
+def _resolve_kernel_binary() -> str:
+    """Return the Rust kernel binary to spawn.
+
+    CI and packaged installs often provide the compatibility name
+    ``nexus-cluster``. Local Cargo builds produce the actual bin target
+    ``nexusd-cluster``. Accept both so real local E2E runs do not require a
+    manual symlink.
+    """
+    configured = os.environ.get(_KERNEL_BINARY_ENV)
+    if configured:
+        return configured
+
+    for binary_name in _KERNEL_BINARY_CANDIDATES:
+        resolved = shutil.which(binary_name)
+        if resolved:
+            return resolved
+
+    return _KERNEL_BINARY_CANDIDATES[0]
+
+
+def _resolve_kernel_data_dir(metadata_path: str | None) -> str | None:
+    """Return a directory path suitable for the Rust kernel data dir.
+
+    Older Python-only runs used ``metadata_path`` as a database file. The Rust
+    kernel reads ``NEXUS_DATA_DIR`` as a directory, so passing that legacy file
+    path makes the subprocess panic before it can report a useful startup
+    error. Keep normal directory/nonexistent paths unchanged, but route an
+    existing file to a deterministic sidecar directory.
+    """
+    if not metadata_path:
+        return None
+
+    path = Path(metadata_path).expanduser()
+    try:
+        if path.exists() and path.is_file():
+            return str(path.with_name(f"{path.name}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"))
+    except OSError:
+        return metadata_path
+
+    return metadata_path
+
+
+# First bytes of every redb database file (verified against files the
+# kernel writes): b"redb\x1a\x0a\xa9\x0d\x0a". Four bytes suffice to
+# tell redb from SQLite ("SQLite format 3\x00") and arbitrary files.
+_REDB_MAGIC = b"redb"
+
+
+def _is_redb_file(path: Path) -> bool:
+    """True if ``path`` is an existing file with the redb magic header.
+
+    Raises ``OSError`` when an existing regular file's header cannot be
+    read (permissions, transient I/O): that file may BE the durable
+    namespace, and falling through to a fresh sidecar data dir would
+    silently boot an empty namespace — the exact data-loss symptom
+    #4343 eliminates. Fail closed; the caller surfaces a boot error.
+    """
+    try:
+        if not path.is_file():
+            return False
+    except OSError:
+        # Could not even stat — indistinguishable from absent; let the
+        # data-dir path proceed (the kernel will surface real errors).
+        return False
+    with path.open("rb") as f:
+        return f.read(len(_REDB_MAGIC)) == _REDB_MAGIC
+
+
+def _resolve_kernel_spawn_paths(metadata_path: str | None) -> tuple[str | None, str | None]:
+    """Return ``(data_dir, metastore_file)`` for the kernel spawn env.
+
+    Directory paths are the kernel data dir; the kernel derives
+    ``<data_dir>/metastore.redb`` itself (#4343). An explicit metastore
+    file — a ``.redb``-suffixed path, or an existing file with the redb
+    magic header regardless of name — is honored via
+    ``NEXUS_KERNEL_METASTORE_PATH`` so a preexisting namespace file is
+    reopened rather than silently abandoned, with the payload data dir
+    routed to the deterministic ``.kernel`` sidecar. Other existing
+    files (legacy SQLite-era paths the kernel cannot reopen as redb)
+    keep the sidecar-dir fallback.
+    """
+    if not metadata_path:
+        return None, None
+
+    path = Path(metadata_path).expanduser()
+    try:
+        if path.is_dir():
+            # An existing directory is always the data dir — even one
+            # named like a redb file. Every deployed volume (the kernel
+            # lays out <dir>/root/** + <dir>/metastore.redb) hits this.
+            return str(path), None
+    except OSError:
+        return metadata_path, None
+    if path.suffix == ".redb" or _is_redb_file(path):
+        sidecar = path.with_name(f"{path.name}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}")
+        return str(sidecar), str(path)
+    return _resolve_kernel_data_dir(metadata_path), None
+
+
+def _apply_storage_env(
+    env: dict[str, str],
+    metadata_path: str | None,
+    metastore_file: str | None = None,
+    *,
+    ephemeral_dir: str | None = None,
+) -> None:
+    """Set the kernel storage env (``NEXUS_DATA_DIR``/``NEXUS_KERNEL_METASTORE_PATH``).
+
+    The kernel reads its metastore override from
+    ``NEXUS_KERNEL_METASTORE_PATH`` only (see ``_KERNEL_METASTORE_ENV``);
+    the legacy ``NEXUS_METASTORE_PATH`` is recognized here purely as
+    caller intent and never exported.
+
+    ``metastore_file`` carries *explicit* metastore intent (the
+    ``KernelClient(metastore_file=...)`` channel): it is forwarded
+    verbatim as ``NEXUS_KERNEL_METASTORE_PATH`` — no suffix or
+    existence heuristics — with the data dir taken from
+    ``metadata_path`` (or its ``.kernel`` sidecar when absent).
+
+    Otherwise, when this client manages storage (``metadata_path``
+    given), the spawn env is derived from it: existing directories and
+    fresh paths become the data dir (the kernel derives
+    ``<data_dir>/metastore.redb``, #4343); explicit redb files
+    (``.redb`` suffix or redb magic header) are forwarded as
+    ``NEXUS_KERNEL_METASTORE_PATH``. *Inherited* metastore env (either
+    name) is dropped in that case — it would silently point every
+    client at one shared namespace file regardless of their distinct
+    ``metadata_path``, breaking per-client isolation — unless it names
+    the same path as ``metadata_path`` (explicit operator intent).
+    Without any storage hint the ambient env passes through untouched
+    (operator-managed spawn).
+    """
+    if ephemeral_dir:
+        # Explicitly ephemeral kernel (":memory:"): all storage lives
+        # in a throwaway dir and ambient durable-namespace env must not
+        # leak in — an inherited metastore override would silently
+        # persist and cross-contaminate state the caller asked to be
+        # temporary. (Without a data dir the kernel would also default
+        # to a durable cwd-relative ./nexus-cluster-data.)
+        env["NEXUS_DATA_DIR"] = ephemeral_dir
+        for name in _METASTORE_ENVS:
+            env.pop(name, None)
+        return
+
+    if metastore_file:
+        for name in _METASTORE_ENVS:
+            env[name] = metastore_file
+        if metadata_path:
+            data_dir, _ = _resolve_kernel_spawn_paths(metadata_path)
+            if data_dir:
+                env["NEXUS_DATA_DIR"] = data_dir
+        else:
+            env["NEXUS_DATA_DIR"] = f"{metastore_file}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
+        return
+
+    kernel_data_dir, kernel_metastore = _resolve_kernel_spawn_paths(metadata_path)
+    if not kernel_data_dir:
+        return
+
+    env["NEXUS_DATA_DIR"] = kernel_data_dir
+    if kernel_metastore:
+        for name in _METASTORE_ENVS:
+            env[name] = kernel_metastore
+        return
+
+    # Inherited metastore overrides: the kernel-namespaced name takes
+    # precedence as intent; both names are stripped from the child env
+    # (different revs read different names — see _METASTORE_ENVS).
+    inherited = env.pop(_KERNEL_METASTORE_ENV, None) or env.pop(_LEGACY_METASTORE_ENV, None)
+    for name in _METASTORE_ENVS:
+        env.pop(name, None)
+    if inherited:
+        # The inherited env naming the SAME path as metadata_path is
+        # explicit operator intent for that file — honor it verbatim
+        # unless the path is already a directory (deployed data-dir
+        # layout).
+        same_target = metadata_path is not None and str(Path(inherited).expanduser()) == str(
+            Path(metadata_path).expanduser()
+        )
+        if same_target and not Path(inherited).expanduser().is_dir():
+            for name in _METASTORE_ENVS:
+                env[name] = inherited
+            env["NEXUS_DATA_DIR"] = f"{inherited}{_KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX}"
+            return
+        logger.warning(
+            "Dropping inherited metastore override %s — metadata_path %s "
+            "manages this kernel's storage (namespace derives from "
+            "NEXUS_DATA_DIR=%s)",
+            inherited,
+            metadata_path,
+            kernel_data_dir,
+        )
+    if metadata_path and kernel_data_dir != metadata_path:
+        logger.warning(
+            "Kernel metadata path %s is a file; using %s as NEXUS_DATA_DIR",
+            metadata_path,
+            kernel_data_dir,
+        )
+
+
+class KernelClient:
+    """gRPC-based kernel client — drop-in replacement for PyKernel.
+
+    For local profiles (embedded/full/cloud), spawns ``nexus-cluster``
+    as a subprocess and connects via loopback gRPC. For remote profiles,
+    connects to an existing server.
+
+    Provides the same method surface as the old PyKernel so existing
+    Python callers continue to work unchanged.
+    """
+
+    def __init__(
+        self,
+        *,
+        server_address: str | None = None,
+        auth_token: str | None = None,
+        metadata_path: str | None = None,
+        metastore_file: str | None = None,
+        ephemeral: bool = False,
+        timeout: float = 90.0,
+    ) -> None:
+        # ``metadata_path`` is the storage hint (directory, or legacy
+        # file path — see _resolve_kernel_spawn_paths heuristics).
+        # ``metastore_file`` is *explicit* metastore-file intent: it is
+        # forwarded verbatim as NEXUS_KERNEL_METASTORE_PATH, no heuristics —
+        # use it when the exact namespace file location matters (e.g.
+        # suffixless paths, backup/restore tooling).
+        # ``ephemeral`` (":memory:" callers): spawn with a throwaway
+        # temp data dir and strip ambient durable-namespace env.
+        self._metadata_path = metadata_path
+        self._metastore_file = metastore_file
+        self._ephemeral = ephemeral
+        self._ephemeral_dir: str | None = None
+        self._process: subprocess.Popen[bytes] | None = None
+        self._stderr_file: IO[bytes] | None = None
+        self._stderr_path: str | None = None
+        self._transport: RPCTransport | None = None
+        self._timeout = timeout
+        self._auth_token = auth_token or ""
+        self.requires_python_hooks = True
+        self._hooks: dict[str, list[Any]] = {}
+
+        if server_address:
+            # Remote mode — connect to existing server.
+            self._server_address = server_address
+        else:
+            # Local mode — will spawn subprocess on open().
+            port = _find_free_port()
+            self._server_address = f"127.0.0.1:{port}"
+
+    # ── Lifecycle ──────────────────────────────────────────────────────
+
+    def open(self) -> None:
+        """Start kernel subprocess (if local) and establish gRPC channel."""
+        if self._process is None and not self._is_remote():
+            self._spawn_kernel()
+        self._transport = RPCTransport(
+            server_address=self._server_address,
+            auth_token=self._auth_token,
+            timeout=self._timeout,
+        )
+        # Wait for kernel to be ready.
+        self._wait_ready()
+
+    def close(self) -> None:
+        """Shutdown kernel subprocess and close gRPC channel."""
+        if self._transport:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self._transport.close()
+            self._transport = None
+        if self._process:
+            self._process.send_signal(signal.SIGTERM)
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+            self._process = None
+        if self._stderr_file is not None:
+            import contextlib
+
+            with contextlib.suppress(OSError):
+                self._stderr_file.close()
+            stderr_path = getattr(self, "_stderr_path", None)
+            if stderr_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(stderr_path)
+            self._stderr_file = None
+        if self._ephemeral_dir is not None:
+            import contextlib
+
+            with contextlib.suppress(OSError):
+                shutil.rmtree(self._ephemeral_dir, ignore_errors=True)
+            self._ephemeral_dir = None
+
+    def _is_remote(self) -> bool:
+        return self._process is None and self._transport is not None
+
+    def _spawn_kernel(self) -> None:
+        """Spawn nexus-cluster as a subprocess."""
+        kernel_binary = _resolve_kernel_binary()
+        cmd = [kernel_binary]
+        env = os.environ.copy()
+        if self._ephemeral and self._ephemeral_dir is None:
+            import tempfile
+
+            self._ephemeral_dir = tempfile.mkdtemp(prefix="nexus-kernel-ephemeral-")
+        _apply_storage_env(
+            env,
+            self._metadata_path,
+            self._metastore_file,
+            ephemeral_dir=self._ephemeral_dir,
+        )
+        env["NEXUS_BIND_ADDR"] = self._server_address
+        env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
+        env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")
+
+        # Redirect stdout/stderr to temp files to avoid pipe buffer deadlock.
+        # The OS pipe buffer (~65KB) fills up when the Rust binary emits
+        # tracing output and nobody reads the pipe, blocking the process.
+        import tempfile
+
+        fd, stderr_path = tempfile.mkstemp(prefix="nexus-kernel-", suffix=".log")
+        self._stderr_file = os.fdopen(fd, "wb")
+        self._stderr_path = stderr_path
+        self._process = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=self._stderr_file,
+        )
+        logger.info(
+            "Spawned %s (pid=%d) at %s, log=%s",
+            kernel_binary,
+            self._process.pid,
+            self._server_address,
+            self._stderr_path,
+        )
+
+    def _wait_ready(self, timeout: float = 30.0) -> None:
+        """Poll kernel health until ready."""
+        assert self._transport is not None
+        deadline = time.monotonic() + timeout
+        last_err: Exception | None = None
+        while time.monotonic() < deadline:
+            # Check if subprocess crashed before wasting time on gRPC.
+            if self._process is not None:
+                rc = self._process.poll()
+                if rc is not None:
+                    stderr_tail = self._read_stderr_tail()
+                    raise RuntimeError(
+                        f"Kernel subprocess exited with code {rc} "
+                        f"before becoming ready.\n{stderr_tail}"
+                    )
+            try:
+                self._transport.ping()
+                return
+            except Exception as e:
+                last_err = e
+                time.sleep(0.1)
+        stderr_tail = self._read_stderr_tail()
+        raise TimeoutError(
+            f"Kernel not ready after {timeout}s at {self._server_address}\n{stderr_tail}"
+        ) from last_err
+
+    def _read_stderr_tail(self, lines: int = 30) -> str:
+        """Read the last N lines from the kernel stderr log file."""
+        stderr_path = getattr(self, "_stderr_path", None)
+        if stderr_path is None:
+            return ""
+        try:
+            with open(stderr_path) as f:
+                all_lines = f.readlines()
+                tail = all_lines[-lines:]
+                return "".join(tail)
+        except OSError:
+            return ""
+
+    # ── Syscall interface ──────────────────────────────────────────────
+
+    def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """Generic Call RPC dispatch."""
+        assert self._transport is not None
+        return self._transport.call_rpc(method, params or {}, auth_token=self._auth_token)
+
+    def sys_read(
+        self,
+        path: str,
+        context: Any = None,
+        timeout_ms: int = 0,
+        offset: int = 0,
+    ) -> Any:
+        """Read file content via the typed Read RPC.
+
+        ``timeout_ms`` / ``offset`` go on the wire — the typed Read carries
+        full sys_read fidelity since the ReadRequest proto extension.
+        """
+        assert self._transport is not None
+        response = self._transport.read(
+            path,
+            content_id="",
+            timeout_ms=int(timeout_ms),
+            offset=int(offset),
+            read_timeout=self._timeout,
+        )
+        stream_next_offset = (
+            response.stream_next_offset if response.HasField("stream_next_offset") else None
+        )
+        return _SysReadResult(
+            data=bytes(response.content),
+            content_id=response.content_id or None,
+            gen=int(response.gen or 0),
+            entry_type=int(response.entry_type or 1),
+            stream_next_offset=stream_next_offset,
+            post_hook_needed=bool(response.post_hook_needed) or self.hook_count("read") > 0,
+        )
+
+    def sys_read_raw(self, path: str, zone_id: str = ROOT_ZONE_ID) -> bytes:  # noqa: ARG002
+        """Read raw file bytes for compatibility with versioning/parsers services."""
+        assert self._transport is not None
+        return self._transport.read_file(path, content_id="", read_timeout=self._timeout)
+
+    def sys_write(
+        self,
+        path: str,
+        context: Any = None,
+        data: bytes = b"",
+        offset: int = 0,
+    ) -> Any:
+        """Write file content via typed Write RPC."""
+        assert self._transport is not None
+        result = self._transport.write_file(path, data, content_id=None, read_timeout=self._timeout)
+        return _SysWriteResult(
+            content_id=result.get("content_id"),
+            size=result.get("size", 0),
+            gen=result.get("gen", 0),
+        )
+
+    def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
+        """Stat a path via the typed Stat RPC.
+
+        Returns a metadata dict (the `stat_to_json` shape, enriched with
+        ISO-8601 `created_at` / `modified_at`), or None on not-found.
+        """
+        assert self._transport is not None
+        try:
+            resp = self._transport.stat(path, zone_id)
+        except Exception:
+            # Auth / transport errors translate to None — matching the
+            # prior Call-path behaviour (FileNotFound was an RPC error).
+            return None
+        if resp is None:
+            return None
+        return _stat_response_to_dict(resp)
+
+    def sys_setattr(self, path: str, **kwargs: Any) -> Any:
+        """Set attributes via the typed Setattr RPC.
+
+        Accepts the same kwargs the Call path did (entry_type, zone_id,
+        mime_type, content_id, modified_at_ms, created_at_ms, size,
+        version, backend_name, io_profile, is_external, capacity).
+        Unknown kwargs are silently dropped — parity with the Call
+        handler's pick-known-keys behaviour.
+        """
+        assert self._transport is not None
+        response = self._transport.setattr(path, **kwargs)
+        return _SysSetAttrResult(
+            {
+                "path": response.path,
+                "created": response.created,
+                "entry_type": response.entry_type,
+            }
+        )
+
+    def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
+        """Delete a file or directory via the typed Delete RPC."""
+        assert self._transport is not None
+        r = self._transport.delete(path, recursive)
+        return _SysUnlinkResult(
+            {
+                "hit": r.success,
+                "entry_type": r.entry_type,
+                "path": r.path,
+                "content_id": r.content_id or None,
+                "size": r.size,
+            }
+        )
+
+    def sys_mkdir(
+        self, path: str, context: Any = None, parents: bool = False, exist_ok: bool = True
+    ) -> Any:
+        """Create a directory via the typed Mkdir RPC."""
+        assert self._transport is not None
+        r = self._transport.mkdir(path, parents=parents, exist_ok=exist_ok)
+        return _SysMkdirResult({"hit": r.hit})
+
+    def sys_rename(
+        self,
+        path: str,
+        new_path: str,
+        context: Any = None,
+    ) -> Any:
+        """Rename/move a file or directory via the typed Rename RPC."""
+        assert self._transport is not None
+        r = self._transport.rename(path, new_path)
+        return _SysRenameResult(
+            {
+                "hit": r.hit,
+                "success": r.success,
+                "is_directory": r.is_directory,
+                "old_content_id": r.old_content_id if r.HasField("old_content_id") else None,
+                "old_size": r.old_size if r.HasField("old_size") else None,
+                "old_version": r.old_version if r.HasField("old_version") else None,
+                "old_modified_at_ms": r.old_modified_at_ms
+                if r.HasField("old_modified_at_ms")
+                else None,
+            }
+        )
+
+    def sys_copy(
+        self,
+        src: str,
+        dst: str,
+        context: Any = None,
+    ) -> Any:
+        """Copy a file via the typed Copy RPC."""
+        assert self._transport is not None
+        r = self._transport.copy(src, dst)
+        return _SysCopyResult(
+            {
+                "hit": r.hit,
+                "dst_path": r.dst_path,
+                "content_id": r.content_id if r.HasField("content_id") else None,
+                "size": r.size,
+                "version": r.version,
+                "gen": r.gen,
+            }
+        )
+
+    def sys_readdir(
+        self,
+        path: str,
+        zone_id: str = ROOT_ZONE_ID,
+        is_admin: bool = False,  # noqa: ARG002 — kept for API compat; ctx-derived server-side
+    ) -> list[tuple[str, int]]:
+        """List directory contents via the typed Readdir RPC.
+
+        Returns ``list[(path, entry_type)]``. ``is_admin`` is accepted for
+        API compatibility but ignored — the server reads it from the
+        auth-resolved OperationContext (the generic Call path did the
+        same, so this is parity).
+        """
+        assert self._transport is not None
+        return [(e.name, e.entry_type) for e in self._transport.readdir(path, zone_id)]
+
+    def sys_lock(
+        self,
+        path: str,
+        lock_id: str = "",
+        max_holders: int = 1,  # noqa: ARG002 — kept for API compat
+        ttl_secs: int = 60,  # noqa: ARG002 — kept for API compat
+        timeout_ms: int = 5000,
+        **_kwargs: Any,
+    ) -> Any:
+        """Acquire an advisory lock via the typed Lock RPC.
+
+        Returns the lock_id string on success; raises on contention to
+        match the prior Call path (which surfaced contention as an RPC
+        error).
+        """
+        from nexus.contracts.exceptions import NexusError
+
+        assert self._transport is not None
+        resp = self._transport.lock(path, lock_id, timeout_ms)
+        if not resp.acquired:
+            raise NexusError(f"lock acquisition failed (contention): {path}")
+        return resp.lock_id
+
+    def sys_unlock(self, path: str, lock_id: str = "", force: bool = False) -> Any:
+        """Release advisory lock via the typed Unlock RPC."""
+        assert self._transport is not None
+        resp = self._transport.unlock(path, lock_id, force)
+        return {"released": resp.released}
+
+    def read_batch(
+        self,
+        items: list[tuple[str, int, int | None]],
+        context: Any = None,
+    ) -> list[Any]:
+        """Batch read via the typed BatchRead RPC — one round-trip.
+
+        Replaces the former N-round-trip loop of single Read RPCs. The
+        Rust kernel reads every item in one pass (rayon par_iter) and
+        returns a per-item result vector in input order.
+
+        Returns a list of _SysReadResult in the same order as ``items``.
+        Per-item failures are surfaced via ``error_kind`` so the caller
+        (nexus_fs_content.read_batch) can distinguish not_found from
+        other errors and implement partial/strict mode correctly.
+        """
+        assert self._transport is not None
+        if not items:
+            return []
+        results: list[Any] = []
+        for item in self._transport.batch_read(items):
+            if item.is_error:
+                kind, message = _error_kind_from_payload(item.error_payload)
+                results.append(_SysReadResult(data=None, error_kind=kind, error_message=message))
+            else:
+                results.append(
+                    _SysReadResult(
+                        data=bytes(item.content),
+                        content_id=item.content_id or None,
+                        gen=item.gen,
+                    )
+                )
+        return results
+
+    def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
+        """Batch stat via the typed BatchStat RPC.
+
+        Returns ``list[dict | None]`` in input order — a stat dict (the
+        same shape ``sys_stat`` returns) per existing path, ``None``
+        per missing path.
+        """
+        assert self._transport is not None
+        if not paths:
+            return []
+        return [
+            _stat_response_to_dict(item) if item.found else None
+            for item in self._transport.batch_stat(paths, zone_id)
+        ]
+
+    def sys_watch(self, path: str, timeout_ms: int = 30000) -> Any:
+        """Block for a file-event match via the typed Watch RPC.
+
+        Returns ``{"path", "event_type"}`` on a match; ``None`` on
+        kernel timeout (no event).
+        """
+        assert self._transport is not None
+        resp = self._transport.watch(path, timeout_ms)
+        if not resp.matched:
+            return None
+        return {"path": resp.path, "event_type": resp.event_type}
+
+    # ── Service registry ───────────────────────────────────────────────
+
+    def service_start_all(self, timeout_ms: int = 30000) -> None:
+        self._call("service_start_all", {"timeout_ms": timeout_ms})
+
+    def service_mark_bootstrapped(self) -> None:
+        self._call("service_mark_bootstrapped", {})
+
+    def service_lookup(self, name: str) -> Any:
+        """Return None — services are kernel-internal in subprocess mode."""
+        return None
+
+    def service_swap(
+        self, name: str, instance: Any, exports: list[str], timeout_ms: int = 5000
+    ) -> None:
+        self._call(
+            "service_swap",
+            {"name": name, "exports": exports, "timeout_ms": timeout_ms},
+        )
+
+    def service_enlist(
+        self,
+        name: str,
+        instance: Any,
+        exports: list[str],
+        allow_overwrite: bool = False,
+    ) -> None:
+        """No-op — service registration is kernel-internal in subprocess mode."""
+        pass
+
+    def service_stop_all(self, timeout_ms: int = 10000) -> None:
+        self._call("service_stop_all", {"timeout_ms": timeout_ms})
+
+    def service_close_all(self) -> None:
+        self._call("service_close_all", {})
+
+    # ── Hook dispatch (stays in Python) ────────────────────────────────
+    # The subprocess kernel cannot hold Python hook objects. Keep a local
+    # mirror so NexusFS can run Python permission/redaction hooks before or
+    # after typed kernel RPCs.
+
+    def hook_count(self, op: str) -> int:
+        return len(self._hooks.get(op, ()))
+
+    def dispatch_post_hooks(self, op: str, ctx: Any) -> None:
+        method = f"on_post_{op}"
+        for hook in tuple(self._hooks.get(op, ())):
+            fn = getattr(hook, method, None)
+            if callable(fn):
+                fn(ctx)
+
+    def dispatch_pre_hooks(self, op: str, ctx: Any) -> None:
+        method = f"on_pre_{op}"
+        for hook in tuple(self._hooks.get(op, ())):
+            fn = getattr(hook, method, None)
+            if callable(fn):
+                fn(ctx)
+
+    def register_hook(self, op: str, hook: Any, *args: Any, **kwargs: Any) -> None:
+        hooks = self._hooks.setdefault(op, [])
+        if hook not in hooks:
+            hooks.append(hook)
+
+    def unregister_hook(self, op: str, hook: Any) -> bool:
+        hooks = self._hooks.get(op)
+        if not hooks:
+            return False
+        try:
+            hooks.remove(hook)
+        except ValueError:
+            return False
+        if not hooks:
+            self._hooks.pop(op, None)
+        return True
+
+    def set_hook_count(self, op: str, count: int) -> None:
+        """No-op — hook bitmap is kernel-internal in subprocess mode."""
+        pass
+
+    def dispatch_pre_hooks_batch_stat(
+        self, paths: list[str], rust_ctx: Any, permission: Any
+    ) -> list[bool]:
+        """Allow all; callers with Python OperationContext dispatch per-path hooks."""
+        return [True] * len(paths)
+
+    # ── Convenience wrappers (derived from syscalls) ──────────────────
+
+    def is_directory(self, path: str, zone_id: str = "") -> bool:
+        """Check if path is a directory via sys_stat."""
+        result = self.sys_stat(path, zone_id=zone_id or ROOT_ZONE_ID)
+        if result is None:
+            return False
+        if isinstance(result, dict):
+            return bool(result.get("is_directory", False))
+        return bool(getattr(result, "is_directory", False))
+
+    def get_content_id(self, path: str, zone_id: str = "") -> str | None:
+        """Get content hash via sys_stat."""
+        result = self.sys_stat(path, zone_id=zone_id or ROOT_ZONE_ID)
+        if result is None:
+            return None
+        if isinstance(result, dict):
+            return result.get("content_id")
+        return getattr(result, "content_id", None)
+
+    def exists_batch(self, paths: list[str], zone_id: str = "") -> list[bool]:
+        """Batch existence check via sys_stat."""
+        zid = zone_id or ROOT_ZONE_ID
+        return [self.sys_stat(p, zone_id=zid) is not None for p in paths]
+
+    def get_mount_points(self) -> list[str]:
+        """Return zone-canonical mount points from the subprocess kernel."""
+        result = self._call("get_mount_points", {})
+        if isinstance(result, list):
+            return [str(p) for p in result]
+        return []
+
+    def get_top_level_mounts(self, zone_id: str = "") -> list[str]:
+        """Return top-level mounts via sys_readdir on /."""
+        result = self.sys_readdir("/", zone_id=zone_id or ROOT_ZONE_ID)
+        if not result:
+            return []
+        # sys_readdir now returns list of (name, entry_type) tuples
+        return [name for name, _etype in result]
+
+    def metastore_list_paginated(
+        self,
+        prefix: str,
+        recursive: bool = True,
+        limit: int = 100000,
+        cursor: Any = None,
+    ) -> dict[str, Any]:
+        """Paginated list via sys_readdir — returns {items, next_cursor, has_more, total_count}.
+
+        Items are FileMetadata objects (callers access .path, .zone_id etc.).
+        Uses stat_batch to populate metadata when available.
+        """
+        from datetime import UTC, datetime
+
+        from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+
+        def _normalize_dir(path: str) -> str:
+            if not path:
+                return "/"
+            if not path.startswith("/"):
+                path = f"/{path}"
+            if path != "/":
+                path = path.rstrip("/")
+            return path
+
+        def _dt_from_ms(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                return datetime.fromtimestamp(int(value) / 1000.0, UTC)
+            except (TypeError, ValueError, OSError):
+                return None
+
+        root = _normalize_dir(prefix)
+        dir_entry_types = {DT_DIR, DT_MOUNT}
+        entries: list[tuple[str, int]] = []
+        seen_entries: set[str] = set()
+        seen_dirs: set[str] = set()
+        pending_dirs: list[str] = [root]
+
+        while pending_dirs:
+            current = pending_dirs.pop()
+            if current in seen_dirs:
+                continue
+            seen_dirs.add(current)
+            for name, etype in self.sys_readdir(current):
+                if not name or name == current:
+                    continue
+                if name in seen_entries:
+                    continue
+                seen_entries.add(name)
+                entries.append((name, etype))
+                if etype in dir_entry_types and recursive:
+                    pending_dirs.append(_normalize_dir(name))
+            if not recursive:
+                break
+
+        entries.sort(key=lambda item: item[0])
+
+        # Apply cursor-based pagination: skip entries until we pass the cursor path
+        if cursor:
+            entries = [(name, etype) for name, etype in entries if name > cursor]
+
+        total = len(entries)
+        page = entries[:limit]
+        has_more = total > limit
+
+        # Convert to FileMetadata objects — callers access .path, .zone_id, etc.
+        # Enrich with stat data when available for size/content_id/version.
+        paths = [name for name, _ in page]
+        stats: list[Any] = []
+        if paths:
+            try:
+                stats = self.stat_batch(paths)
+            except Exception:
+                stats = [None] * len(paths)
+        if len(stats) != len(paths):
+            stats = [None] * len(paths)
+
+        items: list[FileMetadata] = []
+        for i, (name, etype) in enumerate(page):
+            st = stats[i] if i < len(stats) else None
+            if isinstance(st, dict):
+                items.append(
+                    FileMetadata(
+                        path=st.get("path", name),
+                        size=st.get("size", 0),
+                        content_id=st.get("content_id"),
+                        mime_type=st.get("mime_type"),
+                        created_at=_dt_from_ms(st.get("created_at_ms")),
+                        modified_at=_dt_from_ms(st.get("modified_at_ms")),
+                        entry_type=st.get("entry_type", etype),
+                        version=st.get("version", 1),
+                        gen=st.get("gen", 0),
+                        zone_id=st.get("zone_id"),
+                        owner_id=st.get("owner_id"),
+                        last_writer_address=st.get("last_writer_address"),
+                        link_target=st.get("link_target"),
+                    )
+                )
+            else:
+                items.append(FileMetadata(path=name, size=0, entry_type=etype))
+
+        next_cursor = page[-1][0] if has_more and page else None
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "total_count": total,
+        }
+
+    def service_unregister(self, name: str) -> None:
+        """No-op — services are kernel-internal in subprocess mode."""
+        pass
+
+    # ── Trie (resolver registration) ──────────────────────────────────
+    # Trie is Python-side only (DispatchMixin). In subprocess mode the
+    # Rust kernel has no trie — return no-ops / None.
+
+    def trie_register(self, pattern: str, idx: int) -> None:
+        pass
+
+    def trie_lookup(self, path: str) -> Any:
+        return None
+
+    def trie_unregister(self, idx: int) -> Any:
+        return None
+
+    # ── Xattr (file metadata side-car) ──────────────────────────────────
+
+    def get_xattr(self, path: str, key: str) -> str | None:
+        """Get an extended attribute via the typed GetXattr RPC.
+
+        Returns the value string, or ``None`` when the key is not set or
+        any error occurs (matches the prior Call path's broad-catch).
+        """
+        assert self._transport is not None
+        try:
+            resp = self._transport.get_xattr(path, key)
+        except Exception:
+            return None
+        return resp.value if resp.found else None
+
+    def set_xattr(self, path: str, key: str, value: str) -> None:
+        """Set an extended attribute via the typed SetXattr RPC."""
+        import contextlib
+
+        assert self._transport is not None
+        with contextlib.suppress(Exception):
+            self._transport.set_xattr(path, key, value)
+
+    def get_xattr_bulk(self, paths: list[str], key: str) -> dict[str, str | None]:
+        """Bulk get an xattr across paths via the typed GetXattrBulk RPC.
+
+        Returns ``{path: value | None}`` — matches the prior Call shape.
+        """
+        assert self._transport is not None
+        try:
+            items = self._transport.get_xattr_bulk(paths, key)
+        except Exception:
+            return dict.fromkeys(paths)
+        return {item.path: (item.value if item.found else None) for item in items}
+
+    # ── IPC: Pipes ─────────────────────────────────────────────────────
+
+    def create_pipe(self, path: str, capacity: int = 64) -> None:
+        """Create a DT_PIPE via the typed Setattr RPC (entry_type=DT_PIPE)."""
+        self.sys_setattr(path, entry_type=3, capacity=capacity)
+
+    def destroy_pipe(self, path: str) -> None:
+        """Alias for close_pipe (the prior Call surface had both)."""
+        self.close_pipe(path)
+
+    def close_pipe(self, path: str) -> None:
+        """Close a pipe via the typed ClosePipe RPC."""
+        assert self._transport is not None
+        self._transport.close_pipe(path)
+
+    def has_pipe(self, path: str) -> Any:
+        """Has-pipe query via the typed HasPipe RPC."""
+        assert self._transport is not None
+        return self._transport.has_pipe(path)
+
+    def close_all_pipes(self) -> None:
+        """Close every pipe via the typed CloseAllPipes RPC."""
+        assert self._transport is not None
+        self._transport.close_all_pipes()
+
+    # ── IPC: Streams ───────────────────────────────────────────────────
+
+    def create_stream(self, path: str, capacity: int = 1024) -> None:
+        """Create a DT_STREAM via the typed Setattr RPC (entry_type=DT_STREAM)."""
+        self.sys_setattr(path, entry_type=4, capacity=capacity)
+
+    def has_stream(self, path: str) -> Any:
+        assert self._transport is not None
+        return self._transport.has_stream(path)
+
+    def stream_read_at_blocking(
+        self, path: str, offset: int, timeout_ms: int = 30000
+    ) -> tuple[bytes, int]:
+        """Blocking stream read via the typed StreamReadAt RPC."""
+        assert self._transport is not None
+        resp = self._transport.stream_read_at(path, offset, blocking=True, timeout_ms=timeout_ms)
+        return bytes(resp.data), int(resp.next_offset)
+
+    def stream_write_nowait(self, path: str, data: bytes) -> Any:
+        """Non-blocking stream write via the typed StreamWriteNowait RPC."""
+        assert self._transport is not None
+        return self._transport.stream_write_nowait(path, data)
+
+    def stream_read_at(self, path: str, offset: int) -> Any:
+        """Non-blocking stream read via the typed StreamReadAt RPC.
+
+        Returns ``{"data": bytes, "next_offset": int}`` on data, ``None``
+        on eof (matches the prior Call-path shape).
+        """
+        assert self._transport is not None
+        resp = self._transport.stream_read_at(path, offset, blocking=False)
+        if resp.eof:
+            return None
+        return {"data": bytes(resp.data), "next_offset": int(resp.next_offset)}
+
+    def stream_collect_all(self, path: str) -> bytes:
+        assert self._transport is not None
+        return self._transport.stream_collect_all(path)
+
+    def close_stream(self, path: str) -> None:
+        """Close a stream via the typed CloseStream RPC."""
+        assert self._transport is not None
+        self._transport.close_stream(path)
+
+    def destroy_stream(self, path: str) -> None:
+        """Alias for close_stream (the prior Call surface had both)."""
+        self.close_stream(path)
+
+    def close_all_streams(self) -> None:
+        """Close all streams (shutdown)."""
+        # No batch close RPC — streams are cleaned up when the subprocess exits.
+        pass
+
+    # ── Metastore path ─────────────────────────────────────────────────
+
+    def set_metastore_path(self, path: str) -> None:
+        """Request an explicit metastore file for the next spawn.
+
+        The method name is the contract: ``path`` is the namespace file
+        the kernel must reopen — forwarded verbatim as
+        ``NEXUS_KERNEL_METASTORE_PATH`` regardless of suffix (#4343). One
+        exception: an existing *directory* is a deployed data-dir
+        layout (the kernel keeps ``<dir>/metastore.redb`` inside it)
+        and is routed as ``NEXUS_DATA_DIR`` instead. Calling this after
+        ``open()`` has no effect. Remote mode: the server manages its
+        own metastore.
+        """
+        try:
+            is_dir = Path(path).expanduser().is_dir()
+        except OSError:
+            is_dir = False
+        if is_dir:
+            self._metadata_path = path
+            self._metastore_file = None
+        else:
+            self._metastore_file = path
+
+    # ── Misc kernel methods ────────────────────────────────────────────
+
+    def set_vfs_lock(self, lock: Any) -> None:
+        """No-op — VFS lock is kernel-internal."""
+        pass
+
+    def register_native_hook(self, hook: Any) -> None:
+        """No-op — native hooks are wired inside the kernel process."""
+        pass
+
+    def set_permission_provider(self, provider: Any) -> None:
+        """No-op — permission provider lives inside the kernel process."""
+        pass
+
+    def write_batch(self, files: list[tuple[str, bytes]], context: Any = None) -> list[Any]:
+        """Batch write via the typed BatchWrite RPC — one round-trip.
+
+        Replaces the former generic ``write_batch`` Call, which
+        base64-encoded every file's bytes into a JSON blob inside the
+        protobuf envelope (double encoding). Returns one
+        ``_BatchWriteItemResult`` per file in input order; a per-item
+        failure raises (all-or-nothing, as before).
+        """
+        assert self._transport is not None
+        if not files:
+            return []
+        return [
+            _BatchWriteItemResult(
+                {
+                    "content_id": item.content_id or None,
+                    "size": item.size,
+                    "gen": item.gen,
+                    "version": item.version,
+                }
+            )
+            for item in self._transport.batch_write(files)
+        ]
+
+    @property
+    def agent_registry(self) -> Any:
+        """Return agent registry proxy."""
+        return _AgentRegistryProxy(self)
+
+
+# ── Result types ───────────────────────────────────────────────────────
+
+
+def _error_kind_from_payload(error_payload: bytes) -> tuple[str, str]:
+    """Classify a typed-RPC error payload into a ``(error_kind, message)``
+    pair for ``_SysReadResult``.
+
+    BatchRead reports per-item failures in-band as a JSON ``{code,
+    message}`` dict. Mapping the JSON-RPC code here yields the same
+    ``error_kind`` the former per-item single-Read path derived from its
+    raised exception, so the caller's partial/strict handling is
+    unchanged.
+    """
+    err = decode_rpc_message(error_payload) if error_payload else {}
+    code = err.get("code") if isinstance(err, dict) else None
+    message = err.get("message", "") if isinstance(err, dict) else ""
+    if code == RPCErrorCode.FILE_NOT_FOUND.value:
+        return "not_found", message
+    if code in (RPCErrorCode.PERMISSION_ERROR.value, RPCErrorCode.ACCESS_DENIED.value):
+        return "permission_denied", message
+    return "io_error", message
+
+
+def _stat_response_to_dict(resp: Any) -> dict[str, Any]:
+    """Build the sys_stat metadata dict from a typed StatResponse.
+
+    Mirrors the `stat_to_json` shape of the former Call path: optional
+    string fields collapse ``""`` -> ``None``, and epoch-ms timestamps
+    gain the enriched ISO-8601 ``created_at`` / ``modified_at`` companions
+    that Python callers expect.
+    """
+    from datetime import UTC, datetime
+
+    def _opt(v: str) -> str | None:
+        return v or None
+
+    created = resp.created_at_ms if resp.HasField("created_at_ms") else None
+    modified = resp.modified_at_ms if resp.HasField("modified_at_ms") else None
+    d: dict[str, Any] = {
+        "path": resp.path,
+        "size": resp.size,
+        "content_id": _opt(resp.content_id),
+        "mime_type": resp.mime_type,
+        "is_directory": resp.is_directory,
+        "entry_type": resp.entry_type,
+        "mode": resp.mode,
+        "version": resp.version,
+        "gen": resp.gen,
+        "zone_id": _opt(resp.zone_id),
+        "created_at_ms": created,
+        "modified_at_ms": modified,
+        "last_writer_address": _opt(resp.last_writer_address),
+        "link_target": _opt(resp.link_target),
+        "owner_id": _opt(resp.owner_id),
+    }
+    if modified is not None:
+        d["modified_at"] = datetime.fromtimestamp(modified / 1000.0, UTC).isoformat()
+    if created is not None:
+        d["created_at"] = datetime.fromtimestamp(created / 1000.0, UTC).isoformat()
+    return d
+
+
+class _SysReadResult:
+    """Matches Rust SysReadResult field names (SSOT).
+
+    Fields: data, content_id, gen, entry_type, stream_next_offset,
+    post_hook_needed, error_kind, error_message — from rust/kernel/src/kernel/mod.rs.
+    """
+
+    __slots__ = (
+        "data",
+        "content_id",
+        "gen",
+        "entry_type",
+        "stream_next_offset",
+        "post_hook_needed",
+        "error_kind",
+        "error_message",
+    )
+
+    def __init__(
+        self,
+        data: bytes | None = b"",
+        content_id: str | None = None,
+        gen: int = 0,
+        entry_type: int = 1,
+        stream_next_offset: int | None = None,
+        error_kind: str = "",
+        error_message: str = "",
+        post_hook_needed: bool = False,
+    ) -> None:
+        self.data = data
+        self.content_id = content_id
+        self.gen = gen
+        self.entry_type = entry_type
+        self.stream_next_offset = stream_next_offset
+        self.post_hook_needed = post_hook_needed
+        self.error_kind = error_kind
+        self.error_message = error_message
+
+
+class _SysWriteResult:
+    """Mimics PySysWriteResult from the old PyO3 binding."""
+
+    __slots__ = (
+        "hit",
+        "content_id",
+        "post_hook_needed",
+        "version",
+        "gen",
+        "size",
+        "is_new",
+        "old_content_id",
+        "old_size",
+        "old_version",
+        "old_modified_at_ms",
+    )
+
+    def __init__(self, content_id: str | None = None, size: int = 0, gen: int = 0) -> None:
+        self.hit = True
+        self.content_id = content_id
+        self.post_hook_needed = True
+        self.version = 1
+        self.gen = gen
+        self.size = size
+        self.is_new = False
+        self.old_content_id: str | None = None
+        self.old_size: int | None = None
+        self.old_version: int | None = None
+        self.old_modified_at_ms: int | None = None
+
+
+class _SysMkdirResult:
+    """Result wrapper for sys_mkdir Call RPC response."""
+
+    __slots__ = ("hit", "post_hook_needed")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+
+
+class _SysUnlinkResult:
+    """Result wrapper for sys_unlink Call RPC response."""
+
+    __slots__ = ("hit", "post_hook_needed", "entry_type", "path", "content_id", "size")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+        self.entry_type = d.get("entry_type", 0)
+        self.path = d.get("path", "")
+        self.content_id = d.get("content_id")
+        self.size = d.get("size", 0)
+
+
+class _SysRenameResult:
+    """Result wrapper for sys_rename Call RPC response."""
+
+    __slots__ = (
+        "hit",
+        "success",
+        "post_hook_needed",
+        "is_directory",
+        "old_content_id",
+        "old_size",
+        "old_version",
+        "old_modified_at_ms",
+    )
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.success = d.get("success", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+        self.is_directory = d.get("is_directory", False)
+        self.old_content_id = d.get("old_content_id")
+        self.old_size = d.get("old_size")
+        self.old_version = d.get("old_version")
+        self.old_modified_at_ms = d.get("old_modified_at_ms")
+
+
+class _SysCopyResult:
+    """Result wrapper for sys_copy Call RPC response."""
+
+    __slots__ = ("hit", "post_hook_needed", "dst_path", "content_id", "size", "version", "gen")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+        self.dst_path = d.get("dst_path", "")
+        self.content_id = d.get("content_id")
+        self.size = d.get("size", 0)
+        self.version = d.get("version", 1)
+        self.gen = d.get("gen", 0)
+
+
+class _SysSetAttrResult:
+    """Result wrapper for sys_setattr Call RPC response."""
+
+    __slots__ = ("path", "created", "entry_type")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.path = d.get("path", "")
+        self.created = d.get("created", False)
+        self.entry_type = d.get("entry_type", 0)
+
+
+class _BatchWriteItemResult:
+    """Result wrapper for individual write_batch item."""
+
+    __slots__ = ("content_id", "size", "gen", "version")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.content_id = d.get("content_id")
+        self.size = d.get("size", 0)
+        self.gen = d.get("gen", 0)
+        self.version = d.get("version", 1)
+
+
+class _AttrDict(dict):
+    """A dict that also exposes its keys as attributes.
+
+    Proxy ``external_info`` is consumed two ways: as a mapping
+    (``ext["last_heartbeat_ms"]`` / ``ext.get(...)`` in AgentRPCService) and as
+    an object (``ext.last_heartbeat`` in QoSEvictionPolicy, mirroring the
+    ExternalProcessInfo dataclass). Supporting both avoids forcing every caller
+    onto one shape.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+class _ProxyAgentDescriptor(SimpleNamespace):
+    """SimpleNamespace descriptor that also serializes like ``AgentDescriptor``.
+
+    The proc/status VFS resolvers (``AgentStatusResolver`` at
+    ``/{zone}/proc/{pid}/status`` and ``TaskAgentResolver``) call
+    ``desc.to_dict()`` on whatever ``agent_registry.get()`` returns. In
+    subprocess-kernel mode that object is this proxy, so it must provide a
+    ``to_dict()`` matching ``AgentDescriptor.to_dict()`` or those reads raise
+    ``AttributeError`` — the same proxy/dataclass drift class as the
+    ``count_by_state`` crash (Issue #4268). Subclassing SimpleNamespace keeps
+    every existing attribute access (``.pid``, ``.state``, ``.updated_at``,
+    ``.external_info.last_heartbeat`` …) unchanged; this only adds the method.
+    """
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the EXACT dict shape of ``AgentDescriptor.to_dict()``.
+
+        Same 16 keys in the same order (process_types.py): no ``capabilities``
+        key (that is a proxy-only attribute, not part of the dataclass
+        serialization), ``external_info`` always present (``None`` when absent).
+        The wire row carries ``parent_pid`` (Rust ``agent_descriptor_to_json``)
+        whereas the dataclass field is ``ppid`` — map it so the proc/status JSON
+        is identical across in-process and subprocess-kernel deployments.
+        Timestamps are ISO-8601 strings, or ``None`` when the row omitted the
+        ``*_ms`` field.
+        """
+
+        def _iso(value: Any) -> Any:
+            return value.isoformat() if value is not None and hasattr(value, "isoformat") else None
+
+        ppid = getattr(self, "ppid", None)
+        if ppid is None:
+            ppid = getattr(self, "parent_pid", None)
+
+        d: dict[str, Any] = {
+            "pid": getattr(self, "pid", None),
+            "ppid": ppid,
+            "name": getattr(self, "name", ""),
+            "owner_id": getattr(self, "owner_id", None),
+            "zone_id": getattr(self, "zone_id", None),
+            "kind": str(getattr(self, "kind", "")),
+            "state": str(getattr(self, "state", "")),
+            "exit_code": getattr(self, "exit_code", None),
+            "generation": getattr(self, "generation", 0),
+            "cwd": getattr(self, "cwd", "/"),
+            "root": getattr(self, "root", "/"),
+            "children": list(getattr(self, "children", ()) or ()),
+            "created_at": _iso(getattr(self, "created_at", None)),
+            "updated_at": _iso(getattr(self, "updated_at", None)),
+            "labels": dict(getattr(self, "labels", {}) or {}),
+        }
+        ext = getattr(self, "external_info", None)
+        if ext is not None:
+            d["external_info"] = {
+                "connection_id": ext.get("connection_id", ""),
+                "host_pid": ext.get("host_pid"),
+                "remote_addr": ext.get("remote_addr"),
+                "protocol": ext.get("protocol", "grpc"),
+                "last_heartbeat": _iso(ext.get("last_heartbeat")),
+            }
+        else:
+            d["external_info"] = None
+        return d
+
+
+class _AgentRegistryProxy:
+    """Proxy for kernel AgentRegistry operations via gRPC."""
+
+    def __init__(self, client: KernelClient) -> None:
+        self._client = client
+
+    @staticmethod
+    def _descriptor(raw: Any) -> Any:
+        if raw is None or not isinstance(raw, dict):
+            return raw
+
+        from datetime import UTC, datetime
+
+        def _dt(ms: Any) -> datetime | None:
+            if ms is None:
+                return None
+            try:
+                return datetime.fromtimestamp(int(ms) / 1000.0, UTC)
+            except (TypeError, ValueError, OSError):
+                return None
+
+        data = dict(raw)
+        state = data.get("state")
+        if isinstance(state, str):
+            from nexus.contracts.process_types import AgentState
+
+            with contextlib.suppress(ValueError):
+                data["state"] = AgentState(state.lower())
+
+        kind = data.get("kind")
+        if isinstance(kind, str):
+            from nexus.contracts.process_types import AgentKind
+
+            with contextlib.suppress(ValueError):
+                data["kind"] = AgentKind(kind.lower())
+
+        raw_labels = data.get("labels")
+        labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
+        data["labels"] = labels  # Guarantee .labels is always a dict.
+        raw_capabilities = labels.get("capabilities", "")
+        if isinstance(raw_capabilities, str):
+            data["capabilities"] = [
+                capability for capability in raw_capabilities.split(",") if capability
+            ]
+        elif isinstance(raw_capabilities, list):
+            data["capabilities"] = raw_capabilities
+        else:
+            data["capabilities"] = []
+
+        # Duck-type as AgentDescriptor: the wire carries epoch-ms (`*_ms`), but
+        # consumers (e.g. QoSEvictionPolicy) read `.updated_at` / `.created_at`
+        # datetimes and `.external_info.last_heartbeat`. Without this the eviction
+        # cycle raises AttributeError once a candidate is selected (Issue #4268).
+        data["updated_at"] = _dt(data.get("updated_at_ms"))
+        data["created_at"] = _dt(data.get("created_at_ms"))
+
+        ext = data.get("external_info")
+        if isinstance(ext, dict):
+            # _AttrDict exposes BOTH attribute access (`ext.last_heartbeat`, used by
+            # QoSEvictionPolicy) AND dict access (`ext["last_heartbeat_ms"]`/`.get()`,
+            # used by AgentRPCService.agent_list_by_zone) so no consumer breaks.
+            ext_data = _AttrDict(ext)
+            ext_data["last_heartbeat"] = _dt(ext_data.get("last_heartbeat_ms"))
+            data["external_info"] = ext_data
+        else:
+            # Absent → None (not a missing attribute) so `if p.external_info` is safe.
+            data["external_info"] = None
+
+        return _ProxyAgentDescriptor(**data)
+
+    def register(self, **kwargs: Any) -> Any:
+        return self._descriptor(self._client._call("agent_register", kwargs))
+
+    def register_external(
+        self,
+        name: str,
+        owner_id: str,
+        zone_id: str,
+        *,
+        connection_id: str,
+        host_pid: int | None = None,
+        remote_addr: str | None = None,
+        protocol: str = "grpc",
+        parent_pid: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> Any:
+        return self._descriptor(
+            self._client._call(
+                "agent_register_external",
+                {
+                    "name": name,
+                    "owner_id": owner_id,
+                    "zone_id": zone_id,
+                    "connection_id": connection_id,
+                    "host_pid": host_pid,
+                    "remote_addr": remote_addr,
+                    "protocol": protocol,
+                    "parent_pid": parent_pid,
+                    "labels": labels or {},
+                },
+            )
+        )
+
+    def unregister(self, pid: str) -> Any:
+        return self._client._call("agent_unregister", {"pid": pid})
+
+    def unregister_external(self, pid: str) -> None:
+        self._client._call("agent_unregister_external", {"pid": pid})
+
+    def get(self, pid: str) -> Any:
+        return self._descriptor(self._client._call("agent_get", {"pid": pid}))
+
+    def signal(self, pid: str, sig: Any, *, payload: dict[str, Any] | None = None) -> Any:
+        return self._descriptor(
+            self._client._call(
+                "agent_signal",
+                {
+                    "pid": pid,
+                    "sig": str(sig),
+                    "payload": payload or {},
+                },
+            )
+        )
+
+    def update_state(self, pid: str, state: Any) -> Any:
+        return self._descriptor(
+            self._client._call(
+                "agent_update_state",
+                {
+                    "pid": pid,
+                    "state": str(state),
+                },
+            )
+        )
+
+    def heartbeat(self, pid: str) -> Any:
+        return self._descriptor(self._client._call("agent_heartbeat", {"pid": pid}))
+
+    def list_agents(self) -> Any:
+        return self.list_processes()
+
+    def list_processes(
+        self,
+        *,
+        zone_id: str | None = None,
+        owner_id: str | None = None,
+        kind: Any | None = None,
+        state: Any | None = None,
+    ) -> list[Any]:
+        raw = self._client._call(
+            "agent_list",
+            {
+                "zone_id": zone_id,
+                "owner_id": owner_id,
+                "kind": str(kind) if kind is not None else None,
+                "state": str(state) if state is not None else None,
+            },
+        )
+        if not isinstance(raw, list):
+            return []
+        return [self._descriptor(item) for item in raw]
+
+    def count_by_state(self, state: Any, zone_id: str | None = None) -> int:
+        """Count agents in a given state (kernel SSOT: registry.rs count_by_state)."""
+        return len(self.list_processes(zone_id=zone_id, state=state))
+
+    def list_by_priority(
+        self, *, batch_size: int | None = None, zone_id: str | None = None
+    ) -> list[Any]:
+        """Return BUSY eviction candidates ordered by eviction priority.
+
+        Mirrors the kernel SSOT (registry.rs ``list_by_priority``): filter to
+        BUSY, sort by ``(eviction_priority ASC, updated_at_ms ASC)`` — lowest
+        priority and least-recently-updated (LRU) first — then cap to
+        ``batch_size``. Sorting before the cap is what makes the batch the
+        *right* candidates; the downstream EvictionPolicy only refines within
+        it (LRUEvictionPolicy in particular trusts this pre-sort verbatim).
+        """
+        from nexus.contracts.process_types import AgentState
+
+        # i64 bounds — the kernel parses eviction_priority as a Rust i64.
+        _I64_MIN = -(2**63)
+        _I64_MAX = 2**63 - 1
+
+        def _priority(agent: Any) -> int:
+            """Parse eviction_priority with Rust ``parse::<i64>().unwrap_or(50)``
+            semantics. Python ``int()`` is too lenient — it accepts whitespace
+            (" 10"), underscores ("1_000"), Unicode digits, and arbitrary-size
+            integers that Rust's i64 parse rejects — which would order agents
+            differently in subprocess-kernel mode than the in-process kernel.
+            Require a plain ASCII signed decimal within i64 range; default 50 on
+            anything else. (No ``re`` dependency — a manual ASCII-digit check
+            avoids ``str.isdigit()``'s acceptance of Unicode digit forms.)
+            """
+            labels = getattr(agent, "labels", None) or {}
+            raw = labels.get("eviction_priority")
+            if not isinstance(raw, str):
+                return 50
+            negative = raw[:1] == "-"
+            digits = raw[1:] if raw[:1] in ("+", "-") else raw
+            if not digits or not all("0" <= ch <= "9" for ch in digits):
+                return 50
+            # Normalize away leading zeros so "000…001" parses like Rust (→ 1),
+            # then bound the SIGNIFICANT-digit count. A signed i64 has at most 19
+            # significant digits (max 9223372036854775807); 20+ always exceeds
+            # i64, so Rust parse::<i64> would default to 50 too. Checking the
+            # stripped length before int() also avoids CPython's int-string digit
+            # limit (4300) raising ValueError mid-eviction-cycle on a long label.
+            significant = digits.lstrip("0")
+            if len(significant) > 19:
+                return 50
+            value = -int(significant) if (negative and significant) else int(significant or "0")
+            if value < _I64_MIN or value > _I64_MAX:
+                return 50
+            return value
+
+        agents = self.list_processes(zone_id=zone_id, state=AgentState.BUSY)
+        agents.sort(key=lambda a: (_priority(a), getattr(a, "updated_at_ms", 0) or 0))
+        if batch_size is not None:
+            return agents[:batch_size]
+        return agents
+
+
+# ── Helpers ────────────────────────────────────────────────────────────
+
+
+def _find_free_port() -> int:
+    """Find a free TCP port on localhost."""
+    import socket
+
+    reserved_ports: set[int] = set()
+    for env_name in ("NEXUS_GRPC_PORT", "NEXUS_APPROVALS_GRPC_PORT"):
+        raw = os.environ.get(env_name, "").strip()
+        if raw:
+            with contextlib.suppress(ValueError):
+                reserved_ports.add(int(raw))
+
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port: int = s.getsockname()[1]
+        if port not in reserved_ports:
+            return port

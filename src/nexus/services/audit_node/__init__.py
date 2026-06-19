@@ -10,7 +10,7 @@ The audit-node does NOT register an ``AuditHook`` of its own — it
 only consumes the streams produced by production nodes.  This keeps
 the audit-node's local zone free of self-generated noise.
 
-Architectural references: ``docs/architecture/KERNEL-ARCHITECTURE.md``
+Architectural references: ``KERNEL-ARCHITECTURE.md (nexus-vfs)``
 § federation, ``sudowork-2/docs/tech/nexus-integration-architecture.md``
 § Audit Trace.
 """

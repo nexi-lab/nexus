@@ -72,8 +72,7 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         let v: Value =
-            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap())
-                .unwrap();
+            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap()).unwrap();
         v["access_token"].as_str().unwrap().to_string()
     }
 
@@ -92,8 +91,7 @@ mod tests {
             .unwrap();
         let status = resp.status();
         let v: Value =
-            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap())
-                .unwrap();
+            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap()).unwrap();
         (status, v)
     }
 

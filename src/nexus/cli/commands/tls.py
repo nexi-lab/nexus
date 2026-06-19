@@ -5,14 +5,47 @@ Issue #126 (keygen UX), #127 (TOFU), #1250 (mTLS integration).
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import Any
 
 import click
 
 
 def _data_dir() -> Path:
     return Path(os.environ.get("NEXUS_DATA_DIR", "."))
+
+
+class _JsonTofuTrustStore:
+    """Minimal JSON file-based TOFU trust store (replaces PyTofuTrustStore)."""
+
+    def __init__(self, path: str) -> None:
+        self._path = Path(path)
+
+    def _load(self) -> list[dict[str, Any]]:
+        if not self._path.exists():
+            return []
+        try:
+            data: list[dict[str, Any]] = json.loads(self._path.read_text(encoding="utf-8"))
+            return data
+        except (json.JSONDecodeError, OSError):
+            return []
+
+    def _save(self, entries: list[dict[str, Any]]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+
+    def list_trusted(self) -> list[dict[str, Any]]:
+        return self._load()
+
+    def remove(self, zone_id: str) -> bool:
+        entries = self._load()
+        new_entries = [e for e in entries if e.get("zone_id") != zone_id]
+        if len(new_entries) == len(entries):
+            return False
+        self._save(new_entries)
+        return True
 
 
 @click.group()
@@ -84,8 +117,6 @@ def show(data_dir: str | None) -> None:
 @click.option("--data-dir", type=click.Path(), default=None)
 def trusted(data_dir: str | None) -> None:
     """List trusted peer zones (TOFU trust store)."""
-    from nexus_runtime import PyTofuTrustStore
-
     from nexus.security.tls.config import ZoneTlsConfig
 
     base = Path(data_dir) if data_dir else _data_dir()
@@ -94,13 +125,15 @@ def trusted(data_dir: str | None) -> None:
         click.echo("No TLS certificates found.  Run: nexus tls init")
         return
 
-    store = PyTofuTrustStore(str(cfg.known_zones_path))
+    store = _JsonTofuTrustStore(str(cfg.known_zones_path))
     entries = store.list_trusted()
     if not entries:
         click.echo("No trusted zones.")
         return
     for e in entries:
-        click.echo(f"{e.zone_id}  {e.ca_fingerprint}  peers={','.join(e.peer_addresses)}")
+        click.echo(
+            f"{e['zone_id']}  {e['ca_fingerprint']}  peers={','.join(e.get('peer_addresses', []))}"
+        )
 
 
 @tls.command("forget-zone")
@@ -108,8 +141,6 @@ def trusted(data_dir: str | None) -> None:
 @click.option("--data-dir", type=click.Path(), default=None)
 def forget_zone(zone_id: str, data_dir: str | None) -> None:
     """Remove a zone from the TOFU trust store (for cert rotation)."""
-    from nexus_runtime import PyTofuTrustStore
-
     from nexus.security.tls.config import ZoneTlsConfig
 
     base = Path(data_dir) if data_dir else _data_dir()
@@ -118,7 +149,7 @@ def forget_zone(zone_id: str, data_dir: str | None) -> None:
         click.echo("No TLS certificates found.")
         return
 
-    store = PyTofuTrustStore(str(cfg.known_zones_path))
+    store = _JsonTofuTrustStore(str(cfg.known_zones_path))
     if store.remove(zone_id):
         click.echo(f"Removed zone '{zone_id}' from trust store.")
     else:

@@ -22,11 +22,8 @@ ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- 系统依赖 ----------
-# protobuf-compiler is required by raft-proto v0.7.0's protobuf-build
-# step.  The vendored protoc we wire up in our own kernel/raft build.rs
-# only feeds tonic_build → prost-build; protobuf-build is a separate
-# chain that shells out to ``protoc`` on PATH, so dropping this package
-# broke every Docker build after commit 3d93e0155.
+# protobuf-compiler is required by raft-proto's protobuf-build step
+# when building nexusd-cluster from nexus-vfs via cargo install.
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -54,12 +51,13 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         echo "https://pypi.org/simple" > /tmp/pip_index; \
     fi
 
-# ---------- uv + maturin ----------
-RUN pip install --no-cache-dir -i $(cat /tmp/pip_index) uv maturin
+# ---------- uv ----------
+RUN pip install --no-cache-dir -i $(cat /tmp/pip_index) uv
 
 # ---------- pdf-inspector forward-compat (Issue #3757) ----------
 # pdf-inspector 0.1.1 pins pyo3=0.25 which caps at Python 3.13. On 3.14+ we
 # build from sdist and this env lets ABI3 forward-compat bypass the check.
+# (Still needed for pip install of pdf-inspector from sdist.)
 ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 # ---------- Install 3rd-party Python dependencies (stable cache layer) ----------
@@ -79,42 +77,39 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Build Rust extensions (Issue #3125) ----------
-# On arm64, disable SimSIMD SVE backends at compile time. Apple Silicon does
-# not implement SVE, and simsimd's runtime mrs-based SVE detection can misfire
-# inside Docker Desktop's Virtualization.framework VM, causing SIGILL.
-# Cache is scoped per TARGETARCH so amd64/arm64 builds never share artifacts.
-COPY proto/ ./proto/
-COPY rust/ ./rust/
-# BuildKit cache mounts preserve Cargo target artifacts across Docker builds.
-# Files copied into the image can be older than those cached artifacts, so
-# Cargo may incorrectly consider a workspace crate fresh. Touch copied Rust
-# sources before maturin so source changes cannot produce a stale wheel.
-RUN find rust proto -type f -exec touch {} +
-
-ENV CARGO_TARGET_DIR=/build/target \
-    CARGO_BUILD_JOBS=2 \
-    CARGO_NET_RETRY=10 \
+# ---------- Install nexusd-full binary from nexus-vfs (Issue #3125, #4259) ----------
+# Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
+# repo. Install the pre-built binary via `cargo install` from the git repo.
+#
+# We install `nexusd-full` — the `full` profile = `nexusd-cluster` (Raft + IPC +
+# federation) PLUS the S3/R2 object-store driver. Per the nexus-vfs#27 kernel-team
+# review, `driver-s3` is NOT a feature on `nexusd-cluster` (that binary stays pure
+# local+remote and under its size gate); the S3-serving binary is this separate
+# profile. It is symlinked to `nexus-cluster` below so the Python runtime spawns
+# it unchanged.
+#
+# REV is a build-arg, NOT a hardcoded edge. `cargo install --locked --git` lives in a
+# Docker RUN layer that caches by command string, so a bare `--branch main`
+# would FREEZE at the first-built binary forever — exactly how the stale,
+# pre-bridge-2 (#4262) cluster shipped (acked DT_MOUNT but never installed it,
+# created=false → edge E2E mount-setup failure). Putting the resolved rev in
+# the command both busts that cache and makes the build reproducible.
+#   - Default below = a known-good rev for reproducible local builds.
+#   - Edge: CI passes `--build-arg NEXUS_VFS_REV=$(git ls-remote …main | sha)`.
+#   - Downstream pins the *image*, not this file.
+# Default = nexus-vfs main rev matching the Cargo.toml pins (keep in sync —
+# this ARG is what the shipped kernel binary is built from; the Cargo.toml
+# pins only sync the plugin/services crates). Includes the durable-metastore
+# boot wiring (#4343) — older revs lose the VFS namespace on every restart.
+ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-# Phase 3: one cdylib, one wheel. The ``nexus-cdylib`` crate
-# (rust/nexus-cdylib/) is the Python entry point — composes the
-# ``kernel`` + ``lib`` + ``raft`` + ``backends`` + ``services`` +
-# ``transport`` rlibs into a single ``nexus_runtime`` wheel.
-# ``ZoneManager`` / ``ZoneHandle`` / ``MetaStore`` classes are
-# re-exported from ``nexus_runtime`` (no separate ``nexus_raft``
-# wheel; the standalone ``_nexus_tasks`` wheel was retired in #6).
+# Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
+ARG NEXUS_VFS_REV=243746d6fe0cc6c095a179226eaf6254f96c1ec8
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
-    if [ "${TARGETARCH}" = "arm64" ]; then \
-        export SIMSIMD_TARGET_SVE=0 \
-               SIMSIMD_TARGET_SVE2=0 \
-               SIMSIMD_TARGET_SVE_BF16=0 \
-               SIMSIMD_TARGET_SVE_F16=0 \
-               SIMSIMD_TARGET_SVE_I8=0; \
-    fi && \
-    maturin build --release --out /build/dist -m rust/nexus-cdylib/Cargo.toml
-RUN pip install --no-cache-dir /build/dist/nexus_runtime-*.whl
+    --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
+    cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-full nexus-full && \
+    cp /root/.cargo/bin/nexusd-full /build/nexusd-full
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -196,26 +191,28 @@ RUN set -eux; \
       *) echo "Skipping gws/gh CLI connectors for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
 
-# ---------- Copy Python packages + Rust extensions ----------
+# ---------- Copy Python packages + Rust binary ----------
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
+COPY --from=builder /build/nexusd-full /usr/local/bin/nexusd-full
+# Python factory boot spawns "nexus-cluster" (without d) via subprocess; point
+# that name at the full binary (cluster + S3/R2 driver) so usage is unchanged.
+RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexus-cluster
+# Back-compat: preserve the historic `nexusd-cluster` name. Repo consumers still
+# exec it directly (e.g. the federation E2E joiner entrypoint), and nexusd-full
+# is a strict superset of the old slim cluster binary, so the alias is
+# behaviorally identical.
+RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexusd-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------
-# Verify critical native imports are installed correctly.
-# The SIMD test exercises simsimd code paths so that a cross-architecture
-# cache mismatch or mis-compiled SVE backend surfaces as a build failure
-# (SIGILL) instead of a runtime crash (Issue #3125).
-# Always verifiable (present regardless of extras): Rust extensions.
-RUN python3 -c "\
-import importlib; \
-import nexus_runtime; \
-groups = importlib.import_module('nexus._kernel_api_groups'); \
-missing = sorted(m for m in groups.KERNEL_REQUIRED_METHODS if not hasattr(nexus_runtime.PyKernel, m)); \
-assert not missing, f'nexus_runtime.PyKernel ABI stale; missing: {missing}'; \
-print('✓ Core imports and PyKernel ABI passed (always-present subset)')"
+# Fail the build if any expected cluster binary name is missing or not on PATH
+# (don't mask failures with `|| echo`), then verify the binary actually runs.
+RUN for b in nexusd-full nexus-cluster nexusd-cluster; do \
+        command -v "$b" >/dev/null 2>&1 || { echo "missing cluster binary: $b" >&2; exit 1; }; \
+    done && nexusd-full --version
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \
@@ -224,13 +221,6 @@ RUN set -eux; \
         python3 -c "import pgvector; import docker; import fastembed; import psutil; print('✓ all-extras imports passed')" ;; \
       *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
-RUN python3 -c "\
-from nexus_runtime import cosine_similarity_f32, dot_product_f32; \
-s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \
-assert abs(s - 1.0) < 0.01, f'cosine self-similarity failed: {s}'; \
-d = dot_product_f32([1.0, 2.0], [3.0, 4.0]); \
-assert abs(d - 11.0) < 0.01, f'dot product failed: {d}'; \
-print('✓ SIMD smoke test passed')"
 
 # ---------- Copy application files ----------
 WORKDIR /app
@@ -258,10 +248,6 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
-# nexus_runtime cdylib uses simsimd which exhausts the default static-TLS
-# pool on aarch64 ("cannot allocate memory in static TLS block"). Expanding
-# the reservation is harmless on platforms that don't need it.
-ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \

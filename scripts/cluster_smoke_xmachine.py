@@ -20,19 +20,24 @@ half of L1) is a follow-up — wiring through ``nexusd-cluster``'s
 gRPC surface needs a separate client and is out of scope for the
 contract pin this script provides.
 
-Run:
+Run (Tailscale IPs are looked up at runtime — survives SSD swap /
+device migration / Headscale re-registration without code edits):
 
-    # On the founder side (Win, IP 100.64.0.26):
+    # On the founder side (Win — adjust hostname prefix for your tailnet):
+    WIN_IP=$(python -m scripts._tailscale_peers self)
+    MAC_IP=$(python -m scripts._tailscale_peers peer huxt-mac)
     PYTHONPATH=. python scripts/cluster_smoke_xmachine.py \\
         --side win --bootstrap-new \\
-        --hostname 100.64.0.26 \\
-        --peers 100.64.0.21:2126
+        --hostname "$WIN_IP" \\
+        --peers "$MAC_IP:2126"
 
-    # On the joiner side (Mac, IP 100.64.0.21):
+    # On the joiner side (Mac):
+    MAC_IP=$(python -m scripts._tailscale_peers self)
+    WIN_IP=$(python -m scripts._tailscale_peers peer songym-win)
     PYTHONPATH=. python scripts/cluster_smoke_xmachine.py \\
         --side mac \\
-        --hostname 100.64.0.21 \\
-        --peers 100.64.0.26:2126
+        --hostname "$MAC_IP" \\
+        --peers "$WIN_IP:2126"
 
 Two contract guarantees the boot path enforces and the operator
 must respect:
@@ -173,8 +178,11 @@ def main() -> int:
     parser.add_argument(
         "--peers",
         required=True,
-        help="Comma-separated raft peer list, both sides included (e.g. "
-        "'100.64.0.26:2126,100.64.0.21:2126').",
+        help="Comma-separated raft peer list, OTHER nodes only (self is "
+        "added via --bootstrap-new founder or AddNode-on-leader). Resolve "
+        "Tailscale IPs at runtime via `python -m scripts._tailscale_peers "
+        "peer <hostname>` rather than hardcoding — survives Headscale IP "
+        "shuffles.",
     )
     parser.add_argument(
         "--bind-addr",

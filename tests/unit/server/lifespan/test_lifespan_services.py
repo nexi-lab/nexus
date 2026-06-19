@@ -97,7 +97,6 @@ class TestFromAppExtraction:
                 "entity_registry": "entity_reg",
                 "permission_enforcer": "perm_enf",
                 "rebac_manager": "rebac_mgr",
-                "async_namespace_manager": "ns_mgr",
                 "snapshot_service": "snap_svc",
             },
         )
@@ -114,7 +113,6 @@ class TestFromAppExtraction:
         assert svc.coordination_client is None  # sentinel deleted from NexusFS
         assert svc.workflow_engine == "wf_engine"
         assert svc.snapshot_service == "snap_svc"
-        assert svc.namespace_manager == "ns_mgr"
         assert svc.nexus_config == "nexus_cfg"
 
 
@@ -139,7 +137,6 @@ class TestFromAppSystemServices:
             _service_map={
                 "eviction_manager": "em",
                 "write_observer": "write_obs",
-                "zone_lifecycle": "zl",
             },
         )
         app = _make_app(nexus_fs=nx)
@@ -147,7 +144,6 @@ class TestFromAppSystemServices:
 
         assert svc.eviction_manager == "em"
         assert svc.write_observer == "write_obs"
-        assert svc.zone_lifecycle == "zl"
 
     def test_empty_service_registry_yields_none(self) -> None:
         """When no services registered, all system service fields are None."""

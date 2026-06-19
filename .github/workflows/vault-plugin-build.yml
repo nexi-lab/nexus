@@ -1,0 +1,192 @@
+name: Vault Plugin Build (reusable)
+
+# Reusable workflow for building the vault cdylib plugin across all three
+# platforms. Per-platform size budgets keep regressions visible — the
+# dylib is slimmer than the old standalone binary (no clap, no tokio
+# multi-thread, no tonic server, no signal handling).
+#
+# Also runs the password_vault module unit tests on linux — 44 tests
+# covering crypto / storage / all 7 RPCs / RFC 6238 TOTP vectors. The
+# tests are gated behind the same feature flag as the plugin, so they
+# only fire when the relevant code changes (via paths in vault-plugin.yml).
+
+on:
+  workflow_call:
+    inputs:
+      upload_retention_days:
+        description: Artifact retention in days
+        required: false
+        type: number
+        default: 14
+
+jobs:
+  unit-tests:
+    name: vault unit tests (services::password_vault)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: vault-unit-tests
+
+      - name: Run password_vault unit tests
+        # Quoted because `password_vault::` contains a colon-pair that
+        # check-yaml mis-reads as a mapping continuation if unquoted.
+        run: "cargo test -p services --features service-password-vault password_vault::"
+
+  build:
+    name: vault-plugin / ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: nexus-vault-linux-x86_64
+            dylib: libnexus_vault.so
+            # cdylib is slimmer than the old standalone binary (no clap,
+            # no tokio server runtime, no signal handling). Budget keeps
+            # ~1 MiB headroom.
+            max_size_bytes: 6291456  # 6 MiB
+          - os: macos-14
+            artifact_name: nexus-vault-macos-arm64
+            dylib: libnexus_vault.dylib
+            max_size_bytes: 7864320  # 7.5 MiB
+          - os: macos-14
+            artifact_name: nexus-vault-macos-x86_64
+            dylib: libnexus_vault.dylib
+            target: x86_64-apple-darwin
+            max_size_bytes: 7864320  # 7.5 MiB
+          - os: windows-latest
+            artifact_name: nexus-vault-windows-x86_64
+            dylib: nexus_vault.dll
+            max_size_bytes: 6291456  # 6 MiB
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '3.20.2'
+          $protocDir = Join-Path $env:USERPROFILE 'protoc'
+          New-Item -ItemType Directory -Force -Path $protocDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protocVersion}/protoc-${protocVersion}-win64.zip" `
+            -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $protocDir
+          $protocBinDir = Join-Path $protocDir 'bin'
+          $protocExe = Join-Path $protocBinDir 'protoc.exe'
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBinDir
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
+          & $protocExe --version
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          target: ${{ matrix.target || '' }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: vault-plugin-${{ matrix.os }}-${{ matrix.target || 'native' }}
+
+      - name: Build release cdylib
+        run: cargo build --release -p nexus-vault ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Check dylib size
+        shell: bash
+        env:
+          MAX_SIZE_BYTES: ${{ matrix.max_size_bytes }}
+          DYLIB_PATH: ${{ matrix.target && format('target/{0}/release/{1}', matrix.target, matrix.dylib) || format('target/release/{0}', matrix.dylib) }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            actual=$(stat -f '%z' "$DYLIB_PATH")
+          else
+            actual=$(stat -c '%s' "$DYLIB_PATH")
+          fi
+          echo "Plugin size: $actual bytes (max: $MAX_SIZE_BYTES)"
+          if [ "$actual" -gt "$MAX_SIZE_BYTES" ]; then
+            echo "::error::nexus-vault ${{ matrix.artifact_name }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
+            exit 1
+          fi
+
+      - name: Verify plugin symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYLIB="${{ matrix.target && format('target/{0}/release/{1}', matrix.target, matrix.dylib) || format('target/release/{0}', matrix.dylib) }}"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            nm -gU "$DYLIB" | grep -q nexus_plugin_api_version
+            nm -gU "$DYLIB" | grep -q nexus_service_create
+            nm -gU "$DYLIB" | grep -q nexus_service_dispatch
+            nm -gU "$DYLIB" | grep -q nexus_service_destroy
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            nm -D "$DYLIB" | grep -q nexus_plugin_api_version
+            nm -D "$DYLIB" | grep -q nexus_service_create
+            nm -D "$DYLIB" | grep -q nexus_service_dispatch
+            nm -D "$DYLIB" | grep -q nexus_service_destroy
+          fi
+          echo "All required plugin symbols found"
+
+      # Real dlopen regression test (issue nexus-vfs#45). `nm` above
+      # proves the manifest symbols exist in the binary; this step
+      # proves the kernel-side `libloading::Library::new` + symbol
+      # resolution path actually works for the just-built cdylib on
+      # this platform. Cross-compile rows (matrix.target set) skip
+      # because the cross-built binary cannot be executed natively on
+      # the runner.
+      - name: Test plugin dlopen + symbol resolution
+        if: matrix.target == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --release -p nexus-vault --test dlopen_self -- --nocapture
+
+      - name: Run dylib E2E tests
+        if: ${{ !matrix.target }}
+        shell: bash
+        env:
+          VAULT_DYLIB_PATH: ${{ github.workspace }}/target/release/${{ matrix.dylib }}
+        run: cargo test --release -p nexus-vault dylib_e2e -- --test-threads=1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.target && format('target/{0}/release/{1}', matrix.target, matrix.dylib) || format('target/release/{0}', matrix.dylib) }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.upload_retention_days }}

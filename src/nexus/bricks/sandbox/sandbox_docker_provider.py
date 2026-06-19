@@ -429,7 +429,7 @@ class DockerSandboxProvider(SandboxProvider):
 
         try:
             # Stop and remove container
-            await asyncio.to_thread(container.stop, timeout=5)
+            await asyncio.to_thread(container.stop, timeout=1)
             await asyncio.to_thread(container.remove)
             logger.info("Destroyed Docker sandbox: %s", sandbox_id)
         except Exception as e:
@@ -614,7 +614,7 @@ class DockerSandboxProvider(SandboxProvider):
                 container_name,
             )
             try:
-                existing_container.stop(timeout=5)
+                existing_container.stop(timeout=1)
             except Exception as stop_err:
                 logger.debug("Error stopping container (may already be stopped): %s", stop_err)
             existing_container.remove(force=True)

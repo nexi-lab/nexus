@@ -29,16 +29,8 @@ ENV PATH="/root/.cargo/bin:${PATH}" \
 WORKDIR /app
 COPY . /app
 
-# Build nexus_runtime wheel for Python 3.14 + install editable nexus.
-RUN pip install maturin && \
-    if [ "$(uname -m)" = "aarch64" ]; then \
-        export SIMSIMD_TARGET_SVE=0 SIMSIMD_TARGET_SVE2=0 \
-               SIMSIMD_TARGET_SVE_BF16=0 SIMSIMD_TARGET_SVE_F16=0 \
-               SIMSIMD_TARGET_SVE_I8=0; \
-    fi && \
-    maturin build --release --out /tmp/nexus-dist -m rust/nexus-cdylib/Cargo.toml && \
-    pip install /tmp/nexus-dist/nexus_runtime-*.whl && \
-    pip install -e .
+# Install editable nexus (kernel runs as standalone nexus-cluster binary).
+RUN pip install -e .
 
 # Build the standalone nexus-fuse Rust daemon (separate workspace).
 # CARGO_TARGET_DIR=/app/target is exported above, so the artifact lands there

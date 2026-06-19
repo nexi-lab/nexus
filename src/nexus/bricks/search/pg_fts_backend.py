@@ -20,21 +20,18 @@ wires the call site through ChunkStore's actual API
 the SearchBackend protocol shape so isinstance() checks pass immediately.
 
 Page-BM25 approach (keyword_search_pages):
-  The SQL uses a CTE to aggregate chunks per path into a page_text string,
-  then applies pg_textsearch BM25 over page_text. This is the most accurate
-  approach when pg_textsearch can process the CTE result. If the installed
-  build cannot index CTE columns (operator-not-found / undefined-function
-  raises ``ProgrammingError``), the backend transparently falls back to
-  chunk-level BM25 with a wider ``k * 4`` and client-side page aggregation
-  via :func:`result_builders._aggregate_chunks_to_pages`. The fallback
-  decision is cached per-instance so we only try-and-catch once per
-  daemon lifetime.
+  The backend pulls an over-fetched chunk-level candidate set through the
+  indexed BM25/native-FTS query, then max-pools those candidates to one row
+  per path. This keeps page search on the same indexed hot path as chunk
+  search. Avoid building a page aggregation CTE before matching: that forces
+  PostgreSQL to aggregate/rank the corpus for a single-hit query.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -63,7 +60,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _BM25_MATCH_OP: str = "@@@"
 _BM25_SCORE_FN: str = "paradedb.score"
-_NATIVE_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+# Index-preload warm token (Issue #4269). Must NOT be an English stopword: a
+# stopword reduces to an empty ``to_tsquery`` in the native-FTS fallback, which
+# matches nothing and faults in no index pages — defeating the warm. A neutral
+# content word issues a real index lookup on both the BM25 and native paths
+# regardless of whether the corpus actually contains it.
+_PRELOAD_WARM_TOKEN: str = "data"
+_PAGE_SEARCH_CANDIDATE_MULTIPLIER = 8
+_PAGE_SEARCH_MIN_CANDIDATES = 64
+# Unicode-aware token pattern (Issue #4269 Codex R9): ``[^\W_]+`` matches word
+# characters EXCLUDING underscore, with Unicode semantics, so accented Latin and
+# other non-ASCII terms that PostgreSQL FTS and SQLite FTS5 (unicode61) index are
+# not falsely treated as untokenizable by the warm-token sampler.
+_NATIVE_FTS_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 _NATIVE_FTS_STOPWORDS = {
     "a",
     "an",
@@ -131,6 +140,49 @@ def _native_like_patterns(query: str) -> dict[str, str]:
     }
 
 
+def _page_candidate_limit(k: int) -> int:
+    if k <= 0:
+        return 0
+    return max(k * _PAGE_SEARCH_CANDIDATE_MULTIPLIER, _PAGE_SEARCH_MIN_CANDIDATES)
+
+
+def _first_corpus_token(text_value: str) -> str | None:
+    """Pick a warm token from chunk text, matching the query analyzers' token
+    acceptance (Issue #4269 Codex R5/R8).
+
+    Minimum length 2 — the same threshold ``_native_fts_query`` uses — so a
+    searchable acronym/short-token corpus (e.g. ``"AI ML UX"``) is not falsely
+    rejected. A non-stopword token is preferred (more likely to survive
+    Postgres stopword removal), but we fall back to ANY >=2-char token rather
+    than declaring "no token": SQLite FTS5 (porter/unicode61, no stopword list)
+    matches stopwords too, and the caller's matched-row check is the final
+    per-backend effectiveness guarantee. Returns None only when the text has no
+    >=2-char alphanumeric token at all.
+    """
+    tokens = [
+        match.group(0)
+        for match in _NATIVE_FTS_TOKEN_RE.finditer(text_value.lower())
+        if len(match.group(0)) >= 2
+    ]
+    for tok in tokens:
+        if tok not in _NATIVE_FTS_STOPWORDS:
+            return tok
+    return tokens[0] if tokens else None
+
+
+def _record_index_load(timing: dict[str, float] | None, start: float) -> None:
+    """Accumulate the index-touching DB-query wall-clock into index_load_ms.
+
+    Issue #4269: ``+=`` so repeated keyword queries within one search (e.g.
+    chunk + page legs) sum into a single index_load_ms figure rather than
+    clobbering each other.
+    """
+    if timing is None:
+        return
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    timing["index_load_ms"] = timing.get("index_load_ms", 0.0) + elapsed_ms
+
+
 def _is_missing_bm25_error(exc: BaseException) -> bool:
     """Return True for pg_search / pg_textsearch not-installed query failures."""
     orig = getattr(exc, "orig", None)
@@ -162,11 +214,6 @@ class PgFtsBackend:
     def __init__(self, engine: AsyncEngine, chunk_store: Any | None = None) -> None:
         self._engine = engine
         self._chunk_store = chunk_store  # reserved for T9 write delegation
-        # Cached page-BM25 strategy. ``None`` = untried (try CTE first),
-        # ``True`` = CTE works, ``False`` = fall back to client-side
-        # aggregation. Keeps us from try/except on every query once we
-        # know which path the installed pg_textsearch build supports.
-        self._page_cte_supported: bool | None = None
         # ``None`` = not checked yet, ``True`` = pg_search/pg_textsearch BM25
         # works, ``False`` = use built-in PostgreSQL FTS fallback.
         self._bm25_available: bool | None = None
@@ -192,13 +239,158 @@ class PgFtsBackend:
         except Exception as exc:
             logger.debug("PgFtsBackend.startup: BM25 capability probe failed: %s", exc)
             self._bm25_available = None
-        if self._bm25_available is False:
-            self._page_cte_supported = False
         return None
 
     async def shutdown(self) -> None:
         """No-op: engine disposal is the caller's responsibility."""
         return None
+
+    def _bm25_warm_query(self) -> Any:
+        """Ranked BM25 warm query mirroring ``_keyword_search_bm25`` (Codex R2):
+        selects paradedb.score and ORDER BY it so the planner executes the
+        scoring/ranking path, plus the file_paths JOIN + deleted_at filter."""
+        return text(
+            f"SELECT c.chunk_id, {_BM25_SCORE_FN}(c.chunk_id) AS score "
+            f"FROM document_chunks c "
+            f"JOIN file_paths fp ON c.path_id = fp.path_id "
+            f"WHERE c.chunk_text {_BM25_MATCH_OP} :q "
+            f"AND fp.deleted_at IS NULL "
+            f"ORDER BY score DESC "
+            f"LIMIT 64"
+        )
+
+    def _native_warm_query(self) -> Any:
+        """Ranked native-FTS warm query mirroring ``_keyword_search_native``."""
+        return text(
+            "SELECT c.chunk_id, "
+            "       ts_rank_cd(to_tsvector('english', c.chunk_text), q.query) AS score "
+            "FROM document_chunks c "
+            "JOIN file_paths fp ON c.path_id = fp.path_id "
+            "CROSS JOIN (SELECT to_tsquery('english', :q) AS query) q "
+            "WHERE to_tsvector('english', c.chunk_text) @@ q.query "
+            "AND fp.deleted_at IS NULL "
+            "ORDER BY score DESC "
+            "LIMIT 64"
+        )
+
+    async def preload(self) -> float:
+        """Fault the keyword-search hot-path pages into RAM (Issue #4269).
+
+        Issues a single bounded, zone-agnostic warm query that mirrors the real
+        keyword query's table/index access pattern — the ranked BM25 (or
+        tsvector) index on ``document_chunks.chunk_text``, the ``file_paths``
+        JOIN, and the ``deleted_at`` filter — so the kernel faults all of those
+        pages off the (possibly network-attached) volume before the first real
+        query. Returns elapsed ms on success.
+
+        NOT internally fail-soft (Codex R4): a genuine warm failure is raised so
+        the daemon records it as a failed preload rather than reporting a
+        misleading "successful" warm over a still-cold index. The daemon's
+        ``_preload_search_index`` provides the fail-soft boundary (it never lets
+        a preload error abort startup). If BM25 is detected unavailable, the
+        native-FTS fallback — the path the first real query will actually use —
+        is warmed before returning, instead of leaving it cold.
+
+        The warm token is sampled from real indexed chunks (Codex R5) so the
+        query matches actual rows and faults the term postings + joined/ranked
+        heap pages, not just the dictionary on a zero-hit lookup. If the corpus
+        is non-empty but no indexable token can be sampled from it, the warm
+        cannot be proven effective, so preload RAISES (Codex R6) — the daemon
+        then records index_preload_ok=False rather than implying a warm index.
+        """
+        start = time.perf_counter()
+        warm_token, corpus_nonempty, token_is_real = await self._resolve_warm_token()
+        if corpus_nonempty and not token_is_real:
+            raise RuntimeError(
+                "PgFtsBackend.preload: no indexable token found in sampled corpus; "
+                "warm would be a zero-hit lookup that does not fault real postings"
+            )
+
+        matched = await self._run_warm(warm_token)
+        # The warm token came from a live indexed chunk, so a correctly built,
+        # fresh index MUST return at least one row. Zero matches means the index
+        # is stale or its analyzer tokenizes differently than the sampler — the
+        # warm did not fault real postings/heap/ranking pages, so do not report
+        # success (Codex R7).
+        if token_is_real and matched == 0:
+            raise RuntimeError(
+                "PgFtsBackend.preload: warm query matched no rows for a sampled "
+                "corpus token; index is stale or analyzer-mismatched — not "
+                "effectively warmed"
+            )
+        return (time.perf_counter() - start) * 1000
+
+    async def _run_warm(self, warm_token: str) -> int:
+        """Execute the ranked warm query and return the matched row count.
+
+        Handles the BM25 → native fallback on a missing pg_search extension
+        (Codex R4). Genuine errors propagate so the daemon records a failed
+        preload.
+        """
+        if self._bm25_available is False:
+            return await self._run_native_warm(warm_token)
+        try:
+            async with self._engine.connect() as conn:
+                rows = (await conn.execute(self._bm25_warm_query(), {"q": warm_token})).fetchall()
+            return len(rows)
+        except (ProgrammingError, DBAPIError) as exc:
+            if not _is_missing_bm25_error(exc):
+                raise  # genuine error → observable to the daemon (Codex R4)
+            # BM25 extension absent — mark for native fallback AND warm the
+            # native path now so the first real query is not left cold. Use a
+            # fresh connection: the failed BM25 query aborted this one's txn.
+            self._bm25_available = False
+            logger.info(
+                "PgFtsBackend.preload: BM25 unavailable; warming native FTS fallback instead"
+            )
+            return await self._run_native_warm(warm_token)
+
+    async def _run_native_warm(self, warm_token: str) -> int:
+        fts_query = _native_fts_query(warm_token) or warm_token
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(self._native_warm_query(), {"q": fts_query})).fetchall()
+        return len(rows)
+
+    async def _resolve_warm_token(self) -> tuple[str, bool, bool]:
+        """Resolve a warm token, sampling SEVERAL non-deleted indexed chunks so
+        a real corpus token is found even if the first row is all stopwords
+        (Codex R5/R6). Returns ``(token, corpus_nonempty, token_is_real)``:
+
+        * ``token_is_real`` True  → token came from live indexed text; the warm
+          is guaranteed to match the source row (effective).
+        * ``corpus_nonempty`` True but ``token_is_real`` False → the corpus has
+          rows yet none yielded an indexable token; the caller treats this as a
+          failed warm rather than a zero-hit success.
+        * ``corpus_nonempty`` False → genuinely empty corpus: nothing to warm,
+          fixed fallback token, no effectiveness claim needed.
+
+        Sampling errors are NOT swallowed (Codex R10): a transient failure must
+        not be misread as "empty corpus" and let a zero-hit fixed-token warm
+        report success. The exception propagates so the daemon records
+        index_preload_ok=False (fail closed) — and the warm query, which hits
+        the same tables, would fail anyway.
+        """
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT c.chunk_text "
+                        "FROM document_chunks c "
+                        "JOIN file_paths fp ON c.path_id = fp.path_id "
+                        "WHERE fp.deleted_at IS NULL AND c.chunk_text IS NOT NULL "
+                        "LIMIT 20"
+                    )
+                )
+            ).fetchall()
+        if not rows:
+            return _PRELOAD_WARM_TOKEN, False, False  # genuinely empty corpus
+        for row in rows:
+            if row[0]:
+                tok = _first_corpus_token(str(row[0]))
+                if tok:
+                    return tok, True, True
+        # Corpus has rows but no indexable token in the sample.
+        return _PRELOAD_WARM_TOKEN, True, False
 
     # -------------------------------------------------------------------------
     # Write pass-through stubs (T9 wires these to ChunkStore)
@@ -239,6 +431,8 @@ class PgFtsBackend:
         path: str,
         k: int,
         zone_id: str,
+        *,
+        timing: dict[str, float] | None = None,
     ) -> list[BaseSearchResult]:
         """BM25 chunk-level search.
 
@@ -250,15 +444,20 @@ class PgFtsBackend:
             path: Path prefix filter (e.g. "/zone/subdir/").
             k: Maximum number of results to return.
             zone_id: Zone isolation — only files in this zone are searched.
+            timing: Optional dict to accumulate phase timings into. When
+                provided, the wall-clock of the index-touching DB query is
+                added to ``timing['index_load_ms']`` (Issue #4269). This
+                isolates the BM25 scan / index page fault-in — where the cold
+                network-volume read-stall lives — from surrounding Python work.
 
         Returns:
             List of BaseSearchResult ordered by score descending.
         """
         if self._bm25_available is False:
-            return await self._keyword_search_native(query, path, k, zone_id)
+            return await self._keyword_search_native(query, path, k, zone_id, timing=timing)
 
         try:
-            return await self._keyword_search_bm25(query, path, k, zone_id)
+            return await self._keyword_search_bm25(query, path, k, zone_id, timing=timing)
         except (ProgrammingError, DBAPIError) as exc:
             if not _is_missing_bm25_error(exc):
                 raise
@@ -270,8 +469,7 @@ class PgFtsBackend:
                 exc,
             )
             self._bm25_available = False
-            self._page_cte_supported = False
-            return await self._keyword_search_native(query, path, k, zone_id)
+            return await self._keyword_search_native(query, path, k, zone_id, timing=timing)
 
     async def _keyword_search_bm25(
         self,
@@ -279,6 +477,8 @@ class PgFtsBackend:
         path: str,
         k: int,
         zone_id: str,
+        *,
+        timing: dict[str, float] | None = None,
     ) -> list[BaseSearchResult]:
         # NOTE: _BM25_MATCH_OP and _BM25_SCORE_FN are module-level string
         # constants, not user input, so the f-string here does NOT open an
@@ -302,6 +502,7 @@ class PgFtsBackend:
             """
         )
         async with self._engine.connect() as conn:
+            index_load_start = time.perf_counter()
             rows = (
                 (
                     await conn.execute(
@@ -312,6 +513,7 @@ class PgFtsBackend:
                 .mappings()
                 .all()
             )
+            _record_index_load(timing, index_load_start)
 
         return self._rows_to_results(rows, zone_id=zone_id)
 
@@ -321,6 +523,8 @@ class PgFtsBackend:
         path: str,
         k: int,
         zone_id: str,
+        *,
+        timing: dict[str, float] | None = None,
     ) -> list[BaseSearchResult]:
         fts_query = _native_fts_query(query)
         if not fts_query:
@@ -357,6 +561,7 @@ class PgFtsBackend:
             LIMIT :k
         """)
         async with self._engine.connect() as conn:
+            index_load_start = time.perf_counter()
             rows = (
                 (
                     await conn.execute(
@@ -373,6 +578,7 @@ class PgFtsBackend:
                 .mappings()
                 .all()
             )
+            _record_index_load(timing, index_load_start)
 
         return self._rows_to_results(rows, zone_id=zone_id)
 
@@ -401,23 +607,20 @@ class PgFtsBackend:
         k: int,
         zone_id: str,
     ) -> list[BaseSearchResult]:
-        """BM25 page-level search (one result per path, not per chunk).
+        """Indexed page-level search (one result per path, not per chunk).
 
-        Aggregates all chunks for each path into a single page_text string
-        (ordered by chunk_index), then applies pg_textsearch BM25 over the
-        page text. Returns at most *k* results ordered by BM25 score desc.
+        Pulls an over-fetched candidate set through ``keyword_search`` and
+        max-pools those already-ranked chunk rows to page granularity. This
+        preserves the #3980 rare-phrase behavior without a corpus-wide page
+        aggregation CTE on the query hot path.
 
-        This implements the #3980 parity requirement: a rare phrase buried
-        deep in a multi-chunk document should surface the whole document
-        rather than scoring only one chunk in isolation.
-
-        Page-BM25 strategy: try CTE aggregation first. If the installed
-        pg_textsearch build cannot apply ``@@@`` / ``paradedb.score`` over
-        the CTE result (operator-not-found / function-not-found raises
-        ``ProgrammingError``), fall back to chunk-level BM25 with a wider
-        ``k * 4`` and client-side aggregation via
-        ``_aggregate_chunks_to_pages``. The decision is cached on the
-        instance so we only try-and-catch once per daemon lifetime.
+        Recall bound: only the top ``page_candidate_limit(k)`` chunk matches
+        (``max(k * 8, 64)``) are considered. A page surfaces iff at least one
+        of its chunks ranks within that candidate window. For pathologically
+        long documents whose only match is a low-BM25 chunk ranked beyond the
+        window, the page can be missed — the retired CTE path scored the whole
+        page_text and had no such bound. Widen the multiplier if recall on
+        very long documents regresses.
 
         Args:
             query: BM25 search query string.
@@ -428,203 +631,22 @@ class PgFtsBackend:
         Returns:
             List of BaseSearchResult (one per path) ordered by score desc.
         """
-        if self._bm25_available is False:
-            return await self._keyword_search_pages_native(query, path, k, zone_id)
+        candidates = await self.keyword_search(query, path, self.page_candidate_limit(k), zone_id)
+        return self.page_results_from_chunks(candidates, k=k, zone_id=zone_id)
 
-        if self._page_cte_supported is False:
-            # Cached: previous attempt failed — go straight to fallback.
-            return await self._keyword_search_pages_fallback(query, path, k, zone_id)
+    def page_candidate_limit(self, k: int) -> int:
+        return _page_candidate_limit(k)
 
-        try:
-            results = await self._keyword_search_pages_cte(query, path, k, zone_id)
-        except (ProgrammingError, DBAPIError) as exc:
-            # ProgrammingError covers operator-not-found / function-not-found
-            # in psycopg / asyncpg; DBAPIError is the broader catch for builds
-            # that surface the same condition under a different SQLSTATE.
-            # Anything else (timeouts, IntegrityError) we re-raise.
-            if _is_missing_bm25_error(exc):
-                logger.warning(
-                    "PgFtsBackend.keyword_search_pages: BM25 query failed "
-                    "because pg_search/pg_textsearch is unavailable (%s: %s). "
-                    "Falling back to built-in PostgreSQL FTS for this process.",
-                    type(exc).__name__,
-                    exc,
-                )
-                self._bm25_available = False
-                self._page_cte_supported = False
-                return await self._keyword_search_pages_native(query, path, k, zone_id)
-
-            if self._page_cte_supported is None:
-                logger.warning(
-                    "PgFtsBackend.keyword_search_pages: CTE-aggregated BM25 "
-                    "failed on this pg_textsearch build (%s: %s). Falling "
-                    "back to chunk-level BM25 + client-side page "
-                    "aggregation; subsequent calls will skip the CTE attempt.",
-                    type(exc).__name__,
-                    exc,
-                )
-            self._page_cte_supported = False
-            return await self._keyword_search_pages_fallback(query, path, k, zone_id)
-        else:
-            # Cache success on first hit so subsequent calls skip the
-            # try/except overhead.
-            if self._page_cte_supported is None:
-                self._page_cte_supported = True
-            return results
-
-    async def _keyword_search_pages_cte(
+    def page_results_from_chunks(
         self,
-        query: str,
-        path: str,
+        chunks: Sequence[BaseSearchResult],
+        *,
         k: int,
         zone_id: str,
     ) -> list[BaseSearchResult]:
-        sql = text(
-            f"""
-            WITH pages AS (
-              SELECT fp.path_id,
-                     fp.virtual_path,
-                     fp.zone_id,
-                     string_agg(c.chunk_text, ' ' ORDER BY c.chunk_index) AS page_text
-              FROM document_chunks c
-              JOIN file_paths fp ON c.path_id = fp.path_id
-              WHERE fp.zone_id = :zone_id
-                AND fp.virtual_path LIKE :prefix || '%'
-                AND fp.deleted_at IS NULL
-              GROUP BY fp.path_id, fp.virtual_path, fp.zone_id
-            )
-            SELECT path_id,
-                   virtual_path AS path,
-                   page_text,
-                   {_BM25_SCORE_FN}(path_id) AS score
-            FROM pages
-            WHERE page_text {_BM25_MATCH_OP} :q
-            ORDER BY score DESC
-            LIMIT :k
-            """
-        )
-        async with self._engine.connect() as conn:
-            rows = (
-                (
-                    await conn.execute(
-                        sql,
-                        {"q": query, "prefix": path, "zone_id": zone_id, "k": k},
-                    )
-                )
-                .mappings()
-                .all()
-            )
-
-        return [
-            BaseSearchResult(
-                path=r["path"],
-                chunk_text=r["page_text"],
-                score=float(r["score"]),
-                chunk_index=0,  # page-level result has no single chunk_index
-                keyword_score=float(r["score"]),
-                zone_id=zone_id,
-            )
-            for r in rows
-        ]
-
-    async def _keyword_search_pages_native(
-        self,
-        query: str,
-        path: str,
-        k: int,
-        zone_id: str,
-    ) -> list[BaseSearchResult]:
-        fts_query = _native_fts_query(query)
-        if not fts_query:
-            return []
-        like_patterns = _native_like_patterns(query)
-
-        sql = text("""
-            WITH q AS (
-              SELECT to_tsquery('english', :fts_query) AS query
-            ),
-            pages AS (
-              SELECT fp.path_id,
-                     fp.virtual_path,
-                     string_agg(c.chunk_text, ' ' ORDER BY c.chunk_index) AS page_text
-              FROM document_chunks c
-              JOIN file_paths fp ON c.path_id = fp.path_id
-              WHERE fp.zone_id = :zone_id
-                AND fp.virtual_path LIKE :prefix || '%'
-                AND fp.deleted_at IS NULL
-              GROUP BY fp.path_id, fp.virtual_path
-            )
-            SELECT path_id,
-                   virtual_path AS path,
-                   page_text,
-                   (
-                     ts_rank_cd(to_tsvector('english', page_text), q.query)
-                     + CASE
-                         WHEN page_text ILIKE :heading_pattern ESCAPE '\\' THEN 10.0
-                         ELSE 0.0
-                       END
-                     + CASE
-                         WHEN page_text ILIKE :phrase_pattern ESCAPE '\\' THEN 1.0
-                         ELSE 0.0
-                       END
-                   ) AS score
-            FROM pages
-            CROSS JOIN q
-            WHERE to_tsvector('english', page_text) @@ q.query
-            ORDER BY score DESC
-            LIMIT :k
-        """)
-        async with self._engine.connect() as conn:
-            rows = (
-                (
-                    await conn.execute(
-                        sql,
-                        {
-                            "fts_query": fts_query,
-                            **like_patterns,
-                            "prefix": path,
-                            "zone_id": zone_id,
-                            "k": k,
-                        },
-                    )
-                )
-                .mappings()
-                .all()
-            )
-
-        return [
-            BaseSearchResult(
-                path=r["path"],
-                chunk_text=r["page_text"],
-                score=float(r["score"]),
-                chunk_index=0,
-                keyword_score=float(r["score"]),
-                zone_id=zone_id,
-            )
-            for r in rows
-        ]
-
-    async def _keyword_search_pages_fallback(
-        self,
-        query: str,
-        path: str,
-        k: int,
-        zone_id: str,
-    ) -> list[BaseSearchResult]:
-        """Client-side page aggregation when pg_textsearch can't index CTEs.
-
-        Pulls the top ``k * 4`` chunk-level matches and aggregates them into
-        pages via ``_aggregate_chunks_to_pages``. The widened ``k * 4`` keeps
-        recall close to the CTE path: a rare phrase that lands in chunk 30 of
-        a long page still shows up because we collected enough siblings to
-        max-pool at the page level.
-        """
-        chunks = await self.keyword_search(query, path, k * 4, zone_id)
-        if not chunks:
+        if k <= 0 or not chunks:
             return []
 
-        # ``_aggregate_chunks_to_pages`` works on dict rows; convert from
-        # BaseSearchResult and back so we can reuse the shared helper.
         rows = [
             {
                 "path": r.path,
@@ -635,7 +657,6 @@ class PgFtsBackend:
             }
             for r in chunks
         ]
-        # chunks_per_page=1 collapses to one row per page (page-level shape).
         aggregated = _aggregate_chunks_to_pages(rows, chunks_per_page=1)[:k]
         return [
             BaseSearchResult(

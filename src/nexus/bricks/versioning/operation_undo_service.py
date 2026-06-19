@@ -43,7 +43,6 @@ class OperationUndoService:
         delete_fn: Any = None,
         rename_fn: Any = None,
         exists_fn: Any = None,
-        fallback_backend: Any | None = None,
     ) -> None:
         """Initialise the undo service.
 
@@ -53,14 +52,12 @@ class OperationUndoService:
             delete_fn: ``(path) -> None`` kernel delete primitive.
             rename_fn: ``(old, new) -> None`` kernel rename primitive.
             exists_fn: ``(path) -> bool`` kernel existence check.
-            fallback_backend: Optional legacy backend for CAS reads.
         """
         self._dlc = dlc
         self._write = write_fn
         self._delete = delete_fn
         self._rename = rename_fn
         self._exists = exists_fn
-        self._fallback_backend = fallback_backend
 
     # ------------------------------------------------------------------
     # Public API
@@ -99,7 +96,7 @@ class OperationUndoService:
     def _undo_write(self, operation: Any) -> UndoResult:
         """Undo a write: restore previous content or delete new file."""
         if operation.snapshot_hash:
-            old_content = self._read_content_from_cas(operation.path, operation.snapshot_hash)
+            old_content = self._read_snapshot(operation)
             self._write(operation.path, old_content)
             return UndoResult(
                 success=True,
@@ -127,7 +124,7 @@ class OperationUndoService:
                 path=operation.path,
             )
 
-        content = self._read_content_from_cas(operation.path, operation.snapshot_hash)
+        content = self._read_snapshot(operation)
         self._write(operation.path, content)
 
         # NOTE: metadata restoration (chown/chgrp/chmod) is intentionally
@@ -172,17 +169,29 @@ class OperationUndoService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _read_content_from_cas(self, path: str, content_id: str) -> bytes:
-        """Read content from CAS via DLC, with optional fallback."""
-        try:
-            # Read via kernel syscall — sys_read_raw raises on missing path.
-            _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
-            if _kernel is None:
-                raise RuntimeError(f"No kernel available for CAS read: {path}")
-            result: bytes = _kernel.sys_read_raw(path, "root")
-            return result
-        except Exception:
-            if self._fallback_backend is not None:
-                fallback_result: bytes = self._fallback_backend.read_content(content_id)
-                return fallback_result
-            raise
+    def _read_snapshot(self, operation: Any) -> bytes:
+        """Read the pre-write snapshot bytes for ``operation`` via the syscall.
+
+        Snapshots live at ``/__sys__/versioning/{sha256(path)}/{op_id}.bin`` —
+        published by the write observer's OBSERVE-stage hook when the write
+        that produced ``operation`` was committed. Both sides derive the path
+        from ``nexus.contracts.versioning_path`` so the convention is SSOT.
+
+        Reads through ``sys_read_raw`` (§2.5 — service tier never touches CAS
+        by hash). The snapshot entry is metadata-only and points back at the
+        original ``content_id``, so this round-trip costs one path resolve plus
+        one CAS fetch — no byte copy at write time.
+
+        Raises ``RuntimeError`` if no kernel is wired; propagates the kernel's
+        ``NexusFileNotFoundError`` if the snapshot was never published (legacy
+        operation log entries from before the observer was wired, or paths the
+        observer skips).
+        """
+        from nexus.contracts.versioning_path import versioning_snapshot_path
+
+        _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
+        if _kernel is None:
+            raise RuntimeError(f"No kernel available for snapshot read: {operation.path}")
+        snap_path = versioning_snapshot_path(operation.path, operation.operation_id)
+        result: bytes = _kernel.sys_read_raw(snap_path, "root")
+        return result

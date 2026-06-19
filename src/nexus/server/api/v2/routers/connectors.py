@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -194,6 +194,11 @@ def _auth_zone(auth_result: dict[str, Any]) -> str | None:
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     return zone_id if zone_id != ROOT_ZONE_ID else None
+
+
+def _operation_context_from_auth(auth_result: dict[str, Any]) -> Any:
+    """Build the OperationContext used for connector mount lifecycle calls."""
+    return get_operation_context(auth_result)
 
 
 # ---------------------------------------------------------------------------
@@ -599,17 +604,8 @@ async def mount_connector(
     Inherits the API key's zone and permissions. Parent directories
     (e.g., /mnt for /mnt/gmail) are auto-created in the same zone.
     """
-    from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.types import OperationContext
-
     # Build context from the authenticated user's identity
-    mount_context = OperationContext(
-        user_id=auth.get("subject_id", "system"),
-        groups=[],
-        is_admin=auth.get("is_admin", True),
-        is_system=True,
-        zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
-    )
+    mount_context = _operation_context_from_auth(auth)
 
     mount_svc = _get_mount_service(request)
     nx = _get_nx(request)
@@ -630,32 +626,21 @@ async def mount_connector(
                 # in root-level readdir. sys_write creates files but the HTTP
                 # readdir doesn't synthesize parent directories from child paths.
                 try:
-                    from datetime import UTC, datetime
+                    from nexus.contracts.metadata import DT_DIR
 
-                    from nexus.contracts.metadata import FileMetadata
-
-                    meta_store = nx._kernel
-                    if meta_store:
-                        for dir_path in [
-                            "/skills",
-                            f"/skills/{connector_name}",
-                            f"/skills/{connector_name}/schemas",
-                        ]:
-                            try:
-                                if not meta_store.get(dir_path):
-                                    meta_store.put(
-                                        FileMetadata(
-                                            path=dir_path,
-                                            size=0,
-                                            content_id=None,
-                                            created_at=datetime.now(UTC),
-                                            modified_at=datetime.now(UTC),
-                                            version=1,
-                                            zone_id=mount_context.zone_id,
-                                        )
-                                    )
-                            except Exception:
-                                pass
+                    for dir_path in [
+                        "/skills",
+                        f"/skills/{connector_name}",
+                        f"/skills/{connector_name}/schemas",
+                    ]:
+                        try:
+                            if not nx.sys_stat(dir_path):
+                                nx.sys_setattr(
+                                    dir_path,
+                                    entry_type=DT_DIR,
+                                )
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
@@ -780,9 +765,10 @@ async def list_mounted_connectors(
 ) -> list[MountInfo]:
     """List all mounted connectors with status."""
     mount_svc = _get_mount_service(request)
+    list_context = _operation_context_from_auth(auth_result)
 
     async def _list_mounts() -> list[MountInfo]:
-        mounts = await mount_svc.list_mounts()
+        mounts = await mount_svc.list_mounts(context=list_context)
 
         result = []
         for m in mounts:
@@ -811,10 +797,11 @@ async def unmount_connector(
 ) -> MountResponse:
     """Unmount a connector."""
     mount_svc = _get_mount_service(request)
+    unmount_context = _operation_context_from_auth(auth_result)
 
     async def _unmount() -> MountResponse:
         try:
-            await mount_svc.remove_mount(mount_point=req.mount_point)
+            await mount_svc.remove_mount(mount_point=req.mount_point, context=unmount_context)
             _mount_types.pop(req.mount_point, None)
 
             # Mirror the dual-write from the mount handler: also drop the
@@ -1029,7 +1016,7 @@ async def write_to_connector(
 
                 # Load existing metadata so permission hooks can distinguish
                 # overwrite (check WRITE on file) vs create (check WRITE on parent).
-                _old_meta = nx._kernel.sys_stat(mount_path, ROOT_ZONE_ID)
+                _old_meta = nx.sys_stat(mount_path)
 
                 nx.intercept_pre_write(
                     _WHC(

@@ -8,11 +8,13 @@ auto-refresh every 2 seconds.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
 import click
 
+from nexus.cli.config import same_endpoint
 from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
@@ -34,29 +36,157 @@ def _load_project_config_optional() -> dict[str, Any]:
     return load_project_config_optional()
 
 
-def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
+def _fetch_deployment_profile_from_features(
+    server_url: str, api_key: str | None = None
+) -> str | None:
+    """Best-effort fetch of *profile* from ``GET /api/v2/features``.
+
+    Returns the profile string on success, or *None* on any failure.
+    Never raises; uses a short timeout so ``nexus status`` stays responsive
+    even when the server is offline. The *api_key* is forwarded so an
+    authenticated hub's features endpoint is not silently 401'd into the
+    env/unknown fallback.
+    """
+    try:
+        from nexus.cli.api_client import NexusApiClient
+
+        features = NexusApiClient(url=server_url, api_key=api_key, timeout=2.0).get(
+            "/api/v2/features"
+        )
+        if isinstance(features, dict):
+            profile = features.get("profile")
+            if profile and isinstance(profile, str):
+                return profile
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_deployment_profile(
+    server_url: str,
+    api_key: str | None = None,
+    *,
+    allow_env_fallback: bool = True,
+    prefetched_profile: str | None = None,
+) -> str:
+    """Resolve the *running hub's* deployment profile.
+
+    `nexus status` reports the hub at *server_url*, so the live hub's
+    ``/api/v2/features`` value is authoritative and MUST win over a local
+    ``NEXUS_PROFILE`` env var (otherwise ``NEXUS_PROFILE=full nexus status
+    --url <other-hub>`` would mislabel a different hub).
+
+    When *prefetched_profile* is provided (from ``_collect_status_async``),
+    it is used directly instead of making a redundant HTTP call.
+
+    Hierarchy (single source of truth):
+    1. Live ``GET /api/v2/features`` for *server_url* (authoritative when
+       a server URL is available and reachable).
+    2. ``NEXUS_PROFILE`` env var — ONLY when *allow_env_fallback* (the
+       target is the local managed/default stack). For an explicit
+       remote target whose features probe failed there is NO evidence,
+       so the env var must not be reported as that hub's profile.
+    3. ``"unknown"`` fallback.
+    """
+    fetched = prefetched_profile
+    if fetched is None and server_url:
+        fetched = _fetch_deployment_profile_from_features(server_url, api_key)
+    if fetched:
+        return fetched
+    if allow_env_fallback:
+        profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
+        if profile_env:
+            return profile_env
+    return "unknown"
+
+
+def _enrich_with_image_info(
+    data: dict[str, Any], status_api_key: str | None = None
+) -> dict[str, Any]:
     """Add the *effective* image_ref, connection env, and project info into *data*.
 
     Uses the same precedence logic as ``nexus up`` (env vars > config ref >
     deprecated config tag) so ``nexus status`` always shows the image that
     would actually run, not just the raw config value.
+
+    Also adds two new additive keys (Gap 2 of #4132):
+    - ``auth_mode``: from project config's ``auth`` key (default ``"none"``).
+    - ``deployment_profile``: resolved via env ``NEXUS_PROFILE`` →
+      best-effort ``GET /api/v2/features`` → ``"unknown"``.
     """
     from nexus.cli.commands.stack import _resolve_image_ref_from_config
+    from nexus.cli.state import load_runtime_state, resolve_connection_env
 
     project_cfg = _load_project_config_optional()
     if project_cfg:
-        data["image_ref"] = _resolve_image_ref_from_config(project_cfg)
-        data["image_channel"] = project_cfg.get("image_channel", "")
-        data["image_accelerator"] = project_cfg.get("image_accelerator", "")
-
-        # Add connection env vars and project metadata
-        from nexus.cli.state import load_runtime_state, resolve_connection_env
-
+        # Resolve the local stack endpoint/creds first so we can decide
+        # whether the status target IS that stack BEFORE attaching any
+        # local-only (and secret-bearing) metadata to the output.
         data_dir = project_cfg.get("data_dir", "./nexus-data")
         state = load_runtime_state(data_dir)
-        data["connection_env"] = resolve_connection_env(project_cfg, state)
-        data["project_name"] = state.get("project_name", "")
-        data["data_dir"] = data_dir
+        conn_env = resolve_connection_env(project_cfg, state)
+
+        # `nexus status` reports the hub at the *effective status target*
+        # (`data["server_url"]`, which honors an explicit --url). Local
+        # nexus.yaml describes only the locally-managed stack.
+        target_url = data.get("server_url", "")
+        local_stack_url = conn_env.get("NEXUS_URL", "")
+        is_local_stack = (not target_url) or same_endpoint(target_url, local_stack_url)
+
+        if is_local_stack:
+            # Safe: the target IS the local stack — attach its image +
+            # connection metadata (conn_env may carry NEXUS_API_KEY).
+            data["image_ref"] = _resolve_image_ref_from_config(project_cfg)
+            data["image_channel"] = project_cfg.get("image_channel", "")
+            data["image_accelerator"] = project_cfg.get("image_accelerator", "")
+            data["connection_env"] = conn_env
+            data["project_name"] = state.get("project_name", "")
+            data["data_dir"] = data_dir
+        # else: a different remote --url — do NOT attach the local
+        # stack's connection_env/image/project metadata (it would cross
+        # the auth boundary and misdescribe the remote hub).
+
+        # auth_mode: local nexus.yaml auth only when the target IS the
+        # locally-managed stack; otherwise it does not describe that hub.
+        data["auth_mode"] = project_cfg.get("auth", "none") if is_local_stack else "unknown"
+
+        # Credential boundary: send the LOCAL stack key to the features
+        # probe ONLY when the target IS the local stack. For a different
+        # remote --url, use the key the caller supplied for THIS status
+        # invocation (or none) — never the local conn_env bearer token.
+        probe_key = conn_env.get("NEXUS_API_KEY") if is_local_stack else status_api_key
+
+        # deployment_profile: resolved against the actual status target
+        # (features-first; env is offline fallback only).
+        data["deployment_profile"] = _resolve_deployment_profile(
+            target_url or local_stack_url,
+            probe_key,
+            # NEXUS_PROFILE may stand in only when the target IS the
+            # local managed stack; never for a different remote --url.
+            allow_env_fallback=is_local_stack,
+            prefetched_profile=data.pop("_features_profile", None),
+        )
+    else:
+        # No project config: there is no locally-managed stack to compare
+        # against, so we have NO evidence about the target's auth. Report
+        # "unknown" rather than fabricating "none" for what may be an
+        # authenticated remote hub (--url / NEXUS_URL).
+        data["auth_mode"] = "unknown"
+
+        # deployment_profile: resolved against the status target.
+        # With no project config there is no managed stack; only the
+        # loopback default may borrow NEXUS_PROFILE as an offline
+        # fallback — an explicit remote --url must report "unknown" when
+        # its features probe fails (no evidence about that hub).
+        _target = data.get("server_url", "")
+        _is_local_default = (not _target) or same_endpoint(_target, "http://localhost:2026")
+        data["deployment_profile"] = _resolve_deployment_profile(
+            _target,
+            status_api_key,
+            allow_env_fallback=_is_local_default,
+            prefetched_profile=data.pop("_features_profile", None),
+        )
+
     return data
 
 
@@ -66,14 +196,25 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _server_health(
-    base_url: str, api_key: str | None = None, timeout: float = 1.5
+    base_url: str, api_key: str | None = None, timeout: float = 5.0
 ) -> dict[str, Any] | None:
     """Query the running server's ``/health/detailed`` endpoint.
 
     Returns the JSON payload or *None* if the server is unreachable.
     Falls back to the public ``/health`` endpoint when the detailed
     endpoint requires authentication and no *api_key* is provided.
+
+    The 5s default matches the Docker E2E ``curl --max-time 5`` budget
+    (``.github/workflows/docker-publish.yml``); ``/health/detailed``
+    legitimately runs ~9 sub-checks (including async Redis-backed
+    ``durable_invalidation.health_check()``) per
+    ``src/nexus/server/api/core/health.py:71-206``, so a tighter budget
+    times out under realistic load.
     """
+    from nexus.cli.api_client import is_loopback_url
+
+    base_url = base_url.rstrip("/")
+    trust_env = not is_loopback_url(base_url)
 
     def public_health(client: Any) -> dict[str, Any] | None:
         try:
@@ -92,14 +233,21 @@ def _server_health(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        with httpx.Client(timeout=timeout, headers=headers) as client:
+        with httpx.Client(timeout=timeout, headers=headers, trust_env=trust_env) as client:
             if not api_key:
                 return public_health(client)
 
             try:
                 resp = client.get(f"{base_url}/health/detailed")
             except (httpx.TimeoutException, httpx.RequestError):
-                return public_health(client)
+                # Surface the failure rather than masking it with an
+                # unauthenticated public /health probe — silent fallback
+                # makes monitoring report green while authenticated
+                # callers still hang.
+                return {
+                    "status": "degraded",
+                    "reason": "detailed health check timed out",
+                }
             if resp.status_code == 200:
                 result: dict[str, Any] = resp.json()
                 return result
@@ -132,15 +280,21 @@ async def _collect_status_async(
     api_key: str | None = None,
     profiles: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Collect all status data concurrently."""
+    """Collect all status data concurrently.
+
+    Runs health, docker, and features probes in parallel so the
+    features call (used for deployment_profile) does not add latency.
+    """
     health_task = asyncio.to_thread(_server_health, server_url, api_key)
     docker_task = asyncio.to_thread(_docker_services, profiles)
-    health, docker = await asyncio.gather(health_task, docker_task)
+    features_task = asyncio.to_thread(_fetch_deployment_profile_from_features, server_url, api_key)
+    health, docker, features_profile = await asyncio.gather(health_task, docker_task, features_task)
     return {
         "server_url": server_url,
         "server_reachable": health is not None,
         "server_health": health,
         "docker_services": docker,
+        "_features_profile": features_profile,
     }
 
 
@@ -325,10 +479,10 @@ def status(
     if url:
         server_url = url
     else:
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
+
         cfg = _load_project_config_optional()
         if cfg:
-            from nexus.cli.state import load_runtime_state, resolve_connection_env
-
             data_dir = cfg.get("data_dir", "./nexus-data")
             state = load_runtime_state(data_dir)
             conn = resolve_connection_env(cfg, state)
@@ -345,7 +499,8 @@ def status(
             timing = CommandTiming()
             with timing.phase("collect"):
                 data = _enrich_with_image_info(
-                    _collect_status(server_url, remote_api_key, profile_list)
+                    _collect_status(server_url, remote_api_key, profile_list),
+                    remote_api_key,
                 )
             render_output(
                 data=data,
@@ -363,14 +518,14 @@ def _watch_loop(server_url: str, api_key: str | None, profiles: list[str] | None
     """Continuously refresh the status table every 2 seconds."""
     from rich.live import Live
 
-    data = _enrich_with_image_info(_collect_status(server_url, api_key, profiles))
+    data = _enrich_with_image_info(_collect_status(server_url, api_key, profiles), api_key)
 
     with Live(_build_table(data), refresh_per_second=1, console=console) as live:
         while True:
             time.sleep(2)
             live.update(
                 _build_table(
-                    _enrich_with_image_info(_collect_status(server_url, api_key, profiles))
+                    _enrich_with_image_info(_collect_status(server_url, api_key, profiles), api_key)
                 )
             )
 

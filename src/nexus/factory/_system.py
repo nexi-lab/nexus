@@ -12,16 +12,14 @@ Two severity classes:
 
 **Degradable** (per-service try/except → WARNING + None):
     dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
-    workspace_registry, mount_manager, workspace_manager, plus all
-    original services (namespace, etc.).
+    mount_manager, plus all original services (namespace, etc.).
 """
 
 import logging
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
 
@@ -240,66 +238,14 @@ def _boot_pre_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] DeferredPermissionBuffer unavailable: %s", exc)
 
-    # --- Workspace Registry ---
-    workspace_registry: Any = None
-    try:
-        from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
-
-        workspace_registry = WorkspaceRegistry(
-            metadata=ctx.metadata_store,
-            rebac_manager=rebac_manager,
-            record_store=ctx.record_store,
-        )
-        logger.debug("[BOOT:SYSTEM] WorkspaceRegistry created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] WorkspaceRegistry unavailable: %s", exc)
-
     # --- Mount Manager ---
     # Deferred to post-kernel tier (factory/_wired.py) — the VFS-backed
     # MountStore needs a live NexusFS handle, which isn't constructed yet.
     mount_manager: Any = None
 
-    # --- Workspace Manager ---
-    workspace_manager: Any = None
-    try:
-        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace.workspace_manager import WorkspaceManager
-
-        workspace_manager = WorkspaceManager(
-            metadata=ctx.metadata_store,
-            backend=ctx.backend,
-            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            record_store=ctx.record_store,
-        )
-        logger.debug("[BOOT:SYSTEM] WorkspaceManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] WorkspaceManager unavailable: %s", exc)
-
     # =====================================================================
     # ORIGINAL SYSTEM SERVICES (all degradable)
     # =====================================================================
-
-    # --- Namespace Manager (Issue #1502) ---
-    # Now created via rebac_manager.create_namespace_manager() (rebac-internal).
-    namespace_manager: Any = None
-    async_namespace_manager: Any = None
-    if not _on("namespace"):
-        logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
-    elif rebac_manager is not None:
-        try:
-            from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
-
-            namespace_manager = rebac_manager.create_namespace_manager(
-                record_store=ctx.record_store,
-            )
-            async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-            logger.debug(
-                "[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created (rebac-internal)"
-            )
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
     # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
     delivery_worker = None
@@ -355,65 +301,10 @@ def _boot_pre_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
-    # --- Context Branch Service (Issue #1315) ---
-    context_branch_service: Any = None
-    try:
-        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace.context_branch import ContextBranchService
-
-        context_branch_service = ContextBranchService(
-            workspace_manager=workspace_manager,
-            record_store=ctx.record_store,
-            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
-            default_zone_id=ctx.zone_id,
-            default_agent_id=ctx.agent_id,
-        )
-        logger.debug("[BOOT:SYSTEM] ContextBranchService created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
-
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
-    tiger_cache_manager: Any = None
-    try:
-        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
-
-        tiger_cache_manager = TigerCacheManager(
-            rebac_manager=rebac_manager,
-            metadata_store=ctx.metadata_store,
-            default_zone_id=ctx.zone_id or ROOT_ZONE_ID,
-        )
-        tiger_cache_manager.initialize()
-        logger.debug("[BOOT:SYSTEM] TigerCacheManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] TigerCacheManager unavailable: %s", exc)
-
-    # --- Zone Lifecycle Service (Issue #2061) ---
-    zone_lifecycle: Any = None
-    session_factory = getattr(ctx.record_store, "session_factory", None)
-    if session_factory is not None:
-        try:
-            from nexus.services.lifecycle.zone_lifecycle import ZoneLifecycleService
-
-            zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
-
-            # Register session-based finalizers (available at boot).
-            # Cache + Mount finalizers are registered later in service_wiring
-            # when their dependencies (file_cache, mount_service) exist.
-            try:
-                from nexus.services.lifecycle.zone_finalizers import (
-                    ReBACZoneFinalizer,
-                    SearchZoneFinalizer,
-                )
-
-                zone_lifecycle.register_finalizer(SearchZoneFinalizer(session_factory))
-                # ReBAC finalizer (MUST be last — Decision #13A)
-                zone_lifecycle.register_finalizer(ReBACZoneFinalizer(session_factory))
-            except Exception as exc:
-                logger.warning("[BOOT:SYSTEM] Zone finalizer registration failed: %s", exc)
-
-            logger.debug("[BOOT:SYSTEM] ZoneLifecycleService created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] ZoneLifecycleService unavailable: %s", exc)
+    # Deferred to post-kernel tier (factory/_wired.py) — initialize()'s
+    # resource-map sync now lists via NexusFS.sys_readdir (§2.5 mediation),
+    # so the manager needs a live NexusFS handle.
 
     # --- Scheduler Service (Issue #2195, #2360) ---
     scheduler_service: Any = None
@@ -455,17 +346,12 @@ def _boot_pre_kernel_services(
         "write_observer": write_observer,
         # Former-kernel degradable
         "deferred_permission_buffer": deferred_permission_buffer,
-        "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
-        "workspace_manager": workspace_manager,
         # Original services
-        "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
         "event_signal": ctx.event_signal,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
-        "context_branch_service": context_branch_service,
-        "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
     }
 

@@ -11,12 +11,19 @@ Tests cover:
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
+from nexus.bricks.mcp.profiles import (
+    grant_tools_for_profile,
+    load_profiles,
+    load_profiles_from_dict,
+)
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -42,6 +49,21 @@ class FakeContext:
         return self._state[key]
 
     def set_state(self, key: str, value: Any) -> None:
+        self._state[key] = value
+
+
+class AsyncFakeContext:
+    """FastMCP 3.x-style context where get_state/set_state are awaitable."""
+
+    def __init__(self, state: dict[str, Any] | None = None):
+        self._state = state or {}
+
+    async def get_state(self, key: str) -> Any:
+        if key not in self._state:
+            raise KeyError(key)
+        return self._state[key]
+
+    async def set_state(self, key: str, value: Any) -> None:
         self._state[key] = value
 
 
@@ -89,6 +111,69 @@ def make_middleware(
     )
 
 
+def make_subject_asserting_middleware(expected_subject: tuple[str, str]) -> ToolNamespaceMiddleware:
+    """Middleware whose ReBAC double proves the extracted subject value."""
+    rebac = MagicMock()
+    rebac.get_zone_revision.return_value = 0
+
+    def list_objects(
+        *,
+        subject: tuple[str, str],
+        permission: str,
+        object_type: str,
+        zone_id: str | None = None,
+        limit: int,
+    ) -> list[tuple[str, str]]:
+        assert subject == expected_subject
+        assert permission == "read"
+        assert object_type == "file"
+        assert zone_id is None
+        assert limit == 10_000
+        return [("file", "/tools/nexus_read_file")]
+
+    rebac.rebac_list_objects.side_effect = list_objects
+    return ToolNamespaceMiddleware(rebac_manager=rebac)
+
+
+class MemoryToolGrantReBAC:
+    """Small ReBAC test double for profile grant -> namespace filter integration."""
+
+    def __init__(self) -> None:
+        self._objects_by_subject: dict[
+            tuple[tuple[str, str], str | None], set[tuple[str, str]]
+        ] = {}
+        self._revision = 0
+
+    def rebac_write(
+        self,
+        *,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> Any:
+        assert relation == "direct_viewer"
+        self._objects_by_subject.setdefault((subject, zone_id), set()).add(object)
+        self._revision += 1
+        return SimpleNamespace(tuple_id=f"tuple-{self._revision}", revision=self._revision)
+
+    def rebac_list_objects(
+        self,
+        *,
+        subject: tuple[str, str],
+        permission: str,
+        object_type: str,
+        zone_id: str | None = None,
+        limit: int,
+    ) -> list[tuple[str, str]]:
+        assert permission == "read"
+        objects = self._objects_by_subject.get((subject, zone_id), set())
+        return [obj for obj in sorted(objects) if obj[0] == object_type][:limit]
+
+    def get_zone_revision(self, zone_id: str | None) -> int:  # noqa: ARG002
+        return self._revision
+
+
 # ---------------------------------------------------------------------------
 # tools/list filtering
 # ---------------------------------------------------------------------------
@@ -116,6 +201,26 @@ class TestOnListTools:
         result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
         names = [t.name for t in result]
         assert names == ["nexus_read_file", "nexus_list_files"]
+
+    @pytest.mark.asyncio
+    async def test_async_fastmcp_context_state_filters_tools(self):
+        """FastMCP 3.x exposes Context.get_state as async."""
+        mw = make_subject_asserting_middleware(("agent", "A"))
+
+        all_tools = [
+            FakeTool(name="nexus_read_file"),
+            FakeTool(name="nexus_write_file"),
+        ]
+        ctx = FakeMiddlewareContext(
+            fastmcp_context=AsyncFakeContext({"subject_type": "agent", "subject_id": "A"}),
+            method="tools/list",
+        )
+
+        async def call_next(context: Any) -> Sequence[Any]:
+            return all_tools
+
+        result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+        assert [t.name for t in result] == ["nexus_read_file"]
 
     @pytest.mark.asyncio
     async def test_no_grants_returns_empty(self):
@@ -202,6 +307,24 @@ class TestOnCallTool:
         assert result is expected_result
 
     @pytest.mark.asyncio
+    async def test_async_fastmcp_context_state_allows_visible_call(self):
+        """FastMCP 3.x async context state must not hide granted tools."""
+        mw = make_subject_asserting_middleware(("agent", "A"))
+
+        ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name="nexus_read_file"),
+            fastmcp_context=AsyncFakeContext({"subject_type": "agent", "subject_id": "A"}),
+        )
+
+        expected_result = MagicMock()
+
+        async def call_next(context: Any) -> Any:
+            return expected_result
+
+        result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert result is expected_result
+
+    @pytest.mark.asyncio
     async def test_invisible_tool_returns_not_found(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
@@ -256,6 +379,159 @@ class TestOnCallTool:
 
         result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert result is expected_result
+
+
+class TestProfileGrantIntegration:
+    @pytest.mark.asyncio
+    async def test_profile_grants_drive_list_filtering_and_call_denial(self):
+        config = load_profiles_from_dict(
+            {
+                "profiles": {
+                    "minimal": {"tools": ["nexus_read_file"]},
+                    "coding": {
+                        "extends": "minimal",
+                        "tools": ["nexus_write_file"],
+                    },
+                }
+            }
+        )
+        profile = config.get_profile("coding")
+        assert profile is not None
+
+        rebac = MemoryToolGrantReBAC()
+        rebac_manager = cast(Any, rebac)
+        grant_tools_for_profile(
+            rebac_manager=rebac_manager,
+            subject=("agent", "alice"),
+            profile=profile,
+            zone_id="sandbox-agent-1",
+        )
+
+        mw = ToolNamespaceMiddleware(rebac_manager=rebac_manager, zone_id="sandbox-agent-1")
+        ctx = FakeMiddlewareContext(
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "alice"}),
+        )
+        all_tools = [
+            FakeTool(name="nexus_read_file"),
+            FakeTool(name="nexus_write_file"),
+            FakeTool(name="nexus_python"),
+        ]
+
+        async def list_next(context: Any) -> Sequence[Any]:
+            return all_tools
+
+        listed = await mw.on_list_tools(cast(Any, ctx), cast(Any, list_next))
+        assert [tool.name for tool in listed] == ["nexus_read_file", "nexus_write_file"]
+
+        allowed_result = MagicMock()
+
+        async def call_next(context: Any) -> Any:
+            return allowed_result
+
+        allowed_ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name="nexus_write_file"),
+            fastmcp_context=ctx.fastmcp_context,
+        )
+        assert await mw.on_call_tool(cast(Any, allowed_ctx), cast(Any, call_next)) is allowed_result
+
+        denied_ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name="nexus_python"),
+            fastmcp_context=ctx.fastmcp_context,
+        )
+        denied = await mw.on_call_tool(cast(Any, denied_ctx), cast(Any, call_next))
+        denied_text = denied.content[0].text
+        assert "not found" in denied_text.lower()
+        assert "permission" not in denied_text.lower()
+
+
+class TestDefaultToolProfileEnforcement:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("profile_name", "visible", "hidden"),
+        [
+            (
+                "minimal",
+                ["nexus_read_file", "nexus_list_files", "nexus_file_info", "nexus_glob"],
+                "nexus_write_file",
+            ),
+            (
+                "coding",
+                ["nexus_read_file", "nexus_write_file", "nexus_edit_file", "nexus_grep"],
+                "nexus_python",
+            ),
+            (
+                "search",
+                ["nexus_read_file", "nexus_grep", "nexus_semantic_search"],
+                "nexus_write_file",
+            ),
+            (
+                "execution",
+                ["nexus_write_file", "nexus_python", "nexus_bash", "nexus_sandbox_create"],
+                "nexus_discovery_search_tools",
+            ),
+            (
+                "full",
+                [
+                    "nexus_python",
+                    "nexus_discovery_search_tools",
+                    "nexus_list_workflows",
+                    "nexus_hub_admin",
+                ],
+                "nexus_context_branch",
+            ),
+        ],
+    )
+    async def test_default_profile_grants_filter_list_and_call(
+        self,
+        profile_name: str,
+        visible: list[str],
+        hidden: str,
+    ) -> None:
+        config_path = Path(__file__).parents[4] / "src" / "nexus" / "config" / "tool_profiles.yaml"
+        config = load_profiles(config_path)
+        profile = config.get_profile(profile_name)
+        assert profile is not None
+
+        rebac = MemoryToolGrantReBAC()
+        rebac_manager = cast(Any, rebac)
+        grant_tools_for_profile(
+            rebac_manager=rebac_manager,
+            subject=("agent", profile_name),
+            profile=profile,
+            zone_id="sandbox-agent-4131",
+        )
+
+        mw = ToolNamespaceMiddleware(rebac_manager=rebac_manager, zone_id="sandbox-agent-4131")
+        ctx = FakeMiddlewareContext(
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": profile_name}),
+        )
+        all_tools = [FakeTool(name=name) for name in [*visible, hidden]]
+
+        async def list_next(context: Any) -> Sequence[Any]:
+            return all_tools
+
+        listed = await mw.on_list_tools(cast(Any, ctx), cast(Any, list_next))
+        assert {tool.name for tool in listed} == set(visible)
+
+        allowed_result = MagicMock(name=f"{profile_name}-allowed")
+
+        async def call_next(context: Any) -> Any:
+            return allowed_result
+
+        allowed_ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name=visible[0]),
+            fastmcp_context=ctx.fastmcp_context,
+        )
+        assert await mw.on_call_tool(cast(Any, allowed_ctx), cast(Any, call_next)) is allowed_result
+
+        hidden_ctx = FakeMiddlewareContext(
+            message=FakeCallToolParams(name=hidden),
+            fastmcp_context=ctx.fastmcp_context,
+        )
+        denied = await mw.on_call_tool(cast(Any, hidden_ctx), cast(Any, call_next))
+        denied_text = denied.content[0].text.lower()
+        assert "not found" in denied_text
+        assert "permission" not in denied_text
 
 
 # ---------------------------------------------------------------------------

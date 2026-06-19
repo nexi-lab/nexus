@@ -7,12 +7,13 @@ on:
     branches: [main, develop]
   merge_group:
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Required for third-party PyO3 sdist builds (e.g. pdf-inspector).
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   # Detect whether only docs/non-code files changed.
@@ -36,86 +37,35 @@ jobs:
               - 'pyproject.toml'
               - 'Cargo.*'
               - '.github/workflows/**'
+              # Kernel image pins: the Dockerfiles' NEXUS_VFS_REV decides
+              # which kernel ships — an image-only rev bump must not skip
+              # the pinned-kernel smoke + restart-survival gate (#4343).
+              - 'Dockerfile'
+              - 'dockerfiles/**'
 
+  # Single-job pattern (matches federation-e2e.yml / api-surface.yml):
+  # always runs so the required check reports exactly one conclusion;
+  # the per-step `if:` gate keeps the actual work path-filtered while a
+  # leading skip-notice step gives SUCCESS for path-skipped runs.
   rpc-parity:
     name: RPC Parity Check
-    needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
+    needs: [detect-changes]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
-
-      - name: Create virtual environment
-        run: uv venv --python 3.14
-
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions
-        run: uv pip install dist/*.whl
-
-      - name: Install dependencies
-        run: uv pip install -e ".[dev,test]"
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — RPC parity check not needed (clean SUCCESS)"
 
       - name: Check RPC Parity (ENFORCEMENT)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           echo "RPC parity check: test_rpc_parity.py was removed in test cleanup."
           echo "RPC parity is verified by integration/e2e tests."
           echo "Skipping — no dedicated parity test file."
 
-  # Build Rust extensions once per OS, share wheels with downstream jobs
-  build-rust:
-    name: Build Rust Extensions (${{ matrix.os }})
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Build Rust extensions
-        uses: ./.github/actions/build-rust-extensions
-        with:
-          profile: dev
-          rust-cache-shared-key: "rust-test"
-          output-dir: dist
-          github-token: ${{ github.token }}
-
-      - name: Upload wheel artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-wheels-${{ matrix.os }}
-          path: dist/*.whl
-          retention-days: 1
-
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
+    needs: [detect-changes]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -124,47 +74,38 @@ jobs:
         python-version: ["3.14"]
 
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Test Python ${{ matrix.python-version }} on ${{ matrix.os }} not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python ${{ matrix.python-version }}
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-${{ matrix.os }}
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv pip install -e ".[dev,test]"
 
-      - name: Verify Rust extensions
-        run: |
-          uv run --no-sync python -c "import nexus_runtime; print('nexus_runtime OK')"
-          # R20.18.6 deleted the ZoneManager / ZoneHandle pyclass shells;
-          # Python drives zones via Kernel's zone_* methods now. Smoke
-          # test the surviving raft-bound pyclass (Metastore) + the
-          # kernel's own entry points.
-          uv run --no-sync python -c "from nexus_runtime import PyMetaStore, PyKernel; print('raft bindings OK')"
-        shell: bash
-
       - name: Run unit tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 30
         run: |
           start=$(date +%s)
@@ -184,7 +125,7 @@ jobs:
         shell: bash
 
       - name: Unit test duration (target <3min; fail if >8min)
-        if: always()
+        if: always() && needs.detect-changes.outputs.code_changed == 'true'
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
@@ -197,44 +138,71 @@ jobs:
         shell: bash
 
       - name: Verify benchmark collection
+        if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           uv run --no-sync pytest tests/benchmarks/ --collect-only -q -o "addopts="
-        if: matrix.os == 'ubuntu-latest'
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
-    needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
+    needs: [detect-changes]
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (Self-Contained) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
+
+      # The nexus-cluster binary is required by NexusFS (KernelClient spawns
+      # it as a subprocess). Binary SSOT is now nexus-vfs; install via
+      # cargo install --locked from the git repo.
+      - name: Set up Rust toolchain
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache nexus-cluster install
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: e2e-nexus-cluster
+
+      - name: Install nexus-cluster from nexus-vfs (pinned rev)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # Same rev the repo ships (Cargo.toml pins == Dockerfile ARGs,
+        # enforced by the smoke job preflight). Unpinned installs track
+        # nexus-vfs HEAD and let E2E pass/fail on unreviewed upstream
+        # movement (#4343).
+        run: |
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py
@@ -243,9 +211,11 @@ jobs:
       # — a single fixture instantiation timed out at 600s in PR #3961
       # reruns and consumed half the job budget before any test ran.
       - name: Set up Docker Buildx
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Pre-build nexus-server image
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -257,6 +227,7 @@ jobs:
           cache-to: type=gha,scope=e2e-self-contained,mode=max
 
       - name: Run self-contained e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         env:
           # Image is already loaded into the local docker daemon via the
           # pre-build step above, so the fixture can skip ``--build`` and
@@ -271,14 +242,15 @@ jobs:
           uv run --no-sync python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
             --timeout=120 --timeout-method=signal \
             -o faulthandler_timeout=60 -o addopts=
-        # 30 min budget = pre-build (~3 min warm cache, ~10 min cold) +
-        # ~20 min for the test bodies. Per-test --timeout=120 still catches
-        # real hangs fast.
-        timeout-minutes: 30
+        # 45 min budget = Rust build (~3 min warm, ~5 min cold) +
+        # Docker pre-build (~3 min warm, ~10 min cold) +
+        # ~20 min for the test bodies. Per-test --timeout=120 still
+        # catches real hangs fast.
+        timeout-minutes: 45
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)
-    needs: build-rust
+    needs: detect-changes
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -297,41 +269,43 @@ jobs:
     env:
       NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (PostgreSQL) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test,postgres]"
 
       - name: Run PostgreSQL e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/ --ignore=tests/e2e/postgres/migrations -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
       - name: Run auth envelope-encryption tests (#3803)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         env:
           TEST_POSTGRES_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
         run: |
@@ -345,7 +319,7 @@ jobs:
 
   e2e-redis:
     name: E2E Tests (Redis)
-    needs: build-rust
+    needs: detect-changes
     runs-on: ubuntu-latest
     services:
       redis:
@@ -362,121 +336,125 @@ jobs:
       NEXUS_DRAGONFLY_COORDINATION_URL: redis://localhost:6379
       REDIS_ENABLED: "1"
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (Redis) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run Redis e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/redis/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
   e2e-docker:
     name: E2E Tests (Docker)
-    needs: build-rust
+    needs: detect-changes
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (Docker) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run Docker e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/docker/ -v --timeout=180 -o "addopts="
         timeout-minutes: 15
 
   e2e-nats:
     name: E2E Tests (NATS)
-    needs: build-rust
+    needs: detect-changes
     runs-on: ubuntu-latest
     env:
       NEXUS_NATS_URL: nats://localhost:4222
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — E2E (NATS) not needed (clean SUCCESS)"
+
       - name: Start NATS with JetStream
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           docker run -d --name nats -p 4222:4222 nats:latest -js
           sleep 2
 
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run NATS e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
@@ -484,7 +462,7 @@ jobs:
   # ── nexus-fs standalone package validation ─────────────────────────────
   nexus-fs-smoke:
     name: nexus-fs Smoke Test
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -528,18 +506,11 @@ jobs:
           pip install pydistcheck
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist/*.whl
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: rust-dist
-
       - name: Install in clean environment (with timing)
         env:
           VIRTUAL_ENV: /tmp/nexus-fs-test
         run: |
           uv venv --python 3.14 $VIRTUAL_ENV
-          uv pip install --python $VIRTUAL_ENV/bin/python rust-dist/*.whl
           start_time=$(date +%s%N)
           uv pip install --python $VIRTUAL_ENV/bin/python dist/*.whl
           end_time=$(date +%s%N)
@@ -618,33 +589,141 @@ jobs:
           fi
 
   # ── nexusd-cluster boot smoke test ──────────────────────────────────
+  # Kernel-tier Rust (including nexusd-cluster) migrated to nexus-vfs (#4259).
+  # Install from nexus-vfs git and smoke-test the binary.
   nexusd-cluster-smoke:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Two pinned cargo installs (slim + full profile) plus the Python
+    # restart-survival gate; rust-cache keeps warm runs well under this.
+    timeout-minutes: 30
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — nexusd-cluster smoke not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Rust toolchain
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Build nexusd-cluster
-        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+      - name: Cache nexus-cluster install
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nexusd-cluster-smoke
+
+      - name: Kernel pin consistency preflight
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # Every nexus-vfs pin in the repo must agree: the Cargo.toml
+        # crate pins, the Cargo.lock resolution, the shipping image ARG
+        # (Dockerfile), and the federation test/witness image ARGs.
+        # A partial bump ships a kernel the gate below never tested —
+        # the exact drift class behind #4343.
+        run: |
+          set -euo pipefail
+          # Every nexus-vfs install — in Dockerfiles AND workflow
+          # files — must carry an explicit --rev AND --locked. RUN/run
+          # blocks span backslash continuations, so join continuation
+          # lines per file before matching — a same-line grep misses
+          # blocks whose flags were dropped. Without --rev the install
+          # tracks HEAD; without --locked it resolves transitive deps
+          # fresh at build time, so a new release of ANY dep (e.g.
+          # rcgen 0.14.8) can break every image overnight despite the
+          # rev pin.
+          # URL kept in a variable so this scanner's own source lines
+          # never contain the full match set (no self-flagging).
+          VFS_GIT='--git https://github.com/nexi-lab/nexus-vfs'
+          UNPINNED=""
+          UNLOCKED=""
+          for f in Dockerfile dockerfiles/* .github/workflows/*.yml; do
+            [ -f "$f" ] || continue
+            INSTALLS=$(sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' "$f" \
+              | grep -v '^[[:space:]]*#' \
+              | grep 'cargo install' \
+              | grep -F -- "$VFS_GIT" || true)
+            [ -n "$INSTALLS" ] || continue
+            BAD=$(echo "$INSTALLS" | grep -v '\-\-rev' || true)
+            BADLOCK=$(echo "$INSTALLS" | grep -v '\-\-locked' || true)
+            if [ -n "$BAD" ]; then
+              UNPINNED="${UNPINNED}${f}: ${BAD}"$'\n'
+            fi
+            if [ -n "$BADLOCK" ]; then
+              UNLOCKED="${UNLOCKED}${f}: ${BADLOCK}"$'\n'
+            fi
+          done
+          if [ -n "$UNPINNED" ]; then
+            echo "::error::nexus-vfs install without --rev (tracks HEAD):"
+            echo "$UNPINNED"
+            exit 1
+          fi
+          if [ -n "$UNLOCKED" ]; then
+            echo "::error::nexus-vfs install without --locked (fresh dep resolution drifts):"
+            echo "$UNLOCKED"
+            exit 1
+          fi
+          CARGO_REVS=$(grep 'nexus-vfs' Cargo.toml | grep -oE 'rev = "[a-f0-9]{40}"' | grep -oE '[a-f0-9]{40}' | sort -u)
+          LOCK_REVS=$(grep -oE 'nexus-vfs\?rev=[a-f0-9]{40}' Cargo.lock | grep -oE '[a-f0-9]{40}' | sort -u)
+          DOCKER_REVS=$(grep -rh -oE 'ARG NEXUS_VFS_REV=[a-f0-9]{40}' Dockerfile dockerfiles/ | grep -oE '[a-f0-9]{40}' | sort -u)
+          echo "Cargo.toml pins:  $CARGO_REVS"
+          echo "Cargo.lock pins:  $LOCK_REVS"
+          echo "Dockerfile pins:  $DOCKER_REVS"
+          # Empty extraction means the format drifted and the guard is
+          # comparing nothing — fail closed, not open.
+          for SET in "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS"; do
+            if [ -z "$SET" ]; then
+              echo "::error::a nexus-vfs pin source extracted zero revs — pin-extraction pattern regressed"
+              exit 1
+            fi
+          done
+          UNIQUE=$(printf '%s\n%s\n%s\n' "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS" | sort -u | grep -c . )
+          if [ "$UNIQUE" -ne 1 ]; then
+            echo "::error::nexus-vfs pins diverge across Cargo.toml / Cargo.lock / Dockerfiles — partial bump ships an untested kernel"
+            exit 1
+          fi
+
+      - name: Install nexusd-cluster from nexus-vfs (pinned rev)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # Pin to the rev shipped by this checkout. The preflight above
+        # guarantees Cargo.toml == Cargo.lock == every Dockerfile ARG,
+        # so extracting from Cargo.toml IS the shipping rev. An
+        # unpinned install tracks nexus-vfs HEAD and can silently
+        # drift from what the Docker image ships — exactly how a
+        # durable-metastore regression (#4343) could pass smoke while
+        # the pinned kernel is broken. --locked honors the source
+        # tree's Cargo.lock (fresh dep resolution drifts on upstream
+        # releases).
+        run: |
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          echo "Installing nexusd-cluster at pinned nexus-vfs rev $REV"
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          # Also install the full profile — the binary the Docker image
+          # actually ships (nexusd-full, symlinked to nexus-cluster).
+          # Same main.rs, but a full-profile-only build/feature
+          # regression must not slip past the gate on the slim binary.
+          echo "Installing nexusd-full at pinned nexus-vfs rev $REV"
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-full nexus-full
 
       - name: Boot smoke test
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           DATA_DIR=$(mktemp -d)
           # Smoke uses static + empty peers → single-node default
           # (creates own root 1-voter zone).  --bootstrap-mode is
           # required since BootstrapMode validator landed.
-          RUST_LOG=info ./target/release/nexusd-cluster \
+          RUST_LOG=info nexusd-cluster \
             --no-tls --data-dir "$DATA_DIR" \
             --bootstrap-mode static &
           PID=$!
-          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot…"
+          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot..."
 
           sleep 5
 
@@ -654,7 +733,7 @@ jobs:
             exit 1
           fi
 
-          echo "nexusd-cluster is alive after 5s — sending SIGTERM…"
+          echo "nexusd-cluster is alive after 5s — sending SIGTERM..."
           kill "$PID"
           wait "$PID"
           EXIT_CODE=$?
@@ -666,49 +745,88 @@ jobs:
           fi
           echo "nexusd-cluster shut down cleanly — smoke test passed"
 
-  migration-test:
-    name: Migration Tests (SQLite)
-    needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      # Restart-survival regression (#4343): the VFS namespace must
+      # outlive a kernel restart. Runs against the EXACT pinned binary
+      # installed above (NEXUS_KERNEL_BINARY bypasses PATH lookup), so
+      # a rev bump that loses durable-metastore wiring fails this job.
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: '3.14'
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
+      - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: uv pip install -e ".[dev,test]"
 
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
+      - name: Restart-survival regression test (pinned kernels, both profiles)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        timeout-minutes: 15
+        run: |
+          # nexusd-cluster = slim federation binary; nexusd-full = the
+          # binary the Docker image ships (symlinked to nexus-cluster).
+          # Both reuse cluster/src/main.rs — gate both so neither a
+          # slim- nor a full-profile regression ships untested.
+          for BIN in nexusd-cluster nexusd-full; do
+            export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/$BIN"
+            test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::pinned kernel binary missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+            echo "Restart-survival against $BIN"
+            uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
+          done
+
+  migration-test:
+    name: Migration Tests (SQLite)
+    needs: [detect-changes]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Migration (SQLite) not needed (clean SUCCESS)"
+
+      - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: uv venv --python 3.14
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run migration tests (SQLite)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
-    needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
+    needs: [detect-changes]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -727,136 +845,36 @@ jobs:
     env:
       NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
+      - name: Skip notice (no code changes)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — Migration (PostgreSQL) not needed (clean SUCCESS)"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test,postgres]"
 
       - name: Run migration tests (PostgreSQL)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="
-
-  # ---------------------------------------------------------------------------
-  # Skip-pass jobs: satisfy required checks on doc-only PRs where
-  # detect-changes sets code_changed=false. Each job uses the same `name:`
-  # as its real counterpart so GitHub matches the required check.
-  # ---------------------------------------------------------------------------
-
-  rpc-parity-skip:
-    name: RPC Parity Check
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping RPC parity check"
-
-  build-rust-skip:
-    name: Build Rust Extensions (${{ matrix.os }})
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - run: echo "No code changes — skipping Rust build"
-
-  test-skip:
-    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.14"]
-    steps:
-      - run: echo "No code changes — skipping tests"
-
-  e2e-self-contained-skip:
-    name: E2E Tests (Self-Contained)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E tests"
-
-  e2e-pg-skip:
-    name: E2E Tests (PostgreSQL)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E PostgreSQL tests"
-
-  e2e-redis-skip:
-    name: E2E Tests (Redis)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E Redis tests"
-
-  e2e-docker-skip:
-    name: E2E Tests (Docker)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E Docker tests"
-
-  e2e-nats-skip:
-    name: E2E Tests (NATS)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping E2E NATS tests"
-
-  migration-test-skip:
-    name: Migration Tests (SQLite)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping migration tests"
-
-  nexusd-cluster-smoke-skip:
-    name: nexusd-cluster Smoke Test
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping nexusd-cluster smoke test"
-
-  migration-test-pg-skip:
-    name: Migration Tests (PostgreSQL)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No code changes — skipping migration tests"

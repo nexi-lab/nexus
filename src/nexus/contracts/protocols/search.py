@@ -119,6 +119,9 @@ class SearchProtocol(Protocol):
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
+        files: builtins.list[str] | None = None,
+        block_type: str | None = None,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]: ...
 
     # ── Async operations (semantic search requires I/O) ─────────────────

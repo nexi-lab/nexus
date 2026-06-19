@@ -8,7 +8,7 @@ Two implementations live here:
     for E2E ergonomics and as a fallback under the composite auth.
 
   - :class:`ReBACCapabilityAuth` — resolves the bearer token through
-    the standard auth pipeline (``AuthService.authenticate``) and then
+    the standard auth pipeline (``AuthProvider.authenticate``) and then
     runs a ReBAC permission check against the per-zone ``approvals``
     object for the requested capability. Falls through to a wrapped
     :class:`BearerTokenCapabilityAuth` when:
@@ -91,8 +91,8 @@ def _approvals_object_for_zone(zone_id: str) -> tuple[str, str]:
 class _AuthLike(Protocol):
     """Minimal duck-type for the auth resolver.
 
-    Matches both ``nexus.bricks.auth.service.AuthService`` (cache-aware
-    wrapper) and the bare :class:`AuthProvider` ABCs — anything with an
+    Matches the bare :class:`AuthProvider` ABCs (and any cache-aware
+    wrappers operators wire in front of one) — anything with an
     ``authenticate(token)`` coroutine returning an ``AuthResult``-shaped
     object will work.
     """
@@ -256,7 +256,7 @@ class ReBACCapabilityAuth:
 
       1. Pull the bearer token from gRPC metadata. Missing/non-Bearer →
          abort ``UNAUTHENTICATED``.
-      2. Resolve the token via ``AuthService.authenticate``. If the token
+      2. Resolve the token via ``AuthProvider.authenticate``. If the token
          does not resolve to an authenticated subject:
 
            * with an ``admin_fallback`` configured: delegate to it
@@ -283,8 +283,8 @@ class ReBACCapabilityAuth:
 
     Args:
         auth_service: Object with ``async authenticate(token) -> AuthResult``.
-            Typically the ``AuthService`` instance from ``app.state``; the
-            bare ``AuthProvider`` ABC is also accepted (same shape).
+            Typically the ``AuthProvider`` instance from
+            ``app.state.auth_provider``; any duck-compatible wrapper works.
         rebac_manager: Object with ``rebac_check(subject, permission,
             object, zone_id=...) -> bool``. Typically
             ``app.state.rebac_manager``.

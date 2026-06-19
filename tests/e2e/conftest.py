@@ -125,6 +125,8 @@ def nexus_server(isolated_db, tmp_path):
     # Set up environment
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
+    home_path = tmp_path / "home"
+    home_path.mkdir(exist_ok=True)
 
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -132,6 +134,7 @@ def nexus_server(isolated_db, tmp_path):
     # Environment for the server process
     env = os.environ.copy()
     env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
+    env["HOME"] = str(home_path)
     # Allow PostgreSQL via NEXUS_E2E_DATABASE_URL env var; default to SQLite
     env["NEXUS_DATABASE_URL"] = os.environ.get("NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}")
     env["PYTHONPATH"] = str(_src_path)
@@ -141,6 +144,8 @@ def nexus_server(isolated_db, tmp_path):
 
     # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
     env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
+    env["NEXUS_RATE_LIMIT_ENABLED"] = "false"
+    env["NEXUS_SEARCH_DAEMON"] = "false"
 
     # Issue #2035: Enable RecordStore + ReBAC so skills subscribe/share/unshare
     # and share-link operations have a working EnhancedReBACManager.
@@ -164,7 +169,7 @@ def nexus_server(isolated_db, tmp_path):
             (
                 f"from nexus.daemon.main import main; "
                 f"main(['--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{tmp_path}'])"
+                f"'--data-dir', '{tmp_path}', '--profile', 'full'])"
             ),
         ],
         env=env,

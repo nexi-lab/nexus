@@ -3,8 +3,8 @@
 # Unified Docker Compose file for all Nexus deployment presets.
 # Services are activated via Docker Compose profiles:
 #
-#   Preset "shared":  --profile core --profile cache --profile search
-#   Preset "demo":    --profile core --profile cache --profile search
+#   Preset "shared":  --profile core --profile cache
+#   Preset "demo":    --profile core --profile cache
 #   Add-on "nats":    --profile events
 #   Add-on "mcp":     --profile mcp
 #   Add-on "frontend": --profile frontend
@@ -147,6 +147,7 @@ services:
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+      NEXUS_TIGER_WRITE_TIMEOUT_SECONDS: "${NEXUS_TIGER_WRITE_TIMEOUT_SECONDS:-}"
       NEXUS_REDB_CACHE_MB: ${NEXUS_REDB_CACHE_MB:-64}
       OTEL_BSP_MAX_QUEUE_SIZE: ${OTEL_BSP_MAX_QUEUE_SIZE:-512}
       OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT: ${OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT:-1024}
@@ -165,6 +166,7 @@ services:
       NEXUS_SEARCH_CHUNKS_PER_PAGE: ${NEXUS_SEARCH_CHUNKS_PER_PAGE:-2}
       NEXUS_SEARCH_PAGE_BM25: ${NEXUS_SEARCH_PAGE_BM25:-true}
       NEXUS_SEARCH_PAGE_BM25_RRF_K: ${NEXUS_SEARCH_PAGE_BM25_RRF_K:-60}
+      NEXUS_SEARCH_INDEX_PRELOAD: ${NEXUS_SEARCH_INDEX_PRELOAD:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       # Sandbox
@@ -186,6 +188,7 @@ services:
       NEXUS_APPROVALS_ENABLED: "${NEXUS_APPROVALS_ENABLED:-false}"
       NEXUS_APPROVALS_ADMIN_TOKEN: "${NEXUS_APPROVALS_ADMIN_TOKEN:-}"
       NEXUS_APPROVALS_GRPC_PORT: "${NEXUS_APPROVALS_GRPC_PORT:-2029}"
+      NEXUS_TIGER_INIT_TIMEOUT_SECONDS: "${NEXUS_TIGER_INIT_TIMEOUT_SECONDS:-}"
       NEXUS_APPROVALS_GRPC_BIND_ALL: "${NEXUS_APPROVALS_GRPC_BIND_ALL:-1}"
       # Federation/Raft — forwarded from host only when set (null-value form skips unset vars).
       # Empty strings override Rust fallbacks, so these are absent in single-node mode.

@@ -19,7 +19,32 @@ The sync publish preserves the synchronous invalidate_for_write() contract.
 The small window between queue-append and XADD is covered by the read fence
 (cached results are compared against the watermark, not the stream directly).
 
-Related: Issue #3396 (decisions 1A, 6A, 14A, 15A, 16A)
+Cache-flush semantics (Issue #4338):
+    The stream lives in the cache tier, often a volumeless Redis/Dragonfly
+    whose restart legitimately wipes the stream, consumer groups, PEL, and
+    DLQ.  An empty cache is treated as normal:
+
+    - start() creates the group via XGROUP CREATE ... MKSTREAM (BUSYGROUP
+      means it already exists — fine).
+    - The consumer self-heals mid-run: when XREADGROUP fails with NOGROUP,
+      the group is re-created at id="0" (consume everything still in the
+      stream) and reading resumes.  Tracked by the ``group_recreates`` stat.
+
+    What a flush loses — and why no backfill/replay is needed:
+
+    - ReBAC relationship tuples are unaffected.  The relational store is
+      the source of truth; the stream only carries cache-invalidation
+      hints.
+    - Invalidation events not yet consumed (including PEL retries and DLQ
+      entries) are lost.  Remote zones may serve stale cached decisions
+      until their caches expire — bounded by the L1 result-cache TTL
+      (default 300s grants / 60s denials) and the permission-lease TTL
+      (default 30s) — after which decisions are re-derived from the source
+      of truth.  Correctness converges without replay.
+    - Consumer-group offsets are lost, but they referenced wiped entries;
+      the re-created group starts at the head of the new stream.
+
+Related: Issue #3396 (decisions 1A, 6A, 14A, 15A, 16A), Issue #4338
 """
 
 from __future__ import annotations
@@ -127,6 +152,7 @@ class DurableInvalidationStream:
         self._consumed = 0
         self._consume_errors = 0
         self._queue_drops = 0
+        self._group_recreates = 0
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -308,7 +334,33 @@ class DurableInvalidationStream:
 
             except asyncio.CancelledError:
                 return
-            except Exception:
+            except Exception as exc:
+                # NOGROUP: the cache tier lost the stream and/or group — normal
+                # for a volumeless Redis/Dragonfly that restarted empty.  XADD
+                # from publishers re-creates the stream but never the group, so
+                # re-create it here and resume instead of erroring forever
+                # (Issue #4338).  Redis prefixes the error code, so startswith
+                # avoids false positives on payloads that merely contain the
+                # token.  What a flush loses is documented in the module
+                # docstring ("Cache-flush semantics").
+                if str(exc).startswith("NOGROUP"):
+                    logger.warning(
+                        "[DurableStream] Stream/group %s missing (cache flush?) — "
+                        "re-creating (see module docstring for cache-flush semantics)",
+                        self._group_name,
+                    )
+                    try:
+                        await self._ensure_consumer_groups()
+                        self._group_recreates += 1
+                        continue
+                    except asyncio.CancelledError:
+                        # stop() may cancel us mid-re-create — must propagate.
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "[DurableStream] Group re-create failed — will retry",
+                            exc_info=True,
+                        )
                 self._consume_errors += 1
                 logger.warning("[DurableStream] Consumer error", exc_info=True)
                 await asyncio.sleep(1.0)
@@ -506,6 +558,7 @@ class DurableInvalidationStream:
             "queue_drops": self._queue_drops,
             "queue_size": len(self._queue),
             "handler_count": len(self._handlers),
+            "group_recreates": self._group_recreates,
         }
 
     async def health_check(self) -> dict[str, Any]:

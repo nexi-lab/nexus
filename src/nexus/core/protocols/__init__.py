@@ -6,8 +6,8 @@ ConnectorProtocol family also lives here — these are kernel boundary contracts
 for storage backend abstraction.
 
 Non-kernel protocols have been moved to their correct tier locations:
-- Service protocols (EntityRegistry, PermissionEnforcer, ReBACManager,
-  WorkspaceManager) → nexus.contracts.protocols/
+- Service protocols (EntityRegistry, PermissionEnforcer, ReBACManager)
+  → nexus.contracts.protocols/
 - Cross-tier contracts (Describable, WirableFS) → nexus.contracts/
 - ContentServiceProtocol → deleted (zero consumers)
 - ReBACManagerProtocol → merged into ReBACBrickProtocol (DRY)
@@ -35,7 +35,6 @@ from nexus.core.protocols.connector import (
     OAuthCapableProtocol,
     PathDeleteProtocol,
     SearchableConnector,
-    SignedUrlProtocol,
     StreamingProtocol,
 )
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
@@ -54,7 +53,6 @@ __all__ = [
     "OAuthCapableProtocol",
     "PathDeleteProtocol",
     "SearchableConnector",
-    "SignedUrlProtocol",
     "StreamingProtocol",
     "VFSCoreProtocol",
 ]

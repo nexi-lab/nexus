@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import insert, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from nexus.bricks.rebac.cache.tiger.db_timeouts import apply_tiger_write_timeouts
 from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 
 if TYPE_CHECKING:
@@ -50,6 +51,10 @@ class TigerResourceMap:
         self._int_to_uuid: dict[int, tuple[str, str]] = {}  # int -> (type, id)
         self._lock = threading.RLock()
 
+    def connection(self) -> "Connection":
+        """Open a database connection for callers that batch resource-map work."""
+        return self._engine.connect()
+
     def get_or_create_int_id(
         self,
         resource_type: str,
@@ -81,6 +86,9 @@ class TigerResourceMap:
         )
 
         def do_get_or_create(connection: "Connection") -> int:
+            if self._is_postgresql:
+                apply_tiger_write_timeouts(connection)
+
             # Try to get existing (no zone filter)
             row = connection.execute(select_stmt).first()
             if row:
@@ -138,6 +146,74 @@ class TigerResourceMap:
             self._int_to_uuid[int_id] = key
 
         return int_id
+
+    def bulk_get_or_create_int_ids(
+        self,
+        resources: list[tuple[str, str]],
+        conn: "Connection | None" = None,
+    ) -> dict[tuple[str, str], int]:
+        """Bulk get or create integer IDs for resources.
+
+        Inserts all cache misses in one conflict-tolerant statement, commits
+        once, then refreshes the in-memory map with a batched SELECT.
+        """
+        if not resources:
+            return {}
+
+        unique_resources: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for resource in resources:
+            if resource in seen:
+                continue
+            seen.add(resource)
+            unique_resources.append(resource)
+
+        results: dict[tuple[str, str], int] = {}
+        missing: list[tuple[str, str]] = []
+        with self._lock:
+            for resource in unique_resources:
+                int_id = self._uuid_to_int.get(resource)
+                if int_id is None:
+                    missing.append(resource)
+                else:
+                    results[resource] = int_id
+
+        if not missing:
+            return results
+
+        def execute(connection: "Connection") -> None:
+            created_at = datetime.now(UTC)
+            rows = [
+                {
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "created_at": created_at,
+                }
+                for resource_type, resource_id in missing
+            ]
+            if self._is_postgresql:
+                connection.execute(
+                    pg_insert(TRM).on_conflict_do_nothing(
+                        index_elements=["resource_type", "resource_id"],
+                    ),
+                    rows,
+                )
+            else:
+                connection.execute(insert(TRM).prefix_with("OR IGNORE"), rows)
+            connection.commit()
+
+            fetched = self.bulk_get_int_ids(missing, connection)
+            for resource, int_id in fetched.items():
+                if int_id is not None:
+                    results[resource] = int(int_id)
+
+        if conn:
+            execute(conn)
+        else:
+            with self.connection() as new_conn:
+                execute(new_conn)
+
+        return results
 
     def get_resource_id(
         self, int_id: int, conn: "Connection | None" = None

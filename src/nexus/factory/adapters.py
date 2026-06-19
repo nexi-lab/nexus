@@ -356,9 +356,26 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
-        result = self._nx.sys_readdir(path, recursive=recursive, context=admin_ctx)
+        result = self._nx.sys_readdir(
+            path,
+            recursive=recursive,
+            details=True,
+            context=admin_ctx,
+        )
         items: list[Any] = result.items if hasattr(result, "items") else result
-        return items
+
+        files: list[str] = []
+        for entry in items:
+            entry_path = entry if isinstance(entry, str) else entry.get("path") or entry.get("name")
+            if not entry_path:
+                continue
+            if isinstance(entry, dict) and (
+                entry.get("entry_type") == 1 or entry.get("is_directory") is True
+            ):
+                continue
+            if not str(entry_path).endswith("/"):
+                files.append(str(entry_path))
+        return list(dict.fromkeys(files))
 
     def get_session(self) -> Any:
         return self._nx.SessionLocal()

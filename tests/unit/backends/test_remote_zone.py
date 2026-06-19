@@ -68,6 +68,22 @@ class TestRemoteZoneBackendReadOnly:
             readonly_backend.rmdir("/some/path")
         mock_transport.call_rpc.assert_not_called()
 
+    def test_all_write_mutations_fail_before_remote_transport_call(
+        self, readonly_backend: RemoteZoneBackend, mock_transport: MagicMock
+    ) -> None:
+        write_operations = (
+            lambda: readonly_backend.write_content(b"data"),
+            lambda: readonly_backend.delete_content("content-id"),
+            lambda: readonly_backend.mkdir("/some/path"),
+            lambda: readonly_backend.rmdir("/some/path"),
+        )
+
+        for operation in write_operations:
+            with pytest.raises(ZoneReadOnlyError):
+                operation()
+
+        assert mock_transport.method_calls == []
+
     def test_read_content_passes_through(
         self, readonly_backend: RemoteZoneBackend, mock_transport: MagicMock
     ) -> None:

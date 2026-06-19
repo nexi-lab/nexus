@@ -9,7 +9,7 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,9 +20,6 @@ from nexus.bricks.auth.oauth.protocol import OAuthProviderProtocol
 from nexus.bricks.auth.oauth.types import OAuthError
 from nexus.bricks.auth.providers.local import LocalAuth
 from nexus.storage.models import UserModel, UserOAuthAccountModel
-
-if TYPE_CHECKING:
-    from nexus.bricks.auth.protocols.user_provisioner import UserProvisionerProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +44,6 @@ class OAuthUserAuth:
         jwt_secret: str | None = None,
         token_expiry: int = 3600,
         oauth_crypto: OAuthCrypto | None = None,
-        user_provisioner: "UserProvisionerProtocol | None" = None,
     ) -> None:
         self.session_factory = session_factory
         self.providers = providers
@@ -55,7 +51,6 @@ class OAuthUserAuth:
         self.token_expiry = token_expiry
         self.oauth_crypto = oauth_crypto or OAuthCrypto()
         self.local_auth = LocalAuth(jwt_secret=self.jwt_secret, token_expiry=token_expiry)
-        self._user_provisioner = user_provisioner
 
         if logger.isEnabledFor(logging.INFO):
             logger.info(
@@ -244,17 +239,10 @@ class OAuthUserAuth:
         picture: str | None,
         oauth_credential: Any,
     ) -> tuple[UserModel, bool]:
-        """Get existing user or create from OAuth (with race condition protection).
-
-        The new-user path defers ``_provision_oauth_user`` until after the outer
-        transaction commits. ``UserProvisionerProtocol`` opens a second Session
-        on the same engine and writes to ``users`` / ``zones``; invoking it
-        inside the outer ``session.begin()`` block makes the inner INSERT wait
-        on the still-pending users row lock, which deadlocks the request.
-        """
+        """Get existing user or create from OAuth (with race condition protection)."""
         from nexus.bricks.auth.user_queries import get_user_by_email
 
-        new_user_to_provision: UserModel | None = None
+        new_user: UserModel | None = None
 
         with session.begin():
             stmt = select(UserOAuthAccountModel).where(
@@ -340,21 +328,12 @@ class OAuthUserAuth:
                 )
                 session.flush()
                 session.expunge(user)
-                new_user_to_provision = user
+                new_user = user
             except IntegrityError:
                 return self._retry_oauth_race(session, stmt)
 
-        # Transaction has committed. Safe to invoke the user provisioner — it
-        # opens its own Session and will not deadlock on our released locks.
-        if new_user_to_provision is not None and new_user_to_provision.email:
-            await self._provision_oauth_user(
-                user_id=new_user_to_provision.user_id,
-                email=new_user_to_provision.email,
-                display_name=new_user_to_provision.display_name,
-            )
-
-        assert new_user_to_provision is not None
-        return new_user_to_provision, True
+        assert new_user is not None
+        return new_user, True
 
     @staticmethod
     def _retry_oauth_race(
@@ -419,47 +398,6 @@ class OAuthUserAuth:
 
         session.add(oauth_account)
         return oauth_account
-
-    async def _provision_oauth_user(
-        self,
-        user_id: str,
-        email: str,
-        display_name: str | None,
-    ) -> None:
-        if self._user_provisioner is None:
-            logger.error(
-                "Cannot provision OAuth user: no UserProvisionerProtocol injected. "
-                "User created but missing zone, directories, workspace, agents, skills, API key."
-            )
-            return
-
-        zone_id = email.split("@")[0] if email else user_id
-
-        try:
-            result = await self._user_provisioner.provision_user(
-                user_id=user_id,
-                email=email,
-                display_name=display_name,
-                zone_id=zone_id,
-                create_api_key=True,
-                create_agents=True,
-                import_skills=False,
-            )
-
-            if logger.isEnabledFor(logging.INFO):
-                logger.info(
-                    "Successfully provisioned OAuth user: user_id=%s, zone_id=%s",
-                    user_id,
-                    result["zone_id"],
-                )
-
-        except Exception as e:
-            logger.error(
-                "Failed to provision OAuth user resources (user_id=%s): %s",
-                user_id,
-                e,
-                exc_info=True,
-            )
 
     def get_user_oauth_accounts(self, user_id: str) -> list[dict[str, Any]]:
         with self.session_factory() as session:

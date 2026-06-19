@@ -629,8 +629,9 @@ async def test_submit_empty_session_id_passes_none_and_no_session_allow_on_sessi
                 reason="cleanup",
                 source=DecisionSource.GRPC,
             )
-            with pytest.raises((grpc.aio.AioRpcError, Exception)):  # denied → grpc error
-                await asyncio.wait_for(submit2_task, 5.0)
+            decision = await asyncio.wait_for(submit2_task, 5.0)
+            assert decision.decision == "denied"
+            assert decision.request_id == fresh_pending.id
     finally:
         await server.stop(grace=0.1)
 

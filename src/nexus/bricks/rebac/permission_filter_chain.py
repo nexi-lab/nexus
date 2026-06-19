@@ -5,7 +5,7 @@ Decomposes the ~450-line filter_list() into a chain of composable strategies:
 2. LeopardIndexStrategy  — cached accessible directory index
 3. HierarchyPreFilterStrategy — batch ancestor checks via rebac_check_bulk()
 4. ZonePreFilterStrategy  — cross-zone path elimination
-5. BulkReBACStrategy  — final fallback via rebac_check_bulk()
+5. BulkReBACStrategy  — authoritative bulk resolution via rebac_check_bulk()
 
 Each strategy receives remaining paths and returns (allowed, remaining).
 The chain short-circuits once all paths are resolved.
@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from nexus.bricks.rebac._path_utils import get_ancestors
 from nexus.core.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
@@ -53,6 +54,38 @@ class FilterStrategy(Protocol):
     """Single step in the permission filter chain."""
 
     def apply(self, ctx: FilterContext, remaining: list[str]) -> FilterResult: ...
+
+
+Check = tuple[tuple[str, str], str, tuple[str, str]]
+
+
+def _read_checks_for_path(subject: tuple[str, str], path: str) -> list[Check]:
+    """Build direct and inherited READ checks for a virtual path."""
+    object_id = unscope_internal_path(path)
+    candidate_ids = list(get_ancestors(object_id))
+    if "/" not in candidate_ids:
+        candidate_ids.append("/")
+    return [(subject, "read", ("file", candidate_id)) for candidate_id in candidate_ids]
+
+
+def _dedupe_checks_by_path(
+    subject: tuple[str, str],
+    paths: list[str],
+) -> tuple[dict[str, list[Check]], list[Check]]:
+    checks_by_path: dict[str, list[Check]] = {}
+    checks: list[Check] = []
+    seen: set[Check] = set()
+
+    for path in paths:
+        path_checks = _read_checks_for_path(subject, path)
+        checks_by_path[path] = path_checks
+        for check in path_checks:
+            if check in seen:
+                continue
+            seen.add(check)
+            checks.append(check)
+
+    return checks_by_path, checks
 
 
 # =============================================================================
@@ -105,10 +138,10 @@ class LeopardIndexStrategy:
 
 
 class HierarchyPreFilterStrategy:
-    """Batch-check parent directories to eliminate entire subtrees.
+    """Batch-check parent directories to warm accessible-directory cache.
 
     Groups paths by parent directory, checks unique parents via
-    rebac_check_bulk(), then only keeps paths under accessible parents.
+    rebac_check_bulk(), then records accessible parents for Leopard lookup.
     Uses FULL ancestor walk (not just immediate parent) for consistency
     with _check_rebac_batched() (Issue #899, #4A).
     """
@@ -132,16 +165,13 @@ class HierarchyPreFilterStrategy:
 
         subject = ctx.subject
 
-        # Batch check unique parent directories
-        parent_checks = [
-            (subject, "read", ("file", unscope_internal_path(parent))) for parent in unique_parents
-        ]
+        checks_by_parent, parent_checks = _dedupe_checks_by_path(subject, unique_parents)
         parent_results = ctx.rebac_manager.rebac_check_bulk(parent_checks, zone_id=ctx.zone_id)
 
         accessible_parents = {
             parent
-            for parent, check in zip(unique_parents, parent_checks, strict=False)
-            if parent_results.get(check, False)
+            for parent in unique_parents
+            if any(parent_results.get(check, False) for check in checks_by_parent[parent])
         }
 
         logger.info(
@@ -153,16 +183,13 @@ class HierarchyPreFilterStrategy:
         if accessible_parents:
             ctx.cache.record_accessible_dirs(accessible_parents, subject, ctx.zone_id)
 
-        # Only keep paths under accessible parents
+        # Child-level grants are valid traversal visibility in this ReBAC
+        # model, so an inaccessible parent does not prove all descendants are
+        # denied. Keep every candidate for the authoritative bulk pass.
         if len(accessible_parents) < len(unique_parents):
-            kept: list[str] = []
-            for parent in accessible_parents:
-                kept.extend(paths_by_parent[parent])
-
-            skipped = len(remaining) - len(kept)
             logger.info(
-                f"[HIERARCHY-PREFILTER] Reduced fallback: {len(remaining)} -> "
-                f"{len(kept)} paths (skipped {skipped} under denied parents)"
+                f"[HIERARCHY-PREFILTER] Keeping {len(remaining)} paths for bulk resolution "
+                f"because denied parents may still have direct child grants"
             )
 
             # Do NOT mark bitmap complete on empty results — parent grants
@@ -170,7 +197,7 @@ class HierarchyPreFilterStrategy:
             # if not accessible_parents and len(remaining) > 100:
             #     ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
-            return FilterResult(allowed=[], remaining=kept)
+            return FilterResult(allowed=[], remaining=remaining)
 
         return FilterResult(allowed=[], remaining=remaining)
 
@@ -217,7 +244,7 @@ class ZonePreFilterStrategy:
 
 
 class BulkReBACStrategy:
-    """Final fallback: check all remaining paths via rebac_check_bulk().
+    """Final authoritative step: check all remaining paths via rebac_check_bulk().
 
     Includes retry-once on failure (Issue #899, #7A).
     """
@@ -228,9 +255,7 @@ class BulkReBACStrategy:
 
         subject = ctx.subject
 
-        checks = []
-        for path in remaining:
-            checks.append((subject, "read", ("file", unscope_internal_path(path))))
+        checks_by_path, checks = _dedupe_checks_by_path(subject, remaining)
 
         # Retry-once on transient I/O failures only
         try:
@@ -246,17 +271,26 @@ class BulkReBACStrategy:
             logger.error(f"[BULK-REBAC] Bulk check failed (non-retryable): {e}")
             return FilterResult(allowed=[], remaining=[], short_circuit=True)
 
-        allowed = [
-            path
-            for path, check in zip(remaining, checks, strict=False)
-            if results.get(check, False)
-        ]
+        allowed: list[str] = []
+        inherited_allowed = False
+        for path in remaining:
+            path_checks = checks_by_path[path]
+            direct_check = path_checks[0] if path_checks else None
+            path_allowed = False
+            for check in path_checks:
+                if results.get(check, False):
+                    path_allowed = True
+                    if check != direct_check:
+                        inherited_allowed = True
+                    break
+            if path_allowed:
+                allowed.append(path)
 
-        # Only mark bitmap complete when bulk found SOME results from a large set.
-        # An empty result may indicate parent-level grants that aren't resolved
-        # in bulk mode — marking empty as "complete" would block fallback on
-        # subsequent requests and deny all access incorrectly.
-        if allowed and len(remaining) > 100:
+        # Only mark bitmap complete when the bulk pass found direct grants.
+        # Inherited grants mean the leaf bitmap is not complete for this
+        # subject, and marking it complete would let Tiger skip the ReBAC pass
+        # for later descendant paths.
+        if allowed and not inherited_allowed and len(remaining) > 100:
             ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
         return FilterResult(allowed=allowed, remaining=[], short_circuit=True)

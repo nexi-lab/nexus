@@ -65,6 +65,7 @@ class _NexusFSProto(Protocol):
 
     def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
     def sys_setattr(self, path: str, **kwargs: Any) -> Any: ...
+    def sys_stat(self, path: str, **kwargs: Any) -> Any: ...
     def sys_read(self, path: str, **kwargs: Any) -> Any: ...
     def sys_readdir(self, path: str = "/", recursive: bool = True, **kwargs: Any) -> Any: ...
     def sys_unlink(self, path: str, **kwargs: Any) -> Any: ...
@@ -174,6 +175,15 @@ class MetastoreNamespaceStore:
 
     def _read(self, path: str) -> dict[str, Any] | None:
         """Read a JSON config file or return None if absent / malformed."""
+        stat_fn = getattr(self._nx, "sys_stat", None)
+        if callable(stat_fn):
+            try:
+                if stat_fn(path) is None:
+                    return None
+            except FileNotFoundError:
+                return None
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("_read(%s): sys_stat failed, falling back to sys_read: %s", path, exc)
         try:
             result = self._nx.sys_read(path)
         except FileNotFoundError:

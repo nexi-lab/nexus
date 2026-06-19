@@ -1,4 +1,51 @@
-"""Factory orchestrator — create_nexus_services, create_nexus_fs."""
+"""Factory orchestrator — the init system for the Nexus Python app layer.
+
+Analogous to systemd: selects a DeploymentProfile, constructs services,
+and wires them into the Rust kernel via DI.  Two public entry points:
+
+    create_nexus_fs(backend, metadata_store, ...)
+        Recommended entry point.  Instantiates NexusFS (which spawns the
+        Rust kernel subprocess + gRPC channel), then calls
+        create_nexus_services() and _lifecycle._wire_services() /
+        _initialize_services() to assemble the full stack.
+
+    create_nexus_services(record_store, metadata_store, backend, ...)
+        Lower-level: builds the service dict without creating NexusFS.
+        Useful when you already have a kernel handle and just need services.
+
+Boot sequence (4 phases):
+
+    1. create_nexus_services()  — 3-tier brick construction:
+       Tier 0 (Kernel):    validate Storage Pillars (VFS router, Metastore)
+       Tier 1 (Services):  critical services (ReBAC, permissions) → BootError
+       Tier 2 (Bricks):    optional (search, LLM, sandbox) → graceful degrade
+
+    2. _wire_services()        — pure memory, no I/O.  Creates ParsersBrick,
+       CacheBrick; boots post-kernel services; binds onto NexusFS; creates
+       PermissionChecker.  Returns _InitContext.
+
+    3. _initialize_services()  — one-time side effects (VFS hook registration,
+       BLM brick registration).  No background threads yet.
+
+    4. NexusFS.bootstrap()     — starts BackgroundService instances (.start())
+       in dependency order.
+
+Kernel DI patterns (two mechanisms):
+
+    +-----------------+-------------------+-----------------------+
+    | Pattern         | Kernel __init__   | Factory _do_link()    |
+    +-----------------+-------------------+-----------------------+
+    | Kernel owns     | Creates instance  | —                     |
+    | Kernel knows    | self._x = None    | Injects real value    |
+    +-----------------+-------------------+-----------------------+
+
+    "Kernel knows" follows the Linux LSM pattern: kernel declares a
+    default (None), factory overrides at link-time.
+
+See also:
+    - ``deployment_profile.py`` — profile definitions and brick/driver gating
+    - ``_lifecycle.py`` — _wire_services() and _initialize_services() impl
+"""
 
 from __future__ import annotations
 
@@ -40,6 +87,7 @@ def create_nexus_services(
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
+    nexus_fs: "Any" = None,
 ) -> "dict[str, Any]":
     """Create default services for NexusFS dependency injection.
 
@@ -59,17 +107,20 @@ def create_nexus_services(
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
         metadata_store: Any instance (for PermissionEnforcer).
-        backend: Backend instance (for WorkspaceManager).
+        backend: Backend instance.
         dlc: DriverLifecycleCoordinator for routing + backend refs.
         permissions: Permission config (defaults from PermissionConfig()).
         cache: Cache config (for TTL values, defaults from CacheConfig()).
         distributed: Distributed config (for event bus/locks).
-        zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
-        agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
+        zone_id: Default zone ID (embedded mode only).
+        agent_id: Default agent ID (embedded mode only).
         enable_write_buffer: Use async DT_PIPE observer for PG sync (Issue #809).
         resiliency_raw: Raw resiliency policy dict from YAML config.
         enabled_bricks: Set of brick names to enable. When None, all bricks
             are enabled (backward-compatible default = FULL profile).
+        nexus_fs: NexusFS handle, when services are booted from
+            ``create_nexus_fs``. Service-tier boot code uses it to reach the
+            kernel via Tier 1 syscalls. None for standalone callers.
 
     Returns:
         dict[str, Any] — all services keyed by canonical name.
@@ -122,23 +173,14 @@ def create_nexus_services(
     # path_local / cas-local / local_connector backends — must be in the
     # profile's set; the gate has no implicit local-default bypass (see
     # `rust/kernel/src/hal/object_store_provider.rs::is_driver_enabled`).
-    try:
-        import nexus_runtime as _nx_runtime
-
-        _enabled_drivers = sorted(_factory_profile.default_drivers())
-        _nx_runtime.nx_set_enabled_drivers(_enabled_drivers)
-        logger.info(
-            "Factory: enabled_drivers=%d %s (profile=%s)",
-            len(_enabled_drivers),
-            _enabled_drivers,
-            _factory_profile.value,
-        )
-    except Exception as _exc:  # pragma: no cover — startup-only path
-        logger.warning(
-            "Factory: driver gate install skipped (%s): %s",
-            type(_exc).__name__,
-            _exc,
-        )
+    # Driver gate is now managed inside the kernel process (Rust).
+    _enabled_drivers = sorted(_factory_profile.default_drivers())
+    logger.debug(
+        "Factory: driver gate managed by kernel process; enabled_drivers=%d %s (profile=%s)",
+        len(_enabled_drivers),
+        _enabled_drivers,
+        _factory_profile.value,
+    )
 
     perm = permissions or _PermissionConfig()
     audit_cfg = audit or _AuditConfig()
@@ -162,6 +204,7 @@ def create_nexus_services(
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
         profile_tuning=_profile_tuning,
+        nexus_fs=nexus_fs,
     )
 
     # --- Tier 0: KERNEL (validate Storage Pillars — inlined from _kernel.py) ---
@@ -240,8 +283,8 @@ def create_nexus_fs(
             provided, create_nexus_services() is called automatically.
         enable_write_buffer: Use async DT_PIPE observer for PG sync.
         enabled_bricks: Set of brick names to enable.
-        zone_id: Default zone ID (for WorkspaceManager, embedded mode).
-        agent_id: Default agent ID (for WorkspaceManager, embedded mode).
+        zone_id: Default zone ID (embedded mode).
+        agent_id: Default agent ID (embedded mode).
         workflow_engine: Pre-built workflow engine override.
         init_cred: Override kernel process identity (default: system user with is_admin flag).
 
@@ -327,6 +370,7 @@ def create_nexus_fs(
             agent_id=agent_id,
             enable_write_buffer=enable_write_buffer,
             enabled_bricks=enabled_bricks,
+            nexus_fs=nx,
         )
 
     # Default to empty dict when not provided
@@ -343,6 +387,7 @@ def create_nexus_fs(
         workflow_engine=workflow_engine,
         federation=federation,
         security=security,
+        backend=backend,
     )
     nx._linked = True
 
@@ -360,6 +405,7 @@ def _register_vfs_hooks(
     auto_parse: bool = True,
     svc_on: "Callable[[str], bool] | None" = None,
     parse_fn: Any = None,
+    backend: Any = None,
 ) -> None:
     """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
 
@@ -379,15 +425,7 @@ def _register_vfs_hooks(
         """Enlist hook via sys_setattr — factory is the first user."""
         nx.sys_setattr(f"/__sys__/services/{name}", service=hook)
 
-    # ── Zone write guard hook (Issue #1790) ────────────────────────
-    # Rejects writes to zones being deprovisioned (Issue #2061).
-    # Replaces _check_zone_writable() in nexus_fs.
     _ss = services or {}
-    _zl = _ss.get("zone_lifecycle")
-    if _zl is not None:
-        from nexus.services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
-
-        _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
     # ── Permission — RebacPermissionCheckHook as NativeInterceptHook ──
     if permission_checker is not None:
@@ -510,9 +548,17 @@ def _register_vfs_hooks(
             recursive: bool = True,
             zone_id: str = ROOT_ZONE_ID,  # noqa: ARG001
         ) -> Any:
-            from nexus.kernel_helpers import metastore_list
+            # §2.5: list through the syscall surface, not kernel.metastore_*.
+            # is_system=True — the rename hook updates Tiger bitmaps for the
+            # whole renamed subtree regardless of caller zone.
+            from nexus.contracts.types import OperationContext
 
-            return metastore_list(nx._kernel, prefix=prefix, recursive=recursive)
+            return nx.sys_readdir(
+                prefix or "/",
+                recursive=recursive,
+                details=False,
+                context=OperationContext(user_id="system", groups=[], is_system=True),
+            )
 
         _tiger_rename_hook = TigerCacheRenameHook(
             tiger_cache=tiger_cache,
@@ -559,7 +605,7 @@ def _register_vfs_hooks(
         logger.warning(
             "[BOOT:HOOKS] PyKernel.agent_registry unavailable — Rust extension is "
             "stale or built without it. Rebuild with: "
-            "maturin develop -m rust/nexus-cdylib/Cargo.toml --features full"
+            "cargo build --release -p nexus-cluster"
         )
     if _proc_table is not None:
         try:
@@ -663,8 +709,19 @@ def _register_vfs_hooks(
     # sys_write/sys_unlink/sys_rename/sys_mkdir (rmdir is internal). No observer needed.
 
     # ── CAS GC (Issue #1320, #1772) ────────────────────────────────────
-    # ref_count eliminated; reachability-based GC via CASGarbageCollector.
-    # GC is owned by CASLocalBackend, metastore injected via set_metastore().
+    # ref_count eliminated; reachability-based GC via CasGcService.
+    # Factory-gated: enlist one instance when the root backend is CAS so
+    # the kernel auto-starts it as a BackgroundService. Non-CAS backends
+    # (path_local, external connectors) skip this — they own no blob set
+    # to collect.
+    if backend is not None:
+        from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
+
+        if isinstance(backend, CASAddressingEngine):
+            from nexus.backends.engines.cas_gc import CasGcService
+
+            _cas_gc = CasGcService(backend, nx)
+            _enlist("cas_gc", _cas_gc)
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.

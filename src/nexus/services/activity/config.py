@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
+
+from nexus.contracts.protocols.activity import EventKind
 
 
 def _parse_bool(raw: str | None, default: bool) -> bool:
@@ -32,6 +36,30 @@ def _parse_float(name: str, raw: str | None, default: float) -> float:
         raise ValueError(f"{name} must be a float, got {raw!r}") from exc
 
 
+def _validate_rate(name: str, rate: float) -> None:
+    # NaN fails both comparisons, inf fails the upper bound — no separate
+    # isfinite check needed.
+    if not (0.0 <= rate <= 1.0):
+        raise ValueError(f"{name} must be in [0.0, 1.0], got {rate}")
+
+
+def _parse_sample_rates(raw: str | None) -> dict[str, float]:
+    """Parse 'kind=rate,kind=rate' (e.g. 'search=0.05,mcp_tool_call=0.2')."""
+    if raw is None or not raw.strip():
+        return {}
+    rates: dict[str, float] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        key, sep, value = part.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise ValueError(f"NEXUS_ACTIVITY_SAMPLE_RATES entries must be kind=rate, got {part!r}")
+        rates[key] = _parse_float("NEXUS_ACTIVITY_SAMPLE_RATES", value.strip(), 1.0)
+    return rates
+
+
 @dataclass(frozen=True)
 class ActivityConfig:
     enabled: bool = True
@@ -44,6 +72,10 @@ class ActivityConfig:
     agent_log_cap_bytes: int = 10 * 1024 * 1024
     agent_log_retention_days: int = 7
     agent_log_cmd_max_bytes: int = 4 * 1024
+    segment_dir: Path = Path("./activity")
+    min_free_mb: int = 1024
+    sample_rate: float = 1.0
+    sample_rates: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Bounded-queue contract: a non-positive queue_size disables
@@ -79,14 +111,44 @@ class ActivityConfig:
                 f"NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES must be > 0, "
                 f"got {self.agent_log_cmd_max_bytes}"
             )
+        if self.min_free_mb < 0:
+            raise ValueError(f"NEXUS_ACTIVITY_MIN_FREE_MB must be >= 0, got {self.min_free_mb}")
+        _validate_rate("NEXUS_ACTIVITY_SAMPLE_RATE", self.sample_rate)
+        # Late import: emitter owns the exemption set but also imports this
+        # module's consumers; the function-local import avoids a cycle.
+        from nexus.services.activity.emitter import SAMPLING_EXEMPT_KINDS
+
+        valid_kinds = {k.value for k in EventKind}
+        exempt_kinds = {k.value for k in SAMPLING_EXEMPT_KINDS}
+        for key, rate in self.sample_rates.items():
+            if key not in valid_kinds:
+                raise ValueError(
+                    f"NEXUS_ACTIVITY_SAMPLE_RATES has unknown event kind {key!r}; "
+                    f"valid kinds: {sorted(valid_kinds)}"
+                )
+            if key in exempt_kinds:
+                raise ValueError(
+                    f"NEXUS_ACTIVITY_SAMPLE_RATES cannot sample audit kind {key!r}; "
+                    f"audit kinds are always recorded: {sorted(exempt_kinds)}"
+                )
+            _validate_rate(f"NEXUS_ACTIVITY_SAMPLE_RATES[{key!r}]", rate)
+        # Frozen dataclass with a mutable dict field: wrap a private copy in
+        # a read-only proxy so the frozen contract extends to the mapping
+        # contents. Note: still unhashable, like any mapping.
+        object.__setattr__(self, "sample_rates", MappingProxyType(dict(self.sample_rates)))
 
     @classmethod
     def from_env(cls) -> ActivityConfig:
         data_dir = os.environ.get("NEXUS_DATA_DIR", ".")
         default_db = Path(data_dir) / "activity.db"
+        db_path = Path(os.environ.get("NEXUS_ACTIVITY_DB_PATH", str(default_db)))
+        # Segments default to a sibling dir of the (possibly operator-moved)
+        # db_path so a dedicated telemetry volume keeps everything together.
+        default_segment_dir = db_path.parent / "activity"
         return cls(
             enabled=_parse_bool(os.environ.get("NEXUS_ACTIVITY_ENABLED"), True),
-            db_path=Path(os.environ.get("NEXUS_ACTIVITY_DB_PATH", str(default_db))),
+            db_path=db_path,
+            segment_dir=Path(os.environ.get("NEXUS_ACTIVITY_DIR", str(default_segment_dir))),
             retention_days=_parse_int(
                 "NEXUS_ACTIVITY_RETENTION_DAYS",
                 os.environ.get("NEXUS_ACTIVITY_RETENTION_DAYS"),
@@ -123,4 +185,15 @@ class ActivityConfig:
                 os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES"),
                 4 * 1024,
             ),
+            min_free_mb=_parse_int(
+                "NEXUS_ACTIVITY_MIN_FREE_MB",
+                os.environ.get("NEXUS_ACTIVITY_MIN_FREE_MB"),
+                1024,
+            ),
+            sample_rate=_parse_float(
+                "NEXUS_ACTIVITY_SAMPLE_RATE",
+                os.environ.get("NEXUS_ACTIVITY_SAMPLE_RATE"),
+                1.0,
+            ),
+            sample_rates=_parse_sample_rates(os.environ.get("NEXUS_ACTIVITY_SAMPLE_RATES")),
         )

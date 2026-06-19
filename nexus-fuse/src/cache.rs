@@ -22,6 +22,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Maximum age for cached content before forcing revalidation (1 hour).
 const MAX_CACHE_AGE_SECS: u64 = 3600;
 
+/// Maximum age for stale content fallback after a transient revalidation error.
+const MAX_STALE_FALLBACK_AGE_SECS: u64 = MAX_CACHE_AGE_SECS * 24;
+
 /// Default DRAM cache size in bytes (256 MiB).
 pub const DEFAULT_MEMORY_CACHE_BYTES: usize = 256 * 1024 * 1024;
 
@@ -521,7 +524,18 @@ impl FileCache {
     }
 
     pub fn get_stale(&self, path: &str) -> Option<CacheEntry> {
-        self.read_record(path).map(|record| CacheEntry {
+        let record = self.read_record(path)?;
+        let age = Self::now().saturating_sub(record.cached_at_secs);
+        if age > MAX_STALE_FALLBACK_AGE_SECS {
+            debug!(
+                "Cache stale fallback expired for {} (age: {}s, limit: {}s)",
+                path, age, MAX_STALE_FALLBACK_AGE_SECS
+            );
+            self.invalidate(path);
+            return None;
+        }
+
+        Some(CacheEntry {
             content: record.content,
             etag: record.etag,
             gen: record.gen,

@@ -22,6 +22,7 @@ from nexus.cli.commands._hub_common import (
     get_session_factory,
 )
 from nexus.cli.commands._hub_remote import HubRemoteError, call_hub_admin_tool
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.hub.admin_ops import (
     HubAdminAmbiguousTargetError,
     HubAdminError,
@@ -293,7 +294,7 @@ def token_zones_add(name: str, zone_id: str, permissions: str) -> None:
             session.execute(
                 select(ZoneModel)
                 .where(ZoneModel.zone_id == zone_id)
-                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.phase == ZonePhase.ACTIVE)
                 .where(ZoneModel.deleted_at.is_(None))
             )
             .scalars()
@@ -482,7 +483,7 @@ def _collect_zone_ids(session: Any) -> list[str]:
     rows = (
         session.execute(
             select(ZoneModel.zone_id)
-            .where(ZoneModel.phase == "Active")
+            .where(ZoneModel.phase == ZonePhase.ACTIVE)
             .where(ZoneModel.deleted_at.is_(None))
             .order_by(ZoneModel.zone_id.asc())
         )

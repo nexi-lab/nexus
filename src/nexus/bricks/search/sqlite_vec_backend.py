@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import logging
 import os
 import re
@@ -46,6 +47,7 @@ import weakref
 from collections.abc import Sequence
 from typing import Any
 
+from nexus.bricks.search.macro_chunk import ChunkRow
 from nexus.bricks.search.results import BaseSearchResult
 
 logger = logging.getLogger(__name__)
@@ -122,6 +124,12 @@ class SqliteVecEmbedderMismatchError(RuntimeError):
 _DIM_REGEX = re.compile(r"embedding\s+float\[(\d+)\]", re.IGNORECASE)
 
 
+def _require_package(module: str, message: str) -> None:
+    """Check optional package availability without importing heavy modules."""
+    if importlib.util.find_spec(module) is None:
+        raise ImportError(message)
+
+
 def _detect_embedder_kind(api_key: str | None) -> str:
     """Return ``"litellm"`` or ``"fastembed"`` based on env + arg.
 
@@ -165,14 +173,15 @@ class SqliteVecBackend:
         api_key: str | None = None,
         embedder: str | None = None,
     ) -> None:
-        # sqlite-vec is required for both embedder kinds.
-        try:
-            import sqlite_vec  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "SqliteVecBackend requires the 'sqlite-vec' package. "
-                "Install with: pip install 'nexus-ai-fs[sandbox]'"
-            ) from exc
+        # sqlite-vec is required for both embedder kinds. Use find_spec()
+        # instead of importing: sqlite-vec, litellm, and fastembed are
+        # optional but heavy enough that importing them during SANDBOX boot
+        # turns backend construction into visible startup latency.
+        _require_package(
+            "sqlite_vec",
+            "SqliteVecBackend requires the 'sqlite-vec' package. "
+            "Install with: pip install 'nexus-ai-fs[sandbox]'",
+        )
 
         # Pick the embedder. Explicit arg > env override > auto-detect.
         kind = (embedder or os.environ.get("NEXUS_EMBEDDER") or "auto").lower()
@@ -184,26 +193,22 @@ class SqliteVecBackend:
             )
 
         if kind == "litellm":
-            try:
-                import litellm  # noqa: F401
-            except ImportError as exc:
-                raise ImportError(
-                    "SqliteVecBackend(embedder='litellm') requires the 'litellm' package. "
-                    "Install with: pip install 'nexus-ai-fs[sandbox]'"
-                ) from exc
+            _require_package(
+                "litellm",
+                "SqliteVecBackend(embedder='litellm') requires the 'litellm' package. "
+                "Install with: pip install 'nexus-ai-fs[sandbox]'",
+            )
             self._embedding_model = embedding_model or os.environ.get(
                 "NEXUS_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
             )
             self._embedding_dim = int(embedding_dim or DEFAULT_EMBEDDING_DIM)
         else:  # fastembed
-            try:
-                import fastembed  # noqa: F401
-            except ImportError as exc:
-                raise ImportError(
-                    "SqliteVecBackend(embedder='fastembed') requires the 'fastembed' package. "
-                    "Install with: pip install 'nexus-ai-fs[sandbox]' (includes fastembed) "
-                    "or set an embedding API key (e.g. OPENAI_API_KEY) to use litellm."
-                ) from exc
+            _require_package(
+                "fastembed",
+                "SqliteVecBackend(embedder='fastembed') requires the 'fastembed' package. "
+                "Install with: pip install 'nexus-ai-fs[sandbox]' (includes fastembed) "
+                "or set an embedding API key (e.g. OPENAI_API_KEY) to use litellm.",
+            )
             self._embedding_model = embedding_model or os.environ.get(
                 "NEXUS_OFFLINE_EMBED_MODEL", DEFAULT_FASTEMBED_MODEL
             )
@@ -379,18 +384,33 @@ class SqliteVecBackend:
                 existing = _read_existing_dim(conn)
                 if existing is not None and existing != self._embedding_dim:
                     raise _dim_mismatch(existing, race=False)
+
                 # Create vec0 virtual table; embedding dim is fixed at
                 # init time (sqlite-vec requirement). Auxiliary columns
-                # carry zone isolation + result rendering data.
-                conn.execute(
-                    f"CREATE VIRTUAL TABLE IF NOT EXISTS {_VEC_TABLE} USING vec0("
-                    f"embedding float[{self._embedding_dim}], "
-                    f"zone_id text, "
-                    f"path text, "
-                    f"chunk_text text, "
-                    f"chunk_index integer"
-                    f");"
-                )
+                # carry zone isolation + result rendering data. The four
+                # macro-chunk columns (chunk_tokens, line_start, line_end,
+                # heading_prefix) support fetch_ranges neighbor expansion
+                # (Issue #4398 T7).
+                # NOTE: on a legacy old-schema DB (no heading_prefix), this
+                # CREATE IF NOT EXISTS is a no-op — the old table survives
+                # intact until embedder identity is validated (Fix 1: we
+                # only DROP after confirming identity matches).
+                def _create_vec_table() -> None:
+                    conn.execute(
+                        f"CREATE VIRTUAL TABLE IF NOT EXISTS {_VEC_TABLE} USING vec0("
+                        f"embedding float[{self._embedding_dim}], "
+                        f"zone_id text, "
+                        f"path text, "
+                        f"chunk_text text, "
+                        f"chunk_index integer, "
+                        f"+chunk_tokens integer, "
+                        f"+line_start integer, "
+                        f"+line_end integer, "
+                        f"+heading_prefix text"
+                        f");"
+                    )
+
+                _create_vec_table()
                 conn.commit()
                 # Codex review R2 (high): post-check — re-read the
                 # schema after CREATE to catch the race where a
@@ -475,6 +495,30 @@ class SqliteVecBackend:
                             or stored_model == self._embedding_model
                         )
                         raise _embedder_mismatch(stored_kind, stored_model, race=race_now)
+                # Fix 1 (Issue #4398): Rebuild old-schema table AFTER identity is
+                # confirmed-ours. For a legacy DB with the same dim but missing
+                # heading_prefix, the CREATE IF NOT EXISTS above was a no-op (old
+                # schema survived). Now that identity is validated, it is safe to
+                # DROP and recreate with the new schema. Rows repopulate on reindex.
+                rebuild_sql_row = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (_VEC_TABLE,),
+                ).fetchone()
+                if (
+                    rebuild_sql_row
+                    and rebuild_sql_row[0]
+                    and "heading_prefix" not in rebuild_sql_row[0]
+                ):
+                    logger.warning(
+                        "Rebuilding '%s': existing table predates macro-chunk metadata "
+                        "columns; dropping and recreating (index will repopulate on reindex). "
+                        "Embedder identity confirmed — data destruction is safe.",
+                        _VEC_TABLE,
+                    )
+                    conn.execute(f"DROP TABLE {_VEC_TABLE}")
+                    conn.commit()
+                    _create_vec_table()
+                    conn.commit()
                 return conn
 
             self._conn = await self._run_native(_open)
@@ -632,18 +676,37 @@ class SqliteVecBackend:
                 f"{len(documents)} documents (model={self._embedding_model})"
             )
 
-        rows: list[tuple[int, bytes, str, str, str, int]] = []
+        rows: list[
+            tuple[int, bytes, str, str, str, int, int, int | None, int | None, str | None]
+        ] = []
         for doc, vec in zip(documents, vectors, strict=True):
             path = str(doc.get("path", ""))
             chunk_index = int(doc.get("chunk_index", 0) or 0)
             chunk_text = str(doc.get("text") or doc.get("chunk_text") or "")
+            chunk_tokens = int(doc.get("chunk_tokens", 0) or 0)
+            line_start = doc.get("line_start")
+            line_end = doc.get("line_end")
+            heading_prefix = doc.get("heading_prefix")
             if len(vec) != self._embedding_dim:
                 raise RuntimeError(
                     f"Embedding dim mismatch: got {len(vec)} expected "
                     f"{self._embedding_dim} (model={self._embedding_model}, path={path})"
                 )
             rowid = self._stable_rowid(zone_id, path, chunk_index)
-            rows.append((rowid, self._pack_vector(vec), zone_id, path, chunk_text, chunk_index))
+            rows.append(
+                (
+                    rowid,
+                    self._pack_vector(vec),
+                    zone_id,
+                    path,
+                    chunk_text,
+                    chunk_index,
+                    chunk_tokens,
+                    line_start,
+                    line_end,
+                    heading_prefix,
+                )
+            )
 
         def _write() -> int:
             # vec0 doesn't support UPSERT; emulate by deleting any row with
@@ -657,8 +720,9 @@ class SqliteVecBackend:
                 )
                 conn.executemany(
                     f"INSERT INTO {_VEC_TABLE}"
-                    f"(rowid, embedding, zone_id, path, chunk_text, chunk_index) "
-                    f"VALUES (?, ?, ?, ?, ?, ?)",
+                    f"(rowid, embedding, zone_id, path, chunk_text, chunk_index, "
+                    f"chunk_tokens, line_start, line_end, heading_prefix) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
             return len(rows)
@@ -690,18 +754,37 @@ class SqliteVecBackend:
                 f"{len(documents)} documents (model={self._embedding_model})"
             )
 
-        rows: list[tuple[int, bytes, str, str, str, int]] = []
+        rows: list[
+            tuple[int, bytes, str, str, str, int, int, int | None, int | None, str | None]
+        ] = []
         for doc, vec in zip(documents, vectors, strict=True):
             path = str(doc.get("path", ""))
             chunk_index = int(doc.get("chunk_index", 0) or 0)
             chunk_text = str(doc.get("text") or doc.get("chunk_text") or "")
+            chunk_tokens = int(doc.get("chunk_tokens", 0) or 0)
+            line_start = doc.get("line_start")
+            line_end = doc.get("line_end")
+            heading_prefix = doc.get("heading_prefix")
             if len(vec) != self._embedding_dim:
                 raise RuntimeError(
                     f"Embedding dim mismatch: got {len(vec)} expected "
                     f"{self._embedding_dim} (model={self._embedding_model}, path={path})"
                 )
             rowid = self._stable_rowid(zone_id, path, chunk_index)
-            rows.append((rowid, self._pack_vector(vec), zone_id, path, chunk_text, chunk_index))
+            rows.append(
+                (
+                    rowid,
+                    self._pack_vector(vec),
+                    zone_id,
+                    path,
+                    chunk_text,
+                    chunk_index,
+                    chunk_tokens,
+                    line_start,
+                    line_end,
+                    heading_prefix,
+                )
+            )
 
         # Phase 2: atomic delete+insert in a single transaction. sqlite3's
         # `with conn:` uses BEGIN/COMMIT/ROLLBACK, so if executemany fails
@@ -714,8 +797,9 @@ class SqliteVecBackend:
                 )
                 conn.executemany(
                     f"INSERT INTO {_VEC_TABLE}"
-                    f"(rowid, embedding, zone_id, path, chunk_text, chunk_index) "
-                    f"VALUES (?, ?, ?, ?, ?, ?)",
+                    f"(rowid, embedding, zone_id, path, chunk_text, chunk_index, "
+                    f"chunk_tokens, line_start, line_end, heading_prefix) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
             return len(rows)
@@ -850,8 +934,14 @@ class SqliteVecBackend:
         path: str,  # noqa: ARG002
         k: int,  # noqa: ARG002
         zone_id: str,  # noqa: ARG002
+        *,
+        timing: dict[str, float] | None = None,  # noqa: ARG002
     ) -> list[BaseSearchResult]:
-        """Not implemented — this backend is semantic-only; keyword search lives in SqliteFtsBackend."""
+        """Not implemented — semantic-only; keyword search lives in SqliteFtsBackend.
+
+        Accepts ``timing`` (Issue #4269) for SearchBackend-protocol parity; this
+        semantic-only backend records nothing into it.
+        """
         return []
 
     async def semantic_search(
@@ -928,3 +1018,56 @@ class SqliteVecBackend:
                 )
             )
         return results
+
+    # ------------------------------------------------------------------
+    # NeighborFetcher protocol: fetch_ranges (Issue #4398 T7)
+    # ------------------------------------------------------------------
+
+    async def fetch_ranges(
+        self,
+        spans: list[tuple[str, int, int]],
+        zone_id: str | None,
+    ) -> list[ChunkRow]:
+        """Return ChunkRow objects for all chunks in the given (path, lo, hi) spans.
+
+        Implements the NeighborFetcher protocol consumed by the macro-chunk
+        expander (``nexus.bricks.search.macro_chunk``). Each element of
+        ``spans`` is ``(path, chunk_index_lo, chunk_index_hi)``; the range
+        is inclusive on both ends.
+
+        Runs the synchronous SQLite query in a worker thread via
+        ``_run_native`` so the event loop stays responsive.
+        """
+        if not spans:
+            return []
+        await self.startup()
+        conn = self._require_conn()
+
+        def _fetch() -> list[ChunkRow]:
+            out: list[ChunkRow] = []
+            for path, lo, hi in spans:
+                cur = conn.execute(
+                    f"SELECT path, chunk_index, chunk_text, chunk_tokens, "
+                    f"line_start, line_end, heading_prefix "
+                    f"FROM {_VEC_TABLE} "
+                    f"WHERE zone_id = ? AND path = ? AND chunk_index BETWEEN ? AND ? "
+                    f"ORDER BY chunk_index",
+                    (zone_id, path, lo, hi),
+                )
+                for row in cur.fetchall():
+                    out.append(
+                        ChunkRow(
+                            path=row[0],
+                            chunk_index=int(row[1]),
+                            text=row[2],
+                            tokens=int(row[3] or 0),
+                            line_start=row[4],
+                            line_end=row[5],
+                            heading_prefix=row[6],
+                        )
+                    )
+            return out
+
+        async with self._get_loop_lock(self._op_locks):
+            rows: list[ChunkRow] = await self._run_native(_fetch)
+            return rows

@@ -60,21 +60,19 @@ class InternalMixin:
             if cached is not None and cached[0] == is_admin:
                 return cached[1]
 
-        from nexus_runtime import PyOperationContext as _RustCtx
-
-        rust_ctx = _RustCtx(
-            user_id=context.user_id if context else "anonymous",
-            zone_id=self._zone_id,  # routing zone (always set)
-            is_admin=is_admin,
-            agent_id=getattr(context, "agent_id", None) if context else None,
-            is_system=getattr(context, "is_system", False) if context else False,
-            groups=context.groups if context else [],
-            admin_capabilities=list(context.admin_capabilities) if context else [],
-            subject_type=getattr(context, "subject_type", "user") if context else "user",
-            subject_id=getattr(context, "subject_id", None) if context else None,
-            request_id=getattr(context, "request_id", "") if context else "",
-            context_zone_id=context.zone_id if context else None,  # caller's zone
-        )
+        rust_ctx = {
+            "user_id": context.user_id if context else "anonymous",
+            "zone_id": self._zone_id,  # routing zone (always set)
+            "is_admin": is_admin,
+            "agent_id": getattr(context, "agent_id", None) if context else None,
+            "is_system": getattr(context, "is_system", False) if context else False,
+            "groups": context.groups if context else [],
+            "admin_capabilities": list(context.admin_capabilities) if context else [],
+            "subject_type": getattr(context, "subject_type", "user") if context else "user",
+            "subject_id": getattr(context, "subject_id", None) if context else None,
+            "request_id": getattr(context, "request_id", "") if context else "",
+            "context_zone_id": context.zone_id if context else None,  # caller's zone
+        }
 
         if context is not None:
             context.__dict__["_rust_ctx_cache"] = (is_admin, rust_ctx)
@@ -96,6 +94,14 @@ class InternalMixin:
                 context.get("is_admin", fallback.is_admin),
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", False)
+
+    def _prepare_rust_ctx(
+        self, context: OperationContext | None = None
+    ) -> tuple[str | None, str | None, bool, object]:
+        """Combined _get_context_identity + _build_rust_ctx (DRY helper)."""
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        rust_ctx = self._build_rust_ctx(context, is_admin)
+        return zone_id, agent_id, is_admin, rust_ctx
 
     def _resolve_cred(self, context: OperationContext | None) -> OperationContext:
         """Return *context* or the kernel init_cred; raise if neither available.

@@ -458,6 +458,21 @@ class NexusConfig(BaseModel):
             raise ValueError(f"backend must be one of {allowed}, got {v}")
         return v
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str | None) -> str | None:
+        """Issue #4238: accept the canonical ``postgres://`` scheme.
+
+        SQLAlchemy only loads its ``postgresql`` dialect, but cloud
+        providers (Railway, Render, Supabase, Heroku) emit ``postgres://``
+        by default and operators rarely control the URL platforms inject
+        for them. Normalize at config-load so every downstream consumer
+        (record store, alembic, init script) sees ``postgresql://``.
+        """
+        from nexus.core.db_utils import normalize_database_url
+
+        return normalize_database_url(v)
+
     @field_validator("gcs_bucket_name")
     @classmethod
     def validate_gcs_bucket(cls, v: str | None, info: Any) -> str | None:
@@ -525,8 +540,13 @@ def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
         updates["db_path"] = db_path
     if "metastore_path" not in user_set:
         updates["metastore_path"] = db_path
+    # The kernel uses `<data_dir>/nexus.db` as its redb data *directory*
+    # (via NEXUS_DATA_DIR). The Python SQLAlchemy RecordStore must point at
+    # a SEPARATE sqlite file — sharing `<data_dir>/nexus.db` makes sqlite
+    # try to open a directory as a database and boot fails with
+    # "unable to open database file" (develop/#4132 collision).
     if "record_store_path" not in user_set:
-        updates["record_store_path"] = db_path
+        updates["record_store_path"] = f"{data_dir}/record_store.db"
 
     if "cache_size_mb" not in user_set:
         updates["cache_size_mb"] = 64

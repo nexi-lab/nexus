@@ -7,18 +7,27 @@ Commands:
     nexus profile show          Show current profile details
     nexus profile delete <name> Delete a profile
     nexus profile rename <old> <new>  Rename a profile
+    nexus profile contract      Print the running hub's resolved deployment-profile contract
 """
+
+import json
+from typing import Any
 
 import click
 from rich.table import Table
 
+from nexus.cli.api_client import NexusApiClient
 from nexus.cli.config import (
     ProfileEntry,
     get_config_path,
     load_cli_config,
+    resolve_connection,
+    same_endpoint,
     save_cli_config,
 )
+from nexus.cli.state import load_project_config_optional
 from nexus.cli.theme import console
+from nexus.contracts.deployment_profile import DeploymentProfile
 
 
 @click.group(name="profile")
@@ -229,6 +238,148 @@ def rename_cmd(old_name: str, new_name: str) -> None:
 
     save_cli_config(config)
     console.print(f"Renamed profile [bold]'{old_name}'[/bold] to [bold]'{new_name}'[/bold]")
+
+
+@profile_group.command(name="contract")
+@click.option(
+    "--url",
+    "--remote-url",
+    default=None,
+    envvar="NEXUS_URL",
+    help="Server URL to query (default: http://localhost:2026).",
+)
+@click.option(
+    "--api-key",
+    "--remote-api-key",
+    default=None,
+    envvar="NEXUS_API_KEY",
+    help="API key for authenticated requests.",
+)
+@click.pass_context
+def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> None:
+    """Print the running hub's resolved deployment-profile contract as JSON.
+
+    Hub-returned fields (``deployment_profile``, ``bricks``,
+    ``disabled_bricks``, ``mode``, ``version``) are authoritative.
+    ``client_inferred_drivers`` is *not* hub-authoritative: the hub does
+    not return its driver set, so it is inferred from the hub's profile
+    name via this client's DeploymentProfile enum (can diverge under
+    CLI/server version skew). ``auth_mode`` reflects the local nexus.yaml only for the
+    locally-managed stack — for an explicit remote target (``--url`` /
+    ``NEXUS_URL`` / global ``--profile``) it is ``"unknown"`` because
+    local config does not describe a remote hub. A ``_sources`` map in
+    the output records each field's provenance.
+
+    The ``grpc_required`` field is always ``true`` — the remote SDK path
+    requires gRPC, not just HTTP (documented invariant, Issue #4132).
+
+    Examples:
+        nexus profile contract
+        nexus profile contract --url http://hub:9999 --api-key nx_xxx
+        nexus --profile staging profile contract
+    """
+    config = load_cli_config()
+    profile_name = (ctx.obj or {}).get("profile")
+    resolved = resolve_connection(
+        remote_url=url,
+        remote_api_key=api_key,
+        profile_name=profile_name,
+        config=config,
+    )
+
+    # Resolve the locally-managed stack's *actual* endpoint (derived /
+    # runtime-resolved ports) so we can both (a) target it for bare
+    # `nexus profile contract` and (b) decide whether the resolved target
+    # is in fact that local stack — the ONLY case where local nexus.yaml
+    # auth describes the hub being queried.
+    project_cfg = load_project_config_optional()
+    local_managed_url: str | None = None
+    local_managed_key: str | None = None
+    if project_cfg:
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+        _state = load_runtime_state(project_cfg.get("data_dir", "./nexus-data"))
+        _conn = resolve_connection_env(project_cfg, _state)
+        local_managed_url = _conn.get("NEXUS_URL")
+        local_managed_key = _conn.get("NEXUS_API_KEY")
+
+    if resolved.url:
+        # Any resolved URL — explicit --url/NEXUS_URL, named global
+        # --profile, OR the saved current-profile in ~/.nexus/config.yaml.
+        target_url = resolved.url
+        effective_api_key = api_key or resolved.api_key
+    elif local_managed_url:
+        # Bare invocation, project present: target the managed stack's
+        # real endpoint (NOT a hard-coded localhost:2026).
+        target_url = local_managed_url
+        effective_api_key = api_key or local_managed_key
+    else:
+        target_url = "http://localhost:2026"
+        effective_api_key = api_key or resolved.api_key
+
+    # auth_mode is trustworthy ONLY when the resolved target is provably
+    # the locally-managed stack (endpoint match). A saved current-profile
+    # pointing at a remote hub must NOT inherit the local project's auth.
+    is_local_managed = bool(
+        project_cfg and local_managed_url and same_endpoint(target_url, local_managed_url)
+    )
+
+    url = target_url
+    try:
+        features: dict[str, Any] = NexusApiClient(url=url, api_key=effective_api_key).get(
+            "/api/v2/features"
+        )
+    except Exception as exc:
+        console.print(
+            f"[nexus.error]Error:[/nexus.error] could not reach {url}/api/v2/features: {exc}. "
+            "Is the hub running? Try `nexus doctor`."
+        )
+        raise SystemExit(1) from None
+
+    profile_str: str = features.get("profile", "")
+    try:
+        drivers: list[str] = sorted(DeploymentProfile(profile_str).default_drivers())
+    except ValueError:
+        drivers = []
+
+    # auth_mode: local nexus.yaml only describes the locally-managed
+    # stack. Report it ONLY when the resolved target IS that stack;
+    # otherwise (explicit/profile/current-profile remote) report
+    # "unknown" rather than a misleading local value.
+    if is_local_managed:
+        auth_mode = project_cfg.get("auth", "unknown")
+        auth_mode_source = "local nexus.yaml (locally-managed stack)"
+    else:
+        auth_mode = "unknown"
+        auth_mode_source = (
+            "unknown (target is not the locally-managed stack — local config does not describe it)"
+        )
+
+    contract = {
+        "auth_mode": auth_mode,
+        "bricks": sorted(features.get("enabled_bricks", [])),
+        "deployment_profile": profile_str,
+        "disabled_bricks": sorted(features.get("disabled_bricks", [])),
+        # NOT named "drivers": the hub does not return its driver set, so
+        # this is inferred from the hub's profile name via THIS client's
+        # DeploymentProfile enum. The name makes the non-authoritative
+        # nature explicit for machine consumers and operators.
+        "client_inferred_drivers": drivers,
+        "grpc_required": True,
+        "mode": features.get("mode", ""),
+        "version": features.get("version"),
+        "_sources": {
+            "deployment_profile": "hub /api/v2/features (authoritative)",
+            "bricks": "hub /api/v2/features (authoritative)",
+            "disabled_bricks": "hub /api/v2/features (authoritative)",
+            "mode": "hub /api/v2/features (authoritative)",
+            "version": "hub /api/v2/features (authoritative)",
+            "client_inferred_drivers": "client-inferred from hub profile via DeploymentProfile enum (NOT hub-authoritative; may differ under CLI/server version skew)",
+            "grpc_required": "documented invariant (Issue #4132)",
+            "auth_mode": auth_mode_source,
+        },
+    }
+    print(json.dumps(contract, indent=2, sort_keys=True))
 
 
 # ---------------------------------------------------------------------------

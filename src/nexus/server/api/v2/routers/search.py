@@ -11,6 +11,10 @@ Provides search daemon endpoints:
 - POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
+- GET  /api/v2/search/parked            -- parked (poison) mutation events (#4337, admin)
+- POST /api/v2/search/parked/retry      -- re-drive parked events (#4337, admin)
+- POST /api/v2/search/parked/discard    -- discard parked events (#4337, admin)
+- POST /api/v2/search/consumers/{name}/skip-to -- force checkpoint advance (#4337, admin)
 
 Rewritten for txtai backend (#2663):
 - txtai handles hybrid BM25+dense fusion internally
@@ -29,14 +33,17 @@ import logging
 import time
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
+from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_admin, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -77,6 +84,36 @@ def _get_record_store(request: Request) -> Any:
     if store is None:
         raise HTTPException(status_code=503, detail="Record store not available")
     return store
+
+
+def _add_backend_leg_timings(
+    latency_breakdown: dict[str, float],
+    daemon_timing: Any,
+) -> None:
+    if not isinstance(daemon_timing, dict):
+        return
+    for key in _BACKEND_LEG_TIMING_KEYS:
+        value = daemon_timing.get(key)
+        if isinstance(value, int | float):
+            latency_breakdown[key] = round(float(value), 2)
+
+
+def _bind_search_phase_timings(latency_breakdown: dict[str, float]) -> None:
+    """Bind per-query phase timings onto the structlog request context (#4269).
+
+    The CorrelationMiddleware emits ``request_completed`` with every bound
+    contextvar, so prefixing each ``latency_breakdown`` leg with ``search_``
+    and binding it here makes the phase split (backend / keyword / page /
+    vector / fusion / index-load / permission-filter) queryable per request
+    in log aggregators — the evidence the issue asks for to pin I/O vs compute.
+    """
+    bound = {
+        f"search_{key}": round(float(value), 2)
+        for key, value in latency_breakdown.items()
+        if isinstance(value, int | float)
+    }
+    if bound:
+        structlog.contextvars.bind_contextvars(**bound)
 
 
 def _get_optional_search_daemon(request: Request) -> Any:
@@ -143,6 +180,11 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     context = getattr(result, "context", None)
     if context is not None:
         out["context"] = context
+    macro_text = getattr(result, "macro_text", None)
+    if macro_text is not None:
+        out["macro_text"] = macro_text
+        out["macro_line_start"] = getattr(result, "macro_line_start", None)
+        out["macro_line_end"] = getattr(result, "macro_line_end", None)
     return out
 
 
@@ -175,6 +217,81 @@ async def search_daemon_stats(
     return stats
 
 
+class ParkedRetryRequest(BaseModel):
+    consumer: str
+    event_ids: list[str] | None = None
+
+
+class ParkedDiscardRequest(BaseModel):
+    consumer: str
+    event_ids: list[str]
+
+
+class ConsumerSkipToRequest(BaseModel):
+    sequence: int
+
+
+@router.get("/parked")
+async def search_parked_list(
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """List parked (poison) mutation events per consumer (#4337)."""
+    return {"parked": search_daemon.list_parked()}
+
+
+@router.post("/parked/retry")
+async def search_parked_retry(
+    body: ParkedRetryRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Re-drive parked mutation events through their consumer (#4337)."""
+    try:
+        result: dict[str, Any] = await search_daemon.retry_parked(body.consumer, body.event_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Parked-event retry failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Parked-event retry failed") from exc
+    return result
+
+
+@router.post("/parked/discard")
+async def search_parked_discard(
+    body: ParkedDiscardRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Discard parked mutation events without retrying (#4337)."""
+    try:
+        result: dict[str, Any] = await search_daemon.discard_parked(body.consumer, body.event_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Parked-event discard failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Parked-event discard failed") from exc
+    return result
+
+
+@router.post("/consumers/{consumer_name}/skip-to")
+async def search_consumer_skip_to(
+    consumer_name: str,
+    body: ConsumerSkipToRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Force-advance a mutation consumer checkpoint past a poisoned range (#4337)."""
+    try:
+        result: dict[str, int] = await search_daemon.force_checkpoint(consumer_name, body.sequence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Checkpoint skip-to failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Checkpoint skip-to failed") from exc
+    return result
+
+
 @router.get("/query")
 async def search_query(
     request: Request,
@@ -184,6 +301,7 @@ async def search_query(
     path: str | None = Query(None, description="Optional path prefix filter"),
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
+    expand: str = Query("none", description="Context expansion: none or macro"),
     rerank: bool | None = Query(  # noqa: ARG001
         None, description="Override reranker (true/false, default: use config)"
     ),
@@ -225,6 +343,12 @@ async def search_query(
             detail=f"Invalid fusion method: {fusion}. Must be 'rrf', 'weighted', or 'rrf_weighted'",
         )
 
+    if expand not in ("none", "macro"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid expand: {expand}. Must be 'none' or 'macro'",
+        )
+
     if graph_mode not in ("none", "low", "high", "dual", "auto"):
         raise HTTPException(
             status_code=400,
@@ -235,6 +359,7 @@ async def search_query(
 
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---
+        # NOTE: expand= is single-zone only; federated path does not support it.
         if federated:
             return await _handle_federated_search(
                 q=q,
@@ -258,6 +383,7 @@ async def search_query(
             alpha=alpha,
             fusion_method=fusion,
             graph_mode=graph_mode,
+            expand=expand,
             auth_result=auth_result,
             search_daemon=search_daemon,
             async_session_factory=async_session_factory,
@@ -279,6 +405,7 @@ async def _handle_single_zone_search(
     alpha: float,
     fusion_method: str,
     graph_mode: str,
+    expand: str,
     auth_result: dict[str, Any],
     search_daemon: Any,
     async_session_factory: Any,
@@ -292,6 +419,7 @@ async def _handle_single_zone_search(
     # --- Standard single-zone search path ---
     # ReBAC file-level permission enforcer (Decision #17)
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    op_context = get_operation_context(auth_result)
 
     routing_info: dict[str, Any] | None = None
     effective_graph_mode = graph_mode
@@ -358,12 +486,22 @@ async def _handle_single_zone_search(
             # ReBAC file-level filtering (Decision #17)
             pre_filter_count = len(results)
             results, filter_ms = _apply_rebac_filter(
-                results, permission_enforcer, auth_result, zone_id
+                results,
+                permission_enforcer,
+                auth_result,
+                zone_id,
+                operation_context=op_context,
             )
             post_filter_count = len(results)
             results = results[:effective_limit]
 
             latency_ms = (time.perf_counter() - start_time) * 1000
+
+            graph_latency_breakdown = {
+                "total_ms": round(latency_ms, 2),
+                "permission_filter_ms": round(filter_ms, 2),
+            }
+            _bind_search_phase_timings(graph_latency_breakdown)
 
             response: dict[str, Any] = {
                 "query": q,
@@ -372,10 +510,7 @@ async def _handle_single_zone_search(
                 "results": [_serialize_search_result(r) for r in results],
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
-                "latency_breakdown": {
-                    "total_ms": round(latency_ms, 2),
-                    "permission_filter_ms": round(filter_ms, 2),
-                },
+                "latency_breakdown": graph_latency_breakdown,
                 **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
             }
             if routing_info:
@@ -390,20 +525,39 @@ async def _handle_single_zone_search(
             alpha=alpha,
             fusion_method=fusion_method,
             zone_id=zone_id,
+            expand=expand,
         )
 
-        # Read sub-timings from daemon
-        daemon_timing = getattr(search_daemon, "last_search_timing", {})
+        # Prefer the request-local snapshot carried by SearchDaemon results.
+        # Fall back to the legacy daemon field for older/mocked search daemons.
+        daemon_timing = getattr(results, "search_timing", None)
+        if daemon_timing is None:
+            daemon_timing = getattr(search_daemon, "last_search_timing", {})
         backend_ms = daemon_timing.get("backend_ms", 0.0)
         rerank_ms = daemon_timing.get("rerank_ms", 0.0)
 
         # ReBAC file-level filtering (Decision #17)
         pre_filter_count = len(results)
-        results, filter_ms = _apply_rebac_filter(results, permission_enforcer, auth_result, zone_id)
+        results, filter_ms = _apply_rebac_filter(
+            results,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            operation_context=op_context,
+        )
         post_filter_count = len(results)
         results = results[:effective_limit]
 
         latency_ms = (time.perf_counter() - start_time) * 1000
+
+        latency_breakdown = {
+            "total_ms": round(latency_ms, 2),
+            "backend_ms": round(backend_ms, 2),
+            "rerank_ms": round(rerank_ms, 2),
+            "permission_filter_ms": round(filter_ms, 2),
+        }
+        _add_backend_leg_timings(latency_breakdown, daemon_timing)
+        _bind_search_phase_timings(latency_breakdown)
 
         response = {
             "query": q,
@@ -412,12 +566,7 @@ async def _handle_single_zone_search(
             "results": [_serialize_search_result(r) for r in results],
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
-            "latency_breakdown": {
-                "total_ms": round(latency_ms, 2),
-                "backend_ms": round(backend_ms, 2),
-                "rerank_ms": round(rerank_ms, 2),
-                "permission_filter_ms": round(filter_ms, 2),
-            },
+            "latency_breakdown": latency_breakdown,
             **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
         if routing_info:
@@ -456,6 +605,11 @@ async def _handle_federated_search(
         FederatedSearchDispatcher,
         is_all_peers_failed,
     )
+
+    # Issue #4269 (Codex R3): the SANDBOX BM25S fallback below runs AFTER the
+    # dispatcher returns and is not in fed_response.latency_ms, so track its
+    # time separately and fold it into the reported total.
+    fed_fallback_ms = 0.0
 
     # Resolve ReBAC service
     rebac = getattr(request.app.state, "rebac_service", None)
@@ -515,6 +669,7 @@ async def _handle_federated_search(
             from nexus.server.dependencies import get_operation_context
 
             op_context = get_operation_context(auth_result)
+            fallback_start = time.perf_counter()
             bm25s_results = await search_service.semantic_search(
                 query=q,
                 path=path_filter or "/",
@@ -522,6 +677,9 @@ async def _handle_federated_search(
                 search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
                 context=op_context,
             )
+            # Record the degraded-path BM25S fallback work so the bound
+            # total_ms / fallback_ms reflect it (Codex R3).
+            fed_fallback_ms = (time.perf_counter() - fallback_start) * 1000
             # semantic_search stamped semantic_degraded=True on each dict
             # AND sets LAST_SEMANTIC_DEGRADED for this task — we prefer the
             # contextvar so an empty BM25S result still surfaces degradation
@@ -533,6 +691,27 @@ async def _handle_federated_search(
                 isinstance(r, dict) and r.get("semantic_degraded") is True for r in bm25s_results
             )
 
+    # Issue #4269 (Codex R2): /search/query auto-promotes multi-zone tokens
+    # into this federated path, so without binding here those request_completed
+    # logs would omit even search_total_ms — an observability blind spot for
+    # cross-zone searches. total_ms = dispatcher latency + the SANDBOX BM25S
+    # fallback (Codex R3), which runs after the dispatcher returns and is not in
+    # fed_response.latency_ms. (Per-leg backend timings are not aggregated
+    # across zones by the dispatcher.)
+    fed_total_ms = fed_response.latency_ms + fed_fallback_ms
+    fed_latency_breakdown = {"total_ms": round(fed_total_ms, 2)}
+    # Per-leg backend timings aggregated across local zones (Codex R6): surface
+    # index_load_ms / keyword_ms / vector_ms / fusion_ms so a cold federated
+    # query exposes the same phase split as a single-zone one.
+    for key, value in (getattr(fed_response, "search_timing", None) or {}).items():
+        if isinstance(value, int | float):
+            fed_latency_breakdown[key] = round(float(value), 2)
+    if fed_fallback_ms:
+        fed_latency_breakdown["fallback_ms"] = round(
+            fed_latency_breakdown.get("fallback_ms", 0.0) + fed_fallback_ms, 2
+        )
+    _bind_search_phase_timings(fed_latency_breakdown)
+
     response_dict: dict[str, Any] = {
         "query": q,
         "search_type": search_type,
@@ -540,7 +719,8 @@ async def _handle_federated_search(
         "federated": True,
         "results": fed_response.results,
         "total": len(fed_response.results),
-        "latency_ms": round(fed_response.latency_ms, 2),
+        "latency_ms": round(fed_total_ms, 2),
+        "latency_breakdown": fed_latency_breakdown,
         "zones_searched": fed_response.zones_searched,
         "zones_failed": [
             {"zone_id": zf.zone_id, "error": zf.error} for zf in fed_response.zones_failed
@@ -595,6 +775,7 @@ async def search_query_batch(
 
     # Same ReBAC hook the single-query endpoint uses.
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    op_context = get_operation_context(auth_result)
     overfetch_multiplier = 3 if permission_enforcer is not None else 1
 
     # Over-fetch per-query so ReBAC filtering does not strip us below the
@@ -603,8 +784,17 @@ async def search_query_batch(
     fetch_queries: list[dict[str, Any]] = []
     for q_spec in raw_queries:
         orig_limit = max(1, int(q_spec.get("limit", 10)))
+        query_text = str(q_spec.get("query") or q_spec.get("q") or "")
+        path_filter = q_spec.get("path_filter", q_spec.get("path"))
         requested_limits.append(orig_limit)
-        fetch_queries.append({**q_spec, "limit": orig_limit * overfetch_multiplier})
+        fetch_queries.append(
+            {
+                **q_spec,
+                "query": query_text,
+                "path_filter": path_filter,
+                "limit": orig_limit * overfetch_multiplier,
+            }
+        )
 
     t0 = time.perf_counter()
     raw_results = await search_daemon.batch_search(fetch_queries, zone_id=zone_id)
@@ -615,7 +805,11 @@ async def search_query_batch(
     for q_spec, results, orig_limit in zip(raw_queries, raw_results, requested_limits, strict=True):
         # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
         filtered, filter_ms = _apply_rebac_filter(
-            results, permission_enforcer, auth_result, zone_id
+            results,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            operation_context=op_context,
         )
         filter_ms_total += filter_ms
         trimmed = filtered[:orig_limit]
@@ -635,7 +829,7 @@ async def search_query_batch(
             formatted.append(entry)
         response_queries.append(
             {
-                "query": q_spec.get("q", ""),
+                "query": q_spec.get("query") or q_spec.get("q", ""),
                 "results": formatted,
                 "total": len(formatted),
             }
@@ -710,6 +904,7 @@ async def _do_grep_operation(
     invert_match: bool,
     files: list[str] | None,
     block_type: str | None = None,
+    section: str | None = None,
 ) -> dict[str, Any]:
     """Execute a grep request and assemble the paginated response.
 
@@ -766,6 +961,8 @@ async def _do_grep_operation(
             # Issue #3720: only forward block_type when set (backward compat).
             if block_type is not None:
                 grep_kwargs["block_type"] = block_type
+            if section is not None:
+                grep_kwargs["section"] = section
             raw_results = await search_service.grep(**grep_kwargs)
         except (ValueError, InvalidPathError) as exc:
             # Client errors from SearchService:
@@ -790,6 +987,7 @@ async def _do_grep_operation(
             auth_result,
             zone_id,
             path_extractor=lambda r: r.get("file", ""),
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_results)
 
@@ -848,6 +1046,10 @@ async def _do_grep_operation(
         }
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
+        if section is not None:
+            from nexus.server.rpc.handlers.filesystem import _section_response_meta
+
+            extras.update(_section_response_meta(section, paginated))
         return build_paginated_list_response(
             items=paginated,
             total=total,
@@ -912,6 +1114,7 @@ async def _do_glob_operation(
             auth_result,
             zone_id,
             path_extractor=lambda p: p,
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_paths)
 
@@ -1008,6 +1211,26 @@ def _body_get_files(body: dict[str, Any]) -> list[str] | None:
     return raw
 
 
+def _resolve_section_filter(section: str | None, in_section: str | None) -> str | None:
+    """Resolve the canonical section filter from supported aliases."""
+    if section is not None and not isinstance(section, str):
+        raise HTTPException(status_code=400, detail="Field 'section' must be a string")
+    if in_section is not None and not isinstance(in_section, str):
+        raise HTTPException(status_code=400, detail="Field 'in_section' must be a string")
+    values = [value for value in (section, in_section) if value is not None]
+    if not values:
+        return None
+    if len(values) == 2 and values[0] != values[1]:
+        raise HTTPException(
+            status_code=400,
+            detail="Fields 'section' and 'in_section' must match when both are provided",
+        )
+    resolved = values[0]
+    if not resolved.strip():
+        raise HTTPException(status_code=400, detail="section must be a non-empty string")
+    return resolved
+
+
 @router.get("/grep")
 async def search_grep(
     request: Request,
@@ -1034,6 +1257,17 @@ async def search_grep(
             "blockquote, list, heading. Non-markdown files pass through "
             "unfiltered."
         ),
+    ),
+    section: str | None = Query(
+        None,
+        description=(
+            "Restrict matches to a markdown/parsed-content section heading "
+            "(#4186), e.g. 'API' or '## API'."
+        ),
+    ),
+    in_section: str | None = Query(
+        None,
+        description="Alias for section, matching the CLI --in-section flag (#4186).",
     ),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
@@ -1067,6 +1301,7 @@ async def search_grep(
         invert_match=invert_match,
         files=files,
         block_type=block_type,
+        section=_resolve_section_filter(section, in_section),
     )
 
 
@@ -1138,6 +1373,7 @@ async def search_grep_post(
     block_type = body.get("block_type")
     if block_type is not None and not isinstance(block_type, str):
         raise HTTPException(status_code=400, detail="Field 'block_type' must be a string")
+    section = _resolve_section_filter(body.get("section"), body.get("in_section"))
 
     return await _do_grep_operation(
         request,
@@ -1152,6 +1388,7 @@ async def search_grep_post(
         invert_match=invert_match,
         files=files,
         block_type=block_type,
+        section=section,
     )
 
 
@@ -1973,6 +2210,7 @@ async def search_locate(
         permission_enforcer,
         auth_result,
         zone_id,
+        operation_context=get_operation_context(auth_result),
     )
 
     # Unpack back to dicts and truncate to effective_limit

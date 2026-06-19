@@ -106,7 +106,7 @@ def audit_server(tmp_path_factory):
                 f"from nexus.daemon.main import main; "
                 f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', "
-                f"'--auth-type', 'database', '--init'])"
+                f"'--auth-type', 'database'])"
             ),
         ],
         env=env,

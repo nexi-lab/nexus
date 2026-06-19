@@ -7,9 +7,7 @@ Issue #2281: Extract Auth/OAuth brick from server/auth.
 """
 
 from nexus.bricks.auth.protocols.user_lookup import UserLookupProtocol
-from nexus.bricks.auth.protocols.user_provisioner import UserProvisionerProtocol
 
 __all__ = [
     "UserLookupProtocol",
-    "UserProvisionerProtocol",
 ]

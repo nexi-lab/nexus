@@ -54,9 +54,6 @@ from nexus.storage.models.auth import OAuthCredentialModel as OAuthCredentialMod
 from nexus.storage.models.auth import UserModel as UserModel
 from nexus.storage.models.auth import UserOAuthAccountModel as UserOAuthAccountModel
 from nexus.storage.models.auth import ZoneModel as ZoneModel
-
-# Domain: Context Branching (Issue #1315)
-from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
 
 # Domain: Filesystem
@@ -66,7 +63,6 @@ from nexus.storage.models.file_path import FilePathModel as FilePathModel
 from nexus.storage.models.filesystem import DirectoryEntryModel as DirectoryEntryModel
 from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkModel
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel
-from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceSnapshotModel
 
 # Domain: Identity (Agent signing keys, Issue #1355; Credentials, Issue #1753)
 from nexus.storage.models.identity import AgentCredentialModel as AgentCredentialModel
@@ -99,8 +95,8 @@ from nexus.storage.models.metadata_change_log import (
 )
 from nexus.storage.models.operation_log import OperationLogModel as OperationLogModel
 
-# Domain: Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
-from nexus.storage.models.path_registration import PathRegistrationModel as PathRegistrationModel
+# Domain: Path Contexts (Issue #3773)
+from nexus.storage.models.path_context import PathContextModel as PathContextModel
 
 # Domain: Payments
 from nexus.storage.models.payments import AgentWalletMeta as AgentWalletMeta
@@ -126,10 +122,6 @@ from nexus.storage.models.refresh_token_history import (
 
 # Domain: Scheduler (Task Queue, Issue #1212)
 from nexus.storage.models.scheduler import ScheduledTaskModel as ScheduledTaskModel
-
-# Domain: Secrets Store
-from nexus.storage.models.secret_store import SecretStoreModel as SecretStoreModel
-from nexus.storage.models.secret_store import SecretStoreVersionModel as SecretStoreVersionModel
 
 # Domain: Secrets Audit (Issue #997)
 from nexus.storage.models.secrets_audit_log import SecretsAuditEventType as SecretsAuditEventType

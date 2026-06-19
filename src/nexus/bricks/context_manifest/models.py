@@ -1,8 +1,7 @@
 """Pydantic models for context manifest source types and results (Issue #1341).
 
-Defines the 4 source types that can be declared in a context manifest:
+Defines the source types that can be declared in a context manifest:
 - MCPToolSource: Pre-execute an MCP tool and inject its result
-- WorkspaceSnapshotSource: Load a workspace snapshot
 - FileGlobSource: Resolve a file glob pattern and load matching files
 - MemoryQuerySource: Run a semantic search over agent memory
 
@@ -88,27 +87,6 @@ class MCPToolSource(BaseModel):
         return self.tool_name
 
 
-class WorkspaceSnapshotSource(BaseModel):
-    """Load a workspace snapshot into agent context.
-
-    Retrieves the specified snapshot (or latest) and makes its manifest
-    available under ``/context/``.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    type: Literal["workspace_snapshot"] = "workspace_snapshot"
-    snapshot_id: str | Literal["latest"] = "latest"
-    required: bool = True
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
-    max_result_bytes: int = DEFAULT_MAX_RESULT_BYTES
-
-    @property
-    def source_name(self) -> str:
-        """Human-readable name for this source."""
-        return self.snapshot_id
-
-
 class FileGlobSource(BaseModel):
     """Resolve a file glob pattern and load matching files into context.
 
@@ -158,7 +136,7 @@ class MemoryQuerySource(BaseModel):
 # ---------------------------------------------------------------------------
 
 ContextSource = Annotated[
-    MCPToolSource | WorkspaceSnapshotSource | FileGlobSource | MemoryQuerySource,
+    MCPToolSource | FileGlobSource | MemoryQuerySource,
     Discriminator("type"),
 ]
 """Discriminated union of all context source types.

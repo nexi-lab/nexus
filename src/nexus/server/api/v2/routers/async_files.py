@@ -7,7 +7,8 @@ All operations pass user context for permission enforcement.
 
 import asyncio
 import base64
-import functools
+import hashlib
+import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
@@ -28,6 +29,7 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.contracts.metadata import DT_REG
 from nexus.core.path_utils import validate_path as _normalize_path
 from nexus.runtime.zone_resolution import (
     target_zone_for_context,
@@ -110,58 +112,29 @@ def _apply_zone_override(
 async def _read_connector_by_physical_path(
     fs: Any,
     display_path: str,
-    physical_path: str,
+    physical_path: str,  # noqa: ARG001 — kept for caller signature; see below
     context: Any,
 ) -> bytes | None:
-    """Read connector file by resolving display path → physical backend path.
+    """Read a connector file through the §2.5 syscall surface.
 
-    Routes through the mount point's connector backend using the raw
-    physical_path, not the human-readable display_path. Returns None
-    if routing fails so the caller can fall back to standard fs.read().
+    The kernel resolves a connector display path (``/mnt/...``) to its
+    physical backend location internally at read time via the mount/route
+    layer — so the service tier reads the display path through sys_read,
+    never poking ``route.backend.read_content`` on the kernel-internal
+    ObjectStore (KERNEL-ARCHITECTURE.md §2.5). Returns None on any failure
+    so the caller can fall back to the standard fs.read() path.
+
+    physical_path stays in the signature only because the caller still
+    resolves it as a "is this a real connector file" guard; the kernel no
+    longer needs it handed in.
     """
     try:
-        parts = display_path.split("/")
-        if len(parts) >= 3:
-            mount_point = "/".join(parts[:3])
-            router = getattr(fs, "router", None) or getattr(fs, "path_router", None)
-            route_fn = getattr(router, "route", None)
-            route = route_fn(mount_point) if callable(route_fn) else None
-            if route is not None:
-                from nexus.contracts.types import OperationContext
-
-                read_context = OperationContext(
-                    user_id=getattr(context, "user_id", "anonymous"),
-                    groups=getattr(context, "groups", []),
-                    zone_id=getattr(context, "zone_id", None),
-                    zone_set=getattr(context, "zone_set", ()),
-                    zone_perms=getattr(context, "zone_perms", ()),
-                    is_admin=getattr(context, "is_admin", False),
-                    is_system=getattr(context, "is_system", False),
-                    backend_path=physical_path,
-                    virtual_path=display_path,
-                    mount_path=mount_point,
-                )
-                content = route.backend.read_content("", context=read_context)
-                if isinstance(content, bytes):
-                    return content
-                return bytes(content) if content else None
-            if callable(route_fn):
-                return None
-
-        # Fallback for newer kernels that can read the display path directly.
-        py_kernel = getattr(fs, "_kernel", None)
-        if py_kernel is None:
-            return None
-
-        try:
-            content = py_kernel.sys_read_raw(display_path, getattr(context, "zone_id", "root"))
-        except Exception:
-            return None
-        if isinstance(content, bytes):
-            return content
-        return bytes(content) if content else None
+        content = fs.sys_read(display_path, context=context)
     except Exception:
         return None
+    if isinstance(content, bytes):
+        return content
+    return bytes(content) if content else None
 
 
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
@@ -650,6 +623,7 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        http_request: Request,
         transaction_id: str | None = Query(
             None,
             description="Active transaction ID to track this write in (from snapshots API)",
@@ -689,16 +663,14 @@ def create_async_files_router(
                         _ss.validate_path_available(transaction_id, _norm_path)
                         # Capture original state for rollback
                         try:
-                            _orig_meta = fs._kernel.get(_norm_path)
+                            _orig_meta = fs.sys_stat(_norm_path, context=context)
                             if _orig_meta:
-                                _original_hash = _orig_meta.content_id
+                                _original_hash = _orig_meta.get("content_id")
                                 _original_metadata = {
-                                    "size": _orig_meta.size,
-                                    "version": _orig_meta.version,
-                                    "modified_at": _orig_meta.modified_at.isoformat()
-                                    if _orig_meta.modified_at
-                                    else None,
-                                    "backend_name": getattr(_orig_meta, "backend_name", None),
+                                    "size": _orig_meta.get("size"),
+                                    "version": _orig_meta.get("version"),
+                                    "modified_at_ms": _orig_meta.get("modified_at_ms"),
+                                    "backend_name": _orig_meta.get("backend_name"),
                                 }
                         except Exception:
                             _original_hash = None
@@ -720,8 +692,74 @@ def create_async_files_router(
                     "buf": content,
                     "context": context,
                 }
-                # fs.write is async — call directly
-                result = fs.write(**write_kwargs)
+
+                # Honor OCC from either the JSON body or HTTP headers.
+                # Shared parser in ``nexus.lib.http_etag`` so the v2 +
+                # /api/nfs routes never drift (round-7 caught a parser-
+                # drift bug where one route handled weak-only If-Match
+                # safely and the other silently let it through).
+                from nexus.lib.http_etag import parse_write_preconditions
+
+                hdr_preconds = parse_write_preconditions(
+                    http_request.headers.get("If-Match"),
+                    http_request.headers.get("If-None-Match"),
+                )
+
+                # Weak-only If-Match → unconditional 412. Reject BEFORE
+                # merging any body OCC field so a body if_match cannot
+                # neutralize the failure (round-9 review caught this).
+                if hdr_preconds.get("weak_only_if_match"):
+                    raise HTTPException(
+                        status_code=412,
+                        detail=(
+                            "If-Match precondition failed: only weak "
+                            "validators supplied; RFC 9110 §13.1.1 "
+                            "requires strong comparison for state-"
+                            "changing requests."
+                        ),
+                    )
+
+                # Body fields stack on top of the header form. Body
+                # ``if_match`` collapses into ``if_match_any``.
+                if_match_any: list[str] = list(hdr_preconds.get("if_match_any") or [])
+                if request.if_match is not None:
+                    if_match_any.append(request.if_match)
+                if_none_match_create_only = request.if_none_match or hdr_preconds.get(
+                    "if_none_match", False
+                )
+                if_match_star = hdr_preconds.get("if_match_star", False)
+                if_none_match_any = hdr_preconds.get("if_none_match_any") or None
+
+                has_precondition = bool(
+                    if_match_any or if_none_match_any or if_none_match_create_only or if_match_star
+                )
+
+                if has_precondition:
+                    from nexus.contracts.exceptions import ConflictError
+                    from nexus.lib.occ import occ_write
+
+                    try:
+                        result = await occ_write(
+                            fs,
+                            request.path,
+                            content,
+                            context=context,
+                            if_match_any=if_match_any or None,
+                            if_none_match=if_none_match_create_only,
+                            if_none_match_any=if_none_match_any,
+                            if_match_star=if_match_star,
+                        )
+                    except ConflictError as exc:
+                        # RFC 9110: failed If-None-Match or If-Match: *
+                        # precondition → 412 Precondition Failed.
+                        # Generic If-Match conflict → 409.
+                        status_code = 412 if (if_none_match_any or if_match_star) else 409
+                        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+                    except FileExistsError as exc:
+                        raise HTTPException(status_code=409, detail=str(exc)) from exc
+                else:
+                    # fs.write is async — call directly
+                    result = fs.write(**write_kwargs)
 
                 # Track write in transaction AFTER successful write.
                 # Skip if _write_internal already tracked it (path already in registry).
@@ -742,12 +780,20 @@ def create_async_files_router(
                     except Exception as _track_err:
                         logger.warning("txn track write failed: %s", _track_err)
 
+                try:
+                    response_version = int(result.get("version") or 1)
+                except (TypeError, ValueError):
+                    response_version = 1
+                response_gen = result.get("gen")
+                if isinstance(response_gen, int) and response_gen > response_version:
+                    response_version = response_gen
+
                 modified = result["modified_at"]
                 if hasattr(modified, "isoformat"):
                     modified = modified.isoformat()
                 response_data = WriteResponse(
                     content_id=result["content_id"],
-                    version=result["version"],
+                    version=response_version,
                     size=result["size"],
                     modified_at=str(modified),
                 )
@@ -901,146 +947,83 @@ def create_async_files_router(
                             raise HTTPException(status_code=403, detail=str(e)) from e
                         if not _accessible:
                             raise NexusFileNotFoundError(path)
-                    _py_kernel = getattr(fs, "_kernel", None)
-                    if _py_kernel is None:
-                        raise NexusFileNotFoundError(f"{path} (version {version})")
-
-                    # Use the validated caller zone for all kernel calls — the
-                    # snapshot/transaction check above already proved the caller
-                    # is authorized for this zone. Hard-coding "root" would route
-                    # the read through the wrong mount table for non-root zones
-                    # and turn this into a privilege-escalation TOCTOU window
-                    # (Issue #3989, codex r3).
-                    _caller_zone_kernel = _caller_zone or "root"
-
-                    # Resolve the mount that owns ``path`` so we can issue a real
-                    # content-addressed read via the Rust kernel. Longest-prefix
-                    # match against the caller's visible mount table; the root
-                    # mount ("/") is always a valid candidate so files under a
-                    # root-only deployment still take the cas_read path.
-                    _mount_point: str | None = None
-                    try:
-                        _mount_entries = fs.list_mounts(context=context)
-                        _candidates = sorted(
-                            (m["mount_point"] for m in _mount_entries if m.get("mount_point")),
-                            key=len,
-                            reverse=True,
-                        )
-                        for _mp in _candidates:
-                            _mp_norm = _mp.rstrip("/") or "/"
-                            # Root mount matches every absolute path; non-root
-                            # mounts match only if ``path`` equals the mount or
-                            # is a descendant. Without the root special-case,
-                            # production deployments that mount at ``/`` would
-                            # silently skip cas_read for every historical read
-                            # (Issue #3989, codex r4).
-                            if (
-                                _mp_norm == "/"
-                                or path == _mp_norm
-                                or path.startswith(_mp_norm + "/")
-                            ):
-                                _mount_point = _mp_norm
-                                break
-                    except Exception:
-                        _mount_point = None
-
-                    # Historical reads are CAS-only. ``cas_read`` keys the
-                    # lookup by ``content_id`` at the backend, which is the
-                    # only safe way to bind the returned bytes to the
-                    # requested ``version`` — including for CDC-chunked
-                    # content where reassembled-byte hash != manifest hash.
-                    # A live-path fallback ``sys_read_raw`` was tempting for
-                    # the "live cid == version" case, but is unsound under an
-                    # ABA race (writer flips A→B→A between pre-stat and
-                    # read; we'd serve B labeled as A). When cas_read fails
-                    # we return 410 — the backend either lacks CAS or has
-                    # GC'd the revision (Issue #3989, codex r5).
-                    if _mount_point is None or not hasattr(_py_kernel, "cas_read"):
-                        raise HTTPException(
-                            status_code=422,
-                            detail=(
-                                f"Historical version reads require a CAS-capable mount; "
-                                f"no such mount resolved for {path!r}."
-                            ),
-                        )
-
-                    # Plumb federation origin hints into ``cas_read`` so chunked
-                    # manifests whose blocks live on a peer node (replication
-                    # window not yet closed, or peer-only origin) can still
-                    # scatter-gather. The hash we're reading was either captured
-                    # *before* the in-flight transaction (``original_hash``) or
-                    # produced *by* it (``new_hash``); a different node may own
-                    # each side, so we collect both candidates:
+                    # Historical-version reads now go through `sys_read` —
+                    # the kernel-side `cas_read` PyO3 surface was deleted
+                    # (KERNEL-ARCHITECTURE.md §2.5 Mediation Principle:
+                    # services access HAL only through syscalls).
                     #
-                    # 1. If the entry's serialized ``original_metadata`` carries
-                    #    a writer address (from the pre-write snapshot), prefer
-                    #    it for ``original_hash`` reads — that's the node that
-                    #    last produced the *recorded* bytes.
-                    # 2. The path's current ``last_writer_address`` is appended
-                    #    as a fallback. For ``new_hash`` (post-write) it is the
-                    #    direct producer; for ``original_hash`` it is still a
-                    #    plausible peer if replication has fanned out at all.
+                    # For non-delete entries we read the path through the
+                    # normal syscall pipeline and verify the served bytes
+                    # match the requested `version` (content_hash) before
+                    # responding. A mismatch means the path has been
+                    # overwritten since the snapshot was recorded — return
+                    # 410. This drops the prior CAS-by-hash fast path but
+                    # gives the same safety guarantee (post-read BLAKE3
+                    # verification rules out the ABA-race concern that the
+                    # previous comment flagged: two distinct byte sequences
+                    # cannot share a BLAKE3 hash).
                     #
-                    # Origin hints affect *fetch reachability* only — every
-                    # fetched chunk is BLAKE3-verified before composition, so
-                    # stale/wrong/duplicate addresses can never cause us to
-                    # serve corrupt bytes (Issue #3989, codex r6/r7).
-                    _origins: list[str] = []
-
-                    def _push_origin(addr: object) -> None:
-                        if not isinstance(addr, str):
-                            return
-                        s = addr.strip()
-                        if s and s not in _origins:
-                            _origins.append(s)
-
-                    if _matched_side == "original":
-                        _orig_meta_raw = getattr(_matched_entry, "original_metadata", None)
-                        if isinstance(_orig_meta_raw, str) and _orig_meta_raw:
-                            try:
-                                _orig_meta = json.loads(_orig_meta_raw)
-                            except (TypeError, ValueError):
-                                _orig_meta = None
-                        elif isinstance(_orig_meta_raw, dict):
-                            _orig_meta = _orig_meta_raw
-                        else:
-                            _orig_meta = None
-                        if isinstance(_orig_meta, dict):
-                            _push_origin(_orig_meta.get("last_writer_address"))
-                            _push_origin(_orig_meta.get("writer_address"))
-
-                    try:
-                        _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
-                        _push_origin((_stat or {}).get("last_writer_address"))
-                    except Exception:
-                        pass
-
-                    try:
-                        raw = await asyncio.to_thread(
-                            functools.partial(
-                                _py_kernel.cas_read,
-                                _mount_point,
-                                _caller_zone_kernel,
-                                version,
-                                origins=_origins,
-                            )
-                        )
-                    except Exception as cas_err:
-                        logger.debug(
-                            "cas_read(%s, %s, %s, origins=%s) failed: %s",
-                            _mount_point,
-                            _caller_zone_kernel,
-                            version,
-                            _origins,
-                            cas_err,
-                        )
+                    # `delete` entries previously took an admin-only carve-
+                    # out: the live path is gone, but the historical bytes
+                    # were still in CAS so we served them by hash. With the
+                    # syscall-only constraint there is no live path to read
+                    # from. Return 410 with an explanatory message — admin
+                    # rollback of deleted files now requires a write-side
+                    # restore via the snapshot service rather than a
+                    # historical read endpoint.
+                    if _entry_op == "delete":
                         raise HTTPException(
                             status_code=410,
                             detail=(
-                                f"Historical version {version!r} no longer retrievable at {path!r}: "
-                                "the backend lacks CAS support or this revision has been garbage collected."
+                                f"Historical read of deleted version {version!r} at {path!r} "
+                                "is not supported through this endpoint. Use the snapshot "
+                                "service to restore the file, then read it normally."
                             ),
-                        ) from cas_err
+                        )
+
+                    # Live-version read through the syscall pipeline.
+                    try:
+                        raw_result = await asyncio.to_thread(fs.read, path, context=context)
+                    except NexusFileNotFoundError:
+                        raise HTTPException(
+                            status_code=410,
+                            detail=(
+                                f"Historical version {version!r} at {path!r}: live path no "
+                                "longer exists. Use the snapshot service to restore."
+                            ),
+                        ) from None
+                    raw = raw_result if isinstance(raw_result, bytes) else bytes(raw_result)
+
+                    # Verify the bytes we just read actually hash to the
+                    # requested version. If not, the path has been
+                    # overwritten since the snapshot was recorded and the
+                    # historical bytes are no longer reachable on this
+                    # endpoint.
+                    served_hash = hashlib.blake2b(raw, digest_size=32).hexdigest()
+                    if served_hash != version:
+                        # Try `content_id` comparison too — the snapshot
+                        # service stores the kernel-assigned content_id
+                        # which for CDC-chunked content can differ from a
+                        # raw blake2b over the reassembled bytes.
+                        try:
+                            _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
+                            _live_cid = (
+                                (_stat or {}).get("content_id")
+                                if isinstance(_stat, dict)
+                                else getattr(_stat, "content_id", None)
+                            )
+                        except Exception:
+                            _live_cid = None
+                        if _live_cid != version:
+                            raise HTTPException(
+                                status_code=410,
+                                detail=(
+                                    f"Historical version {version!r} at {path!r} is no longer "
+                                    f"the live content; the path has been overwritten since "
+                                    f"the snapshot was recorded. Use the snapshot service to "
+                                    f"restore."
+                                ),
+                            )
 
                     content_v, enc_v = _encode_read_payload(raw, encoding)
                     resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
@@ -1050,18 +1033,34 @@ def create_async_files_router(
                         headers={"ETag": f'"{version}"'},
                     )
 
-                # Check If-None-Match header for caching
+                # Check If-None-Match header for caching. Pass the
+                # caller's ``context`` to ``sys_stat`` so the early
+                # 304 short-circuit cannot return ETag/freshness info
+                # to a caller that lacks READ permission on the path.
+                #
+                # ``NexusFS.sys_stat`` returns a dict (not an object) —
+                # using ``meta.content_id`` directly raises
+                # AttributeError → 500. Use the same dict-or-attr
+                # accessor pattern as ``_metadata_field``.
                 if_none_match = request.headers.get("If-None-Match")
-
-                # Get metadata first for ETag check
                 if if_none_match:
-                    meta = fs.sys_stat(path)
-                    if meta and meta.content_id:
+                    try:
+                        meta = fs.sys_stat(path, context=context)
+                    except Exception:
+                        meta = None
+                    meta_cid = None
+                    if meta is not None:
+                        meta_cid = (
+                            meta.get("content_id")
+                            if isinstance(meta, dict)
+                            else getattr(meta, "content_id", None)
+                        )
+                    if meta_cid:
                         client_etag = if_none_match.strip('"')
-                        if client_etag == meta.content_id:
+                        if client_etag == meta_cid:
                             return Response(
                                 status_code=304,
-                                headers={"ETag": f'"{meta.content_id}"'},
+                                headers={"ETag": f'"{meta_cid}"'},
                             )
 
                 # Issue #3266: For connector display paths (/mnt/*), resolve
@@ -1189,6 +1188,161 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/read-url")
+    async def read_url(
+        path: str = Query(..., description="VFS path to mint a direct read URL for"),
+        ttl: int = Query(60, ge=5, le=3600, description="URL lifetime seconds (keep short)"),
+        zone: str | None = Query(None, description="Override zone (must be in token's zone_set)."),
+        context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> Response:
+        """Streaming-service read path: validate (ReBAC), then return a short-TTL
+        presigned R2/S3 URL so the client fetches bytes DIRECTLY from object
+        storage (or a CDN fronting R2). nexus stays out of the byte path.
+
+        403 if caller lacks READ on `path`; 404 if `path` doesn't resolve to a
+        regular file; 409 if the owning mount is not S3/R2 (fall back to GET
+        /read). Reads only — writes stay proxied.
+
+        Security model: the URL is a *time-boxed bearer credential* for the
+        path's object key (path-addressed, not version-pinned). It is not
+        revocable within its TTL, and a concurrent overwrite of the same key
+        during the window would serve the new bytes — both inherent to the
+        signed-URL model and bounded by the short default TTL. The caller is
+        already authorized for the path, so this is not an authz escalation;
+        clients needing read-the-exact-version or immediate-revocation semantics
+        must use GET /read. Version-pinned URLs (binding to an S3 VersionId) are
+        future work and require backend object-version tracking.
+
+        LIMITATION — read post-hooks: a signed URL fetches RAW object bytes and
+        therefore bypasses the GET /read byte-path post-processing, including any
+        read post-hooks that redact/transform content (e.g. column-level CSV
+        filtering). Deployments that rely on read-time redaction as an access
+        control on S3/R2-mounted paths must serve those reads through GET /read,
+        not read-url. A precise server-side gate (signing only when no
+        content-transforming post-read hook applies) needs a kernel API to count
+        post-read transform hooks distinctly from pre-read permission hooks; that
+        is deferred infrastructure (the aggregate hook_count also includes the
+        always-present permission pre-hook, so it cannot be used here).
+        """
+        # 1. ReBAC gate — identical posture to GET /read. sys_stat enforces READ
+        #    and returns metadata (content_id) without transferring any bytes.
+        context = _apply_zone_override(context, zone, auth_result, required_perm="r")
+
+        async def _work() -> Response:
+            fs = await _get_fs()
+            meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
+            if meta is None:
+                # sys_stat returns None when the VFS cannot resolve the path to an
+                # object. Fail closed: never mint a bearer S3/R2 URL for a key we
+                # have not proven exists as an authorized object.
+                raise HTTPException(status_code=404, detail=f"Not found: {path}")
+
+            # Only mint a URL for an explicit regular file (DT_REG). sys_stat also
+            # succeeds for directories (DT_DIR), mount roots (DT_MOUNT),
+            # pipes/streams, and external-storage markers — none map to a single
+            # object key, and a mount root can even report is_directory=False, so
+            # checking is_directory alone is insufficient. Signing their
+            # empty/prefix key would hand out a bearer URL GET /read never serves.
+            def _meta_get(field: str, default: Any = None) -> Any:
+                return (
+                    meta.get(field, default)
+                    if isinstance(meta, dict)
+                    else getattr(meta, field, default)
+                )
+
+            entry_type = _meta_get("entry_type")
+            if _meta_get("is_directory", False) or (
+                entry_type is not None and entry_type != DT_REG
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "read-url is for regular files only (not directories, mounts, "
+                        "or other special entries); use GET /read."
+                    ),
+                )
+
+            # 2. Find the owning mount's backend instance (holds creds). Longest
+            #    matching mount prefix wins.
+            #
+            # Zone safety: this map is keyed by mount path and the cluster
+            # permits at most one backend per VFS path (mounting the same path
+            # in a second zone is rejected). The authorization boundary is the
+            # zone-scoped sys_stat above — this whole _work runs inside
+            # _run_for_context, so a path not mounted/authorized in the caller's
+            # zone returns None -> 404 before any backend is looked up or signed.
+            # A fully zone-keyed mount map ((zone, path) -> backend) is the
+            # proper long-term hardening and is tracked as separate work.
+            mounted = getattr(fs, "_mounted_backend_instances", {}) or {}
+            norm = "/" + str(path).strip("/")
+            mount_pt = max(
+                (m for m in mounted if norm == m or norm.startswith(m.rstrip("/") + "/")),
+                key=len,
+                default=None,
+            )
+            backend = mounted.get(mount_pt) if mount_pt else None
+            # Only S3/R2-style signers are served here. Detect them by the
+            # ``method`` parameter on generate_signed_url (PathS3Backend has it);
+            # a method-less signer (e.g. PathGCSBackend) would otherwise be called
+            # with method="GET" and raise TypeError -> 500 instead of the
+            # advertised 409 fallback to GET /read.
+            signer = getattr(backend, "generate_signed_url", None)
+            accepts_method = False
+            if signer is not None:
+                try:
+                    accepts_method = "method" in inspect.signature(signer).parameters
+                except (TypeError, ValueError):
+                    accepts_method = False
+            if mount_pt is None or signer is None or not accepts_method:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Direct read-url is only available for S3/R2 mounts; use GET /read.",
+                )
+
+            # 3. Mint the presigned URL (pure signing, no network). Path relative
+            #    to the mount; the backend adds its own prefix in _get_key_path.
+            rel = norm[len(mount_pt.rstrip("/")) :].lstrip("/")
+            if not rel:
+                # The path IS the mount root (stripping the prefix leaves
+                # nothing). Robust mount-root guard independent of stat fields:
+                # the real sys_stat projection omits entry_type, so a mount root
+                # reporting is_directory=False would otherwise reach here and the
+                # signer would mint a bearer URL for the backend's empty/prefix
+                # key. Never sign a mount root.
+                raise HTTPException(
+                    status_code=409,
+                    detail="read-url is for regular files only, not a mount root; use GET /read.",
+                )
+
+            try:
+                signed = signer(rel, expires_in=ttl, method="GET", context=context)
+            except Exception as e:
+                logger.exception(f"read-url signing error: {e}")
+                raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e
+            content_id = None
+            if isinstance(meta, dict):
+                content_id = meta.get("content_id")
+            elif meta is not None:
+                content_id = getattr(meta, "content_id", None)
+            return Response(
+                content=json.dumps(
+                    {
+                        "url": signed["url"],
+                        "expires_in": signed["expires_in"],
+                        "content_id": content_id,
+                        "path": path,
+                    }
+                ),
+                media_type="application/json",
+            )
+
+        # Route through the same zone-scoped guard as GET /read: a mismatched
+        # path/query zone is rejected (400) before any stat/sign, and the stat +
+        # mount resolution + signing all run in the resolved target zone — so an
+        # out-of-band storage URL can't be minted across a tenant boundary.
+        return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
     @router.get("/md-structure")
     async def md_structure(
@@ -1319,16 +1473,14 @@ def create_async_files_router(
                         _norm_path = _normalize_path(path)
                         _ss.validate_path_available(transaction_id, _norm_path)
                         try:
-                            _orig_meta = fs._kernel.get(_norm_path)
+                            _orig_meta = fs.sys_stat(_norm_path, context=context)
                             if _orig_meta:
-                                _original_hash = _orig_meta.content_id
+                                _original_hash = _orig_meta.get("content_id")
                                 _original_metadata = {
-                                    "size": _orig_meta.size,
-                                    "version": _orig_meta.version,
-                                    "modified_at": _orig_meta.modified_at.isoformat()
-                                    if _orig_meta.modified_at
-                                    else None,
-                                    "backend_name": getattr(_orig_meta, "backend_name", None),
+                                    "size": _orig_meta.get("size"),
+                                    "version": _orig_meta.get("version"),
+                                    "modified_at_ms": _orig_meta.get("modified_at_ms"),
+                                    "backend_name": _orig_meta.get("backend_name"),
                                 }
                         except Exception:
                             _original_hash = None
@@ -1925,9 +2077,10 @@ def create_async_files_router(
                     request_headers=request.headers,
                     content_generator=_range_generator,
                     full_generator=_full_generator,
-                    total_size=meta.size,
-                    etag=meta.content_id,
-                    content_type=meta.mime_type or "application/octet-stream",
+                    total_size=int(_metadata_field(meta, "size", 0) or 0),
+                    etag=_metadata_field(meta, "content_id"),
+                    content_type=_metadata_field(meta, "mime_type", "application/octet-stream")
+                    or "application/octet-stream",
                     filename=path.split("/")[-1],
                 )
 
@@ -1960,7 +2113,9 @@ def create_async_files_router(
 
             async def _work() -> RenameResponse:
                 fs = await _get_fs()
-                fs.sys_rename(request.source, request.destination, context=context)
+                await _maybe_await(
+                    fs.sys_rename(request.source, request.destination, context=context)
+                )
                 return RenameResponse(
                     success=True,
                     source=request.source,
@@ -1998,7 +2153,7 @@ def create_async_files_router(
                 fs = await _get_fs()
 
                 # Check source exists and get size
-                meta = fs.sys_stat(request.source, context=context)
+                meta = await _maybe_await(fs.sys_stat(request.source, context=context))
                 if meta is None:
                     raise NexusFileNotFoundError(path=request.source)
 
@@ -2006,8 +2161,8 @@ def create_async_files_router(
 
                 if file_size < STREAMING_COPY_THRESHOLD:
                     # Small file: read all then write all
-                    content = fs.sys_read(request.source, context=context)
-                    fs.write(request.destination, buf=content, context=context)
+                    content = await _maybe_await(fs.sys_read(request.source, context=context))
+                    await _maybe_await(fs.write(request.destination, buf=content, context=context))
                     bytes_copied = len(content)
                 else:
                     # Large file: streaming copy
@@ -2054,7 +2209,7 @@ def create_async_files_router(
             async def _work() -> RenameBatchResponse:
                 fs = await _get_fs()
                 renames = [(op.source, op.destination) for op in request.operations]
-                raw_results = fs.rename_batch(renames, context=context)
+                raw_results = await _maybe_await(fs.rename_batch(renames, context=context))
 
                 results: list[BulkRenameResult] = []
                 for op in request.operations:
@@ -2100,7 +2255,7 @@ def create_async_files_router(
 
                 for op in request.operations:
                     try:
-                        meta = fs.sys_stat(op.source, context=context)
+                        meta = await _maybe_await(fs.sys_stat(op.source, context=context))
                         if meta is None:
                             results.append(
                                 BulkCopyResult(
@@ -2115,8 +2270,10 @@ def create_async_files_router(
                         file_size = _metadata_field(meta, "size", 0) or 0
 
                         if file_size < STREAMING_COPY_THRESHOLD:
-                            content = fs.sys_read(op.source, context=context)
-                            fs.write(op.destination, buf=content, context=context)
+                            content = await _maybe_await(fs.sys_read(op.source, context=context))
+                            await _maybe_await(
+                                fs.write(op.destination, buf=content, context=context)
+                            )
                             bytes_copied = len(content)
                         else:
                             chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
@@ -2235,7 +2392,11 @@ def create_async_files_router(
 
                 # Try Rust mmap grep first
                 results = await asyncio.to_thread(
-                    grep_files_mmap, pattern, all_paths, ignore_case, limit
+                    grep_files_mmap,
+                    pattern,
+                    all_paths,
+                    ignore_case=ignore_case,
+                    max_results=limit,
                 )
 
                 # Fallback to Python re if Rust is unavailable

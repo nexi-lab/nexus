@@ -192,6 +192,48 @@ class TestRecordStoreAsyncURLConversion:
         with pytest.raises(ValueError, match="Unrecognized database URL scheme"):
             SQLAlchemyRecordStore._to_async_url("mysql://host/db")
 
+    def test_to_async_url_accepts_canonical_postgres_scheme(self):
+        """Round-3 review (codex MEDIUM): cloud providers (Railway,
+        Render, Supabase, Heroku) emit ``postgres://`` rather than
+        ``postgresql://``. The async converter must accept it too,
+        otherwise read-replica or other direct ``_to_async_url`` callers
+        abort with "Unrecognized scheme" instead of getting the right
+        async driver."""
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        result = SQLAlchemyRecordStore._to_async_url("postgres://user:pass@replica/db")
+        assert result == "postgresql+asyncpg://user:pass@replica/db"
+
+
+class TestRecordStoreReadReplicaURLNormalization:
+    """Issue #4238 round 3: ``postgres://`` from cloud providers must be
+    rewritten on the read replica URL too — otherwise a Railway/Render/
+    Supabase replica URL aborts at startup with SQLAlchemy's missing
+    postgres dialect."""
+
+    def test_read_replica_url_normalized_via_helper(self) -> None:
+        """The round-3 fix routes ``read_replica_url`` through
+        ``normalize_database_url`` before assigning to
+        ``self._read_replica_url``. Verify the helper invariant + that
+        record_store.py is the consumer (regression guard if the helper
+        gets moved without updating the call site).
+        """
+        from pathlib import Path
+
+        from nexus.core.db_utils import normalize_database_url
+
+        assert (
+            normalize_database_url("postgres://replica:5432/db") == "postgresql://replica:5432/db"
+        )
+
+        import nexus.storage.record_store as _rs
+
+        src = Path(_rs.__file__).read_text()
+        assert "normalize_database_url(read_replica_url)" in src, (
+            "round-3 fix: read_replica_url assignment must route through "
+            "normalize_database_url (Issue #4238)"
+        )
+
 
 class TestRecordStoreCreateTables:
     """Tests for create_tables flag."""

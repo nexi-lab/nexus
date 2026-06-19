@@ -1,6 +1,7 @@
 """Search and discovery commands - glob, grep, semantic search."""
 
 import asyncio
+import inspect
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -61,6 +62,13 @@ def _resolve_files_arg(
             merged.append(stripped)
 
     return merged
+
+
+async def _await_service_result(value: Any) -> Any:
+    """Await local async service results while preserving sync remote proxy results."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @click.command()
@@ -142,7 +150,9 @@ def glob(
                     glob_kwargs: dict[str, Any] = {}
                     if files_list is not None:
                         glob_kwargs["files"] = files_list
-                    result = nx.service("search").glob(pattern, path, **glob_kwargs)
+                    result = await _await_service_result(
+                        nx.service("search").glob(pattern, path, **glob_kwargs)
+                    )
                     matches = (
                         result["matches"]
                         if isinstance(result, dict) and "matches" in result
@@ -320,6 +330,16 @@ def glob(
         "Non-markdown files pass through unfiltered."
     ),
 )
+@click.option(
+    "--in-section",
+    "section",
+    type=str,
+    default=None,
+    help=(
+        "Restrict matches to a markdown/parsed-content section heading "
+        "(#4186), e.g. 'API' or '## API'."
+    ),
+)
 @add_output_options
 @add_backend_options
 def grep(
@@ -339,6 +359,7 @@ def grep(
     files: tuple[str, ...],
     files_from: str | None,
     block_type: str | None,
+    section: str | None,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -358,6 +379,7 @@ def grep(
 
     \b
         nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
+        nexus grep "status" /workspace/spec.md --in-section "## API"
     """
 
     async def _impl() -> None:
@@ -397,8 +419,12 @@ def grep(
                         grep_kwargs["files"] = files_list
                     if block_type is not None:
                         grep_kwargs["block_type"] = block_type
+                    if section is not None:
+                        grep_kwargs["section"] = section
 
-                    result = nx.service("search").grep(pattern, **grep_kwargs)
+                    result = await _await_service_result(
+                        nx.service("search").grep(pattern, **grep_kwargs)
+                    )
 
             # Normalize result format
             if isinstance(result, dict) and "results" in result:
@@ -581,14 +607,16 @@ def search_init(
             with console.status(
                 "[nexus.warning]Initializing search engine...[/nexus.warning]", spinner="dots"
             ):
-                nx.service("search").ainitialize_semantic_search(
-                    nx=nx,
-                    record_store_engine=None,
-                    embedding_provider=provider,
-                    embedding_model=model,
-                    api_key=api_key,
-                    chunk_size=chunk_size,
-                    chunk_strategy=chunk_strategy,
+                await _await_service_result(
+                    nx.service("search").ainitialize_semantic_search(
+                        nx=nx,
+                        record_store_engine=None,
+                        embedding_provider=provider,
+                        embedding_model=model,
+                        api_key=api_key,
+                        chunk_size=chunk_size,
+                        chunk_strategy=chunk_strategy,
+                    )
                 )
 
             console.print(
@@ -649,7 +677,9 @@ def search_index(
                 f"[nexus.warning]Indexing {path}...[/nexus.warning]", spinner="dots"
             ):
                 search_svc = nx.service("search")
-                raw_results = search_svc.semantic_search_index(path, recursive=recursive)
+                raw_results = await _await_service_result(
+                    search_svc.semantic_search_index(path, recursive=recursive)
+                )
 
             # RPC handler wraps results as {"indexed": {path: count, ...}, ...}
             if isinstance(raw_results, dict) and "indexed" in raw_results:
@@ -670,7 +700,7 @@ def search_index(
                 console.print(f"  Failed: [nexus.warning]{failed}[/nexus.warning]")
 
             # Show stats
-            stats: dict[str, Any] = search_svc.semantic_search_stats()
+            stats: dict[str, Any] = await _await_service_result(search_svc.semantic_search_stats())
             console.print("\n[bold nexus.value]Index Statistics:[/bold nexus.value]")
             console.print(
                 f"  Total indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
@@ -737,8 +767,10 @@ def search_query(
                 # so it would silently drop the positional ``query`` argument and
                 # the server-side handler would error with
                 # ``'SimpleNamespace' object has no attribute 'query'``.
-                raw = search_svc.semantic_search(
-                    query=query, path=path, limit=limit, search_mode=mode
+                raw = await _await_service_result(
+                    search_svc.semantic_search(
+                        query=query, path=path, limit=limit, search_mode=mode
+                    )
                 )
                 # RPC handler wraps as {"results": [...]}, unwrap if needed
                 results: list[dict[str, Any]] = (
@@ -748,7 +780,7 @@ def search_query(
             if json_output:
                 import json
 
-                console.print(json.dumps(results, indent=2))
+                click.echo(json.dumps(results, indent=2, default=str))
             else:
                 if not results:
                     console.print(f"[nexus.warning]No results found for:[/nexus.warning] {query}")
@@ -793,7 +825,9 @@ def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
         try:
             nx = await get_filesystem(remote_url, remote_api_key)
 
-            stats: dict[str, Any] = nx.service("search").semantic_search_stats()
+            stats: dict[str, Any] = await _await_service_result(
+                nx.service("search").semantic_search_stats()
+            )
 
             console.print("\n[bold nexus.value]Semantic Search Statistics[/bold nexus.value]")
             console.print(

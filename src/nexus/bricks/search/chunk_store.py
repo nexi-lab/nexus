@@ -34,6 +34,7 @@ class ChunkRecord:
     end_offset: int | None = None
     line_start: int | None = None
     line_end: int | None = None
+    heading_prefix: str | None = None
     embedding: list[float] | None = None
     embedding_model: str | None = None
     chunk_context: str | None = None
@@ -122,6 +123,7 @@ class ChunkStore:
             "end_offset": chunk.end_offset,
             "line_start": chunk.line_start,
             "line_end": chunk.line_end,
+            "heading_prefix": chunk.heading_prefix,
             "embedding_model": chunk.embedding_model,
             "chunk_context": _strip_null_bytes(chunk.chunk_context),
             "chunk_position": chunk.chunk_position,
@@ -138,13 +140,13 @@ class ChunkStore:
                 """
                 INSERT INTO document_chunks
                 (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
-                 start_offset, end_offset, line_start, line_end,
+                 start_offset, end_offset, line_start, line_end, heading_prefix,
                  embedding_model, embedding,
                  chunk_context, chunk_position, source_document_id,
                  created_at)
                 VALUES
                 (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
-                 :start_offset, :end_offset, :line_start, :line_end,
+                 :start_offset, :end_offset, :line_start, :line_end, :heading_prefix,
                  :embedding_model, CAST(:embedding AS halfvec),
                  :chunk_context, :chunk_position, :source_document_id,
                  :created_at)
@@ -154,13 +156,13 @@ class ChunkStore:
             """
             INSERT INTO document_chunks
             (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
-             start_offset, end_offset, line_start, line_end,
+             start_offset, end_offset, line_start, line_end, heading_prefix,
              embedding_model,
              chunk_context, chunk_position, source_document_id,
              created_at)
             VALUES
             (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
-             :start_offset, :end_offset, :line_start, :line_end,
+             :start_offset, :end_offset, :line_start, :line_end, :heading_prefix,
              :embedding_model,
              :chunk_context, :chunk_position, :source_document_id,
              :created_at)

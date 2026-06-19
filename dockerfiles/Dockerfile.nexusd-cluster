@@ -1,0 +1,78 @@
+# Nexus Cluster Binary — Slim Federation Runtime
+#
+# Kernel-tier Rust lives in the nexus-vfs repo (#4259).  This image
+# builds nexusd-cluster from a nexus-vfs source tree provided via the
+# `nexus-vfs-src` named build context — single code path that the
+# caller wires up either way:
+#
+#   Local dev:
+#     docker build \
+#       --build-context nexus-vfs-src=../nexus-vfs \
+#       -f dockerfiles/Dockerfile.nexusd-cluster \
+#       -t nexusd-cluster:latest .
+#
+#   CI:
+#     The workflow runs `actions/checkout@v4` against nexi-lab/nexus-vfs
+#     at the SHA parsed from `Cargo.toml`'s workspace dep rev, then
+#     passes the checkout dir as `build-contexts: nexus-vfs-src=...`.
+#
+# Pinning is single-sourced in `Cargo.toml` — the plugin dylibs and
+# the cluster binary must compile against the same nexus-vfs commit
+# for ABI parity, so there is one SHA, one place to bump.
+
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler: raft proto codegen shells out to system protoc.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at
+# compile time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# The named build context carries the full nexus-vfs source tree
+# (including the workspace's proto/ at the root so raft/build.rs can
+# locate it via `../../proto`).
+COPY --from=nexus-vfs-src . /build/nexus-vfs
+
+# `--locked` respects the source tree's `Cargo.lock` instead of
+# re-resolving dependency versions from scratch.  Without it, `cargo
+# install` ignores the lockfile and picks the newest semver-compatible
+# release for every transitive crate at build time — which surfaces as
+# a different dependency graph than the one nexus-vfs CI exercises via
+# `cargo build`, and breaks on the first upstream regression
+# (e.g. `time 0.3.47` introducing a duplicate `From<HourBase>` impl
+# that fails to compile with `rcgen 0.14.7`).  `Cargo.lock` is the
+# substrate's own SSOT for which versions to compile against; honor it.
+RUN cargo install \
+    --locked \
+    --path /build/nexus-vfs/rust/profiles/cluster \
+    --bin nexusd-cluster
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+# bash: the compose healthcheck uses `bash -c '</dev/tcp/localhost/2126'`
+# ca-certificates: outbound TLS for any remote backend driver calls
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends bash ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/
+
+# Non-root runtime user
+RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
+    mkdir -p /app/data && \
+    chown -R nexus:nexus /app
+
+USER nexus
+WORKDIR /app
+
+ENV NEXUS_BIND_ADDR=0.0.0.0:2126 \
+    NEXUS_DATA_DIR=/app/data \
+    RUST_LOG=info,nexus_raft=info
+
+EXPOSE 2126
+
+ENTRYPOINT ["nexusd-cluster"]

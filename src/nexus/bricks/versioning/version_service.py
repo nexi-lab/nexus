@@ -349,7 +349,7 @@ class VersionService:
             if stat is not None:
                 self._kernel.sys_setattr(
                     path,
-                    0,  # UPDATE existing entry
+                    entry_type=0,  # UPDATE existing entry
                     content_id=new_hash,
                     size=new_size,
                 )

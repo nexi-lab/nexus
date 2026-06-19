@@ -12,12 +12,14 @@ Extracted from: nexus_fs_search.py (2,817 lines)
 import asyncio
 import builtins
 import fnmatch
+import inspect
 import logging
 import os
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
@@ -38,10 +40,7 @@ from nexus.contracts.search_types import (
     SearchStrategy,
 )
 from nexus.contracts.types import Permission
-from nexus.kernel_helpers import (
-    metastore_get_searchable_text_bulk,
-    metastore_list_iter,
-)
+from nexus.kernel_helpers import metastore_get_searchable_text_bulk
 from nexus.lib.rpc_decorator import rpc_expose
 
 # List directory traversal thresholds (Issue #901)
@@ -87,6 +86,16 @@ VALID_BLOCK_TYPES: frozenset[str] = frozenset(
 _MARKDOWN_EXTENSIONS: tuple[str, ...] = (".md", ".markdown", ".mdown", ".mkd")
 _BLOCK_TYPE_OVERFETCH_FACTOR = 5
 _BLOCK_TYPE_OVERFETCH_CAP = 2000
+
+# Directory-like entry_type values in the sys_readdir detail dict
+# (DT_DIR=1, DT_MOUNT=5). The list pipeline treats both as "directory".
+_DIR_ENTRY_TYPES: frozenset[int] = frozenset({1, 5})
+
+
+def _entry_is_dir(entry: dict[str, Any]) -> bool:
+    """True when a sys_readdir detail dict represents a directory or mount."""
+    return entry.get("entry_type") in _DIR_ENTRY_TYPES
+
 
 # Zone-aware path prefixes for cross-zone filtering (Issue #899)
 ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
@@ -234,8 +243,13 @@ class SearchService:
                 ``litellm`` are importable.
         """
         self.metadata = metadata_store
-        # Pull the kernel out of the proxy for direct ``metastore_*`` calls
-        # (and survive W3, which deletes the proxy).
+        # Kernel handle, kept ONLY for kernel-ABI methods that have no
+        # NexusFilesystem syscall equivalent: stat_batch (bulk stat) and
+        # get_xattr / get_xattr_bulk (extended attributes). These are
+        # composed kernel operations, not MetaStore/ObjectStore HAL pillar
+        # access, so they are not §2.5 boundary violations — NexusFS itself
+        # calls _kernel.stat_batch the same way. All path/list/stat work
+        # goes through self._nexus_fs (the syscall surface).
         self._kernel = metadata_store
         self._record_store = record_store
         self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
@@ -389,6 +403,8 @@ class SearchService:
         if self._nexus_fs is None:
             raise NotImplementedError("nexus_fs not provided to SearchService")
         result = self._nexus_fs.read(path, context=context, return_metadata=return_metadata)
+        if inspect.isawaitable(result):
+            result = await result
         if isinstance(result, str):
             return result.encode("utf-8")
         return result
@@ -487,8 +503,15 @@ class SearchService:
                 # Derive mount point from first path segments
                 _parts = path.strip("/").split("/")
                 _mp_guess = "/" + "/".join(_parts[:2]) if len(_parts) >= 2 else "/" + _parts[0]
+                from nexus.contracts.types import OperationContext as _OC
+
                 _mount_stat = (
-                    self._kernel.sys_stat(_mp_guess, ROOT_ZONE_ID) if self._kernel else None
+                    self._nexus_fs.sys_stat(
+                        _mp_guess,
+                        context=_OC(user_id="system", groups=[], is_system=True),
+                    )
+                    if self._nexus_fs
+                    else None
                 )
                 _is_ext = _mount_stat is not None and _mount_stat.get("entry_type") == 5
                 if _is_ext:
@@ -583,7 +606,7 @@ class SearchService:
                 _revision_before,
                 _rebac_manager,
             )
-            sample_paths = [m.path for m in all_files[:5]]
+            sample_paths = [m["path"] for m in all_files[:5]]
             logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
         # Issue #3779 follow-up: when the caller is in a specific zone, drop
@@ -595,11 +618,7 @@ class SearchService:
         # _get_cross_zone_shared_paths.
         _is_admin_caller = bool(getattr(context, "is_admin", False)) if context else False
         if list_zone_id and list_zone_id != ROOT_ZONE_ID and not _is_admin_caller:
-            all_files = [
-                m
-                for m in all_files
-                if (getattr(m, "zone_id", None) or ROOT_ZONE_ID) == list_zone_id
-            ]
+            all_files = [m for m in all_files if (m.get("zone_id") or ROOT_ZONE_ID) == list_zone_id]
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -615,23 +634,30 @@ class SearchService:
                 f"{len(cross_zone_paths) if cross_zone_paths else 0} paths"
             )
             if cross_zone_paths:
-                from nexus.contracts.metadata import FileMetadata
+                from nexus.contracts.types import OperationContext as _OC
 
-                existing_paths = {meta.path for meta in all_files}
+                _xz_ctx = _OC(user_id="system", groups=[], is_system=True)
+                existing_paths = {meta["path"] for meta in all_files}
                 for ct_path in cross_zone_paths:
                     if ct_path not in existing_paths:
                         try:
-                            ct_stat = self._kernel.sys_stat(ct_path, ROOT_ZONE_ID)
+                            ct_stat = self._nexus_fs.sys_stat(ct_path, context=_xz_ctx)
                             if ct_stat:
+                                # Cross-zone entries flow through the same
+                                # detail-dict shape as sys_readdir(details=True)
+                                # so downstream consumers stay dict-typed.
                                 all_files.append(
-                                    FileMetadata(
-                                        path=ct_path,
-                                        size=ct_stat.get("size", 0),
-                                        content_id=ct_stat.get("content_id"),
-                                        version=ct_stat.get("version", 1),
-                                        entry_type=ct_stat.get("entry_type", 0),
-                                        zone_id=ct_stat.get("zone_id"),
-                                    )
+                                    {
+                                        "path": ct_path,
+                                        "size": ct_stat.get("size", 0),
+                                        "content_id": ct_stat.get("content_id"),
+                                        "version": ct_stat.get("version", 1),
+                                        "entry_type": ct_stat.get("entry_type", 0),
+                                        "zone_id": ct_stat.get("zone_id"),
+                                        "mime_type": ct_stat.get("mime_type"),
+                                        "modified_at": ct_stat.get("modified_at"),
+                                        "created_at": ct_stat.get("created_at"),
+                                    }
                                 )
                         except Exception:
                             logger.debug("Skipping deleted cross-zone path: %s", ct_path)
@@ -639,7 +665,7 @@ class SearchService:
         # Filter out internal system entries
         from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
-        all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
+        all_files = [m for m in all_files if not str(m["path"]).startswith(SYSTEM_PATH_PREFIX)]
 
         # Apply recursive filter
         if recursive:
@@ -647,7 +673,8 @@ class SearchService:
         else:
             results = []
             for meta in all_files:
-                rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                _mp = str(meta["path"])
+                rel_path = _mp[len(path) :] if path != "/" else _mp[1:]
                 if "/" not in rel_path:
                     results.append(meta)
             logger.info(
@@ -667,7 +694,7 @@ class SearchService:
         )
         if self._enforce_permissions:
             results_before = len(results)
-            results = [meta for meta in results if meta.path in allowed_set]
+            results = [meta for meta in results if meta["path"] in allowed_set]
             logger.info(
                 f"[LIST-DEBUG] after perm filter: {len(results)} results (was {results_before})"
             )
@@ -677,7 +704,7 @@ class SearchService:
 
         # Sort by path
         _sort_start = _time.time()
-        results.sort(key=lambda m: m.path)
+        results.sort(key=lambda m: str(m["path"]))
         logger.info(f"[LIST-TIMING] sort_results: {(_time.time() - _sort_start) * 1000:.1f}ms")
 
         # Add directories to results
@@ -948,9 +975,12 @@ class SearchService:
         all_paths: builtins.list[str],
     ) -> builtins.list[dict[str, Any]]:
         """Build detailed results for dynamic connector paths."""
+        from nexus.contracts.types import OperationContext as _OC
+
+        _stat_ctx = _OC(user_id="system", groups=[], is_system=True)
         results_with_details = []
         for entry_path in all_paths:
-            file_stat = self._kernel.sys_stat(entry_path, ROOT_ZONE_ID)
+            file_stat = self._nexus_fs.sys_stat(entry_path, context=_stat_ctx)
             is_dir = bool(file_stat and file_stat.get("is_directory", False))
             name = entry_path.rstrip("/").split("/")[-1]
             results_with_details.append(
@@ -977,8 +1007,6 @@ class SearchService:
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.contracts.metadata import FileMetadata
-
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
 
@@ -1029,23 +1057,25 @@ class SearchService:
                 if _accessible_dirs.get(entry_path, True):
                     _preapproved_dirs.add(entry_path)
                     all_files.append(
-                        FileMetadata(
-                            path=entry_path,
-                            size=0,
-                            created_at=entry.get("created_at"),
-                            content_id=None,
-                            mime_type="inode/directory",
-                        )
+                        {
+                            "path": entry_path,
+                            "size": 0,
+                            "created_at": entry.get("created_at"),
+                            "content_id": None,
+                            "mime_type": "inode/directory",
+                            "entry_type": 1,
+                        }
                     )
             else:
                 all_files.append(
-                    FileMetadata(
-                        path=entry_path,
-                        size=0,
-                        created_at=entry.get("created_at"),
-                        content_id=None,
-                        mime_type=None,
-                    )
+                    {
+                        "path": entry_path,
+                        "size": 0,
+                        "created_at": entry.get("created_at"),
+                        "content_id": None,
+                        "mime_type": None,
+                        "entry_type": 0,
+                    }
                 )
         logger.info(
             f"[LIST-TIMING] has_accessible_descendants_batch(): "
@@ -1069,6 +1099,110 @@ class SearchService:
                 _use_fast_path = False
 
         return all_files, _preapproved_dirs, _use_fast_path, _revision_before
+
+    def _sys_readdir_entries(self, list_prefix: str) -> builtins.list[dict[str, Any]]:
+        """Recursive sys_readdir → list of detail dicts for the slow-path scan.
+
+        The detail dict (sys_readdir details=True) is the §2.5 syscall's
+        native output shape and the single shape the list pipeline works
+        in — no conversion to FileMetadata. Runs under is_system=True so
+        the wrapper's zone filter is skipped — the service applies its own
+        stronger filter (zone post-filter + tiger_cache predicate-pushdown)
+        downstream.
+        """
+        from nexus.contracts.types import OperationContext
+
+        if self._nexus_fs is None:
+            return []
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        root = list_prefix or "/"
+        try:
+            recursive_entries = self._nexus_fs.sys_readdir(
+                root,
+                recursive=True,
+                details=True,
+                context=ctx,
+            )
+        except Exception:
+            recursive_entries = []
+        recursive_dicts = [entry for entry in recursive_entries if isinstance(entry, dict)]
+        if recursive_dicts:
+            return recursive_dicts
+
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        pending: list[tuple[str, int]] = [(root, 0)]
+
+        def _stat_entry(path: str) -> dict[str, Any] | None:
+            try:
+                stat = self._nexus_fs.sys_stat(path, context=ctx)
+            except Exception:
+                return None
+            if not isinstance(stat, dict) or not stat:
+                return None
+            return {
+                "path": stat.get("path", path),
+                "size": stat.get("size", 0),
+                "content_id": stat.get("content_id"),
+                "entry_type": stat.get("entry_type", 1 if stat.get("is_directory") else 0),
+                "zone_id": stat.get("zone_id"),
+                "owner_id": stat.get("owner_id"),
+                "mime_type": stat.get("mime_type"),
+                "created_at": stat.get("created_at"),
+                "modified_at": stat.get("modified_at"),
+                "version": stat.get("version", 1),
+                "gen": stat.get("gen", 0),
+            }
+
+        while pending:
+            current, depth = pending.pop(0)
+            if depth >= LIST_PARALLEL_MAX_DEPTH:
+                logger.warning(
+                    "[LIST-PARALLEL] Hit max depth %s at %s, truncating traversal",
+                    LIST_PARALLEL_MAX_DEPTH,
+                    current,
+                )
+                continue
+            try:
+                entries = self._nexus_fs.sys_readdir(
+                    current,
+                    recursive=False,
+                    details=True,
+                    context=ctx,
+                )
+            except Exception:
+                entries = []
+
+            # The real sandbox kernel currently returns no detail rows for
+            # root but can return path-only rows; recover details through
+            # sys_stat while staying on the syscall surface.
+            if not entries and current == "/":
+                try:
+                    paths = self._nexus_fs.sys_readdir(
+                        current,
+                        recursive=False,
+                        details=False,
+                        context=ctx,
+                    )
+                except Exception:
+                    paths = []
+                entries = [
+                    stat
+                    for path in paths
+                    if isinstance(path, str)
+                    for stat in [_stat_entry(path)]
+                    if stat is not None
+                ]
+
+            for entry in entries:
+                if isinstance(entry, dict):
+                    path = str(entry.get("path") or "")
+                    if path and path not in seen:
+                        seen.add(path)
+                        out.append(entry)
+                        if _entry_is_dir(entry):
+                            pending.append((path, depth + 1))
+        return out
 
     def _list_slow_path(
         self,
@@ -1121,16 +1255,12 @@ class SearchService:
                     _accessible_int_ids = None
 
         _meta_start = _time.time()
-        # Issue #3779 follow-up: when the backing store is not zone-scoped
-        # (standalone/embedded metastore has self._zone_id=None), passing a
-        # non-root zone_id raises in RaftMetadataStore._list_raw. In that
-        # case we fetch everything and rely on the service-layer zone
-        # post-filter (applied by list()). ``kernel.metastore_list`` is
-        # single-zone (zone scoping is handled at the mount-router level
-        # in federation mode), so ``list_zone_id`` is intentionally not
-        # passed to the kernel call here — it's still used by the
-        # zone-revision check below.
-        all_files = self._kernel.metastore_list_paginated(list_prefix, True, 100000, None)["items"]
+        # §2.5 mediation: reach MetaStore through the syscall surface, not
+        # directly via kernel.metastore_*. is_system=True bypasses the
+        # wrapper's zone filter — the service applies its own stronger
+        # filter below (zone post-filter + tiger_cache predicate-pushdown),
+        # so the wrapper filter would only add cost.
+        all_files = self._sys_readdir_entries(list_prefix)
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
             f"{len(all_files)} files"
@@ -1146,11 +1276,11 @@ class SearchService:
         # filter's ``router.validate_path`` call rejects them with
         # ``InvalidPathError: Path must be absolute: ns:rebac:memory``.
         #
-        # The correct fix is to scope them: any FileMetadata whose path does
+        # The correct fix is to scope them: any entry whose path does
         # not start with ``/`` is a synthetic/pseudo-path that should never
         # enter the filesystem filter pipeline.
         _pre_synthetic = len(all_files)
-        all_files = [f for f in all_files if f.path.startswith("/")]
+        all_files = [f for f in all_files if str(f.get("path", "")).startswith("/")]
         if len(all_files) != _pre_synthetic:
             logger.debug(
                 f"[LIST-SYNTHETIC] dropped {_pre_synthetic - len(all_files)} "
@@ -1165,7 +1295,7 @@ class SearchService:
                 all_files = [
                     f
                     for f in all_files
-                    if tiger_cache._resource_map.get_or_create_int_id("file", f.path)
+                    if tiger_cache._resource_map.get_or_create_int_id("file", f["path"])
                     in _accessible_int_ids
                 ]
                 logger.info(
@@ -1186,12 +1316,10 @@ class SearchService:
                         "[PREDICATE-PUSHDOWN] Revision changed, re-running without filter"
                     )
                     _meta_start = _time.time()
-                    all_files = self._kernel.metastore_list_paginated(
-                        list_prefix, True, 100000, None
-                    )["items"]
+                    all_files = self._sys_readdir_entries(list_prefix)
                     # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
                     # guard as the primary list path above.
-                    all_files = [f for f in all_files if f.path.startswith("/")]
+                    all_files = [f for f in all_files if str(f.get("path", "")).startswith("/")]
                     logger.info(
                         f"[LIST-TIMING] metadata.list() retry: "
                         f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
@@ -1227,7 +1355,7 @@ class SearchService:
         ctx: OperationContext = ctx_raw
 
         candidate_paths: set[str] = set()
-        candidate_paths.update(meta.path for meta in all_files)
+        candidate_paths.update(meta["path"] for meta in all_files)
 
         if not recursive:
             backend_dirs = self._get_backend_directory_entries(path)
@@ -1236,7 +1364,7 @@ class SearchService:
         # Single permission filter call
         filter_start = time.time()
         if _accessible_int_ids is not None:
-            allowed_set = {meta.path for meta in all_files}
+            allowed_set = {meta["path"] for meta in all_files}
             # Issue #3786 / Codex Round 9 finding #3: predicate-pushdown
             # via _accessible_int_ids reflects ReBAC visibility for the
             # subject — but multi-zone federation tokens can scope to a
@@ -1298,18 +1426,15 @@ class SearchService:
         directories: set[str] = set()
 
         for meta in results:
-            if (
-                meta.mime_type == "inode/directory"
-                or getattr(meta, "is_dir", False)
-                or getattr(meta, "is_mount", False)
-            ):
-                directories.add(meta.path)
+            if _entry_is_dir(meta):
+                directories.add(meta["path"])
 
         if not recursive:
             if self._enforce_permissions and context:
                 for meta in all_files:
-                    if meta.path in allowed_set:
-                        rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    _mp = str(meta["path"])
+                    if _mp in allowed_set:
+                        rel_path = _mp[len(path) :] if path != "/" else _mp[1:]
                         if "/" in rel_path:
                             dir_name = rel_path.split("/")[0]
                             dir_path = path + dir_name if path != "/" else "/" + dir_name
@@ -1324,7 +1449,8 @@ class SearchService:
                 )
             else:
                 for meta in all_files:
-                    rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    _mp = str(meta["path"])
+                    rel_path = _mp[len(path) :] if path != "/" else _mp[1:]
                     if "/" in rel_path:
                         dir_name = rel_path.split("/")[0]
                         dir_path = path + dir_name if path != "/" else "/" + dir_name
@@ -1437,20 +1563,19 @@ class SearchService:
         import time as _time
 
         _details_start = _time.time()
+
         file_results = [
             {
-                "path": meta.path,
-                "size": meta.size,
-                "modified_at": meta.modified_at,
-                "created_at": meta.created_at,
-                "content_id": meta.content_id,
-                "mime_type": meta.mime_type,
+                "path": meta["path"],
+                "size": meta.get("size", 0),
+                "modified_at": meta.get("modified_at"),
+                "created_at": meta.get("created_at"),
+                "content_id": meta.get("content_id"),
+                "mime_type": meta.get("mime_type"),
                 "is_directory": False,
             }
             for meta in results
-            if meta.mime_type != "inode/directory"
-            and not getattr(meta, "is_dir", False)
-            and not getattr(meta, "is_mount", False)
+            if not _entry_is_dir(meta)
         ]
         dir_results = [
             {
@@ -1483,13 +1608,7 @@ class SearchService:
         """Build path-only results."""
         import time as _time
 
-        file_paths = [
-            meta.path
-            for meta in results
-            if meta.mime_type != "inode/directory"
-            and not getattr(meta, "is_dir", False)
-            and not getattr(meta, "is_mount", False)
-        ]
+        file_paths = [meta["path"] for meta in results if not _entry_is_dir(meta)]
         all_paths = file_paths + sorted(directories)
         all_paths.sort()
         logger.info(
@@ -1508,13 +1627,16 @@ class SearchService:
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
+        from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+        from nexus.contracts.metadata import DT_DIR
+        from nexus.contracts.types import OperationContext
         from nexus.core.pagination import PaginatedResult
         from nexus.lib.pagination import encode_cursor
 
         context = context or self._default_context
         import time as _time
 
-        _start = _time.time()
+        _start = _time.time()  # noqa: F841 — retained for parity with non-paginated list timing
 
         list_zone_id, _, _ = self._extract_zone_info(context)
 
@@ -1526,10 +1648,10 @@ class SearchService:
 
         buffer_multiplier = 1.5
         fetch_limit = int(limit * buffer_multiplier)
-        collected_items: builtins.list[Any] = []
+        collected_items: builtins.list[dict[str, Any]] = []
         has_more = True
 
-        # Decode encoded cursor to plain path for paginate_iter
+        # Decode encoded cursor to plain path for sys_readdir's keyset cursor.
         current_cursor_path: str | None = None
         if cursor:
             from nexus.lib.pagination import CursorError, decode_cursor
@@ -1540,31 +1662,39 @@ class SearchService:
             except CursorError:
                 current_cursor_path = None
 
+        # §2.5: paginated scan goes through sys_readdir (native limit/cursor
+        # support), not the metastore_list_iter → metastore_list_paginated
+        # HAL bypass. is_system=True so the wrapper skips its zone filter —
+        # the service applies its own filter_list permission pass below.
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         while len(collected_items) < limit and has_more:
-            from nexus.core.pagination import paginate_iter
-
-            batch = paginate_iter(
-                metastore_list_iter(self._kernel, prefix=list_prefix, recursive=recursive),
+            batch = self._nexus_fs.sys_readdir(
+                list_prefix or "/",
+                recursive=recursive,
+                details=True,
                 limit=fetch_limit,
-                cursor_path=current_cursor_path,
+                cursor=current_cursor_path,
+                context=sys_ctx,
             )
 
-            from nexus.contracts.constants import SYSTEM_PATH_PREFIX
-
-            batch.items = [
+            # sys_readdir already drops cfg:/ns: internal paths; additionally
+            # filter SYSTEM_PATH_PREFIX and reject any non-/ entries
+            # (nexi-lab/nexus#3733 Bug B).
+            batch_items = [
                 item
                 for item in batch.items
                 # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata entries
                 # (e.g. ns:rebac:*) whose paths are not valid virtual paths.
-                if item.path.startswith("/") and not item.path.startswith(SYSTEM_PATH_PREFIX)
+                if str(item.get("path", "")).startswith("/")
+                and not str(item.get("path", "")).startswith(SYSTEM_PATH_PREFIX)
             ]
 
             if self._enforce_permissions and context:
-                paths = [item.path for item in batch.items]
+                paths = [item["path"] for item in batch_items]
                 allowed_paths = set(self._permission_enforcer.filter_list(paths, context))
-                filtered_items = [item for item in batch.items if item.path in allowed_paths]
+                filtered_items = [item for item in batch_items if item["path"] in allowed_paths]
             else:
-                filtered_items = batch.items
+                filtered_items = batch_items
 
             collected_items.extend(filtered_items)
             has_more = batch.has_more
@@ -1580,26 +1710,28 @@ class SearchService:
             last_item = result_items[-1]
             filters = {"prefix": list_prefix, "recursive": recursive, "zone_id": list_zone_id}
             next_cursor = encode_cursor(
-                last_path=last_item.path,
+                last_path=str(last_item["path"]),
                 last_path_id=None,
                 filters=filters,
             )
 
         if details:
+            # sys_readdir(details=True) emits created_at/modified_at as ISO
+            # strings (JSON-safe over RPC); they flow through unchanged.
             items_output = [
                 {
-                    "path": meta.path,
-                    "size": meta.size,
-                    "modified_at": meta.modified_at,
-                    "created_at": meta.created_at,
-                    "content_id": meta.content_id,
-                    "mime_type": meta.mime_type,
-                    "is_directory": meta.is_dir if hasattr(meta, "is_dir") else False,
+                    "path": meta["path"],
+                    "size": meta.get("size", 0),
+                    "modified_at": meta.get("modified_at"),
+                    "created_at": meta.get("created_at"),
+                    "content_id": meta.get("content_id"),
+                    "mime_type": meta.get("mime_type"),
+                    "is_directory": meta.get("entry_type") == DT_DIR,
                 }
                 for meta in result_items
             ]
         else:
-            items_output = [meta.path for meta in result_items]
+            items_output = [meta["path"] for meta in result_items]
 
         return PaginatedResult(
             items=items_output,
@@ -1740,6 +1872,23 @@ class SearchService:
         if not accessible_files:
             return []
 
+        pattern_path = path
+        if _engine_zone_id is None and isinstance(path, str) and path.startswith("/zone/"):
+            from nexus.core.path_utils import split_zone_from_internal_path
+
+            _explicit_zone, _explicit_path = split_zone_from_internal_path(path)
+            _scoped_prefix = path.rstrip("/") + "/"
+            _unscoped_prefix = (_explicit_path or "/").rstrip("/") + "/"
+            if (
+                _explicit_zone is not None
+                and not any(p == path or p.startswith(_scoped_prefix) for p in accessible_files)
+                and any(
+                    p == (_explicit_path or "/") or p.startswith(_unscoped_prefix)
+                    for p in accessible_files
+                )
+            ):
+                pattern_path = _explicit_path or "/"
+
         # Phase 2.5: Gitignore filtering (Issue #538)
         pre_filter_count = len(accessible_files)
         accessible_files = _filter_ignored_paths(accessible_files)
@@ -1752,14 +1901,14 @@ class SearchService:
         strategy = self._select_glob_strategy(pattern, len(accessible_files))
 
         # Build full pattern
-        if not path.endswith("/"):
-            path = path + "/"
-        if path == "/":
+        if not pattern_path.endswith("/"):
+            pattern_path = pattern_path + "/"
+        if pattern_path == "/":
             full_pattern = pattern
             if self._should_prepend_recursive_wildcard(full_pattern):
                 full_pattern = "**/" + full_pattern
         else:
-            base_path = path[1:] if path.startswith("/") else path
+            base_path = pattern_path[1:] if pattern_path.startswith("/") else pattern_path
             # Strip leading "/" from pattern to avoid double-slash when
             # base_path already ends with "/" (e.g., zone-scoped paths).
             pattern_part = pattern.lstrip("/") if pattern.startswith("/") else pattern
@@ -1796,6 +1945,57 @@ class SearchService:
                 path_for_match = file_path[1:] if file_path.startswith("/") else file_path
                 if fnmatch.fnmatch(path_for_match, pattern_for_match):
                     matches.append(file_path)
+
+        if (
+            not matches
+            and _engine_zone_id is None
+            and isinstance(path, str)
+            and path.startswith("/zone/")
+        ):
+            from nexus.core.path_utils import split_zone_from_internal_path
+
+            explicit_zone, explicit_path = split_zone_from_internal_path(path)
+            if explicit_zone is not None:
+                candidate_bases = [path, explicit_path or "/"]
+                candidate_patterns: list[str] = []
+                for base in candidate_bases:
+                    base_for_pattern = base if base.endswith("/") else f"{base}/"
+                    if base_for_pattern == "/":
+                        candidate_patterns.append(pattern)
+                    else:
+                        base_part = (
+                            base_for_pattern[1:]
+                            if base_for_pattern.startswith("/")
+                            else base_for_pattern
+                        )
+                        candidate_patterns.append(base_part + pattern.lstrip("/"))
+
+                seen_fallback: set[str] = set()
+                for file_path in accessible_files:
+                    file_candidates = [file_path]
+                    file_zone, file_unscoped = split_zone_from_internal_path(file_path)
+                    if file_zone is not None:
+                        file_candidates.append(file_unscoped)
+                    else:
+                        file_candidates.append(f"/zone/{explicit_zone}{file_path}")
+
+                    for file_candidate in file_candidates:
+                        candidate = (
+                            file_candidate[1:] if file_candidate.startswith("/") else file_candidate
+                        )
+                        if any(
+                            fnmatch.fnmatch(
+                                candidate,
+                                fallback_pattern[1:]
+                                if fallback_pattern.startswith("/")
+                                else fallback_pattern,
+                            )
+                            for fallback_pattern in candidate_patterns
+                        ):
+                            if file_path not in seen_fallback:
+                                seen_fallback.add(file_path)
+                                matches.append(file_path)
+                            break
 
         logger.debug(
             f"[GLOB] {strategy.value}: matched {len(matches)}/{len(accessible_files)} files "
@@ -1913,6 +2113,7 @@ class SearchService:
         invert_match: bool = False,
         files: builtins.list[str] | None = None,
         block_type: str | None = None,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Public grep entry point with activity-event instrumentation (#3791).
 
@@ -1942,6 +2143,7 @@ class SearchService:
                 invert_match=invert_match,
                 files=files,
                 block_type=block_type,
+                section=section,
             )
         except Exception:
             emit(
@@ -1976,6 +2178,7 @@ class SearchService:
         invert_match: bool = False,
         files: builtins.list[str] | None = None,
         block_type: str | None = None,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""Search file contents using regex patterns.
 
@@ -2006,6 +2209,11 @@ class SearchService:
                 ``"table"``, ``"frontmatter"``.  Non-markdown files
                 (or markdown files without ``md_structure`` metadata)
                 pass through unfiltered.
+            section: #4186: optional markdown/parsed-content section
+                filter. Matches may be specified as heading text
+                (``"API"``) or a markdown heading (``"## API"``).
+                Files without ``md_structure`` metadata fail closed so
+                grep never falls back to whole-file results.
         """
         if path and path != "/":
             path = self._validate_path(path)
@@ -2016,6 +2224,8 @@ class SearchService:
                 f"Invalid block_type {block_type!r}. "
                 f"Valid values: {', '.join(sorted(VALID_BLOCK_TYPES))}"
             )
+        if section is not None and not section.strip():
+            raise ValueError("section must be a non-empty string")
 
         flags = re.IGNORECASE if ignore_case else 0
         try:
@@ -2023,11 +2233,13 @@ class SearchService:
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
-        # Issue #3720: over-fetch when block_type filtering will discard
-        # some matches.  The original max_results is restored after
-        # post-filtering so callers see the expected result count.
+        structural_filter = block_type is not None or section is not None
+
+        # Issue #3720/#4186: over-fetch when structural filtering will
+        # discard some matches.  The original max_results is restored
+        # after post-filtering so callers see the expected result count.
         original_max_results = max_results
-        if block_type is not None:
+        if structural_filter:
             max_results = min(
                 max_results * _BLOCK_TYPE_OVERFETCH_FACTOR,
                 max(max_results, _BLOCK_TYPE_OVERFETCH_CAP),
@@ -2091,11 +2303,11 @@ class SearchService:
         # threshold lives in ``FILES_FILTER_TRIGRAM_THRESHOLD`` and is
         # benchmark-backed.
         zone_id, _, _ = self._get_routing_params(context)
-        if block_type is not None:
-            # Issue #3720 (Codex R2+R5): block_type MUST use SEQUENTIAL
+        if structural_filter:
+            # Issue #3720/#4186: structural filters MUST use SEQUENTIAL
             # to ensure ALL files (cached + uncached) are searched.
             # CACHED_TEXT skips files_needing_raw; TRIGRAM/ZOEKT return
-            # a fixed page that may miss qualifying block matches.
+            # a fixed page that may miss qualifying structural matches.
             strategy = SearchStrategy.SEQUENTIAL
         elif needs_python_path:
             # Force a Python-loop strategy so context/invert flags take
@@ -2177,11 +2389,14 @@ class SearchService:
                     trigram_results = [
                         r for r in trigram_results if r.get("file") in _files_filter_set
                     ][:max_results]
-                # Issue #3720: apply block_type post-filter before returning.
+                # Issue #3720/#4186: apply structural post-filters before returning.
+                if section is not None:
+                    trigram_results = self._filter_results_by_section(trigram_results, section)
                 if block_type is not None:
                     trigram_results = self._filter_results_by_block_type(
                         trigram_results, block_type
                     )
+                if structural_filter:
                     return trigram_results[:original_max_results]
                 return trigram_results
             strategy = SearchStrategy.RUST_BULK  # Fallback
@@ -2197,9 +2412,12 @@ class SearchService:
                 context=context,
             )
             if zoekt_results is not None:
-                # Issue #3720: apply block_type post-filter before returning.
+                # Issue #3720/#4186: apply structural post-filters before returning.
+                if section is not None:
+                    zoekt_results = self._filter_results_by_section(zoekt_results, section)
                 if block_type is not None:
                     zoekt_results = self._filter_results_by_block_type(zoekt_results, block_type)
+                if structural_filter:
                     return zoekt_results[:original_max_results]
                 return zoekt_results
             strategy = SearchStrategy.RUST_BULK
@@ -2210,25 +2428,45 @@ class SearchService:
                 if len(results) >= max_results:
                     break
                 lines = text.splitlines()
-                results.extend(
-                    self._grep_lines(
-                        regex=regex,
-                        lines=lines,
-                        file_path=file_path,
-                        before_context=before_context,
-                        after_context=after_context,
-                        invert_match=invert_match,
-                        max_results=max_results - len(results),
+                if section is not None:
+                    section_info = self._section_range_and_meta(file_path, section)
+                    if section_info is None:
+                        continue
+                    range_start, range_end, section_meta = section_info
+                    results.extend(
+                        self._grep_lines_in_section(
+                            regex=regex,
+                            lines=lines,
+                            file_path=file_path,
+                            range_start=range_start,
+                            range_end=range_end,
+                            section_meta=section_meta,
+                            before_context=before_context,
+                            after_context=after_context,
+                            invert_match=invert_match,
+                            max_results=max_results - len(results),
+                        )
                     )
-                )
+                else:
+                    results.extend(
+                        self._grep_lines(
+                            regex=regex,
+                            lines=lines,
+                            file_path=file_path,
+                            before_context=before_context,
+                            after_context=after_context,
+                            invert_match=invert_match,
+                            max_results=max_results - len(results),
+                        )
+                    )
             if (
                 strategy == SearchStrategy.CACHED_TEXT
-                and block_type is None
+                and not structural_filter
                 and len(results) >= max_results
             ):
                 return results[:max_results]
 
-        if block_type is None and len(results) >= max_results:
+        if not structural_filter and len(results) >= max_results:
             return results[:max_results]
 
         # Process remaining files needing raw content
@@ -2257,13 +2495,17 @@ class SearchService:
                         before_context=before_context,
                         after_context=after_context,
                         invert_match=invert_match,
-                        force_python_path=needs_python_path,
+                        force_python_path=needs_python_path or structural_filter,
+                        section=section,
                     )
                 )
 
-        # Issue #3720: post-filter by block_type when requested.
+        # Issue #4186/#3720: post-filter by section/block_type when requested.
+        if section is not None:
+            results = self._filter_results_by_section(results, section)
         if block_type is not None:
             results = self._filter_results_by_block_type(results, block_type)
+        if structural_filter:
             max_results = original_max_results
 
         return results[:max_results]
@@ -2355,6 +2597,68 @@ class SearchService:
 
         return results
 
+    @staticmethod
+    def _grep_lines_in_section(
+        regex: re.Pattern[str],
+        lines: builtins.list[str],
+        file_path: str,
+        range_start: int,
+        range_end: int,
+        section_meta: dict[str, Any],
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+        max_results: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search only match lines inside a stored section line range."""
+        results: builtins.list[dict[str, Any]] = []
+        if max_results <= 0:
+            return results
+
+        start = max(0, min(range_start, len(lines)))
+        end = max(start, min(range_end, len(lines)))
+        for idx in range(start, end):
+            if len(results) >= max_results:
+                break
+
+            line = lines[idx]
+            match_obj = regex.search(line)
+            if invert_match:
+                if match_obj:
+                    continue
+                entry: dict[str, Any] = {
+                    "file": file_path,
+                    "line": idx + 1,
+                    "content": line,
+                    "section": section_meta,
+                }
+            else:
+                if match_obj is None:
+                    continue
+                entry = {
+                    "file": file_path,
+                    "line": idx + 1,
+                    "content": line,
+                    "match": match_obj.group(0),
+                    "section": section_meta,
+                }
+
+            if before_context > 0 or after_context > 0:
+                b_start = max(0, idx - before_context)
+                a_end = min(len(lines), idx + after_context + 1)
+                if before_context > 0:
+                    entry["before_context"] = [
+                        {"line": i + 1, "content": lines[i]} for i in range(b_start, idx)
+                    ]
+                if after_context > 0:
+                    entry["after_context"] = [
+                        {"line": i + 1, "content": lines[i]} for i in range(idx + 1, a_end)
+                    ]
+
+            results.append(entry)
+
+        return results
+
     def _filter_results_by_block_type(
         self,
         results: builtins.list[dict[str, Any]],
@@ -2371,9 +2675,6 @@ class SearchService:
         Works directly with the raw JSON dict to avoid cross-brick
         imports (``nexus.bricks.parsers`` is a separate brick).
         """
-        import json as _json
-
-        MD_STRUCTURE_KEY = "md_structure"  # noqa: N806
         _V2_BLOCK_TYPES = frozenset({"paragraph", "blockquote", "list", "heading"})
 
         # Group results by file so we fetch metadata once per file.
@@ -2390,22 +2691,14 @@ class SearchService:
                 filtered.extend(file_results)
                 continue
 
-            # Fetch md_structure metadata for this file.
-            raw = self._kernel.get_xattr(file_path, MD_STRUCTURE_KEY)
-            if raw is None:
+            data = self._load_md_structure_data(file_path)
+            if data is None:
                 # Issue #3720 (Codex R6): recognized markdown without
                 # metadata → fail closed.
                 logger.debug(
                     "No md_structure for %s — excluding results (fail closed)",
                     file_path,
                 )
-                continue
-
-            try:
-                data: dict[str, Any] = raw if isinstance(raw, dict) else _json.loads(raw)
-            except Exception:
-                # Issue #3720 (Codex R7): fail closed on corrupt metadata.
-                logger.debug("Corrupt md_structure for %s — excluding results", file_path)
                 continue
 
             # Issue #3720 (Codex R1+R2): v1 indices don't contain the
@@ -2456,6 +2749,148 @@ class SearchService:
 
         return filtered
 
+    def _load_md_structure_data(self, file_path: str) -> dict[str, Any] | None:
+        """Load stored md_structure xattr for a file.
+
+        Uses ``get_xattr`` — the single kernel API for extended attributes.
+        No fallback chain: if get_xattr is unavailable the file is excluded
+        (fail-closed).
+        """
+        getter = getattr(self._kernel, "get_xattr", None)
+        if not callable(getter):
+            return None
+        try:
+            raw = getter(file_path, "md_structure")
+        except Exception:
+            return None
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            return raw
+        import json as _json
+
+        try:
+            loaded = _json.loads(raw)
+        except Exception:
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    @staticmethod
+    def _normalize_section_query(section: str) -> tuple[str, int | None]:
+        stripped = section.strip()
+        match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if match:
+            return match.group(2).strip(), len(match.group(1))
+        return stripped, None
+
+    @classmethod
+    def _find_section_metadata(
+        cls,
+        data: dict[str, Any],
+        section: str,
+    ) -> dict[str, Any] | None:
+        heading_query, requested_depth = cls._normalize_section_query(section)
+        lower = heading_query.lower()
+
+        def _eligible(sec: dict[str, Any]) -> bool:
+            if requested_depth is not None and sec.get("depth") != requested_depth:
+                return False
+            return bool(sec.get("heading"))
+
+        sections = [sec for sec in data.get("sections", []) if _eligible(sec)]
+        for sec in sections:
+            if str(sec.get("heading", "")).lower() == lower:
+                return sec
+        for sec in sections:
+            if lower in str(sec.get("heading", "")).lower():
+                return sec
+        return None
+
+    def _section_range_and_meta(
+        self,
+        file_path: str,
+        section: str,
+    ) -> tuple[int, int, dict[str, Any]] | None:
+        data = self._load_md_structure_data(file_path)
+        if data is None:
+            logger.debug(
+                "No md_structure for %s - excluding section-filtered results",
+                file_path,
+            )
+            return None
+
+        matched_section = self._find_section_metadata(data, section)
+        if matched_section is None:
+            return None
+
+        try:
+            range_start = int(matched_section["line_start"])
+            range_end = int(matched_section["line_end"])
+        except (KeyError, TypeError, ValueError):
+            logger.debug(
+                "Malformed md_structure section for %s - excluding results",
+                file_path,
+            )
+            return None
+        if range_start < 0 or range_end < range_start:
+            logger.debug(
+                "Invalid md_structure section range for %s - excluding results",
+                file_path,
+            )
+            return None
+
+        section_meta = {
+            "heading": matched_section.get("heading", ""),
+            "depth": matched_section.get("depth"),
+            "line_start": range_start + 1,
+            "line_end": range_end,
+        }
+        return range_start, range_end, section_meta
+
+    def _filter_results_by_section(
+        self,
+        results: builtins.list[dict[str, Any]],
+        section: str,
+    ) -> builtins.list[dict[str, Any]]:
+        """Post-filter grep results to lines inside a heading-delimited section.
+
+        Issue #4186. Uses stored ``md_structure`` metadata and does not
+        parse file content during grep. Files with missing/corrupt
+        structure metadata fail closed to avoid whole-file fallback.
+        """
+        by_file: dict[str, builtins.list[dict[str, Any]]] = {}
+        for r in results:
+            by_file.setdefault(r.get("file", ""), []).append(r)
+
+        filtered: builtins.list[dict[str, Any]] = []
+        start = time.monotonic()
+
+        for file_path, file_results in by_file.items():
+            section_info = self._section_range_and_meta(file_path, section)
+            if section_info is None:
+                continue
+            range_start, range_end, section_meta = section_info
+
+            for r in file_results:
+                line_0 = r.get("line", 0) - 1
+                if range_start <= line_0 < range_end:
+                    out = dict(r)
+                    out["section"] = section_meta
+                    filtered.append(out)
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+        if elapsed_ms > 5:
+            logger.debug(
+                "[GREP] Issue #4186: section=%r filter took %.1f ms (%d→%d results, %d files)",
+                section,
+                elapsed_ms,
+                len(results),
+                len(filtered),
+                len(by_file),
+            )
+
+        return filtered
+
     async def _grep_raw_content(
         self,
         regex: re.Pattern[str],
@@ -2469,6 +2904,7 @@ class SearchService:
         after_context: int = 0,
         invert_match: bool = False,
         force_python_path: bool = False,
+        section: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Process files needing raw content read (mmap, Rust bulk, sequential).
 
@@ -2544,17 +2980,37 @@ class SearchService:
                     except UnicodeDecodeError:
                         continue
                     lines = text.splitlines()
-                    results.extend(
-                        self._grep_lines(
-                            regex=regex,
-                            lines=lines,
-                            file_path=file_path,
-                            before_context=before_context,
-                            after_context=after_context,
-                            invert_match=invert_match,
-                            max_results=remaining_results - len(results),
+                    if section is not None:
+                        section_info = self._section_range_and_meta(file_path, section)
+                        if section_info is None:
+                            continue
+                        range_start, range_end, section_meta = section_info
+                        results.extend(
+                            self._grep_lines_in_section(
+                                regex=regex,
+                                lines=lines,
+                                file_path=file_path,
+                                range_start=range_start,
+                                range_end=range_end,
+                                section_meta=section_meta,
+                                before_context=before_context,
+                                after_context=after_context,
+                                invert_match=invert_match,
+                                max_results=remaining_results - len(results),
+                            )
                         )
-                    )
+                    else:
+                        results.extend(
+                            self._grep_lines(
+                                regex=regex,
+                                lines=lines,
+                                file_path=file_path,
+                                before_context=before_context,
+                                after_context=after_context,
+                                invert_match=invert_match,
+                                max_results=remaining_results - len(results),
+                            )
+                        )
                 except Exception as e:
                     logger.debug("Failed to grep file %s: %s", file_path, e)
                     continue
@@ -3141,6 +3597,151 @@ class SearchService:
         stale_count = len(normalised) - len(visible)
         return visible, stale_count
 
+    def _filter_existing_search_paths(
+        self,
+        paths: builtins.list[str],
+        context: "OperationContext | None",
+    ) -> builtins.list[str]:
+        """Drop search hits whose file no longer exists in the VFS.
+
+        Search backends and SQL path rows can lag the authoritative kernel
+        namespace, especially around delete propagation. Result sets are small,
+        so check the namespace before permission checks instead of returning
+        stale hits while background cleanup catches up.
+        """
+        if not paths:
+            return paths
+
+        unique = list(dict.fromkeys(p for p in paths if p))
+        if not unique:
+            return []
+
+        candidates = unique
+        if self._record_store is not None:
+            try:
+                from sqlalchemy import select
+
+                from nexus.storage.models import FilePathModel
+
+                zone_id = getattr(context, "zone_id", None) if context is not None else None
+                stmt = select(FilePathModel.virtual_path).where(
+                    FilePathModel.virtual_path.in_(unique),
+                    FilePathModel.deleted_at.is_(None),
+                )
+                if zone_id:
+                    stmt = stmt.where(FilePathModel.zone_id == zone_id)
+
+                session = self._record_store.session_factory()
+                try:
+                    candidates = list(session.execute(stmt).scalars().all())
+                finally:
+                    session.close()
+            except Exception:
+                logger.debug("Search hit SQL existence filter failed", exc_info=True)
+
+        existing = self._filter_paths_existing_in_vfs(candidates, context)
+        if existing is None:
+            existing = set(candidates)
+
+        return [p for p in paths if p in existing]
+
+    def _filter_paths_existing_in_vfs(
+        self,
+        paths: builtins.list[str],
+        context: "OperationContext | None",
+    ) -> set[str] | None:
+        if self._nexus_fs is None:
+            return None
+
+        existing: set[str] = set()
+        for path in paths:
+            try:
+                stat = self._nexus_fs.sys_stat(path, context=context)
+            except TypeError:
+                stat = self._nexus_fs.sys_stat(path)
+            except Exception:
+                logger.debug("Search hit VFS existence check dropped %s", path, exc_info=True)
+                continue
+            if stat is not None:
+                existing.add(path)
+
+        return existing
+
+    def _filter_readable_search_paths(
+        self,
+        paths: builtins.list[str],
+        context: "OperationContext | None",
+    ) -> builtins.list[str]:
+        """Filter small search result sets by authoritative read access.
+
+        ``filter_list`` is optimized for list/glob/grep-scale workloads and may
+        use caches or bulk shortcuts. Search post-filtering only handles the
+        top few hits, so fall back to direct ``check`` for any paths the bulk
+        path denies. This preserves inherited directory grants without making
+        large tree scans slower.
+        """
+        if not paths:
+            return []
+
+        existing_paths = self._filter_existing_search_paths(paths, context)
+        if not self._enforce_permissions or self._permission_enforcer is None or context is None:
+            return existing_paths
+
+        unique = list(dict.fromkeys(p for p in existing_paths if p))
+        accessible: set[str] = set()
+
+        subject_type = "user"
+        subject_id = getattr(context, "user_id", None) or getattr(context, "subject_id", None)
+        with suppress(Exception):
+            subject_type, subject_id = context.get_subject()
+
+        search_filter = getattr(self._permission_enforcer, "filter_search_results", None)
+        if callable(search_filter) and subject_type == "user" and subject_id:
+            try:
+                accessible.update(
+                    search_filter(
+                        unique,
+                        user_id=subject_id,
+                        zone_id=getattr(context, "zone_id", None) or ROOT_ZONE_ID,
+                        is_admin=bool(getattr(context, "is_admin", False)),
+                    )
+                )
+            except Exception:
+                logger.debug("Search-specific permission filter failed", exc_info=True)
+
+        if not accessible:
+            try:
+                accessible.update(self._permission_enforcer.filter_list(unique, context))
+            except Exception:
+                logger.debug("Search permission filter_list failed", exc_info=True)
+
+        for path in unique:
+            if path in accessible:
+                continue
+            try:
+                if self._permission_enforcer.check(path, Permission.READ, context):
+                    accessible.add(path)
+            except Exception:
+                logger.debug("Search direct permission check denied %s", path, exc_info=True)
+
+        return [p for p in existing_paths if p in accessible]
+
+    def _filter_hit_dicts_by_read_permission(
+        self,
+        hits: builtins.list[dict[str, Any]],
+        context: "OperationContext | None",
+    ) -> builtins.list[dict[str, Any]]:
+        if not self._enforce_permissions or self._permission_enforcer is None or not hits:
+            return hits
+
+        readable = set(
+            self._filter_readable_search_paths(
+                [str(h.get("path", "")) for h in hits],
+                context,
+            )
+        )
+        return [h for h in hits if h.get("path", "") in readable]
+
     # =========================================================================
     # Semantic Search (inlined from SemanticSearchMixin, Issue #1287, #2075)
     # =========================================================================
@@ -3316,7 +3917,9 @@ class SearchService:
             from nexus.server.path_utils import unscope_internal_path as _unscope
 
             db_path = _unscope(path) if path != "/" else None
-            fetch_limit = limit * 3 if self._permission_enforcer else limit
+            fetch_limit = (
+                limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+            )
             results = await backend.search(
                 query=query,
                 limit=fetch_limit,
@@ -3352,10 +3955,8 @@ class SearchService:
                 entry["context"] = ctx_val
             hits.append(entry)
 
-        if self._permission_enforcer and hits and context is not None:
-            all_paths = [h["path"] for h in hits]
-            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-            hits = [h for h in hits if h["path"] in accessible]
+        if self._enforce_permissions and self._permission_enforcer and hits and context is not None:
+            hits = self._filter_hit_dicts_by_read_permission(hits, context)
 
         return hits[:limit] if hits else None
 
@@ -3411,7 +4012,7 @@ class SearchService:
         # Permission filtering happens after fusion, so account for that
         # too when an enforcer is active.
         per_lane_limit = limit * 3
-        if self._permission_enforcer:
+        if self._enforce_permissions and self._permission_enforcer:
             per_lane_limit = max(per_lane_limit, limit * 5)
 
         async def _vec_lane() -> builtins.list[Any]:
@@ -3446,40 +4047,49 @@ class SearchService:
             # a wired daemon — the daemon itself decides whether
             # BM25S, FTS, or txtai answers.
             daemon = getattr(self, "_search_daemon", None)
-            if daemon is None:
-                return []
-            try:
-                rows = await daemon.search(
-                    query=query,
-                    search_type="keyword",
-                    limit=per_lane_limit,
-                    path_filter=db_path,
-                    zone_id=zone_id,
+            if daemon is not None:
+                try:
+                    rows = await daemon.search(
+                        query=query,
+                        search_type="keyword",
+                        limit=per_lane_limit,
+                        path_filter=db_path,
+                        zone_id=zone_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[SearchService] SANDBOX hybrid: keyword lane failed (%s); "
+                        "falling back to SQL chunk keyword search",
+                        exc,
+                    )
+                else:
+                    out: builtins.list[dict[str, Any]] = []
+                    for r in rows:
+                        entry: dict[str, Any] = {
+                            "path": r.path,
+                            "chunk_text": getattr(r, "chunk_text", ""),
+                            "score": round(r.score, 4),
+                            "chunk_index": getattr(r, "chunk_index", 0),
+                            "start_offset": getattr(r, "start_offset", 0) or 0,
+                            "end_offset": getattr(r, "end_offset", 0) or 0,
+                            "line_start": getattr(r, "line_start", 0) or 0,
+                            "line_end": getattr(r, "line_end", 0) or 0,
+                        }
+                        ctx_val = getattr(r, "context", None)
+                        if ctx_val is not None:
+                            entry["context"] = ctx_val
+                        out.append(entry)
+                    if out:
+                        return out
+
+            if self._record_store is not None:
+                return await self._sql_chunk_search(
+                    query,
+                    path,
+                    per_lane_limit,
+                    context=context,
                 )
-            except Exception as exc:
-                logger.warning(
-                    "[SearchService] SANDBOX hybrid: keyword lane failed (%s); "
-                    "fusion will use vec-only",
-                    exc,
-                )
-                return []
-            out: builtins.list[dict[str, Any]] = []
-            for r in rows:
-                entry: dict[str, Any] = {
-                    "path": r.path,
-                    "chunk_text": getattr(r, "chunk_text", ""),
-                    "score": round(r.score, 4),
-                    "chunk_index": getattr(r, "chunk_index", 0),
-                    "start_offset": getattr(r, "start_offset", 0) or 0,
-                    "end_offset": getattr(r, "end_offset", 0) or 0,
-                    "line_start": getattr(r, "line_start", 0) or 0,
-                    "line_end": getattr(r, "line_end", 0) or 0,
-                }
-                ctx_val = getattr(r, "context", None)
-                if ctx_val is not None:
-                    entry["context"] = ctx_val
-                out.append(entry)
-            return out
+            return []
 
         vec_results, kw_results = await asyncio.gather(_vec_lane(), _kw_lane())
         if not vec_results and not kw_results:
@@ -3507,14 +4117,17 @@ class SearchService:
             keyword_results=kw_results,
             vector_results=vec_results,
             config=FusionConfig(method=FusionMethod.RRF),
-            limit=limit if not self._permission_enforcer else limit * 3,
+            limit=(limit * 3 if self._enforce_permissions and self._permission_enforcer else limit),
             id_key=None,  # use path:chunk_index — no chunk_id stamped here
         )
 
-        if self._permission_enforcer and fused and context is not None:
-            all_paths = [h.get("path", "") for h in fused]
-            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-            fused = [h for h in fused if h.get("path", "") in accessible]
+        if (
+            self._enforce_permissions
+            and self._permission_enforcer
+            and fused
+            and context is not None
+        ):
+            fused = self._filter_hit_dicts_by_read_permission(fused, context)
 
         # Codex review R2 (high): recompute degradation AFTER
         # permission filtering. If every fused row that originated in
@@ -3643,7 +4256,9 @@ class SearchService:
             # Prefer the daemon's keyword path (BM25S when available).
             daemon = getattr(self, "_search_daemon", None)
             if daemon is not None and getattr(daemon, "_backend", None) is not None:
-                fetch_limit = limit * 3 if self._permission_enforcer else limit
+                fetch_limit = (
+                    limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+                )
                 zone_id = getattr(context, "zone_id", None) if context else None
                 from nexus.server.path_utils import unscope_internal_path as _unscope
 
@@ -3672,10 +4287,13 @@ class SearchService:
                         entry["context"] = ctx_val
                     hits.append(entry)
 
-                if self._permission_enforcer and hits and context is not None:
-                    all_paths = [h["path"] for h in hits]
-                    accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-                    hits = [h for h in hits if h["path"] in accessible]
+                if (
+                    self._enforce_permissions
+                    and self._permission_enforcer
+                    and hits
+                    and context is not None
+                ):
+                    hits = self._filter_hit_dicts_by_read_permission(hits, context)
 
                 return hits[:limit]
 
@@ -3698,6 +4316,8 @@ class SearchService:
             if isinstance(r, dict):
                 if degraded:
                     r["semantic_degraded"] = True
+                    r.setdefault("keyword_score", r.get("score"))
+                    r.setdefault("vector_score", None)
                 out.append(r)
             else:
                 # _bm25s_call emits dicts; non-dict can come from a real
@@ -3706,6 +4326,8 @@ class SearchService:
                 entry: dict[str, Any] = {"path": getattr(r, "path", "")}
                 if degraded:
                     entry["semantic_degraded"] = True
+                    entry["keyword_score"] = getattr(r, "score", None)
+                    entry["vector_score"] = None
                 out.append(entry)
         return out
 
@@ -3836,7 +4458,9 @@ class SearchService:
         )
         if daemon is not None and (_has_legacy_backend or _has_new_backends):
             # Over-fetch to compensate for permission filtering
-            fetch_limit = limit * 3 if self._permission_enforcer else limit
+            fetch_limit = (
+                limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+            )
             zone_id = getattr(context, "zone_id", None) if context else None
             # RPC may scope paths as /zone/{id}/...; daemon stores unscoped.
             from nexus.server.path_utils import unscope_internal_path as _unscope
@@ -3870,10 +4494,13 @@ class SearchService:
                 hits.append(entry)
 
             # Filter by read permission — only return files the caller can access
-            if self._permission_enforcer and hits and context is not None:
-                all_paths = [h["path"] for h in hits]
-                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-                hits = [h for h in hits if h["path"] in accessible]
+            if (
+                self._enforce_permissions
+                and self._permission_enforcer
+                and hits
+                and context is not None
+            ):
+                hits = self._filter_hit_dicts_by_read_permission(hits, context)
 
             return hits[:limit]
 
@@ -3962,10 +4589,10 @@ class SearchService:
         }
         for i, kw in enumerate(keywords[:5]):  # max 5 keywords
             key = f"kw{i}"
-            conditions.append(f"dc.chunk_text ILIKE :{key}")
+            conditions.append(f"LOWER(dc.chunk_text) LIKE :{key}")
             bind_params[key] = f"%{kw}%"
 
-        where_clause = " OR ".join(conditions)
+        where_clause = "(" + " OR ".join(conditions) + ")"
         sql = sa_text(f"""
             SELECT dc.chunk_text, dc.chunk_index, dc.start_offset,
                    dc.end_offset, dc.line_start, dc.line_end,
@@ -3973,6 +4600,7 @@ class SearchService:
             FROM document_chunks dc
             JOIN file_paths fp ON dc.path_id = fp.path_id
             WHERE fp.virtual_path LIKE :path_prefix
+              AND fp.deleted_at IS NULL
               AND {where_clause}
             LIMIT :lim
         """)
@@ -3993,12 +4621,15 @@ class SearchService:
 
         hits = []
         for i, row in enumerate(rows):
+            score = round(1.0 - (i * 0.05), 4)
             hits.append(
                 {
                     "path": row.virtual_path if hasattr(row, "virtual_path") else row[6],
                     "chunk_index": row.chunk_index if hasattr(row, "chunk_index") else row[1],
                     "chunk_text": row.chunk_text if hasattr(row, "chunk_text") else row[0],
-                    "score": round(1.0 - (i * 0.05), 4),
+                    "score": score,
+                    "keyword_score": score,
+                    "vector_score": None,
                     "start_offset": row.start_offset if hasattr(row, "start_offset") else row[2],
                     "end_offset": row.end_offset if hasattr(row, "end_offset") else row[3],
                     "line_start": row.line_start if hasattr(row, "line_start") else row[4],
@@ -4010,7 +4641,7 @@ class SearchService:
         # Fail closed when permissions must be enforced but no valid context
         # was supplied — callers that can legitimately bypass (admin/internal)
         # use ``enforce_permissions=False`` at SearchService construction.
-        if self._permission_enforcer is not None and hits:
+        if self._enforce_permissions and self._permission_enforcer is not None and hits:
             if context is None:
                 if self._enforce_permissions:
                     logger.warning(
@@ -4019,9 +4650,7 @@ class SearchService:
                     )
                     return []
             else:
-                all_paths = [h["path"] for h in hits]
-                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-                hits = [h for h in hits if h["path"] in accessible]
+                hits = self._filter_hit_dicts_by_read_permission(hits, context)
         return hits
 
     @rpc_expose(description="Index documents for semantic search")

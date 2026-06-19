@@ -36,7 +36,14 @@ import json
 import logging
 from typing import Any
 
+from nexus.contracts.types import OperationContext
+
 logger = logging.getLogger(__name__)
+
+
+# Audit-node runs kernel-internally; bypass the permission gate but keep
+# OBSERVE/INTERCEPT pipeline intact.
+_AUDIT_CONTEXT = OperationContext(user_id="audit-node", groups=[], is_system=True)
 
 
 @dataclasses.dataclass
@@ -71,7 +78,10 @@ class AuditNode:
         batch_size: int = 256,
         poll_interval_secs: float = 1.0,
     ) -> None:
+        from nexus_runtime import PyOperationContext
+
         self._kernel = kernel
+        self._sys_ctx = PyOperationContext(is_system=True)
         self._audit_zone_id = audit_zone_id
         self._stream_path = stream_path
         self._batch_size = batch_size
@@ -95,11 +105,9 @@ class AuditNode:
         raft-replicated and doesn't need explicit registration on
         learners — but the kernel's ``stream_manager`` does).
         """
-        import nexus_runtime  # local import — keeps test envs working
-
         # 1. Create the audit-node's own central zone.
         try:
-            nexus_runtime.federation_create_zone(self._kernel, self._audit_zone_id)
+            self._kernel._call("federation_create_zone", {"zone_id": self._audit_zone_id})
             logger.info("[audit-node] created audit zone %r", self._audit_zone_id)
         except Exception as exc:  # pragma: no cover — race with operator
             # Idempotent: existing-zone errors are expected on restart.
@@ -113,7 +121,7 @@ class AuditNode:
         #    audit stream locally.
         for zone in production_zones:
             try:
-                nexus_runtime.federation_join_zone(self._kernel, zone, as_learner=True)
+                self._kernel._call("federation_join_zone", {"zone_id": zone, "as_learner": True})
                 logger.info("[audit-node] joined zone %r as learner", zone)
             except Exception as exc:
                 logger.warning(
@@ -123,7 +131,10 @@ class AuditNode:
                 )
                 continue
             try:
-                nexus_runtime.prepare_audit_stream_only(self._kernel, zone, self._stream_path)
+                self._kernel._call(
+                    "prepare_audit_stream_only",
+                    {"zone_id": zone, "stream_path": self._stream_path},
+                )
                 logger.info("[audit-node] registered audit stream for zone %r", zone)
             except Exception as exc:
                 logger.warning(
@@ -197,24 +208,31 @@ class AuditNode:
         ``checkpoint.offset`` and persists the new offset on success.
         """
         source_path = f"/{zone}{self._stream_path}".rstrip("/")
-        # ``stream_read_batch`` returns ``(entries, new_offset)``;
-        # record bytes are JSON-encoded ``AuditRecord`` blobs the
-        # producer wrote via ``AuditHook``.
-        entries, new_offset = self._kernel.stream_read_batch(
-            source_path,
-            checkpoint.offset,
-            self._batch_size,
-        )
+        # Drain up to ``batch_size`` DT_STREAM records via sys_read with
+        # offset chaining — each record is one ``AuditRecord`` JSON blob
+        # written by ``AuditHook``. sys_read dispatches DT_STREAM to the
+        # same StreamManager.read_at the primitive used, plus the
+        # INTERCEPT read hooks the primitive bypassed.
+        entries: list[bytes] = []
+        new_offset = checkpoint.offset
+        for _ in range(self._batch_size):
+            result = self._kernel.sys_read(
+                source_path, _AUDIT_CONTEXT, timeout_ms=0, offset=new_offset
+            )
+            if result.data is None:
+                break
+            entries.append(result.data)
+            new_offset = result.stream_next_offset
         if not entries:
             return 0
 
         target_path = self._collect_traces_path(zone)
         for raw in entries:
-            # ``stream_write_nowait`` is the append-only writer for
-            # DT_STREAM paths; returns the appended offset.  We don't
-            # care about the local offset on the audit-node — only
-            # the source-zone offset that we persist as a checkpoint.
-            self._kernel.stream_write_nowait(target_path, raw)
+            # ``sys_write`` routes to DT_STREAM append-only writer;
+            # returns SysWriteResult.  We don't care about the local
+            # offset on the audit-node — only the source-zone offset
+            # that we persist as a checkpoint.
+            self._kernel.sys_write(target_path, self._sys_ctx, raw)
 
         checkpoint.offset = new_offset
         self._write_offset(zone, new_offset)

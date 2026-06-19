@@ -49,6 +49,14 @@ def record_store():
             )
         )
         conn.commit()
+    # create_key validates the target zone exists and is Active (#3871);
+    # keys here use the default ROOT_ZONE_ID, so seed that zone.
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.storage.models.auth import ZoneModel
+
+    with store.session_factory() as session:
+        session.add(ZoneModel(zone_id=ROOT_ZONE_ID, name=ROOT_ZONE_ID, phase="Active"))
+        session.commit()
     yield store
     store.close()
 

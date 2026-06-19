@@ -140,7 +140,6 @@ class OAuthCredentialService:
 
         state = secrets.token_urlsafe(32)
         provider_instance = self._create_provider(provider, redirect_uri, scopes)
-        self._register_provider(provider_instance)
 
         return await self._get_authorization_url_with_pkce_support(
             provider_instance, provider, state
@@ -298,6 +297,8 @@ class OAuthCredentialService:
         from nexus.lib.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
+        if token_manager is None:
+            raise ValueError("OAuth credential store not configured")
         zone_id = get_zone_id(context)
 
         await self._check_credential_ownership(

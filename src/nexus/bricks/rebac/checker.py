@@ -180,6 +180,8 @@ class PermissionChecker:
                         if _z == _path_zone:
                             if _perm_char in _perms or "x" in _perms:
                                 _allowed = True
+                                if ctx.zone_id == ROOT_ZONE_ID:
+                                    return
                             else:
                                 raise PermissionError(
                                     f"Access denied: zone {_path_zone!r} is "

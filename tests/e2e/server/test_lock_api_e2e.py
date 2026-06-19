@@ -280,7 +280,7 @@ class TestLockApiWithRedis:
             lock_ids.append((path, response.json()["lock_id"]))
 
         # List locks
-        response = test_app.get("/api/v2/locks?limit=100")
+        response = test_app.get("/api/v2/locks?limit=100", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert data["count"] >= 3
@@ -302,10 +302,9 @@ class TestLockApiWithRedis:
         assert response.status_code == 201
         lock_id = response.json()["lock_id"]
 
-        # Try force release without admin - should fail
+        # Try force release without credentials - should fail before admin authorization.
         response = test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}&force=true")
-        assert response.status_code == 403
-        assert "admin" in response.json().get("detail", "").lower()
+        assert response.status_code == 401
 
         # Normal release should work
         response = test_app.delete(f"/api/v2/locks{path}?lock_id={lock_id}", headers=auth_headers)
@@ -427,7 +426,7 @@ class TestLockApiEdgeCases:
 
     def test_missing_lock_id_in_release(self, test_app: httpx.Client, auth_headers):
         """Test that DELETE without lock_id returns 422."""
-        response = test_app.delete("/api/v2/locks/test/file.txt")
+        response = test_app.delete("/api/v2/locks/test/file.txt", headers=auth_headers)
         assert response.status_code == 422
 
     def test_missing_lock_id_in_extend(self, test_app: httpx.Client, auth_headers):

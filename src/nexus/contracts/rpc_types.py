@@ -22,12 +22,13 @@ class RPCErrorCode(Enum):
     INVALID_PARAMS = -32602
     INTERNAL_ERROR = -32603
 
-    # Nexus-specific errors
-    FILE_NOT_FOUND = -32000
+    # Nexus-specific errors — values MUST match Rust RpcErrorCode (SSOT).
+    # See rust/transport/src/grpc.rs  RpcErrorCode enum.
+    FILE_NOT_FOUND = -32007
     FILE_EXISTS = -32001
-    INVALID_PATH = -32002
-    ACCESS_DENIED = -32003
-    PERMISSION_ERROR = -32004
+    INVALID_PATH = -32004
+    PERMISSION_ERROR = -32003
+    ACCESS_DENIED = -32018
     VALIDATION_ERROR = -32005
     CONFLICT = -32006  # Optimistic concurrency conflict
 

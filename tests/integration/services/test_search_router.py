@@ -5,6 +5,7 @@ for the search endpoint, including the federated=true parameter.
 """
 
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -50,8 +51,12 @@ class TestSearchQueryEndpoint:
         mock_daemon.is_initialized = True
         mock_daemon.get_health.return_value = {"status": "ok"}
         mock_daemon.get_stats.return_value = {"queries": 0}
+        mock_daemon.last_search_timing = {
+            "backend_ms": 12.34,
+            "rerank_ms": 0.0,
+        }
 
-        async def mock_search(**kwargs):
+        async def mock_search(**kwargs: Any) -> list[_MockResult]:
             return [
                 _MockResult(path="result.txt", chunk_text="found", score=0.9),
             ]
@@ -120,3 +125,60 @@ class TestSearchQueryEndpoint:
         assert "path" in result
         assert "chunk_text" in result
         assert "score" in result
+
+    def test_latency_breakdown_includes_backend_leg_timings(self, client: "TestClient") -> None:
+        app: Any = client.app
+        app.state.search_daemon.last_search_timing = {
+            "backend_ms": 42.567,
+            "embed_ms": 3.214,
+            "keyword_ms": 11.111,
+            "page_keyword_ms": 7.777,
+            "vector_ms": 19.999,
+            "fusion_ms": 1.005,
+            "rerank_ms": 0.0,
+        }
+
+        resp = client.get("/api/v2/search/query?q=hello")
+
+        assert resp.status_code == 200
+        breakdown = resp.json()["latency_breakdown"]
+        assert breakdown["backend_ms"] == 42.57
+        assert breakdown["embed_ms"] == 3.21
+        assert breakdown["keyword_ms"] == 11.11
+        assert breakdown["page_keyword_ms"] == 7.78
+        assert breakdown["vector_ms"] == 20.0
+        assert breakdown["fusion_ms"] == 1.0
+        assert breakdown["rerank_ms"] == 0.0
+
+    def test_latency_breakdown_prefers_result_timing_snapshot(self, client: "TestClient") -> None:
+        class _TimedResults(list[_MockResult]):
+            search_timing: dict[str, float]
+
+        timed_results = _TimedResults(
+            [_MockResult(path="snapshot.txt", chunk_text="snapshot", score=0.8)]
+        )
+        timed_results.search_timing = {
+            "backend_ms": 12.345,
+            "keyword_ms": 6.789,
+            "rerank_ms": 0.0,
+        }
+
+        app: Any = client.app
+        app.state.search_daemon.last_search_timing = {
+            "backend_ms": 999.0,
+            "keyword_ms": 999.0,
+            "rerank_ms": 999.0,
+        }
+
+        async def mock_search(**kwargs: Any) -> _TimedResults:
+            return timed_results
+
+        app.state.search_daemon.search = mock_search
+
+        resp = client.get("/api/v2/search/query?q=hello")
+
+        assert resp.status_code == 200
+        breakdown = resp.json()["latency_breakdown"]
+        assert breakdown["backend_ms"] == 12.35
+        assert breakdown["keyword_ms"] == 6.79
+        assert breakdown["rerank_ms"] == 0.0

@@ -19,8 +19,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# Default port assignments for Nexus services
-# NOTE: gRPC default must match grpc/server.py client default (2028).
+# Default port assignments for Nexus services.
+# NOTE: gRPC default (2028) must match the Rust VFS gRPC server in
+# ``rust/transport/src/grpc.rs`` and ``NEXUS_GRPC_PORT`` env honored by
+# nexusd / nexusd-cluster. Keep these three in sync.
 DEFAULT_PORTS: dict[str, int] = {
     "http": 2026,
     "grpc": 2028,

@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.engines.cas_gc import CASGarbageCollector
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
@@ -129,8 +128,9 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         # CDCEngine needs self (CASAddressingEngine internals) — wire after init
         self._cdc = CDCEngine(self)
 
-        # GC: metastore injected later via set_metastore() — not available at construction.
-        self._gc = CASGarbageCollector(self)
+        # GC moved out of the backend: CasGcService is a factory-gated
+        # BackgroundService enlisted in orchestrator._register_vfs_hooks when
+        # the root backend is CAS. Driver code no longer owns or wires it.
 
         # Volume compaction (Issue #3408): background scheduler.
         # Requires volume packing (BlobPackLocalTransport).
@@ -213,10 +213,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         if self._tiering_service is not None:
             asyncio.ensure_future(self._tiering_service.stop())
             logger.info("Cold tiering service scheduled to stop on unmount")
-
-    def set_metastore(self, metastore: Any) -> None:
-        """Inject metastore reference for GC reachability scan."""
-        self._gc.set_metastore(metastore)
 
     @property
     def name(self) -> str:

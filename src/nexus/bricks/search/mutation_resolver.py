@@ -7,7 +7,6 @@ and path lookup within a worker cycle.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import time
 from dataclasses import dataclass
@@ -20,6 +19,10 @@ from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutat
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
+
+# #4337: failure_detail flows into durable park records and WARNING logs;
+# bound it so a fat backend exception repr can't bloat either sink.
+FAILURE_DETAIL_MAX_CHARS = 512
 
 
 def _strip_null_bytes(value: str) -> str:
@@ -47,8 +50,9 @@ class ResolvedMutation:
       * ``content_resolved=True``  + ``content=""`` → confirmed empty;
         consumers should treat as a delete-shaped operation.
       * ``content_resolved=True``  + ``content=text`` → indexable.
-      * ``content_resolved=False``                → unresolved; consumers
-        MUST refuse to checkpoint (raise) so the next batch retries.
+      * ``content_resolved=False`` → unresolved; the #4337 parking gate in
+        SearchDaemon._resolve_mutations refuses to checkpoint (bounded
+        retries) or parks the event.
 
     DELETE events are always resolved (they don't need content).
     """
@@ -61,6 +65,12 @@ class ResolvedMutation:
     content: str | None = None
     path_id_resolved: bool = True
     content_resolved: bool = True
+    # #4337: when content_resolved=False, classify WHY so the parking gate
+    # can budget retries: "permanent" (every read raised FileNotFoundError —
+    # the path is gone) vs "transient" (no reader yet, non-NotFound error,
+    # backend outage). None when content_resolved=True.
+    failure_kind: str | None = None
+    failure_detail: str | None = None
 
 
 class MutationResolver:
@@ -132,7 +142,7 @@ class MutationResolver:
         path_id_map = await self._lookup_path_ids(
             lookup_candidates, include_deleted=include_deleted
         )
-        content_map = await self._lookup_content(events, unresolved_indices)
+        content_map, failure_map = await self._lookup_content(events, unresolved_indices)
 
         for idx in unresolved_indices:
             event = events[idx]
@@ -152,9 +162,18 @@ class MutationResolver:
             if event.op == SearchMutationOp.DELETE:
                 content_resolved = True
                 content_value: str | None = None
+                failure_kind: str | None = None
+                failure_detail: str | None = None
             else:
                 content_resolved = event.event_id in content_map
                 content_value = content_map.get(event.event_id)
+                if content_resolved:
+                    failure_kind = None
+                    failure_detail = None
+                else:
+                    failure_kind, failure_detail = failure_map.get(
+                        event.event_id, ("transient", "unresolved")
+                    )
             mutation = ResolvedMutation(
                 event=event,
                 zone_id=zone_id,
@@ -164,8 +183,14 @@ class MutationResolver:
                 content=content_value,
                 path_id_resolved=path_id_resolved,
                 content_resolved=content_resolved,
+                failure_kind=failure_kind,
+                failure_detail=failure_detail,
             )
-            self._cache[event.event_id] = (now, mutation)
+            # #4337: do NOT cache unresolved mutations. A cached miss would
+            # be served to every retry pass inside the TTL, making the
+            # gate's attempt budget count cache hits instead of real reads.
+            if mutation.content_resolved:
+                self._cache[event.event_id] = (now, mutation)
             resolved[idx] = mutation
 
         return [item for item in resolved if item is not None]
@@ -233,29 +258,35 @@ class MutationResolver:
         self,
         events: list[SearchMutationEvent],
         unresolved_indices: list[int],
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
         """Resolve UPSERT content for each unresolved event.
 
-        Codex review R10 #1 (high): the caller treats absence-from-map
-        as "couldn't resolve" (unresolved → consumer raises). An empty
-        string IS a valid resolution state and MUST be recorded.
-        Previously the ``if content:`` truthy filter dropped empty
-        strings on the floor, conflating them with read failures.
+        Returns ``(content_map, failure_map)``: an event_id present in
+        ``content_map`` is resolved (possibly to ``""`` — a valid state,
+        per Codex review R10 #1: empty string IS a valid resolution and
+        MUST be recorded so consumers don't conflate it with a read
+        failure); an event_id present in ``failure_map`` failed with
+        ``(failure_kind, failure_detail)``. The content_cache DB fallback
+        clears a read failure when it hits.
         """
         content_map: dict[str, str] = {}
+        failure_map: dict[str, tuple[str, str]] = {}
         update_events = [
             events[idx] for idx in unresolved_indices if events[idx].op.value == "upsert"
         ]
         if not update_events:
-            return content_map
+            return content_map, failure_map
 
         missing_events: list[SearchMutationEvent] = []
         for event in update_events:
-            content = await self._read_content(event.path, event.virtual_path)
+            content, kind, detail = await self._read_content(event.path, event.virtual_path)
             if isinstance(content, str):
-                # Resolved (could be empty string).
                 content_map[event.event_id] = _strip_null_bytes(content)
             else:
+                failure_map[event.event_id] = (
+                    kind or "transient",
+                    detail or "unknown read failure",
+                )
                 missing_events.append(event)
 
         if missing_events and self._async_session_factory is not None:
@@ -267,31 +298,49 @@ class MutationResolver:
                 content = db_content.get(self._path_key(event.zone_id, event.virtual_path))
                 if isinstance(content, str):
                     content_map[event.event_id] = _strip_null_bytes(content)
+                    failure_map.pop(event.event_id, None)
 
-        return content_map
+        return content_map, failure_map
 
-    async def _read_content(self, scoped_path: str, virtual_path: str) -> str | None:
-        """Return resolved content (possibly empty) or ``None`` on read failure.
+    async def _read_content(
+        self, scoped_path: str, virtual_path: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Return ``(content, failure_kind, failure_detail)``.
 
-        Codex review R10 #1 (high): an empty file is a valid read
-        outcome (caller distinguishes via isinstance) — only
-        exceptions / non-string returns map to ``None`` so the caller
-        can detect transient failures and retry instead of treating
-        them as truncations.
+        ``content`` is a str (possibly empty) on success. On failure it is
+        ``None`` and ``failure_kind`` classifies the failure (#4337):
+
+          * ``"permanent"`` — every attempted read raised
+            ``FileNotFoundError`` (incl. ``NexusFileNotFoundError``): the
+            path is gone as far as the reader is concerned.
+          * ``"transient"`` — anything else: no reader attached yet (the
+            server lifespan wires it post-boot), a non-string return, or a
+            non-NotFound exception (backend outage, timeout).
         """
         if self._file_reader is None:
-            return None
+            return None, "transient", "no file_reader attached"
 
-        try:
-            scoped_content = await self._file_reader.read_text(scoped_path)
-            if isinstance(scoped_content, str):
-                return scoped_content
-        except Exception:
-            with contextlib.suppress(OSError, ValueError, Exception):
-                virtual_content = await self._file_reader.read_text(virtual_path)
-                if isinstance(virtual_content, str):
-                    return virtual_content
-        return None
+        candidates = [scoped_path]
+        if virtual_path != scoped_path:
+            candidates.append(virtual_path)
+
+        failures: list[tuple[str, BaseException | str]] = []
+        for candidate in candidates:
+            try:
+                content = await self._file_reader.read_text(candidate)
+            except Exception as exc:
+                failures.append((candidate, exc))
+                continue
+            if isinstance(content, str):
+                return content, None, None
+            failures.append((candidate, f"non-string return {type(content).__name__!r}"))
+
+        permanent = all(isinstance(failure, FileNotFoundError) for _, failure in failures)
+        kind = "permanent" if permanent else "transient"
+        detail = "; ".join(f"{path}: {failure!r}" for path, failure in failures)
+        if len(detail) > FAILURE_DETAIL_MAX_CHARS:
+            detail = detail[:FAILURE_DETAIL_MAX_CHARS] + "…[truncated]"
+        return None, kind, detail
 
     async def _lookup_content_cache(
         self,

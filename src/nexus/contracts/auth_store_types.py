@@ -10,7 +10,7 @@ Issue #2436: Move auth/ to bricks/auth/ with Protocol DI.
 from dataclasses import dataclass
 from datetime import datetime
 
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.zone_phase import ZonePhase
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class ZoneDTO:
     name: str
     domain: str | None = None
     description: str | None = None
-    phase: str = "Active"
+    phase: str = ZonePhase.ACTIVE
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -108,30 +108,3 @@ class SystemSettingDTO:
     key: str
     value: str
     description: str | None = None
-
-
-@dataclass(frozen=True)
-class SessionDTO:
-    """Immutable user session data transfer object.
-
-    Replaces UserSessionModel (SQLAlchemy ORM) — sessions are ephemeral KV
-    with TTL, stored in CacheStore per data-storage-matrix.md Part 6.
-    """
-
-    session_id: str
-    user_id: str
-    agent_id: str | None = None
-    zone_id: str = ROOT_ZONE_ID
-    created_at: datetime | None = None
-    expires_at: datetime | None = None
-    last_activity: datetime | None = None
-    ip_address: str | None = None
-    user_agent: str | None = None
-
-    def is_expired(self) -> bool:
-        """Check if session has expired."""
-        if self.expires_at is None:
-            return False
-        from datetime import UTC
-
-        return datetime.now(UTC) > self.expires_at

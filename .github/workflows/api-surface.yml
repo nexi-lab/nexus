@@ -4,9 +4,6 @@ on:
   pull_request:
     branches: [main, develop]
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 permissions:
   contents: read
   pull-requests: write
@@ -14,6 +11,10 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Required for third-party PyO3 sdist builds (e.g. pdf-inspector).
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   api-surface-check:
@@ -158,3 +159,93 @@ jobs:
 
             If this change is intentional, update the API surface baseline.`
             });
+
+  surface-matrix-check:
+    name: Enforce API/RPC Surface Matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect surface-matrix changes
+        id: surface-filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            surface:
+              - '.github/workflows/api-surface.yml'
+              - 'Cargo.*'
+              - 'docs/surface-coverage/**'
+              - 'docs/benchmarks/**'
+              - 'pyproject.toml'
+              - 'rust/**'
+              - 'scripts/gen_api_surface_coverage.py'
+              - 'scripts/render_api_surface_coverage.py'
+              - 'scripts/surface_coverage/**'
+              - 'scripts/validate_api_surface_coverage.py'
+              - 'src/nexus/**'
+              - 'tests/**'
+              - 'uv.lock'
+
+      - name: Skip when no surface-matrix changes
+        if: steps.surface-filter.outputs.surface != 'true'
+        run: |
+          echo "No API/RPC surface-matrix changes detected — skipping matrix enforcement."
+
+      - name: Set up Python
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: uv venv --python 3.14
+
+      - name: Install dependencies
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: uv pip install -e ".[dev,test]"
+
+      # nexusd-cluster binary SSOT is now nexus-vfs (#4259).
+      # Install from git for runtime discovery in surface matrix tests.
+      - name: Set up Rust toolchain
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache nexus-cluster install
+        if: steps.surface-filter.outputs.surface == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: api-rpc-surface-matrix
+
+      - name: Install nexusd-cluster from nexus-vfs (pinned rev)
+        if: steps.surface-filter.outputs.surface == 'true'
+        # Same rev the repo ships (Cargo.toml pins == Dockerfile ARGs,
+        # enforced by the test.yml preflight). Unpinned installs track
+        # nexus-vfs HEAD and drift from the shipped kernel (#4343).
+        # --locked honors the source tree's Cargo.lock.
+        run: |
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
+          if [ -z "$REV" ]; then
+            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+            exit 1
+          fi
+          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+
+      - name: Validate API/RPC surface matrix
+        if: steps.surface-filter.outputs.surface == 'true'
+        run: |
+          uv run --no-sync python scripts/validate_api_surface_coverage.py --coverage docs/surface-coverage/api-rpc-surface-coverage.yaml
+          uv run --no-sync python -m pytest \
+            tests/surface_coverage/test_inventory.py \
+            tests/surface_coverage/test_validate.py \
+            tests/surface_coverage/test_runtime_discovery.py \
+            tests/surface_coverage/test_gap_backlog.py \
+            tests/surface_coverage/test_merge.py \
+            -v

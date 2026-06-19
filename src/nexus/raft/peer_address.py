@@ -3,17 +3,23 @@
 Derives deterministic node IDs from hostnames using SHA-256, eliminating
 the need for manually assigned NEXUS_NODE_ID environment variables.
 
-The SSOT algorithm lives in Rust (``nexus_runtime.hostname_to_node_id``,
-``rust/raft/src/transport/mod.rs``); this module re-exports it so
-Python callers keep their existing import path.
+The algorithm (SHA-256 hostname -> u64) is implemented in pure Python
+here and identically in Rust (``rust/raft/src/transport/mod.rs``).
 """
 
 from __future__ import annotations
 
+import hashlib
 import socket
+import struct
 from dataclasses import dataclass
 
-from nexus_runtime import hostname_to_node_id as _rust_hostname_to_node_id
+
+def _rust_hostname_to_node_id(hostname: str) -> int:
+    """SHA-256 hostname -> u64 deterministic node ID (pure Python reimpl)."""
+    digest = hashlib.sha256(hostname.encode()).digest()
+    node_id: int = struct.unpack("<Q", digest[:8])[0]
+    return node_id
 
 
 def hostname_to_node_id(hostname: str) -> int:

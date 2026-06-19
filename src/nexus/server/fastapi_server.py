@@ -71,10 +71,55 @@ logger = logging.getLogger(__name__)
 # Module-level limiter instance; initialized in create_app().
 limiter: Limiter
 
+DISCOVERABLE_RPC_SERVICE_NAMES: tuple[str, ...] = (
+    "mcp",
+    "oauth",
+    "mount",
+    "search",
+    "share_link",
+    "rebac",
+)
+
 
 def _rate_limit_enabled_from_env() -> bool:
     """Return whether HTTP rate limiting was explicitly enabled."""
     return os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def _pay_rpc_credits_config() -> tuple[bool, str, int]:
+    """Resolve Pay RPC CreditsService settings using the REST pay autodetection policy."""
+    import importlib.util
+    import socket
+
+    tb_address = os.environ.get("TIGERBEETLE_ADDRESS", "127.0.0.1:3000")
+    tb_cluster = int(os.environ.get("TIGERBEETLE_CLUSTER_ID", "0"))
+    tigerbeetle_available = importlib.util.find_spec("tigerbeetle") is not None
+
+    if not tigerbeetle_available:
+        return False, tb_address, tb_cluster
+
+    if os.environ.get("NEXUS_PAY_ENABLED", "").lower() in {"1", "true", "yes"}:
+        return True, tb_address, tb_cluster
+
+    # Probe well-known TigerBeetle hostnames with a short timeout.
+    # Total worst-case: len(hostnames) * 0.3s = ~0.9s (not 3s+).
+    _PROBE_TIMEOUT = 0.3
+    for hostname in ("nexus-tigerbeetle", "tigerbeetle", "127.0.0.1"):
+        try:
+            ip = socket.gethostbyname(hostname) if hostname != "127.0.0.1" else hostname
+            conn = socket.create_connection((ip, 3000), timeout=_PROBE_TIMEOUT)
+            conn.close()
+            return True, f"{ip}:3000", tb_cluster
+        except Exception:
+            continue
+
+    return False, tb_address, tb_cluster
+
+
+def _pay_rpc_credits_enabled() -> bool:
+    """Return whether Pay RPC should use a real TigerBeetle-backed CreditsService."""
+    enabled, _address, _cluster = _pay_rpc_credits_config()
+    return enabled
 
 
 # ============================================================================
@@ -385,7 +430,6 @@ def create_app(
 
     app.state.rebac_manager = _resolve_service("rebac_manager", "_rebac_manager")
     app.state.entity_registry = _resolve_service("entity_registry", "_entity_registry")
-    app.state.namespace_manager = _resolve_service("namespace_manager", "_namespace_manager")
 
     # Thread pool and timeout settings (Issue #932, #2071)
     _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)
@@ -400,14 +444,7 @@ def create_app(
     # Services with @rpc_expose override kernel stubs (later sources win).
     if nexus_fs is not None:
         _rpc_sources: list[Any] = []
-        for _svc_name in (
-            "mcp",
-            "oauth",
-            "mount",
-            "search",
-            "share_link",
-            "rebac",
-        ):
+        for _svc_name in DISCOVERABLE_RPC_SERVICE_NAMES:
             _brick_svc = nexus_fs.service(_svc_name)
             if _brick_svc is not None:
                 _rpc_sources.append(_brick_svc)
@@ -418,10 +455,6 @@ def create_app(
         _agent_rpc = nexus_fs.service("agent_rpc")
         if _agent_rpc is not None:
             _rpc_sources.append(_agent_rpc)
-        # WorkspaceRPCService
-        _workspace_rpc = nexus_fs.service("workspace_rpc")
-        if _workspace_rpc is not None:
-            _rpc_sources.append(_workspace_rpc)
         # AcpRPCService is owned by the Rust kernel (commit 22 cutover);
         # the gRPC Call handler routes acp_* methods through Rust dispatch.
         # Issue #841: MetadataExportService lives outside kernel
@@ -455,7 +488,16 @@ def create_app(
             from nexus.bricks.pay import CreditsService
             from nexus.server.rpc.services.pay_rpc import PayRPCService
 
-            _rpc_sources.append(PayRPCService(CreditsService()))
+            pay_enabled, tb_address, tb_cluster = _pay_rpc_credits_config()
+            _rpc_sources.append(
+                PayRPCService(
+                    CreditsService(
+                        tigerbeetle_address=tb_address,
+                        cluster_id=tb_cluster,
+                        enabled=pay_enabled,
+                    )
+                )
+            )
         except Exception as _exc:
             logger.debug("PayRPCService unavailable: %s", _exc)
         # --- Audit (Issue #1133) ---
@@ -527,10 +569,6 @@ def create_app(
                 webhook_timeout=app.state.profile_tuning.network.webhook_timeout,
             )
             set_subscription_manager(app.state.subscription_manager)
-            # Issue #625: Forward subscription_manager to workflow dispatch service
-            wds = getattr(app.state, "workflow_dispatch", None)
-            if wds is not None and hasattr(wds, "set_subscription_manager"):
-                wds.set_subscription_manager(app.state.subscription_manager)
             # Issue #914: Inject getter into delivery worker (fixes services→server import)
             from nexus.server.subscriptions import get_subscription_manager
 
@@ -968,97 +1006,9 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import secrets audit router: {e}")
 
-    # Secrets store endpoints (general-purpose secret storage with versioning)
-    try:
-        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
-        from nexus.bricks.secrets.service import SecretsService
-        from nexus.server.api.v2.routers.secrets import (
-            get_secrets_service as _secrets_service_dep,
-        )
-        from nexus.server.api.v2.routers.secrets import (
-            router as secrets_router,
-        )
-        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
-
-        _secrets_service_instance: SecretsService | None = None
-
-        def _get_secrets_service_override() -> SecretsService:
-            nonlocal _secrets_service_instance
-            if _secrets_service_instance is None:
-                _sa_rs = getattr(app.state, "record_store", None)
-                if _sa_rs is None:
-                    raise HTTPException(status_code=500, detail="Secrets service not configured")
-
-                # Persist OAuth encryption key in the record_store (SQL) —
-                # the services-tier SSOT for application-level settings.
-                # Pre-R20.18.5 this went through a second Kernel() instance
-                # + RustMetastoreProxy pointing at ~/.nexus/metastore.redb,
-                # which mixed filesystem-metastore tier with app-level
-                # settings and was the root cause of the silent OAuth-key
-                # data-loss on upgrade (the redb filename changed between
-                # versions with no migration path).
-                from nexus.storage.auth_stores.legacy_oauth_key_migration import (
-                    migrate_legacy_oauth_key,
-                )
-                from nexus.storage.auth_stores.sqlalchemy_system_settings_store import (
-                    SQLAlchemySystemSettingsStore,
-                )
-
-                _settings_store = SQLAlchemySystemSettingsStore(_sa_rs.session_factory)
-                # One-shot upgrade path: copy OAuth key from a legacy
-                # ~/.nexus/metastore[.redb] file into SQL if present. Idempotent;
-                # no-ops once SQL already has the key.
-                # Pass the main NexusFS metastore so migration reuses the
-                # Kernel's existing redb connection instead of creating a
-                # second Kernel() that would hit the exclusive file lock.
-                _nx_fs = getattr(app.state, "nexus_fs", None)
-                _existing_metastore = getattr(_nx_fs, "metadata", None) if _nx_fs else None
-                migrate_legacy_oauth_key(
-                    _settings_store,
-                    existing_metastore=_existing_metastore,
-                )
-                _oauth_crypto = OAuthCrypto(settings_store=_settings_store)
-                _audit_logger = SecretsAuditLogger(record_store=_sa_rs)
-                _secrets_service_instance = SecretsService(
-                    record_store=_sa_rs,
-                    oauth_crypto=_oauth_crypto,
-                    audit_logger=_audit_logger,
-                )
-            return _secrets_service_instance
-
-        app.dependency_overrides[_secrets_service_dep] = _get_secrets_service_override
-        app.include_router(secrets_router)
-        logger.info("Secrets store routes registered")
-
-        # Password vault endpoints (domain wrapper over SecretsService).
-        # Nested inside the secrets try so the _get_secrets_service_override
-        # closure is guaranteed to exist when we build the vault singleton.
-        try:
-            from nexus.server.api.v2.routers.password_vault import (
-                get_password_vault_service as _pv_service_dep,
-            )
-            from nexus.server.api.v2.routers.password_vault import (
-                router as password_vault_router,
-            )
-            from nexus.services.password_vault.service import PasswordVaultService
-
-            _password_vault_instance: PasswordVaultService | None = None
-
-            def _get_password_vault_override() -> PasswordVaultService:
-                nonlocal _password_vault_instance
-                if _password_vault_instance is None:
-                    _password_vault_instance = PasswordVaultService(
-                        secrets_service=_get_secrets_service_override(),
-                    )
-                return _password_vault_instance
-
-            app.dependency_overrides[_pv_service_dep] = _get_password_vault_override
-            app.include_router(password_vault_router)
-            logger.info("Password vault routes registered")
-        except ImportError as e:
-            logger.warning(f"Failed to import password vault router: {e}")
-    except ImportError as e:
-        logger.warning(f"Failed to import secrets router: {e}")
+    # SecretsService + PasswordVaultService HTTP routes removed.
+    # Both services are now handled by the Rust vault plugin via gRPC
+    # (password-vault.secret_* dispatch). See nexus#4326.
 
     # ---- /v1 (nexus-bot daemon, #3804) ----
     # Daemon enroll/refresh + auth-profiles routers — gated on JWT signing key
@@ -1092,7 +1042,12 @@ def _register_routes(app: FastAPI) -> None:
                 # must degrade gracefully to "daemon routes disabled" rather than take
                 # the whole API server down during startup.
                 try:
-                    _v1_engine = create_engine(_database_url, future=True)
+                    # Issue #4238: defense in depth — already normalized by
+                    # daemon main + load_config validator, but app.state may
+                    # be set from other entrypoints (e.g. embedding callers).
+                    from nexus.core.db_utils import normalize_database_url
+
+                    _v1_engine = create_engine(normalize_database_url(_database_url), future=True)
                     # Idempotent: creates tenants / principals / auth_profiles /
                     # daemon_machines / auth_profile_reads / RLS policies if absent.
                     # Without this a fresh stack returns 500 ProgrammingError on the

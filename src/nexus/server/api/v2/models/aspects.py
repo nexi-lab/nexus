@@ -97,3 +97,20 @@ class ReindexResponse(ApiModel):
     errors: int = 0
     last_sequence: int = 0
     dry_run: bool = False
+    # Issue #4241: surface that the search-daemon refresh was *enqueued*
+    # for these paths. Round-1 review (codex finding MEDIUM): the consumer
+    # loop drains asynchronously, so a non-zero count means "queued", not
+    # "completed". Operators who need a hard barrier should poll
+    # /api/v2/search/stats for ``last_index_refresh`` advancing past
+    # ``search_refresh_enqueued_at``, or sleep until BM25 returns the
+    # expected hits before declaring success.
+    search_paths_enqueued: int = 0
+    search_refresh_enqueued_at: float | None = None
+    # Round-4 review (codex MEDIUM): explicit signal when one or more
+    # enqueue calls failed (backend down, queue full, etc.). Without
+    # this, a partial failure returned processed=N, errors=0, and only
+    # a lower enqueued count — operators could miss that part of the
+    # replay never reached the search index. ``failed_paths`` is
+    # capped at 25 entries to bound response size.
+    search_enqueue_errors: int = 0
+    search_enqueue_failed_paths: list[str] = []

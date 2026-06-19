@@ -409,7 +409,7 @@ def _list_zones(nexus_fs: Any) -> list[str]:
         if kernel is not None:
             return [
                 p.rstrip("/").rsplit("/", 1)[-1]
-                for p, _etype in kernel.readdir("/__sys__/zones/", "root")
+                for p, _etype in kernel.sys_readdir("/__sys__/zones/", "root")
             ]
     except Exception:
         pass

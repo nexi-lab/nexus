@@ -132,7 +132,7 @@ def test_create_subscription_runs_in_auth_zone_runner() -> None:
     with TestClient(app) as client:
         response = client.post(
             "/api/v2/subscriptions",
-            json={"event_types": ["file_write"], "url": "https://example.com/hook"},
+            json={"event_types": ["file_write"], "url": "https://1.1.1.1/hook"},
         )
 
     assert response.status_code == 201

@@ -57,6 +57,13 @@ def _make_enforcer(permitted_paths: list[str]) -> MagicMock:
         return [p for p in paths if p in permitted_paths]
 
     enforcer.filter_search_results = MagicMock(side_effect=_filter)
+    enforcer.filter_list.side_effect = lambda paths, _context: enforcer.filter_search_results(
+        paths,
+        user_id="test-user",
+        zone_id=ROOT_ZONE_ID,
+        is_admin=False,
+    )
+    enforcer.check.return_value = False
     return enforcer
 
 

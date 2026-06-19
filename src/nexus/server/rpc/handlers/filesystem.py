@@ -19,6 +19,15 @@ from nexus.server.path_utils import (
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
+
+def _section_response_meta(section: str, results: list[Any]) -> dict[str, str]:
+    """Build section filter metadata for grep responses (SSOT helper)."""
+    return {
+        "section_filter": section,
+        "section_status": "matched" if results else "no_matches",
+    }
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +51,21 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for glob"
     matches = search.glob(params.pattern, **kwargs)
+    if (
+        not matches
+        and getattr(params, "path", None)
+        and isinstance(params.path, str)
+        and not params.pattern.startswith("/")
+    ):
+        # Some full-profile RPC requests list scoped paths successfully but
+        # match relative globs against the root namespace. Retry with the
+        # caller's base path folded into the pattern, which is equivalent to
+        # POSIX glob(path / pattern) and keeps the response unscoped below.
+        retry_kwargs: dict[str, Any] = {"path": "/", "context": context}
+        if hasattr(params, "files") and params.files is not None:
+            retry_kwargs["files"] = params.files
+        scoped_pattern = f"{params.path.rstrip('/')}/{params.pattern.lstrip('/')}"
+        matches = search.glob(scoped_pattern, **retry_kwargs)
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
@@ -74,12 +98,20 @@ async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     # way through to SearchService.
     if hasattr(params, "files") and params.files is not None:
         kwargs["files"] = params.files
+    if hasattr(params, "block_type") and params.block_type is not None:
+        kwargs["block_type"] = params.block_type
+    if hasattr(params, "section") and params.section is not None:
+        kwargs["section"] = params.section
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for grep"
     results = await search.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
-    return {"results": results}
+    response: dict[str, Any] = {"results": results}
+    section = getattr(params, "section", None)
+    if section is not None:
+        response.update(_section_response_meta(section, results))
+    return response
 
 
 def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:

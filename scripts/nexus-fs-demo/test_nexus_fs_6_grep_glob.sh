@@ -262,7 +262,7 @@ async def main():
     fs = await nexus.fs.mount(*uris, mount_overrides=overrides or None, skip_unavailable=True)
 
     # Collect file contents from projects backend for benchmarking
-    entries = await fs._kernel.sys_readdir(
+    entries = fs._kernel.sys_readdir(
         "/local/nexus-fs-demo-projects/", recursive=True, details=True,
         context=_SLIM_CONTEXT,
     )
@@ -273,7 +273,7 @@ async def main():
     file_contents = {}
     for fp in file_paths:
         try:
-            file_contents[fp] = await fs._kernel.sys_read(fp, context=_SLIM_CONTEXT)
+            file_contents[fp] = fs._kernel.sys_read(fp, context=_SLIM_CONTEXT)
         except Exception:
             pass
     all_paths = list(file_contents.keys())

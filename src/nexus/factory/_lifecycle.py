@@ -1,9 +1,31 @@
-"""NexusFS lifecycle implementations — _wire_services() / _initialize_services().
+"""NexusFS lifecycle — _wire_services() and _initialize_services().
 
-These factory-layer functions are called directly by create_nexus_fs()
-in the orchestrator, keeping the kernel free of factory/bricks imports.
+Called by ``orchestrator.create_nexus_fs()`` after the Rust kernel
+subprocess is up and the gRPC channel is live.  Separated from the
+orchestrator so that kernel code never imports factory/bricks modules.
 
-Linearized in PR #3371 Phase 2: partial injection eliminated.
+Two phases (see orchestrator.py module docstring for the full 4-phase
+boot sequence):
+
+    _wire_services(nx, ...)  →  _InitContext
+        Phase 2.  Pure memory, no I/O.  Constructs ParsersBrick and
+        CacheBrick, boots post-kernel wired services (those that need an
+        NexusFS reference), enlists them into ServiceRegistry, and creates
+        the PermissionChecker.  Returns an ``_InitContext`` dataclass that
+        captures all factory-phase locals needed by the next phase.
+
+    _initialize_services(nx, ctx)
+        Phase 3.  One-time side effects — VFS hook registration (INTERCEPT
+        + OBSERVE hooks via KernelDispatch), BLM brick registration.
+        No background threads — those are started later by
+        ``NexusFS.bootstrap()`` which calls ``BackgroundService.start()``
+        on each registered service in dependency order.
+
+Service lifecycle protocols:
+
+    BackgroundService   start() / stop() — auto-managed by ServiceRegistry
+    duck-typed hook_spec()  → HookSpec — auto-registered at enlist() time
+    swap_service()      unified path: refcount drain → unhook → replace → rehook
 """
 
 import dataclasses
@@ -26,6 +48,9 @@ class _InitContext:
     svc_on: Callable[[str], bool]
     parse_fn: Any
     permission_checker: Any
+    # Root backend handed to create_nexus_fs — needed by _register_vfs_hooks
+    # to decide whether to enlist CasGcService (only for CAS root backends).
+    backend: Any = None
 
 
 def _wire_services(
@@ -38,6 +63,7 @@ def _wire_services(
     workflow_engine: Any = None,
     federation: Any = None,
     security: Any = None,
+    backend: Any = None,
 ) -> _InitContext:
     """Phase 1: wire service topology.  Pure memory — NO I/O.
 
@@ -137,6 +163,12 @@ def _wire_services(
     if _upload_svc is not None and hasattr(_upload_svc, "attach_filesystem"):
         _upload_svc.attach_filesystem(nx)
 
+    # ManifestResolver executors that resolve sources via the §2.5 syscall
+    # surface receive the NexusFS handle now that the kernel tier exists.
+    _manifest_resolver = _svc.get("manifest_resolver")
+    if _manifest_resolver is not None and hasattr(_manifest_resolver, "attach_filesystem"):
+        _manifest_resolver.attach_filesystem(nx)
+
     # R20.18.5: federation is kernel-internal now. The federation
     # parameter is vestigial (always None post-cutover). Kernel::new()
     # reads env vars and bootstraps raft::ZoneManager in Rust. DLC
@@ -148,7 +180,11 @@ def _wire_services(
     # Services that need cleanup at close() register callbacks here.
     # Callbacks run BEFORE pillar
     # close (metadata_store, record_store) to ensure DB connections are still open.
+    # Write observer publishes /__sys__/versioning/ snapshot entries via
+    # sys_setattr, so it needs the kernel-tier NexusFS handle.
     _wo = _svc.get("write_observer")
+    if _wo is not None and hasattr(_wo, "attach_filesystem"):
+        _wo.attach_filesystem(nx)
     if _wo is not None and hasattr(_wo, "flush_sync"):
 
         def _close_write_observer() -> None:
@@ -201,6 +237,7 @@ def _wire_services(
         svc_on=svc_on,
         parse_fn=_parse_fn,
         permission_checker=_permission_checker,
+        backend=backend,
     )
 
 
@@ -234,12 +271,13 @@ def _initialize_services(
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
         svc_on=ctx.svc_on,
         parse_fn=ctx.parse_fn,
+        backend=ctx.backend,
     )
 
-    # Background services (DeferredPermissionBuffer, EventDeliveryWorker,
-    # ZoneLifecycleService) implement BackgroundService and are auto-started
-    # by the coordinator's start_background_services() at bootstrap.
-    # No manual _bootstrap_callbacks needed.
+    # Background services (DeferredPermissionBuffer, EventDeliveryWorker)
+    # implement BackgroundService and are auto-started by the coordinator's
+    # start_background_services() at bootstrap.  No manual
+    # _bootstrap_callbacks needed.
 
 
 # Backward compatibility aliases

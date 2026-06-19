@@ -17,11 +17,14 @@ from nexus.bricks.auth.constants import (
     get_hmac_secret,
 )
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
+from nexus.contracts.zone_phase import ZonePhase
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+VALID_SUBJECT_TYPES = ["user", "agent", "service"]
 
 
 class DatabaseAPIKeyAuth(AuthProvider):
@@ -152,7 +155,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             # unmigrated row) — treat it as inactive.
             for zid in [z for z, _ in zone_perm_rows]:
                 zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid))
-                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+                if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
                     logger.warning(
                         "UNAUTHORIZED: API key %s zone %r is not active "
                         "(zone_row=%r, phase=%s, deleted_at=%s)",
@@ -265,6 +268,60 @@ class DatabaseAPIKeyAuth(AuthProvider):
         return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod
+    def validate_key_params(
+        cls,
+        session: Session,
+        *,
+        zone_id: str | None,
+        is_admin: bool,
+        subject_type: str = "user",
+    ) -> None:
+        """Validate subject/zone constraints for key issuance.
+
+        Raises ValueError when the subject_type is outside the allow-list,
+        when the request is for a zoneless non-admin key (#3871 round 4),
+        or when the target zone is missing, not Active, or soft-deleted
+        (#3871 rounds 3+6). Surfaces a controlled ValueError instead
+        of (a) an opaque IntegrityError from the junction FK constraint or
+        (b) a returned raw key that the lifecycle gate immediately rejects
+        at first authentication (already persisted/displayed once).
+
+        Callers that mutate other state before create_key (e.g. entity
+        registration in handle_admin_create_key) must run this first so a
+        rejected request leaves no side effects (#4352 review).
+        """
+        if subject_type not in VALID_SUBJECT_TYPES:
+            raise ValueError(
+                f"subject_type must be one of {VALID_SUBJECT_TYPES}, got {subject_type}"
+            )
+
+        # Zoneless non-admin: the token would have no zone access at auth
+        # time (and downstream routes would coerce the missing zone to
+        # ROOT_ZONE_ID, silently granting root).
+        if not zone_id and not is_admin:
+            raise ValueError(
+                "DatabaseAPIKeyAuth.create_key: non-admin keys must specify a zone_id "
+                "(zoneless tokens are reserved for global admins, #3871)"
+            )
+
+        if zone_id:
+            from nexus.storage.models import ZoneModel
+
+            # with_for_update: hold the zone row through the caller's
+            # transaction so a concurrent terminate/soft-delete serializes
+            # with key issuance instead of racing the select→commit window
+            # (no-op on SQLite, row lock on Postgres). #4352 review.
+            zone = session.scalar(
+                select(ZoneModel).where(ZoneModel.zone_id == zone_id).with_for_update()
+            )
+            if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
+                raise ValueError(
+                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
+                    "(missing, Terminating, or soft-deleted); create or restore "
+                    "the zone before issuing keys against it"
+                )
+
+    @classmethod
     def create_key(
         cls,
         session: Session,
@@ -284,13 +341,11 @@ class DatabaseAPIKeyAuth(AuthProvider):
         """
         from nexus.storage.models import APIKeyModel
 
-        final_subject_id = subject_id or user_id
-        valid_subject_types = ["user", "agent", "service"]
-        if subject_type not in valid_subject_types:
-            raise ValueError(
-                f"subject_type must be one of {valid_subject_types}, got {subject_type}"
-            )
+        cls.validate_key_params(
+            session, zone_id=zone_id, is_admin=is_admin, subject_type=subject_type
+        )
 
+        final_subject_id = subject_id or user_id
         zone_prefix = f"{zone_id[:8]}_" if zone_id else ""
         subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
         random_suffix = secrets.token_hex(16)
@@ -298,32 +353,6 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
         raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
-
-        # #3871 round 4: non-admin keys must have a zone. Otherwise the token
-        # has no zone access at auth time (and downstream routes would coerce
-        # the missing zone to ROOT_ZONE_ID, silently granting root). Zoneless
-        # is reserved for explicit global admins.
-        if not zone_id and not is_admin:
-            raise ValueError(
-                "DatabaseAPIKeyAuth.create_key: non-admin keys must specify a zone_id "
-                "(zoneless tokens are reserved for global admins, #3871)"
-            )
-
-        # #3871 round 3+6: validate zone exists, is Active, and not deleted
-        # before inserting junction row. Surfaces a controlled ValueError
-        # instead of (a) an opaque IntegrityError from the FK constraint or
-        # (b) a returned raw key that the lifecycle gate immediately rejects
-        # at first authentication (already persisted/displayed once).
-        if zone_id:
-            from nexus.storage.models import ZoneModel
-
-            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
-            if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
-                raise ValueError(
-                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
-                    "(missing, Terminating, or soft-deleted); create or restore "
-                    "the zone before issuing keys against it"
-                )
 
         api_key = APIKeyModel(
             key_hash=key_hash,

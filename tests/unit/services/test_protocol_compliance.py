@@ -183,13 +183,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.snapshot.service.TransactionalSnapshotService",
         True,
     ),
-    # ── Async adapter protocols (Issue #1440) ─────────────────────────
-    (
-        "NamespaceManagerProtocol",
-        "nexus.contracts.protocols.namespace_manager",
-        "nexus.bricks.rebac.namespace_manager.AsyncNamespaceManager",
-        True,
-    ),
     # ── Service-layer protocols ───────────────────────────────────────
     (
         "MCPProtocol",
@@ -234,12 +227,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "EntityRegistryProtocol",
         "nexus.contracts.protocols.entity_registry",
         "nexus.bricks.rebac.entity_registry.EntityRegistry",
-        True,
-    ),
-    (
-        "WorkspaceManagerProtocol",
-        "nexus.contracts.protocols.workspace_manager",
-        "nexus.services.workspace.workspace_manager.WorkspaceManager",
         True,
     ),
 ]
@@ -329,7 +316,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("lock", "nexus/contracts/protocols/lock.py"),
     ("mcp", "nexus/contracts/protocols/mcp.py"),
     ("mount", "nexus/contracts/protocols/mount.py"),
-    ("namespace_manager", "nexus/contracts/protocols/namespace_manager.py"),
     ("oauth", "nexus/contracts/protocols/oauth.py"),
     ("operation_log", "nexus/contracts/protocols/operation_log.py"),
     ("parse", "nexus/contracts/protocols/parse.py"),
@@ -350,7 +336,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("wirable_fs", "nexus/contracts/wirable_fs.py"),
     ("permission_enforcer", "nexus/contracts/protocols/permission_enforcer.py"),
     ("entity_registry", "nexus/contracts/protocols/entity_registry.py"),
-    ("workspace_manager", "nexus/contracts/protocols/workspace_manager.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

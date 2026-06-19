@@ -36,20 +36,29 @@ import json
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import text as sa_text
 
+from nexus.bricks.search import consumer_metrics
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
+from nexus.bricks.search.config import get_env_bool as _get_env_bool
+from nexus.bricks.search.config import get_env_int as _get_env_int
 from nexus.bricks.search.mutation_events import (
     SearchMutationEvent,
     SearchMutationOp,
     extract_zone_id,
     strip_zone_prefix,
+)
+from nexus.bricks.search.mutation_parking import (
+    MutationParkStore,
+    ParkedEvent,
+    UnresolvedMutationError,
 )
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
@@ -68,6 +77,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Durable mutation consumer names (#4337): single source for the refresh
+# loop, startup reconciliation, parked-event re-drive, and admin skip-to.
+MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
+LEGACY_REFRESH_CONSUMER = "legacy-refresh"
+
+_BACKEND_LEG_TIMING_KEYS = (
+    "backend_ms",
+    "embed_ms",
+    "keyword_ms",
+    "page_keyword_ms",
+    "vector_ms",
+    "fusion_ms",
+    "rerank_ms",
+    # Issue #4269: time spent inside the index-touching DB query itself
+    # (the BM25 scan / index page fault-in), isolated from the surrounding
+    # Python coercion and fusion work. On a cold network-attached volume this
+    # is where the read-stall shows up.
+    "index_load_ms",
+    # Issue #4269 (Codex R2): time spent in the legacy fallback stack
+    # (Zoekt / BM25S / inline FTS / _hybrid_search) when the indexed backend
+    # returned empty but the fallback produced the results. Kept distinct from
+    # the indexed legs so a degraded-path response doesn't misattribute that
+    # work to keyword_ms / vector_ms / fusion_ms.
+    "fallback_ms",
+)
+
+# Per-backend ceiling for boot-time index preload (Issue #4269). Preload
+# targets slow/flaky network volumes — exactly where a cold index read can
+# hang — so each backend warm is bounded to keep a stalled volume from
+# blocking server startup indefinitely. A fired timeout is fail-soft: the
+# first real query just pays the cold cost it would have paid anyway.
+_PRELOAD_TIMEOUT_SECONDS: float = 30.0
+
 
 @dataclass
 class DaemonStats:
@@ -77,6 +119,11 @@ class DaemonStats:
     db_pool_size: int = 0
     db_pool_warmup_time_ms: float = 0.0
     vector_warmup_time_ms: float = 0.0
+    index_preload_time_ms: float = 0.0  # Issue #4269: boot-time index warm
+    # Issue #4269 (Codex R4): None = preload not attempted; True = every
+    # attempted backend warmed successfully; False = at least one warm failed
+    # or timed out (index may still be cold — telemetry must not imply success).
+    index_preload_ok: bool | None = None
     total_queries: int = 0
     avg_latency_ms: float = 0.0
     p99_latency_ms: float = 0.0
@@ -101,6 +148,41 @@ class SearchResult(BaseSearchResult):
     search_type: str = "hybrid"
 
 
+class SearchResultList(list[SearchResult]):
+    """Search results plus a request-local timing snapshot."""
+
+    def __init__(
+        self,
+        results: Iterable[SearchResult] = (),
+        *,
+        search_timing: dict[str, float] | None = None,
+    ) -> None:
+        super().__init__(results)
+        self.search_timing = dict(search_timing or {})
+
+
+def _empty_backend_timing() -> dict[str, float]:
+    return {
+        "backend_ms": 0.0,
+        "embed_ms": 0.0,
+        "keyword_ms": 0.0,
+        "page_keyword_ms": 0.0,
+        "vector_ms": 0.0,
+        "fusion_ms": 0.0,
+        "rerank_ms": 0.0,
+        "index_load_ms": 0.0,
+        "fallback_ms": 0.0,
+    }
+
+
+def _merge_backend_timing(total_ms: float, recorded: dict[str, float]) -> dict[str, float]:
+    timing = {"backend_ms": total_ms, "rerank_ms": recorded.get("rerank_ms", 0.0)}
+    for key in _BACKEND_LEG_TIMING_KEYS:
+        if key in recorded:
+            timing[key] = recorded[key]
+    return timing
+
+
 @dataclass
 class DaemonConfig:
     """Configuration for the search daemon."""
@@ -114,6 +196,18 @@ class DaemonConfig:
     # Vector search settings
     vector_warmup_enabled: bool = True
     vector_ef_search: int = 100  # HNSW recall parameter
+
+    # Index preload (Issue #4269). When the search index lives on a slow
+    # network-attached volume, the first query per process pays a cold
+    # mmap fault-in cost (1.6-2.7s observed) that the kernel does not retain
+    # in page cache under that storage. Enabling this issues a representative
+    # index-touching query against the keyword/BM25 index at startup so those
+    # pages are faulted into RAM before the first real request, trading idle
+    # boot time for a warm first query. (The dense-vector HNSW index is warmed
+    # separately by ``_warm_vector_index`` under ``vector_warmup_enabled``.)
+    # Default off — only worth it on network volumes; on local NVMe the cold
+    # cost is small and preload just wastes boot time.
+    index_preload_enabled: bool = False
 
     # Index refresh settings
     refresh_debounce_seconds: float = 5.0
@@ -183,6 +277,33 @@ class DaemonConfig:
     # as config so operators can tune without a code change.
     path_context_max_zones: int = 2048
 
+    # Bounded retries for unresolved-content mutations (#4337). When the
+    # MutationResolver cannot obtain content for an UPSERT, the consumer
+    # retries the batch (refusing to checkpoint) up to this many passes,
+    # then PARKS the event (durable skip record + metric) so one poisoned
+    # event cannot head-of-line block indexing forever.
+    # NOTE: budgets must be >= 2 — startup reconciliation drives each handler
+    # exactly once through the gate (possibly before the file_reader is
+    # attached), so a budget of 1 would park live files during boot.
+    mutation_unresolved_permanent_attempts: int = 3
+    mutation_unresolved_transient_attempts: int = 30
+    mutation_parked_max_entries: int = 200
+
+    # Macro-chunk (neighbor-context) expansion knobs (Issue #4398).
+    # When search() is called with expand="macro", each result is expanded
+    # into its surrounding section bounded by a token budget and a window of
+    # neighbor chunks. Configured via environment variables so operators can
+    # tune without a code change.
+    macro_chunk_tokens: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_MACRO_CHUNK_TOKENS", 1024)
+    )
+    macro_chunk_window: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_MACRO_CHUNK_WINDOW", 8)
+    )
+    macro_chunk_code_forward_bias: bool = field(
+        default_factory=lambda: _get_env_bool("NEXUS_SEARCH_MACRO_CHUNK_FORWARD_BIAS", True)
+    )
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -200,6 +321,36 @@ class SearchDaemon:
         # Cleanup
         await daemon.shutdown()
     """
+
+    def _search_timing_var(self) -> ContextVar[dict[str, float] | None]:
+        """Per-instance ContextVar holding the request-local timing snapshot.
+
+        Created lazily on first access — the sole creation path, so instances
+        that skip ``__init__`` (test doubles, subclasses) still work.
+        """
+        timing_var = self.__dict__.get("_last_search_timing_var")
+        if timing_var is None:
+            timing_var = ContextVar(
+                f"search_daemon_{id(self)}_last_search_timing",
+                default=None,
+            )
+            self.__dict__["_last_search_timing_var"] = timing_var
+        return timing_var
+
+    @property
+    def last_search_timing(self) -> dict[str, float]:
+        timing = self._search_timing_var().get()
+        if timing is None:
+            timing = {}
+            self._search_timing_var().set(timing)
+        return timing
+
+    @last_search_timing.setter
+    def last_search_timing(self, value: dict[str, float]) -> None:
+        self._search_timing_var().set(dict(value))
+
+    def _with_search_timing(self, results: Iterable[SearchResult]) -> SearchResultList:
+        return SearchResultList(results, search_timing=self.last_search_timing)
 
     def __init__(
         self,
@@ -285,6 +436,16 @@ class SearchDaemon:
         self._consumer_last_sequence: dict[str, int] = {}
         self._checkpoint_file = Path(".nexus-data") / "mutation-checkpoints.json"
         self._checkpoint_lock = asyncio.Lock()
+        # #4337: bounded-retry gate state. Attempt counts are in-memory
+        # (restart resets them; a poisoned event re-accumulates to budget in
+        # seconds). The park store is the durable record of skipped events.
+        self._unresolved_attempts: dict[tuple[str, str], int] = {}
+        self._consumer_retrying: dict[str, dict[str, Any] | None] = {}
+        self._park_store = MutationParkStore(
+            settings_store=settings_store,
+            fallback_file=self._checkpoint_file.parent / "mutation-parked.json",
+            max_entries_per_consumer=self.config.mutation_parked_max_entries,
+        )
         self._shared_mutation_lock = asyncio.Lock()
         self._shared_mutation_events: list[SearchMutationEvent] = []
         self._shared_mutation_floor_sequence = 0
@@ -304,7 +465,9 @@ class SearchDaemon:
         self._fts_backend: Any = None
         self._vector_backend: Any = None
         self._embedding_client: Any = None
-        self.last_search_timing: dict[str, float] = {}
+        # ContextVar is created lazily by _search_timing_var(); the setter
+        # below routes through it, so no separate eager construction here.
+        self.last_search_timing = {}
 
         # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
         # Bootstrapped from document_skeleton DB rows; no file reads on restart (13B).
@@ -667,12 +830,18 @@ class SearchDaemon:
             )
 
         from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
-        from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
 
         sqlite_path = self._sqlite_path_from_url(database_url)
+        vec_backend: Any = None
+        try:
+            from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
+
+            vec_backend = SqliteVecBackend(db_path=sqlite_path)
+        except Exception:
+            logger.info("sqlite_vec unavailable; vector search disabled (FTS still works)")
         return (
             SqliteFtsBackend(db_path=sqlite_path, chunk_store=self._chunk_store),
-            SqliteVecBackend(db_path=sqlite_path),
+            vec_backend,
         )
 
     @staticmethod
@@ -730,7 +899,8 @@ class SearchDaemon:
             url = self.config.database_url or ""
             self._fts_backend, self._vector_backend = self._build_backends(url)
             await self._fts_backend.startup()
-            await self._vector_backend.startup()
+            if self._vector_backend is not None:
+                await self._vector_backend.startup()
             logger.info(
                 "search backends ready: fts=%s vector=%s",
                 type(self._fts_backend).__name__,
@@ -743,6 +913,12 @@ class SearchDaemon:
             )
             self._fts_backend = None
             self._vector_backend = None
+
+        # Preload index pages into RAM if requested (Issue #4269). Runs
+        # synchronously so the first real query lands on a warm index. Only
+        # worth enabling on slow network-attached volumes; default off.
+        if self.config.index_preload_enabled:
+            await self._preload_search_index()
 
         # Embedding client for query-time vectors. Also wired as the
         # ``_embedding_provider`` so the durable mutation consumer +
@@ -1024,6 +1200,19 @@ class SearchDaemon:
 
         return None, "none"
 
+    @staticmethod
+    def _engine_dialect_name(engine: Any | None) -> str:
+        """Return a normalized SQLAlchemy engine dialect name."""
+
+        def dialect_name(candidate: Any | None) -> str:
+            if candidate is None:
+                return ""
+            dialect = getattr(candidate, "dialect", None)
+            name = getattr(dialect, "name", "")
+            return str(name).lower() if name else ""
+
+        return dialect_name(engine) or dialect_name(getattr(engine, "sync_engine", None))
+
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
         # If session factory was injected via __init__, skip engine creation
@@ -1127,6 +1316,86 @@ class SearchDaemon:
         except Exception as e:
             # Non-fatal - vector search will still work, just slower first time
             logger.debug(f"Vector index warmup skipped: {e}")
+
+    async def _preload_search_index(self) -> None:
+        """Fault the search index pages into RAM at boot (Issue #4269).
+
+        Calls ``preload()`` on any backend that exposes it (the FTS/keyword
+        backends do; the dense-vector HNSW index is warmed separately and
+        earlier by :meth:`_warm_vector_index`). Each backend issues a
+        representative index-touching query so the kernel faults the keyword
+        index pages into the process address space before the first real
+        request — turning the ~1.6-2.7s cold-load I/O stall on a
+        network-attached volume into idle boot time instead.
+
+        Fail-soft: a backend that lacks ``preload()`` is skipped, a
+        ``preload()`` that raises is logged and swallowed, and each warm is
+        bounded by ``_PRELOAD_TIMEOUT_SECONDS`` so a hung volume cannot block
+        startup forever. Any of these only means the first query pays the cold
+        cost it would have paid anyway.
+        """
+        start = time.perf_counter()
+        total_ms = 0.0
+        any_attempted = False
+        all_ok = True
+        # Only warm backends the query path will actually use. Searches route
+        # through the new backend path only when BOTH fts and vector backends
+        # exist (see _search_on_current_loop ``has_new_backends``); when vector
+        # is absent (e.g. SQLite without sqlite_vec) queries fall back to the
+        # legacy stack and the warmed FTS backend is bypassed — warming it would
+        # be wasted work and a misleading index_preload_ok (Codex R7). Report
+        # not-attempted in that case so telemetry stays honest.
+        backends_active = self._fts_backend is not None and self._vector_backend is not None
+        if not backends_active:
+            self.stats.index_preload_time_ms = 0.0
+            self.stats.index_preload_ok = None
+            logger.info(
+                "search index preload skipped: backend query path inactive (fts=%s vector=%s)",
+                type(self._fts_backend).__name__ if self._fts_backend else None,
+                type(self._vector_backend).__name__ if self._vector_backend else None,
+            )
+            return
+        for label, backend in (("fts", self._fts_backend), ("vector", self._vector_backend)):
+            if backend is None:
+                continue
+            preload = getattr(backend, "preload", None)
+            if preload is None:
+                continue
+            any_attempted = True
+            try:
+                elapsed = await asyncio.wait_for(preload(), timeout=_PRELOAD_TIMEOUT_SECONDS)
+                if isinstance(elapsed, int | float):
+                    total_ms += float(elapsed)
+                logger.info(
+                    "search %s index preloaded in %.1fms",
+                    label,
+                    float(elapsed) if isinstance(elapsed, int | float) else -1.0,
+                )
+            except TimeoutError:
+                all_ok = False
+                logger.warning(
+                    "search %s index preload timed out after %.0fs; first query will pay cold cost",
+                    label,
+                    _PRELOAD_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                all_ok = False
+                logger.warning(
+                    "search %s index preload failed; first query will pay cold cost",
+                    label,
+                    exc_info=True,
+                )
+        self.stats.index_preload_time_ms = (time.perf_counter() - start) * 1000
+        # None when nothing was attempted; otherwise reflect whether every
+        # attempted warm actually succeeded — so /search/stats never implies a
+        # successful preload over a still-cold index (Codex R4).
+        self.stats.index_preload_ok = all_ok if any_attempted else None
+        logger.info(
+            "search index preload complete in %.1fms (backend-reported %.1fms, ok=%s)",
+            self.stats.index_preload_time_ms,
+            total_ms,
+            self.stats.index_preload_ok,
+        )
 
     # ==========================================================================
     # Skeleton index — Issue #3725
@@ -1484,6 +1753,34 @@ class SearchDaemon:
                     exc,
                 )
 
+    async def _apply_macro_expansion(
+        self,
+        results: Any,
+        *,
+        expand: str,
+        zone_id: str,
+    ) -> None:
+        """Best-effort: when expand=='macro', attach macro_text to each result by
+        stitching neighbor chunks via the active vector backend. No-op when
+        disabled, no results, or no vector backend (Issue #4398)."""
+        if expand != "macro" or not results or self._vector_backend is None:
+            return
+        from nexus.bricks.search.macro_chunk import ExpansionConfig, expand_results
+
+        cfg = ExpansionConfig(
+            token_budget=self.config.macro_chunk_tokens,
+            window=self.config.macro_chunk_window,
+            code_forward_bias=self.config.macro_chunk_code_forward_bias,
+        )
+        _t0 = time.perf_counter()
+        await expand_results(results, self._vector_backend, cfg, zone_id=zone_id)
+        timing = self.last_search_timing
+        timing["macro_expand_ms"] = (time.perf_counter() - _t0) * 1000.0
+        timing["macro_expanded_count"] = sum(
+            1 for r in results if getattr(r, "macro_text", None) is not None
+        )
+        self.last_search_timing = timing
+
     async def search(
         self,
         query: str,
@@ -1493,9 +1790,10 @@ class SearchDaemon:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         zone_id: str | None = None,
+        expand: str = "none",
     ) -> list[SearchResult]:
         if zone_id is None:
-            return await self._search_on_current_loop(
+            results = await self._search_on_current_loop(
                 query,
                 search_type=search_type,
                 limit=limit,
@@ -1504,19 +1802,23 @@ class SearchDaemon:
                 fusion_method=fusion_method,
                 zone_id=zone_id,
             )
+        else:
 
-        async def _work() -> list[SearchResult]:
-            return await self._search_on_current_loop(
-                query,
-                search_type=search_type,
-                limit=limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                fusion_method=fusion_method,
-                zone_id=zone_id,
-            )
+            async def _work() -> list[SearchResult]:
+                return await self._search_on_current_loop(
+                    query,
+                    search_type=search_type,
+                    limit=limit,
+                    path_filter=path_filter,
+                    alpha=alpha,
+                    fusion_method=fusion_method,
+                    zone_id=zone_id,
+                )
 
-        return await self._run_on_owner_loop(_work)
+            results = await self._run_on_owner_loop(_work)
+
+        await self._apply_macro_expansion(results, expand=expand, zone_id=zone_id or ROOT_ZONE_ID)
+        return results
 
     async def _search_on_current_loop(
         self,
@@ -1567,20 +1869,23 @@ class SearchDaemon:
                     )
                     backend_ms = (time.perf_counter() - backend_start) * 1000
                     backend_attempted = True
-                    self.last_search_timing = {
-                        "backend_ms": backend_ms,
-                        "rerank_ms": 0.0,
-                    }
+                    self.last_search_timing = _merge_backend_timing(
+                        backend_ms, self.last_search_timing
+                    )
                     if backend_results:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
                         await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
-                        return backend_results
+                        return self._with_search_timing(backend_results)
 
                 # Keyword mode should use the daemon's keyword stack first.
                 # The new fts backend above is the canonical BM25/native-FTS
                 # path. Fall back to `_keyword_search` only if the backend is
-                # unavailable or returned no hits.
+                # unavailable or returned no hits. This is the SOLE legacy
+                # keyword call — the branch returns unconditionally below rather
+                # than falling through to the generic fallback, which would
+                # re-run _keyword_search a second time (doubling cold-volume I/O
+                # on exactly the 0-result query the issue measures — Codex R5).
                 keyword_start = time.perf_counter()
                 keyword_results = await self._keyword_search(
                     query,
@@ -1589,12 +1894,29 @@ class SearchDaemon:
                     zone_id=effective_zone_id,
                 )
                 keyword_ms = (time.perf_counter() - keyword_start) * 1000
-                self.last_search_timing = {"backend_ms": keyword_ms, "rerank_ms": 0.0}
-                if keyword_results:
-                    latency_ms = (time.perf_counter() - start) * 1000
-                    self._track_latency(latency_ms)
-                    await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
-                    return keyword_results
+                if not backend_attempted:
+                    # No indexed backend ran (none configured) — the legacy
+                    # keyword path is the only timing source.
+                    self.last_search_timing = {"backend_ms": keyword_ms, "rerank_ms": 0.0}
+                else:
+                    # Indexed backend ran (and recorded index_load_ms) but
+                    # returned empty. Record the legacy fallback work as a
+                    # distinct fallback_ms leg and fold it into the backend
+                    # total — ALWAYS, even on 0 results, so a cold zero-hit
+                    # query's fallback latency is visible rather than an
+                    # unexplained gap in total_ms (Codex R5). The indexed legs
+                    # (index_load_ms / keyword_ms) are preserved as-is, without
+                    # conflation (Codex R1/R2).
+                    self.last_search_timing["fallback_ms"] = (
+                        self.last_search_timing.get("fallback_ms", 0.0) + keyword_ms
+                    )
+                    self.last_search_timing["backend_ms"] = (
+                        self.last_search_timing.get("backend_ms", 0.0) + keyword_ms
+                    )
+                latency_ms = (time.perf_counter() - start) * 1000
+                self._track_latency(latency_ms)
+                await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
+                return self._with_search_timing(keyword_results)
             elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
                 # matches are not lost before backend semantic ranking.
@@ -1622,10 +1944,7 @@ class SearchDaemon:
                     zone_id=effective_zone_id,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
-                self.last_search_timing = {
-                    "backend_ms": backend_ms,
-                    "rerank_ms": 0.0,
-                }
+                self.last_search_timing = _merge_backend_timing(backend_ms, self.last_search_timing)
                 if hybrid_keyword_ms:
                     self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
@@ -1641,14 +1960,15 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(results, zone_id=effective_zone_id)
-                    return results
+                    return self._with_search_timing(results)
                 # Backend returned empty — fall through to the legacy stack
                 # so Zoekt / BM25S / inline FTS can still serve the query.
 
-            # Legacy fallback (no search backends available, or empty result)
-            if search_type == "keyword":
-                results = await self._keyword_search(query, limit, path_filter, zone_id=zone_id)
-            elif search_type == "semantic":
+            # Legacy fallback (no search backends available, or empty indexed
+            # result). Keyword mode already returned above — it owns its single
+            # legacy keyword call — so only semantic and hybrid reach here.
+            fallback_start = time.perf_counter()
+            if search_type == "semantic":
                 results = await self._semantic_search(query, limit, path_filter, zone_id=zone_id)
             else:  # hybrid
                 results = await self._hybrid_search(
@@ -1659,19 +1979,35 @@ class SearchDaemon:
                     fusion_method,
                     zone_id=zone_id,
                 )
+            fallback_ms = (time.perf_counter() - fallback_start) * 1000
 
             # Track latency
             latency_ms = (time.perf_counter() - start) * 1000
             self._track_latency(latency_ms)
             if hybrid_keyword_ms and "backend_ms" in self.last_search_timing:
                 self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
+            # When an indexed backend was attempted but returned empty, this
+            # legacy fallback (semantic / hybrid) ran. Record its time as a
+            # distinct fallback_ms leg and fold it into backend_ms — ALWAYS,
+            # regardless of result count, so even a cold 0-result degraded query
+            # shows where the time went rather than leaving an unexplained gap
+            # in total_ms (Codex R5). The indexed legs (index_load_ms, vector_ms,
+            # keyword_ms, fusion_ms) are preserved as-is, without misattributing
+            # fallback time to them (Codex R1/R2).
+            if has_new_backends and "backend_ms" in self.last_search_timing:
+                self.last_search_timing["fallback_ms"] = (
+                    self.last_search_timing.get("fallback_ms", 0.0) + fallback_ms
+                )
+                self.last_search_timing["backend_ms"] = (
+                    self.last_search_timing.get("backend_ms", 0.0) + fallback_ms
+                )
 
             await self._attach_path_contexts(results, zone_id=effective_zone_id)
-            return results
+            return self._with_search_timing(results)
 
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
-            return []
+            return self._with_search_timing([])
 
     async def _search_via_backends(
         self,
@@ -1692,45 +2028,107 @@ class SearchDaemon:
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
 
         path = path_filter or "/"
+        timing = _empty_backend_timing()
+        backend_start = time.perf_counter()
+
+        async def timed_leg(key: str, awaitable: Awaitable[T]) -> T:
+            leg_start = time.perf_counter()
+            result = await awaitable
+            timing[key] = (time.perf_counter() - leg_start) * 1000
+            return result
+
+        def record_total() -> None:
+            timing["backend_ms"] = (time.perf_counter() - backend_start) * 1000
+            self.last_search_timing = timing
 
         if search_type == "keyword":
-            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            results = await timed_leg(
+                "keyword_ms",
+                self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         if search_type == "semantic":
-            qvec = await self._embed_query(query)
+            qvec = await timed_leg("embed_ms", self._embed_query(query))
             if qvec is None:
+                record_total()
                 return []
-            results = await self._vector_backend.semantic_search(qvec, path, limit, zone_id)
+            results = await timed_leg(
+                "vector_ms",
+                self._vector_backend.semantic_search(qvec, path, limit, zone_id),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         # Hybrid: 3-way RRF on PG, 2-way on SQLite.
-        qvec = await self._embed_query(query)
+        qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
-            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            results = await timed_leg(
+                "keyword_ms",
+                self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
+            )
+            record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         is_pg = isinstance(self._fts_backend, PgFtsBackend)
         if is_pg:
-            chunk_kw, page_kw, dense = await asyncio.gather(
-                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
-                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+            pg_fts_backend = self._fts_backend
+            assert isinstance(pg_fts_backend, PgFtsBackend)
+
+            async def timed_pg_keyword_legs() -> tuple[list[Any], list[Any]]:
+                keyword_limit = limit * 2
+                keyword_start = time.perf_counter()
+                keyword_candidates = await pg_fts_backend.keyword_search(
+                    query,
+                    path,
+                    pg_fts_backend.page_candidate_limit(keyword_limit),
+                    zone_id,
+                    timing=timing,
+                )
+                timing["keyword_ms"] = (time.perf_counter() - keyword_start) * 1000
+
+                page_start = time.perf_counter()
+                page_results = pg_fts_backend.page_results_from_chunks(
+                    keyword_candidates,
+                    k=keyword_limit,
+                    zone_id=zone_id,
+                )
+                timing["page_keyword_ms"] = (time.perf_counter() - page_start) * 1000
+                return keyword_candidates[:keyword_limit], page_results
+
+            (chunk_kw, page_kw), dense = await asyncio.gather(
+                timed_pg_keyword_legs(),
+                timed_leg(
+                    "vector_ms",
+                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                ),
                 return_exceptions=False,
             )
         else:
             chunk_kw, dense = await asyncio.gather(
-                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                timed_leg(
+                    "keyword_ms",
+                    self._fts_backend.keyword_search(
+                        query, path, limit * 2, zone_id, timing=timing
+                    ),
+                ),
+                timed_leg(
+                    "vector_ms",
+                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                ),
                 return_exceptions=False,
             )
             page_kw = []
 
         # Fuse keyword legs first (chunk + page), then RRF that with dense.
+        fusion_start = time.perf_counter()
         kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
         fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+        timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+        record_total()
         return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
 
     async def _embed_query(self, query: str) -> list[float] | None:
@@ -2007,11 +2405,11 @@ class SearchDaemon:
 
         Issue #3699: writes are owned by ``ChunkStore.replace_document_chunks``
         via the indexing pipeline. Each document is treated as ``(path,
-        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch
-        to ``IndexingPipeline.index_document`` which chunks, embeds, and
+        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch to
+        ``IndexingPipeline.index_document`` which chunks, embeds, and
         bulk-inserts into ``document_chunks``. Failures bubble up so the
-        HTTP boundary returns 500 (Decision #18) instead of silently
-        returning count=0.
+        HTTP boundary returns 500 (Decision #18) instead of silently returning
+        count=0.
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
@@ -2046,8 +2444,10 @@ class SearchDaemon:
 
             # Resolve path_id from file_paths so the indexing pipeline can
             # write document_chunks. Without a path_id we cannot persist —
-            # surface that as an exception so the caller (router) returns
-            # 500 instead of silently dropping the doc.
+            # skip rather than fail so best-effort callers in mount/connector
+            # wiring don't error out. The search daemon is a READER of
+            # filesystem metadata — it must not create or modify file_paths
+            # rows (that ownership belongs to the kernel/metastore).
             path_id: str | None = None
             if self._async_session is not None:
                 async with self._async_session() as session:
@@ -2365,57 +2765,130 @@ class SearchDaemon:
             return []
 
         try:
-            from sqlalchemy import text
+            dialect_name = self._engine_dialect_name(self._async_engine)
 
-            async with self._async_session() as session:
-                # Build WHERE clause dynamically to avoid asyncpg
-                # AmbiguousParameterError with IS NULL patterns
-                where_parts = [
-                    "to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)"
-                ]
-                params: dict[str, Any] = {"query": query, "limit": limit}
-                if path_filter:
-                    where_parts.append("fp.virtual_path LIKE :path_pattern")
-                    params["path_pattern"] = f"{path_filter}%"
-                if zone_id:
-                    where_parts.append("fp.zone_id = :zone_id")
-                    params["zone_id"] = zone_id
-
-                where_clause = " AND ".join(where_parts)
-                sql = text(f"""
-                    SELECT
-                        c.chunk_index, c.chunk_text,
-                        c.start_offset, c.end_offset, c.line_start, c.line_end,
-                        fp.virtual_path,
-                        ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
-                    FROM document_chunks c
-                    JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE {where_clause}
-                    ORDER BY score DESC
-                    LIMIT :limit
-                """)
-
-                result = await session.execute(sql, params)
-
-                return [
-                    SearchResult(
-                        path=row.virtual_path,
-                        chunk_index=row.chunk_index,
-                        chunk_text=row.chunk_text,
-                        score=float(row.score),
-                        start_offset=row.start_offset,
-                        end_offset=row.end_offset,
-                        line_start=row.line_start,
-                        line_end=row.line_end,
-                        keyword_score=float(row.score),
-                        search_type="keyword",
-                    )
-                    for row in result
-                ]
+            if dialect_name == "sqlite":
+                return await self._search_fts_sqlite(query, limit, path_filter, zone_id=zone_id)
+            return await self._search_fts_postgres(query, limit, path_filter, zone_id=zone_id)
 
         except Exception as e:
             logger.error(f"FTS search error: {e}")
             return []
+
+    async def _search_fts_sqlite(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+        *,
+        zone_id: str | None = None,
+    ) -> list[SearchResult]:
+        """FTS search using SQLite LIKE fallback."""
+        assert self._async_session is not None  # guarded by caller
+
+        import re
+
+        from sqlalchemy import text
+
+        terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+        if not terms:
+            return []
+
+        sqlite_params: dict[str, Any] = {"limit": limit}
+        where_parts = ["fp.deleted_at IS NULL"]
+        score_parts: list[str] = []
+        for index, term in enumerate(terms):
+            key = f"term_{index}"
+            sqlite_params[key] = f"%{term}%"
+            where_parts.append(f"LOWER(c.chunk_text) LIKE :{key}")
+            score_parts.append(f"CASE WHEN LOWER(c.chunk_text) LIKE :{key} THEN 1.0 ELSE 0.0 END")
+        if path_filter:
+            where_parts.append("fp.virtual_path LIKE :path_pattern")
+            sqlite_params["path_pattern"] = f"{path_filter}%"
+        if zone_id:
+            where_parts.append("fp.zone_id = :zone_id")
+            sqlite_params["zone_id"] = zone_id
+
+        where_clause = " AND ".join(where_parts)
+        score_expr = " + ".join(score_parts) or "1.0"
+        sql = text(f"""
+            SELECT
+                c.chunk_index, c.chunk_text,
+                c.start_offset, c.end_offset, c.line_start, c.line_end,
+                fp.virtual_path,
+                ({score_expr}) as score
+            FROM document_chunks c
+            JOIN file_paths fp ON c.path_id = fp.path_id
+            WHERE {where_clause}
+            ORDER BY score DESC, fp.virtual_path ASC, c.chunk_index ASC
+            LIMIT :limit
+        """)
+
+        async with self._async_session() as session:
+            result = await session.execute(sql, sqlite_params)
+            return self._fts_rows_to_results(result)
+
+    async def _search_fts_postgres(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+        *,
+        zone_id: str | None = None,
+    ) -> list[SearchResult]:
+        """FTS search using PostgreSQL tsvector."""
+        assert self._async_session is not None  # guarded by caller
+
+        from sqlalchemy import text
+
+        # Build WHERE clause dynamically to avoid asyncpg
+        # AmbiguousParameterError with IS NULL patterns
+        where_parts = ["to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)"]
+        pg_params: dict[str, Any] = {"query": query, "limit": limit}
+        if path_filter:
+            where_parts.append("fp.virtual_path LIKE :path_pattern")
+            pg_params["path_pattern"] = f"{path_filter}%"
+        if zone_id:
+            where_parts.append("fp.zone_id = :zone_id")
+            pg_params["zone_id"] = zone_id
+        where_parts.append("fp.deleted_at IS NULL")
+
+        where_clause = " AND ".join(where_parts)
+        sql = text(f"""
+            SELECT
+                c.chunk_index, c.chunk_text,
+                c.start_offset, c.end_offset, c.line_start, c.line_end,
+                fp.virtual_path,
+                ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
+            FROM document_chunks c
+            JOIN file_paths fp ON c.path_id = fp.path_id
+            WHERE {where_clause}
+            ORDER BY score DESC
+            LIMIT :limit
+        """)
+
+        async with self._async_session() as session:
+            result = await session.execute(sql, pg_params)
+            return self._fts_rows_to_results(result)
+
+    @staticmethod
+    def _fts_rows_to_results(result: Any) -> list[SearchResult]:
+        """Map SQL result rows to SearchResult objects (shared by sqlite/postgres)."""
+        return [
+            SearchResult(
+                path=row.virtual_path,
+                chunk_index=row.chunk_index,
+                chunk_text=row.chunk_text,
+                score=float(row.score),
+                start_offset=row.start_offset,
+                end_offset=row.end_offset,
+                line_start=row.line_start,
+                line_end=row.line_end,
+                keyword_score=float(row.score),
+                search_type="keyword",
+            )
+            for row in result
+        ]
 
     async def _get_query_embedding(self, query: str) -> list[float] | None:
         """Get embedding for query text (legacy fallback path).
@@ -2451,19 +2924,39 @@ class SearchDaemon:
         if change_type == "delete":
             self._pending_delete_paths.add(path)
             self._pending_refresh_paths.discard(path)
+            try:
+                await self._delete_indexes_for_paths([path])
+            except Exception:
+                logger.warning(
+                    "Immediate search delete propagation failed for %s; queued for retry",
+                    path,
+                    exc_info=True,
+                )
         else:
             self._pending_refresh_paths.add(path)
             self._pending_delete_paths.discard(path)
         self._mutation_wakeup.set()
 
-    async def _index_refresh_loop(self) -> None:
-        """Background task to drive durable per-indexer mutation consumers."""
-        consumer_specs = {
+    def _mutation_handlers(self) -> dict[str, Any]:
+        """Consumer-name → handler map (#4337): single source for the
+        refresh loop, startup reconciliation, and parked-event re-drive."""
+        return {
             "fts": self._consume_fts_mutations,
             "embedding": self._consume_embedding_mutations,
         }
+
+    async def _index_refresh_loop(self) -> None:
+        """Background task to drive durable per-indexer mutation consumers."""
+        consumer_specs = self._mutation_handlers()
         all_consumer_names = tuple(consumer_specs.keys())
         self._consumer_names = all_consumer_names
+        # #4337: load parked records before consumers start so the gauge,
+        # stats, and already-parked filtering reflect prior runs. Best-effort:
+        # a corrupt/unreadable store logs and starts empty.
+        try:
+            await self._park_store.load()
+        except Exception as exc:
+            logger.error("Parked-event store load failed; starting empty: %s", exc)
         # #4016: reconcile pre-existing unindexed files BEFORE consumers
         # snap their checkpoints to MAX(sequence_number). Skipped on warm
         # restarts (any consumer already has a persisted checkpoint).
@@ -2550,7 +3043,7 @@ class SearchDaemon:
             )
             for path in paths
         ]
-        resolved = await self._resolve_mutations(events)
+        resolved = await self._resolve_mutations(LEGACY_REFRESH_CONSUMER, events)
         logger.debug(
             "delete-propagation: resolved=%d (resolved_path_id=%d)",
             len(resolved),
@@ -2929,10 +3422,7 @@ class SearchDaemon:
         if self._async_session is None or not self._consumer_names:
             return
 
-        handlers_by_name: dict[str, Any] = {
-            "fts": self._consume_fts_mutations,
-            "embedding": self._consume_embedding_mutations,
-        }
+        handlers_by_name: dict[str, Any] = self._mutation_handlers()
         pending: list[tuple[str, Any]] = []
         for name in self._consumer_names:
             handler = handlers_by_name.get(name)
@@ -3043,8 +3533,115 @@ class SearchDaemon:
         return events
 
     async def _save_consumer_checkpoint(self, consumer_name: str, sequence_number: int) -> None:
+        current = self._consumer_last_sequence.get(consumer_name)
+        if current is not None and sequence_number < current:
+            # #4337: monotonic guard — an in-flight pass that succeeds with a
+            # stale batch must not rewind an admin force-advance (skip-to).
+            sequence_number = current
         self._consumer_last_sequence[consumer_name] = sequence_number
         await self._persist_checkpoint(consumer_name, sequence_number)
+
+    async def force_checkpoint(self, consumer_name: str, sequence_number: int) -> dict[str, int]:
+        """Force-advance a consumer checkpoint past a poisoned range (#4337).
+
+        Admin escape hatch ("skip event N"): everything with
+        sequence_number <= the new value is permanently skipped for this
+        consumer. Deliberately NOT capped at the current op-log max so an
+        operator can pre-advance past a known-bad range.
+        """
+        if consumer_name not in MUTATION_CONSUMER_NAMES:
+            raise ValueError(
+                f"unknown consumer {consumer_name!r}; expected one of {MUTATION_CONSUMER_NAMES}"
+            )
+        current = self._consumer_last_sequence.get(consumer_name)
+        if current is None:
+            current = await self._initialize_consumer_checkpoint(consumer_name)
+            self._consumer_last_sequence[consumer_name] = current
+        if sequence_number <= current:
+            raise ValueError(
+                f"sequence {sequence_number} must be greater than current checkpoint {current}"
+            )
+        await self._save_consumer_checkpoint(consumer_name, sequence_number)
+        # #4337 review: events skipped by the force-advance can never resolve
+        # or park — drop their in-flight retry counters so the dict stays tidy.
+        self._unresolved_attempts = {
+            key: value
+            for key, value in self._unresolved_attempts.items()
+            if key[0] != consumer_name
+        }
+        logger.warning(
+            "Search mutation checkpoint FORCED for consumer=%s: %d -> %d "
+            "(events in between are skipped)",
+            consumer_name,
+            current,
+            sequence_number,
+        )
+        return {"previous": current, "current": sequence_number}
+
+    def list_parked(self) -> dict[str, list[dict[str, Any]]]:
+        """Parked mutation events per consumer, serialized for the API (#4337)."""
+        return {
+            consumer: [entry.to_dict() for entry in entries]
+            for consumer, entries in self._park_store.list_entries().items()
+            if entries
+        }
+
+    async def retry_parked(
+        self,
+        consumer_name: str,
+        event_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Re-drive parked events through their consumer handler (#4337).
+
+        One-shot per event: the entry is removed from the store FIRST (so
+        the gate doesn't filter it as already-parked, which would make the
+        handler succeed vacuously), then run through the handler. Success →
+        stays unparked. Failure → re-parked with the new error detail.
+        """
+        if consumer_name not in MUTATION_CONSUMER_NAMES:
+            raise ValueError(
+                f"unknown consumer {consumer_name!r}; expected one of {MUTATION_CONSUMER_NAMES}"
+            )
+        entries = self._park_store.list_entries(consumer_name).get(consumer_name, [])
+        if event_ids is not None:
+            wanted = set(event_ids)
+            entries = [entry for entry in entries if entry.event_id in wanted]
+        handler = self._mutation_handlers()[consumer_name]
+        succeeded: list[str] = []
+        failed: list[dict[str, str]] = []
+        for entry in entries:
+            await self._park_store.remove(consumer_name, [entry.event_id])
+            # #4337 review: one-shot semantics — start from a clean counter so
+            # a live pass's accumulated attempts can't make the in-handler gate
+            # park (and double-count) before our own failure handling re-parks.
+            self._unresolved_attempts.pop((consumer_name, entry.event_id), None)
+            # #4337 final review: the one-shot's gate pass writes
+            # _consumer_retrying — snapshot/restore so an admin re-drive
+            # never clobbers (or fabricates) the live loop's blocker stats.
+            retrying_snapshot = self._consumer_retrying.get(consumer_name)
+            try:
+                await handler([entry.to_event()])
+                succeeded.append(entry.event_id)
+            except Exception as exc:
+                await self._park_store.park(replace(entry, detail=str(exc), parked_at=time.time()))
+                failed.append({"event_id": entry.event_id, "error": str(exc)})
+            finally:
+                self._unresolved_attempts.pop((consumer_name, entry.event_id), None)
+                self._consumer_retrying[consumer_name] = retrying_snapshot
+        return {"retried": len(entries), "succeeded": succeeded, "failed": failed}
+
+    async def discard_parked(
+        self,
+        consumer_name: str,
+        event_ids: list[str],
+    ) -> dict[str, Any]:
+        """Drop parked events without retrying — operator accepts the loss (#4337)."""
+        if consumer_name not in MUTATION_CONSUMER_NAMES:
+            raise ValueError(
+                f"unknown consumer {consumer_name!r}; expected one of {MUTATION_CONSUMER_NAMES}"
+            )
+        removed = await self._park_store.remove(consumer_name, event_ids)
+        return {"discarded": [entry.event_id for entry in removed]}
 
     async def _fetch_operation_log_events(
         self,
@@ -3208,11 +3805,116 @@ class SearchDaemon:
 
     async def _resolve_mutations(
         self,
+        consumer_name: str,
         events: list[SearchMutationEvent],
     ) -> list[ResolvedMutation]:
         if self._mutation_resolver is None:
             return []
-        return await self._mutation_resolver.resolve_batch(events)
+        resolved = await self._mutation_resolver.resolve_batch(events)
+        if consumer_name == LEGACY_REFRESH_CONSUMER:
+            # Fallback delete-propagation path: resolves DELETE events only
+            # (always content_resolved) — the gate has nothing to do.
+            return resolved
+        return await self._gate_unresolved(consumer_name, resolved)
+
+    async def _gate_unresolved(
+        self,
+        consumer_name: str,
+        resolved: list[ResolvedMutation],
+    ) -> list[ResolvedMutation]:
+        """Bounded-retry gate for unresolved-content UPSERTs (#4337).
+
+        Per pass over a batch:
+          * already-parked events are filtered out (no recount);
+          * resolved events drop any stale attempt counter and auto-unpark;
+          * unresolved upserts count one attempt against their kind's
+            budget — at/over budget they are parked (durable record +
+            metrics) and filtered, otherwise the lowest-sequence one is
+            reported in a raised ``UnresolvedMutationError`` so the whole
+            batch retries (checkpoint untouched), exactly like the
+            pre-#4337 refuse-to-checkpoint behavior but bounded.
+        """
+        # #4337 review: reset per-pass so a stale blocker from a previous
+        # pass never survives an early return or a mid-batch park failure.
+        self._consumer_retrying[consumer_name] = None
+        kept: list[ResolvedMutation] = []
+        blocking: ResolvedMutation | None = None
+        blocking_attempts = 0
+        blocking_budget = 0
+        for mutation in resolved:
+            event = mutation.event
+            key = (consumer_name, event.event_id)
+            is_unresolved_upsert = (
+                event.op == SearchMutationOp.UPSERT and not mutation.content_resolved
+            )
+            if not is_unresolved_upsert:
+                self._unresolved_attempts.pop(key, None)
+                if self._park_store.contains(consumer_name, event.event_id):
+                    # Content recovered while parked — heal the record.
+                    await self._park_store.remove(consumer_name, [event.event_id])
+                kept.append(mutation)
+                continue
+            if self._park_store.contains(consumer_name, event.event_id):
+                continue  # already parked: skip without recounting
+            kind = mutation.failure_kind or "transient"
+            attempts = self._unresolved_attempts.get(key, 0) + 1
+            self._unresolved_attempts[key] = attempts
+            budget = (
+                self.config.mutation_unresolved_permanent_attempts
+                if kind == "permanent"
+                else self.config.mutation_unresolved_transient_attempts
+            )
+            consumer_metrics.MUTATION_UNRESOLVED_RETRIES_TOTAL.labels(
+                consumer=consumer_name, kind=kind
+            ).inc()
+            if attempts >= budget:
+                entry = ParkedEvent.from_mutation(
+                    consumer_name,
+                    mutation,
+                    kind=kind,
+                    detail=mutation.failure_detail or "",
+                    attempts=attempts,
+                )
+                # park() raises if it cannot persist a record — in that
+                # case the error propagates, the batch retries, and the
+                # event is NEVER skipped without a durable record.
+                await self._park_store.park(entry)
+                consumer_metrics.MUTATION_PARKED_TOTAL.labels(
+                    consumer=consumer_name, kind=kind
+                ).inc()
+                self._unresolved_attempts.pop(key, None)
+                logger.warning(
+                    "Search mutation PARKED for consumer=%s event_id=%s path=%s "
+                    "kind=%s after %d attempts (checkpoint will advance past it; "
+                    "re-drive or discard via /api/v2/search/parked): %s",
+                    consumer_name,
+                    event.event_id,
+                    event.path,
+                    kind,
+                    attempts,
+                    mutation.failure_detail,
+                )
+                continue
+            if blocking is None or event.sequence_number < blocking.event.sequence_number:
+                blocking = mutation
+                blocking_attempts = attempts
+                blocking_budget = budget
+        if blocking is not None:
+            self._consumer_retrying[consumer_name] = {
+                "event_id": blocking.event.event_id,
+                "path": blocking.event.path,
+                "attempts": blocking_attempts,
+                "budget": blocking_budget,
+                "kind": blocking.failure_kind or "transient",
+            }
+            raise UnresolvedMutationError(
+                f"{consumer_name} mutation content unresolved for "
+                f"event_id={blocking.event.event_id} path={blocking.event.path} "
+                f"kind={blocking.failure_kind or 'transient'} "
+                f"attempt={blocking_attempts}/{blocking_budget} — refusing to "
+                "checkpoint so the consumer retries on next pass"
+            )
+        return kept
 
     def _collapse_resolved_mutations(
         self,
@@ -3241,18 +3943,8 @@ class SearchDaemon:
         embedding_active = (
             self._indexing_pipeline is not None and self._embedding_provider is not None
         )
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
+        resolved = self._collapse_resolved_mutations(await self._resolve_mutations("fts", events))
         for mutation in resolved:
-            # Codex review R10 #1 (high): refuse to checkpoint
-            # unresolved-content UPSERTs — see commit history for rationale
-            # for the rationale.
-            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
-                raise RuntimeError(
-                    f"FTS mutation content unresolved for "
-                    f"event_id={mutation.event.event_id} "
-                    f"path={mutation.event.path} — refusing to checkpoint "
-                    "so the consumer retries on next pass"
-                )
             is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
                 mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
             )
@@ -3308,18 +4000,10 @@ class SearchDaemon:
     async def _consume_embedding_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._indexing_pipeline is None or self._embedding_provider is None:
             return
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
+        resolved = self._collapse_resolved_mutations(
+            await self._resolve_mutations("embedding", events)
+        )
         for mutation in resolved:
-            # Codex review R10 #1 (high): refuse to checkpoint
-            # unresolved-content UPSERTs — see commit history for rationale
-            # for the rationale.
-            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
-                raise RuntimeError(
-                    f"Embedding mutation content unresolved for "
-                    f"event_id={mutation.event.event_id} "
-                    f"path={mutation.event.path} — refusing to checkpoint "
-                    "so the consumer retries on next pass"
-                )
             # Codex review R10 #1 (high): treat resolved-empty UPSERTs
             # as DELETEs (real truncation). Combined with the explicit
             # DELETE op below.
@@ -3558,6 +4242,28 @@ class SearchDaemon:
             p99_idx = int(len(sorted_latencies) * 0.99)
             self.stats.p99_latency_ms = sorted_latencies[p99_idx] if sorted_latencies else 0
 
+    def _mutation_consumer_stats(self) -> dict[str, dict[str, Any]]:
+        """Per-consumer loop stats merged with parking state (#4337)."""
+        merged: dict[str, dict[str, Any]] = {}
+        names = set(self.stats.mutation_consumers) | set(MUTATION_CONSUMER_NAMES)
+        for name in sorted(names):
+            entry = dict(self.stats.mutation_consumers.get(name, {}))
+            entry["parked_count"] = self._park_store.count(name)
+            last = self._park_store.last(name)
+            entry["last_parked"] = (
+                {
+                    "event_id": last.event_id,
+                    "path": last.path,
+                    "kind": last.kind,
+                    "parked_at": last.parked_at,
+                }
+                if last is not None
+                else None
+            )
+            entry["retrying"] = self._consumer_retrying.get(name)
+            merged[name] = entry
+        return merged
+
     def get_stats(self) -> dict[str, Any]:
         """Get current daemon statistics.
 
@@ -3570,6 +4276,13 @@ class SearchDaemon:
             "db_pool_size": self.stats.db_pool_size,
             "db_pool_warmup_time_ms": self.stats.db_pool_warmup_time_ms,
             "vector_warmup_time_ms": self.stats.vector_warmup_time_ms,
+            # Issue #4269: boot-time keyword-index preload telemetry so
+            # operators can confirm via /search/stats whether preload is on
+            # and how long the warm took.
+            "index_preload_enabled": self.config.index_preload_enabled,
+            "index_preload_time_ms": self.stats.index_preload_time_ms,
+            # None = not attempted; True/False = whether the warm succeeded.
+            "index_preload_ok": self.stats.index_preload_ok,
             "total_queries": self.stats.total_queries,
             "avg_latency_ms": round(self.stats.avg_latency_ms, 2),
             "p99_latency_ms": round(self.stats.p99_latency_ms, 2),
@@ -3598,7 +4311,7 @@ class SearchDaemon:
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,
-            "mutation_consumers": self.stats.mutation_consumers,
+            "mutation_consumers": self._mutation_consumer_stats(),
             # Issue #3773: path-context attach runs fail-soft so search is
             # never broken by a context-lookup bug. Expose the counts so
             # operators can spot persistent failures via /search/stats.

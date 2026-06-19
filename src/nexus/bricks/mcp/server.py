@@ -12,7 +12,12 @@ import contextvars
 import inspect
 import json
 import logging
+from collections.abc import Coroutine
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
@@ -84,6 +89,18 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
         token: The token returned by set_request_api_key()
     """
     _request_api_key.reset(token)
+
+
+def _json_default(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    return str(value)
 
 
 def register_policy_gate_dependency(app: Any, gate: PolicyGate) -> None:
@@ -255,6 +272,76 @@ async def create_mcp_server(
 
         _connection_cache[request_api_key] = new_nx
         return new_nx
+
+    def _service(nx_instance: Any, name: str) -> Any | None:
+        service_fn = getattr(nx_instance, "service", None)
+        if not callable(service_fn):
+            return None
+        try:
+            return service_fn(name)
+        except Exception:
+            return None
+
+    def _workflow_api(nx_instance: Any) -> Any | None:
+        workflows = getattr(nx_instance, "workflows", None)
+        if workflows is not None:
+            return workflows
+        return _service(nx_instance, "workflow_engine")
+
+    def _declared_callable(obj: Any, name: str) -> Any | None:
+        try:
+            inspect.getattr_static(obj, name)
+        except AttributeError:
+            return None
+        value = getattr(obj, name, None)
+        return value if callable(value) else None
+
+    def _run_maybe_async(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            from nexus.lib.sync_bridge import run_sync
+
+            return run_sync(cast(Coroutine[Any, Any, Any], value), timeout=30.0)
+        return value
+
+    def _sandbox_rpc_service(nx_instance: Any) -> Any | None:
+        return _service(nx_instance, "sandbox_rpc")
+
+    def _sandbox_rpc_available(nx_instance: Any) -> bool:
+        service = _sandbox_rpc_service(nx_instance)
+
+        explicit_available = getattr(nx_instance, "sandbox_available", None)
+        if explicit_available is False:
+            return False
+        if explicit_available is True:
+            return True
+
+        if service is None:
+            ensure = getattr(nx_instance, "_ensure_sandbox_manager", None)
+            if callable(ensure):
+                try:
+                    ensure()
+                    service = _sandbox_rpc_service(nx_instance)
+                except Exception:
+                    service = None
+
+        if service is None:
+            return False
+
+        providers_fn = getattr(service, "available_providers", None)
+        if callable(providers_fn):
+            providers = providers_fn()
+            if isinstance(providers, list | tuple | set | frozenset):
+                return bool(providers)
+            return False
+
+        is_available = getattr(service, "is_available", None)
+        if callable(is_available):
+            available = is_available()
+            if isinstance(available, bool):
+                return available
+            return False
+
+        return False
 
     # Create FastMCP server
     mcp = FastMCP(name)
@@ -1013,6 +1100,7 @@ async def create_mcp_server(
             auth_result,
             zone_id,
             path_extractor=lambda p: p,
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_paths)
         total = post_filter_count
@@ -1083,6 +1171,7 @@ async def create_mcp_server(
         after_context: int = 0,
         invert_match: bool = False,
         block_type: str | None = None,
+        section: str | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -1111,6 +1200,10 @@ async def create_mcp_server(
                 ``"frontmatter"``, ``"paragraph"``, ``"blockquote"``,
                 ``"list"``, ``"heading"``. Non-markdown files pass
                 through unfiltered. Omit for default full-file search.
+            section: Restrict matches to a markdown or parsed-content
+                section heading (#4186), e.g. ``"API"`` or ``"## API"``.
+                Missing sections return an empty result envelope rather
+                than falling back to whole-file search.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -1179,6 +1272,8 @@ async def create_mcp_server(
             grep_kwargs["invert_match"] = True
         if block_type is not None:
             grep_kwargs["block_type"] = block_type
+        if section is not None:
+            grep_kwargs["section"] = section
 
         # SearchService.grep() is async in local mode but the
         # RemoteServiceProxy returns a sync result. Handle both.
@@ -1196,6 +1291,7 @@ async def create_mcp_server(
             auth_result,
             zone_id,
             path_extractor=lambda r: r.get("file", ""),
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_results)
 
@@ -1239,6 +1335,9 @@ async def create_mcp_server(
         }
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
+        if section is not None:
+            extras["section_filter"] = section
+            extras["section_status"] = "matched" if paginated_results else "no_matches"
 
         result = build_paginated_list_response(
             items=paginated_results,
@@ -1454,14 +1553,24 @@ async def create_mcp_server(
             JSON string with list of workflows
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "workflows"):
+        workflows_api = _workflow_api(nx_instance)
+        if workflows_api is None:
             return tool_error(
                 "unavailable",
                 "Workflow system not available (requires NexusFS with workflows enabled).",
             )
 
-        workflows = nx_instance.workflows.list_workflows()
-        return json.dumps(workflows, indent=2)
+        list_fn = _declared_callable(workflows_api, "list_workflows") or _declared_callable(
+            workflows_api, "list"
+        )
+        if not callable(list_fn):
+            return tool_error(
+                "unavailable",
+                "Workflow system not available (workflow API cannot list workflows).",
+            )
+
+        workflows = _run_maybe_async(list_fn())
+        return json.dumps(workflows, indent=2, default=_json_default)
 
     @mcp.tool(
         annotations={
@@ -1485,7 +1594,8 @@ async def create_mcp_server(
             Workflow execution result
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "workflows"):
+        workflows_api = _workflow_api(nx_instance)
+        if workflows_api is None:
             return tool_error(
                 "unavailable",
                 "Workflow system not available (requires NexusFS with workflows enabled).",
@@ -1498,8 +1608,22 @@ async def create_mcp_server(
                 "invalid_input", "Invalid JSON in inputs parameter. Provide valid JSON string."
             )
 
-        result = nx_instance.workflows.execute(name, **input_dict)
-        return json.dumps(result, indent=2)
+        execute_fn = _declared_callable(workflows_api, "execute")
+        trigger_fn = _declared_callable(workflows_api, "trigger_workflow")
+        if execute_fn is not None:
+            result = execute_fn(name, **input_dict)
+        elif trigger_fn is not None:
+            result = trigger_fn(name, input_dict)
+        else:
+            return tool_error(
+                "unavailable",
+                "Workflow system not available (workflow API cannot execute workflows).",
+            )
+
+        result = _run_maybe_async(result)
+        if result is None:
+            return tool_error("not_found", f"Workflow not found or disabled: {name}")
+        return json.dumps(result, indent=2, default=_json_default)
 
     # =========================================================================
     # SANDBOX EXECUTION TOOLS (Conditional Registration)
@@ -1528,19 +1652,7 @@ async def create_mcp_server(
 
     # Check if sandbox support is available
     # First check the explicit sandbox_available property, then probe internals
-    sandbox_available = False
-    try:
-        sa = getattr(_default_nx, "sandbox_available", None)
-        if sa is False:
-            sandbox_available = False
-        elif sa is True:
-            sandbox_available = True
-        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
-            _default_nx._ensure_sandbox_manager()
-            if getattr(_default_nx, "sandbox_available", False):
-                sandbox_available = True
-    except Exception:
-        sandbox_available = False
+    sandbox_available = _sandbox_rpc_available(_default_nx)
 
     # Only register sandbox tools if available
     if sandbox_available:
@@ -1558,7 +1670,10 @@ async def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_run(
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            result = sandbox_rpc.sandbox_run(
                 sandbox_id=sandbox_id, language="python", code=code, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1576,7 +1691,10 @@ async def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_run(
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            result = sandbox_rpc.sandbox_run(
                 sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1584,21 +1702,33 @@ async def create_mcp_server(
         @mcp.tool()
         @handle_tool_errors("creating sandbox")
         def nexus_sandbox_create(
-            name: str, ttl_minutes: int = 10, ctx: Context | None = None
+            name: str,
+            ttl_minutes: int = 10,
+            provider: str | None = None,
+            template_id: str | None = None,
+            ctx: Context | None = None,
         ) -> str:
             """Create a new sandbox for code execution.
 
             Args:
                 name: User-friendly sandbox name
                 ttl_minutes: Idle timeout in minutes (default: 10)
+                provider: Optional sandbox provider (for example, "docker" or "monty")
+                template_id: Optional provider template or image identifier
 
             Returns:
                 JSON string with sandbox_id and metadata
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_create(
-                name=name, ttl_minutes=ttl_minutes
-            )
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            create_kwargs: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes}
+            if provider is not None:
+                create_kwargs["provider"] = provider
+            if template_id is not None:
+                create_kwargs["template_id"] = template_id
+            result = sandbox_rpc.sandbox_create(**create_kwargs)
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1610,7 +1740,10 @@ async def create_mcp_server(
                 JSON string with list of sandboxes
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.service("sandbox_rpc").sandbox_list()
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            result = sandbox_rpc.sandbox_list()
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1625,7 +1758,10 @@ async def create_mcp_server(
                 Success message or error
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            nx_instance.service("sandbox_rpc").sandbox_stop(sandbox_id)
+            sandbox_rpc = _sandbox_rpc_service(nx_instance)
+            if sandbox_rpc is None:
+                return tool_error("unavailable", "Sandbox RPC service is not available.")
+            sandbox_rpc.sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================
@@ -1862,364 +1998,6 @@ async def create_mcp_server(
             "active_tool_count": len(_active_tools),
         }
         return json.dumps(result, indent=2)
-
-    # =========================================================================
-    # CONTEXT BRANCHING TOOLS (Issue #1315)
-    # =========================================================================
-
-    def _get_branch_service(ctx: Context | None = None):  # type: ignore[no-untyped-def]
-        """Get ContextBranchService via ServiceRegistry (Issue #1771)."""
-        nx_instance = _get_nexus_instance(ctx)
-        return nx_instance.service("context_branch") if nx_instance else None
-
-    def _get_namespace_fork_service(ctx: Context | None = None) -> Any:
-        """Get AgentNamespaceForkService via ServiceRegistry (Issue #1771)."""
-        nx_instance = _get_nexus_instance(ctx)
-        return nx_instance.service("namespace_fork") if nx_instance else None
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("committing context snapshot")
-    def nexus_context_commit(
-        workspace: str,
-        message: str | None = None,
-        branch: str | None = None,
-        ctx: Context | None = None,
-    ) -> str:
-        """Create a snapshot and advance branch HEAD.
-
-        Args:
-            workspace: Workspace path (e.g., "/workspace")
-            message: Commit message
-            branch: Branch to commit to (default: current branch)
-            ctx: FastMCP Context
-
-        Returns:
-            JSON with snapshot and branch info
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        result = svc.commit(workspace, message=message, branch_name=branch)
-        return json.dumps(result, indent=2, default=str)
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("creating context branch")
-    def nexus_context_branch(
-        workspace: str,
-        name: str,
-        from_branch: str | None = None,
-        ctx: Context | None = None,
-    ) -> str:
-        """Create a new named branch (zero-copy, instant).
-
-        Args:
-            workspace: Workspace path
-            name: Branch name
-            from_branch: Fork from this branch (default: current)
-            ctx: FastMCP Context
-
-        Returns:
-            JSON with branch info
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        result = svc.create_branch(workspace, name, from_branch=from_branch)
-        return json.dumps(
-            {
-                "branch_name": result.branch_name,
-                "parent_branch": result.parent_branch,
-                "fork_point_id": result.fork_point_id,
-                "id": result.id,
-            },
-            indent=2,
-        )
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("checking out context branch")
-    def nexus_context_checkout(workspace: str, target: str, ctx: Context | None = None) -> str:
-        """Switch to a different branch and restore its workspace state.
-
-        Args:
-            workspace: Workspace path
-            target: Branch name to switch to
-            ctx: FastMCP Context
-
-        Returns:
-            JSON with checkout result
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        result = svc.checkout(workspace, target)
-        return json.dumps(result, indent=2, default=str)
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("merging context branches")
-    def nexus_context_merge(
-        workspace: str,
-        source: str,
-        target: str | None = None,
-        strategy: str = "fail",
-        ctx: Context | None = None,
-    ) -> str:
-        """Merge a branch into another (three-way merge).
-
-        Args:
-            workspace: Workspace path
-            source: Branch to merge FROM
-            target: Branch to merge INTO (default: current)
-            strategy: 'fail' (default) or 'source-wins'
-            ctx: FastMCP Context
-
-        Returns:
-            JSON with merge result
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
-        return json.dumps(
-            {
-                "merged": result.merged,
-                "fast_forward": result.fast_forward,
-                "files_added": result.files_added,
-                "files_removed": result.files_removed,
-                "files_modified": result.files_modified,
-                "strategy": result.strategy,
-            },
-            indent=2,
-        )
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("listing context branches")
-    def nexus_context_branches(
-        workspace: str, include_inactive: bool = False, ctx: Context | None = None
-    ) -> str:
-        """List all branches for a workspace.
-
-        Args:
-            workspace: Workspace path
-            include_inactive: Include merged/discarded branches
-            ctx: FastMCP Context
-
-        Returns:
-            JSON array of branch info
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        branches = svc.list_branches(workspace, include_inactive=include_inactive)
-        return json.dumps(
-            [
-                {
-                    "branch_name": b.branch_name,
-                    "status": b.status,
-                    "is_current": b.is_current,
-                    "head_snapshot_id": b.head_snapshot_id,
-                    "parent_branch": b.parent_branch,
-                }
-                for b in branches
-            ],
-            indent=2,
-        )
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("viewing context log")
-    def nexus_context_log(workspace: str, limit: int = 20, ctx: Context | None = None) -> str:
-        """Show snapshot history for a workspace.
-
-        Args:
-            workspace: Workspace path
-            limit: Max entries to show
-            ctx: FastMCP Context
-
-        Returns:
-            JSON array of snapshots
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        snapshots = svc.log(workspace, limit=limit)
-        return json.dumps(snapshots, indent=2, default=str)
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("starting context exploration")
-    def nexus_context_explore(
-        workspace: str,
-        description: str,
-        fork_namespace: bool = True,
-        ctx: Context | None = None,
-    ) -> str:
-        """Start an exploration: auto-commit + create branch + checkout.
-
-        Optionally forks the agent's namespace for isolated visibility during
-        exploration (Issue #1273).
-
-        Args:
-            workspace: Workspace path
-            description: Description of exploration (used for branch name)
-            fork_namespace: If True (default), fork namespace for isolated visibility
-            ctx: FastMCP Context
-
-        Returns:
-            JSON with exploration branch info and optional namespace_fork metadata
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        result = svc.explore(workspace, description)
-        response: dict[str, object] = {
-            "branch_name": result.branch_name,
-            "branch_id": result.branch_id,
-            "fork_point_snapshot_id": result.fork_point_snapshot_id,
-            "skipped_commit": result.skipped_commit,
-            "message": result.message,
-        }
-
-        # Namespace fork (non-fatal — exploration works without it)
-        if fork_namespace:
-            fork_svc = _get_namespace_fork_service(ctx)
-            if fork_svc is not None:
-                try:
-                    from nexus.contracts.namespace_fork_types import ForkMode
-
-                    fork_info = fork_svc.fork(
-                        agent_id=result.branch_name,
-                        mode=ForkMode.COPY,
-                    )
-                    response["namespace_fork"] = {
-                        "fork_id": fork_info.fork_id,
-                        "mount_count": fork_info.mount_count,
-                        "mode": fork_info.mode.value,
-                    }
-                except Exception:
-                    logger.warning(
-                        "[MCP] Namespace fork failed during explore, continuing without",
-                        exc_info=True,
-                    )
-
-        return json.dumps(response, indent=2, default=str)
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": True,
-            "idempotentHint": False,
-            "openWorldHint": False,
-        }
-    )
-    @handle_tool_errors("finishing context exploration")
-    def nexus_context_finish(
-        workspace: str,
-        branch: str,
-        outcome: str = "merge",
-        strategy: str = "source-wins",
-        fork_id: str | None = None,
-        ctx: Context | None = None,
-    ) -> str:
-        """Finish an exploration: merge or discard the branch.
-
-        If *fork_id* is provided, the corresponding namespace fork is merged
-        (on outcome='merge') or discarded (on outcome='discard') alongside
-        the workspace branch (Issue #1273).
-
-        Args:
-            workspace: Workspace path
-            branch: Exploration branch to finish
-            outcome: 'merge' (default) or 'discard'
-            strategy: Merge strategy if outcome='merge' ('source-wins' default)
-            fork_id: Namespace fork to merge/discard alongside branch
-            ctx: FastMCP Context
-
-        Returns:
-            JSON with outcome details and optional namespace_fork result
-        """
-        svc = _get_branch_service(ctx)
-        if not svc:
-            return tool_error("unavailable", "Context branching not available.")
-        result = svc.finish_explore(workspace, branch, outcome=outcome, strategy=strategy)
-
-        # Wrap in dict if needed for namespace_fork info
-        response = dict(result) if isinstance(result, dict) else {"result": result}
-
-        # Namespace fork merge/discard (non-fatal)
-        if fork_id is not None:
-            fork_svc = _get_namespace_fork_service(ctx)
-            if fork_svc is not None:
-                try:
-                    if outcome == "merge":
-                        merge_result = fork_svc.merge(fork_id, strategy=strategy)
-                        response["namespace_fork"] = {
-                            "action": "merged",
-                            "fork_id": merge_result.fork_id,
-                            "entries_added": merge_result.entries_added,
-                            "entries_removed": merge_result.entries_removed,
-                            "entries_modified": merge_result.entries_modified,
-                        }
-                    else:
-                        fork_svc.discard(fork_id)
-                        response["namespace_fork"] = {
-                            "action": "discarded",
-                            "fork_id": fork_id,
-                        }
-                except Exception:
-                    logger.warning(
-                        "[MCP] Namespace fork %s during finish failed, continuing",
-                        outcome,
-                        exc_info=True,
-                    )
-
-        return json.dumps(response, indent=2, default=str)
 
     # =========================================================================
     # PROMPTS

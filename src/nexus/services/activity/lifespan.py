@@ -19,7 +19,7 @@ from nexus.services.activity.emitter import (
     set_emitter,
 )
 from nexus.services.activity.events import ActivityEvent
-from nexus.services.activity.retention import RetentionTask
+from nexus.services.activity.retention import RetentionTask, sweep_expired
 from nexus.services.activity.sinks import NoopSink, SQLiteSink
 from nexus.services.activity.sinks.jsonl import JsonlActivitySink
 from nexus.services.activity.sinks.protocol import SinkProtocol
@@ -53,17 +53,30 @@ async def setup_activity() -> None:
 
     queue: asyncio.Queue[ActivityEvent] = asyncio.Queue(maxsize=cfg.queue_size)
 
+    # #4336: reclaim expired segments and a stale legacy db BEFORE opening
+    # the sink. Booting on a full volume is the motivating incident — if
+    # the sweep can free space, the sink open below succeeds instead of
+    # degrading into the permanent NoopSink fallback.
+    try:
+        await asyncio.to_thread(
+            sweep_expired,
+            segment_dir=cfg.segment_dir,
+            legacy_db_path=cfg.db_path,
+            retention_days=cfg.retention_days,
+        )
+    except Exception:
+        logger.warning("activity pre-sink retention sweep failed", exc_info=True)
+
     sinks: list[SinkProtocol] = []
     try:
-        sinks.append(SQLiteSink(path=cfg.db_path))
-        logger.info("activity SQLite sink open at %s", cfg.db_path)
-    except Exception:
-        logger.error(
-            "activity SQLiteSink failed to open at %s — falling back to NoopSink. "
-            "Durable activity_events store is DISABLED for this process.",
-            cfg.db_path,
-            exc_info=True,
+        sinks.append(
+            SQLiteSink(
+                segment_dir=cfg.segment_dir,
+                min_free_bytes=cfg.min_free_mb * 1024 * 1024,
+            )
         )
+        logger.info("activity SQLite segment store at %s", cfg.segment_dir)
+    except Exception:
         # Surface the degradation in /metrics so operators have an alertable
         # signal — without this, ACTIVITY_SINK_ERRORS stays at 0 while every
         # event is silently discarded.
@@ -73,7 +86,35 @@ async def setup_activity() -> None:
             ACTIVITY_SINK_ERRORS.labels(sink="SQLiteSink").inc()
         except Exception:
             pass
-        sinks.append(NoopSink())
+        # A failed open may be transient (ENOSPC at boot is the motivating
+        # incident — including mkdir of the segment dir itself). A deferred
+        # sink retries mkdir + open on every batch; once retention or an
+        # operator frees space, persistence resumes without a restart.
+        # Permanent misconfiguration then surfaces as per-batch
+        # ACTIVITY_SINK_ERRORS (alertable) rather than a silent Noop; the
+        # NoopSink arm below is defense in depth only.
+        try:
+            sinks.append(
+                SQLiteSink(
+                    segment_dir=cfg.segment_dir,
+                    min_free_bytes=cfg.min_free_mb * 1024 * 1024,
+                    defer_open=True,
+                )
+            )
+            logger.error(
+                "activity SQLiteSink failed to open at %s — deferred; "
+                "each batch retries the open until the volume recovers.",
+                cfg.segment_dir,
+                exc_info=True,
+            )
+        except Exception:
+            logger.error(
+                "activity SQLiteSink failed to open at %s — falling back to NoopSink. "
+                "Durable activity_events store is DISABLED for this process.",
+                cfg.segment_dir,
+                exc_info=True,
+            )
+            sinks.append(NoopSink())
 
     if cfg.agent_log_enabled:
         agent_log_store = MemoryBackend(cap_bytes=cfg.agent_log_cap_bytes)
@@ -98,13 +139,22 @@ async def setup_activity() -> None:
         batch_size=cfg.batch_size,
         batch_timeout_s=cfg.batch_timeout_s,
     )
-    retention = RetentionTask(db_path=cfg.db_path, retention_days=cfg.retention_days)
+    retention = RetentionTask(
+        segment_dir=cfg.segment_dir,
+        legacy_db_path=cfg.db_path,
+        retention_days=cfg.retention_days,
+    )
 
     loop = asyncio.get_running_loop()
     await worker.start()
     await retention.start()
 
-    queue_emitter = QueueEmitter(queue=queue, loop=loop)
+    queue_emitter = QueueEmitter(
+        queue=queue,
+        loop=loop,
+        sample_rate=cfg.sample_rate,
+        sample_rates=cfg.sample_rates,
+    )
     set_emitter(queue_emitter)
 
     _STATE["worker"] = worker
@@ -121,8 +171,8 @@ async def shutdown_activity() -> None:
     2. Quiesce the previous QueueEmitter — off-loop emits schedule
        call_soon_threadsafe callbacks that have not yet enqueued, and
        must run before the worker drain closes the queue.
-    3. Stop retention BEFORE the worker so retention's VACUUM cannot
-       hold the SQLite write lock during the final drain.
+    3. Stop retention BEFORE the worker so the retention sweep cannot
+       race the final drain.
     4. Stop the worker and close sinks.
     """
     prev_emitter = _STATE.pop("emitter", None)

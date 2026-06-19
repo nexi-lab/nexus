@@ -13,6 +13,9 @@ Tests cover:
 - Error handling and edge cases
 """
 
+import subprocess
+import sys
+
 import pytest
 
 from nexus.utils.edit_engine import (
@@ -437,6 +440,21 @@ class TestEditResult:
 
 class TestRapidFuzzIntegration:
     """Tests for rapidfuzz integration."""
+
+    def test_import_does_not_load_rapidfuzz(self):
+        """Exact-match edit startup should not import fuzzy matcher dependencies."""
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                ("import sys; import nexus.utils.edit_engine; print('rapidfuzz' in sys.modules)"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert completed.stdout.strip() == "False"
 
     def test_rapidfuzz_availability(self):
         """Test that rapidfuzz availability is detected."""

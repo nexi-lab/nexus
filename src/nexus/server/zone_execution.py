@@ -24,6 +24,12 @@ def context_for_target_zone(context: Any, target_zone: str | None) -> Any:
         return context
     if not context_allows_target_zone(context, target_zone):
         return context
+    zone_perms = tuple(getattr(context, "zone_perms", ()) or ())
+    real_zone_perms = tuple(
+        zp for zp in zone_perms if isinstance(zp, (list, tuple)) and zp and zp[0] != "root"
+    )
+    if len(real_zone_perms) > 1 and getattr(context, "zone_id", None) == "root":
+        return context
     updates: dict[str, Any] = {"zone_id": target_zone}
     if getattr(context, "is_admin", False):
         updates["zone_set"] = (target_zone,)

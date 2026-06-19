@@ -32,6 +32,34 @@ def test_successful_handshake_returns_hub_session():
     assert session.zones[1] == HubZoneGrant(zone_id="shared", permission="rw")
 
 
+def test_handshake_uses_startup_bounded_timeouts():
+    """Unreachable hubs must not block sandbox local-only boot for transport defaults."""
+    mock_transport = MagicMock()
+    mock_transport.call_rpc.return_value = {"zones": []}
+
+    with patch(
+        "nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport
+    ) as transport_cls:
+        handshake = FederationHandshake(
+            hub_url="grpc://hub.example.com",
+            token="tok-abc",
+            timeout=1.25,
+            connect_timeout=0.5,
+        )
+        handshake.run()
+
+    transport_cls.assert_called_once_with(
+        "grpc://hub.example.com",
+        auth_token="tok-abc",
+        timeout=1.25,
+        connect_timeout=0.5,
+    )
+    mock_transport.call_rpc.assert_called_once_with(
+        "federation_client_whoami",
+        read_timeout=1.25,
+    )
+
+
 def test_handshake_401_raises_auth_error():
     """Hub rejects the token with 401 → HandshakeAuthError."""
     mock_transport = MagicMock()

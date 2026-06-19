@@ -166,18 +166,23 @@ def test_fs_google_oauth_setup_stores_service_specific_provider(
         def close(self) -> None:
             return None
 
+    import sys
+
     monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "client-secret")
     monkeypatch.setattr(
         "nexus.fs._oauth_support.get_token_manager", lambda db_path=None: _Manager()
     )
-    monkeypatch.setattr(
-        "nexus.fs._oauth_support._il.import_module",
-        lambda name: (
-            SimpleNamespace(GoogleOAuthProvider=_Provider)
-            if name == "nexus.lib.oauth.providers.google"
-            else None
-        ),
+    # Inject the fake provider module directly into sys.modules instead of
+    # monkey-patching `_il.import_module` globally. The previous approach
+    # replaced importlib's import_module with a lambda that returned None
+    # for any other name, which broke pytest's own `monkeypatch.setattr`
+    # string-path resolution on Python 3.14 (it now routes through importlib
+    # and would receive None for "click", then fail on .prompt assignment).
+    monkeypatch.setitem(
+        sys.modules,
+        "nexus.lib.oauth.providers.google",
+        SimpleNamespace(GoogleOAuthProvider=_Provider),
     )
 
     monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "code-123")

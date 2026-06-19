@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.cli.commands._hub_common import parse_duration
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.api_key_ops import (
     create_api_key,
     get_primary_zones_for_keys,
@@ -39,7 +40,10 @@ class HubAdminAmbiguousTargetError(HubAdminError):
 
 def get_env_session_factory() -> Callable[[], Session]:
     """Build a hub DB session factory from the server environment."""
-    db_url = (
+    from nexus.core.db_utils import normalize_database_url
+
+    # Issue #4238: accept the canonical ``postgres://`` scheme.
+    db_url = normalize_database_url(
         os.environ.get("NEXUS_DATABASE_URL")
         or os.environ.get("POSTGRES_URL")
         or os.environ.get("DATABASE_URL")
@@ -145,7 +149,7 @@ def create_hub_token(
             for entry in zones:
                 zid = entry[0] if isinstance(entry, tuple) else entry
                 if not session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid)):
-                    session.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
+                    session.add(ZoneModel(zone_id=zid, name=zid, phase=ZonePhase.ACTIVE))
             session.flush()
 
         try:
@@ -188,7 +192,7 @@ def _resolve_create_zones(
         active = (
             session.execute(
                 select(ZoneModel)
-                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.phase == ZonePhase.ACTIVE)
                 .where(ZoneModel.deleted_at.is_(None))
             )
             .scalars()
@@ -219,7 +223,7 @@ def _validate_active_zones(session: Any, zones: list[str | tuple[str, str]]) -> 
             session.execute(
                 select(ZoneModel)
                 .where(ZoneModel.zone_id == zid)
-                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.phase == ZonePhase.ACTIVE)
                 .where(ZoneModel.deleted_at.is_(None))
             )
             .scalars()
@@ -231,7 +235,7 @@ def _validate_active_zones(session: Any, zones: list[str | tuple[str, str]]) -> 
             z.zone_id
             for z in session.execute(
                 select(ZoneModel)
-                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.phase == ZonePhase.ACTIVE)
                 .where(ZoneModel.deleted_at.is_(None))
             )
             .scalars()

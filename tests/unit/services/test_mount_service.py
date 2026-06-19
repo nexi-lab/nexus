@@ -6,6 +6,7 @@ pytest-asyncio dependency.
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -44,15 +45,8 @@ def mock_nexus_fs():
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()
     fs.sys_unlink = MagicMock()
-    fs._kernel.sys_unlink = MagicMock()
-    fs._kernel.metastore_list_paginated = MagicMock(
-        return_value={
-            "items": [],
-            "has_more": False,
-            "next_cursor": None,
-            "total_count": 0,
-        }
-    )
+    # §2.5: mount-removal cleanup lists the subtree via nexus_fs.sys_readdir.
+    fs.sys_readdir = MagicMock(return_value=[])
     fs.rebac_add_tuple = MagicMock()
     fs.rebac_check = MagicMock(return_value=True)
     fs.rebac_delete_object_tuples = MagicMock(return_value=0)
@@ -215,15 +209,15 @@ class TestRemoveMount:
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        # Post-C10b/C11: mount_service iterates metastore_list_paginated +
-        # per-path sys_unlink (the kernel exposes no batch-delete primitive
-        # so the bulk wrapper became a loop).
+        # §2.5: mount_service lists the subtree via sys_readdir + per-path
+        # sys_unlink (the kernel exposes no batch-delete primitive so the
+        # bulk wrapper is a loop).
         mock_nexus_fs.sys_unlink.assert_called()
 
     def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_nexus_fs):
         """Errors during cleanup are reported but don't fail the removal."""
         mount_service._driver_coordinator.unmount.return_value = True
-        mock_nexus_fs._kernel.metastore_list_paginated.side_effect = RuntimeError("DB error")
+        mock_nexus_fs.sys_readdir.side_effect = RuntimeError("DB error")
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
@@ -304,19 +298,17 @@ class TestGetMount:
 
     def test_get_mount_found(self, mount_service, mock_nexus_fs):
         """Getting an existing mount returns its details."""
-        mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = True
+        mock_nexus_fs.sys_stat = MagicMock(return_value={"entry_type": 2})
 
         result = asyncio.run(mount_service.get_mount("/mnt/test"))
 
         assert result is not None
         assert result["mount_point"] == "/mnt/test"
-        mock_nexus_fs._kernel.has_mount.assert_called_once_with("/mnt/test", "root")
+        mock_nexus_fs.sys_stat.assert_called_once_with("/mnt/test")
 
     def test_get_mount_not_found(self, mount_service, mock_nexus_fs):
         """Getting a non-existent mount returns None."""
-        mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = False
+        mock_nexus_fs.sys_stat = MagicMock(return_value={"entry_type": 0})
 
         result = asyncio.run(mount_service.get_mount("/mnt/nonexistent"))
         assert result is None
@@ -332,15 +324,13 @@ class TestHasMount:
 
     def test_has_mount_true(self, mount_service, mock_nexus_fs):
         """has_mount returns True for existing mount."""
-        mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = True
+        mock_nexus_fs.sys_stat = MagicMock(return_value={"entry_type": 2})
         assert asyncio.run(mount_service.has_mount("/mnt/test")) is True
-        mock_nexus_fs._kernel.has_mount.assert_called_once_with("/mnt/test", "root")
+        mock_nexus_fs.sys_stat.assert_called_once_with("/mnt/test")
 
     def test_has_mount_false(self, mount_service, mock_nexus_fs):
         """has_mount returns False for non-existent mount."""
-        mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = False
+        mock_nexus_fs.sys_stat = MagicMock(return_value={"entry_type": 0})
         assert asyncio.run(mount_service.has_mount("/mnt/nonexistent")) is False
 
 
@@ -399,6 +389,69 @@ class TestSavedMounts:
         with pytest.raises(RuntimeError, match="Mount manager not available"):
             asyncio.run(service.delete_saved_mount("/mnt/test"))
 
+    def test_load_mount_activates_saved_config(self, mount_service, mock_mount_manager):
+        """load_mount reads stored config and activates it through add_mount."""
+        mock_mount_manager.get_mount.return_value = {
+            "mount_point": "/mnt/saved",
+            "backend_type": "path_local",
+            "backend_config": {"root_path": "/tmp/saved"},
+        }
+        mount_service.add_mount = MagicMock(
+            side_effect=lambda **kwargs: asyncio.sleep(0, result=kwargs["mount_point"])
+        )
+
+        result = asyncio.run(mount_service.load_mount("/mnt/saved"))
+
+        assert result == "/mnt/saved"
+        mount_service.add_mount.assert_called_once_with(
+            mount_point="/mnt/saved",
+            backend_type="path_local",
+            backend_config={"root_path": "/tmp/saved"},
+        )
+
+
+class TestConnectorDiscovery:
+    """Tests for connector discovery RPC surface."""
+
+    def test_list_connectors_filters_by_category(self, mount_service):
+        """list_connectors delegates category filtering to ConnectorRegistry."""
+        with patch("nexus.backends.base.registry.ConnectorRegistry") as mock_registry:
+            mock_registry.list_by_category.return_value = [
+                SimpleNamespace(
+                    name="hn",
+                    description="Hacker News",
+                    category="api",
+                    runtime_deps=[],
+                    user_scoped=False,
+                ),
+            ]
+
+            result = asyncio.run(mount_service.list_connectors(category="api"))
+
+        assert [item["name"] for item in result] == ["hn"]
+        mock_registry.list_by_category.assert_called_once_with("api")
+
+
+class TestMountUpdateAndReauth:
+    """Stable behavior for update/reauth RPC surfaces."""
+
+    def test_update_mount_reports_no_change_without_runtime_backend(self, mount_service):
+        """update_mount preserves a stable no-op result when DLC has no Python backend."""
+        mount_service._check_permission = MagicMock(return_value=True)
+        mount_service._dlc._kernel.sys_stat.return_value = {"entry_type": 2}
+
+        result = asyncio.run(mount_service.update_mount("/mnt/saved", {"api_url": "v2"}))
+
+        assert result == {"updated": False, "mount_point": "/mnt/saved", "changed_keys": []}
+
+    def test_reauth_mount_reports_unavailable_without_runtime_backend(self, mount_service):
+        """reauth_mount has a stable unavailable error when no Python backend is retained."""
+        mount_service._check_permission = MagicMock(return_value=True)
+        mount_service._dlc._kernel.sys_stat.return_value = {"entry_type": 2}
+
+        with pytest.raises(ValueError, match="No Python backend available"):
+            asyncio.run(mount_service.reauth_mount("/mnt/saved", provider="google"))
+
 
 # =============================================================================
 # _grant_owner_permission tests
@@ -425,15 +478,15 @@ class TestGrantMountOwnerPermission:
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory entries are created via _setup_mount_point."""
         # access returns False → dirs don't exist yet, so sys_setattr is called
-        mock_nexus_fs._kernel.access.return_value = False
+        mock_nexus_fs.access = MagicMock(return_value=False)
         mount_service._setup_mount_point("/mnt/test", operation_context)
         # sys_setattr called for /mnt and /mnt/test
-        assert mock_nexus_fs._kernel.sys_setattr.call_count == 2
+        assert mock_nexus_fs.sys_setattr.call_count == 2
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
-        mock_nexus_fs._kernel.access.return_value = False
-        mock_nexus_fs._kernel.sys_setattr.side_effect = RuntimeError("put failed")
+        mock_nexus_fs.access = MagicMock(return_value=False)
+        mock_nexus_fs.sys_setattr.side_effect = RuntimeError("put failed")
 
         # Should not raise — errors in directory creation are logged but not fatal
         mount_service._setup_mount_point("/mnt/test", operation_context)

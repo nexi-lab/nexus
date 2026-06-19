@@ -138,6 +138,45 @@ class TestApplyRebacFilterNoOpPaths:
             is_admin=False,
         )
 
+    def test_admin_bypass_from_auth_result_skips_filter_work(self) -> None:
+        results = [_StubResult("/a.py"), _StubResult("/secret.py")]
+        enforcer = MagicMock()
+        enforcer.allow_admin_bypass = True
+        enforcer.filter_search_results = MagicMock(return_value=[])
+
+        filtered, filter_ms = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(is_admin=True),
+            zone_id=ROOT_ZONE_ID,
+        )
+
+        assert filtered is results
+        assert filter_ms == 0.0
+        enforcer.filter_search_results.assert_not_called()
+
+    def test_admin_bypass_from_operation_context_skips_filter_work(self) -> None:
+        results = [_StubResult("/a.py"), _StubResult("/secret.py")]
+        op_context = MagicMock()
+        op_context.is_admin = True
+        enforcer = MagicMock()
+        enforcer.allow_admin_bypass = True
+        enforcer.filter_list = MagicMock(return_value=[])
+        enforcer.filter_search_results = MagicMock(return_value=[])
+
+        filtered, filter_ms = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(is_admin=False),
+            zone_id=ROOT_ZONE_ID,
+            operation_context=op_context,
+        )
+
+        assert filtered is results
+        assert filter_ms == 0.0
+        enforcer.filter_list.assert_not_called()
+        enforcer.filter_search_results.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # _apply_rebac_filter — filtering behaviour
@@ -237,6 +276,79 @@ class TestApplyRebacFilterBehaviour:
         # Enforcer should see only one unique path, not two.
         call = enforcer.filter_search_results.call_args
         assert call.args[0] == ["/a.py"]
+
+    def test_operation_context_uses_filter_list_for_inherited_directory_grants(self) -> None:
+        """Search filtering must match list/read inheritance semantics.
+
+        ``filter_search_results`` checks only exact paths; ``filter_list``
+        runs the full strategy chain, including directory inheritance.
+        """
+        results = [
+            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="inherited"),
+            _StubResult("/workspace/private/secret.md", marker="denied"),
+        ]
+        op_context = object()
+        enforcer = MagicMock()
+        enforcer.filter_list = MagicMock(
+            return_value=["/workspace/demo/herb/customers/cust-002.md"]
+        )
+        enforcer.filter_search_results = MagicMock(return_value=[])
+        enforcer.check = None
+
+        filtered, _ = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(),
+            zone_id=ROOT_ZONE_ID,
+            operation_context=op_context,
+        )
+
+        assert [r.marker for r in filtered] == ["inherited"]
+        enforcer.filter_list.assert_called_once_with(
+            [
+                "/workspace/demo/herb/customers/cust-002.md",
+                "/workspace/private/secret.md",
+            ],
+            op_context,
+        )
+        enforcer.filter_search_results.assert_not_called()
+
+    def test_operation_context_trusts_filter_list_denials_without_rechecking(self) -> None:
+        """Search must not put fallback permission checks on the hot path."""
+        results = [
+            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="allowed"),
+            _StubResult("/workspace/private/secret.md", marker="denied"),
+        ]
+        op_context = object()
+        enforcer = MagicMock()
+        enforcer.filter_list = MagicMock(
+            return_value=["/workspace/demo/herb/customers/cust-002.md"]
+        )
+        enforcer.filter_search_results = MagicMock(return_value=[])
+        enforcer.filter_read_with_inheritance = MagicMock(
+            side_effect=AssertionError("search should trust filter_list")
+        )
+        enforcer.check = MagicMock(side_effect=AssertionError("search should trust filter_list"))
+
+        filtered, _ = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(),
+            zone_id=ROOT_ZONE_ID,
+            operation_context=op_context,
+        )
+
+        assert [r.marker for r in filtered] == ["allowed"]
+        enforcer.filter_list.assert_called_once_with(
+            [
+                "/workspace/demo/herb/customers/cust-002.md",
+                "/workspace/private/secret.md",
+            ],
+            op_context,
+        )
+        enforcer.filter_read_with_inheritance.assert_not_called()
+        enforcer.check.assert_not_called()
+        enforcer.filter_search_results.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

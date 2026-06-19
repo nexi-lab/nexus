@@ -215,7 +215,7 @@ class MountService:
                 while queue and len(file_paths) < 200:
                     virtual_prefix = queue.popleft()
                     try:
-                        entries = list(_rust_kernel.readdir(virtual_prefix, zone_id or "root"))
+                        entries = list(_rust_kernel.sys_readdir(virtual_prefix, zone_id or "root"))
                     except Exception:
                         continue
                     for child_path, etype in entries:
@@ -313,27 +313,22 @@ class MountService:
         # Create directory entries for mount point AND parent directories
         # via sync metadata_put.
         if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
-            from nexus.contracts.constants import ROOT_ZONE_ID
             from nexus.contracts.metadata import DT_DIR, DT_MOUNT
-            from nexus.lib.context_utils import get_zone_id
 
             if entry_type is None:
                 entry_type = DT_MOUNT
-
-            zone_id = get_zone_id(context) if context else "default"
 
             parts = mount_point.rstrip("/").split("/")
             for i in range(2, len(parts) + 1):
                 dir_path = "/".join(parts[:i])
                 try:
-                    existing = self.nexus_fs._kernel.access(dir_path, ROOT_ZONE_ID)
+                    existing = self.nexus_fs.access(dir_path)
                     if existing:
                         continue
                     is_mount_point = i == len(parts)
-                    self.nexus_fs._kernel.sys_setattr(
+                    self.nexus_fs.sys_setattr(
                         dir_path,
-                        entry_type if is_mount_point else DT_DIR,
-                        zone_id=zone_id,
+                        entry_type=entry_type if is_mount_point else DT_DIR,
                     )
                     logger.info(f"Created directory entry: {dir_path}")
                 except Exception as e:
@@ -597,16 +592,25 @@ class MountService:
         zone_id = get_zone_id(context)
 
         # --- NexusFS-based cleanup ---
-        if self.nexus_fs is not None and getattr(self.nexus_fs, "_kernel", None) is not None:
-            kernel = self.nexus_fs._kernel
-            # Delete all metadata entries (mount point + children)
+        if self.nexus_fs is not None:
+            # Delete all metadata entries (mount point + children). The
+            # child listing goes through the §2.5 syscall surface
+            # (sys_readdir), not kernel.metastore_list_paginated — MetaStore
+            # is a kernel-internal HAL pillar. is_system=True: this is an
+            # admin mount-removal cleanup walking the whole mount subtree.
             try:
+                from nexus.contracts.types import OperationContext as _OC
+
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_entries = kernel.metastore_list_paginated(dir_prefix, True, 100000, None)[
-                    "items"
+                _sys_ctx = _OC(user_id="system", groups=[], is_system=True)
+                child_paths = [
+                    str(p)
+                    for p in self.nexus_fs.sys_readdir(
+                        dir_prefix, recursive=True, details=False, context=_sys_ctx
+                    )
+                    if p
                 ]
-                paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
-                paths_to_delete.append(mount_point)  # Include mount point itself
+                paths_to_delete = [*child_paths, mount_point]  # incl. mount point itself
                 for path in paths_to_delete:
                     with contextlib.suppress(Exception):
                         self.nexus_fs.sys_unlink(path, context=context)
@@ -719,8 +723,12 @@ class MountService:
         if not self._check_permission(mount_point, "read", context):
             return None
 
-        _rust_kernel = getattr(self.nexus_fs, "_kernel", None) if self.nexus_fs else None
-        _has_mount = _rust_kernel.has_mount(mount_point, "root") if _rust_kernel else False
+        if not self.nexus_fs:
+            return None
+        try:
+            _has_mount = self.nexus_fs.sys_stat(mount_point).get("entry_type") == 2
+        except Exception:
+            _has_mount = False
         if _has_mount:
             return {
                 "mount_point": mount_point,
@@ -736,8 +744,12 @@ class MountService:
         Returns:
             True if mount exists
         """
-        _rust_kernel = getattr(self.nexus_fs, "_kernel", None) if self.nexus_fs else None
-        return _rust_kernel.has_mount(mount_point, "root") if _rust_kernel else False
+        if not self.nexus_fs:
+            return False
+        try:
+            return self.nexus_fs.sys_stat(mount_point).get("entry_type") == 2
+        except Exception:
+            return False
 
     def list_connectors_sync(self, category: str | None = None) -> list[dict[str, Any]]:
         """List available connector types (synchronous).
@@ -1038,7 +1050,13 @@ class MountService:
         if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
         _kernel = getattr(self._dlc, "_kernel", None)
-        if _kernel is None or not _kernel.has_mount(mount_point, "root"):
+        try:
+            _is_mount = (
+                _kernel is not None and _kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+            )
+        except Exception:
+            _is_mount = False
+        if not _is_mount:
             raise ValueError(f"Mount not found: {mount_point}")
 
         # DLC no longer stores skill backends — runtime config updates are
@@ -1112,7 +1130,13 @@ class MountService:
         if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
         _kernel = getattr(self._dlc, "_kernel", None)
-        if _kernel is None or not _kernel.has_mount(mount_point, "root"):
+        try:
+            _is_mount = (
+                _kernel is not None and _kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+            )
+        except Exception:
+            _is_mount = False
+        if not _is_mount:
             raise ValueError(f"Mount not found: {mount_point}")
 
         # DLC no longer stores skill backends — reauth is not available.

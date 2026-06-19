@@ -62,7 +62,7 @@ use proc_entry::{register_proc_entry, unregister_proc_entry};
 
 /// Install ManagedAgentService on `kernel` with an injected
 /// [`SpawnTask`] provider. This is the entry the binary edge
-/// (`nexus-cdylib`'s pyo3 wrapper for the Python wheel,
+/// (`profiles/cluster` binary,
 /// `profiles/cluster` for the cluster binary) calls with a
 /// concrete adapter that wraps a runtime crate (e.g.
 /// `sudocode_runtime::spawn_task`).
@@ -77,9 +77,8 @@ pub fn install_managed_agent_with_spawn(
 }
 
 /// Install ManagedAgentService on `kernel` without a runtime body
-/// (procfs + AgentRegistry only). Mirrors the existing pyo3 path
-/// `services::python::nx_managed_agent_install` for callers that
-/// don't ship a runtime.
+/// (procfs + AgentRegistry only) — for callers that do not ship a
+/// runtime spawn provider.
 pub fn install_managed_agent(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
     ManagedAgentService::<kernel::kernel::Kernel>::install(kernel)
 }
@@ -183,7 +182,7 @@ impl std::error::Error for ManagedAgentError {}
 // which is the wrong layer for cross-repo coupling — same reason
 // `KernelAbi` lives at the trait boundary). Instead, services
 // declares a small DI trait that nexus's binary edge
-// (`profiles/cluster` for cluster builds, `nexus-cdylib` for the
+// (`profiles/cluster` for all builds — the sole binary edge
 // Python wheel) implements by wrapping `sudocode_runtime::spawn_task`.
 // The trait method is `dyn`-dispatched but only fires once per
 // `start_session` call (out of the hot path); the spawn body itself
@@ -203,6 +202,30 @@ pub trait SpawnHandle: Send + Sync {
     fn abort(&self);
 }
 
+/// Lifecycle-state notifications a [`SpawnTask`] body emits as the
+/// runtime loop progresses. Service-side mirror of the runtime
+/// crate's equivalent enum (today: `sudocode_runtime::spawn_task::
+/// AgentLoopState`); the binary-edge adapter maps the runtime enum
+/// to this one on the way through the [`SpawnTask::spawn`]
+/// `state_observer`.
+///
+/// Services owns this enum (not the runtime crate) because state
+/// transition semantics are a managed-agent concern — keeping the
+/// trait surface runtime-agnostic preserves the services rlib's
+/// no-cross-repo-runtime-dep boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentLoopState {
+    /// Runtime is initialising (loading prompt, system setup); maps
+    /// to [`AgentState::WarmingUp`].
+    WarmingUp,
+    /// Runtime is parked waiting for input on the mailbox; maps to
+    /// [`AgentState::Ready`].
+    Ready,
+    /// Runtime is mid-turn (LLM streaming, tool execution); maps to
+    /// [`AgentState::Busy`].
+    Busy,
+}
+
 /// Spawn-task provider. `start_session` calls
 /// [`Self::spawn`] after `register_proc_entry` succeeds to kick off
 /// the per-pid runtime body. The concrete impl wraps whatever
@@ -214,7 +237,22 @@ pub trait SpawnTask<K: KernelAbi>: Send + Sync + 'static {
     /// service stores in its `spawn_handles` sidecar; the
     /// on_terminate observer aborts via the handle on session
     /// termination.
-    fn spawn(&self, kernel: Arc<K>, desc: AgentDescriptor) -> Box<dyn SpawnHandle>;
+    ///
+    /// `state_observer` is the SSOT writer for the session's
+    /// [`AgentState`]. The closure is constructed by
+    /// `ManagedAgentService::start_session` — it captures the
+    /// service's `Arc<AgentRegistry>` and the session's pid, maps
+    /// the runtime-side [`AgentLoopState`] onto [`AgentState`], and
+    /// calls `AgentRegistry::update_state`. The spawn body's only
+    /// role w.r.t. state is to invoke the observer on each
+    /// transition; it MUST NOT write to AgentRegistry through any
+    /// other path.
+    fn spawn(
+        &self,
+        kernel: Arc<K>,
+        desc: AgentDescriptor,
+        state_observer: Arc<dyn Fn(AgentLoopState) + Send + Sync>,
+    ) -> Box<dyn SpawnHandle>;
 }
 
 // ── Service ─────────────────────────────────────────────────────────────
@@ -245,11 +283,10 @@ impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
     /// Service constructor.  Production callers reach this through
-    /// [`ManagedAgentService::<Kernel>::install`] which wraps the
-    /// cdylib's freshly-built `Kernel`; tests instantiate directly
-    /// with a `Kernel::new()` (cheap in-memory construction) so the
-    /// per-pid procfs entries land in the same metastore the
-    /// assertion helpers read back.
+    /// [`ManagedAgentService::<Kernel>::install`] against the boot-time
+    /// `Arc<Kernel>`; tests instantiate directly with a `Kernel::new()`
+    /// (cheap in-memory construction) so the per-pid procfs entries
+    /// land in the same metastore the assertion helpers read back.
     pub(crate) fn new(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel,
@@ -260,7 +297,7 @@ impl<K: KernelAbi> ManagedAgentService<K> {
     }
 
     /// Constructor variant that injects a [`SpawnTask`] provider.
-    /// The binary edge (`profiles/cluster` / `nexus-cdylib`) calls
+    /// The binary edge (`profiles/cluster`) calls
     /// this with a concrete adapter (e.g. sudocode-runtime
     /// `spawn_task` wrapper) so `start_session` actually kicks off a
     /// runtime body. Pure-Rust slim builds without a runtime body
@@ -377,13 +414,40 @@ impl<K: KernelAbi> ManagedAgentService<K> {
             // services rlib free of a hard dep on any specific
             // runtime crate (sudocode today, future runtimes
             // tomorrow); the concrete adapter lives at the binary
-            // edge (`profiles/cluster` / `nexus-cdylib`) and
+            // edge (`profiles/cluster`) and
             // monomorphises `spawn_task::<K>` internally — no
             // per-`sys_read` vtable cost. Slim builds without a
             // provider (`spawn_provider: None`) skip the spawn and
             // run procfs-only.
             if let Some(provider) = self.spawn_provider.as_ref() {
-                let handle = provider.spawn(Arc::clone(&self.kernel), desc);
+                // Construct the SSOT state observer. AgentRegistry is
+                // the single writer of AgentState in the runtime path
+                // (see kernel::core::agents::registry::update_state +
+                // can_transition_to FSM); the spawn body calls this
+                // closure on each AgentLoopState transition and the
+                // closure forwards the update through update_state.
+                // InvalidTransition is logged rather than panicked so
+                // an FSM bug in the runtime body surfaces as a warning
+                // instead of taking down the worker thread.
+                let registry = Arc::clone(&self.agent_registry);
+                let pid_for_observer = pid.clone();
+                let observer: Arc<dyn Fn(AgentLoopState) + Send + Sync> =
+                    Arc::new(move |loop_state: AgentLoopState| {
+                        let target = match loop_state {
+                            AgentLoopState::WarmingUp => AgentState::WarmingUp,
+                            AgentLoopState::Ready => AgentState::Ready,
+                            AgentLoopState::Busy => AgentState::Busy,
+                        };
+                        if let Err(e) = registry.update_state(&pid_for_observer, target) {
+                            tracing::warn!(
+                                pid = %pid_for_observer,
+                                state = ?target,
+                                error = %e,
+                                "AgentRegistry.update_state rejected runtime-side transition",
+                            );
+                        }
+                    });
+                let handle = provider.spawn(Arc::clone(&self.kernel), desc, observer);
                 self.spawn_handles.insert(pid.clone(), handle);
             }
         }
@@ -491,7 +555,7 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
     }
 
     /// Install variant that injects a [`SpawnTask`] provider. Used
-    /// by the binary edge (`profiles/cluster` / `nexus-cdylib`) to
+    /// by the binary edge (`profiles/cluster`) to
     /// wire the sudocode-runtime adapter — the actual managed-agent
     /// runtime body. Slim builds without a runtime body call
     /// [`Self::install`] which leaves `spawn_provider = None` and
@@ -663,11 +727,58 @@ mod tests {
         }
     }
 
+    /// Mock [`SpawnTask`] that invokes the injected `state_observer`
+    /// with a scripted WARMING_UP → READY → BUSY transition sequence,
+    /// then returns a no-op handle. Used by the
+    /// `state_observer_drives_agent_registry_through_loop_states`
+    /// test to verify the service-constructed observer closure is the
+    /// SSOT writer of AgentState.
+    struct ScriptedSpawn;
+    struct NoopHandle;
+    impl SpawnHandle for NoopHandle {
+        fn abort(&self) {}
+    }
+    impl SpawnTask<Kernel> for ScriptedSpawn {
+        fn spawn(
+            &self,
+            _kernel: Arc<Kernel>,
+            _desc: AgentDescriptor,
+            state_observer: Arc<dyn Fn(AgentLoopState) + Send + Sync>,
+        ) -> Box<dyn SpawnHandle> {
+            state_observer(AgentLoopState::WarmingUp);
+            state_observer(AgentLoopState::Ready);
+            state_observer(AgentLoopState::Busy);
+            Box::new(NoopHandle)
+        }
+    }
+
     #[test]
     fn service_has_canonical_name() {
         let (_kernel, _table, svc) = fresh_service();
         assert_eq!(svc.name(), "managed_agent");
         assert_eq!(ManagedAgentService::<Kernel>::NAME, "managed_agent");
+    }
+
+    #[test]
+    fn state_observer_drives_agent_registry_through_loop_states() {
+        let kernel = Arc::new(Kernel::new());
+        let registry = Arc::clone(kernel.agent_registry());
+        let svc = ManagedAgentService::<Kernel>::with_spawn(
+            Arc::clone(&kernel),
+            Arc::clone(&registry),
+            Arc::new(ScriptedSpawn),
+        );
+
+        let resp = svc.start_session(req("scode-standard")).unwrap();
+        let desc = registry
+            .get(&resp.session_id)
+            .expect("AgentRegistry record present");
+        // The scripted observer fired WARMING_UP → READY → BUSY; final
+        // state in the SSOT is BUSY. (start_session already moves
+        // REGISTERED → WARMING_UP before spawn, so a re-fired
+        // WARMING_UP from the observer is a no-op via the from==new
+        // shortcut in update_state.)
+        assert_eq!(desc.state, AgentState::Busy);
     }
 
     #[test]
@@ -897,12 +1008,13 @@ mod tests {
 
     /// Procfs lifecycle tests — exercise start_session through a real
     /// `Kernel` and assert the metastore carries the dirents + DT_LINK
-    /// rows the integration doc §2.2 promises.  Pure-Rust setup, no
-    /// PyO3.
+    /// rows the integration doc §2.2 promises.
     mod procfs {
         use super::*;
         use kernel::core::agents::registry::AgentSignal;
+        use kernel::kernel::convenience::KernelConvenience;
         use kernel::kernel::Kernel;
+        use kernel::ROOT_ZONE_ID;
 
         const DT_DIR: u8 = 1;
         const DT_STREAM: u8 = 4;
@@ -912,31 +1024,27 @@ mod tests {
         fn dir_exists(kernel: &Kernel, path: &str) -> bool {
             let path = path.trim_end_matches('/');
             kernel
-                .metastore_get(path)
-                .ok()
-                .flatten()
+                .sys_stat(path, ROOT_ZONE_ID)
                 .is_some_and(|e| e.entry_type == DT_DIR)
         }
 
         /// True when `path` has any metastore entry.
         fn entry_exists(kernel: &Kernel, path: &str) -> bool {
             let path = path.trim_end_matches('/');
-            kernel.metastore_get(path).ok().flatten().is_some()
+            kernel.access(path, ROOT_ZONE_ID)
         }
 
         /// DT_LINK target string at `path` — None if the entry is
         /// missing or not a DT_LINK.
         fn link_target_at(kernel: &Kernel, path: &str) -> Option<String> {
             kernel
-                .metastore_get(path)
-                .ok()
-                .flatten()
+                .sys_stat(path, ROOT_ZONE_ID)
                 .filter(|e| e.entry_type == DT_LINK)
                 .and_then(|e| e.link_target)
         }
 
         /// Build a `ManagedAgentService` with a real Kernel inside —
-        /// the only setup needed is `Kernel::new` (no PyO3 boot).
+        /// the only setup needed is `Kernel::new`.
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService<Kernel>) {
             let k = Arc::new(Kernel::new());
             let svc = ManagedAgentService::new(Arc::clone(&k), Arc::clone(k.agent_registry()));
@@ -944,7 +1052,8 @@ mod tests {
         }
 
         fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService<Kernel>> {
-            ManagedAgentService::install_returning(kernel, None).expect("install ManagedAgentService")
+            ManagedAgentService::install_returning(kernel, None)
+                .expect("install ManagedAgentService")
         }
 
         #[test]
@@ -981,9 +1090,10 @@ mod tests {
                 .expect("descriptor must carry repos");
             assert_eq!(desc.repos.len(), 2);
 
-            for (alias, expected) in
-                [("myrepo", "/host/repos/myrepo"), ("another", "/host/repos/another")]
-            {
+            for (alias, expected) in [
+                ("myrepo", "/host/repos/myrepo"),
+                ("another", "/host/repos/another"),
+            ] {
                 let alias_path = format!("{}{}", &resp.workspace_path, alias);
                 assert_eq!(
                     link_target_at(&kernel, &alias_path).as_deref(),
@@ -1116,8 +1226,7 @@ mod tests {
             // followed the DT_LINK to the canonical stream" without
             // coupling to the stamping policy.  The MailboxStamping
             // e2e companion exercises the rewrite path explicitly.
-            let payload =
-                br#"{"from":"scode-standard","to":"human-ethan","body":"ping"}"#;
+            let payload = br#"{"from":"scode-standard","to":"human-ethan","body":"ping"}"#;
 
             let ctx = OperationContext {
                 user_id: "ethan".into(),
@@ -1134,13 +1243,21 @@ mod tests {
                 zone_perms: vec![],
             };
 
-            kernel
-                .sys_write(&shortcut, &ctx, payload, 0)
+            // Use UFCS through KernelAbi so we get the single-path
+            // trait wrappers (sys_read_single / sys_write_with_link_depth)
+            // — the inherent Kernel::sys_read/sys_write are now batch-shaped
+            // (&[ReadRequest] / &[WriteRequest]).
+            KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, payload, 0)
                 .expect("sys_write through workspace shortcut DT_LINK");
 
-            let read = kernel
-                .sys_read(&canonical, &ctx, /* timeout_ms */ 0, 0)
-                .expect("sys_read on canonical chat-with-me");
+            let read = KernelAbi::sys_read(
+                kernel.as_ref(),
+                &canonical,
+                &ctx,
+                /* timeout_ms */ 0,
+                0,
+            )
+            .expect("sys_read on canonical chat-with-me");
             let bytes = read.data.expect("stream data present after write");
             assert_eq!(bytes.as_slice(), payload);
         }
@@ -1184,12 +1301,10 @@ mod tests {
                 zone_perms: vec![],
             };
 
-            kernel
-                .sys_write(&shortcut, &ctx, &llm_authored, 0)
+            KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, &llm_authored, 0)
                 .expect("sys_write through workspace shortcut DT_LINK");
 
-            let read = kernel
-                .sys_read(&canonical, &ctx, 0, 0)
+            let read = KernelAbi::sys_read(kernel.as_ref(), &canonical, &ctx, 0, 0)
                 .expect("sys_read on canonical chat-with-me");
             let bytes = read.data.expect("stream data present");
             let json: serde_json::Value =
@@ -1214,18 +1329,17 @@ mod tests {
             // Workspace shortcut is a DT_LINK whose target is the
             // canonical path.
             let shortcut_meta = kernel
-                .metastore_get(&shortcut)
-                .ok()
-                .flatten()
+                .sys_stat(&shortcut, ROOT_ZONE_ID)
                 .expect("workspace shortcut entry present");
             assert_eq!(shortcut_meta.entry_type, DT_LINK);
-            assert_eq!(shortcut_meta.link_target.as_deref(), Some(canonical.as_str()));
+            assert_eq!(
+                shortcut_meta.link_target.as_deref(),
+                Some(canonical.as_str())
+            );
 
             // Canonical path holds the DT_STREAM the link points at.
             let canonical_meta = kernel
-                .metastore_get(&canonical)
-                .ok()
-                .flatten()
+                .sys_stat(&canonical, ROOT_ZONE_ID)
                 .expect("canonical chat-with-me entry present");
             assert_eq!(canonical_meta.entry_type, DT_STREAM);
         }

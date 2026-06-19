@@ -23,6 +23,20 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _slot_items(obj: Any) -> dict[str, Any]:
+    slots = getattr(obj, "__slots__", ())
+    if isinstance(slots, str):
+        slots = (slots,)
+    return {
+        name: getattr(obj, name)
+        for name in slots
+        if isinstance(name, str)
+        and not name.startswith("_")
+        and hasattr(obj, name)
+        and not callable(getattr(obj, name))
+    }
+
+
 class RPCEncoder(json.JSONEncoder):
     """Custom JSON encoder for RPC messages.
 
@@ -54,6 +68,7 @@ class RPCEncoder(json.JSONEncoder):
 
             if is_dataclass(obj):
                 return {f.name: getattr(obj, f.name) for f in fields(obj)}
+            return _slot_items(obj)
         return super().default(obj)
 
 
@@ -114,7 +129,7 @@ def _prepare_for_orjson(obj: Any) -> Any:
 
         if is_dataclass(obj):
             return {f.name: _prepare_for_orjson(getattr(obj, f.name)) for f in fields(obj)}
-        return obj
+        return {k: _prepare_for_orjson(v) for k, v in _slot_items(obj).items()}
     else:
         return obj
 

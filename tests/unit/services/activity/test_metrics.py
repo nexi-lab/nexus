@@ -200,3 +200,31 @@ def test_record_metrics_fetch_is_noop() -> None:
         subject_extra=None,
         latency_ms=None,
     )
+
+
+def test_4336_metrics_registered_and_incrementable() -> None:
+    from nexus.services.activity.metrics import (
+        ACTIVITY_DISK_FREE_BYTES,
+        ACTIVITY_SAMPLED_OUT,
+        ACTIVITY_SEGMENTS_DELETED,
+        ACTIVITY_SHED,
+        ACTIVITY_STORE_BYTES,
+    )
+
+    before_shed = _sample(ACTIVITY_SHED)
+    ACTIVITY_SHED.inc(5)
+    assert _sample(ACTIVITY_SHED) == before_shed + 5
+
+    before_sampled = _sample(ACTIVITY_SAMPLED_OUT)
+    ACTIVITY_SAMPLED_OUT.inc()
+    assert _sample(ACTIVITY_SAMPLED_OUT) == before_sampled + 1
+
+    before_seg = _sample(ACTIVITY_SEGMENTS_DELETED)
+    ACTIVITY_SEGMENTS_DELETED.inc(2)
+    assert _sample(ACTIVITY_SEGMENTS_DELETED) == before_seg + 2
+
+    ACTIVITY_DISK_FREE_BYTES.set(123456)
+    assert _sample(ACTIVITY_DISK_FREE_BYTES) == 123456
+
+    ACTIVITY_STORE_BYTES.set(789)
+    assert _sample(ACTIVITY_STORE_BYTES) == 789

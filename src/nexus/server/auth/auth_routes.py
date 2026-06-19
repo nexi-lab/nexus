@@ -66,7 +66,7 @@ def get_auth_provider() -> DatabaseLocalAuth:
     """Return the *explicitly-injected* DatabaseLocalAuth, or raise 503.
 
     Used by endpoints that mutate email/password auth state — register,
-    login, change-password, request-verification, verify-email, setup-zone.
+    login, change-password, request-verification, verify-email.
     In OAuth-only deployments (no DatabaseLocalAuth injected) these endpoints
     MUST 503: we don't silently synthesize a password backend from the OAuth
     provider, because that would enable flows (e.g. email+password login)
@@ -244,13 +244,6 @@ class OAuthConfirmRequest(BaseModel):
     zone_slug: str | None = Field(None, description="Optional zone slug for new user")
 
 
-class ZoneSetupRequest(BaseModel):
-    """Zone setup request for password users."""
-
-    zone_name: str | None = Field(None, description="Optional zone name")
-    zone_slug: str | None = Field(None, description="Optional zone slug")
-
-
 class UserResponse(BaseModel):
     """User information response."""
 
@@ -330,15 +323,6 @@ class OAuthConfirmResponse(BaseModel):
     api_key: str | None = None
     zone_id: str | None = None
     message: str = "OAuth authentication confirmed"
-
-
-class ZoneSetupResponse(BaseModel):
-    """Zone setup response."""
-
-    user: UserResponse
-    api_key: str
-    zone_id: str
-    message: str = "Zone created successfully"
 
 
 # ==============================================================================
@@ -479,193 +463,6 @@ async def login(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
-
-
-@router.post("/setup-zone", response_model=ZoneSetupResponse)
-async def setup_zone(
-    request: ZoneSetupRequest,
-    user_info: tuple[str, str] = Depends(get_authenticated_user),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
-) -> ZoneSetupResponse:
-    """Create zone and API key for password-authenticated users.
-
-    This endpoint is for password users who have already registered and logged in
-    but don't have a zone yet. It creates a zone and generates an API key.
-
-    Args:
-        request: Zone setup request with optional zone_name and zone_slug
-        user_info: Authenticated user information from JWT token
-        auth: Authentication provider
-
-    Returns:
-        User information, API key, and zone_id
-
-    Raises:
-        401: Not authenticated or invalid token
-        400: Invalid request data
-        500: Server error during zone creation
-    """
-    user_id, email = user_info
-
-    try:
-        from datetime import UTC, datetime, timedelta
-
-        from nexus.bricks.auth.user_queries import get_user_by_id
-
-        # Get user from database
-        with auth.session_factory() as session:
-            user = get_user_by_id(session, user_id)
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User not found: {user_id}",
-                )
-
-            if not user.email:
-                raise ValueError("User email is required for zone setup")
-
-            # Generate zone_id based on email type
-            # For personal emails (gmail, outlook, etc): use username
-            # For work emails: use full domain (e.g., multifi.ai)
-            email_username, email_domain = (
-                user.email.split("@") if "@" in user.email else (user.email, "")
-            )
-            personal_domains = [
-                "gmail.com",
-                "outlook.com",
-                "hotmail.com",
-                "yahoo.com",
-                "icloud.com",
-                "proton.me",
-                "protonmail.com",
-            ]
-            is_personal = email_domain.lower() in personal_domains
-
-            # Calculate default zone_id and name
-            if is_personal:
-                default_zone_id = email_username
-                first_name = (
-                    user.display_name.split()[0]
-                    if user.display_name
-                    else email_username.capitalize()
-                )
-                default_zone_name = f"{first_name}'s Org"
-            else:
-                # Remove dots from domain for zone_id (e.g., multifi.ai -> multifiai)
-                default_zone_id = email_domain.replace(".", "")
-                default_zone_name = email_domain
-
-            # Use custom zone_slug and zone_name from request if provided
-            zone_id = request.zone_slug if request.zone_slug else default_zone_id
-            zone_name = request.zone_name if request.zone_name else default_zone_name
-
-            # Make user detached so we can access it after session closes
-            session.expunge(user)
-
-        # Provision full user resources (workspace, agents, permissions)
-        # This is done outside the session to avoid conflicts
-        api_key_value = None
-        key_id = None
-        try:
-            from nexus.contracts.types import OperationContext
-
-            nx = get_nexus_instance()
-            if not nx:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="NexusFS instance not configured. Cannot provision user resources.",
-                )
-
-            admin_context = OperationContext(
-                user_id="system",
-                groups=[],
-                zone_id=zone_id,
-                is_admin=True,
-            )
-
-            # Provision user resources with API key (90 days expiry)
-            provision_result = await nx.service("user_provisioning").provision_user(
-                user_id=user_id,
-                email=user.email,
-                display_name=user.display_name,
-                zone_id=zone_id,
-                zone_name=zone_name,
-                create_api_key=True,
-                api_key_name="Password Auth Auto-generated Key",
-                api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
-                create_agents=True,
-                import_skills=False,
-                context=admin_context,
-            )
-            logger.info(f"Provisioned password user resources: {provision_result}")
-
-            # Extract API key and key_id for encryption storage
-            api_key_value = provision_result.get("api_key")
-            key_id = provision_result.get("key_id")
-
-            if not api_key_value or not key_id:
-                raise ValueError("Failed to create API key during provisioning")
-
-        except Exception as e:
-            logger.error("Failed to provision password user resources: %s", e, exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to provision user resources: {e}",
-            ) from e
-
-        # Encrypt and store the raw API key in oauth_api_keys table
-        # This allows password users to retrieve their API key on subsequent logins (if we implement that)
-        try:
-            from nexus.storage.models import OAuthAPIKeyModel
-
-            # Get OAuth provider for crypto (password users use the same encryption as OAuth)
-            oauth_provider = get_oauth_provider()
-            if oauth_provider:
-                crypto = oauth_provider.oauth_crypto
-                encrypted_key_value = crypto.encrypt_token(api_key_value)
-
-                # Store encrypted key in a new session
-                with auth.session_factory() as key_session, key_session.begin():
-                    oauth_api_key = OAuthAPIKeyModel(
-                        key_id=key_id,
-                        user_id=user_id,
-                        encrypted_key_value=encrypted_key_value,
-                    )
-                    key_session.add(oauth_api_key)
-                    logger.info(f"Stored encrypted API key for password user: {user_id}")
-            else:
-                # OAuth provider not configured - skip encryption storage
-                # User can still use the API key, just can't retrieve it on subsequent logins
-                logger.warning(
-                    f"OAuth provider not configured - skipping encrypted API key storage for user {user_id}"
-                )
-        except Exception as e:
-            logger.error(f"Failed to encrypt and store API key: {e}")
-            # Don't fail the request - user still got the API key, just can't retrieve it later
-
-        return ZoneSetupResponse(
-            user=UserResponse(
-                user_id=user.user_id,
-                email=user.email,
-                username=user.username,
-                display_name=user.display_name,
-                avatar_url=user.avatar_url,
-                is_global_admin=user.is_global_admin == 1,
-                primary_auth_method=user.primary_auth_method,
-            ),
-            api_key=api_key_value,
-            zone_id=zone_id,
-            message="Zone created successfully",
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Zone setup failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Zone setup failed: {e}",
-        ) from e
 
 
 @router.get("/me", response_model=UserResponse)
@@ -1405,18 +1202,20 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     message="OAuth linked to existing account",
                 )
 
-        # New user - create zone, user, and OAuth account
+        # New user - create user + OAuth account
         user_id = str(uuid.uuid4())
 
-        # Generate zone_id based on email type (same logic as existing users)
-        # For personal emails: use username, for work emails: use full domain
+        # Derive a zone_id for the JWT claim (no zone row is created — that
+        # work lived in user_provisioning, which was deleted).  Personal-
+        # domain emails use the local part; org-domain emails use the
+        # domain; missing email falls back to a user-id-derived slug.
         if registration.provider_email:
             email_username, email_domain = (
                 registration.provider_email.split("@")
                 if "@" in registration.provider_email
                 else (registration.provider_email, "")
             )
-            personal_domains = [
+            personal_domains = {
                 "gmail.com",
                 "outlook.com",
                 "hotmail.com",
@@ -1424,31 +1223,14 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 "icloud.com",
                 "proton.me",
                 "protonmail.com",
-            ]
-            # Use email username for personal domains, domain for org domains
+            }
             default_zone_id = (
                 email_username if email_domain.lower() in personal_domains else email_domain
             )
-
-            # Calculate smart zone name based on email type
-            if email_domain.lower() in personal_domains:
-                # Personal: extract first name from display_name
-                first_name = (
-                    registration.name.split()[0]
-                    if registration.name
-                    else email_username.capitalize()
-                )
-                default_zone_name = f"{first_name}'s Org"
-            else:
-                # Work: use domain
-                default_zone_name = email_domain
         else:
             default_zone_id = f"user_{user_id[:8]}"
-            default_zone_name = f"User {user_id[:8]} Organization"
 
-        # Use custom zone_slug and zone_name from frontend if provided, otherwise use defaults
         zone_id = request.zone_slug if request.zone_slug else default_zone_id
-        zone_name = request.zone_name if request.zone_name else default_zone_name
 
         # Ensure provider email exists for new user creation
         if not registration.provider_email:
@@ -1491,69 +1273,6 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
-        # Provision full user resources (workspace, agents, permissions)
-        # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
-        # This is done outside the session to avoid conflicts
-        api_key_value = None
-        key_id = None
-        try:
-            from nexus.contracts.types import OperationContext
-
-            nx = get_nexus_instance()
-            if nx:
-                admin_context = OperationContext(
-                    user_id="system",
-                    groups=[],
-                    zone_id=zone_id,
-                    is_admin=True,
-                )
-
-                # Provision user resources with OAuth-specific API key (90 days expiry)
-                provision_result = await nx.service("user_provisioning").provision_user(
-                    user_id=user_id,
-                    email=user.email,
-                    display_name=user.display_name,
-                    zone_id=zone_id,
-                    zone_name=zone_name,
-                    create_api_key=True,
-                    api_key_name="OAuth Auto-generated Key",
-                    api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
-                    create_agents=True,
-                    import_skills=False,
-                    context=admin_context,
-                )
-                logger.info(f"Provisioned OAuth user resources: {provision_result}")
-
-                # Extract API key and key_id for OAuth encryption
-                api_key_value = provision_result.get("api_key")
-                key_id = provision_result.get("key_id")
-
-        except Exception as e:
-            logger.error(f"Failed to provision OAuth user resources: {e}")
-            # Continue - user can be provisioned later via retry
-
-        # Encrypt and store the raw API key in oauth_api_keys table
-        # This allows OAuth users to retrieve their API key on subsequent logins
-        if api_key_value and key_id:
-            try:
-                from nexus.storage.models import OAuthAPIKeyModel
-
-                # Use the OAuth crypto instance from the provider
-                crypto = oauth_provider.oauth_crypto
-                encrypted_key_value = crypto.encrypt_token(api_key_value)
-
-                # Store encrypted key in a new session
-                with oauth_provider.session_factory() as oauth_session, oauth_session.begin():
-                    oauth_api_key = OAuthAPIKeyModel(
-                        key_id=key_id,
-                        user_id=user_id,
-                        encrypted_key_value=encrypted_key_value,
-                    )
-                    oauth_session.add(oauth_api_key)
-                    logger.info(f"Stored encrypted API key for OAuth user: {user_id}")
-            except Exception as e:
-                logger.error(f"Failed to encrypt and store OAuth API key: {e}")
-
         # Type guard: email is required for OAuth users
         assert user.email is not None, "OAuth user must have email"
 
@@ -1583,7 +1302,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 primary_auth_method="oauth",
             ),
             is_new_user=True,
-            api_key=api_key_value,
+            api_key=None,
             zone_id=zone_id,
             message="OAuth authentication confirmed and account created",
         )

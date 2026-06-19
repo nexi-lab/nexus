@@ -315,14 +315,33 @@ fn register_stdio_pipe<K: KernelAbi>(
     read_fd: i32,
     write_fd: i32,
 ) -> Result<(), String> {
+    // DT_PIPE create via the generic sys_setattr matrix: entry_type=3
+    // (DT_PIPE), the "stdio" io_profile, and the subprocess's dup'd
+    // read/write fds. The DT_PIPE arm of sys_setattr accepts exactly
+    // these params — no dedicated setattr_pipe syscall needed.
     kernel
-        .setattr_pipe(
+        .sys_setattr(
             path,
-            PIPE_CAPACITY,
-            "stdio",
-            Some(read_fd),
-            Some(write_fd),
-            "root",
+            /* entry_type   */ 3, // DT_PIPE
+            /* backend_name */ "",
+            /* backend      */ None,
+            /* metastore    */ None,
+            /* raft_backend */ None,
+            /* io_profile   */ "stdio",
+            /* zone_id      */ "root",
+            /* is_external  */ false,
+            /* capacity     */ PIPE_CAPACITY,
+            /* read_fd      */ Some(read_fd),
+            /* write_fd     */ Some(write_fd),
+            /* mime_type       */ None,
+            /* modified_at_ms  */ None,
+            /* content_id      */ None,
+            /* size            */ None,
+            /* version         */ None,
+            /* created_at_ms   */ None,
+            /* link_target     */ None,
+            /* source          */ None,
+            /* remote_metastore*/ None,
         )
         .map(|_| ())
         .map_err(|e: KernelError| format!("{e:?}"))
@@ -478,8 +497,8 @@ mod tests {
     /// a metastore mount at `/{zone}/proc/...`, so `unregister_pipes`
     /// can't reach the kernel-side StdioPipeBackend to close its
     /// dup'd fd, the subprocess never sees EOF on stdin, and `wait`
-    /// hangs. Run this test against a fully-wired kernel (boot via
-    /// PyKernel + factory) where the proc-tree mount is present:
+    /// hangs. Run this test against a fully-wired kernel (the boot
+    /// path that mounts the proc-tree):
     ///   `cargo test acp::subprocess::tests::cat_roundtrip -- --ignored`
     /// The roundtrip portion of the test (write -> read -> assert
     /// echoed bytes) does pass; only the EOF / wait teardown trips on

@@ -22,11 +22,13 @@ def _floor_ms(dt: datetime) -> datetime:
     return dt.replace(microsecond=(dt.microsecond // 1000) * 1000)
 
 
-@pytest.fixture
-async def nexus_fs(isolated_db, tmp_path):
+@pytest.fixture(scope="module")
+async def nexus_fs(tmp_path_factory):
     """Create a NexusFS instance for testing via factory."""
-    backend = CASLocalBackend(str(tmp_path / "data"))
-    metadata_store = str(isolated_db).replace(".db", "")
+    base = tmp_path_factory.mktemp("nexus_timestamp")
+    (base / "data").mkdir()
+    backend = CASLocalBackend(str(base / "data"))
+    metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )

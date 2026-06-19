@@ -827,6 +827,10 @@ def auth_migrate_to_postgres(
     if not sqlite_path.exists():
         raise click.ClickException(f"Source SQLite DB not found: {sqlite_path}")
 
+    # Issue #4238: accept the canonical ``postgres://`` scheme (inlined —
+    # brick boundary forbids nexus.core imports).
+    if db_url and db_url.startswith("postgres://"):
+        db_url = "postgresql://" + db_url[len("postgres://") :]
     engine = create_engine(db_url, future=True)
     try:
         ensure_schema(engine)
@@ -927,6 +931,10 @@ def enroll_token_cmd(tenant_id: str, principal_id: str, ttl_minutes: int) -> Non
     if not db_url:
         raise click.ClickException("NEXUS_AUTH_DB_URL must be set")
 
+    # Issue #4238: accept the canonical ``postgres://`` scheme (inlined —
+    # brick boundary forbids nexus.core imports).
+    if db_url.startswith("postgres://"):
+        db_url = "postgresql://" + db_url[len("postgres://") :]
     engine = create_engine(db_url, future=True)
     token = issue_enroll_token(
         engine=engine,
@@ -1162,6 +1170,10 @@ def auth_rotate_kek(
     if (tenant is None) == (tenant_id_opt is None):
         raise click.ClickException("Pass exactly one of --tenant or --tenant-id.")
 
+    # Issue #4238: accept the canonical ``postgres://`` scheme (inlined —
+    # brick boundary forbids nexus.core imports).
+    if db_url and db_url.startswith("postgres://"):
+        db_url = "postgresql://" + db_url[len("postgres://") :]
     engine = create_engine(db_url, future=True)
     try:
         if tenant_id_opt is not None:

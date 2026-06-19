@@ -17,6 +17,8 @@ import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from nexus.contracts.zone_phase import ZonePhase
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -169,7 +171,7 @@ def create_api_key(
         active_rows = session.execute(
             sa_select(ZoneModel.zone_id)
             .where(ZoneModel.zone_id.in_(requested))
-            .where(ZoneModel.phase == "Active")
+            .where(ZoneModel.phase == ZonePhase.ACTIVE)
             .where(ZoneModel.deleted_at.is_(None))
         )
         active = {row[0] for row in active_rows}

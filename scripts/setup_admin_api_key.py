@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 from nexus.bricks.rebac.entity_registry import EntityRegistry  # noqa: E402
+from nexus.core.db_utils import normalize_database_url  # noqa: E402
 from nexus.storage.models import APIKeyModel  # noqa: E402
 
 
@@ -43,6 +44,11 @@ def setup_admin_api_key(
         True if successful, False otherwise
     """
     try:
+        # Issue #4238: accept the canonical ``postgres://`` scheme that
+        # cloud providers emit by default. local-demo passes
+        # NEXUS_DATABASE_URL straight to this script — without normalize
+        # the create_engine call below aborts with NoSuchModuleError.
+        database_url = normalize_database_url(database_url)
         engine = create_engine(database_url)
         SessionFactory = sessionmaker(bind=engine)
 

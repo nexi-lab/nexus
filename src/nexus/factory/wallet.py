@@ -1,15 +1,16 @@
-"""WalletProvisioner — sync TigerBeetle wallet creation for agent registration."""
+"""WalletProvisioner — TigerBeetle wallet creation for agent registration."""
 
 import logging
 from typing import Any
 
+from nexus.bricks.pay.constants import tb_status_code
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
 
 class WalletProvisioner:
-    """Sync wallet provisioner for NexusFS agent registration.
+    """Async wallet provisioner for NexusFS agent registration.
 
     Creates TigerBeetle wallet accounts on demand.  The client is lazily
     initialised on first call and reused.  Account creation is idempotent
@@ -21,7 +22,7 @@ class WalletProvisioner:
         self._tb_cluster = tb_cluster
         self._client: Any = None
 
-    def __call__(self, agent_id: str, zone_id: str = ROOT_ZONE_ID) -> None:
+    async def __call__(self, agent_id: str, zone_id: str = ROOT_ZONE_ID) -> None:
         """Create TigerBeetle account for *agent_id*. Idempotent."""
         import tigerbeetle as tb
 
@@ -32,7 +33,7 @@ class WalletProvisioner:
         )
 
         if self._client is None:
-            self._client = tb.ClientSync(
+            self._client = tb.ClientAsync(
                 cluster_id=self._tb_cluster,
                 replica_addresses=self._tb_address,
             )
@@ -47,10 +48,10 @@ class WalletProvisioner:
 
         client = self._client
         assert client is not None
-        errors = client.create_accounts([account])
+        errors = await client.create_accounts([account])
         # Ignore EXISTS (21) — idempotent operation
-        if errors and errors[0].result not in (0, 21):
-            raise RuntimeError(f"TigerBeetle account creation failed: {errors[0].result}")
+        if errors and tb_status_code(errors[0]) not in (0, 21, 2**32 - 1):
+            raise RuntimeError(f"TigerBeetle account creation failed: {tb_status_code(errors[0])}")
 
 
 def create_wallet_provisioner() -> WalletProvisioner | None:

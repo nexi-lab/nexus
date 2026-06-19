@@ -1,0 +1,56 @@
+name: Release FUSE Plugin
+
+# Release pipeline for the nexus-fuse-plugin cdylib — wrapper around
+# the reusable plugin-release workflow. Triggered by tags of the form
+# `fuse-v<semver>`.
+#
+# Linux + macOS — fuser bindings cover libfuse3 (Linux) and macFUSE
+# (macOS) under the same `Filesystem` trait; the plugin's cfg gate
+# extends to `cfg(any(target_os = "linux", target_os = "macos"))` so
+# both targets ship from one source. Windows shipping waits on a
+# separate WinFsp adapter (different binding crate, different trait
+# shape) — tracked as a follow-up PR.
+#
+# Uses the dogfood signing path (`signing_key_source: vault`) — vault is
+# the trust root for every non-vault plugin's signing key. The path now
+# resolves against the sealed in-repo keystore at data/vault-signing/ via
+# scripts/dogfood_keystore_fetch.py — see
+# docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md.
+#
+# COS path convention: nexus-fuse-plugin/release/v<version>/<filename>
+
+on:
+  push:
+    tags:
+      - "fuse-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-plugin-reusable.yml
+    with:
+      plugin_name: nexus-fuse-plugin
+      dylib_basename: libnexus_fuse_plugin
+      archive_prefix: nexus-fuse-plugin
+      cos_subdir: nexus-fuse-plugin/release
+      version_tag_prefix: fuse-v
+      signing_key_source: vault
+      signing_key_name: kernel-dogfood-v1
+      platforms: '["linux-x86_64", "macos-arm64", "macos-x86_64"]'
+      release_description: |
+        Nexus FUSE service plugin for nexusd-cluster.
+
+        Spawns a fuser-based FUSE event loop and translates POSIX
+        filesystem ops into Nexus kernel syscalls via the plugin-abi
+        KernelHandle, in-process. Ships for Linux (libfuse3) and
+        macOS (macFUSE). Windows shipping waits on a separate
+        WinFsp adapter — tracked as a follow-up PR.
+    secrets:
+      VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
+      COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+      COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+      COS_BUCKET: ${{ secrets.COS_BUCKET }}
+      COS_REGION: ${{ secrets.COS_REGION }}
+      COS_BASE_URL: ${{ secrets.COS_BASE_URL }}

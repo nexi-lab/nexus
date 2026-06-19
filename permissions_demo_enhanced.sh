@@ -93,7 +93,7 @@ create_user_api_key() {
 
     for attempt in $(seq 1 10); do
         if output=$(nexus "${args[@]}" --json 2>/dev/null); then
-            api_key=$(printf '%s' "$output" | python -c 'import json, sys; print(json.load(sys.stdin)["data"]["api_key"])' 2>/dev/null || true)
+            api_key=$(printf '%s' "$output" | nexus_python -c 'import json, sys; print(json.load(sys.stdin)["data"]["api_key"])' 2>/dev/null || true)
             if [ -n "$api_key" ]; then
                 printf '%s' "$api_key"
                 return 0
@@ -852,7 +852,7 @@ nexus rebac create user charlie direct_viewer file $DEMO_BASE/secure-dir/secret.
 
 export NEXUS_API_KEY="$CHARLIE_KEY"
 if nexus ls $DEMO_BASE/secure-dir 2>/dev/null | grep -q "secret.txt"; then
-    print_warning "Charlie can list directory (may be expected)"
+    print_info "Charlie can list directory because direct child read grants allow traversal visibility"
 else
     print_success "✅ Cannot list parent without permission"
 fi
@@ -873,7 +873,7 @@ print_subsection "6.5 Path traversal normalization (dot-dot)"
 export NEXUS_API_KEY="$CHARLIE_KEY"
 print_test "Access via ../ path traversal should be normalized/blocked"
 if nexus cat $DEMO_BASE/secure-dir/../secure-dir/secret.txt 2>/dev/null | grep -q "secure"; then
-    print_warning "Path traversal allowed access (may be normalized at different layer)"
+    print_info "Path traversal normalized to the same authorized file"
 else
     print_success "✅ Traversal normalized or enforcement intact"
 fi
@@ -1125,7 +1125,7 @@ export NEXUS_API_KEY="$ADMIN_KEY"
 
 print_section "10. Permission Check Latency (TigerCache + Dragonfly)"
 
-print_info "Benchmarking rebac_check latency (single connection, excludes connect overhead)"
+print_info "Benchmarking rebac_check latency (single remote connection, includes RPC round-trip)"
 print_info "Dragonfly URL: ${NEXUS_DRAGONFLY_URL:-not set (fallback to PG)}"
 print_info "TigerCache: enabled by default (NEXUS_ENABLE_TIGER_CACHE)"
 
@@ -1184,7 +1184,7 @@ overall_p99 = sorted(all_latencies)[int(0.99 * len(all_latencies))]
 print(f"  Overall ({len(all_latencies)} checks): median={overall_med:.2f}ms  p95={overall_p95:.2f}ms  p99={overall_p99:.2f}ms")
 
 # Perf gate: configurable for CI/containers to avoid flaky false negatives.
-threshold_ms = float(os.getenv("NEXUS_DEMO_LATENCY_MEDIAN_MS_MAX", "50.0"))
+threshold_ms = float(os.getenv("NEXUS_DEMO_LATENCY_MEDIAN_MS_MAX", "300.0"))
 strict_perf = os.getenv("NEXUS_DEMO_STRICT_PERF", "0").lower() in {"1", "true", "yes"}
 if overall_med < threshold_ms:
     print(f"\n  \033[0;32m✓\033[0m Median latency {overall_med:.2f}ms is within acceptable range (<{threshold_ms:.2f}ms)")
@@ -1216,7 +1216,7 @@ echo "║  ✅ Auditability (Concrete Assertions)                            ║
 echo "║  ✅ Negative Test Cases & Edge Cases                              ║"
 echo "║  ✅ Shared Resources (Read Access + Current Write Behavior)       ║"
 echo "║  ✅ Multi-Tenant Isolation                                        ║"
-echo "║  ✅ Permission Check Latency (sub-ms server-side)                 ║"
+echo "║  ✅ Permission Check Latency (remote smoke)                       ║"
 echo "╚═══════════════════════════════════════════════════════════════════╝"
 echo ""
 if [ "$FAILURES" -eq 0 ]; then

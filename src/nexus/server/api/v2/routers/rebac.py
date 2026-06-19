@@ -94,6 +94,23 @@ def _subject_tuple(body: TupleBody) -> tuple[str, str] | tuple[str, str, str]:
     return (body.subject_namespace, body.subject_id)
 
 
+def _normalize_file_object_id(object_namespace: str, object_id: str) -> str:
+    """Normalize exact file object IDs without rewriting explicit patterns.
+
+    Issue #4239 now stores supported ``file`` path-pattern suffixes as tuple
+    object IDs. Keep ``/**`` and ``/*`` values intact so the ReBAC graph layer
+    can apply the new matcher. Non-file namespaces pass through unchanged.
+    """
+    if object_namespace != "file" or not object_id:
+        return object_id
+
+    # Preserve pattern IDs exactly; only keep the old exact-path trailing-slash
+    # normalization for non-root values.
+    if len(object_id) > 1 and object_id.endswith("/"):
+        return object_id.rstrip("/")
+    return object_id
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -117,7 +134,16 @@ async def write_tuple(
     """
     rebac_manager = _resolve_rebac_manager(request)
     subject = _subject_tuple(body)
-    obj = (body.object_namespace, body.object_id)
+    # Issue #4239: preserve explicit file path-pattern tuple IDs so the graph
+    # layer can distinguish recursive and single-level grants.
+    normalized_object_id = _normalize_file_object_id(body.object_namespace, body.object_id)
+    if normalized_object_id != body.object_id:
+        logger.info(
+            "[#4239] rebac tuple object_id normalized: %r -> %r (exact path canonicalization)",
+            body.object_id,
+            normalized_object_id,
+        )
+    obj = (body.object_namespace, normalized_object_id)
 
     try:
         result = rebac_manager.rebac_write(
@@ -137,7 +163,8 @@ async def write_tuple(
         "subject_id": body.subject_id,
         "relation": body.relation,
         "object_namespace": body.object_namespace,
-        "object_id": body.object_id,
+        "object_id": normalized_object_id,
+        "object_id_input": body.object_id,
         "zone_id": body.zone_id,
     }
 
@@ -150,6 +177,7 @@ async def list_tuples(
     relation: str | None = None,
     object_namespace: str | None = None,
     object_id: str | None = None,
+    zone_id: str | None = None,
     _auth: dict[str, Any] = Depends(require_followup_admin),
 ) -> dict[str, Any]:
     """List ReBAC tuples matching optional filters (admin-only).
@@ -157,31 +185,25 @@ async def list_tuples(
     Diagnostic surface — production callers use the gRPC permission
     check, not this endpoint. Returns up to whatever the manager
     returns; we don't paginate.
+
+    Issue #4242: any subset of filters is honored — ``?subject_id=admin``
+    alone is valid (operators debugging a permission denial want to
+    grep by subject regardless of ``subject_type``).
     """
     rebac_manager = _resolve_rebac_manager(request)
 
-    subject: tuple[str, str] | None = None
-    if subject_namespace is not None and subject_id is not None:
-        subject = (subject_namespace, subject_id)
-    elif subject_namespace is not None or subject_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="subject_namespace and subject_id must be provided together",
-        )
-
-    obj: tuple[str, str] | None = None
-    if object_namespace is not None and object_id is not None:
-        obj = (object_namespace, object_id)
-    elif object_namespace is not None or object_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="object_namespace and object_id must be provided together",
-        )
+    # Issue #4239: keep explicit path-pattern IDs exact at the diagnostic
+    # lookup surface; only trailing slashes on exact paths are canonicalized.
+    if object_id is not None and object_namespace is not None:
+        object_id = _normalize_file_object_id(object_namespace, object_id)
 
     tuples: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
-        subject=subject,
         relation=relation,
-        object=obj,
+        subject_type=subject_namespace,
+        subject_id=subject_id,
+        object_type=object_namespace,
+        object_id=object_id,
+        zone_id=zone_id,
     )
     return {"tuples": tuples, "count": len(tuples)}
 
@@ -199,20 +221,26 @@ async def delete_tuple(
     the no-op case (tuple did not exist) without a separate GET.
     """
     rebac_manager = _resolve_rebac_manager(request)
-    # Subject lookup uses the 2-tuple form (rebac_list_tuples doesn't
-    # filter on subject_relation); the 3-tuple is only relevant for
-    # writes. The zone_id filter below disambiguates same-shape tuples
-    # across zones.
-    obj = (body.object_namespace, body.object_id)
+    # Issue #4239: preserve pattern IDs so DELETE matches exactly what POST
+    # stores for recursive and single-level grants.
+    normalized_object_id = _normalize_file_object_id(body.object_namespace, body.object_id)
+    obj = (body.object_namespace, normalized_object_id)
 
+    # Round-10 review (codex HIGH): pass subject_relation through to
+    # the manager so we delete EXACTLY the tuple shape the operator
+    # asked for. Previously the manager collapsed subject to (type, id)
+    # and ignored subject_relation — meaning a parallel
+    # userset-as-subject tuple sharing (subject, relation, object,
+    # zone) would also be deleted. ``body.subject_relation`` is None
+    # for direct tuples (POST's default) and a string for usersets.
+    # Either value routes through the manager's _UNSET-aware filter.
     matches: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
         subject=(body.subject_namespace, body.subject_id),
         relation=body.relation,
         object=obj,
+        subject_relation=body.subject_relation,
+        zone_id=body.zone_id,
     )
-    # Filter to the requested zone — list_tuples doesn't zone-filter, so
-    # we do it here to avoid deleting a same-shape tuple in another zone.
-    matches = [t for t in matches if t.get("zone_id") == body.zone_id]
 
     deleted = 0
     for t in matches:
@@ -226,6 +254,7 @@ async def delete_tuple(
         "subject_id": body.subject_id,
         "relation": body.relation,
         "object_namespace": body.object_namespace,
-        "object_id": body.object_id,
+        "object_id": normalized_object_id,
+        "object_id_input": body.object_id,
         "zone_id": body.zone_id,
     }

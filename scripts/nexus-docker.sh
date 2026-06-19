@@ -316,36 +316,12 @@ run_provisioning() {
         return
     fi
 
-    # Provision admin user for default zone using API
-    echo "  Calling provision_user API for admin@default..."
-    local RESPONSE
-    # Try API call first (requires valid API key); include headers so we can grep for HTTP/1.1 200 OK
-    echo "  Attempting API call to provision_user with API key: $API_KEY on url: $NEXUS_URL"
-    RESPONSE=$(curl -s -i -X POST "http://localhost:2026/api/nfs/provision_user" \
-        -H "Authorization: Bearer ${API_KEY}" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "provision_user",
-            "params": {
-                "user_id": "admin",
-                "email": "",
-                "display_name": "Admin User",
-                "zone_id": "default",
-                "create_api_key": false,
-                "create_agents": true,
-                "import_skills": true
-            }
-        }' 2>&1)
-
-    if echo "$RESPONSE" | grep -q "HTTP/1.1 200 OK"; then
-        echo "✅ Provisioning completed successfully"
-    else
-        echo "❌ provision_user failed (did not see HTTP/1.1 200 OK)"
-        echo "$RESPONSE"
-        exit 1
-    fi
+    # User provisioning previously called the provision_user RPC here; the
+    # underlying service was deleted (orphaned 9-step composite — see
+    # nexus-para PR series).  The admin API key is still ensured above; any
+    # additional zone-bootstrapping the future smoke-test needs should be
+    # wired into whatever surface replaces provision_user.
+    echo "ℹ️  provision_user RPC removed; admin key already minted, skipping further bootstrap"
 }
 
 clean_all_data() {

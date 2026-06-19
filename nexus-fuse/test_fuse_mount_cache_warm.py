@@ -20,16 +20,17 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
-# Preload nexus_runtime before any other native module so it claims its TLS
+# kernel runs as separate nexus-cluster process (no native module preload needed)
 # slots first. Without this, on aarch64 Linux the import can fail with
 # "cannot allocate memory in static TLS block" when fusepy / criterion / etc.
 # load first and exhaust the static TLS pool.
-import nexus_runtime  # noqa: F401  (must be first)
+# nexus_runtime removed — kernel runs as separate process
 
 
-def _wait_until(predicate, timeout: float, interval: float = 0.1) -> bool:
+def _wait_until(predicate: Callable[[], bool], timeout: float, interval: float = 0.1) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():

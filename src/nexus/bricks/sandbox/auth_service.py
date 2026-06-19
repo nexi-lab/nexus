@@ -20,6 +20,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.mount_entries import build_mount_entries
+
 if TYPE_CHECKING:
     from nexus.bricks.sandbox.protocols import AgentEventLogProtocol
     from nexus.bricks.sandbox.sandbox_manager import SandboxManager
@@ -41,12 +43,13 @@ class SandboxAuthService:
     """Orchestrates sandbox creation through AgentRegistry.
 
     This is a platform service that uses kernel primitives (AgentRegistry,
-    NamespaceManager). The sandbox doesn't bypass the kernel for auth.
+    ReBACManager). The sandbox doesn't bypass the kernel for auth.
 
     Args:
         agent_registry: Process lifecycle table (required).
         sandbox_manager: Infrastructure-layer sandbox lifecycle manager (required).
-        namespace_manager: Per-subject namespace visibility (optional).
+        rebac_manager: ReBACManager for grant lookup when building the mount
+            table (optional — if absent the mount table is empty).
         nexus_pay: Budget enforcement SDK (optional).
         event_log: Agent event audit log (optional).
         budget_enforcement: When True AND nexus_pay is provided, checks
@@ -57,14 +60,14 @@ class SandboxAuthService:
         self,
         agent_registry: Any,  # AgentRegistry injected via DI
         sandbox_manager: "SandboxManager",
-        namespace_manager: Any = None,
+        rebac_manager: Any = None,
         nexus_pay: Any = None,
         event_log: "AgentEventLogProtocol | None" = None,
         budget_enforcement: bool = False,
     ) -> None:
         self._agent_registry = agent_registry
         self._sandbox_manager = sandbox_manager
-        self._namespace_manager = namespace_manager
+        self._rebac_manager = rebac_manager
         self._nexus_pay = nexus_pay
         self._event_log = event_log
         self._budget_enforcement = budget_enforcement
@@ -118,7 +121,7 @@ class SandboxAuthService:
             1. Validate agent exists in process table
             2. Verify ownership (agent belongs to owner_id)
             3. Signal SIGCONT to transition agent to CONNECTED (new session)
-            4. Construct namespace from grants (if NamespaceManager available)
+            4. Construct namespace from ReBAC grants (if ReBACManager available)
             5. Check budget (if budget_enforcement enabled)
             6. Delegate sandbox creation to SandboxManager
             7. Record lifecycle event
@@ -160,15 +163,20 @@ class SandboxAuthService:
             self._agent_registry.signal, agent_id, AgentSignal.SIGCONT
         )
 
-        # Step 4: Construct namespace (best-effort — failure doesn't block sandbox)
+        # Step 4: Construct namespace from ReBAC grants
+        # (best-effort — failure doesn't block sandbox)
         mount_table: list[Any] = []
-        if self._namespace_manager is not None:
+        if self._rebac_manager is not None:
             try:
-                mount_table = await asyncio.to_thread(
-                    self._namespace_manager.get_mount_table,
-                    ("agent", agent_id),
-                    zone_id,
+                object_paths = await asyncio.to_thread(
+                    self._rebac_manager.rebac_list_objects,
+                    subject=("agent", agent_id),
+                    permission="read",
+                    object_type="file",
+                    zone_id=zone_id,
+                    limit=10_000,
                 )
+                mount_table = build_mount_entries(object_paths)
             except Exception:
                 logger.warning(
                     "[SANDBOX-AUTH] Namespace construction failed for agent %s, "

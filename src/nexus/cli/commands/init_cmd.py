@@ -2,7 +2,7 @@
 
 Presets:
   local   — embedded-only quickstart, no daemon, no Docker
-  shared  — one shared node with Postgres, Dragonfly, Zoekt
+  shared  — one shared node with Postgres, Dragonfly
   demo    — shared node + demo-ready seed data settings
 
 Writes a project-local ``nexus.yaml`` with all defaults materialized.

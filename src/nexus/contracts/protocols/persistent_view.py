@@ -33,7 +33,7 @@ class PersistentViewStore(Protocol):
     """Protocol for persistent namespace view storage (L3 cache).
 
     Implementations must provide save/load/delete for namespace views.
-    All methods are synchronous (called from sync NamespaceManager context).
+    All methods are synchronous.
 
     Structural subtyping — no need to inherit from this protocol.
     """

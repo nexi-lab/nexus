@@ -37,3 +37,38 @@ class TestFederationRPCGating:
         modes so data-portability RPCs reach the kernel.
         """
         assert _federation_rpc_active(SimpleNamespace()) is True
+
+    def test_cluster_info_standalone_unknown_kernel_call_returns_stable_shape(self) -> None:
+        """#4138: full-profile control-plane smoke should not surface a 500.
+
+        The standalone Rust kernel path may not register the federation
+        cluster-info Call method. The public Python RPC still needs to return
+        a stable read-only control-plane response instead of leaking that
+        transport detail as an internal error.
+        """
+        from nexus.contracts.exceptions import NexusError
+        from nexus.server.rpc.services.federation_rpc import FederationRPCService
+
+        class Kernel:
+            def _call(self, method: str, _params: dict[str, str]) -> dict[str, object]:
+                assert method == "federation_cluster_info"
+                raise NexusError("RPC error [-32603]: unknown Call method: federation_cluster_info")
+
+        result = FederationRPCService(Kernel()).federation_cluster_info("root")
+
+        assert result == {
+            "zone_id": "root",
+            "node_id": 0,
+            "has_store": False,
+            "is_leader": False,
+            "leader_id": 0,
+            "term": 0,
+            "commit_index": 0,
+            "applied_index": 0,
+            "voter_count": 0,
+            "witness_count": 0,
+            "links_count": 0,
+            "available": False,
+            "mode": "standalone",
+            "reason": "federation_cluster_info unavailable in standalone kernel",
+        }

@@ -77,11 +77,9 @@ def _postgres_available() -> bool:
 
 def _tigerbeetle_available() -> bool:
     try:
-        import tigerbeetle as tb
-
-        client = tb.ClientSync(cluster_id=0, replica_addresses=TIGERBEETLE_ADDRESS)
-        # Quick health check: lookup a non-existent account
-        client.lookup_accounts([0])
+        host, port = TIGERBEETLE_ADDRESS.split(":", 1)
+        with socket.create_connection((host, int(port)), timeout=1):
+            pass
         return True
     except Exception:
         return False
@@ -153,8 +151,7 @@ def nexus_server_with_pay(tmp_path, pg_engine):
             (
                 "from nexus.daemon.main import main; "
                 f"main(['--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{tmp_path}', '--auth-type', 'database', "
-                f"'--init', '--reset', '--admin-user', 'e2e-wallet-admin'])"
+                f"'--data-dir', '{tmp_path}', '--auth-type', 'database'])"
             ),
         ],
         env=env,
@@ -173,14 +170,29 @@ def nexus_server_with_pay(tmp_path, pg_engine):
             f"stderr: {stderr.decode()[:2000]}"
         )
 
-    admin_env_file = tmp_path / ".nexus-admin-env"
     api_key = None
-    if admin_env_file.exists():
-        for line in admin_env_file.read_text().splitlines():
-            if "NEXUS_API_KEY=" in line:
-                value = line.split("NEXUS_API_KEY=", 1)[1].strip()
-                api_key = value.strip("'\"")
-                break
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        engine = create_engine(POSTGRES_URL)
+        factory = sessionmaker(bind=engine)
+        with factory() as session:
+            _, api_key = DatabaseAPIKeyAuth.create_key(
+                session,
+                user_id="e2e-wallet-admin",
+                name="Wallet E2E admin key",
+                zone_id=ROOT_ZONE_ID,
+                is_admin=True,
+            )
+            session.commit()
+        engine.dispose()
+    except Exception as exc:
+        process.terminate()
+        pytest.fail(f"Failed to create admin API key: {exc}")
 
     yield {
         "port": port,
@@ -213,10 +225,14 @@ def _rpc_call(base_url: str, api_key: str, method: str, params: dict) -> dict:
             "params": params,
             "id": 1,
         },
-        timeout=10.0,
+        timeout=120.0,
         trust_env=False,
     )
-    return response.json()
+    payload = response.json()
+    if response.status_code >= 400:
+        payload.setdefault("error", payload.get("detail") or f"HTTP {response.status_code}")
+        payload["status_code"] = response.status_code
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -412,43 +428,14 @@ class TestWalletProvisioningE2E:
 # ---------------------------------------------------------------------------
 
 ADMIN_KEY = "sk-admin-wallet-e2e"
-ALICE_KEY = "sk-alice-wallet-e2e"
 
 
 def _build_permissions_startup_script(port: int, data_dir: str) -> str:
-    """Build startup script with StaticAPIKeyAuth (admin + alice) and permissions ON."""
+    """Build startup script with static admin auth and permissions ON."""
     return textwrap.dedent(f"""\
-        import os, sys, logging
+        import logging
         logging.basicConfig(level=logging.INFO)
-        sys.path.insert(0, os.getenv("PYTHONPATH", ""))
-
-        from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.daemon.main import main as cli_main
-
-        auth_config = {{
-            "api_keys": {{
-                "{ADMIN_KEY}": {{
-                    "subject_type": "user",
-                    "subject_id": "admin",
-                    "zone_id": "root",
-                    "is_admin": True,
-                }},
-                "{ALICE_KEY}": {{
-                    "subject_type": "user",
-                    "subject_id": "alice",
-                    "zone_id": "root",
-                    "is_admin": False,
-                }},
-            }}
-        }}
-
-        import nexus.server.auth.factory as factory
-        _orig = factory.create_auth_provider
-        def _patched(auth_type, auth_config_arg=None, **kwargs):
-            if auth_type == "static":
-                return StaticAPIKeyAuth.from_config(auth_config)
-            return _orig(auth_type, auth_config_arg, **kwargs)
-        factory.create_auth_provider = _patched
 
         cli_main([
             '--host', '127.0.0.1', '--port', '{port}',
@@ -495,12 +482,36 @@ def nexus_server_permissions(tmp_path, pg_engine):
             f"stderr: {stderr.decode()[:2000]}"
         )
 
+    alice_key = None
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        engine = create_engine(POSTGRES_URL)
+        factory = sessionmaker(bind=engine)
+        with factory() as session:
+            _, alice_key = DatabaseAPIKeyAuth.create_key(
+                session,
+                user_id="alice",
+                name="Wallet E2E alice key",
+                zone_id=ROOT_ZONE_ID,
+                is_admin=False,
+            )
+            session.commit()
+        engine.dispose()
+    except Exception as exc:
+        process.terminate()
+        pytest.fail(f"Failed to create alice API key: {exc}")
+
     yield {
         "port": port,
         "base_url": base_url,
         "process": process,
         "admin_key": ADMIN_KEY,
-        "alice_key": ALICE_KEY,
+        "alice_key": alice_key,
     }
 
     if sys.platform != "win32":

@@ -29,6 +29,7 @@ from nexus.bricks.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
@@ -56,6 +57,7 @@ def rebac_manager(rebac_engine):
         engine=rebac_engine,
         cache_ttl_seconds=1,
         version_store=MetastoreVersionStore(InMemoryNexusFS()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
 
 
@@ -75,6 +77,7 @@ def mock_nx():
     """Minimal mock NexusFS for server creation."""
     nx = Mock()
     nx.read = Mock(return_value=b"hello world")
+    nx.sys_read = Mock(return_value=b"hello world")
     nx.write = Mock()
     nx.delete = Mock()
     nx.list = Mock(return_value=[])
@@ -156,9 +159,10 @@ def _get_tool(server, name):
 class TestToolNamespaceE2E:
     """Full lifecycle: grant → discover → call → revoke → verify gone."""
 
-    def test_full_lifecycle(self, rebac_manager, middleware, mock_nx, profiles):
+    @pytest.mark.asyncio
+    async def test_full_lifecycle(self, rebac_manager, middleware, mock_nx, profiles):
         """Complete grant → discover → use → revoke → verify lifecycle."""
-        server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
+        server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
         ctx = _make_ctx("agent", "lifecycle-agent")
 
         # --- Phase 1: No grants → no tools visible ---
@@ -186,7 +190,7 @@ class TestToolNamespaceE2E:
 
         # Use: read_file should work
         read_fn = _get_tool(server, "nexus_read_file")
-        read_result = read_fn.fn(path="/test.txt", ctx=ctx)
+        read_result = await read_fn.fn(path="/test.txt", ctx=ctx)
         assert "hello world" in read_result
 
         # Get details: visible tool returns details, invisible returns not found
@@ -396,7 +400,8 @@ class TestPerformanceE2E:
         assert elapsed_ms < 1, f"Hot lookup took {elapsed_ms:.3f}ms (expected <1ms)"
         logger.info("Hot lookup: %.3fms (cache hit)", elapsed_ms)
 
-    def test_discovery_search_performance(self, rebac_manager, middleware, mock_nx, profiles):
+    @pytest.mark.asyncio
+    async def test_discovery_search_performance(self, rebac_manager, middleware, mock_nx, profiles):
         """Discovery search with namespace filtering under 50ms."""
         reader_profile = profiles.get_profile("reader")
         grant_tools_for_profile(
@@ -406,7 +411,7 @@ class TestPerformanceE2E:
         )
         middleware.invalidate()
 
-        server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
+        server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
         search_fn = _get_tool(server, "nexus_discovery_search_tools")
         ctx = _make_ctx("agent", "perf-disco-agent")
 
@@ -432,18 +437,20 @@ class TestPerformanceE2E:
 class TestBackwardCompat:
     """No middleware → all tools visible (backward compat)."""
 
-    def test_no_middleware_returns_all_tools(self, mock_nx):
+    @pytest.mark.asyncio
+    async def test_no_middleware_returns_all_tools(self, mock_nx):
         """Server without middleware returns unfiltered tool results."""
-        server = create_mcp_server(nx=mock_nx)
+        server = await create_mcp_server(nx=mock_nx)
         search_fn = _get_tool(server, "nexus_discovery_search_tools")
 
         result = json.loads(search_fn.fn(query="file", top_k=20, ctx=None))
         assert result["count"] > 3, "Without middleware, all tools should be visible"
         logger.info("PASS: Backward compat — %d tools visible", result["count"])
 
-    def test_no_ctx_returns_all_tools(self, mock_nx, middleware):
+    @pytest.mark.asyncio
+    async def test_no_ctx_returns_all_tools(self, mock_nx, middleware):
         """With middleware but no ctx, all tools visible."""
-        server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
+        server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
         search_fn = _get_tool(server, "nexus_discovery_search_tools")
 
         result = json.loads(search_fn.fn(query="file", top_k=20, ctx=None))

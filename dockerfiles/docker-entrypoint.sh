@@ -524,7 +524,12 @@ cleanup_stale_pid_files() {
     # hasn't started yet at this point, so there is nothing legitimate to
     # protect.
     local nexus_home="${HOME}/.nexus"
-    for f in "$nexus_home/nexusd.pid" "$nexus_home/nexusd.ready"; do
+    local data_dir="${NEXUS_DATA_DIR:-/app/data}"
+    for f in \
+        "$nexus_home/nexusd.pid" \
+        "$nexus_home/nexusd.ready" \
+        "$data_dir/.nexusd.pid" \
+        "$data_dir/.nexusd.ready"; do
         if [ -f "$f" ]; then
             echo -e "${YELLOW}Removing stale $f from previous run${NC}"
             rm -f "$f"

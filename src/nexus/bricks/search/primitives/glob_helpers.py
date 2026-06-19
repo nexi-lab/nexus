@@ -1,6 +1,6 @@
 """Glob pattern helpers — pure-Python utilities used by the search tier.
 
-These helpers complement the kernel-side `kernel.sys_glob` syscall and
+These helpers complement the Python-side `_helpers.glob` function and
 the kernel-exported `glob_match_bulk` primitive: they handle the
 query-side concerns (static-prefix extraction for directory pruning,
 include/exclude filter composition, single-pattern matching) that

@@ -110,30 +110,31 @@ class DirectoryExpander:
     Args:
         engine: SQLAlchemy engine for DB queries
         tiger_cache: Tiger bitmap cache (may be None if disabled)
-        metadata_store: Optional metadata store for directory queries
+        nexus_fs: Optional NexusFS handle for directory queries
     """
 
     def __init__(
         self,
         engine: "Engine",
         tiger_cache: "TigerCache | None" = None,
-        metadata_store: Any | None = None,
+        nexus_fs: Any | None = None,
         *,
         is_postgresql: bool = False,  # noqa: ARG002
         version_store: MetastoreVersionStore | None = None,
     ) -> None:
         self._engine = engine
         self._tiger_cache = tiger_cache
-        self._metadata_store = metadata_store
-        # Pull the kernel out of the proxy so calls go to ``kernel.metastore_*``
-        # directly (and survive W3).
-        self._kernel: Any = metadata_store
+        # NexusFS handle — descendant listing goes through the Tier 1
+        # sys_readdir syscall. ``_kernel`` is derived from it solely for the
+        # sys_stat directory probe in is_directory_path.
+        self._nexus_fs = nexus_fs
+        self._kernel: Any = getattr(nexus_fs, "_kernel", None)
         self._version_store = version_store
 
-    def set_metadata_store(self, metadata_store: Any) -> None:
-        """Set the metadata store reference for directory queries."""
-        self._metadata_store = metadata_store
-        self._kernel = metadata_store
+    def set_nexus_fs(self, nexus_fs: Any) -> None:
+        """Set the NexusFS reference for directory queries (deferred injection)."""
+        self._nexus_fs = nexus_fs
+        self._kernel = getattr(nexus_fs, "_kernel", None)
 
     # -- Path detection ----------------------------------------------------
 
@@ -304,17 +305,23 @@ class DirectoryExpander:
     ) -> list[str]:
         """Get all file paths under a directory.
 
+        Lists descendants from the file_paths record-store table (ORM) —
+        a service-tier-allowed storage source. The former
+        kernel.metastore_list_paginated fast path was removed: MetaStore is
+        a kernel-internal HAL pillar (§2.5), and the ORM query is in fact
+        more correct here — it honours zone_id, which the single-zone
+        metastore call ignored.
+
         Returns:
             List of descendant file paths.
         """
-        # Try using the kernel metastore if available. ``kernel.metastore_list``
-        # is single-zone (the proxy ignored ``zone_id`` too); the SQL fallback
+        # Prefer the kernel namespace via the Tier 1 sys_readdir syscall.
+        # It is single-zone here (``zone_id`` is ignored); the SQL fallback
         # below honours the parameter for federated installs.
-        if self._kernel is not None:
+        if self._nexus_fs is not None:
             try:
-                _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
-                files = _page["items"]
-                return [f.path for f in files]
+                entries = self._nexus_fs.sys_readdir(directory_path, recursive=True, details=True)
+                return [e["path"] for e in entries]
             except (RuntimeError, OperationalError) as e:
                 logger.warning("[LEOPARD] Metadata store query failed: %s", e)
 

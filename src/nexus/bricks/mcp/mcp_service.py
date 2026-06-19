@@ -111,6 +111,7 @@ class MCPService:
         self._ssrf_config = ssrf_config
         self._policy_gate = policy_gate
         self._zone_id = zone_id
+        self._mcp_mount_manager: Any | None = None
 
         logger.info("[MCPService] Initialized")
 
@@ -122,6 +123,8 @@ class MCPService:
         consults the gate when SSRF blocks an unlisted host (Issue #3790).
         """
         self._policy_gate = gate
+        if self._mcp_mount_manager is not None:
+            self._mcp_mount_manager._policy_gate = gate
 
     def set_zone(self, zone_id: str | None) -> None:
         """Attach (or detach) the daemon zone after construction.
@@ -131,6 +134,82 @@ class MCPService:
         egress is filed against the correct zone (not ROOT_ZONE_ID).
         """
         self._zone_id = zone_id
+        if self._mcp_mount_manager is not None:
+            self._mcp_mount_manager.set_zone(zone_id)
+
+    # =========================================================================
+    # Public API: Hub Administration
+    # =========================================================================
+
+    def admin_hub_status(self) -> dict[str, Any]:
+        """Read local hub status for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.get_hub_status(self._hub_session_factory())
+
+    def admin_hub_token_list(self, *, show_revoked: bool = False) -> dict[str, Any]:
+        """List local hub tokens for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.list_hub_tokens(
+            self._hub_session_factory(),
+            show_revoked=show_revoked,
+        )
+
+    def admin_hub_token_create(
+        self,
+        *,
+        name: str,
+        zones: str | None = None,
+        zones_glob: str | None = None,
+        admin: bool = False,
+        expires: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a local hub token for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.create_hub_token(
+            self._hub_session_factory(),
+            name=name,
+            zones_csv=zones,
+            zones_glob=zones_glob,
+            is_admin=admin,
+            expires=expires,
+            user_id=user_id,
+        )
+
+    def admin_hub_token_revoke(self, *, identifier: str) -> dict[str, Any]:
+        """Revoke a local hub token for admin MCP callers."""
+        self._require_admin()
+        from nexus.hub import admin_ops
+
+        return admin_ops.revoke_hub_token(
+            self._hub_session_factory(),
+            identifier=identifier,
+        )
+
+    def _hub_session_factory(self) -> Any:
+        record_store = getattr(self._filesystem, "_record_store", None)
+        session_factory = getattr(record_store, "session_factory", None)
+        if callable(session_factory):
+            return session_factory
+
+        from nexus.hub import admin_ops
+
+        return admin_ops.get_env_session_factory()
+
+    def _require_admin(self) -> None:
+        context = getattr(self._filesystem, "_init_cred", None)
+        if getattr(context, "is_admin", False):
+            return
+
+        from nexus.contracts.exceptions import NexusPermissionError
+
+        raise NexusPermissionError("hub_admin", "Admin privileges required")
 
     # =========================================================================
     # Public API: MCP Mount Management
@@ -236,7 +315,6 @@ class MCPService:
             tools = service.mcp_list_tools("github", context=context)
             has_issues = any(t['name'] == 'create_issue' for t in tools)
         """
-        import asyncio
         import json
 
         from nexus.contracts.exceptions import ValidationError
@@ -244,8 +322,7 @@ class MCPService:
         # Get MCP mount manager
         manager = self._get_mcp_mount_manager()
 
-        # Get mount info (run in thread to avoid blocking)
-        mount = await asyncio.to_thread(manager.get_mount, name, context=context)
+        mount = await manager.get_mount(name, context=context)
 
         if not mount:
             raise ValidationError(f"MCP mount not found: {name}")
@@ -506,14 +583,11 @@ class MCPService:
             Server must be mounted before syncing. Use mcp_mount() first
             if the server is not yet mounted.
         """
-        import asyncio
-
         from nexus.contracts.exceptions import ValidationError
 
         manager = self._get_mcp_mount_manager()
 
-        # Get mount to verify it exists (run in thread)
-        mount = await asyncio.to_thread(manager.get_mount, name, context=context)
+        mount = await manager.get_mount(name, context=context)
         if not mount:
             raise ValidationError(f"MCP mount not found: {name}")
 
@@ -886,9 +960,12 @@ class MCPService:
         if self._filesystem is None:
             raise RuntimeError("Filesystem not configured for MCPService")
 
-        return MCPMountManager(
-            self._filesystem,
-            ssrf_config=self._ssrf_config,
-            policy_gate=self._policy_gate,
-            zone_id=self._zone_id,
-        )
+        if self._mcp_mount_manager is None:
+            self._mcp_mount_manager = MCPMountManager(
+                self._filesystem,
+                ssrf_config=self._ssrf_config,
+                policy_gate=self._policy_gate,
+                zone_id=self._zone_id,
+            )
+
+        return self._mcp_mount_manager

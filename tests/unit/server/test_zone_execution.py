@@ -1,9 +1,10 @@
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import TypeVar
 
 import pytest
 
-from nexus.server.zone_execution import run_zone_scoped
+from nexus.server.zone_execution import context_for_target_zone, run_zone_scoped
 
 T = TypeVar("T")
 
@@ -58,3 +59,18 @@ async def test_run_zone_scoped_runs_inline_without_target_zone() -> None:
 
     assert await run_zone_scoped(registry, None, work) == "global"
     assert registry.requested == []
+
+
+def test_context_for_target_zone_preserves_root_for_multizone_token() -> None:
+    context = SimpleNamespace(
+        zone_id="root",
+        zone_set=("company", "shared"),
+        zone_perms=(("company", "r"), ("shared", "rw")),
+        is_admin=False,
+    )
+
+    result = context_for_target_zone(context, "shared")
+
+    assert result is context
+    assert context.zone_id == "root"
+    assert context.zone_perms == (("company", "r"), ("shared", "rw"))

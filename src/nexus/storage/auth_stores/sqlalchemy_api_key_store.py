@@ -12,6 +12,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from nexus.contracts.auth_store_types import APIKeyDTO
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.models import APIKeyModel, APIKeyZoneModel
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ class SQLAlchemyAPIKeyStore:
                 from nexus.storage.models import ZoneModel
 
                 zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
-                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+                if zone is None or zone.phase != ZonePhase.ACTIVE or zone.deleted_at is not None:
                     raise ValueError(
                         f"SQLAlchemyAPIKeyStore.create_key: zone {zone_id!r} is not active "
                         "(missing, Terminating, or soft-deleted); create or restore "

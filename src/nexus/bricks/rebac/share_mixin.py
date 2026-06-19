@@ -379,6 +379,7 @@ class ReBACShareMixin:
         self,
         subject: tuple[str, str],
         file_path: str,
+        zone_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Get dynamic_viewer configuration for a subject and file (sync)."""
         import json as _json
@@ -388,6 +389,8 @@ class ReBACShareMixin:
         tuples = self.rebac_list_tuples_sync(
             subject=subject, relation="dynamic_viewer", object=("file", file_path)
         )
+        if zone_id is not None:
+            tuples = [t for t in tuples if t.get("zone_id") == zone_id]
         if not tuples:
             return None
 

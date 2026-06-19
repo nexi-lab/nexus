@@ -37,3 +37,18 @@ def test_health_does_not_probe_federation_when_peers_unset(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
     assert calls == []
+
+
+def test_health_reports_workspace_index_status_when_present():
+    fs = SimpleNamespace(
+        _kernel=object(),
+        _perm_config=SimpleNamespace(enforce=False),
+        _enforce_zone_isolation=True,
+    )
+
+    app = _app_with_health(fs)
+    app.state.health_state = {"status": "indexing"}
+    response = TestClient(app).get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["workspace_index_status"] == "indexing"

@@ -185,7 +185,9 @@ class ZoektPipeConsumer:
             # If nothing pending, block until first event (in thread to avoid blocking event loop)
             if not pending_paths and not has_sync:
                 try:
-                    first = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
+                    # timeout_ms=0 (O_NONBLOCK): own asyncio.sleep paces the loop;
+                    # the long-poll default would starve the event loop. Issue #3699.
+                    first = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH, timeout_ms=0)
                 except NexusFileNotFoundError:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break

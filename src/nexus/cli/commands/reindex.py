@@ -248,12 +248,62 @@ def _reindex_via_rest(
     table.add_row("Processed", str(result.get("processed", 0)))
     table.add_row("Errors", str(result.get("errors", 0)))
     table.add_row("Dry run", str(result.get("dry_run", dry_run)))
+
+    # Issue #4241 + round-2 review (codex MEDIUM): surface the queued
+    # search-refresh fields so remote operators don't mistake
+    # "processed=N" for "BM25/vector index rebuilt". notify_file_change
+    # only wakes the async consumer loop; the actual indexing happens
+    # afterwards, so the count below is paths *enqueued*, not completed.
+    enqueued = result.get("search_paths_enqueued")
+    if enqueued is not None:
+        table.add_row("Search paths queued (async)", str(enqueued))
+    enqueued_at = result.get("search_refresh_enqueued_at")
+    if enqueued_at is not None:
+        from datetime import UTC, datetime
+
+        ts = datetime.fromtimestamp(float(enqueued_at), tz=UTC).isoformat(timespec="seconds")
+        table.add_row("Search refresh enqueued at", ts)
+
+    # Round-5 review (codex MEDIUM): surface enqueue failures so
+    # partial-failure isn't hidden behind processed=N, errors=0.
+    enqueue_errors = int(result.get("search_enqueue_errors") or 0)
+    failed_paths = result.get("search_enqueue_failed_paths") or []
+    if enqueue_errors:
+        table.add_row(
+            "Search refresh enqueue errors",
+            f"[nexus.warning]{enqueue_errors}[/nexus.warning]",
+        )
+
     if target == "all":
         console.print(
             "\n[nexus.warning]Note:[/nexus.warning] Semantic reindex requires local filesystem access "
             "and was skipped. Only search + versions targets were processed."
         )
+    if enqueued:
+        console.print(
+            "\n[nexus.muted]Search refresh is asynchronous. Poll "
+            "/api/v2/search/stats or wait for BM25 to return expected hits "
+            "before declaring success.[/nexus.muted]"
+        )
+    if enqueue_errors:
+        console.print(
+            f"\n[nexus.warning]⚠ {enqueue_errors} path(s) failed to enqueue for search "
+            "refresh — those paths will NOT appear in BM25/vector results until "
+            "the next write or a successful /search/refresh call.[/nexus.warning]"
+        )
+        if failed_paths:
+            shown = "\n  ".join(failed_paths[:10])
+            extra = f"\n  ... and {len(failed_paths) - 10} more" if len(failed_paths) > 10 else ""
+            console.print(f"\nFailed paths:\n  {shown}{extra}")
     console.print(table)
+
+    # Round-5: non-zero CLI exit on partial enqueue failure for the
+    # search/all targets so CI / operator scripts can detect it.
+    if enqueue_errors and target in ("all", "search"):
+        raise click.ClickException(
+            f"Reindex completed but {enqueue_errors} search-refresh enqueue(s) failed. "
+            "See the table above for details."
+        )
 
 
 def _run_semantic_reindex(
@@ -436,17 +486,17 @@ class _MCLProcessor:
             change_type,
         )
 
-        if "search" in self._targets:
+        # Round-6 review (codex HIGH): ``_rebuild_versions`` is
+        # implemented by calling ``_rebuild_search`` (put_aspect builds
+        # history as a side-effect of the version-0 swap), so running
+        # both branches under ``target=all`` would replay the SAME MCL
+        # row through put_aspect twice — producing duplicate version-
+        # history rows and applying deletes twice. Run exactly once;
+        # the search rebuild's natural version-0 swap already produces
+        # one history entry per MCL row, which is what target=versions
+        # asks for too.
+        if self._targets & {"search", "versions"}:
             self._rebuild_search(
-                change_type=change_type,
-                entity_urn=entity_urn,
-                aspect_name=aspect_name,
-                aspect_value=aspect_value,
-                zone_id=zone_id,
-            )
-
-        if "versions" in self._targets:
-            self._rebuild_versions(
                 change_type=change_type,
                 entity_urn=entity_urn,
                 aspect_name=aspect_name,

@@ -59,6 +59,8 @@ def register_hub_admin_tool(
             else:
                 return _json_error(400, f"unknown hub admin action: {action}")
             return json.dumps(result, indent=2, default=str)
+        except AttributeError as exc:
+            return _json_error(501, f"hub admin action unavailable: {exc}")
         except NexusPermissionError as exc:
             return _json_error(403, str(exc))
         except NexusError as exc:

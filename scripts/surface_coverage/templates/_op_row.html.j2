@@ -1,0 +1,28 @@
+<div class="op" data-op-id="{{ op.id }}" data-op-text="{{ op.id }} {{ op.summary }} {% for tkey, _, _ in transport_display %}{% if tkey in op.transports %}{{ op.transports[tkey].name }} {% endif %}{% endfor %}">
+  <div class="op-header">
+    <span class="op-id">{{ op.id }}</span>
+    <span class="op-summary">&mdash; {{ op.summary or '(no summary yet)' }}</span>
+  </div>
+  <div class="transports">
+    {% for tkey, tlabel, tslug in transport_display %}
+    {% if tkey in op.transports %}
+    <span class="transport-pill" data-t="{{ tslug }}"><span class="label">{{ tlabel }}</span> <span>{{ op.transports[tkey].name }}</span></span>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+      {% for pkey in ('lite', 'sandbox', 'full') %}
+      {% set status = op.profiles[pkey].value %}
+      {% if status == 'supported' %}<span class="profile-badge profile-supported">{{ pkey }}</span>
+      {% elif status == 'unavailable' %}<span class="profile-badge profile-unavailable">{{ pkey }}</span>
+      {% else %}<span class="profile-badge profile-other">{{ pkey }}: {{ status }}</span>{% endif %}
+      {% endfor %}
+    </span>
+    <span>usage: {% if op.usage_example %}<code>{{ op.usage_example }}</code>{% else %}<span class="todo">TODO</span>{% endif %}</span>
+    <span>test: {% if op.correctness_test %}<a href="../../{{ op.correctness_test }}">{{ op.correctness_test }}</a>{% else %}<span class="todo">TODO</span>{% endif %}</span>
+    <span>perf: {% if op.perf_class %}{{ op.perf_class.value }}{% else %}<span class="todo">TODO</span>{% endif %}</span>
+    <span>owner: {% if op.owning_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.owning_issue }}">#{{ op.owning_issue }}</a>{% else %}&mdash;{% endif %}</span>
+    <span>gap: {% if op.gap_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.gap_issue }}">#{{ op.gap_issue }}</a>{% else %}&mdash;{% endif %}</span>
+  </div>
+</div>

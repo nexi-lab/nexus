@@ -4,6 +4,7 @@ Manage AI agents for delegation and multi-agent workflows.
 """
 
 import asyncio
+import inspect
 from typing import Any
 
 import click
@@ -20,6 +21,27 @@ from nexus.cli.utils import (
     handle_error,
     open_filesystem,
 )
+
+
+def _parse_metadata(items: tuple[str, ...]) -> dict[str, str] | None:
+    metadata: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise click.BadParameter(
+                f"metadata must be KEY=VALUE, got {item!r}",
+                param_hint="--metadata",
+            )
+        key, value = item.split("=", 1)
+        if not key:
+            raise click.BadParameter("metadata key must not be empty", param_hint="--metadata")
+        metadata[key] = value
+    return metadata or None
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @click.group(name="agent")
@@ -227,6 +249,56 @@ def info_cmd(
         handle_error(e)
 
 
+@agent.command(name="update")
+@click.argument("agent_id", type=str)
+@click.option("--name", default=None, help="Updated display name")
+@click.option("--description", "-d", default=None, help="Updated description")
+@click.option(
+    "--metadata",
+    "metadata_items",
+    multiple=True,
+    help="Metadata entry as KEY=VALUE. Can be specified multiple times.",
+)
+@add_backend_options
+def update_cmd(
+    agent_id: str,
+    name: str | None,
+    description: str | None,
+    metadata_items: tuple[str, ...],
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Update an agent's stored configuration.
+
+    Examples:
+        nexus agent update alice --name "Alice Bot" --metadata tier=gold
+    """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            metadata = _parse_metadata(metadata_items)
+            result = await _maybe_await(
+                nx.service("agent_rpc").update_agent(
+                    agent_id=agent_id,
+                    name=name,
+                    description=description,
+                    metadata=metadata,
+                )
+            )
+
+            console.print(f"[nexus.success]✓[/nexus.success] Updated agent: {agent_id}")
+            if result.get("name"):
+                console.print(f"  Name: {result['name']}")
+            if result.get("description"):
+                console.print(f"  Description: {result['description']}")
+
+    try:
+        asyncio.run(_impl())
+    except Exception as e:
+        handle_error(e)
+
+
 @agent.command(name="delete")
 @click.argument("agent_id", type=str)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
@@ -264,6 +336,81 @@ def delete_cmd(
                 console.print(f"[nexus.success]✓[/nexus.success] Deleted agent: {agent_id}")
             else:
                 console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
+
+    try:
+        asyncio.run(_impl())
+    except Exception as e:
+        handle_error(e)
+
+
+@agent.command(name="transition")
+@click.argument("agent_id", type=str)
+@click.argument(
+    "target_state",
+    type=click.Choice(["CONNECTED", "IDLE", "SUSPENDED"], case_sensitive=False),
+)
+@click.option(
+    "--expected-generation",
+    type=int,
+    default=None,
+    help="Optimistic-lock generation to reject stale lifecycle updates.",
+)
+@add_backend_options
+def transition_cmd(
+    agent_id: str,
+    target_state: str,
+    expected_generation: int | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Transition an agent lifecycle state.
+
+    Examples:
+        nexus agent transition alice CONNECTED --expected-generation 7
+        nexus agent transition alice IDLE
+    """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            result = await _maybe_await(
+                nx.service("agent_rpc").agent_transition(
+                    agent_id=agent_id,
+                    target_state=target_state.upper(),
+                    expected_generation=expected_generation,
+                )
+            )
+
+            console.print(f"[nexus.success]✓[/nexus.success] Transitioned agent: {agent_id}")
+            console.print(f"  State: {result.get('state', target_state.upper())}")
+            if result.get("generation") is not None:
+                console.print(f"  Generation: {result['generation']}")
+
+    try:
+        asyncio.run(_impl())
+    except Exception as e:
+        handle_error(e)
+
+
+@agent.command(name="heartbeat")
+@click.argument("agent_id", type=str)
+@add_backend_options
+def heartbeat_cmd(
+    agent_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Record an agent heartbeat.
+
+    Examples:
+        nexus agent heartbeat alice
+    """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            await _maybe_await(nx.service("agent_rpc").agent_heartbeat(agent_id))
+            console.print(f"[nexus.success]✓[/nexus.success] Recorded heartbeat: {agent_id}")
 
     try:
         asyncio.run(_impl())

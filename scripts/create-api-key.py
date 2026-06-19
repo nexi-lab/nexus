@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.rebac.entity_registry import EntityRegistry
+from nexus.core.db_utils import normalize_database_url
 
 
 def main() -> None:
@@ -37,6 +38,9 @@ def main() -> None:
         print("Error: NEXUS_DATABASE_URL environment variable not set")
         print("Example: export NEXUS_DATABASE_URL='postgresql://nexus:password@localhost/nexus'")
         sys.exit(1)
+
+    # Issue #4238: accept the canonical ``postgres://`` scheme.
+    database_url = normalize_database_url(database_url)
 
     # Create engine and session
     engine = create_engine(database_url)

@@ -1,0 +1,266 @@
+# cc-tasks-share full-chain E2E — LocalConnector + FUSE + federation
+# =========================================================================
+# Compose for `tests/e2e/docker/test_cc_tasks_share_e2e.py`.
+#
+# Topology: founder + joiner sharing a `sharedzone`.  Each node carries:
+#
+#   * `local-connector` driver dylib mounted at a hostname-namespaced
+#     path under `/shared/cc-tasks/` — host-fs is the SSOT, the VFS
+#     entry resolves to bytes on disk via the backend's read/write.
+#       founder: --mount-driver local-connector:sharedzone:/shared/cc-tasks/founder:{local_root:/host/tasks}
+#       joiner:  --mount-driver local-connector:sharedzone:/shared/cc-tasks/joiner:{local_root:/host/tasks}
+#
+#   * `nexus-fuse-plugin` service dylib mounting `/shared/cc-tasks` at
+#     `/mnt/cc-tasks` — exposes the federated VFS as a real OS mount
+#     so plain `ls /mnt/cc-tasks/founder/` from the joiner walks
+#     through to founder's host fs end-to-end, the shape the Mac↔Win
+#     `cc tasks list` workflow rides.
+#
+# The DT_MOUNT entry that `kernel.mount` writes for each LocalConnector
+# mount lands in sharedzone's metastore and replicates via raft, so
+# the *mount existence* is visible cross-node.  But the *backend
+# instance* stays node-local — founder's LocalConnector points at
+# founder's host fs, joiner's at joiner's.  Cross-node visibility of
+# bytes written directly to host fs (the cc-tasks-share use case:
+# Claude Code writes `~/.claude/tasks/<n>.json` outside Nexus) needs
+# the lazy observe substrate landed in nexus-vfs#46.  The FUSE plugin
+# on top then exposes that same federated path as a normal OS mount
+# point — `cat /mnt/cc-tasks/<peer>/...` invokes the v2 KernelHandle
+# callbacks, which route through federation back to the peer's
+# LocalConnector and host fs.
+#
+# Each node needs the FUSE privileged-ish profile (`/dev/fuse` device,
+# `SYS_ADMIN` cap, apparmor:unconfined) so `fuser::spawn_mount2` can
+# perform the actual mount syscall.
+#
+# Workflow validated end-to-end:
+#
+#   1. Direct host-fs write on founder — bypassing every Nexus syscall,
+#      mirroring real Claude Code writing task JSON.
+#   2. First `vfs_read` on joiner — metastore miss (no `sys_write` ever
+#      happened) + joiner's backend miss (bytes are on founder's host
+#      fs) → fan-out to founder via `peer_client.fetch`.  Founder's
+#      `KernelBlobFetcher::read` synthesises a peer-served ctx
+#      (`propagates_cross_node = true`), hits its LocalConnector
+#      backend, and `observe_backend_content` proposes metadata with
+#      `last_writer_address = founder`.
+#   3. Raft replicates the metadata back to joiner.
+#   4. Second `vfs_read` on joiner — metastore hit → existing
+#      `try_remote_fetch` fast path via `last_writer_address`.  Cold
+#      fan-out cost paid once per (path, node) pair.
+#
+# Each step has a hard data dependency on the prior step's output.
+# No arbitrary calls.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml up -d founder joiner
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-share.yml down -v
+
+# Privileged-ish FUSE profile shared by both nodes — `/dev/fuse`
+# device + SYS_ADMIN cap + apparmor:unconfined is the minimum WinFsp's
+# Linux analogue (libfuse3 + kernel-FUSE driver) needs to perform the
+# mount syscall.  `privileged: true` is the short form that subsumes
+# all three.  The compose grants this so `fuser::spawn_mount2` inside
+# the plugin can publish `/mnt/cc-tasks` as a real OS mount.
+x-fuse-runtime: &fuse-runtime
+  privileged: true
+  devices:
+    - /dev/fuse
+  cap_add:
+    - SYS_ADMIN
+  security_opt:
+    - apparmor:unconfined
+
+# Auto-detect bootstrap mode shared via YAML anchor — same pattern the
+# federation-runbook compose uses.  First boot reads the static-only
+# env (FEDERATION_ZONES / MOUNTS), persists ConfState, then restart
+# strips them so PR #4028's mode-x-env validator passes on next boot.
+x-bootstrap-entrypoint: &bootstrap-entrypoint
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      if [ -f "$$DATA_DIR/.node_id" ]; then
+        MODE=restart
+        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
+      else
+        MODE=static
+      fi
+      exec nexusd-cluster \
+        --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+        --data-dir "$$DATA_DIR" \
+        --no-tls \
+        --plugin-dir /plugins \
+        --mount-driver "$$NEXUS_MOUNT_DRIVER" \
+        --bootstrap-mode "$$MODE"
+  command: []
+
+services:
+  founder:
+    <<: [*bootstrap-entrypoint, *fuse-runtime]
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.local-connector-plugin
+      # Plugin-signing key for the in-build Ed25519 sign step (kernel
+      # 67ac07f+ refuses unsigned plugins). Sourced from the
+      # PLUGIN_SIGNING_PRIVKEY env var on the invoking shell — CI
+      # exports it from the repo secret of the same name.
+      secrets:
+        - plugin_signing_key
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-founder
+    hostname: founder
+    environment:
+      NEXUS_HOSTNAME: founder
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      # First boot only — auto-detect entrypoint strips on restart.
+      NEXUS_FEDERATION_ZONES: sharedzone
+      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks/founder:{"local_root":"/host/tasks"}'
+      # FUSE plugin env — surfaces /shared/cc-tasks (the federated
+      # path) as a real OS mount at /mnt/cc-tasks.
+      NEXUS_FUSE_MOUNT_POINT: /mnt/cc-tasks
+      NEXUS_FUSE_VFS_ROOT: /shared/cc-tasks
+      RUST_LOG: info,nexus_raft=info
+    volumes:
+      - cc_tasks_founder_data:/app/data
+      - cc_tasks_founder_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-net
+    healthcheck:
+      # Gate on BOTH the gRPC port AND the FUSE mount.  The daemon
+      # binds 2126 a few seconds before the FUSE plugin's background
+      # thread completes `fuser::spawn_mount2`; reporting "healthy" on
+      # gRPC alone races the test runner against the mount.  Use
+      # /proc/mounts (kernel SSOT) instead of `mountpoint -q` — the
+      # latter falsely returns rc=1 against FUSE mounts under
+      # Docker overlay2 + libfuse3 (observed on Windows Docker AND
+      # GHA ubuntu-latest); /proc/mounts always reflects the truth
+      # the moment fuser::spawn_mount2 returns.
+      test:
+        - CMD-SHELL
+        - >
+          timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null &&
+          grep -qE ' /mnt/cc-tasks fuse' /proc/mounts
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  joiner:
+    <<: [*bootstrap-entrypoint, *fuse-runtime]
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-joiner
+    hostname: joiner
+    environment:
+      NEXUS_HOSTNAME: joiner
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: joiner:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      # Joiner does NOT set FEDERATION_ZONES at first boot — the test
+      # fixture's `nexusd-cluster join` CLI seeds sharedzone's
+      # ConfState + DT_MOUNT entries into the data dir before the
+      # entrypoint's second boot auto-detects restart mode and picks
+      # them up via the apply-cb replay path.
+      NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks/joiner:{"local_root":"/host/tasks"}'
+      NEXUS_FUSE_MOUNT_POINT: /mnt/cc-tasks
+      NEXUS_FUSE_VFS_ROOT: /shared/cc-tasks
+      RUST_LOG: info,nexus_raft=info
+    volumes:
+      - cc_tasks_joiner_data:/app/data
+      - cc_tasks_joiner_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-net
+    depends_on:
+      founder:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-cc-tasks-test
+    profiles:
+      - run
+    depends_on:
+      founder:
+        condition: service_healthy
+      joiner:
+        condition: service_healthy
+    # working_dir, PYTHONPATH, PYTEST_ADDOPTS inherited from
+    # Dockerfile.federation-test — same runner image as the
+    # federation-runbook suite.
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NEXUS_CC_TASKS_E2E: "1"
+      NEXUS_FOUNDER_GRPC: founder:2126
+      NEXUS_JOINER_GRPC: joiner:2126
+      NEXUS_FOUNDER_CONTAINER: nexus-cc-tasks-founder
+      NEXUS_JOINER_CONTAINER: nexus-cc-tasks-joiner
+      # Image + network for the runbook helper's transient `join`
+      # sidecar (it shells out to `docker run` against the joiner's
+      # data volume while the joiner is stopped, mirroring runbook §3b).
+      NEXUS_CLUSTER_IMAGE: nexus-local-connector-plugin:latest
+      NEXUS_CC_TASKS_NETWORK: nexus-cc-tasks-net
+      # Zone + VFS path prefix for founder's LocalConnector mount.
+      # Single-node substrate tests (`TestLocalConnectorThroughVFS`)
+      # consume these to compose paths for `vfs_write` / `vfs_read`
+      # against founder's mount.  Cross-node workflow tests
+      # (`TestCrossNodeLazyMaterialization`) compose their own paths
+      # for both nodes — `/shared/cc-tasks/founder/...` vs `joiner/...`.
+      NEXUS_LOCAL_CONNECTOR_ZONE: sharedzone
+      NEXUS_LOCAL_CONNECTOR_VFS_ROOT: /shared/cc-tasks/founder
+      # FUSE mount point inside each node — same env var the plugin
+      # reads at create-time, exposed to the test runner so
+      # `mountpoint -q` + `docker exec ... cat` ops against the mount
+      # know where to look.  Same path on both nodes (compose anchor).
+      NEXUS_FUSE_MOUNT_POINT: /mnt/cc-tasks
+    networks:
+      - nexus-cc-tasks-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_cc_tasks_share_e2e.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-cc-tasks-net:
+    name: nexus-cc-tasks-net
+    driver: bridge
+
+secrets:
+  plugin_signing_key:
+    environment: PLUGIN_SIGNING_PRIVKEY
+
+volumes:
+  cc_tasks_founder_data:
+    name: nexus-cc-tasks-founder-data
+  # `cc_tasks_founder_hostfs` simulates the operator's local
+  # `~/.claude/tasks/` (or any host-fs subtree LocalConnector projects
+  # into the VFS).  The compose mounts it at `/host/tasks` — the path
+  # the `--mount-driver` config's `local_root` points at.
+  cc_tasks_founder_hostfs:
+    name: nexus-cc-tasks-founder-hostfs
+  cc_tasks_joiner_data:
+    name: nexus-cc-tasks-joiner-data
+  cc_tasks_joiner_hostfs:
+    name: nexus-cc-tasks-joiner-hostfs

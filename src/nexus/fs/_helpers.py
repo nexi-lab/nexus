@@ -180,15 +180,13 @@ def grep(
     ignore_case: bool = False,
     max_results: int = 1000,
 ) -> list[dict[str, Any]]:
-    """Search file contents for *pattern* via the Rust ``sys_grep`` syscall.
+    """Search file contents for *pattern* under *path*.
 
-    Phase 6 / Phase 7: the entire batched-trigram-fallback flow this
-    helper used to host (~80 lines) is now a single Rust syscall.
-    `kernel.sys_grep` walks the metastore-recursive listing, reads each
-    regular file, and runs `lib::search::search_lines` against the
-    pattern.  Returns a list of `{file, line, content, match}` dicts —
-    same shape as before so existing callers keep working unchanged.
+    Composes Tier 1 syscalls: ``readdir`` (recursive) + ``sys_read`` +
+    Python ``re`` matching.  Returns ``[{file, line, content, match}]``.
     """
+    import re
+
     from nexus.core.dispatch import grep_path
 
     pushed_down = grep_path(
@@ -201,41 +199,6 @@ def grep(
     )
     if pushed_down is not None:
         return pushed_down
-
-    inner: Any = getattr(kernel, "_kernel", kernel)
-    return list(
-        inner.sys_grep(
-            pattern,
-            path,
-            ignore_case,
-            max_results,
-            LOCAL_CONTEXT.zone_id or ROOT_ZONE_ID,
-        )
-    )
-
-
-def glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
-    """Find files matching *pattern* via the Rust ``sys_glob`` syscall.
-
-    Phase 6 / Phase 7: replaces the Python ``glob_match_bulk`` +
-    ``fnmatch`` fallback with a single ``kernel.sys_glob`` call —
-    metastore-recursive listing + ``lib::glob::glob_match`` happen in
-    pure Rust.
-    """
-    inner: Any = getattr(kernel, "_kernel", kernel)
-    return list(inner.sys_glob(pattern, path, LOCAL_CONTEXT.zone_id or ROOT_ZONE_ID))
-
-
-def _LEGACY_grep(
-    kernel: NexusFS,
-    pattern: str,
-    path: str = "/",
-    *,
-    ignore_case: bool = False,
-    max_results: int = 1000,
-) -> list[dict[str, Any]]:
-    """Legacy Python-side grep — retained as a fallback only."""
-    import re
 
     flags = re.IGNORECASE if ignore_case else 0
     try:
@@ -257,8 +220,6 @@ def _LEGACY_grep(
         except Exception:
             continue
         if not isinstance(content, bytes):
-            # DT_STREAM returns {data, next_offset} — grep only scans
-            # regular files, so skip non-bytes payloads.
             continue
         try:
             text = content.decode("utf-8", errors="replace")
@@ -273,13 +234,16 @@ def _LEGACY_grep(
     return matches
 
 
-def _LEGACY_glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
-    """Legacy Python-side glob — retained as a fallback only."""
+def glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
+    """Find files matching *pattern* under *path*.
+
+    Composes Tier 1 ``readdir`` (recursive) + Python ``fnmatch``.
+    """
+    import fnmatch
+
     entries = kernel.sys_readdir(path, recursive=True, details=False, context=LOCAL_CONTEXT)
     all_paths = [e for e in entries if isinstance(e, str)]
     if not all_paths:
         return []
-
-    import fnmatch
 
     return [p for p in all_paths if fnmatch.fnmatch(p, pattern)]

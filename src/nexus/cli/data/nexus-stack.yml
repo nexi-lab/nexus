@@ -4,8 +4,8 @@
 # Pulls the prebuilt Nexus image from GHCR — no local Docker build required.
 # Services are activated via Docker Compose profiles:
 #
-#   Preset "shared":  --profile core --profile cache --profile search
-#   Preset "demo":    --profile core --profile cache --profile search
+#   Preset "shared":  --profile core --profile cache
+#   Preset "demo":    --profile core --profile cache
 #   Add-on "nats":    --profile events
 #   Add-on "mcp":     --profile mcp
 #
@@ -110,6 +110,9 @@ services:
       # Cache
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+      NEXUS_TIGER_INIT_TIMEOUT_SECONDS: "${NEXUS_TIGER_INIT_TIMEOUT_SECONDS:-}"
+      NEXUS_TIGER_WRITE_TIMEOUT_SECONDS: "${NEXUS_TIGER_WRITE_TIMEOUT_SECONDS:-}"
       # gRPC
       NEXUS_GRPC_PORT: "2028"  # Fixed inside container; host port varies via port mapping
       NEXUS_GRPC_TLS: ${NEXUS_GRPC_TLS:-false}
@@ -152,7 +155,7 @@ services:
   # ============================================================================
   # Init service: formats data file on first run (idempotent — exits if already formatted)
   tigerbeetle-init:
-    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.78
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.3
     profiles:
       - core
     security_opt:
@@ -166,7 +169,7 @@ services:
       - nexus-network
 
   tigerbeetle:
-    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.78
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.3
     restart: unless-stopped
     profiles:
       - core

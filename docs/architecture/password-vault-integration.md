@@ -4,10 +4,10 @@ How the password-vault domain service splits across nexus and its
 consumers, and where the gRPC contract sits in the workspace.
 
 Cross-references:
-- `KERNEL-ARCHITECTURE.md` §6.1 (workspace composition + peer-crate
+- [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §6.1 (workspace composition + peer-crate
   invariants) — explains why a new domain service ships as a peer
   crate under `rust/services/`.
-- `KERNEL-ARCHITECTURE.md` §7.1 (profile binaries) — the cluster
+- [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §7.1 (profile binaries) — the cluster
   binary is one consumer of this service through its in-process
   syscall surface.
 - `proto/nexus/exchange/v1/common.proto` — `NexusErrorCode` enum the
@@ -65,39 +65,73 @@ counts:
 So `PasswordVaultService` is its own peer service that *uses*
 `SecretsService` internally, not a routing alias.
 
+## Deployment model
+
+The vault runs as a **dylib plugin** inside `nexusd-cluster`, loaded
+at startup via the `--plugin-dir` CLI flag. The plugin is compiled as
+a cdylib (`libnexus_vault.so` / `.dylib` / `.dll`) and exports the
+standard `declare_service_plugin!` C ABI symbols.
+
+At load time, `PluginLoader` calls `nexus_service_create` which:
+1. Creates a private `Kernel` instance for vault storage
+2. Sets up a `PathLocalBackend` under `$NEXUS_DATA_DIR/vault/content/`
+3. Auto-generates a 32-byte AES-256 master key at
+   `$NEXUS_DATA_DIR/vault/master.key` on first load
+4. Registers as `RustService` named `"password-vault"` in the
+   kernel's `ServiceRegistry`
+
+Plugin dispatch maps method strings (`"put_entry"`, `"get_entry"`,
+etc.) to the existing `PasswordVaultService` gRPC trait impl with
+protobuf-encoded payloads. Zero logic changes from the trait impl —
+the plugin is a deployment wrapper only.
+
+## Cloud-sync-friendly deployments (interim)
+
+The standalone `nexusd-vault` binary (the `[[bin]]` target of
+`rust/services/vault/`) is the alternative to the in-cluster plugin
+path above. It hosts the same `PasswordVaultService` +
+`GenericSecretsService` over loopback gRPC, with no cluster machinery —
+suited to thin-client integrations that spawn the daemon on-demand
+for a short burst of RPCs.
+
+One concrete motivator: hosting `--data-dir` on file-level
+cloud-synced storage (Dropbox / OneDrive / iCloud / Syncthing / NFS).
+The OS holds exclusive locks on `vault-meta.redb` while the daemon
+runs, and a long-running daemon starves the sync client. The
+standalone binary exposes `--idle-shutdown-seconds N` (also via
+`NEXUS_VAULT_IDLE_SHUTDOWN_SECONDS`) so the daemon exits when traffic
+has been quiet for N seconds, releasing locks for the sync client to
+publish a clean state.
+
+```
+nexusd-vault \
+  --data-dir /Users/you/Dropbox/vault-data \
+  --idle-shutdown-seconds 30
+```
+
+Default is `0` (disabled) — current behavior is preserved. Set it
+higher than the longest expected RPC; typical values are 30
+(interactive on-demand) and 300 (back-to-back batch).
+
+> **Forward note.** This is an interim story. Once nexus-vfs
+> federation is generally available, vault data should ride federation
+> replication directly — file-level cloud sync becomes unnecessary
+> and the `--idle-shutdown-seconds` flag becomes irrelevant. This
+> section will be removed at that time.
+
 ## Rust implementation placement
 
-A Rust port lands as a peer crate at `rust/services/password_vault/`.
+The service logic lives at `rust/services/src/password_vault/`.
 
 - The crate depends only on `kernel` + `contracts`, preserving the
   `services ⊥ backends ⊥ transport ⊥ raft` invariant from
-  `KERNEL-ARCHITECTURE.md` §6.1.
-- Storage delegates to `SecretsService` under `namespace="passwords"`
-  — `SecretsService` today is SQLAlchemy on SQLite; the eventual
-  Rust port of `SecretsService` chooses its own storage and
-  PasswordVaultService inherits that decision rather than picking
-  one independently.
-- Crypto delegation is the same: PasswordVaultService never touches
-  the master key directly.  `OAuthCrypto` (or its Rust successor) is
-  the single owner of master-key derivation, sourced from
-  `system_settings` SQL per #3850.
+  [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/blob/main/README.md) §6.1.
+- Storage uses kernel syscalls through a private Kernel instance
+  with a `PathLocalBackend` for persistent content.
+- The vault dylib (`rust/services/vault/`) compiles to a cdylib
+  that uses `nexus-plugin-abi`'s `declare_service_plugin!` macro.
 - Audit is wired through `kernel::Kernel::register_native_hook`
-  (the in-tree Rust API surface from `KERNEL-ARCHITECTURE.md` §6.1)
-  with `AccessContext`-tagged events.  The hook impl mirrors
-  `services::audit::AuditHook`'s shape — same `NativeInterceptHook`
-  trait, same `mpsc::SyncSender::try_send` non-blocking write.
-- gRPC binding lives next to the impl and is composed into the
-  cluster-profile binary's tonic server alongside `ZoneApiService`
-  and `ZoneTransportService` from `nexus_raft::transport`.  The
-  Phase-1 generic `Call(method, json_payload)` dispatcher in
-  `proto/nexus/grpc/vfs/vfs.proto` is for legacy paths and stays out
-  of this service's wiring.
-- Binary delta target: under 250 KB on top of the Rust
-  `SecretsService` port.
-
-A Python implementation kept alongside the existing
-`PasswordVaultService` class is a transitional bridge until the Rust
-port lands; the cluster binary stays Python-free.
+  with `AccessContext`-tagged events.
 
 ## Proto contract
 
@@ -134,14 +168,7 @@ segment because they ship in lockstep with the kernel.
    mechanism applies to every cross-repo proto in
    `proto/nexus/*/v1/`.
 
-2. **Transport endpoint co-location.**  REST listens on 12012 today.
-   gRPC for cluster-internal services listens on 2126 (the federation
-   port).  The PasswordVault gRPC server lives on its own port to
-   avoid HTTP/2 + h2c upgrade fragility on the FastAPI process; the
-   exact port plus how `DynamicNexusService` advertises it to clients
-   stays open.
-
-3. **REST deprecation overlap.**  password-agent just switched to
+2. **REST deprecation overlap.**  password-agent just switched to
    v0.9.43's REST surface.  Recommended overlap is two minor releases
    — one matches password-agent's `v0.9.43 → v0.10.x` cycle and the
    second covers Tier-1 sudowork tools.  REST router is marked

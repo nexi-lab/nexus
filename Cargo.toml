@@ -1,56 +1,52 @@
 [workspace]
 resolver = "2"
 members = [
-    # Tier-neutral packages (KERNEL-ARCHITECTURE.md §6):
-    #   contracts/ — types / enums / exceptions / constants (zero deps).
-    #   lib/       — pure-Rust implementations (algorithms + transport
-    #                primitives). Every peer crate depends on it; it
-    #                depends only on `contracts`.
-    "rust/contracts",
-    "rust/lib",
-    # OS proper + driver / service tiers (§6.1).
-    "rust/transport",
-    "rust/kernel",
-    "rust/backends",
+    # nexus-owned service modules (peer crate of nexus-vfs kernel).
     "rust/services",
-    "rust/raft",
-    # Deployment binaries.
-    "rust/profiles/cluster",
-    # Build artifact: Python wheel cdylib.
-    "rust/nexus-cdylib",
+    # nexus-vault — cdylib service plugin for PasswordVaultService,
+    # loaded by nexusd-cluster via --plugin-dir.  Sits next to the
+    # service crate source it wraps (rust/services/src/password_vault/).
+    "rust/services/vault",
+    # nexus-local-connector — cdylib driver plugin that exposes a
+    # host filesystem subtree through the VFS.  Loaded by
+    # nexusd-cluster via --plugin-dir; mounted via
+    # `--mount-driver local-connector:<vfs-path>:<config-json>`.
+    "rust/backends/local-connector",
+    # nexus-fuse-plugin — cdylib service plugin that mounts the Nexus
+    # VFS at an operator-named host path via libfuse3 (Linux).  Spawns
+    # a fuser-based FUSE event loop in a background thread on
+    # `nexus_service_create`; FUSE ops translate in-process to kernel
+    # syscalls via the plugin-abi KernelHandle.  Loaded by
+    # nexusd-cluster via --plugin-dir alongside nexus-vault.
+    "rust/services/fuse-plugin",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
+# from the workspace.  Distinct from nexus-fuse-plugin (the new
+# in-process service plugin above) — the legacy daemon talks to a
+# Python FastAPI server over HTTPS REST and is being phased out as
+# the plugin matures.
 exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
-contracts = { path = "rust/contracts" }
-# `lib` is the tier-neutral implementation crate per §6 — algorithms
-# (bitmap, bloom, glob, hash, rebac, search, simd, trigram) plus the
-# `transport_primitives` module (TLS / pool / addressing / TOFU /
-# PeerBlobClient trait). Default build is WASM-clean; `python` and
-# `transport` features are opt-in.
-lib = { path = "rust/lib" }
-transport = { path = "rust/transport" }
+# Kernel-tier crates from nexus-vfs (external git dependency).
+# SSOT: https://github.com/nexi-lab/nexus-vfs
+# Pinned at the nexus-vfs main commit that landed #58 (drop
+# `kernel-dogfood-v1.pub` into TRUSTED_KEY_FILES). Required so cluster
+# builds in CI verify plugins signed by the sealed-keystore root.
+# Builds on the Phase P (#57) plugin-as-gRPC-service routing: cluster
+# routes plugin-exposed gRPC services on the same port + trust root as
+# VFS via `nexus_plugin_grpc_services` + bytes-level dispatch through
+# `nexus_service_dispatch`. Bump alongside the rest of nexus-vfs
+# updates when a downstream change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
+# Local service crate (nexus-owned).
 services = { path = "rust/services" }
-# Driver impls. `default-features = false` so transitive workspace
-# consumers (e.g. `nexus-cluster`) can pick a slim driver set without
-# fighting Cargo's feature unification.  Crates that want the full
-# driver matrix (`nexus-cdylib`) opt back in via
-# `default-features = true` plus the `python` feature.
-backends = { path = "rust/backends", default-features = false }
-# `kernel` is rlib-only — the Python entry-point cdylib
-# `nexus_runtime.so` lives in `rust/nexus-cdylib/`. `default-features =
-# false` keeps the kernel runtime defaults (mimalloc allocator, HTTP
-# connector stack, py-hook adapters) off in transitive consumers
-# (backends / services / transport rlibs); `nexus-cdylib` opts back in
-# explicitly. This is the cycle break that lets `<peer-crate> -> kernel`
-# coexist with cdylib registration of peer-crate `#[pyclass]`es.
-kernel = { path = "rust/kernel", default-features = false }
-# raft is an rlib pulled into the `nexus_runtime.so` cdylib via the
-# nexus-cdylib build artifact (alongside kernel). Other crates use raft
-# as a workspace dep too; the `python` + `grpc` feature flags here apply
-# uniformly.
-raft = { path = "rust/raft", default-features = false, features = ["grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
@@ -81,34 +77,3 @@ lto = "thin"
 codegen-units = 1
 opt-level = 3
 strip = "symbols"
-
-# Cluster binary ships standalone for sudowork; size matters more than
-# raw throughput. opt-level="z" picks the cluster code path that
-# minimizes object size. On Linux x86_64 with workspace-wide
-# strip="symbols", the binary lands around 5-6 MB; on Windows MSVC
-# the .exe is closer to 8 MB (PE headers + import tables don't
-# compress as much as stripped ELF). CI's size gate (Group F) checks
-# the Linux artifact.
-[profile.release.package.nexus-cluster]
-opt-level = "z"
-
-# ── Cross-repo dep deduplication ──────────────────────────────────────
-#
-# `nexus-cdylib` git-deps on the sudocode runtime crate (PR-C v1
-# `spawn_task` integration). That sudocode crate in turn git-deps on
-# *this* nexus repo's `kernel` rlib (because sudocode needs the
-# `KernelAbi` trait declaration). Without this `[patch]`, cargo sees
-# the two `kernel` crates — our local path-based `rust/kernel` and
-# sudocode's git-based copy — as distinct, and the `AgentDescriptor`
-# struct sudocode-runtime hands back from `spawn_task` no longer
-# matches the one our cdylib service code uses (E0308 mismatched
-# types pointing at "two different versions of crate kernel").
-#
-# `[patch."https://github.com/nexi-lab/nexus"]` redirects every
-# transitive git-dep on the nexus repo to our workspace member at
-# `rust/kernel`, so kernel-typed values flow through one canonical
-# struct definition end-to-end. Same trick the standard cargo
-# dedup playbook uses for vendored deps.
-[patch."https://github.com/nexi-lab/nexus"]
-kernel = { path = "rust/kernel" }
-contracts = { path = "rust/contracts" }

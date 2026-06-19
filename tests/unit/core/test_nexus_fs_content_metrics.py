@@ -22,9 +22,11 @@ class _Kernel:
     def __init__(self) -> None:
         self.sys_read_calls = 0
         self.sys_write_calls = 0
+        self.read_timeouts: list[int] = []
 
     def sys_read(self, path: str, _ctx: object, _timeout_ms: int, _offset: int = 0) -> Any:
         self.sys_read_calls += 1
+        self.read_timeouts.append(_timeout_ms)
         return SimpleNamespace(
             data=b"abc",
             post_hook_needed=False,
@@ -53,6 +55,20 @@ class _Kernel:
     def write(self, path: str, _ctx: object, content: bytes, _offset: int = 0) -> Any:
         return self.sys_write(path, _ctx, content, _offset)
 
+    def read_batch(
+        self, items: list[tuple[str, int, int | None]], context: Any = None
+    ) -> list[Any]:
+        return [
+            SimpleNamespace(
+                data=f"b{index}".encode(),
+                content_id=f"cid-{index}",
+                gen=index + 1,
+                entry_type=1,
+                stream_next_offset=None,
+            )
+            for index, (_path, _off, _cnt) in enumerate(items)
+        ]
+
     def stat_batch(self, paths: list[str], zone_id: str = "root") -> list[Any]:
         return [
             {
@@ -62,16 +78,6 @@ class _Kernel:
                 "gen": 1,
                 "modified_at": None,
             }
-            for index, _path in enumerate(paths)
-        ]
-
-    def sys_read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
-        return [
-            SimpleNamespace(
-                data=f"b{index}".encode(),
-                content_id=f"cid-{index}",
-                gen=index + 1,
-            )
             for index, _path in enumerate(paths)
         ]
 
@@ -86,6 +92,9 @@ class _Kernel:
             )
             for index, (_path, content) in enumerate(files)
         ]
+
+    def write_batch(self, files: list[tuple[str, bytes]], _ctx: object) -> list[Any]:
+        return self.sys_write_batch(files, _ctx)
 
     def dispatch_pre_hooks(self, _name: str, _ctx: object) -> None:
         return None
@@ -104,14 +113,18 @@ class _ErrorKernel(_Kernel):
 
 
 class _FallbackKernel(_Kernel):
-    def sys_read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
+    def read_batch(
+        self, items: list[tuple[str, int, int | None]], context: Any = None
+    ) -> list[Any]:
         return [
             SimpleNamespace(
                 data=None,
                 content_id=f"cid-{index}",
                 gen=index + 1,
+                entry_type=1,
+                stream_next_offset=None,
             )
-            for index, _path in enumerate(paths)
+            for index, _item in enumerate(items)
         ]
 
 
@@ -157,6 +170,13 @@ class _Harness(ContentMixin):
 
     def _get_context_identity(self, context: object | None) -> tuple[str, str | None, bool]:
         return ("root", None, False)
+
+    def _prepare_rust_ctx(
+        self, context: object | None = None
+    ) -> tuple[str | None, str | None, bool, object]:
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        rust_ctx = self._build_rust_ctx(context, is_admin)
+        return zone_id, agent_id, is_admin, rust_ctx
 
     def _validate_path(self, path: str) -> str:
         return path
@@ -233,6 +253,28 @@ class _MutatingHookHarness(_Harness):
         self._kernel = _MutatingHookKernel()
 
 
+class _EditHarness(_Harness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stat_calls = 0
+
+    def sys_stat(
+        self,
+        path: str,
+        *,
+        context: object | None = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        self.stat_calls += 1
+        return {
+            "content_id": "cid",
+            "version": 1,
+            "gen": 1,
+            "modified_at": None,
+            "size": 3,
+        }
+
+
 def test_sys_read_records_backend_latency_and_bytes() -> None:
     harness = _Harness()
     before_bytes = _sample("nexus_read_bytes_total", tier="backend")
@@ -242,6 +284,46 @@ def test_sys_read_records_backend_latency_and_bytes() -> None:
 
     assert _sample("nexus_read_bytes_total", tier="backend") == before_bytes + 3
     assert _sample("nexus_read_latency_seconds_count", tier="backend") == before_count + 1
+
+
+def test_sys_read_defaults_to_longpoll_budget() -> None:
+    """sys_read(timeout_ms=None) must pass the 5000ms long-poll default to the
+    kernel — the Issue #3699 opt-out contract. DT_REG ignores timeout_ms per
+    rust/kernel/src/kernel/io.rs:255-305, so this default is safe for regular
+    reads while preserving correct IPC blocking for DT_PIPE / DT_STREAM
+    consumers that don't opt out."""
+    harness = _Harness()
+
+    assert harness.sys_read("/file.txt") == b"abc"
+
+    assert harness._kernel.read_timeouts == [5000]
+
+
+def test_sys_read_preserves_explicit_ipc_timeout() -> None:
+    harness = _Harness()
+
+    assert harness.sys_read("/file.txt", timeout_ms=250) == b"abc"
+
+    assert harness._kernel.read_timeouts == [250]
+
+
+def test_edit_preview_without_if_match_does_not_stat() -> None:
+    harness = _EditHarness()
+
+    result = harness.edit("/file.txt", [("abc", "abd")], preview=True)
+
+    assert result["success"] is True
+    assert result["preview"] is True
+    assert harness.stat_calls == 0
+
+
+def test_edit_with_if_match_reads_metadata_for_occ() -> None:
+    harness = _EditHarness()
+
+    result = harness.edit("/file.txt", [("abc", "abd")], if_match="cid", preview=True)
+
+    assert result["success"] is True
+    assert harness.stat_calls == 1
 
 
 def test_sys_read_records_virtual_resolver_reads() -> None:

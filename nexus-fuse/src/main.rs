@@ -428,7 +428,7 @@ fn main() -> anyhow::Result<()> {
             let passthrough_manager = create_passthrough_manager(&url, passthrough_config)?;
 
             // Create filesystem
-            let filesystem = fs::NexusFs::try_new(client, file_cache, passthrough_manager)?;
+            let filesystem = fs::NexusFs::new(client, file_cache, passthrough_manager);
 
             // Build mount options
             let mut options = Config::default();

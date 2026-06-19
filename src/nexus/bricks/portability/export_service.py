@@ -355,33 +355,50 @@ class ZoneExportService:
         file_count = 0
         total_size = 0
 
-        # Get all files from metadata store
-        # Note: The actual implementation depends on the metadata store API
+        # Get all files via the §2.5 syscall surface. Export-time scan runs
+        # is_system=True so the wrapper's zone filter is skipped — the
+        # caller chooses the zone via ``zone_id`` and any cross-zone
+        # filtering belongs in the export-level zone option, not the
+        # syscall wrapper.
+        from datetime import datetime as _dt
+
+        from nexus.contracts.types import OperationContext as _OC
+
         prefix = options.path_prefix or ""
-        if self._kernel is None:
-            raise RuntimeError("ZoneExportService requires a kernel-backed NexusFS")
-        all_files = self._kernel.metastore_list_paginated(prefix, True, 100000, None)["items"]
+        sys_ctx = _OC(user_id="system", groups=[], zone_id=zone_id, is_system=True)
+        all_entries = self.nexus_fs.sys_readdir(
+            prefix or "/",
+            recursive=True,
+            details=True,
+            context=sys_ctx,
+        )
 
-        # Apply zone filter if metadata store doesn't do it
-        # (In a real implementation, this would be done at the database level)
+        def _parse_iso(value: Any) -> _dt | None:
+            if value is None:
+                return None
+            if isinstance(value, _dt):
+                return value
+            if isinstance(value, str):
+                try:
+                    return _dt.fromisoformat(value)
+                except ValueError:
+                    return None
+            return None
 
-        total_files = len(all_files)
+        total_files = len(all_entries)
 
         with output_path.open("w", encoding="utf-8") as f:
-            for idx, file_meta in enumerate(all_files):
-                # Apply time filters
-                if (
-                    options.after_time
-                    and file_meta.modified_at
-                    and file_meta.modified_at < options.after_time
-                ):
+            for idx, entry in enumerate(all_entries):
+                if not isinstance(entry, dict):
                     continue
 
-                if (
-                    options.before_time
-                    and file_meta.modified_at
-                    and file_meta.modified_at > options.before_time
-                ):
+                modified_at = _parse_iso(entry.get("modified_at"))
+                created_at = _parse_iso(entry.get("created_at"))
+
+                # Apply time filters
+                if options.after_time and modified_at and modified_at < options.after_time:
+                    continue
+                if options.before_time and modified_at and modified_at > options.before_time:
                     continue
 
                 # Build FileRecord
@@ -391,19 +408,32 @@ class ZoneExportService:
                 # bundles only need to carry the virtual path. We keep
                 # the FileRecord fields (the .nexus 1.0 schema requires
                 # them) but emit empty strings.
+                entry_path = entry.get("path") or ""
+                content_id = entry.get("content_id")
+                size_bytes = int(entry.get("size") or 0)
+                if options.include_content and entry_path and (not content_id or size_bytes == 0):
+                    try:
+                        data = self.nexus_fs.sys_read(entry_path)
+                    except Exception as exc:
+                        logger.debug("sys_read fallback skipped for %s: %s", entry_path, exc)
+                    else:
+                        if data is not None:
+                            raw = data if isinstance(data, bytes) else bytes(data)
+                            size_bytes = len(raw)
+                            content_id = content_id or entry_path.lstrip("/") or entry_path
                 record = FileRecord(
-                    path_id=getattr(file_meta, "path_id", str(idx)),
+                    path_id=str(idx),
                     zone_id=zone_id,
-                    virtual_path=file_meta.path,
+                    virtual_path=entry_path,
                     backend_id="",
                     physical_path="",
-                    file_type=file_meta.mime_type,
-                    size_bytes=file_meta.size,
-                    content_id=file_meta.content_id,
-                    created_at=file_meta.created_at,
-                    updated_at=file_meta.modified_at,
-                    current_version=getattr(file_meta, "version", 1),
-                    metadata=getattr(file_meta, "custom_metadata", None) or {},
+                    file_type=entry.get("mime_type"),
+                    size_bytes=size_bytes,
+                    content_id=content_id,
+                    created_at=created_at,
+                    updated_at=modified_at,
+                    current_version=int(entry.get("version") or 1),
+                    metadata={},
                 )
 
                 # Write JSONL line
@@ -414,12 +444,12 @@ class ZoneExportService:
                 # (identical content at a different path) are no-ops —
                 # `_export_content_blobs` reads via sys_read(path) once
                 # per unique hash.
-                if file_meta.content_id and file_meta.content_id not in content_ids:
-                    content_ids.add(file_meta.content_id)
-                    hash_to_path[file_meta.content_id] = file_meta.path
+                if content_id and content_id not in content_ids:
+                    content_ids.add(content_id)
+                    hash_to_path[content_id] = entry_path
 
                 file_count += 1
-                total_size += file_meta.size
+                total_size += size_bytes
 
                 # Progress callback
                 if progress_callback and idx % 100 == 0:
@@ -464,12 +494,17 @@ class ZoneExportService:
                     )
                     continue
 
-                # Write to CAS structure (2-char prefix directories)
-                if len(content_id) >= 2:
-                    prefix = content_id[:2]
+                # Write to CAS structure (2-char prefix directories). The
+                # kernel content_id is opaque and may contain path separators,
+                # so encode it before using it as a bundle member name.
+                from urllib.parse import quote
+
+                blob_name = quote(content_id, safe="")
+                if len(blob_name) >= 2:
+                    prefix = blob_name[:2]
                     blob_dir = output_dir / prefix
                     blob_dir.mkdir(parents=True, exist_ok=True)
-                    blob_path = blob_dir / content_id
+                    blob_path = blob_dir / blob_name
                     blob_path.write_bytes(data if isinstance(data, bytes) else bytes(data))
                     blob_count += 1
 

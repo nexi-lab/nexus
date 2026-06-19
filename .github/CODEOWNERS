@@ -1,6 +1,39 @@
-# Kernel team — auto-assign kernel lead as reviewer
+# Kernel team — auto-assign kernel team as reviewer.
+# Any PR touching these paths requires kernel team (@elfenlieds7) approval to merge.
+# GitHub enforces this when "Require review from Code Owners" is enabled
+# in branch protection rules for the develop branch.
+
+# Rust crates — ALL Rust code requires kernel team review
+/rust/                    @elfenlieds7
+/Cargo.toml               @elfenlieds7
+/Cargo.lock               @elfenlieds7
+
+# Python kernel boundary
 /src/nexus/core/          @elfenlieds7
 /src/nexus/raft/          @elfenlieds7
 /src/nexus/contracts/     @elfenlieds7
 /src/nexus/lib/           @elfenlieds7
+
+# Codegen + stubs (kernel ABI surface)
+/scripts/codegen_kernel_abi.py  @elfenlieds7
+/stubs/                   @elfenlieds7
+
+# Architecture docs
 /docs/architecture/       @elfenlieds7
+
+# Plugin signing trust chain — kernel team gates the master key
+# bootstrap, the sealed keystore, the verifier scripts, and the
+# CI workflow that fetches privkeys at release time. Drift here
+# breaks the dogfood signing path for every cdylib plugin.
+/data/vault-signing/                                @elfenlieds7
+/scripts/_dogfood_vault.py                          @elfenlieds7
+/scripts/dogfood_keystore_init.py                   @elfenlieds7
+/scripts/dogfood_keystore_fetch.py                  @elfenlieds7
+/scripts/provision_dogfood_key.py                   @elfenlieds7
+/scripts/vault_get_signing_key.py                   @elfenlieds7
+/scripts/sign_plugin.py                             @elfenlieds7
+/scripts/check_plugin_signing_compliance.py         @elfenlieds7
+/.github/workflows/release-plugin-reusable.yml      @elfenlieds7
+/.github/workflows/release-vault-plugin.yml         @elfenlieds7
+/.github/workflows/release-local-connector-plugin.yml  @elfenlieds7
+/.github/workflows/release-fuse-plugin.yml          @elfenlieds7

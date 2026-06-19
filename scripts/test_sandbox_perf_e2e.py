@@ -206,7 +206,7 @@ async def main() -> int:
         }
         if has_openai:
             cfg["enable_vector_search"] = True
-        nx = await nexus.connect(config=cfg)
+        nx = nexus.connect(config=cfg)
         boot_ms = (time.monotonic() - t0) * 1000
         print(f"    Boot time: {boot_ms:.0f} ms")
         check("SANDBOX boots", nx is not None)

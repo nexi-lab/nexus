@@ -82,7 +82,7 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
             from nexus.bricks.rebac.manager import ReBACManager
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            _store = SQLAlchemyRecordStore(db_url=svc.database_url)
+            _store = svc.record_store or SQLAlchemyRecordStore(db_url=svc.database_url)
             _sync_mgr = ReBACManager(engine=_store.engine)
             app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
             logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
@@ -412,7 +412,7 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     expander = DirectoryGrantExpander(
                         engine=_rebac_engine,
                         tiger_cache=tiger_cache,
-                        metadata_store=svc.nexus_fs._kernel,
+                        nexus_fs=svc.nexus_fs,
                     )
                     app.state.directory_grant_expander = expander
 

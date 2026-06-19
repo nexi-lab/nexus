@@ -23,7 +23,8 @@ class TigerCacheRenameHook:
 
     Dependencies injected at construction:
       - tiger_cache:   The TigerCache instance (may be None)
-      - metadata_list: (prefix, recursive, zone_id) -> Iterator[FileMetadata]
+      - metadata_list: (prefix, recursive, zone_id) -> Iterable[dict] of
+        sys_readdir(details=True) entries (``entry["path"]``)
     """
 
     # ── Hook spec (duck-typed) (Issue #1610) ──────────────────────────
@@ -129,14 +130,15 @@ class TigerCacheRenameHook:
 
         try:
             result = []
-            for file_meta in self._metadata_list_iter(
+            # _metadata_list_iter yields plain path strings (sys_readdir
+            # details=False) — see factory/orchestrator.py.
+            for new_file_path in self._metadata_list_iter(
                 prefix=new_prefix, recursive=True, zone_id=zone_id
             ):
-                new_file_path = file_meta.path
                 if new_file_path:
-                    relative_path = new_file_path[len(new_prefix) :]
+                    relative_path = str(new_file_path)[len(new_prefix) :]
                     old_file_path = old_prefix + relative_path
-                    result.append((old_file_path, new_file_path))
+                    result.append((old_file_path, str(new_file_path)))
             return result
         except Exception as e:
             logger.warning(f"[LEOPARD] Failed to list directory files: {e}")

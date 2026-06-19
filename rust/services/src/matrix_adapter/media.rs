@@ -129,7 +129,9 @@ pub async fn upload<K: kernel::abi::KernelAbi>(
                 /* remote_metastore */ None,
             )
             .map_err(|e| {
-                AdapterError::Internal(format!("sys_setattr DT_STREAM({media_path_for_write}): {e:?}"))
+                AdapterError::Internal(format!(
+                    "sys_setattr DT_STREAM({media_path_for_write}): {e:?}"
+                ))
             })?;
         kernel_for_write
             .sys_write(&media_path_for_write, &ctx, &bytes, 0)
@@ -193,8 +195,8 @@ pub async fn download<K: kernel::abi::KernelAbi>(
     let media_path = format!("/media/{media_id}");
     let kernel_for_read = Arc::clone(kernel);
     let media_path_for_read = media_path.clone();
-    let (bytes, mime_type) = tokio::task::spawn_blocking(
-        move || -> Result<(Vec<u8>, String), AdapterError> {
+    let (bytes, mime_type) =
+        tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String), AdapterError> {
             let ctx = kernel::kernel::OperationContext {
                 user_id: "matrix-adapter".into(),
                 zone_id: "root".into(),
@@ -209,12 +211,8 @@ pub async fn download<K: kernel::abi::KernelAbi>(
                 context_zone_id: None,
                 zone_perms: vec![],
             };
-            let read_result = kernel_for_read.sys_read(
-                &media_path_for_read,
-                &ctx,
-                /* timeout_ms */ 0,
-                0,
-            );
+            let read_result =
+                kernel_for_read.sys_read(&media_path_for_read, &ctx, /* timeout_ms */ 0, 0);
             let read = match read_result {
                 Ok(r) => r,
                 Err(kernel::kernel::KernelError::FileNotFound(_)) => {
@@ -240,10 +238,9 @@ pub async fn download<K: kernel::abi::KernelAbi>(
                 .filter(|m| !m.is_empty())
                 .unwrap_or_else(|| "application/octet-stream".to_string());
             Ok((bytes, mime))
-        },
-    )
-    .await
-    .map_err(|e| AdapterError::Internal(format!("spawn_blocking join: {e}")))??;
+        })
+        .await
+        .map_err(|e| AdapterError::Internal(format!("spawn_blocking join: {e}")))??;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -315,8 +312,7 @@ mod tests {
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let v: Value =
-            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap())
-                .unwrap();
+            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap()).unwrap();
         v["access_token"].as_str().unwrap().to_string()
     }
 
@@ -336,8 +332,7 @@ mod tests {
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body: Value =
-            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap())
-                .unwrap();
+            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap()).unwrap();
         let content_uri = body["content_uri"].as_str().unwrap().to_string();
         assert!(content_uri.starts_with(&format!("mxc://{SERVER}/")));
         let media_id = content_uri
@@ -425,8 +420,7 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         let v: Value =
-            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap())
-                .unwrap();
+            serde_json::from_slice(&to_bytes(resp.into_body(), 64 * 1024).await.unwrap()).unwrap();
         let content_uri = v["content_uri"].as_str().unwrap().to_string();
         let media_id = content_uri.split('/').next_back().unwrap().to_string();
 

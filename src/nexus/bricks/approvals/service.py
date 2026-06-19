@@ -249,8 +249,9 @@ class ApprovalService:
         timeout_override: float | None = None,
     ) -> Decision:
         timeout = self._cfg.clamp_request_timeout(timeout_override)
+        durable_timeout = self._cfg.durable_request_timeout(timeout_override)
         now = datetime.now(UTC)
-        expires = now + timedelta(seconds=timeout)
+        expires = now + timedelta(seconds=durable_timeout)
 
         # Option 2: session-scope cache short-circuit. Mirrors PolicyGate.check
         # so non-PolicyGate callers (gRPC, HTTP, internal) also benefit and so

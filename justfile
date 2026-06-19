@@ -1,67 +1,22 @@
 # justfile — Nexus repo-root task runner
 # Install just: https://github.com/casey/just
-# Usage: just setup        # build all Rust crates
+# Usage: just setup        # install nexus-cluster binary
 #        just doctor       # verify env is healthy
-#        just build-kernel # rebuild only kernel
 
-# Build every Rust crate as a Python extension (editable install).
-# Uses `uv run` so maturin and python operate on the repo-managed venv,
-# not whatever happens to be on ambient PATH.
-# Run after: git clone, git pull, or switching branches with Rust changes.
+# Install the nexus-cluster binary from nexus-vfs.
+# Kernel-tier Rust (including nexus-cluster) lives in
+# https://github.com/nexi-lab/nexus-vfs after #4259; this repo
+# consumes the binary via `cargo install` rather than building it
+# locally. Run after: git clone, git pull, or any nexus-vfs update.
 setup:
-    @echo "Building all Rust crates..."
-    uv run maturin develop --release -m rust/nexus-cdylib/Cargo.toml
-    uv run maturin develop --release -m rust/raft/Cargo.toml
-    uv run maturin develop --release -m rust/tasks/Cargo.toml
-    @echo "Done. Run 'just doctor' to verify."
+    @echo "Installing nexus-cluster from nexus-vfs..."
+    cargo install --git https://github.com/nexi-lab/nexus-vfs --bin nexusd-cluster nexus-cluster
+    @echo "Done. Binary at ~/.cargo/bin/nexusd-cluster."
 
-# Verify the environment is healthy (binary matches source ABI).
-# Validates both MODULE_CAPABILITY_GROUPS (module-level symbols) and
-# KERNEL_REQUIRED_METHODS (Kernel class methods) against the installed binary.
+# Verify the environment is healthy.
 doctor:
-    uv run python -c "
-import sys, nexus_kernel
-from nexus._kernel_api_groups import KERNEL_REQUIRED_METHODS, MODULE_CAPABILITY_GROUPS
-
-print(f'nexus_kernel: {nexus_kernel.__file__}')
-errors = []
-
-# Check module-level capability groups
-for group, symbols in MODULE_CAPABILITY_GROUPS.items():
-    missing = [s for s in symbols if not hasattr(nexus_kernel, s)]
-    if missing:
-        errors.append(f'  group {group!r}: missing {missing}')
-
-# Check Kernel class methods
-kernel_cls = getattr(nexus_kernel, 'Kernel', None)
-if kernel_cls is None:
-    errors.append('  Kernel class is absent from module')
-else:
-    missing_methods = sorted(m for m in KERNEL_REQUIRED_METHODS if not hasattr(kernel_cls, m))
-    if missing_methods:
-        errors.append(f'  Kernel methods missing ({len(missing_methods)}): {missing_methods}')
-
-if errors:
-    print('FAIL — stale binary detected:')
-    for e in errors:
-        print(e)
-    print('Fix: just setup')
-    sys.exit(1)
-
-print(f'OK — {len(MODULE_CAPABILITY_GROUPS)} capability groups, {len(KERNEL_REQUIRED_METHODS)} Kernel methods all present')
-"
-
-# Rebuild only kernel (fastest for Kernel-only changes).
-build-kernel:
-    uv run maturin develop --release -m rust/nexus-cdylib/Cargo.toml
-
-# Verify generated files (stubs, kernel_exports.py, _kernel_api_groups.py) are up-to-date.
-codegen-check:
-    uv run python scripts/codegen_kernel_abi.py --check
-
-# Re-generate all codegen artifacts.
-codegen:
-    uv run python scripts/codegen_kernel_abi.py
+    @echo "Checking nexusd-cluster on PATH..."
+    @command -v nexusd-cluster >/dev/null && echo "OK — nexusd-cluster on PATH" || echo "FAIL — nexusd-cluster missing; run \`just setup\`"
 
 # Run the gbrain-evals benchmark gate (Issue #3699 pre-merge check).
 #

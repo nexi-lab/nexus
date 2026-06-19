@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.contracts.zone_phase import ZonePhase
 from nexus.storage.models import APIKeyModel
 from tests.testkit.records import InMemoryRecordStore
 
@@ -31,7 +32,7 @@ def session_factory(record_store):
 
     sf = record_store.session_factory
     with sf() as s:
-        s.add(ZoneModel(zone_id="org_acme", name="org_acme", phase="Active"))
+        s.add(ZoneModel(zone_id="org_acme", name="org_acme", phase=ZonePhase.ACTIVE))
         s.commit()
     return sf
 

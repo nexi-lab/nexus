@@ -36,7 +36,7 @@ import logging
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.path_utils import extract_zone_id, normalize_path
+from nexus.core.path_utils import normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -82,9 +82,16 @@ class DriverLifecycleCoordinator:
         except ValueError:
             return False
 
-        # Check with Rust kernel if mount exists
-        if self._kernel is not None and not self._kernel.has_mount(normalized, zone_id):
-            return False
+        # Check with Rust kernel if mount exists (sys_stat + DT_MOUNT check)
+        if self._kernel is not None:
+            from nexus.contracts.metadata import DT_MOUNT
+
+            try:
+                stat = self._kernel.sys_stat(normalized, zone_id)
+                if stat.get("entry_type") != DT_MOUNT:
+                    return False
+            except Exception:
+                return False
 
         # Fire unmount event BEFORE removing state
         try:
@@ -95,7 +102,11 @@ class DriverLifecycleCoordinator:
         # Rust DLC handles metastore delete + dcache evict + routing remove
         if self._kernel is not None:
             with contextlib.suppress(Exception):
-                self._kernel.kernel_unmount(normalized, zone_id)
+                from nexus_runtime import PyOperationContext
+
+                self._kernel.sys_unlink(
+                    normalized, PyOperationContext(is_system=True, zone_id=zone_id)
+                )
 
         return True
 
@@ -107,10 +118,13 @@ class DriverLifecycleCoordinator:
         """Return user-facing mount points (no zone prefix).
 
         If ``zone_id`` is provided, only mounts in that zone are returned.
-        Delegates to Rust kernel ``get_mount_points()``.
+        Delegates to Rust kernel ``get_mount_points()`` which returns
+        zone-canonical keys.  We parse them via ``extract_zone_id``.
         """
         if self._kernel is None:
             return []
+        from nexus.core.path_utils import extract_zone_id
+
         result: list[str] = []
         for canonical in self._kernel.get_mount_points():
             z, user_mp = extract_zone_id(canonical)

@@ -194,10 +194,9 @@ nav:
     - Architecture: paths/architecture.md
   - Trust Boundary: getting-started/trust-boundary.md
   - Architecture:
-    - Kernel Architecture: architecture/KERNEL-ARCHITECTURE.md
+    # - Kernel Architecture: architecture/KERNEL-ARCHITECTURE.md  # moved to nexus-vfs
     - Backend Architecture: architecture/backend-architecture.md
     - CLI Design: architecture/cli-design.md
-    - VFS Capability Discovery: architecture/vfs-capability-discovery.md
   - Agents:
     - Self-Observability: agents/self-observability.md
   - Research:
@@ -211,5 +210,6 @@ nav:
   - Deployment:
     - SANDBOX Profile: deployment/sandbox-profile.md
     - MCP Hub Mode: deployment/mcp-hub-mode.md
+    - S3 / R2 Payload Backend: deployment/s3-r2-payload-backend.md
     - Hub Deploy: hub-deploy.md
     - Hub Deploy on Kubernetes: hub-deploy-k8s.md

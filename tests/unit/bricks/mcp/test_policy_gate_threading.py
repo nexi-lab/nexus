@@ -7,7 +7,11 @@ production. Without this wiring the hook in ``mount.py`` is dead code.
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from nexus.bricks.approvals.policy_gate import PolicyGate
 from nexus.bricks.mcp.connection_manager import MCPConnectionManager
@@ -73,7 +77,7 @@ def test_mcp_service_set_policy_gate_updates_internal_state() -> None:
 
 
 def test_mcp_service_get_mount_manager_forwards_policy_gate() -> None:
-    """_get_mcp_mount_manager() must forward the gate to every MCPMountManager it builds."""
+    """_get_mcp_mount_manager() must forward the gate to its MCPMountManager."""
     gate = MagicMock(spec=PolicyGate)
     fake_fs = MagicMock()
     svc = MCPService(filesystem=fake_fs, policy_gate=gate)
@@ -81,9 +85,10 @@ def test_mcp_service_get_mount_manager_forwards_policy_gate() -> None:
     manager = svc._get_mcp_mount_manager()
     assert manager._policy_gate is gate
 
-    # Detach via setter — newly constructed managers reflect the new state.
+    # Detach via setter — the cached manager reflects the new state.
     svc.set_policy_gate(None)
     manager2 = svc._get_mcp_mount_manager()
+    assert manager2 is manager
     assert manager2._policy_gate is None
 
 
@@ -142,4 +147,68 @@ def test_mcp_service_get_mount_manager_forwards_zone_id() -> None:
 
     svc.set_zone(None)
     mgr2 = svc._get_mcp_mount_manager()
+    assert mgr2 is mgr
     assert mgr2._zone_id is None
+
+
+def test_mcp_service_reuses_mount_manager_state_between_calls() -> None:
+    """RPC calls must share one manager so mounted MCP clients stay visible."""
+    fake_fs = MagicMock()
+    svc = MCPService(filesystem=fake_fs)
+
+    mgr = svc._get_mcp_mount_manager()
+    mgr._mounts["existing"] = object()
+
+    assert svc._get_mcp_mount_manager() is mgr
+    assert "existing" in svc._get_mcp_mount_manager()._mounts
+
+
+@pytest.mark.asyncio
+async def test_mcp_service_list_tools_awaits_manager_get_mount() -> None:
+    """mcp_list_tools must await MCPMountManager.get_mount directly."""
+
+    class _FakeManager:
+        async def get_mount(self, name: str, context=None):  # noqa: ANN001, ARG002
+            return SimpleNamespace(tools_path="/skills/system/mcp-tools/demo/")
+
+    fake_fs = MagicMock()
+    fake_fs.sys_readdir.return_value = [
+        "/skills/system/mcp-tools/demo/echo.json",
+        "/skills/system/mcp-tools/demo/mount.json",
+    ]
+    fake_fs.sys_read.return_value = json.dumps(
+        {
+            "name": "echo",
+            "description": "Echo text",
+            "input_schema": {"type": "object"},
+        }
+    )
+
+    svc = MCPService(filesystem=fake_fs)
+    svc._mcp_mount_manager = _FakeManager()
+
+    assert await svc.mcp_list_tools("demo") == [
+        {
+            "name": "echo",
+            "description": "Echo text",
+            "input_schema": {"type": "object"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mcp_service_sync_awaits_manager_get_mount() -> None:
+    """mcp_sync uses the async mount lookup before refreshing tools."""
+
+    class _FakeManager:
+        async def get_mount(self, name: str, context=None):  # noqa: ANN001, ARG002
+            return SimpleNamespace(name=name)
+
+        async def sync_tools(self, name: str) -> int:
+            assert name == "demo"
+            return 3
+
+    svc = MCPService(filesystem=MagicMock())
+    svc._mcp_mount_manager = _FakeManager()
+
+    assert await svc.mcp_sync("demo") == {"name": "demo", "tool_count": 3}

@@ -20,6 +20,14 @@ def test_clamp_request_timeout_to_max():
     assert cfg.clamp_request_timeout(9999.0) == 600.0
 
 
+def test_durable_request_timeout_never_shortens_auto_deny_window():
+    cfg = ApprovalConfig(auto_deny_after_seconds=60.0, auto_deny_max_seconds=600.0)
+    assert cfg.durable_request_timeout(None) == 60.0
+    assert cfg.durable_request_timeout(10.0) == 60.0
+    assert cfg.durable_request_timeout(120.0) == 120.0
+    assert cfg.durable_request_timeout(9999.0) == 600.0
+
+
 def test_clamp_rejects_non_positive():
     cfg = ApprovalConfig()
     with pytest.raises(ValueError):

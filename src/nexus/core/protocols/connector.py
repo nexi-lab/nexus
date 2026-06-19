@@ -257,21 +257,6 @@ class DirectoryListingProtocol(Protocol):
     ) -> "FileInfo": ...
 
 @runtime_checkable
-class SignedUrlProtocol(Protocol):
-    """Backend can generate pre-signed/signed download URLs (Issue #2069).
-
-    Replaces orphan ``hasattr(backend, 'generate_presigned_url')`` and
-    ``hasattr(backend, 'generate_signed_url')`` checks in filesystem.py.
-    """
-
-    def generate_signed_download_url(
-        self,
-        backend_path: str,
-        expires_in: int = 3600,
-        context: "OperationContext | None" = None,
-    ) -> dict[str, Any]: ...
-
-@runtime_checkable
 class PathDeleteProtocol(Protocol):
     """Backend supports path-based delete (Issue #2069).
 

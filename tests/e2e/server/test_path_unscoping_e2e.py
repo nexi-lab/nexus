@@ -6,8 +6,8 @@ Tests the full RPC path: HTTP POST /api/nfs/{method} → FastAPI dispatch
 Verifies that internal zone/tenant/user prefixes are stripped from paths
 before returning them to API clients via the real FastAPI server stack.
 
-Strategy: Write files using zone-scoped internal paths (simulating what
-provision_user creates), then verify RPC responses return clean paths.
+Strategy: Write files using zone-scoped internal paths, then verify
+RPC responses return clean paths.
 
 Uses Starlette TestClient with real NexusFS + RaftMetadataStore.
 """
@@ -98,8 +98,8 @@ def _assert_no_internal_prefix(path: str, label: str = "") -> None:
 class TestZoneScopedPathUnscopingE2E:
     """E2E: Reproduce the actual bug (#1202) with zone-scoped internal paths.
 
-    Writes files directly to zone/user-prefixed paths (as provision_user does),
-    then verifies RPC responses strip the internal prefixes.
+    Writes files directly to zone/user-prefixed paths, then verifies
+    RPC responses strip the internal prefixes.
     """
 
     async def _write_zone_scoped_file(
@@ -110,9 +110,8 @@ class TestZoneScopedPathUnscopingE2E:
         resource_path: str,
         content: bytes,
     ) -> None:
-        """Write a file using the internal zone-scoped path format.
+        """Write a file using the internal zone-scoped path format:
 
-        This simulates what happens when provision_user creates files:
         /zone/{zone_id}/user:{user_id}/{resource_path}
         """
         internal_path = f"/zone/{zone_id}/user:{user_id}/{resource_path}"
@@ -122,7 +121,7 @@ class TestZoneScopedPathUnscopingE2E:
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
     ) -> None:
         """Issue #1202: list('/') must not return /zone/... prefixed paths."""
-        # Write files using internal zone-scoped paths (as provision_user does)
+        # Write files using internal zone-scoped paths
         self._write_zone_scoped_file(
             nexus_fs_local,
             "root",

@@ -20,6 +20,63 @@ def cli_runner() -> CliRunner:
     return CliRunner()
 
 
+# ---------------------------------------------------------------------------
+# In-process FS parity harness (Issue #4133)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def inproc_nexus(tmp_path):
+    from nexus.backends.storage.path_local import PathLocalBackend
+    from nexus.core.config import ParseConfig, PermissionConfig
+    from nexus.factory import create_nexus_fs
+    from nexus.remote.kernel_client import KernelClient
+
+    (tmp_path / "data").mkdir(exist_ok=True)
+    k = KernelClient()
+    k.set_metastore_path(str(tmp_path / "metastore.redb"))
+    try:
+        k.open()
+    except FileNotFoundError as exc:
+        # ``KernelClient.open`` spawns ``nexus-cluster``; CI matrices
+        # that don't install the Rust binary (Linux/macOS unit jobs)
+        # otherwise error every test setup with the same
+        # ``FileNotFoundError: 'nexus-cluster'``. Skip cleanly instead.
+        pytest.skip(
+            f"inproc_nexus requires the ``nexus-cluster`` binary on PATH "
+            f"(KernelClient spawns it). Build it with "
+            f"``cargo build -p nexus-profiles-cluster`` and symlink "
+            f"``nexusd-cluster`` -> ``nexus-cluster``. ({exc})"
+        )
+    nx = create_nexus_fs(
+        backend=PathLocalBackend(root_path=str(tmp_path / "data")),
+        metadata_store=k,
+        record_store=None,
+        permissions=PermissionConfig(enforce=False),
+        parsing=ParseConfig(auto_parse=False),
+    )
+    yield nx
+    nx.close()
+    k.close()
+
+
+@pytest.fixture()
+def patched_fs(inproc_nexus, monkeypatch):
+    """Make every CLI command use the in-process FS (no daemon)."""
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _open(*a, **k):
+        yield inproc_nexus
+
+    monkeypatch.setattr("nexus.cli.commands.file_ops.open_filesystem", _open)
+    monkeypatch.setattr(
+        "nexus.cli.commands.file_ops.get_filesystem",
+        lambda *a, **k: inproc_nexus,
+    )
+    return inproc_nexus
+
+
 @pytest.fixture()
 def tmp_config_dir(tmp_path: Path) -> Path:
     """Temporary ~/.nexus/ directory."""

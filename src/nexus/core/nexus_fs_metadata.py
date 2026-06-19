@@ -219,7 +219,7 @@ class MetadataMixin:
         for parent_dir in reversed(parents_to_create):
             self._kernel.sys_setattr(
                 parent_dir,
-                DT_DIR,
+                entry_type=DT_DIR,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
 
@@ -415,6 +415,12 @@ class MetadataMixin:
                 )
             exports = attrs.get("exports", ())
             allow_overwrite = attrs.get("allow_overwrite", False)
+            local_services = getattr(self, "_local_services", None)
+            if local_services is not None:
+                local_services[name] = service
+            local_exports = getattr(self, "_local_service_exports", None)
+            if local_exports is not None:
+                local_exports[name] = tuple(exports)
             self._kernel.service_enlist(name, service, list(exports), allow_overwrite)
             # Auto-capture hooks via duck-typed hook_spec()
             from nexus.core.nexus_fs import _declares_hook_spec, _register_hooks_for_spec
@@ -445,8 +451,8 @@ class MetadataMixin:
                 _backend_name = attrs.get("backend_name", "remote")
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     backend_type="remote",
                     server_address=attrs.get("server_address"),
                     remote_auth_token=attrs.get("remote_auth_token"),
@@ -463,8 +469,8 @@ class MetadataMixin:
                 _backend_name = attrs.get("backend_name", backend_type)
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     backend_type=backend_type,
                     openai_base_url=attrs.get("openai_base_url"),
                     openai_api_key=attrs.get("openai_api_key"),
@@ -488,8 +494,8 @@ class MetadataMixin:
                 _backend_name = attrs.get("backend_name", "")
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     zone_id=zone_id,
                     is_external=bool(attrs.get("is_external", False)),
                     source=attrs.get("source"),
@@ -525,8 +531,8 @@ class MetadataMixin:
             if _rust_typed is not None:
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     zone_id=zone_id,
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
@@ -553,8 +559,8 @@ class MetadataMixin:
                 )
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     zone_id=zone_id,
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
@@ -571,13 +577,21 @@ class MetadataMixin:
             else:
                 _local_type = "cas-local"  # CASLocalBackend (canonical name)
 
+            _transport = getattr(backend, "_transport", None)
+            _fsync_attr = attrs.get("fsync")
+            _fsync = (
+                bool(getattr(_transport, "_fsync", True))
+                if _fsync_attr is None
+                else bool(_fsync_attr)
+            )
+
             result = self._kernel.sys_setattr(
                 path,
-                entry_type,
-                _backend_name,
+                entry_type=entry_type,
+                backend_name=_backend_name,
                 local_root=_local_root,
                 backend_type=_local_type,
-                fsync=True,
+                fsync=_fsync,
                 zone_id=zone_id,
                 metastore_path=_ms_path_str,
                 is_external=_is_external,
@@ -594,7 +608,7 @@ class MetadataMixin:
 
         result = self._kernel.sys_setattr(
             path,
-            entry_type,
+            entry_type=entry_type,
             zone_id=zone_id,
             io_profile=io_profile,
             capacity=capacity,
@@ -774,42 +788,40 @@ class MetadataMixin:
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         _unlink_start = time.perf_counter()
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR handled via internal sys_rmdir).
-            if _unlink_result.post_hook_needed:
-                et = _unlink_result.entry_type
-                if et == DT_DIR:
-                    from nexus.contracts.vfs_hooks import RmdirHookContext
+            et = _unlink_result.entry_type
+            if et == DT_DIR:
+                from nexus.contracts.vfs_hooks import RmdirHookContext
 
-                    ctx = self._resolve_cred(context)
-                    self._kernel.dispatch_post_hooks(
-                        "rmdir",
-                        RmdirHookContext(
-                            path=path,
-                            context=ctx,
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            recursive=recursive,
-                            metadata=_pre_delete_meta,
-                        ),
-                    )
-                else:
-                    from nexus.contracts.vfs_hooks import DeleteHookContext
+                ctx = self._resolve_cred(context)
+                self._kernel.dispatch_post_hooks(
+                    "rmdir",
+                    RmdirHookContext(
+                        path=path,
+                        context=ctx,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                        recursive=recursive,
+                        metadata=_pre_delete_meta,
+                    ),
+                )
+            else:
+                from nexus.contracts.vfs_hooks import DeleteHookContext
 
-                    self._kernel.dispatch_post_hooks(
-                        "delete",
-                        DeleteHookContext(
-                            path=path,
-                            context=context,
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            metadata=_pre_delete_meta,
-                        ),
-                    )
+                self._kernel.dispatch_post_hooks(
+                    "delete",
+                    DeleteHookContext(
+                        path=path,
+                        context=context,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                        metadata=_pre_delete_meta,
+                    ),
+                )
             if _unlink_result.entry_type == DT_MOUNT:
                 self._forget_mounted_backend_instance(path)
             emit_op_completed(
@@ -840,7 +852,9 @@ class MetadataMixin:
                 if candidate is None:
                     continue
                 try:
-                    present = self._kernel.has_mount(path, candidate)
+                    present = (self._kernel.sys_stat(path, candidate) or {}).get(
+                        "entry_type"
+                    ) == DT_MOUNT
                 except Exception as probe_exc:
                     raise BackendError(
                         f"sys_unlink: cannot verify mount route in zone "
@@ -853,7 +867,9 @@ class MetadataMixin:
             if stranded_zone is not None:
                 self._driver_coordinator.unmount(path, stranded_zone)
                 try:
-                    still_present = self._kernel.has_mount(path, stranded_zone)
+                    still_present = (self._kernel.sys_stat(path, stranded_zone) or {}).get(
+                        "entry_type"
+                    ) == DT_MOUNT
                 except Exception as verify_exc:
                     raise BackendError(
                         f"sys_unlink: cannot verify stranded mount route "
@@ -900,7 +916,9 @@ class MetadataMixin:
             # committed (Codex review, round 9): we can't risk
             # reporting success while a route may still be live.
             try:
-                mount_remains = self._kernel.has_mount(path, route_zone)
+                mount_remains = (self._kernel.sys_stat(path, route_zone) or {}).get(
+                    "entry_type"
+                ) == DT_MOUNT
             except Exception as verify_exc:
                 raise BackendError(
                     f"sys_unlink: cannot verify mount route teardown for {path!r}: {verify_exc}",
@@ -975,15 +993,21 @@ class MetadataMixin:
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
         # Rust handles all entry types (files, dirs, mounts, external storage).
         # Dispatch POST hooks with reconstructed metadata for audit trail.
-        if _rename_result.post_hook_needed:
+        post_hook_needed = bool(_rename_result.post_hook_needed)
+        if not post_hook_needed:
+            try:
+                post_hook_needed = bool(self._kernel.hook_count("rename") > 0)
+            except Exception:
+                post_hook_needed = False
+
+        if post_hook_needed:
             from nexus.contracts.metadata import FileMetadata as _FM
             from nexus.contracts.vfs_hooks import RenameHookContext
 
@@ -1054,11 +1078,10 @@ class MetadataMixin:
         self._gate_sys_namespace_mutation((src_path, dst_path), context)
         context = self._parse_context(context)
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
         # Rust validates source existence + rejects directories internally.
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
         _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
         # POST-INTERCEPT hooks (zero consumers use metadata field)
@@ -1651,17 +1674,103 @@ class MetadataMixin:
                 is_implicit_dir = _s is not None and _s.get("is_directory", False)
             if is_implicit_dir:
                 et = DT_DIR
+        # Full FileMetadata projection — sys_readdir(details=True) is the
+        # Tier 1 surface service callers use in place of the
+        # metastore_list_paginated kernel primitive, so the dict must carry
+        # every FileMetadata field (not just the display subset). Additive:
+        # CLI / API consumers keying on the original fields are unaffected.
         return {
             "path": entry.path,
             "size": entry.size,
             "content_id": entry.content_id,
-            "entry_type": et,
-            "zone_id": entry.zone_id,
-            "owner_id": entry.owner_id,
+            "mime_type": entry.mime_type,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
             "version": entry.version,
+            "zone_id": entry.zone_id,
+            "owner_id": entry.owner_id,
+            "entry_type": et,
+            "target_zone_id": entry.target_zone_id,
+            "ttl_seconds": entry.ttl_seconds,
+            "last_writer_address": entry.last_writer_address,
+            "link_target": entry.link_target,
             "gen": entry.gen,
         }
+
+    @staticmethod
+    def _readdir_item_path(item: Any) -> str | None:
+        """Extract a path from a sys_readdir result item."""
+        path = item.get("path") if isinstance(item, dict) else item
+        return path if isinstance(path, str) and path else None
+
+    def _readdir_item_is_dir(
+        self,
+        item: Any,
+        *,
+        context: OperationContext | None,
+    ) -> bool:
+        """Return True when a sys_readdir result item is a directory-like entry."""
+        if isinstance(item, dict):
+            entry_type = item.get("entry_type")
+            return bool(item.get("is_directory")) or entry_type in (DT_DIR, DT_MOUNT)
+
+        path = self._readdir_item_path(item)
+        if path is None:
+            return False
+        try:
+            stat = self.sys_stat(path, context=context)
+        except Exception as exc:
+            logger.debug("sys_readdir recursive stat skipped for %s: %s", path, exc)
+            return False
+        return bool(stat and stat.get("is_directory"))
+
+    def _expand_recursive_readdir(
+        self,
+        entries: builtins.list[Any],
+        *,
+        details: bool,
+        context: OperationContext | None,
+    ) -> builtins.list[Any]:
+        """Expand explicit child directories that live behind their own metastore route."""
+        from collections import deque
+
+        by_path: dict[str, Any] = {}
+        pending_dirs: deque[str] = deque()
+
+        def remember(item: Any) -> None:
+            path = self._readdir_item_path(item)
+            if path is None or path in by_path:
+                return
+            by_path[path] = item
+            if self._readdir_item_is_dir(item, context=context):
+                pending_dirs.append(path)
+
+        for entry in entries:
+            remember(entry)
+
+        max_entries = 100_000
+        while pending_dirs and len(by_path) < max_entries:
+            directory = pending_dirs.popleft()
+            try:
+                child_entries = self.sys_readdir(
+                    directory,
+                    recursive=True,
+                    details=details,
+                    context=context,
+                )
+            except Exception as exc:
+                logger.debug("recursive sys_readdir expansion skipped for %s: %s", directory, exc)
+                continue
+            for child in child_entries:
+                remember(child)
+
+        if pending_dirs:
+            logger.warning(
+                "recursive sys_readdir expansion truncated at %d entries under explicit dirs",
+                max_entries,
+            )
+
+        return [by_path[path] for path in sorted(by_path)]
 
     # Issue #3388: Internal metastore prefixes that must not appear in
     # user-facing directory listings (search checkpoints, ReBAC namespaces).
@@ -1743,13 +1852,17 @@ class MetadataMixin:
                 else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
             try:
-                _kernel_entries = _kernel.readdir(path, self._zone_id, _is_admin)
+                _kernel_entries = _kernel.sys_readdir(path, self._zone_id, _is_admin)
             except (OSError, ValueError) as exc:
-                logger.debug("kernel.readdir failed for %s: %s", path, exc)
+                logger.debug("kernel.sys_readdir failed for %s: %s", path, exc)
                 _kernel_entries = None
             if _kernel_entries:
                 _children = [
-                    child for child, _etype in _kernel_entries if not self._is_internal_path(child)
+                    child
+                    for child, _etype in _kernel_entries
+                    if child != path
+                    and not self._is_internal_path(child)
+                    and _etype not in (DT_DIR, DT_MOUNT)
                 ]
                 # Issue #3786 / Codex Round 7 finding #1: federation tokens
                 # land here as zone_id="root", so without an explicit zone_perms
@@ -1844,6 +1957,36 @@ class MetadataMixin:
             return entry_zone == caller_zone
 
         if limit is not None:
+            if recursive:
+                from nexus.core.pagination import PaginatedResult
+
+                expanded_items = self.sys_readdir(
+                    path,
+                    recursive=True,
+                    details=details,
+                    context=context,
+                )
+                expanded_items = sorted(
+                    expanded_items,
+                    key=lambda item: self._readdir_item_path(item) or "",
+                )
+                if cursor:
+                    expanded_items = [
+                        item
+                        for item in expanded_items
+                        if (self._readdir_item_path(item) or "") > cursor
+                    ]
+                page = expanded_items[: limit + 1]
+                has_more = len(page) > limit
+                items = page[:limit]
+                next_cursor = self._readdir_item_path(items[-1]) if has_more and items else None
+                return PaginatedResult(
+                    items=items,
+                    next_cursor=next_cursor,
+                    has_more=has_more,
+                    total_count=len(expanded_items),
+                )
+
             from nexus.core.pagination import paginate_iter
 
             items_iter = (
@@ -1884,9 +2027,20 @@ class MetadataMixin:
                 ]
             else:
                 _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+                _result = self._expand_recursive_readdir(
+                    _result,
+                    details=True,
+                    context=context,
+                )
             _emit_list()
             return _result
         _result = [e.path for e in entries_iter]
+        if recursive:
+            _result = self._expand_recursive_readdir(
+                _result,
+                details=False,
+                context=context,
+            )
         _emit_list()
         return _result
 

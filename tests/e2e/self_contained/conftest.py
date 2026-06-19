@@ -27,6 +27,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(scope="module")
+def _module_tmp(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Module-scoped temp directory (replaces function-scoped tmp_path)."""
+    return tmp_path_factory.mktemp("e2e_self_contained")
+
+
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))

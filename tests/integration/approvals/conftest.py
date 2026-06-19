@@ -9,6 +9,11 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nexus.bricks.approvals.config import ApprovalConfig
+from nexus.bricks.approvals.db_models import (
+    ApprovalDecisionModel,
+    ApprovalRequestModel,
+    ApprovalSessionAllowModel,
+)
 from nexus.bricks.approvals.events import NotifyBridge
 from nexus.bricks.approvals.repository import ApprovalRepository
 from nexus.bricks.approvals.service import ApprovalService
@@ -26,9 +31,32 @@ def _db_url() -> str:
 @pytest_asyncio.fixture
 async def session_factory():
     engine = create_async_engine(_db_url())
+    approval_tables = (
+        ApprovalRequestModel.__table__,
+        ApprovalDecisionModel.__table__,
+        ApprovalSessionAllowModel.__table__,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda sync_conn: ApprovalRequestModel.metadata.create_all(
+                sync_conn,
+                tables=approval_tables,
+                checkfirst=True,
+            )
+        )
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    yield factory
-    await engine.dispose()
+    try:
+        yield factory
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: ApprovalRequestModel.metadata.drop_all(
+                    sync_conn,
+                    tables=tuple(reversed(approval_tables)),
+                    checkfirst=True,
+                )
+            )
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture

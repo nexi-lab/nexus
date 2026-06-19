@@ -1,0 +1,133 @@
+# Nexus cc-tasks-share plugin image
+#
+# Multi-stage build that produces a cluster image with BOTH the
+# `local-connector` driver cdylib AND the `nexus-fuse-plugin` service
+# cdylib pre-installed under `/plugins/`.  The cluster binary's
+# `--plugin-dir /plugins` flag picks both up at startup; operators
+# then:
+#
+#   1. Mount the LocalConnector at a federated VFS path:
+#        --mount-driver 'local-connector:<zone>:<vfs-path>:<config>'
+#   2. Set the FUSE plugin's env vars before launch:
+#        NEXUS_FUSE_MOUNT_POINT=/mnt/<name>
+#        NEXUS_FUSE_VFS_ROOT=<vfs-path>
+#
+# Result: cc-tasks lives in the federated VFS via LocalConnector +
+# raft, AND is exposed back as a normal OS mount via FUSE — `ls
+# /mnt/cc-tasks/founder/` from the joiner walks through to founder's
+# host fs end-to-end, the exact shape the Mac↔Win `cc tasks list`
+# workflow rides.
+#
+# Build:
+#   docker build -f dockerfiles/Dockerfile.local-connector-plugin \
+#     -t nexus-local-connector-plugin:latest .
+#
+# Stage 1 builds both dylibs from this nexus repo against the same
+# nexus-vfs SHA that the cluster image was built against (workspace
+# Cargo.toml + Cargo.lock pin the rev).  Stage 2 starts FROM the
+# cluster image so the operator gets a single image with the daemon
+# and both plugins in lockstep.  Runtime requires the privileged-ish
+# profile FUSE needs — `/dev/fuse` device + `SYS_ADMIN` cap +
+# `apparmor:unconfined` — supplied by docker-compose.cc-tasks-share.yml.
+
+# ---------- Builder ----------
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler: transport / tonic deps shell out to the system
+# protoc at compile time.
+# libfuse3-dev + pkg-config: the `fuser` crate links against libfuse3
+# at build time on Linux; without the dev headers + .pc file the FUSE
+# cdylib fails the build-script pkg-config probe.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at
+# compile time (same as the cluster image).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        libfuse3-dev \
+        pkg-config \
+        python3 \
+        python3-dev \
+        python3-cryptography \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy only what cargo needs to resolve the workspace + build the
+# dylib.  Source tree is just the workspace manifest + the two
+# in-tree crates (services + the local-connector crate itself); the
+# nexus-vfs deps are fetched by cargo from the git rev pinned in
+# Cargo.toml / Cargo.lock.
+COPY Cargo.toml Cargo.lock ./
+COPY rust ./rust
+
+# Release-build BOTH cdylibs in one cargo invocation so the shared
+# workspace deps (contracts, lib, plugin-abi, etc.) compile only
+# once.  Cargo honours each crate's `crate-type = ["cdylib"]`.
+RUN cargo build --release \
+    -p nexus-local-connector \
+    -p nexus-fuse-plugin
+
+# Ed25519-sign BOTH dylibs (kernel rev 67ac07f+ refuses unsigned
+# plugins, no escape hatch — PluginLoader verifies against
+# compile-time trusted keys). The private key arrives as a BuildKit
+# secret, never a layer:
+#   docker build --secret id=plugin_signing_key,env=PLUGIN_SIGNING_PRIVKEY …
+# CI provides it from the PLUGIN_SIGNING_PRIVKEY repo secret (same one
+# release-vault-plugin.yml uses). Build fails loudly without it — an
+# unsigned plugin would only defer the failure to founder boot.
+COPY scripts/sign_plugin.py ./scripts/sign_plugin.py
+RUN --mount=type=secret,id=plugin_signing_key \
+    PLUGIN_SIGNING_PRIVKEY="$(cat /run/secrets/plugin_signing_key)" \
+    python3 scripts/sign_plugin.py target/release/libnexus_local_connector.so && \
+    PLUGIN_SIGNING_PRIVKEY="$(cat /run/secrets/plugin_signing_key)" \
+    python3 scripts/sign_plugin.py target/release/libnexus_fuse_plugin.so
+
+# ---------- Runtime ----------
+# nexusd-cluster:latest must be built first (Dockerfile.nexusd-cluster);
+# CI / compose set BUILDX_BUILDER=default so FROM resolves against the
+# local daemon image rather than reaching out to a registry.
+FROM nexusd-cluster:latest
+
+USER root
+
+# libfuse3 runtime + `fusermount3` setuid helper — the FUSE plugin
+# `dlopen`s libfuse3 at startup, and `fusermount3` is what fuser uses
+# to perform the mount syscall from userspace without needing the
+# daemon to be root.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fuse3 \
+        libfuse3-3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# `/plugins`     — --plugin-dir scan target.
+# `/host/tasks`  — LocalConnector `local_root`, where the operator's
+#   real `~/.claude/tasks/` shows up via bind-mount.  Pre-creating in
+#   the image (rather than letting docker mint on first volume
+#   attach) means docker copies the image's perms into the volume on
+#   first start, so the daemon's `nexus` user can read / write.
+# `/mnt/cc-tasks` — FUSE mount point (must exist + be empty before
+#   `fuser::spawn_mount2`).
+RUN mkdir -p /plugins /host/tasks /mnt/cc-tasks && \
+    chown nexus:nexus /plugins /host/tasks /mnt/cc-tasks
+USER nexus
+
+# Both signed dylibs land in /plugins; PluginLoader walks the dir
+# at startup and registers each.  Detached `.sig` must sit next to
+# the dylib — PluginLoader reads `<plugin>.sig` in tandem with
+# `<plugin>` at --plugin-dir scan time.
+COPY --from=builder --chown=nexus:nexus \
+    /build/target/release/libnexus_local_connector.so \
+    /plugins/libnexus_local_connector.so
+COPY --from=builder --chown=nexus:nexus \
+    /build/target/release/libnexus_local_connector.so.sig \
+    /plugins/libnexus_local_connector.so.sig
+COPY --from=builder --chown=nexus:nexus \
+    /build/target/release/libnexus_fuse_plugin.so \
+    /plugins/libnexus_fuse_plugin.so
+COPY --from=builder --chown=nexus:nexus \
+    /build/target/release/libnexus_fuse_plugin.so.sig \
+    /plugins/libnexus_fuse_plugin.so.sig
+
+# Default env wires the full chain — operators can override.
+ENV NEXUS_PLUGIN_DIR=/plugins \
+    NEXUS_FUSE_MOUNT_POINT=/mnt/cc-tasks \
+    NEXUS_FUSE_VFS_ROOT=/shared/cc-tasks

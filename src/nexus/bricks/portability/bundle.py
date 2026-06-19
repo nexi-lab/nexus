@@ -436,20 +436,31 @@ class BundleReader:
         if self._tar is None:
             raise RuntimeError("Bundle not open. Call open() first.")
 
-        if len(content_id) < 2:
+        from urllib.parse import quote
+
+        blob_names = [quote(content_id, safe="")]
+        if blob_names[0] != content_id:
+            # Backward compatibility for older bundles whose content IDs were
+            # already path-safe hashes and were stored without encoding.
+            blob_names.append(content_id)
+
+        if not blob_names[0] or len(blob_names[0]) < 2:
             return None
 
-        # CAS path structure: content/cas/ab/abcdef...
-        prefix = content_id[:2]
-        blob_path = f"{BUNDLE_PATHS['content']}/{prefix}/{content_id}"
+        for blob_name in blob_names:
+            if len(blob_name) < 2:
+                continue
+            # CAS path structure: content/cas/ab/abcdef...
+            prefix = blob_name[:2]
+            blob_path = f"{BUNDLE_PATHS['content']}/{prefix}/{blob_name}"
 
-        try:
-            member = self._tar.getmember(blob_path)
-            file_obj = self._tar.extractfile(member)
-            if file_obj is not None:
-                return file_obj.read()
-        except KeyError:
-            pass
+            try:
+                member = self._tar.getmember(blob_path)
+                file_obj = self._tar.extractfile(member)
+                if file_obj is not None:
+                    return file_obj.read()
+            except KeyError:
+                pass
 
         return None
 

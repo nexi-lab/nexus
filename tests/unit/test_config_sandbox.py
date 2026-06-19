@@ -42,7 +42,10 @@ class TestApplySandboxDefaults:
         result = _apply_sandbox_defaults(cfg)
         assert result.db_path == "/tmp/test-sandbox/nexus.db"
         assert result.metastore_path == "/tmp/test-sandbox/nexus.db"
-        assert result.record_store_path == "/tmp/test-sandbox/nexus.db"
+        # record_store_path is a SEPARATE sqlite file: the kernel uses
+        # <data_dir>/nexus.db as its redb data directory, so the Python
+        # record store must not share that path (develop/#4132 collision fix).
+        assert result.record_store_path == "/tmp/test-sandbox/record_store.db"
 
     def test_sandbox_cache_size_default(self) -> None:
         # cache_size_mb NOT provided — not in model_fields_set — should get sandbox default
@@ -86,7 +89,8 @@ class TestApplySandboxDefaults:
         result = _apply_sandbox_defaults(cfg)
         assert result.db_path == "/my/custom/nexus.db"
         assert result.metastore_path == "/my/custom/nexus.db"
-        assert result.record_store_path == "/my/custom/nexus.db"
+        # Separate sqlite file (develop/#4132 collision fix).
+        assert result.record_store_path == "/my/custom/record_store.db"
 
     def test_returns_same_object_when_no_updates(self) -> None:
         """When all sandbox defaults are already applied, returns same cfg."""
@@ -137,7 +141,8 @@ class TestLoadFromDictSandbox:
         assert cfg.data_dir == "/tmp/custom"
         assert cfg.db_path == "/tmp/custom/nexus.db"
         assert cfg.metastore_path == "/tmp/custom/nexus.db"
-        assert cfg.record_store_path == "/tmp/custom/nexus.db"
+        # Separate sqlite file (develop/#4132 collision fix).
+        assert cfg.record_store_path == "/tmp/custom/record_store.db"
 
     def test_explicit_path_fields_in_dict_are_not_overridden(self) -> None:
         """If the user explicitly provides db_path in config_dict, it must win
@@ -176,7 +181,12 @@ class TestLoadConfigNexusConfigPassthroughNormalizes:
         assert cfg_out.data_dir is not None and "sandbox" in cfg_out.data_dir
         assert cfg_out.db_path is not None and cfg_out.db_path.endswith("nexus.db")
         assert cfg_out.metastore_path == cfg_out.db_path
-        assert cfg_out.record_store_path == cfg_out.db_path
+        # record_store_path must be a SEPARATE sqlite file, NOT == db_path:
+        # the kernel uses <data_dir>/nexus.db as its redb dir, so sharing it
+        # makes sqlite open a directory and boot fails (develop/#4132 fix).
+        assert cfg_out.record_store_path is not None
+        assert cfg_out.record_store_path.endswith("record_store.db")
+        assert cfg_out.record_store_path != cfg_out.db_path
         # Vec-on-by-default still applies.
         assert cfg_out.enable_vector_search is True
 
@@ -202,3 +212,52 @@ class TestLoadConfigNexusConfigPassthroughNormalizes:
         # data_dir must NOT be coerced to a sandbox path.
         if cfg_out.data_dir is not None:
             assert "sandbox" not in cfg_out.data_dir
+
+
+class TestSandboxStoragePathInvariant:
+    """Lock the storage-path invariant that was broken by the develop/#4132
+    refactor and fixed in this PR: under sandbox defaults the kernel's redb
+    data directory and the Python SQLAlchemy RecordStore sqlite file MUST
+    point at different paths. Sharing one path makes the kernel materialise
+    a directory where sqlite expects a file -> boot fails with
+    ``sqlite3.OperationalError: unable to open database file``.
+
+    Regression guard: any future regression of
+    ``record_store_path = db_path`` (the colliding default) fails here
+    before it can break bare ``nexusd --profile sandbox`` boots.
+    """
+
+    def test_metastore_and_record_store_paths_diverge_under_sandbox(self) -> None:
+        """Auto-derived defaults: the two storage paths must not collide."""
+        cfg = NexusConfig(profile="sandbox", data_dir="/tmp/inv-default")
+        out = _apply_sandbox_defaults(cfg)
+        assert out.metastore_path == "/tmp/inv-default/nexus.db"
+        # The kernel uses metastore_path as a redb DIRECTORY; record_store_path
+        # must be a SEPARATE sqlite file. Same-path = the regressed bug.
+        assert out.record_store_path != out.metastore_path
+        # And must live inside the sandbox data_dir (no leaks).
+        assert out.record_store_path is not None
+        assert out.record_store_path.startswith("/tmp/inv-default/")
+
+    def test_invariant_holds_with_custom_data_dir(self) -> None:
+        """Same invariant under an explicit non-default data_dir."""
+        cfg = NexusConfig(profile="sandbox", data_dir="/my/custom-sandbox")
+        out = _apply_sandbox_defaults(cfg)
+        assert out.metastore_path == "/my/custom-sandbox/nexus.db"
+        assert out.record_store_path != out.metastore_path
+        assert out.record_store_path is not None
+        assert out.record_store_path.startswith("/my/custom-sandbox/")
+
+    def test_explicit_user_record_store_path_respected(self) -> None:
+        """Operator override still wins: if the user explicitly sets
+        ``record_store_path``, the defaulter must not overwrite it
+        (even with the new separate-file default)."""
+        cfg = NexusConfig(
+            profile="sandbox",
+            data_dir="/tmp/explicit-rs",
+            record_store_path="/elsewhere/rs.db",
+        )
+        out = _apply_sandbox_defaults(cfg)
+        assert out.record_store_path == "/elsewhere/rs.db"
+        # And metastore_path still auto-derived.
+        assert out.metastore_path == "/tmp/explicit-rs/nexus.db"

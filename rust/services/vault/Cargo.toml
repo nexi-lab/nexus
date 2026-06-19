@@ -1,0 +1,55 @@
+[package]
+name = "nexus-vault"
+version = "0.1.4"
+edition = "2021"
+description = "Nexus vault plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Hosts PasswordVaultService as a dylib plugin with C ABI dispatch."
+authors = ["Nexus Team"]
+publish = false
+
+[lib]
+name = "nexus_vault"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "nexusd-vault"
+path = "src/bin/nexusd_vault.rs"
+
+[dependencies]
+# Plugin ABI — stable C ABI contract for dylib plugins.
+nexus-plugin-abi = { workspace = true }
+# Our PasswordVaultService impl. Enabling the feature pulls in
+# aes-gcm / hmac / sha1 / base32 / prost-types / tonic-prost (all
+# gated under service-password-vault in services/Cargo.toml).
+services = { workspace = true, features = ["service-password-vault", "service-generic-secrets"] }
+# Kernel from nexus-vfs — vault creates a private Kernel instance for
+# its own metastore so all storage goes through kernel syscalls.
+kernel = { workspace = true }
+# PathLocalBackend for persistent vault content storage on local disk.
+backends = { workspace = true, features = ["driver-path-local"] }
+# tonic types (Request/Response/Status) for calling into the gRPC trait
+# impl on PasswordVaultServiceImpl.
+tonic = { workspace = true }
+# Protobuf encode/decode for plugin dispatch payload serialization.
+prost = { workspace = true }
+
+# Lightweight runtime for block_on — the gRPC trait methods are async
+# but the plugin dispatch is sync (C ABI). current_thread suffices
+# since all vault I/O is actually synchronous under the hood.
+# The binary uses multi_thread + macros for #[tokio::main].
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"
+# dlopen the just-built cdylib in tests/dlopen_self.rs — closes the
+# Linux/macOS/Windows plugin-load regression gap surfaced by SEV
+# nexus-vfs#45.
+libloading = "0.8"
+# Real tonic server + client end-to-end in tests/grpc_e2e.rs — locks
+# in Discovery (2) (vault data layout) + the sealed Get/Put contract
+# under actual network transport.
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic-prost = "0.14"

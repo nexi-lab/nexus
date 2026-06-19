@@ -962,6 +962,12 @@ class PostgresAuthProfileStore:
         self._principal_id = uuid.UUID(str(principal_id))
         # Allow callers (tests, server with a shared engine) to inject one.
         if engine is None:
+            # Issue #4238: accept the canonical ``postgres://`` scheme
+            # SQLAlchemy dropped in 1.4 but cloud providers (Railway,
+            # Render, Supabase, Heroku) still emit. Inline rather than
+            # import from nexus.core (brick boundary forbids it).
+            if db_url and db_url.startswith("postgres://"):
+                db_url = "postgresql://" + db_url[len("postgres://") :]
             self._engine = create_engine(
                 db_url,
                 pool_size=pool_size,

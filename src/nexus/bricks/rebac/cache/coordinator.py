@@ -45,6 +45,7 @@ from nexus.bricks.rebac.cache.invalidation_stream import (
 )
 from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
 from nexus.bricks.rebac.domain import RELATION_TO_PERMISSIONS
+from nexus.bricks.rebac.path_patterns import path_pattern_prefix
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -174,9 +175,6 @@ class CacheCoordinator:
             tuple[str, Callable[[str, str, str, str, str], None]]
         ] = []
         self._visibility_invalidators: list[tuple[str, Callable[[str, str], None]]] = []
-        # Namespace cache invalidators: callback(subject_type, subject_id, zone_id)
-        # Used by NamespaceManager to invalidate dcache + mount table on grant/revoke (Issue #1244)
-        self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
         # Permission lease invalidators (Issue #3394, #3398):
         # callback(zone_id, subject, relation, object) — path-targeted for direct
         # grants, zone-wide fallback for group/inherited changes (decision 3A/7A).
@@ -204,7 +202,6 @@ class CacheCoordinator:
         self._lease_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
-        self._namespace_invalidations = 0
         self._iterator_invalidations = 0
         self._callback_failure_count = 0
 
@@ -299,33 +296,6 @@ class CacheCoordinator:
         for i, (cid, _) in enumerate(self._visibility_invalidators):
             if cid == callback_id:
                 self._visibility_invalidators.pop(i)
-                return True
-        return False
-
-    def register_namespace_invalidator(
-        self,
-        callback_id: str,
-        callback: "Callable[[str, str, str], None]",
-    ) -> None:
-        """Register a namespace cache invalidation callback (Issue #1244).
-
-        Called on every rebac_write/rebac_delete to immediately invalidate the
-        affected subject's dcache + mount table entries.
-
-        Args:
-            callback_id: Unique identifier for this callback
-            callback: Function(subject_type, subject_id, zone_id)
-        """
-        for cid, _ in self._namespace_invalidators:
-            if cid == callback_id:
-                return  # Already registered
-        self._namespace_invalidators.append((callback_id, callback))
-
-    def unregister_namespace_invalidator(self, callback_id: str) -> bool:
-        """Unregister a namespace cache invalidation callback."""
-        for i, (cid, _) in enumerate(self._namespace_invalidators):
-            if cid == callback_id:
-                self._namespace_invalidators.pop(i)
                 return True
         return False
 
@@ -441,10 +411,7 @@ class CacheCoordinator:
         # 5. Directory visibility cache (external callbacks)
         self._notify_visibility_invalidators(zone_id, object_type, object_id)
 
-        # 6. Namespace cache — dcache + mount table (Issue #1244)
-        self.notify_namespace_invalidators(zone_id, subject_type, subject_id)
-
-        # 7. Iterator cache (zone-level)
+        # 6. Iterator cache (zone-level)
         self._invalidate_iterator(zone_id)
 
         # 8. DT_STREAM: Publish invalidation event for intra-zone consumers (Issue #3192)
@@ -643,6 +610,21 @@ class CacheCoordinator:
                     obj.entity_id,
                     zone_id,
                 )
+
+            pattern_prefix = path_pattern_prefix(obj.entity_type, obj.entity_id)
+            if pattern_prefix is not None:
+                if self._l1_cache:
+                    self._l1_cache.invalidate_object_prefix(
+                        obj.entity_type,
+                        pattern_prefix,
+                        zone_id,
+                    )
+                if self._boundary_cache and obj.entity_type == "file":
+                    self._boundary_cache.invalidate_path_prefix(
+                        effective_zone_id,
+                        pattern_prefix,
+                    )
+                should_eager_recompute = False
 
             # L2 SQL cache (rebac_check_cache) removed — table no longer exists.
             # Invalidation is now handled entirely by L1 in-memory cache above.
@@ -1087,25 +1069,6 @@ class CacheCoordinator:
                 [InvalidationEventType.VISIBILITY],
             )
 
-        for ns_id, ns_cb in self._namespace_invalidators:
-
-            def _make_namespace_handler(cb: Any) -> Any:
-                def handler(event: Any) -> None:
-                    if event.event_type == InvalidationEventType.NAMESPACE:
-                        cb(
-                            event.payload["subject_type"],
-                            event.payload["subject_id"],
-                            event.zone_id,
-                        )
-
-                return handler
-
-            self._stream.register_consumer(
-                f"namespace:{ns_id}",
-                _make_namespace_handler(ns_cb),
-                [InvalidationEventType.NAMESPACE],
-            )
-
     def _invalidate_l1(
         self,
         subject_type: str,
@@ -1213,10 +1176,11 @@ class CacheCoordinator:
 
         # Map relation to permissions
         permissions = RELATION_TO_PERMISSIONS.get(relation, [relation])
+        invalidation_object_id = path_pattern_prefix(object_type, object_id) or object_id
 
         def _invoke_boundary(cb: "Callable[..., None]") -> None:
             for permission in permissions:
-                cb(zone_id, subject_type, subject_id, permission, object_id)
+                cb(zone_id, subject_type, subject_id, permission, invalidation_object_id)
 
         self._dispatch_to_layer(
             InvalidationEventType.BOUNDARY,
@@ -1228,7 +1192,7 @@ class CacheCoordinator:
                 "subject_id": subject_id,
                 "relation": relation,
                 "object_type": object_type,
-                "object_id": object_id,
+                "object_id": invalidation_object_id,
                 "permissions": permissions,
             },
             metric_attr="_boundary_invalidations",
@@ -1264,35 +1228,6 @@ class CacheCoordinator:
             metric_attr="_visibility_invalidations",
         )
 
-    def notify_namespace_invalidators(
-        self,
-        zone_id: str,
-        subject_type: str,
-        subject_id: str,
-    ) -> None:
-        """Notify namespace cache invalidators (Issue #1244).
-
-        Public entry point for namespace cache invalidation. When a permission
-        tuple changes for a subject, invalidate that subject's dcache + mount
-        table so visibility reflects the new grants immediately.
-
-        Args:
-            zone_id: Zone where the tuple was written
-            subject_type: Type of the subject whose cache should be invalidated
-            subject_id: ID of the subject whose cache should be invalidated
-        """
-        if not self._namespace_invalidators and not self._stream:
-            return
-
-        self._dispatch_to_layer(
-            InvalidationEventType.NAMESPACE,
-            zone_id,
-            self._namespace_invalidators,
-            lambda cb: cb(subject_type, subject_id, zone_id),
-            stream_payload={"subject_type": subject_type, "subject_id": subject_id},
-            metric_attr="_namespace_invalidations",
-        )
-
     def _invalidate_iterator(self, zone_id: str) -> None:
         """Invalidate iterator cache for a zone."""
         if self._iterator_cache is None:
@@ -1315,11 +1250,9 @@ class CacheCoordinator:
             "lease_invalidations": self._lease_invalidations,
             "boundary_invalidations": self._boundary_invalidations,
             "visibility_invalidations": self._visibility_invalidations,
-            "namespace_invalidations": self._namespace_invalidations,
             "iterator_invalidations": self._iterator_invalidations,
             "registered_boundary_invalidators": len(self._boundary_invalidators),
             "registered_visibility_invalidators": len(self._visibility_invalidators),
-            "registered_namespace_invalidators": len(self._namespace_invalidators),
             "registered_lease_invalidators": len(self._lease_invalidators),
             "registered_tiger_l2_invalidators": len(self._tiger_l2_invalidators),
             "callback_failure_count": self._callback_failure_count,
@@ -1346,7 +1279,6 @@ class CacheCoordinator:
         self._lease_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
-        self._namespace_invalidations = 0
         self._iterator_invalidations = 0
         self._callback_failure_count = 0
         self._recompute_submitted = 0

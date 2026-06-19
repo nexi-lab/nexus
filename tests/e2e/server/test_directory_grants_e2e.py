@@ -114,8 +114,8 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     if _rebac_mgr is not None:
         engine = _rebac_mgr.engine
         add_migration_tables(engine)
-        # Connect the metadata store to ReBAC manager for directory expansion
-        _rebac_mgr.set_metadata_store(nx.metadata)
+        # Connect NexusFS to the ReBAC manager for directory expansion
+        _rebac_mgr.set_nexus_fs(nx)
 
     # Create admin context for tests
     admin_context = OperationContext(
@@ -405,7 +405,7 @@ class TestDirectoryGrantWorker:
         expander = DirectoryGrantExpander(
             engine=standalone_engine,
             tiger_cache=tiger_cache,
-            metadata_store=None,  # No metadata store for this test
+            nexus_fs=None,  # No nexus_fs for this test
         )
 
         # Insert a pending grant manually (provide explicit grant_id for SQLite BigInteger compatibility)
@@ -438,11 +438,11 @@ class TestDirectoryGrantWorker:
         resource_map = TigerResourceMap(standalone_engine)
         tiger_cache = TigerCache(engine=standalone_engine, resource_map=resource_map)
 
-        # Create expander with no metadata store (will return empty directory)
+        # Create expander with no nexus_fs (will return empty directory)
         expander = DirectoryGrantExpander(
             engine=standalone_engine,
             tiger_cache=tiger_cache,
-            metadata_store=None,
+            nexus_fs=None,
         )
 
         # Insert a pending grant (provide explicit grant_id for SQLite BigInteger compatibility)

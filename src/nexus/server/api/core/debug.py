@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
-from nexus.server.dependencies import get_auth_result, require_admin, require_auth
+from nexus.server.dependencies import get_auth_result, require_admin
 from nexus.server.rate_limiting import RATE_LIMIT_ANONYMOUS, limiter
 
 logger = logging.getLogger(__name__)
@@ -84,29 +84,6 @@ async def whoami(
         is_admin=auth_result.get("is_admin", False),
         inherit_permissions=auth_result.get("inherit_permissions", True),
         user=auth_result.get("subject_id"),
-    )
-
-
-@router.get("/api/vfs/initialize")
-async def initialize_vfs_capabilities(
-    request: Request,
-    _auth_result: dict[str, Any] = Depends(require_auth),
-) -> dict[str, Any]:
-    """Return VFS protocol capability metadata for HTTP-based clients."""
-    try:
-        from importlib.metadata import version as _version
-
-        server_version = _version("nexus-ai-fs")
-    except Exception:
-        server_version = "unknown"
-
-    from nexus.grpc.capability_discovery import build_initialize_response_dict
-
-    return build_initialize_response_dict(
-        nexus_fs=request.app.state.nexus_fs,
-        exposed_methods=getattr(request.app.state, "exposed_methods", {}),
-        server_version=server_version,
-        rust_mounts={},
     )
 
 

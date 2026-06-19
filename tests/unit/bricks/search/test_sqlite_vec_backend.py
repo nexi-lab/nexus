@@ -6,6 +6,7 @@ The tests use an in-memory SQLite database (``:memory:``) and a mocked
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from typing import Any
 from unittest.mock import patch
@@ -91,44 +92,29 @@ class TestImportGuards:
 
     def test_missing_sqlite_vec_raises_clear_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Construction must fail with a clear ImportError when sqlite-vec is absent."""
-        # Hide the module *and* prevent re-import inside the constructor.
-        real_sqlite_vec = sys.modules.pop("sqlite_vec", None)
-        try:
-            import builtins
+        real_find_spec = importlib.util.find_spec
 
-            real_import = builtins.__import__
+        def _fake_find_spec(name: str, *a: Any, **kw: Any) -> Any:
+            if name == "sqlite_vec":
+                return None
+            return real_find_spec(name, *a, **kw)
 
-            def _fake_import(name: str, *a: Any, **kw: Any) -> Any:
-                if name == "sqlite_vec":
-                    raise ImportError("simulated missing sqlite_vec")
-                return real_import(name, *a, **kw)
-
-            monkeypatch.setattr(builtins, "__import__", _fake_import)
-            with pytest.raises(ImportError, match="sqlite-vec"):
-                SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
-        finally:
-            if real_sqlite_vec is not None:
-                sys.modules["sqlite_vec"] = real_sqlite_vec
+        monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec)
+        with pytest.raises(ImportError, match="sqlite-vec"):
+            SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
 
     def test_missing_litellm_raises_clear_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Construction with embedder='litellm' must fail clearly when litellm is absent."""
-        real_litellm = sys.modules.pop("litellm", None)
-        try:
-            import builtins
+        real_find_spec = importlib.util.find_spec
 
-            real_import = builtins.__import__
+        def _fake_find_spec(name: str, *a: Any, **kw: Any) -> Any:
+            if name == "litellm":
+                return None
+            return real_find_spec(name, *a, **kw)
 
-            def _fake_import(name: str, *a: Any, **kw: Any) -> Any:
-                if name == "litellm":
-                    raise ImportError("simulated missing litellm")
-                return real_import(name, *a, **kw)
-
-            monkeypatch.setattr(builtins, "__import__", _fake_import)
-            with pytest.raises(ImportError, match="litellm"):
-                SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
-        finally:
-            if real_litellm is not None:
-                sys.modules["litellm"] = real_litellm
+        monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec)
+        with pytest.raises(ImportError, match="litellm"):
+            SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
 
 
 # =============================================================================

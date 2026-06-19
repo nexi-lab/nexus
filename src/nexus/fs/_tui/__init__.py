@@ -118,7 +118,7 @@ class ContextualNexusFS:
         # Use public syscall: readdir("/") returns top-level entries including mounts.
         _rk = getattr(self._kernel, "_kernel", None)
         if _rk is not None:
-            entries = _rk.readdir("/", self._kernel._zone_id, True)
+            entries = _rk.sys_readdir("/", self._kernel._zone_id, True)
             mounts = [path for path, _etype in entries if path != "/"]
             return mounts or ["/"]
         result: list[str] = self._kernel._driver_coordinator.mount_points()
@@ -146,7 +146,7 @@ class ContextualNexusFS:
         # Use Rust kernel readdir for listing (merges metastore + backend).
         try:
             raw_entries: list[tuple[str, int]] = list(
-                self._kernel._kernel.readdir(path, self._kernel._zone_id)
+                self._kernel._kernel.sys_readdir(path, self._kernel._zone_id)
             )
         except Exception:
             return None

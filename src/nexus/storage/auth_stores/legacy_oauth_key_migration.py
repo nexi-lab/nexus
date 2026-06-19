@@ -164,18 +164,18 @@ def _read_oauth_key_from_redb(
         return None
 
     try:
-        from nexus_runtime import PyKernel
+        from nexus.remote.kernel_client import KernelClient
     except ImportError as exc:
         logger.warning(
-            "Legacy OAuth key migration skipped — nexus_runtime unavailable (%s): %s",
+            "Legacy OAuth key migration skipped — KernelClient unavailable (%s): %s",
             path,
             exc,
         )
         return None
 
     try:
-        kernel = PyKernel()
-        kernel.set_metastore_path(str(path))
+        kernel = KernelClient(metadata_path=str(path))
+        kernel.open()
         store = MetastoreSettingsStore(kernel)
         dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
         if dto is None:

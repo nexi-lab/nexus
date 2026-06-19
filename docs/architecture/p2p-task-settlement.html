@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P Task Settlement <span class="status status-draft">DRAFT v0.3</span></h1>
+<h1>P2P Task Settlement <span class="status status-draft">DRAFT v0.4</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Buyer posts a task, Seller does the work, settlement in sudowork points.
@@ -283,6 +283,9 @@ flowchart LR
     <li><strong>Seller delivers garbage</strong> &rarr; buyer has 72h window to reject</li>
   </ul>
   <p style="color:var(--green)"><strong>Key insight</strong>: Server still isn't an arbiter &mdash; it only executes a commitment the buyer <em>already signed</em>. No unilateral power. The buyer bound themselves at contract creation time.</p>
+  <div class="warn">
+    <strong>Clarification</strong>: The <code>timeout_hours</code> value is NOT set by the server. It comes from <code>contract.terms.auto_accept_timeout_hours</code>, which is negotiated and agreed upon by both buyer and seller before signing. The server merely reads the timeout from the buyer's pre-signed conditional release &mdash; it makes zero business decisions.
+  </div>
 </div>
 
 <h3>Option C: Hash-Locked Transfer (HTLC-inspired)</h3>
@@ -321,13 +324,35 @@ flowchart LR
   </ul>
 </div>
 
+<h3>Role in the system: marketplace signal, NOT settlement enforcement</h3>
+
+<div class="card">
+  <div class="card-title">Two independent mechanisms, two different problems</div>
+  <table>
+    <tr><th>Mechanism</th><th>Solves</th><th>Nature</th></tr>
+    <tr><td><strong>Pre-commitment + dual-sig</strong> (&sect;5)</td><td>This transaction won't be cheated</td><td>Hard guarantee (cryptographic)</td></tr>
+    <tr><td><strong>Reputation</strong> (&sect;5A)</td><td>Pick a reliable counterparty next time</td><td>Soft signal (statistical)</td></tr>
+  </table>
+  <p>Reputation does <strong>not</strong> participate in settlement logic. It doesn't gate payments, doesn't override pre-commitments, doesn't resolve disputes. It's a <strong>dashboard metric</strong> visible on the marketplace &mdash; helps buyers choose sellers and sellers choose buyers. The two systems are intentionally decoupled.</p>
+</div>
+
+<h3>Bilateral: both buyer AND seller are rated</h3>
+<table>
+  <tr><th>Dimension</th><th>Rating Seller</th><th>Rating Buyer</th></tr>
+  <tr><td><strong>Reliability</strong> (30%)</td><td>Delivers on time, doesn't ghost</td><td>Responds to delivery on time, doesn't ghost</td></tr>
+  <tr><td><strong>Quality</strong> (30%)</td><td>Deliverable meets acceptance criteria</td><td>Requirements are clear and fair</td></tr>
+  <tr><td><strong>Timeliness</strong> (20%)</td><td>Completes before deadline</td><td>Accepts/rejects within timeout</td></tr>
+  <tr><td><strong>Fairness</strong> (20%)</td><td>Reasonable pricing, honest work</td><td>Doesn't maliciously reject, doesn't underpay</td></tr>
+</table>
+<p>Buyer reputation matters as much as seller reputation &mdash; sellers need to know if a buyer is trustworthy before accepting a task. Same model as ride-sharing (driver rates passenger, passenger rates driver).</p>
+
 <h3>Adaptation for P2P task settlement</h3>
 <table>
-  <tr><th>Aspect</th><th>Original</th><th>Adapted</th></tr>
-  <tr><td>Who rates whom</td><td>Agent &rarr; Agent</td><td>Agent &rarr; Agent (aligned with their human via L1 trust zone)</td></tr>
+  <tr><th>Aspect</th><th>Original (deleted nexus code)</th><th>Adapted</th></tr>
+  <tr><td>Who rates whom</td><td>Agent &rarr; Agent</td><td>Agent &rarr; Agent, bilateral (both buyer and seller rated)</td></tr>
   <tr><td>Storage</td><td>PostgreSQL (RecordStore)</td><td>VFS files (JSON, CAS-addressed) &mdash; <em>everything is a file</em></td></tr>
   <tr><td>Distribution</td><td>Federation-safe (database reads)</td><td>Inherits nexus-vfs Raft consensus for replicated reputation data</td></tr>
-  <tr><td>Dimensions</td><td>reliability, quality, timeliness, fairness</td><td>Same 4 dimensions map perfectly to task settlement</td></tr>
+  <tr><td>Dimensions</td><td>reliability, quality, timeliness, fairness</td><td>Same 4 dimensions, applied bilaterally</td></tr>
 </table>
 
 <div class="card">
@@ -340,9 +365,13 @@ flowchart LR
   <p>Each event is CAS-addressed &mdash; tamper-evident. Composite score is recomputable from events.</p>
 </div>
 
-<p><strong>Human-AI alignment for rating</strong>: The agent submits feedback on behalf of its human. The alignment process (how much the human reviews vs delegates to AI) is a local L1 decision &mdash; out of protocol scope. The protocol only requires that the feedback is signed by the agent's key, which the human controls.</p>
+<div class="card">
+  <div class="card-title">Agent rates on behalf of human (L1 alignment)</div>
+  <p>The agent submits feedback on behalf of its human. This is <strong>not autonomous AI scoring</strong> &mdash; the agent acts within the L1 trust zone, aligned with its human's interests (the human paid for the points powering the agent).</p>
+  <p>How much the human reviews vs delegates to the AI is a <strong>local preference</strong>: some users will review every rating, others will let their AI handle routine feedback. This alignment process is entirely within L1 &mdash; out of protocol scope. The protocol only requires that feedback is signed by the agent's key, which the human controls.</p>
+</div>
 
-<div class="pref">Reuse <code>reputation_math.py</code> pure functions (Beta scoring + time decay + composite). Replace ORM storage with VFS JSON files. The 4-dimension model (reliability, quality, timeliness, fairness) maps perfectly to task settlement feedback.</div>
+<div class="pref">Reuse <code>reputation_math.py</code> pure functions (Beta scoring + time decay + composite). Replace ORM with VFS JSON. Bilateral rating (buyer + seller). Reputation is a marketplace signal only &mdash; does not gate settlement.</div>
 
 <!-- ============================================================ -->
 <h2 id="s6">6. Delivery via VFS</h2>
@@ -477,6 +506,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v0.4 (2026-06-19) &mdash; Clarified auto-execute terms come from negotiate (not server). Reputation: bilateral (buyer + seller), marketplace signal only (not settlement enforcement), agent rates on behalf of human (L1 alignment).<br>
   v0.3 (2026-06-19) &mdash; Added Buyer Pre-commitment (Option B+) to close hostage problem in low-trust markets. Added §5A Reputation System reuse from nexus (Bayesian Beta model, VFS storage).<br>
   v0.2 (2026-06-19) &mdash; Revised trust diagram (our/their perspective), real scenarios (data labeling + Douyin engagement), escrow preference (Option B), initial preferences on all open questions.<br>
   v0.1 (2026-06-19) &mdash; Initial draft.<br>

@@ -666,10 +666,16 @@ sequenceDiagram
       <td>AI should NOT fabricate survey responses. Helps with task routing only.</td>
     </tr>
     <tr>
-      <td>Code review / testing</td>
-      <td style="color:var(--green)">High &mdash; auto-run tests, diff review</td>
-      <td style="color:var(--green)">High &mdash; AI generates tests, finds bugs</td>
-      <td>Strongest AI leverage. Both layers fully automatable.</td>
+      <td>Illustration / commissioned art (代画)</td>
+      <td style="color:var(--green)">High &mdash; style consistency check, format validation</td>
+      <td style="color:var(--orange)">Medium &mdash; AI assists creativity (composition, color, reference search), human hand-draws</td>
+      <td>Existing fragmented market (米画师, 半次元约稿). txt2img has ceiling &mdash; human artistry remains core value. AI augments, doesn't replace.</td>
+    </tr>
+    <tr>
+      <td>Code review / architecture review</td>
+      <td style="color:var(--green)">High &mdash; auto-run tests, lint, security scan</td>
+      <td style="color:var(--green)">High &mdash; AI generates tests, finds bugs, checks patterns</td>
+      <td>Highest-value brain work. Architecture + CR is where senior engineers create the most differentiation. Tasks naturally decomposable (per PR, per file).</td>
     </tr>
   </table>
   <p><strong>Design implication</strong>: The protocol is task-type-agnostic, but the <em>platform guidance</em> should steer sellers toward task types where AI leverage is highest &mdash; maximizing both earnings efficiency and AI skill development.</p>

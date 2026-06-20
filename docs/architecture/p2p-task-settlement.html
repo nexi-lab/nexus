@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.3</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.4</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
@@ -620,16 +620,22 @@ sequenceDiagram
   <tr><td>Online customer service (兼职客服)</td><td>&#165;15 &ndash; 25/h</td><td>&#165;2,000 &ndash; 4,000</td><td>Flexible scheduling, most similar to micro-tasks.</td></tr>
   <tr><td>Data labeling platforms</td><td>&#165;15 &ndash; 25/h</td><td>&#165;1,000 &ndash; 3,000</td><td>Digital, flexible, but monotonous and shrinking margins.</td></tr>
   <tr style="background:var(--card)">
-    <td><strong>Our micro-tasks (cash only)</strong></td>
+    <td><strong>Our micro-tasks (cash only, no AI)</strong></td>
     <td><strong>&#165;6 &ndash; 15/h</strong></td>
     <td><strong>&#165;500 &ndash; 2,000</strong></td>
-    <td>Lower cash rate. Competitive only when combined with token leverage.</td>
+    <td>Baseline: &#165;0.30-0.50/task, 3-5 min per task without AI. Not competitive.</td>
+  </tr>
+  <tr style="background:var(--card)">
+    <td><strong>Our micro-tasks (cash, with AI throughput)</strong></td>
+    <td><strong>&#165;18 &ndash; 30/h</strong></td>
+    <td><strong>&#165;1,500 &ndash; 4,000</strong></td>
+    <td>AI copilot compresses task time from 3-5 min to ~1 min (understanding, drafting, proof generation). Same per-task payment, 3-5x more tasks per hour. <strong>Matches delivery/customer service rates.</strong></td>
   </tr>
   <tr style="background:#1a2e1a">
     <td><strong>Our micro-tasks (cash + AI value)</strong></td>
-    <td><strong>&#165;6-15 cash + &#165;60-300 AI value</strong></td>
+    <td><strong>&#165;18-30 cash + &#165;180-600 AI value</strong></td>
     <td>&mdash;</td>
-    <td>10-20x token leverage means earned points buy &#165;60-300/h worth of AI compute. <strong>Compelling for students who value AI access</strong> (career skill-building, coursework, side projects).</td>
+    <td>With AI throughput, earned points also scale 3-5x. 10-20x token leverage &rarr; &#165;180-600/h worth of AI compute. <strong>Compelling for students who value AI access</strong> (career skill-building, coursework, side projects).</td>
   </tr>
 </table>
 <div class="warn">
@@ -774,6 +780,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v1.4 (2026-06-20) &mdash; Added AI throughput row to competing gig table: AI copilot compresses task time 3-5x, bringing effective cash rate to &#165;18-30/h (matches delivery/customer service). Token leverage also scales with throughput.<br>
   v1.3 (2026-06-20) &mdash; Scenario A enriched with real production data (2,135 images, $54.56 full-AI pipeline, 8-30x cheaper than human labeling). Market context corrected with 2025-2026 verified data: bounding box &#165;0.04-0.15/box (not &#165;0.5-2). Added competing gig income comparison for university students (tutoring &#165;40-200/h, delivery &#165;20-30/h, game companion &#165;10-30/h). Honest assessment: micro-task cash rate is lower than alternatives, value proposition depends on token leverage + AI skill-building. Added template contracts (buyer agent L1 decision), pipeline as product capability, seller specialization via post-training + model choice meta-learning.<br>
   v1.2 (2026-06-19) &mdash; Added illustration/代画 scenario to AI Efficiency table. Enhanced CR row as highest-value brain work. Added "Value to sudowork's existing collaboration network" section: P2P settlement as incentive layer for cross-org collaboration (nonprofits, open-source, freelancers).<br>
   v1.0 (2026-06-19) &mdash; Points leverage: 10-20x value amplification analysis (use AI vs cash out). Target market: university students &amp; fresh graduates (supply volume, AI willingness, career ROI, network effects). Token acceptance insight: students accept tokens because they value AI access.<br>

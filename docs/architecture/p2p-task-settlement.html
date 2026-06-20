@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.2</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.3</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
@@ -449,10 +449,10 @@ sequenceDiagram
 
 <p><em>Two real-world scenarios that stress-test different aspects of the protocol.</em></p>
 
-<h3>Scenario A: Data Labeling</h3>
+<h3>Scenario A: Data Labeling (with real production data)</h3>
 <div class="card">
   <p><strong>Buyer</strong>: "Label 1000 images for object detection. Bounding boxes in COCO format. 500 points."</p>
-  <p><strong>Seller</strong>: Data labeler. Accepts, labels images (possibly with AI assistance), delivers labeled dataset.</p>
+  <p><strong>Seller</strong>: Data labeler. Their sudowork runs the labeling pipeline (model selection, detection, classification), seller does quality review.</p>
   <p><strong>Acceptance criteria</strong>:</p>
   <ul>
     <li>All 1000 images labeled (count check &mdash; machine-verifiable)</li>
@@ -460,10 +460,33 @@ sequenceDiagram
     <li>Accuracy &gt; 95% on 50-image spot check (quality check &mdash; AI-assisted, human-confirmed)</li>
   </ul>
   <p><strong>Delivery</strong>: COCO JSON + labeled images in VFS. CAS hash covers the entire dataset.</p>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Real data point: UI element labeling (June 2026)</h4>
+  <p>Production data from a desktop-use annotation pipeline. Full AI: OmniParser detection &rarr; YOLO &rarr; Claude Opus 4.6 reclassification.</p>
+  <table>
+    <tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Images processed</td><td>2,135 e-commerce screenshots</td></tr>
+    <tr><td>UI elements detected</td><td>81,088 (button, label, image, interactive_element, etc.)</td></tr>
+    <tr><td>Elements reclassified by Opus</td><td>43,667</td></tr>
+    <tr><td>Total cost (Opus API)</td><td><strong>$54.56 (&#165;396)</strong></td></tr>
+    <tr><td>Cost per image</td><td>$0.026 (&#165;0.19)</td></tr>
+    <tr><td>Prompt cache hit rate</td><td>99.4%</td></tr>
+  </table>
+  <p><strong>Comparison to human labeling</strong> (2025-2026 market rates: bounding box &#165;0.04-0.15/box in China):</p>
+  <table>
+    <tr><th>Method</th><th>Total (81K elements)</th><th>vs AI pipeline</th></tr>
+    <tr><td>Human bounding box (&#165;0.04-0.15/box)</td><td>&#165;3,244 &ndash; 12,163</td><td>8-30x more expensive</td></tr>
+    <tr><td>Full AI pipeline (Opus 4.6)</td><td><strong>&#165;396</strong></td><td>baseline</td></tr>
+    <tr><td>If seller uses DSV4 instead</td><td>~&#165;40</td><td>10x cheaper still</td></tr>
+  </table>
+
   <p><strong>Stress tests</strong>:</p>
   <ul>
     <li><strong>Verification</strong>: Mix of machine-verifiable (count, format) and subjective (accuracy) criteria. Buyer's AI can automate the first two; spot-check needs AI + human.</li>
-    <li><strong>Volume</strong>: Large deliverable (1000 images). CAS chunking + federation handles transfer.</li>
+    <li><strong>Volume &amp; task decomposition</strong>: 81K elements in a single contract may be too large &mdash; seller's agent evaluates ROI and may decline. Buyer's sudowork can split into ~21 contracts of 100 images each. Granularity is buyer agent's L1 decision.</li>
+    <li><strong>Template contracts</strong>: For standard task types like "UI labeling", buyer's sudowork can use pre-defined templates that skip negotiation. Seller agent sees "UI labeling, 100 images, 30 points, 72h timeout" and accepts/rejects instantly. Whether to use templates is the <strong>buyer agent's decision</strong> (L1), not platform-mandated.</li>
+    <li><strong>Pipeline as product capability</strong>: The seller does <strong>not</strong> build their own pipeline. Sudowork provides OmniParser+model orchestration as a <strong>product-level capability</strong>. Seller says "label these images", sudowork handles the rest. sudowork product team must keep pace with pipeline capabilities for key task types.</li>
+    <li><strong>Seller specialization</strong>: A seller who completes many labeling tasks can fine-tune a local model (if they have GPU, e.g. DGX) on accumulated task data, increasing accuracy over time &rarr; higher reputation &rarr; more tasks at higher prices (positive feedback loop). Without GPU, sudowork's <strong>model choice meta-learning</strong> remembers which model works best for which task type &mdash; lightweight specialization for all sellers.</li>
     <li><strong>Partial quality</strong>: What if 900/1000 are good but 100 are sloppy? Revision or partial payment?</li>
   </ul>
 </div>
@@ -576,16 +599,42 @@ sequenceDiagram
   <p>This creates a <strong>natural market for AI-assisted labor</strong>: the platform makes AI assistance accessible and economically viable for micro-work, driving adoption.</p>
 </div>
 
-<h3>Market Context (China)</h3>
+<h3>Market Context (China, 2025-2026 data)</h3>
+<h4 style="color:var(--purple)">Micro-task platform benchmarks</h4>
 <table>
-  <tr><th>Benchmark</th><th>Price</th></tr>
-  <tr><td>Ant Microwork (蚂蚁微客) simple task</td><td>&#165;0.10 &ndash; 0.50/task</td></tr>
-  <tr><td>Douyin follow (grey market)</td><td>&#165;0.05 &ndash; 0.20/follow</td></tr>
-  <tr><td>Douyin like (grey market)</td><td>&#165;0.02 &ndash; 0.10/like</td></tr>
-  <tr><td>Minimum hourly wage (varies by city)</td><td>&#165;15 &ndash; 25/hour</td></tr>
-  <tr><td>Our Scenario B (3-5 min task)</td><td>&#165;0.30 &ndash; 0.50/task &asymp; &#165;4-10/hour effective</td></tr>
+  <tr><th>Benchmark</th><th>Price</th><th>Source</th></tr>
+  <tr><td>Data labeling: bounding box (China)</td><td>&#165;0.04 &ndash; 0.15/box</td><td>36Kr, GigaBPO</td></tr>
+  <tr><td>Data labeling platform hourly (搜活帮, 京东微工)</td><td>&#165;15 &ndash; 25/hour</td><td>Platform listings</td></tr>
+  <tr><td>Ant Microwork (蚂蚁微客) simple task</td><td>&#165;0.10 &ndash; 0.50/task</td><td>Platform listings</td></tr>
+  <tr><td>Douyin follow (grey market)</td><td>&#165;0.05 &ndash; 0.20/follow</td><td>Market observation</td></tr>
+  <tr><td>Our Scenario B (3-5 min task)</td><td>&#165;0.30 &ndash; 0.50/task &asymp; &#165;6-10/hour effective</td><td>&mdash;</td></tr>
 </table>
-<p>Pricing is competitive with existing micro-task platforms. The value-add is AI assistance + cryptographic settlement guarantees + no platform rake on the task payment itself.</p>
+
+<h4 style="color:var(--purple)">Competing gig income for university students</h4>
+<p>Our target market (university students) has multiple gig options. Micro-task settlement must offer competitive <strong>total value</strong> (cash + AI access), not just hourly rate.</p>
+<table>
+  <tr><th>Gig type</th><th>Hourly rate</th><th>Monthly income (est.)</th><th>Notes</th></tr>
+  <tr><td>One-on-one tutoring (家教)</td><td>&#165;40 &ndash; 200/h</td><td>&#165;2,000 &ndash; 8,000</td><td>Highest hourly, but requires subject expertise + scheduling. City-dependent (&#165;60-300 in tier 1).</td></tr>
+  <tr><td>Food delivery (外卖骑手, part-time)</td><td>&#165;20 &ndash; 30/h</td><td>&#165;2,000 &ndash; 4,000</td><td>Physical, weather-dependent. Full-time riders average &#165;7,500/mo.</td></tr>
+  <tr><td>Game companionship (游戏陪玩)</td><td>&#165;10 &ndash; 30/h (platform rate)</td><td>&#165;1,000 &ndash; 5,000</td><td>Low fill rate (~40%). Top performers &#165;25,000+/mo. Prices halved from 2023 peak (&#165;80-90/game &rarr; &#165;40-45/game).</td></tr>
+  <tr><td>Online customer service (兼职客服)</td><td>&#165;15 &ndash; 25/h</td><td>&#165;2,000 &ndash; 4,000</td><td>Flexible scheduling, most similar to micro-tasks.</td></tr>
+  <tr><td>Data labeling platforms</td><td>&#165;15 &ndash; 25/h</td><td>&#165;1,000 &ndash; 3,000</td><td>Digital, flexible, but monotonous and shrinking margins.</td></tr>
+  <tr style="background:var(--card)">
+    <td><strong>Our micro-tasks (cash only)</strong></td>
+    <td><strong>&#165;6 &ndash; 15/h</strong></td>
+    <td><strong>&#165;500 &ndash; 2,000</strong></td>
+    <td>Lower cash rate. Competitive only when combined with token leverage.</td>
+  </tr>
+  <tr style="background:#1a2e1a">
+    <td><strong>Our micro-tasks (cash + AI value)</strong></td>
+    <td><strong>&#165;6-15 cash + &#165;60-300 AI value</strong></td>
+    <td>&mdash;</td>
+    <td>10-20x token leverage means earned points buy &#165;60-300/h worth of AI compute. <strong>Compelling for students who value AI access</strong> (career skill-building, coursework, side projects).</td>
+  </tr>
+</table>
+<div class="warn">
+  <strong>Honest assessment</strong>: On pure cash hourly rate, micro-tasks are less competitive than tutoring or delivery. The value proposition depends on: (a) students valuing AI access (the 10-20x leverage), (b) the flexibility advantage (async, no commute, no physical labor), and (c) the AI skill-building narrative (career ROI). If students don't find AI useful for their own work, the token leverage collapses and we're just a low-paying gig platform. <strong>Product must ensure sudowork delivers real value to students' daily life</strong> &mdash; coursework, job applications, learning, side projects.
+</div>
 
 <h3>Points Liquidity: Stable-Price Buyback</h3>
 <div class="card">
@@ -725,6 +774,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v1.3 (2026-06-20) &mdash; Scenario A enriched with real production data (2,135 images, $54.56 full-AI pipeline, 8-30x cheaper than human labeling). Market context corrected with 2025-2026 verified data: bounding box &#165;0.04-0.15/box (not &#165;0.5-2). Added competing gig income comparison for university students (tutoring &#165;40-200/h, delivery &#165;20-30/h, game companion &#165;10-30/h). Honest assessment: micro-task cash rate is lower than alternatives, value proposition depends on token leverage + AI skill-building. Added template contracts (buyer agent L1 decision), pipeline as product capability, seller specialization via post-training + model choice meta-learning.<br>
   v1.2 (2026-06-19) &mdash; Added illustration/代画 scenario to AI Efficiency table. Enhanced CR row as highest-value brain work. Added "Value to sudowork's existing collaboration network" section: P2P settlement as incentive layer for cross-org collaboration (nonprofits, open-source, freelancers).<br>
   v1.0 (2026-06-19) &mdash; Points leverage: 10-20x value amplification analysis (use AI vs cash out). Target market: university students &amp; fresh graduates (supply volume, AI willingness, career ROI, network effects). Token acceptance insight: students accept tokens because they value AI access.<br>
   v0.9 (2026-06-19) &mdash; Resolved ShareOne comments: removed timeout + multi-revision from open questions (already resolved in §5 B+ and §4). Confirmed no transfer API exists (need new endpoint). Confirmed no marketplace code in nexus (build from scratch). Cross-platform answer: integrate tools via MCP/ai-dev-browser, not require non-sudowork. Added RTB comparison and seller agent preference learning to "Why this matters". Added AI efficiency by task type table to §7A. Added points buyback as formal open question with policy risk analysis.<br>

@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<!--
+  Nexus Integration Architecture — SSOT protocol spec for
+  sudowork ↔ nexus ↔ sudo-code integration surface.
+
+  Self-contained: no build step, no JS bundler. Styled to render well
+  both as `file://` open and as a ShareOne-hosted page.
+
+  Publish to ShareOne:
+    node scripts/upload_page.js docs/architecture/nexus-integration-architecture.html \
+      --filename "nexus-integration-architecture.html" \
+      --share-id "nexus-integration-arch"
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus Integration Architecture</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-alt: #172033;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #60a5fa;
+    --accent-dim: rgba(96, 165, 250, 0.12);
+    --warn: rgba(251, 191, 36, 0.18);
+    --warn-fg: #fcd34d;
+    --code-bg: #1e293b;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: var(--fg);
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 60px 28px 100px;
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  h1 { font-size: 28px; margin-bottom: 4px; }
+  h2 {
+    font-size: 22px;
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 2px solid var(--border);
+    color: var(--fg);
+  }
+  h3 { font-size: 18px; margin-top: 32px; color: var(--accent); }
+  h4 { font-size: 16px; margin-top: 24px; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .callout {
+    background: var(--accent-dim);
+    border-left: 4px solid var(--accent);
+    padding: 14px 20px;
+    margin: 20px 0;
+    border-radius: 4px;
+  }
+  .callout-warn { background: var(--warn); border-left-color: #f59e0b; color: var(--warn-fg); }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 13px;
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 14px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  pre code { background: transparent; padding: 0; font-size: 13px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--surface); font-weight: 600; color: var(--fg); }
+  tbody tr:nth-child(even) td { background: var(--surface-alt); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  ul li, ol li { margin: 4px 0; }
+  blockquote {
+    border-left: 3px solid var(--border);
+    color: var(--muted);
+    padding: 4px 16px;
+    margin: 16px 0;
+  }
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 24px 0 32px;
+  }
+  .toc ol { margin: 8px 0 0 16px; padding: 0; }
+  .toc li { margin: 4px 0; }
+  a { color: var(--accent); }
+  a:hover { text-decoration: underline; }
+  footer { margin-top: 80px; color: var(--muted); font-size: 13px; text-align: center; }
+  pre.mermaid {
+    background: none;
+    border: none;
+    text-align: center;
+    padding: 20px 0;
+    visibility: hidden;
+  }
+  pre.mermaid[data-processed] { visibility: visible; }
+</style>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+</script>
+</head>
+<body>
+
+<h1>Nexus Integration Architecture</h1>
+<p class="meta">End-state architecture for the sudowork &harr; nexus &harr; sudo-code surface &mdash; agent identity,
+A2A messaging, audit trace, cross-instance transport.</p>
+
+<div class="callout">
+  <strong>Cross-references:</strong>
+  <ul style="margin:8px 0 0">
+    <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/README.md">KERNEL-ARCHITECTURE</a> (peer doc): kernel primitives, syscall surface, dispatch model</li>
+    <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/docs/federation-architecture.md">federation-architecture</a> (peer doc): Raft, zone topology, gRPC transport</li>
+    <li>sudowork repo (<code>sudoprivacy/sudowork</code>) &mdash; <code>OPEN-ITEMS.md</code>: items not yet implemented</li>
+  </ul>
+</div>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#system-overview">System Overview</a></li>
+    <li><a href="#agent-identity">Agent Identity &amp; Runtime</a></li>
+    <li><a href="#a2a">A2A Communication</a></li>
+    <li><a href="#transport">Cross-instance Transport</a></li>
+    <li><a href="#audit">Audit Trace</a></li>
+    <li><a href="#replication">Data Replication Mechanisms</a></li>
+    <li><a href="#messenger">Messenger Surface</a></li>
+    <li><a href="#orchestration">Orchestration &amp; Isolation Boundary</a></li>
+    <li><a href="#appendix-hooks">Appendix A: Kernel Dispatch Hook Lifecycle</a></li>
+    <li><a href="#appendix-raft">Appendix B: Raft Command Taxonomy</a></li>
+  </ol>
+</nav>
+
+<!-- ================================================================ -->
+<h2 id="system-overview">1. System Overview</h2>
+
+<pre class="mermaid">
+graph TD
+    subgraph sw["sudowork (Electron)"]
+        direction LR
+        renderer["Renderer (React UI)"] <-->|IPC| mainproc["Main Process"]
+    end
+
+    sw -->|"gRPC (VFS port)"| grpc
+
+    subgraph host["sudocode-host (one process per host)"]
+        grpc["gRPC server (VFS port)"]
+
+        subgraph kernel["Embedded Rust Kernel"]
+            vfs["VFSRouter · DCache · Metastore"]
+            pipes["PipeManager · StreamManager"]
+            hooks["AuditHook · AgentRegistry"]
+        end
+
+        subgraph svc["Services rlib"]
+            mas["ManagedAgentService"]
+            acp["AcpService"]
+            spawn["SpawnTask‹Kernel›"]
+        end
+
+        subgraph tasks["Agent Tasks (N tokio tasks)"]
+            agent["KernelFsBackend‹K› + ConversationRuntime<br/>cwd = /proc/{pid}/workspace"]
+        end
+
+        grpc --- kernel
+        kernel --- svc
+        kernel --- tasks
+        svc -->|"spawn via DI seam"| tasks
+    end
+</pre>
+
+<h3>Constraints</h3>
+<ul>
+  <li><strong>One nexus per host.</strong> A host that runs sudocode agents runs one <code>sudocode-host</code> process, and its embedded <code>kernel::Kernel</code> is that host's nexus. A host without sudocode agents runs the standalone <code>nexusd-cluster</code> binary. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch, so both shapes converge on one kernel per host (&sect;8).</li>
+  <li><strong>Pure-infra nexus.</strong> The kernel and the service-tier crates (<code>services</code>, <code>raft</code>, <code>lib</code>, <code>contracts</code>) compile with zero knowledge of any agent runtime; the dependency edge runs <code>sudocode &rarr; nexus</code>. <code>sudocode-host</code> (sudocode repo) is the one binary that links both source trees and monomorphises <code>SpawnTask&lt;Kernel&gt;</code> (&sect;2.3).</li>
+  <li><strong>State SSOT.</strong> Agent runtime state (<code>pid &rarr; AgentState</code>, condvar wakeup, signal semantics, parent/child links, transition validation) lives in <code>kernel::core::agents::registry::AgentRegistry</code>. In-process Rust callers reach it directly; external callers reach it through the gRPC surface.</li>
+  <li><strong>gRPC is the external surface.</strong> External clients (sudowork UI, orchestrator) reach the kernel over the VFS gRPC port; the agent&harr;kernel hot path stays in-process Rust.</li>
+  <li><strong>Cluster profile.</strong> <code>sudocode-host</code> and <code>nexusd-cluster</code> both run Nexus's cluster profile &mdash; bricks: IPC, FEDERATION.</li>
+  <li><strong>Zone = VFS path mount point.</strong> A zone's visibility boundary is its mount path. ReBAC governs sub-path access within a zone.</li>
+</ul>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="agent-identity">2. Agent Identity &amp; Runtime</h2>
+
+<p>Two namespaces, the same Linux distinction between an executable on disk and a running process:</p>
+
+<table>
+  <thead><tr><th>Namespace</th><th>Lifetime</th><th>Content</th><th>Backing store</th></tr></thead>
+  <tbody>
+    <tr><td><code>/agents/{name}/</code></td><td>Persistent</td><td>Profile + history: <code>config.toml</code>, <code>prompts/</code>, <code>skills/</code>, <code>memory/</code>, <code>sessions/</code></td><td>Metastore (DT_FILE / DT_DIR)</td></tr>
+    <tr><td><code>/proc/{pid}/</code></td><td>Ephemeral</td><td>Runtime presence: <code>status</code>, <code>agent</code> link, <code>chat-with-me</code>, <code>workspace/</code></td><td>In-memory + WAL while pid alive</td></tr>
+  </tbody>
+</table>
+
+<p><code>/agents/{name}/</code> is the stable identity an outsider addresses (other agents, humans on Element). One agent name can spawn many <code>pid</code>s &mdash; different worktrees, parallel work &mdash; and all of them share the same profile.</p>
+
+<h3>2.1 Agent-name namespace</h3>
+
+<pre><code>/agents/scode-standard/          &larr; profile + history (DT_DIR)
+   config.toml                   &larr; model selection, MCP endpoints, default workspace recipe
+   prompts/                      &larr; system-prompt overrides, per-skill prompts
+   skills/                       &larr; loadable tool sets
+   memory/                       &larr; long-lived agent memory
+   sessions/                     &larr; per-session jsonl transcripts (DT_DIR)
+      &lt;session-id&gt;.jsonl</code></pre>
+
+<p><code>/agents/{name}/</code> is the persistent SSOT for everything an agent needs to boot: config, prompts, skills, memory, and session history. A worker boots by reading its profile and the requested <code>--session-id</code> transcript from here, works, and exits; resuming re-reads the same session-id.</p>
+
+<h3>2.2 Runtime namespace</h3>
+
+<pre><code>/proc/{pid}/
+   status                        &larr; virtual file: AgentStatusResolver renders descriptor JSON
+   agent                         &larr; DT_LINK &rarr; /agents/{name}/   (Linux /proc/{pid}/exe analogue)
+   chat-with-me                  &larr; DT_STREAM: this pid's conversation
+   workspace/                    &larr; DT_DIR (agent cwd)
+      chat-with-me               &larr; DT_LINK &rarr; /proc/{pid}/chat-with-me
+      project-x/                 &larr; DT_LINK &rarr; host repo path from desc.repos
+      project-y/                 &larr; DT_LINK &rarr; host repo path from desc.repos</code></pre>
+
+<p>The whole <code>/proc/{pid}/</code> subtree is stamped at <code>start_session</code> and reaped when the task exits. <code>/proc/{pid}/status</code> is served by <code>AgentStatusResolver</code>, a <code>PathResolver</code> that renders the live <code>AgentDescriptor</code> as JSON each read.</p>
+
+<h3>2.3 Spawn lifecycle</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+    participant Orchestrator as sudowork / orchestrator
+    participant MAS as ManagedAgentService
+    participant Registry as AgentRegistry
+    participant Spawn as SpawnTask&lt;Kernel&gt;
+    participant Worker as Agent tokio task
+
+    Orchestrator->>MAS: start_session_v1(agent_id, repos, model)
+    MAS->>Registry: register(descriptor) &rarr; pid
+    MAS->>MAS: stamp /proc/{pid}/ entries
+    MAS->>Spawn: spawn(kernel, desc, observer)
+    Spawn->>Worker: tokio::spawn(run_loop)
+    Worker->>Registry: state_cb(WARMING_UP)
+    Worker->>Worker: read profile + session from /agents/{name}/
+    Worker->>Registry: state_cb(READY)
+    MAS-->>Orchestrator: {session_id=pid, workspace_path}
+
+    Note over Worker: conversation loop...
+
+    Worker->>Registry: state_cb(TERMINATED)
+    Registry->>Registry: reap /proc/{pid}/
+</pre>
+
+<p>A managed agent runs as one in-process tokio task inside <code>sudocode-host</code>, reaching the kernel through direct Rust syscalls. External ACP agents (claude / codex) run as subprocesses over stdio JSON-RPC; that path lives in <code>AcpService</code>.</p>
+
+<p>The session identifier IS the AgentRegistry pid. <code>ManagedAgentService</code> plants the per-pid <code>AgentDescriptor</code> and returns <code>{session_id=pid, workspace_path}</code> to the caller.</p>
+
+<p><strong>ManagedAgentService surface</strong> (over <code>NexusVFSService.Call</code>):</p>
+<ul>
+  <li><code>start_session_v1</code> &mdash; <code>{agent_id, repos, model, owner_id, zone_id}</code> &rarr; <code>{session_id, workspace_path}</code></li>
+  <li><code>cancel_v1</code> &mdash; <code>{session_id, mode}</code> &rarr; <code>{cancelled}</code>; <code>mode &isin; {turn, session}</code></li>
+  <li><code>get_session_v1</code> &mdash; <code>{session_id}</code> &rarr; <code>{session_id, agent_id, workspace_path, model, state}</code></li>
+</ul>
+
+<p><code>AgentState</code> FSM: <code>REGISTERED &rarr; WARMING_UP &rarr; READY &harr; BUSY &rarr; SUSPENDED &rarr; TERMINATED</code>.</p>
+
+<h3>2.4 sudo-code state placement</h3>
+
+<p>sudo-code routes all filesystem access through one <code>FsBackend</code> trait with three impls, selected by deployment:</p>
+
+<table>
+  <thead><tr><th>Backend</th><th>Used by</th><th>Reaches files via</th></tr></thead>
+  <tbody>
+    <tr><td><code>KernelFsBackend&lt;Kernel&gt;</code></td><td><code>sudocode-host</code> (production)</td><td>in-process kernel syscalls</td></tr>
+    <tr><td><code>StdFsBackend</code></td><td>standalone CLI</td><td>host <code>std::fs</code></td></tr>
+    <tr><td><code>NexusVfsFsBackend</code></td><td>edge / dev CLI</td><td>gRPC to a remote kernel</td></tr>
+  </tbody>
+</table>
+
+<p>Inside <code>sudocode-host</code> the agent task runs on <code>KernelFsBackend&lt;Kernel&gt;</code>, so <code>SessionStore</code>, <code>ConfigLoader</code>, and the workspace-bounded <code>file_ops</code> helpers all issue kernel syscalls against nexus VFS paths:</p>
+
+<table>
+  <thead><tr><th>sudo-code surface</th><th>nexus VFS path</th></tr></thead>
+  <tbody>
+    <tr><td>session jsonl transcripts</td><td><code>/agents/{name}/sessions/&lt;workspace_hash&gt;/&lt;session-id&gt;.jsonl</code></td></tr>
+    <tr><td>user-level config</td><td><code>/agents/{name}/config.toml</code> (ConfigLoader user slot)</td></tr>
+    <tr><td>project-level config</td><td><code>/proc/{pid}/workspace/{repo}/.nexus/sudocode/settings.json</code></td></tr>
+    <tr><td>AGENTS.md scan</td><td>walks the repo mount under <code>/proc/{pid}/workspace/{repo}/</code> (cwd)</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="a2a">3. A2A Communication</h2>
+
+<p>A2A, H2A, and A2H share one primitive: write a message to the recipient's <code>chat-with-me</code>.</p>
+
+<h3>3.1 Mailbox</h3>
+
+<p><code>/agents/{name}/chat-with-me</code> and <code>/proc/{pid}/chat-with-me</code> are append-only message streams. They are normal DT_STREAMs that any caller can write to and the owner can read with <code>sys_watch</code>. Federation Raft replicates them across zone members; reach to clients outside the federation goes through the Matrix C-S adapter (&sect;4).</p>
+
+<h3>3.2 The chat-with-me link inside a workspace</h3>
+
+<pre><code>/proc/{pid}/workspace/chat-with-me  &rarr;  /proc/{pid}/chat-with-me</code></pre>
+
+<p>An agent inside another's workspace writes to <code>chat-with-me</code> relative to wherever it stands; resolution follows back to the workspace owner's stream. The link is a plain DT_LINK row in the metastore, stamped at <code>start_session</code>.</p>
+
+<h3>3.3 Sender identity</h3>
+
+<p>Mailbox envelope stamping rewrites the message envelope's <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend.</p>
+
+<pre class="mermaid">
+sequenceDiagram
+    participant A as Agent A
+    participant Kernel as sys_write
+    participant Hook as MailboxStampingHook
+    participant Stream as DT_STREAM
+
+    A->>Kernel: write envelope {to: "scode-standard", body: "ping"}
+    Kernel->>Kernel: has_mutating_hook_match("/chat-with-me") &rarr; true
+    Kernel->>Kernel: clone content into WriteHookCtx
+    Kernel->>Hook: on_pre(ctx)
+    Hook->>Hook: reads ctx.agent_id = "human-ethan"
+    Hook->>Hook: maybe_stamp_chat_envelope
+    Hook-->>Kernel: HookOutcome::Replace({from:"human-ethan", ...})
+    Kernel->>Stream: append (stamped envelope)
+</pre>
+
+<h3>3.4 Boundary teaching UX</h3>
+
+<p><code>WorkspaceBoundaryHook</code> is registered as an <code>INTERCEPT pre-write</code> hook. On mismatch the hook returns <code>Err(EPERM)</code> with a structured payload:</p>
+
+<pre><code>EPERM at /proc/p_scode/workspace/projects/nexus/src/main.rs:
+  This workspace is owned by agent 'scode-standard' (pid p_scode).
+  You are 'human-ethan'. To send a message about this workspace, write to:
+     /proc/p_scode/workspace/chat-with-me
+  (DT_LINK to /proc/p_scode/chat-with-me.)</code></pre>
+
+<p>The error is intentionally instructive. LLMs that hit it once learn the convention without memory or system-prompt edits.</p>
+
+<h3>3.5 Same primitive across humans and agents</h3>
+
+<p><code>/agents/human-ethan/chat-with-me</code> is the canonical address &mdash; "human" identities have no spawn lifecycle so the path resolves directly to a long-lived DT_STREAM, no pid indirection needed.</p>
+
+<h3>3.6 Addressing non-human agents</h3>
+
+<p>Non-human agent names can map to zero, one, or many running pids in parallel. The chat-with-me surface for these agents is per-pid:</p>
+<ul>
+  <li><code>/proc/{pid}/chat-with-me</code> &mdash; direct DT_STREAM at the per-pid path.</li>
+  <li><code>/proc/{pid}/workspace/chat-with-me</code> &mdash; DT_LINK to the same stream.</li>
+</ul>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="transport">4. Cross-instance Transport</h2>
+
+<p>Two layers compose. <strong>Within</strong> a federation, raft replicates the chat-with-me DT_STREAM across every nexus instance. <strong>Outside</strong> the federation, a Matrix Client-Server adapter exposes the same DT_STREAMs over Matrix REST so unmodified third-party clients (Element, FluffyChat, Cinny) can join conversations.</p>
+
+<h3>4.1 Federation-internal &mdash; raft replication</h3>
+
+<p>Every chat-with-me DT_STREAM lives inside its zone's raft cluster. The write path is <code>sys_write</code> &rarr; <code>WalStreamCore</code> &rarr; <code>Command::AppendStreamEntry</code> &rarr; raft commit &rarr; state-machine apply on every voter.</p>
+
+<h3>4.2 Federation-external &mdash; Matrix C-S adapter</h3>
+
+<pre class="mermaid">
+graph LR
+    E["Element / FluffyChat / Cinny"]
+    A["services::matrix_adapter"]
+    K["nexus kernel<br/><em>sys_read · sys_write · stream_read_batch</em><br/>on chat-with-me DT_STREAMs"]
+
+    E -->|"HTTP REST + JSON"| A -->|"in-process Rust"| K
+</pre>
+
+<h4>Endpoint scope</h4>
+
+<table>
+  <thead><tr><th>Group</th><th>Endpoints</th><th>Backed by</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Auth</strong></td><td><code>POST /login</code>, <code>POST /logout</code>, <code>GET /whoami</code></td><td><code>AuthService</code>; Matrix access token = AuthService session token</td></tr>
+    <tr><td><strong>Sync</strong></td><td><code>GET /sync</code> (long-poll, since-token paging)</td><td><code>sys_watch</code> on joined chat-with-me streams</td></tr>
+    <tr><td><strong>Rooms &mdash; read</strong></td><td><code>GET /state</code>, <code>GET /messages</code>, <code>GET /joined_members</code></td><td><code>stream_read_batch</code> over chat-with-me DT_STREAM</td></tr>
+    <tr><td><strong>Rooms &mdash; write</strong></td><td><code>PUT /send</code>, <code>POST /join</code>, <code>POST /leave</code>, <code>POST /createRoom</code></td><td><code>sys_write</code>; join/leave write ReBAC mutations</td></tr>
+    <tr><td><strong>Media</strong></td><td><code>GET /download</code>, <code>POST /upload</code>, <code>GET /thumbnail</code></td><td>DT_FILE under <code>/media/{media_id}</code>; CAS storage</td></tr>
+  </tbody>
+</table>
+
+<h4>Room &harr; chat-with-me mapping</h4>
+
+<pre><code>!{base32(stream_path)}:nexus.local
+  e.g. /agents/human-bob/chat-with-me
+       &harr; !MFRGS43FORZS6ZTPMVQHIYLUMRZA:nexus.local</code></pre>
+
+<h4>PDU envelope &harr; chat envelope</h4>
+
+<table>
+  <thead><tr><th>PDU field</th><th>Chat envelope field</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>sender</code></td><td><code>from</code></td><td>Stamped by <code>MailboxStampingHook</code> &mdash; adapter cannot forge</td></tr>
+    <tr><td><code>content.body</code></td><td><code>body</code></td><td><code>m.room.message</code> text; pass-through</td></tr>
+    <tr><td><code>content.msgtype</code></td><td><code>msgtype</code></td><td><code>m.text</code>, <code>m.image</code>, etc.</td></tr>
+    <tr><td><code>origin_server_ts</code></td><td><code>ts_ms</code></td><td>Unix ms</td></tr>
+    <tr><td><code>event_id</code></td><td>derived from DT_STREAM offset</td><td><code>$offset_{n}:nexus.local</code> &mdash; stable</td></tr>
+    <tr><td><code>room_id</code></td><td>derived from path</td><td>See above</td></tr>
+  </tbody>
+</table>
+
+<h4>Storage</h4>
+
+<p>Adapter is <strong>stateless</strong> &mdash; every read/write goes through the kernel. Three things in-memory (rebuilt on restart): active <code>/sync</code> long-poll registrations, access-token &rarr; user-id map, room id &rarr; stream path decoding.</p>
+
+<h3>4.3 Properties retained across both layers</h3>
+
+<ul>
+  <li><strong>Permissions</strong> &mdash; ReBAC on the DT_STREAM path governs who may write/read. Matrix room membership is derived from the same ReBAC decision.</li>
+  <li><strong>Audit</strong> &mdash; Every Matrix-originated write reaches the kernel through <code>sys_write</code>, so <code>AuditHook</code> captures it like any other VFS write.</li>
+  <li><strong>Single SSOT</strong> &mdash; The DT_STREAM is authoritative. None of the three clients maintain a parallel store.</li>
+</ul>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="audit">5. Audit Trace</h2>
+
+<h3>5.1 Surface</h3>
+
+<table>
+  <thead><tr><th>Concern</th><th>What</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>VFS operation trace</td><td>Every read/write/delete/rename through nexus kernel</td><td>Rust <code>AuditHook</code> on kernel dispatch (POST phase)</td></tr>
+    <tr><td>Exchange audit</td><td>Agent economic transactions</td><td>Python exchange service</td></tr>
+  </tbody>
+</table>
+
+<h3>5.2 AuditHook pipeline</h3>
+
+<pre class="mermaid">
+graph TB
+    D["Kernel dispatch (Rust)"] -->|"on_post_write / on_post_read"| A["AuditHook (NativeInterceptHook)"]
+    A -->|"mpsc try_send (~10-50ns)"| F["audit-flush (background thread)"]
+    F -->|"JSON &rarr; WalStreamCore::write_nowait"| W["WalStreamCore"]
+    W -->|"Command::AppendStreamEntry"| R["Zone Raft cluster"]
+    R --- S["/__sys__/audit/traces/"]
+</pre>
+
+<h3>5.3 Auto-wiring on zone mount</h3>
+
+<p><code>services::audit::install_root</code> installs a <code>MutationObserver</code> filtering on <code>FileEventType::Mount</code>. Each fired event maps to <code>install_for_zone(zone_id)</code>, guarded by a <code>Mutex&lt;HashSet&lt;String&gt;&gt;</code> so a re-mount is a harmless no-op. New zones wire their AuditHook + DT_STREAM the moment they mount.</p>
+
+<h3>5.4 Central audit zone</h3>
+
+<pre class="mermaid">
+graph TB
+    subgraph nodeA["Production node A"]
+        A_hook["AuditHook &rarr; /__sys__/audit/traces/"]
+    end
+    subgraph nodeB["Production node B"]
+        B_hook["AuditHook &rarr; /__sys__/audit/traces/"]
+    end
+    subgraph audit["Audit node"]
+        collect["local collect/gather"]
+    end
+
+    A_hook -->|"zone-A-audit (voter+learner)"| audit
+    B_hook -->|"zone-B-audit (voter+learner)"| audit
+</pre>
+
+<h3>5.5 AuditRecord schema</h3>
+
+<pre><code>{
+  "v": 1,
+  "ts": "2026-04-26T10:00:00.123Z",
+  "trace_id": "req_a1b2c3d4",
+  "agent_id": "agent:sudo-code",
+  "op": "write",
+  "path": "/proc/p_scode/workspace/projects/nexus/src/main.rs",
+  "zone_id": "root",
+  "size_bytes": 1024,
+  "status": "ok",
+  "duration_us": 42
+}</code></pre>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="replication">6. Data Replication Mechanisms</h2>
+
+<table>
+  <thead><tr><th>Entry type</th><th>Used for</th><th>Metadata channel</th><th>Content channel</th></tr></thead>
+  <tbody>
+    <tr><td><strong>DT_FILE</strong></td><td>sessions, profile configs, task lists</td><td>Raft (intra-zone, strongly consistent)</td><td>Local CAS + on-miss lazy fetch from peer via <code>PeerBlobClient</code></td></tr>
+    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="messenger">7. Messenger Surface</h2>
+
+<p>Three clients sit over the same chat-with-me DT_STREAMs:</p>
+
+<ul>
+  <li><strong>sudowork chat UI</strong> &mdash; talks gRPC directly to nexus.</li>
+  <li><strong>Stock Matrix clients</strong> (Element, FluffyChat, Cinny) &mdash; connect to the Matrix C-S adapter over HTTP.</li>
+  <li><strong>sudocode agent tasks</strong> &mdash; in-process tokio tasks read/write via direct kernel syscalls.</li>
+</ul>
+
+<p>The chat-with-me DT_STREAM is the SSOT. None of the three clients maintain a parallel inbox.</p>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="orchestration">8. Orchestration &amp; Isolation Boundary</h2>
+
+<h3>8.1 Orchestration lives outside nexus</h3>
+
+<p>nexus is passive VFS infrastructure: it stores state, routes syscalls, and fires hooks. Deciding <em>which</em> workers exist is an orchestrator concern.</p>
+
+<h3>8.2 Isolation</h3>
+
+<p>Agent loops share <code>sudocode-host</code>'s address space as tokio tasks. Isolation floor is <code>catch_unwind</code> per task plus <code>SpawnHandle::abort</code> on reap. Workers are cattle: persistent state lives in <code>/agents/{name}/</code>, so a host that dies is restarted and each worker resumes from its <code>--session-id</code> transcript.</p>
+
+<h3>8.3 One nexus per host</h3>
+
+<p>A host runs exactly one kernel. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch (PID file, ready file, socket path, health check).</p>
+
+<h3>8.4 sudocode-host placement</h3>
+
+<p><code>sudocode-host</code> lives in the sudocode repo, peer to the standalone <code>rusty-sudocode-cli</code>. Keeping it there holds the dependency edge at <code>sudocode &rarr; nexus</code>.</p>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="appendix-hooks">9. Appendix A: Kernel Dispatch Hook Lifecycle</h2>
+
+<pre class="mermaid">
+graph TB
+    S["syscall (sys_write, sys_read, ...)"]
+    S --> CG["CLONE GATE (sys_write only)"]
+    CG -->|"has_mutating_hook_match?"| CG_yes["true: clone content"]
+    CG -->|"false"| CG_no["WriteHookCtx.content = vec![]"]
+
+    CG_yes --> PRE
+    CG_no --> PRE
+
+    PRE["PRE: NativeInterceptHook chain"]
+    PRE -->|"Err"| ABORT["abort (PermissionHook, BoundaryHook)"]
+    PRE -->|"Pass"| EXEC
+    PRE -->|"Replace(bytes)"| EXEC["EXECUTE: backend write"]
+
+    EXEC --> POST["POST: NativeInterceptHook chain (AuditHook)"]
+    POST --> OBS["OBSERVE: MutationObserver::on_mutation"]
+    OBS --> W1["StreamEventObserver &rarr; sys_watch wakeup"]
+    OBS --> W2["FileWatcher &rarr; sys_watch subscribers"]
+    OBS --> W3["AuditZoneAutoWire (Mount filter)"]
+</pre>
+
+<p>The clone gate keeps the hot path allocation-free for writes that do not need rewriting. Each hook declares a <code>mutating_path_suffix</code>; the dispatcher only clones content into <code>WriteHookCtx</code> when one matches. <code>MailboxStampingHook</code> declares <code>/chat-with-me</code>; accept/reject hooks declare <code>None</code>.</p>
+
+<hr>
+
+<!-- ================================================================ -->
+<h2 id="appendix-raft">10. Appendix B: Raft Command Taxonomy</h2>
+
+<p>All commands in a zone's Raft cluster share a single <code>Command</code> enum (<code>state_machine.rs</code>):</p>
+
+<pre><code>Command::SetMetadata           &mdash; VFS file/dir metadata (path, size, etag, ...)
+Command::DeleteMetadata        &mdash; VFS delete
+Command::AcquireLock           &mdash; distributed lock
+Command::ReleaseLock           &mdash; lock release
+Command::AppendStreamEntry{..} &mdash; WalStreamBackend stream data (chat, audit)
+Command::DeleteStreamEntry     &mdash; stream cleanup
+... (others)</code></pre>
+
+<footer>
+  <p>Nexus Integration Architecture &mdash; joint-owned by the nexus and sudocode teams. Apache-2.0.</p>
+</footer>
+
+</body>
+</html>

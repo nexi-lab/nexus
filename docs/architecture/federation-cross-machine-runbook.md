@@ -250,13 +250,19 @@ target/release/nexusd-cluster join \
   /shared \
   --hostname <B_tailscale_ip> \
   --data-dir /tmp/nexus-fed-data \
-  --no-tls
+  --no-tls \
+  --as <learner|voter>
 ```
+
+`--as` picks the membership role on `sharedzone` (default `learner`):
+
+* **`--as learner`** — owner-pattern share.  Joiner gets full replication of `sharedzone` metadata + can write `sys_setattr` / `sys_unlink` metadata via the EC default path (see [Consistency model](#consistency-model) below), but doesn't count toward quorum.  Wipe-rejoin safe — losing or replacing a learner has zero quorum impact, so SSD swap / OS reinstall / device migration can't strand the zone in `not leader` deadlock.  Pick this when one side is the authoritative writer and the other side is mostly read-along (canonical `nexus share` semantics).
+* **`--as voter`** — symmetric-peer share.  Joiner counts toward quorum AND can write SC linearizable ops (locks, CAS).  EC-routed `sys_setattr` still works without quorum (so single-peer-online still lets that peer write metadata), but lock acquire / CAS need majority ACK.  Wipe-rejoin risk re-emerges if a voter goes through SSD swap without first transferring its voter slot away.  Pick this for the cc-tasks-share Mac↔Win pattern where both peers write to their own subpath under `/shared` and want equal authority.
 
 Expected last line:
 
 ```
-Joined remote zone 'sharedzone' (via http://<A_tailscale_ip>:2126); mounted at '/shared' inside zone 'root'
+Joined remote zone 'sharedzone' as <learner|voter> (via http://<A_tailscale_ip>:2126); mounted at '/shared' inside zone 'root'
 ```
 
 Each node's local root zone owns its DT_MOUNT routing entries.  `join` writes B's DT_MOUNT into B's local root.  A's local root has its own DT_MOUNT for `/shared` (from the `NEXUS_FEDERATION_MOUNTS` env at A's boot).  They do not need to agree on root-zone membership — the parent zone for each side's DT_MOUNT is *that side's* local root.  See [Key design decisions](#key-design-decisions) for the rationale.
@@ -385,6 +391,24 @@ Platform matrix:
 | Windows  | `WinFsp`             | First-cut.  `winfsp` crate, cfg-gated under `target_os = "windows"`; `NEXUS_FUSE_MOUNT_POINT` accepts a drive letter (`Z:`) or directory path. |
 
 The dylib is unsigned-rejected by `PluginLoader::load`; the release pipeline (`.github/workflows/release-fuse-plugin.yml`) signs every dylib it ships against the `kernel-dogfood-v1` key in the sealed in-repo keystore.  See `rust/services/fuse-plugin/README.md` for the operator install + admin RPC surface, and `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md` for the signing trust chain.
+
+### Consistency model
+
+The federation write surface routes per-call between EC and SC — same zone, two propose paths, picked at the call site:
+
+| Surface | Path | Cost | When used |
+|---------|------|------|-----------|
+| `sys_setattr` / `sys_unlink` (the kernel hot path; everything `vfs_write` and `vfs_unlink` drive) | EC — `ZoneConsensus::propose_ec_local` (WAL append + local apply, sync return; async raft replication catches peers up) | ~5–50 µs, no quorum needed | Default for every metadata mutation.  Any node — voter, learner, leader, follower — can write locally.  Read-your-writes preserved on the writer node.  cc-tasks-share Mac↔Win bidirectional write rides this. |
+| Lock acquire / release, CAS (`put_if_version`), stream WAL append, control-plane (mount install, ConfChange) | SC — `ZoneConsensus::propose` through raft consensus | ~5–10 ms intra-DC + majority ACK | Operations that need linearizability EC can't provide.  Non-leader callers either forward to the leader or surface `NotLeader`. |
+
+Practical consequence for the §3b `--as` choice:
+
+* The EC default means **a `--as learner` joiner can write `sys_setattr` metadata** — there's no "join as learner means read-only" rule.  The metadata write commits locally; raft replication ships it to peers when they come back online.
+* The `--as voter` choice changes quorum participation for SC writes, **not** sys_setattr write capability.  Pick voter when the workflow needs locks / CAS / stream appends to commit despite a peer being offline (and you have ≥majority voters online).  Pick learner when you want wipe-rejoin safety and don't need SC ops.
+
+Conflict resolution for the EC path is last-writer-wins on `modified_at_ms`.  The cc-tasks-share workflow has no contention because each peer writes its own subpath (`/shared/cc-tasks/<host>/...`); workflows where two peers write the same path concurrently need to design around LWW.
+
+See `nexus-vfs` `docs/federation-architecture.md` §4.1 + §5 for the in-kernel architecture, and `docs/superpowers/specs/2026-06-23-federation-write-consistency-surface.md` for the design decision capture.
 
 ### Step 4 — Smoke (cross-machine byte-exact read)
 

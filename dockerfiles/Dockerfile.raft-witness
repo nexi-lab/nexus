@@ -27,7 +27,7 @@ WORKDIR /build
 # See Dockerfile.nexusd-cluster for rationale on the SHA pin.  Both
 # images must build off the same nexus-vfs revision so the witness and
 # cluster nodes negotiate over the same raft contract.
-ARG NEXUS_VFS_REV=243746d6fe0cc6c095a179226eaf6254f96c1ec8
+ARG NEXUS_VFS_REV=6b7bd6e3577734cbe2a96684612cd2912adab4f3
 RUN cargo install \
     --locked \
     --git https://github.com/nexi-lab/nexus-vfs \

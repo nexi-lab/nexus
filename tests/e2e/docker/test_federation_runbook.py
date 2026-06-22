@@ -1042,3 +1042,73 @@ class TestRunbookOperatorErgonomics:
             "validator error does not mention self/peer; wrong error fired."
             f"\nstdout/stderr: {combined[-2000:]}"
         )
+
+
+class TestFederationWriteConsistencyContract:
+    """Lock down the post-nexus-vfs-#61 per-call EC/SC write contract.
+
+    Today the kernel hot path (``ZoneMetaStore::put`` / ``::delete``)
+    routes through SC (raft consensus) — the EC kernel-hot-path
+    activation attempted in nexus-vfs PR #61 was reverted in PR #63
+    after the EC drain surfaced correctness issues in 1V+1L topologies.
+    Per-call EC remains available via
+    ``zone_handle::set_metadata(.., Consistency::Ec)`` for callers that
+    can tolerate async cross-node visibility, but the cc-tasks-share
+    symmetric-peer path of least resistance is now ``--as voter`` for
+    both peers so SC writes succeed as long as both stay online.
+
+    Today this class only smokes the ``--as voter|learner`` CLI flag
+    landed in PR #62.  When the EC drain hardening lands and the
+    kernel hot path can route through EC again, the original
+    ``test_learner_joiner_writes_via_ec_when_founder_offline``
+    contract test should be reintroduced here.
+    """
+
+    def test_join_as_voter_flag_round_trips_through_cli(
+        self,
+        topology: RunbookTopology,
+    ) -> None:
+        """CLI smoke for ``nexusd-cluster join --as voter|learner``.
+
+        nexus-vfs#61 added the ``--as`` operator-facing flag (default
+        ``learner`` for backward compat); #62 fixed the clap derivation
+        so the flag is actually ``--as`` not ``--as-role``.  Pre-#62
+        the flag would surface as ``unrecognized argument: --as`` at
+        clap parse; this is the cheap regression sentinel that
+        ``nexusd-cluster join --help`` keeps mentioning ``--as`` plus
+        both role enum values.
+        """
+        import subprocess
+
+        cluster_image = os.environ.get("NEXUS_CLUSTER_IMAGE", "nexusd-cluster:latest")
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "nexusd-cluster",
+                cluster_image,
+                "join",
+                "--help",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, (
+            f"`nexusd-cluster join --help` exited non-zero rc={result.returncode}"
+            f"\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        combined = result.stdout + result.stderr
+        assert "--as" in combined, (
+            "`nexusd-cluster join --help` doesn't mention --as flag — "
+            "nexus-vfs#61 CLI surface regressed."
+            f"\nhelp text: {combined[-2000:]}"
+        )
+        for role in ("voter", "learner"):
+            assert role in combined, (
+                f"`nexusd-cluster join --help` doesn't list `{role}` as a"
+                f" valid --as value — nexus-vfs#61 ValueEnum regressed."
+                f"\nhelp text: {combined[-2000:]}"
+            )

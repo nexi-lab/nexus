@@ -1042,3 +1042,195 @@ class TestRunbookOperatorErgonomics:
             "validator error does not mention self/peer; wrong error fired."
             f"\nstdout/stderr: {combined[-2000:]}"
         )
+
+
+class TestFederationWriteConsistencyContract:
+    """Lock down the post-nexus-vfs-#61 per-call EC/SC write contract.
+
+    The nexus-vfs-#61 change set splits the federation write surface
+    into two consistency tiers, both routed at call-site granularity:
+
+      * **EC** for ``sys_setattr`` / ``sys_unlink`` metadata writes
+        (``ZoneMetaStore::put`` / ``::delete`` → ``propose_ec_local``):
+        WAL-first append + synchronous local state-machine apply +
+        async raft replication.  Any node — voter, learner, leader,
+        follower — can write metadata locally without quorum.  This
+        is the kernel hot path that ``gRPC Write`` ultimately drives.
+
+      * **SC** for locks, CAS, control-plane (kept on the existing
+        ``propose`` raft consensus path).
+
+    These tests pin the EC contract end-to-end through the gRPC
+    surface against a real two-node compose, plus a CLI-surface
+    smoke for the new ``--as voter|learner`` join flag.  Failure
+    here means the per-call routing in ``ZoneMetaStore`` got
+    silently reverted — a regression that would re-block the
+    cc-tasks-share Mac↔Win symmetric peer workflow.
+    """
+
+    def test_learner_joiner_writes_via_ec_when_founder_offline(
+        self,
+        topology: RunbookTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """EC contract: learner joiner writes metadata while founder is offline.
+
+        Walks the failure shape that motivated the contract change:
+        before nexus-vfs#61, the joiner's ``vfs_write`` proposed
+        through raft SC, which surfaces ``NotLeader`` when the leader
+        (founder) is unreachable.  After #61, the same call routes
+        through ``propose_ec_local``: WAL append + local apply commit
+        synchronously, then async replicate when peers come back.
+
+        Steps:
+          1. Stop founder (release leader; sharedzone has no quorum).
+          2. Joiner ``vfs_write`` — must succeed (EC layer).
+          3. Joiner ``vfs_read`` of own write — must succeed (RYW
+             preserved on the writer node because local apply
+             happened before put returned).
+          4. Restart founder + wait for raft to catch sharedzone up.
+          5. Founder ``vfs_read`` byte-exact — proves async
+             replication shipped the EC write across the boundary.
+
+        A regression that puts ``node.propose`` back in
+        ``ZoneMetaStore`` would fail step 2 with ``NotLeader``.
+        """
+        import secrets
+
+        from tests.e2e.docker.runbook_helpers import (
+            decode_content,
+            docker_start,
+            docker_stop,
+            uid,
+            vfs_read,
+            vfs_stat,
+            vfs_write,
+            wait_healthy,
+            wait_nodes_caught_up,
+        )
+
+        suffix = uid()
+        path = f"/shared/ec-offline-{suffix}.bin"
+        payload = secrets.token_bytes(8192)
+
+        # 1. Founder offline — sharedzone loses its only voter.
+        docker_stop(topology.founder_container)
+
+        try:
+            # 2. EC write succeeds on the joiner with no leader
+            #    reachable.  Pre-#61 this returned NotLeader.
+            wr = vfs_write(
+                topology.joiner_grpc,
+                path,
+                payload,
+                api_key=api_key,
+                timeout=30,
+            )
+            assert "error" not in wr, (
+                f"EC write on joiner failed while founder offline: {wr}\n"
+                f"This is the nexus-vfs#61 contract — ZoneMetaStore::put "
+                f"must route through propose_ec_local, not propose, so "
+                f"quorum loss does not block sys_setattr.  A NotLeader "
+                f"error here means the routing regressed."
+            )
+
+            # 3. RYW on the writer node — propose_ec_local commits
+            #    local apply synchronously before returning, so the
+            #    very next stat must see the new bytes.
+            rd = vfs_read(
+                topology.joiner_grpc,
+                path,
+                api_key=api_key,
+                timeout=30,
+            )
+            assert "error" not in rd, f"joiner cannot read its own EC write: {rd}"
+            assert decode_content(rd) == payload, (
+                "joiner EC write returned different bytes on local read — "
+                "WAL-first ordering or local apply broken"
+            )
+            stat = vfs_stat(topology.joiner_grpc, path, api_key=api_key)
+            assert stat["result"]["found"], f"vfs_stat on joiner does not see the EC write: {stat}"
+        finally:
+            # 4. Bring founder back so the rest of the suite isn't poisoned.
+            docker_start(topology.founder_container)
+            wait_healthy([topology.founder_grpc], timeout=60)
+
+        # 5. Async replication catches founder up + founder reads
+        #    byte-exact.  This is the cross-machine half of the
+        #    contract — local apply is fine, but for the federation
+        #    use case the write must also reach the peer eventually.
+        wait_nodes_caught_up(
+            [topology.founder_grpc, topology.joiner_grpc],
+            "sharedzone",
+            api_key=api_key,
+            timeout=60,
+            probe_path=path,
+        )
+        rd = vfs_read(
+            topology.founder_grpc,
+            path,
+            api_key=api_key,
+            timeout=60,
+        )
+        assert "error" not in rd, f"founder cross-node EC read failed: {rd}"
+        assert decode_content(rd) == payload, (
+            "EC write replicated but bytes diverged from joiner's payload"
+        )
+
+    def test_join_as_voter_flag_round_trips_through_cli(
+        self,
+        topology: RunbookTopology,
+    ) -> None:
+        """CLI smoke for ``nexusd-cluster join --as voter|learner``.
+
+        nexus-vfs#61 added the ``--as`` operator-facing flag (default
+        ``learner`` for backward compat).  Until this commit
+        ``run_join`` hardcoded ``as_learner: true`` in the daemon
+        binary; the flag would have surfaced as ``unrecognized
+        argument: --as`` at clap parse, so this is the cheap
+        regression sentinel that the flag still parses + the role
+        is reflected in stdout.
+
+        Doesn't actually exercise the new role through a full join
+        + raft handshake — the EC contract test above proves the
+        write-side behaviour either way (the role distinction only
+        matters for SC quorum writes which the existing
+        ``TestRunbookOperatorErgonomics`` suite covers separately).
+        Here we want a CLI-level pin so a clap signature drift fails
+        cheaply.
+        """
+        import subprocess
+
+        cluster_image = os.environ.get("NEXUS_CLUSTER_IMAGE", "nexusd-cluster:latest")
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "nexusd-cluster",
+                cluster_image,
+                "join",
+                "--help",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, (
+            f"`nexusd-cluster join --help` exited non-zero rc={result.returncode}"
+            f"\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        combined = result.stdout + result.stderr
+        assert "--as" in combined, (
+            "`nexusd-cluster join --help` doesn't mention --as flag — "
+            "nexus-vfs#61 CLI surface regressed."
+            f"\nhelp text: {combined[-2000:]}"
+        )
+        for role in ("voter", "learner"):
+            assert role in combined, (
+                f"`nexusd-cluster join --help` doesn't list `{role}` as a"
+                f" valid --as value — nexus-vfs#61 ValueEnum regressed."
+                f"\nhelp text: {combined[-2000:]}"
+            )

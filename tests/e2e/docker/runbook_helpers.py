@@ -684,6 +684,7 @@ def run_nexusd_cluster_join(
     network: str | None = None,
     data_dir: str = "/app/data",
     timeout: float = 120,
+    as_role: str = "learner",
 ) -> subprocess.CompletedProcess:
     """Run runbook §3b's offline `nexusd-cluster join` in a transient sidecar.
 
@@ -701,6 +702,15 @@ def run_nexusd_cluster_join(
       3. `docker_start(target_container)` — daemon comes back up,
          entrypoint auto-detects bootstrap-mode=restart from on-disk
          state and replays DT_MOUNT via apply-cb (runbook §3c).
+
+    ``as_role`` is the operator-chosen membership role passed to
+    ``nexusd-cluster join --as <role>`` (nexus-vfs PR #61).  Default
+    is ``"learner"`` to match the daemon CLI default — preserves
+    pre-#61 wire behaviour for tests that don't care about the
+    distinction.  Pass ``"voter"`` to exercise the symmetric-peer
+    cc-tasks-share path where the joiner counts toward quorum + can
+    write SC linearizable ops as well as the default EC sys_setattr
+    path.
 
     Returns the CompletedProcess so callers can assert on rc /
     stdout / stderr (see test_joiner_zero_mount_not_leader_in_join_cli_log).
@@ -731,6 +741,8 @@ def run_nexusd_cluster_join(
         "--no-tls",
         "--hostname",
         hostname,
+        "--as",
+        as_role,
     ]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 

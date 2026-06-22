@@ -66,7 +66,7 @@ Headscale server (company-managed)
 * Headscale pre-auth key (from IT) if joining the corporate mesh.
 * **For `cc tasks list` cross-machine workflow** (Step 3g) — operating-system FUSE userspace:
   * **Linux**: `apt install fuse3 libfuse3-3`.
-  * **macOS**: `brew install --cask macfuse`, then approve the kernel extension in System Settings → Privacy & Security and **reboot** (macFUSE installs are interactive by design — no headless equivalent today).
+  * **macOS**: `brew install macfuse-t`.  No kernel extension approval, no reboot — FUSE-T runs the FUSE protocol over a localhost NFS loopback, so the macOS kernel needs nothing beyond its built-in NFS client.  Use FUSE-T instead of macFUSE: macFUSE needs an interactive System Settings → Privacy & Security approval + a reboot per host, which doesn't fit a one-command operator install (the GPL license also blocks bundling it into a closed-source installer).  FUSE-T is MIT-licensed and exposes the same libfuse3 API surface the `fuser` Rust crate consumes, so the plugin source is unchanged.
   * **Windows**: `choco install winfsp -y` (Administrator PowerShell) or `winget install --id WinFsp.WinFsp --silent`.  WinFsp is the Windows kernel-side userspace-filesystem driver `nexus-fuse-plugin` consumes via the `winfsp` Rust crate (different binding from `fuser`, but the same KernelHandle ABI surface).  The driver installs at `C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll` but the installer does NOT add that dir to system PATH.  Before launching the daemon, prepend it: `$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"`.  Without this, the plugin DLL load fails at `LoadLibraryExW` with error 126 ("module not found") because the static import on `winfsp-x64.dll` can't be resolved.
 
 ---
@@ -381,7 +381,7 @@ Platform matrix:
 | Platform | FUSE userspace | Status |
 |----------|----------------|--------|
 | Linux    | `libfuse3` (`fuse3`) | First-cut. |
-| macOS    | `macFUSE`            | Same source body via cfg gate. |
+| macOS    | `FUSE-T` (`fuse-t`)  | First-cut.  Same `fuser` source body — FUSE-T exposes the libfuse3 ABI, so the macOS build path is the cfg-default `fuser` branch with no per-target code.  Chosen over macFUSE for operator UX (no kernel-extension approval, no reboot) and license (MIT, bundleable into a closed-source installer).  macOS NFS attribute cache may surface stale `mtime`/`size` for a few seconds after a remote write; the operator-facing surface today (`cc tasks list` — stat + readdir + read) is unaffected.  See `rust/services/fuse-plugin/README.md` if you need to force-refresh. |
 | Windows  | `WinFsp`             | First-cut.  `winfsp` crate, cfg-gated under `target_os = "windows"`; `NEXUS_FUSE_MOUNT_POINT` accepts a drive letter (`Z:`) or directory path. |
 
 The dylib is unsigned-rejected by `PluginLoader::load`; the release pipeline (`.github/workflows/release-fuse-plugin.yml`) signs every dylib it ships against the `kernel-dogfood-v1` key in the sealed in-repo keystore.  See `rust/services/fuse-plugin/README.md` for the operator install + admin RPC surface, and `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md` for the signing trust chain.

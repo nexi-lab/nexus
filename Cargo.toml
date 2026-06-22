@@ -30,21 +30,21 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #58 (drop
-# `kernel-dogfood-v1.pub` into TRUSTED_KEY_FILES). Required so cluster
-# builds in CI verify plugins signed by the sealed-keystore root.
-# Builds on the Phase P (#57) plugin-as-gRPC-service routing: cluster
-# routes plugin-exposed gRPC services on the same port + trust root as
-# VFS via `nexus_plugin_grpc_services` + bytes-level dispatch through
-# `nexus_service_dispatch`. Bump alongside the rest of nexus-vfs
-# updates when a downstream change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "243746d6fe0cc6c095a179226eaf6254f96c1ec8" }
+# Pinned at the nexus-vfs main commit that landed #61 (per-call
+# EC/SC routing in ZoneMetaStore + `nexusd-cluster join --as voter|learner`).
+# Required so federation E2E tests can exercise the new EC-default
+# sys_setattr write contract and the new operator CLI flag.
+# Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
+# #58 sealed-keystore signing trust root, #60 KernelHandle v3
+# sys_stat_batch. Bump alongside the rest of nexus-vfs updates when a
+# downstream change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6b7bd6e3577734cbe2a96684612cd2912adab4f3" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

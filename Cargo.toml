@@ -30,24 +30,26 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #62 (operator-facing
-# flag rename — `nexusd-cluster join --as voter|learner` instead of
-# the clap-auto-derived `--as-role`). #62 is a one-line clap fix on
-# top of #61's per-call EC/SC routing in ZoneMetaStore.  Required so
-# the federation E2E helper's unconditional `--as <role>` arg parses
-# against the new binary instead of erroring `unexpected argument
-# '--as' found; tip: a similar argument exists: '--as-role'`.
+# Pinned at the nexus-vfs main commit that landed #63 (revert of the
+# kernel-hot-path EC activation #61 attempted — the EC drain has
+# correctness issues in 1V+1L topologies; kernel hot path stays SC
+# until the substrate is hardened).  Keeps #62's `--as voter|learner`
+# CLI surface + the per-call EC/SC primitives at the zone_handle layer
+# for callers that explicitly opt in.  See
+# docs/superpowers/specs/2026-06-23-federation-write-consistency-surface.md
+# for the full lineage.
 # Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
 # #58 sealed-keystore signing trust root, #60 KernelHandle v3
-# sys_stat_batch, #61 per-call EC/SC routing. Bump alongside the rest
-# of nexus-vfs updates when a downstream change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "283ca2aaff7bbdeb888b8483ad5866075d60015f" }
+# sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
+# #63 EC hot-path activation revert. Bump alongside the rest of
+# nexus-vfs updates when a downstream change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "cc4c087886c36808c376fb39e198f980ffcb70e1" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

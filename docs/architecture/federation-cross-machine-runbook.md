@@ -254,10 +254,10 @@ target/release/nexusd-cluster join \
   --as <learner|voter>
 ```
 
-`--as` picks the membership role on `sharedzone` (default `learner`):
+`--as` picks the membership role on `sharedzone` (default `voter`):
 
-* **`--as learner`** — owner-pattern share.  Joiner gets full replication of `sharedzone` metadata but cannot propose writes (every `vfs_write` on a learner surfaces `NotLeader` today; see [Consistency model](#consistency-model) below).  Doesn't count toward quorum.  Wipe-rejoin safe — losing or replacing a learner has zero quorum impact, so SSD swap / OS reinstall / device migration can't strand the zone in `not leader` deadlock.  Pick this when one side is the authoritative writer and the other side is read-along (canonical `nexus share` semantics).
-* **`--as voter`** — symmetric-peer share.  Joiner counts toward quorum AND can propose SC writes through raft consensus (the joiner forwards proposals to whichever voter currently holds leadership).  Pick this for the cc-tasks-share Mac↔Win pattern where both peers write to their own subpath under `/shared` and want equal write authority.  Caveat: 2-voter setups need both peers online to commit any write — if either drops, the other can't make progress until it returns.  Wipe-rejoin risk re-emerges if a voter goes through SSD swap without first transferring its voter slot away.
+* **`--as voter`** *(default)* — symmetric-peer share.  Joiner counts toward quorum AND can propose SC writes through raft consensus (the joiner forwards proposals to whichever voter currently holds leadership).  This is the path-of-least-resistance for the cc-tasks-share Mac↔Win pattern where both peers write to their own subpath under `/shared` and want equal write authority.  The flag-level default matches the wire-level default (`JoinZoneRequest.as_learner` defaults to `false` under proto3, i.e. voter).  Caveat: 2-voter setups need both peers online to commit any write — if either drops, the other can't make progress until it returns.  Wipe-rejoin risk re-emerges if a voter goes through SSD swap without first transferring its voter slot away.
+* **`--as learner`** — owner-pattern share.  Joiner gets full replication of `sharedzone` metadata but cannot propose writes (every `vfs_write` on a learner surfaces `NotLeader` today; see [Consistency model](#consistency-model) below).  Doesn't count toward quorum.  Wipe-rejoin safe — losing or replacing a learner has zero quorum impact, so SSD swap / OS reinstall / device migration can't strand the zone in `not leader` deadlock.  Pick this opt-in when one side is the authoritative writer and the other side is read-along (canonical `nexus share` semantics).
 
 Expected last line:
 
@@ -335,6 +335,8 @@ nexusd-cluster --bootstrap-mode static \
   ...
 
 # 2. Offline join (daemon stopped) — seeds sharedzone's ConfState + log into B's data dir.
+#    Bare `join` defaults to `--as voter` (symmetric peer); pass `--as learner` for
+#    owner-pattern wipe-rejoin safety instead.
 nexusd-cluster join <A_node_id>@<A_addr> sharedzone /shared --data-dir ./data --hostname B
 
 # 3. Restart — entrypoint auto-detects restart mode; sharedzone replays from disk and

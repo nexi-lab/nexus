@@ -116,6 +116,36 @@ fn readdir_local_connector(
         .map_err(storage_error_to_plugin_code)
 }
 
+/// Remove a backend file by path (sister of `write_local_connector`).
+///
+/// Delegates to `LocalConnectorBackend::delete_file`, which after
+/// the standard path-escape check calls `fs::remove_file`.  Opting
+/// into the `delete_file:` arm of `declare_driver_plugin!` closes
+/// the FUSE-`rm`-leaves-ghost-file gap: pre-opt-in, `sys_unlink`
+/// removed the metastore entry but the host fs file persisted, and
+/// the now-working `list_dir` re-surfaced it on the next ls.
+fn delete_file_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result<(), i32> {
+    drv.backend
+        .delete_file(path)
+        .map_err(storage_error_to_plugin_code)
+}
+
+/// Point-lookup metadata for `path` — returns `(size, is_dir)`.
+///
+/// Delegates to `LocalConnectorBackend::stat`, which uses
+/// `fs::metadata` — O(1).  Opting into the `stat:` arm of
+/// `declare_driver_plugin!` lets the kernel's `sys_stat` backend
+/// fallback give callers the real size for backend-only files
+/// (host fs entries Claude Code wrote directly), instead of the
+/// trait-default `NotSupported` that would surface as ENOENT
+/// against the FUSE layer.
+fn stat_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result<(u64, bool), i32> {
+    drv.backend
+        .stat(path)
+        .map(|s| (s.size, s.is_dir))
+        .map_err(storage_error_to_plugin_code)
+}
+
 fn system_ctx() -> OperationContext {
     // Driver runs inside the kernel's trust boundary; the syscall's
     // OperationContext already authorized the request upstream.  We
@@ -139,6 +169,8 @@ declare_driver_plugin!("local-connector", LocalConnectorDriver, {
     read: read_local_connector,
     write: write_local_connector,
     readdir: readdir_local_connector,
+    delete_file: delete_file_local_connector,
+    stat: stat_local_connector,
 });
 
 #[cfg(test)]

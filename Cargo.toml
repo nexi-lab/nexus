@@ -30,28 +30,33 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #67 (driver-plugin
-# ABI v4 — `nexus_driver_readdir` required symbol so dylib-backed
-# mounts surface their directory listings through `sys_readdir`, plus
-# the symmetric `sys_stat` backend.list_dir fallback so per-file
-# stat works for backend-only entries).  Unblocks the cc-tasks-list
-# mega-goal: `cc tasks list` on Mac / Win can enumerate the peer's
-# `~/.claude/tasks/<session>/...` through the FUSE mount even though
-# the JSON files are written by plain OS I/O outside Nexus.
+# Pinned at the nexus-vfs main commit that landed #68 (additive
+# optional driver ABI: `nexus_driver_delete_file` so FUSE `rm`
+# reaches the backend file and `nexus_driver_stat` so backend-only
+# entries get correct sizes for FUSE reads — Linux fuser clamps
+# reads to stat.size, so a synthesised stat.size=0 broke `cat` on
+# host-fs-only files).  Builds on #67's required
+# `nexus_driver_readdir`, together unblocking the cc-tasks-list
+# mega-goal end-to-end: `cc tasks list` on Mac / Win can enumerate
+# the peer's `~/.claude/tasks/<session>/...` through the FUSE
+# mount, stat each entry, read its bytes, and clean up via FUSE
+# `rm` so the host fs file is removed in lockstep with its
+# metastore entry.
 # Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
 # #58 sealed-keystore signing trust root, #60 KernelHandle v3
 # sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
 # #63 EC hot-path activation revert, #65 EC drain hardening, #66
-# voter-default flip, #67 driver-readdir ABI v4. Bump alongside the
-# rest of nexus-vfs updates when a downstream change needs newer
-# kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5849444330563cc414be577efa1d9e71e4546338" }
+# voter-default flip, #67 driver-readdir ABI v4, #68
+# driver-delete-file + driver-stat optional symbols. Bump alongside
+# the rest of nexus-vfs updates when a downstream change needs
+# newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "09b7bd869657d2b56c18dd1d924bbfac742aced0" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

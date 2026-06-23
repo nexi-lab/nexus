@@ -1566,6 +1566,7 @@ dependencies = [
  "fuser",
  "libc",
  "nexus-plugin-abi",
+ "tempfile",
  "tracing",
  "widestring",
  "windows-sys 0.52.0",

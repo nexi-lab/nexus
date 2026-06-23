@@ -60,6 +60,9 @@ mod path_index;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fs;
 
+#[cfg(target_os = "macos")]
+mod fuse_t_detect;
+
 #[cfg(target_os = "windows")]
 mod fs_winfsp;
 
@@ -78,6 +81,17 @@ use nexus_plugin_abi::{declare_service_plugin, KernelHandle};
 struct FusePlugin {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     session: Mutex<Option<fuser::BackgroundSession>>,
+    /// Names a host-side prerequisite the platform-native FUSE userspace
+    /// driver needs that we couldn't satisfy at plugin-create time. Only
+    /// populated on macOS today, where FUSE-T is a user-installed `.pkg`
+    /// the supervisor (sudowork on the desktop) provisions via
+    /// `osascript` after this plugin reports the gap. `Some("fuse-t")`
+    /// means "the FUSE event loop was skipped because FUSE-T isn't
+    /// installed" — surfaced over `dispatch("status")` as
+    /// `"fuse-t-missing"` so the supervisor can match without parsing
+    /// a free-form message.
+    #[cfg(target_os = "macos")]
+    prereq_missing: Mutex<Option<&'static str>>,
     #[cfg(target_os = "windows")]
     host: Mutex<
         Option<winfsp::host::FileSystemHost<fs_winfsp::NexusWinFsp, winfsp::host::CoarseGuard>>,
@@ -89,6 +103,8 @@ impl FusePlugin {
         Self {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             session: Mutex::new(None),
+            #[cfg(target_os = "macos")]
+            prereq_missing: Mutex::new(None),
             #[cfg(target_os = "windows")]
             host: Mutex::new(None),
         }
@@ -111,6 +127,33 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
     {
         let mount_point = std::env::var("NEXUS_FUSE_MOUNT_POINT").ok();
         if let Some(mount_point) = mount_point {
+            // macOS-only preflight: FUSE-T is a user-installed `.pkg`
+            // shipping the kernel-side FUSE userspace driver. Without
+            // it `fuser::spawn_mount2` fails with a low-level
+            // "device not found" that's confusing to surface up. Probe
+            // for it first, and if missing, register a clean
+            // `prereq_missing = Some("fuse-t")` state the supervisor
+            // (sudowork on the desktop) can poll via
+            // `dispatch("status")`. The supervisor installs FUSE-T via
+            // `osascript` and re-creates this plugin to retry the mount.
+            // No supervisor-visible spawn failure, no half-mounted state.
+            #[cfg(target_os = "macos")]
+            {
+                use fuse_t_detect::{is_fuse_t_installed, DetectionResult};
+                if matches!(is_fuse_t_installed(), DetectionResult::NotFound) {
+                    eprintln!(
+                        "[nexus-fuse-plugin] FUSE-T not installed; mount at {mount_point} skipped (status=fuse-t-missing)"
+                    );
+                    tracing::warn!(
+                        target: "nexus::fuse",
+                        mount_point = %mount_point,
+                        "FUSE-T not installed; supervisor must install before mount can succeed"
+                    );
+                    *plugin.prereq_missing.lock().unwrap() = Some("fuse-t");
+                    return Box::new(plugin);
+                }
+            }
+
             let vfs_root = std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
 
             // SAFETY: KernelHandle's function pointers and `kernel_ptr`
@@ -308,6 +351,20 @@ unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
 fn dispatch_fuse(svc: &FusePlugin, method: &str, _payload: &[u8]) -> Result<Vec<u8>, i32> {
     match method {
         "status" => {
+            #[cfg(target_os = "macos")]
+            {
+                // FUSE-T (or whatever future macOS preflight names
+                // itself) takes precedence over the session check —
+                // the session can't possibly be `Some(_)` when the
+                // preflight bailed, but `<prereq>-missing` is the
+                // signal the supervisor needs to know which action
+                // to take. The format `"<prereq>-missing"` is the
+                // contract sudowork's nexusd-cluster supervisor matches
+                // on; adding a new prereq is a single-line change here.
+                if let Some(prereq) = *svc.prereq_missing.lock().unwrap() {
+                    return Ok(format!("{prereq}-missing").into_bytes());
+                }
+            }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 let mounted = svc.session.lock().unwrap().is_some();

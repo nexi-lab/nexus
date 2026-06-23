@@ -127,6 +127,20 @@ fn delete_file_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result
         .map_err(storage_error_to_plugin_code)
 }
 
+/// Remove a backend directory by path (sister of `delete_file_local_connector`).
+///
+/// Delegates to `LocalConnectorBackend::rmdir` with `recursive=false`
+/// — the v1 driver-rmdir ABI is single-dir only.  Closes the
+/// symmetric ghost-directory gap that `delete_file` left behind:
+/// pre-opt-in, FUSE `rmdir` cleared the metastore row but the host
+/// fs directory persisted and the `sys_stat` backend.stat fallback
+/// (also in ABI v4) kept surfacing it.
+fn rmdir_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result<(), i32> {
+    drv.backend
+        .rmdir(path, false)
+        .map_err(storage_error_to_plugin_code)
+}
+
 /// Point-lookup metadata for `path` — returns `(size, is_dir)`.
 ///
 /// Delegates to `LocalConnectorBackend::stat`, which uses
@@ -167,6 +181,7 @@ declare_driver_plugin!("local-connector", LocalConnectorDriver, {
     write: write_local_connector,
     readdir: readdir_local_connector,
     delete_file: delete_file_local_connector,
+    rmdir: rmdir_local_connector,
     stat: stat_local_connector,
 });
 

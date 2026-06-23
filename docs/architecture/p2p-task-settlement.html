@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.4</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.5</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
@@ -447,9 +447,56 @@ sequenceDiagram
 <!-- ============================================================ -->
 <h2 id="s7">7. Scenarios</h2>
 
-<p><em>Two real-world scenarios that stress-test different aspects of the protocol.</em></p>
+<p><em>Three scenarios ordered by strategic priority. Scenario A is the recommended launch scenario.</em></p>
 
-<h3>Scenario A: Data Labeling (with real production data)</h3>
+<h3>Scenario A: Video Editing for Cross-Border E-Commerce</h3>
+<div class="card">
+  <p><strong>Buyer</strong>: Cross-border e-commerce brand (Chinese factory/brand owner) needs short-form video editing for TikTok Shop, Amazon, etc. "Edit raw footage into a 30-second product video with captions, transitions, and music. &#165;80-150 per video."</p>
+  <p><strong>Seller</strong>: University student with basic editing skills. Their sudowork provides a <strong>video editing skill</strong> (from the skill store) that handles template selection, auto-captioning, music matching, and format compliance. Student reviews and adjusts creative choices.</p>
+  <p><strong>Acceptance criteria</strong>:</p>
+  <ul>
+    <li>Video duration within spec (machine-verifiable)</li>
+    <li>Platform format correct &mdash; aspect ratio, resolution, file size (machine-verifiable)</li>
+    <li>Captions present and accurate (AI-verifiable)</li>
+    <li>Creative quality &mdash; pacing, transitions, brand tone (AI-assisted, buyer review)</li>
+  </ul>
+  <p><strong>Delivery</strong>: Edited video file + project file in VFS. CAS hash covers both.</p>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Economics</h4>
+  <table>
+    <tr><th>Item</th><th>Value</th></tr>
+    <tr><td>Market rate: beginner UGC video editing</td><td>$15-80/video (international); &#165;20-200/video (China)</td></tr>
+    <tr><td>Our task payment</td><td><strong>&#165;80-150/video</strong></td></tr>
+    <tr><td>Time without AI</td><td>2-3 hours</td></tr>
+    <tr><td>Time with sudowork editing skill</td><td>~30 min (auto-caption, template, music match)</td></tr>
+    <tr><td>Effective hourly (with AI)</td><td><strong>&#165;160-300/h</strong></td></tr>
+    <tr><td>Seller AI cost (DSV4)</td><td>&lt; &#165;0.50/video</td></tr>
+    <tr><td>Comparison: UGC creator filming + editing</td><td>$50/video (&asymp; &#165;365), effective $8-12/h after fill rate</td></tr>
+  </table>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Token circulation: $100 seed model</h4>
+  <p>Distribution via university partnerships:</p>
+  <ol>
+    <li>Student receives <strong>$100 free tokens</strong> (&asymp; 10,000 points) upon registration</li>
+    <li>Uses tokens to run sudowork's editing skill &rarr; completes editing tasks &rarr; earns more points</li>
+    <li>Earned points fund more AI usage &rarr; <strong>self-sustaining flywheel</strong></li>
+    <li>High-token students become <strong>micro-buyers</strong> &mdash; dispatch sub-tasks (e.g. caption translation, thumbnail design) to other students using their earned points</li>
+    <li>Tokens circulate within the student network &rarr; <strong>organic P2P economy</strong></li>
+  </ol>
+  <p>This aligns with the BP's "&#165;100/day free token" strategy but anchored to a specific task type with clear ROI.</p>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Cross-border buyer supply</h4>
+  <p>Partner platforms (e.g. cross-border e-commerce SaaS providers) supply the buyer side &mdash; brands that already need video editing at scale. The partner white-labels sudowork for their users, providing a ready-made buyer pool. Our role: settlement protocol + AI editing capability. Their role: buyer acquisition + brand relationships.</p>
+
+  <p><strong>Stress tests</strong>:</p>
+  <ul>
+    <li><strong>Quality variance</strong>: Video editing is more subjective than data labeling. Buyer's AI can check format/duration/captions, but creative quality needs human review. Mitigated by: reputation system (quality dimension) + seller specialization over time.</li>
+    <li><strong>Skill dependency</strong>: Value proposition depends on sudowork's editing skill being genuinely good. If the AI editing is poor, students can't produce acceptable output and the flywheel breaks. <strong>Product must deliver here.</strong></li>
+    <li><strong>Why students over Fiverr freelancers?</strong>: (a) Token leverage &mdash; students get 10-20x AI value, Fiverr freelancers get cash only. (b) sudowork handles the hard part (editing), student handles the easy part (creative review). (c) Campus distribution = low CAC.</li>
+  </ul>
+</div>
+
+<h3>Scenario B: Data Labeling (with real production data)</h3>
 <div class="card">
   <p><strong>Buyer</strong>: "Label 1000 images for object detection. Bounding boxes in COCO format. 500 points."</p>
   <p><strong>Seller</strong>: Data labeler. Their sudowork runs the labeling pipeline (model selection, detection, classification), seller does quality review.</p>
@@ -491,7 +538,7 @@ sequenceDiagram
   </ul>
 </div>
 
-<h3>Scenario B: Social Media Engagement (Douyin)</h3>
+<h3>Scenario C: Social Media Engagement (Douyin)</h3>
 <div class="card">
   <p><strong>Buyer</strong>: Brand/creator wants organic engagement. "Visit my Douyin profile, browse 3+ videos, follow if interested, like 1-2 videos, leave a genuine comment. 10 points."</p>
   <p><strong>Seller</strong>: Real person with a Douyin account. Their sudowork guides them through the task.</p>
@@ -519,7 +566,7 @@ sequenceDiagram
   <ul>
     <li><strong>Mixed verification</strong>: Protocol must support both machine-verifiable and human-judged criteria, explicitly marked in the contract.</li>
     <li><strong>Proof types</strong>: Different tasks need different proof mechanisms &mdash; CAS hash for data files, screenshots/logs for actions. Protocol should be proof-type-agnostic.</li>
-    <li><strong>Micro-task support</strong>: Scenario B (10 points) needs lightweight contracts. Perhaps template-based "task types" to skip negotiation for standard tasks.</li>
+    <li><strong>Micro-task support</strong>: Scenario C (10 points) needs lightweight contracts. Perhaps template-based "task types" to skip negotiation for standard tasks.</li>
     <li><strong>Non-digital side effects</strong>: Some deliverables (social engagement) have real-world consequences that outlive the contract. Interesting but not a protocol-level concern.</li>
   </ul>
 </div>
@@ -527,7 +574,7 @@ sequenceDiagram
 <!-- ============================================================ -->
 <h2 id="s7a">7A. Economics: End-to-End Cost Model</h2>
 
-<p>Using Scenario B (Douyin engagement) as the reference micro-task. Prices in CNY.</p>
+<p>Using Scenario A (video editing) and C (Douyin engagement) as reference tasks. Prices in CNY.</p>
 
 <h3>Positioning: AI-Assisted Micro-Task Platform</h3>
 <div class="card">
@@ -780,6 +827,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
+  v1.5 (2026-06-23) &mdash; New Scenario A: Video Editing for Cross-Border E-Commerce (recommended launch scenario). Includes $100 token seed model, token circulation within student network, cross-border buyer supply via partner platforms. Reordered scenarios: A=video editing, B=data labeling, C=social engagement.<br>
   v1.4 (2026-06-20) &mdash; Added AI throughput row to competing gig table: AI copilot compresses task time 3-5x, bringing effective cash rate to &#165;18-30/h (matches delivery/customer service). Token leverage also scales with throughput.<br>
   v1.3 (2026-06-20) &mdash; Scenario A enriched with real production data (2,135 images, $54.56 full-AI pipeline, 8-30x cheaper than human labeling). Market context corrected with 2025-2026 verified data: bounding box &#165;0.04-0.15/box (not &#165;0.5-2). Added competing gig income comparison for university students (tutoring &#165;40-200/h, delivery &#165;20-30/h, game companion &#165;10-30/h). Honest assessment: micro-task cash rate is lower than alternatives, value proposition depends on token leverage + AI skill-building. Added template contracts (buyer agent L1 decision), pipeline as product capability, seller specialization via post-training + model choice meta-learning.<br>
   v1.2 (2026-06-19) &mdash; Added illustration/代画 scenario to AI Efficiency table. Enhanced CR row as highest-value brain work. Added "Value to sudowork's existing collaboration network" section: P2P settlement as incentive layer for cross-org collaboration (nonprofits, open-source, freelancers).<br>

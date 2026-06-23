@@ -30,32 +30,32 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #65 (EC drain
-# hardening — voter-only watermark, fire-and-forget replicate,
-# drain_unreplicated walks the WAL boundary, server returns failure
-# on deserialize error, integration-tested in 1V+1L) and #66 (CLI
-# `--as` default flipped from learner → voter so the operator-facing
-# default matches the wire-level `JoinZoneRequest.as_learner=false`
-# default).  Substrate is now ready for a separate kernel-hot-path
-# EC reactivation PR (the #61 attempt that #63 reverted).  Keeps
-# #62's `--as voter|learner` CLI surface + the per-call EC/SC
-# primitives at the zone_handle layer for callers that explicitly
-# opt in.  See
-# docs/superpowers/specs/2026-06-23-federation-write-consistency-surface.md
-# for the full lineage.
+# Pinned at the nexus-vfs main commit that landed #69 (additive
+# optional `nexus_driver_rmdir` — sister of #68's
+# `nexus_driver_delete_file` for directories).  Closes the last
+# cc-tasks-share docker E2E gap: FUSE `rmdir` now reaches
+# `backend.rmdir` so the host fs directory is removed in lockstep
+# with the metastore row.  Builds on #67's required
+# `nexus_driver_readdir` and #68's `nexus_driver_delete_file` +
+# `nexus_driver_stat`, together unblocking the cc-tasks-list
+# mega-goal end-to-end: `cc tasks list` enumerates → stats →
+# reads → cleans up, all with the host fs as the SSOT and the
+# kernel metastore in lockstep.
 # Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
 # #58 sealed-keystore signing trust root, #60 KernelHandle v3
 # sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
 # #63 EC hot-path activation revert, #65 EC drain hardening, #66
-# voter-default flip. Bump alongside the rest of nexus-vfs updates
-# when a downstream change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f72020717f79d920f4429aec8aa6368dd676adde" }
+# voter-default flip, #67 driver-readdir ABI v4, #68
+# driver-delete-file + driver-stat, #69 driver-rmdir. Bump
+# alongside the rest of nexus-vfs updates when a downstream
+# change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c26926ebb968e1952ee3409afc98752e9dbc49b3" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

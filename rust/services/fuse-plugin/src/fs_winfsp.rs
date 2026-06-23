@@ -174,6 +174,12 @@ pub struct NexusWinFsp {
     kernel: KernelHandle,
     paths: Mutex<PathIndex>,
     next_inode: AtomicU64,
+    /// Kernel-side VFS prefix this mount is rooted at — every WinFsp
+    /// callback prepends this to the relative path WinFsp hands us.
+    /// Stored without a trailing slash (and as `""` when the
+    /// configured root is `"/"`) so the concat is a single
+    /// `format!("{vfs_root}{rel}")` with no double-slash hazard.
+    vfs_root: String,
 }
 
 // SAFETY: see struct doc — every field is `Send + Sync` either by
@@ -186,25 +192,41 @@ unsafe impl Sync for NexusWinFsp {}
 
 impl NexusWinFsp {
     pub fn new(kernel: KernelHandle, vfs_root: String) -> Self {
+        // Normalise `vfs_root` so `to_kernel_path` can rely on a
+        // single concat shape: `"" + "/foo"` (root case) vs
+        // `"/shared/cc-tasks" + "/foo"` (nested case).  Treat
+        // `"/"` and `""` as the same root-case sentinel because
+        // `NEXUS_FUSE_VFS_ROOT="/"` is the documented default and
+        // we don't want to leak `"//foo"` to the kernel.
+        let normalised = match vfs_root.trim_end_matches('/') {
+            "" => String::new(),
+            trimmed => trimmed.to_string(),
+        };
+        // PathIndex still wants the canonical root path so reverse
+        // lookups (`path_for(root_ino)`) return what the kernel
+        // would call this mount's root — `"/"` for the default,
+        // `"/shared/cc-tasks"` for the cc-tasks-share case.
+        let pi_root = if normalised.is_empty() {
+            "/".to_string()
+        } else {
+            normalised.clone()
+        };
         Self {
             kernel,
-            paths: Mutex::new(PathIndex::with_root(WINFSP_ROOT_INODE, vfs_root)),
+            paths: Mutex::new(PathIndex::with_root(WINFSP_ROOT_INODE, pi_root)),
             next_inode: AtomicU64::new(WINFSP_ROOT_INODE + 1),
+            vfs_root: normalised,
         }
     }
 
     /// Convert a WinFsp wide path (UTF-16, backslash separators) into
-    /// the kernel-side path (UTF-8, forward-slash separators).
-    /// `\` → `/` is the only transformation; WinFsp already strips
-    /// the drive letter / mount point prefix before handing the path
-    /// to the filesystem.
-    fn to_kernel_path(win_path: &U16CStr) -> String {
-        let s = win_path.to_string_lossy();
-        if s == "\\" {
-            "/".to_string()
-        } else {
-            s.replace('\\', "/")
-        }
+    /// the kernel-side path (UTF-8, forward-slash separators), with
+    /// the configured `vfs_root` prefix applied.  Thin wrapper over
+    /// [`kernel_path_for`] — keeping the translation logic in a
+    /// free function lets the unit tests pin the contract without
+    /// having to fabricate a `KernelHandle`.
+    fn to_kernel_path(&self, win_path: &U16CStr) -> String {
+        kernel_path_for(&self.vfs_root, win_path)
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
@@ -274,7 +296,7 @@ impl FileSystemContext for NexusWinFsp {
         _security_descriptor: Option<&mut [std::os::raw::c_void]>,
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> Result<FileSecurity, FspError> {
-        let path = Self::to_kernel_path(file_name);
+        let path = self.to_kernel_path(file_name);
         winfsp_diag!("get_security_by_name path={:?}", path);
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
@@ -300,7 +322,7 @@ impl FileSystemContext for NexusWinFsp {
         granted_access: u32,
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
-        let path = Self::to_kernel_path(file_name);
+        let path = self.to_kernel_path(file_name);
         winfsp_diag!(
             "open path={:?} create_opts=0x{:x} granted=0x{:x} raw_widebytes={}",
             path,
@@ -340,7 +362,7 @@ impl FileSystemContext for NexusWinFsp {
         _extra_buffer_is_reparse_point: bool,
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext, FspError> {
-        let path = Self::to_kernel_path(file_name);
+        let path = self.to_kernel_path(file_name);
         winfsp_diag!("create path={:?} create_opts=0x{:x}", path, create_options);
         let is_dir = (create_options & FILE_DIRECTORY_FILE) != 0;
         if is_dir {
@@ -553,8 +575,8 @@ impl FileSystemContext for NexusWinFsp {
         new_file_name: &U16CStr,
         _replace_if_exists: bool,
     ) -> Result<(), FspError> {
-        let old_path = Self::to_kernel_path(file_name);
-        let new_path = Self::to_kernel_path(new_file_name);
+        let old_path = self.to_kernel_path(file_name);
+        let new_path = self.to_kernel_path(new_file_name);
         let res = kernel_callbacks::sys_rename(&self.kernel, &old_path, &new_path);
         // Trace kept while the rename callsite is still being
         // debugged on CI — diagnostic on CI run 27515796611 showed
@@ -710,5 +732,87 @@ impl FileSystemContext for NexusWinFsp {
         out.free_size = 1 << 39;
         let _ = out.set_volume_label("NexusVFS");
         Ok(())
+    }
+}
+
+/// Pure-function path translator extracted from
+/// [`NexusWinFsp::to_kernel_path`] so unit tests can pin the
+/// contract without fabricating a `KernelHandle`.
+///
+/// Translates a WinFsp wide path (UTF-16, backslash separators,
+/// always rooted at `\`) into a kernel-side absolute VFS path
+/// (UTF-8, forward slashes) by prepending the mount's `vfs_root`.
+/// `vfs_root` is expected pre-normalised: no trailing slash, empty
+/// string sentinel for the `"/"` default case.
+fn kernel_path_for(vfs_root: &str, win_path: &U16CStr) -> String {
+    let s = win_path.to_string_lossy();
+    let relative = if s == "\\" {
+        String::new()
+    } else {
+        s.replace('\\', "/")
+    };
+    if vfs_root.is_empty() {
+        if relative.is_empty() {
+            "/".to_string()
+        } else {
+            relative
+        }
+    } else if relative.is_empty() {
+        vfs_root.to_string()
+    } else {
+        format!("{}{}", vfs_root, relative)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use widestring::U16CString;
+
+    fn w(s: &str) -> U16CString {
+        U16CString::from_str(s).expect("utf-16 conversion")
+    }
+
+    #[test]
+    fn kernel_path_for_root_default() {
+        // Default mount (`NEXUS_FUSE_VFS_ROOT="/"` → normalised to "")
+        // surfaces the global VFS root on `M:\`.
+        assert_eq!(kernel_path_for("", w("\\").as_ucstr()), "/");
+        assert_eq!(kernel_path_for("", w("\\foo").as_ucstr()), "/foo");
+        assert_eq!(
+            kernel_path_for("", w("\\dir\\file.txt").as_ucstr()),
+            "/dir/file.txt"
+        );
+    }
+
+    #[test]
+    fn kernel_path_for_subtree_mount() {
+        // cc-tasks-share scope: M:\ surfaces /shared/cc-tasks,
+        // M:\songym-win surfaces /shared/cc-tasks/songym-win, etc.
+        // Regression pin for the bug where `ls M:\` showed `/`s
+        // contents (raft/, sm, ...) instead of the configured
+        // subtree.
+        let root = "/shared/cc-tasks";
+        assert_eq!(
+            kernel_path_for(root, w("\\").as_ucstr()),
+            "/shared/cc-tasks"
+        );
+        assert_eq!(
+            kernel_path_for(root, w("\\songym-win").as_ucstr()),
+            "/shared/cc-tasks/songym-win"
+        );
+        assert_eq!(
+            kernel_path_for(root, w("\\songym-win\\session-1\\1.json").as_ucstr()),
+            "/shared/cc-tasks/songym-win/session-1/1.json"
+        );
+    }
+
+    #[test]
+    fn kernel_path_for_normalised_vfs_root_no_double_slash() {
+        // Even if the caller forgets to normalise, the constructor
+        // does — verify the post-normalisation contract: `vfs_root`
+        // never carries a trailing slash, so the concat is a single
+        // `{root}{relative}` with no `"//"` hazard.
+        assert!(!kernel_path_for("/shared/cc-tasks", w("\\foo").as_ucstr()).contains("//"));
     }
 }

@@ -46,6 +46,12 @@ libc = "0.2"
 # winfsp-rs ships with a bundled import library so no WinFsp SDK is
 # needed at build time; the runtime DLL must be installed on the
 # operator's machine before launching nexusd-cluster.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# fuse_t_detect tests stage candidate paths in a tempdir to avoid
+# touching /Library/Filesystems on the developer's host. macOS-only
+# because that's the only target where `fuse_t_detect` compiles.
+tempfile = "3"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 winfsp = "0.13"
 # `widestring` for U16CStr ↔ String path conversion at the FFI

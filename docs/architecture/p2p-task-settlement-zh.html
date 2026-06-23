@@ -582,7 +582,7 @@ sequenceDiagram
   <p>该平台同时作为 <strong>AI 辅助劳动力的推广载体</strong>：因微任务开始使用 sudowork 的卖家，会自然发现它对自身工作的价值，从而驱动有机增长。</p>
 </div>
 
-<h3>单任务成本明细（场景 B：抖音互动）</h3>
+<h3>单任务成本明细（场景 C：抖音互动）</h3>
 
 <table>
   <tr><th>项目</th><th>谁承担</th><th>估算</th><th>备注</th></tr>
@@ -654,7 +654,7 @@ sequenceDiagram
   <tr><td>数据标注平台时薪（搜活帮、京东微工）</td><td>&#165;15 &ndash; 25/小时</td><td>平台列表</td></tr>
   <tr><td>蚂蚁微客简单任务</td><td>&#165;0.10 &ndash; 0.50/任务</td><td>平台列表</td></tr>
   <tr><td>抖音关注（灰色市场）</td><td>&#165;0.05 &ndash; 0.20/关注</td><td>市场观察</td></tr>
-  <tr><td>我们的场景 B（3-5 分钟任务）</td><td>&#165;0.30 &ndash; 0.50/任务 &asymp; &#165;6-10/小时有效时薪</td><td>&mdash;</td></tr>
+  <tr><td>我们的场景 C（3-5 分钟任务）</td><td>&#165;0.30 &ndash; 0.50/任务 &asymp; &#165;6-10/小时有效时薪</td><td>&mdash;</td></tr>
 </table>
 
 <h4 style="color:var(--purple)">大学生竞品零工收入</h4>
@@ -667,26 +667,32 @@ sequenceDiagram
   <tr><td>兼职客服</td><td>&#165;15 &ndash; 25/小时</td><td>&#165;2,000 &ndash; 4,000</td><td>时间灵活，与微任务最为相似。</td></tr>
   <tr><td>数据标注平台</td><td>&#165;15 &ndash; 25/小时</td><td>&#165;1,000 &ndash; 3,000</td><td>数字化、灵活，但单调且利润率持续下降。</td></tr>
   <tr style="background:var(--card)">
-    <td><strong>我们的微任务（纯现金，无 AI）</strong></td>
+    <td><strong>我们的场景 C：抖音微任务（纯现金，无 AI）</strong></td>
     <td><strong>&#165;6 &ndash; 15/小时</strong></td>
     <td><strong>&#165;500 &ndash; 2,000</strong></td>
-    <td>基准：&#165;0.30-0.50/任务，无 AI 每任务 3-5 分钟。不具竞争力。</td>
+    <td>&#165;0.30-0.50/任务，无 AI 每任务 3-5 分钟。低端场景。</td>
   </tr>
   <tr style="background:var(--card)">
-    <td><strong>我们的微任务（现金，AI 提效后）</strong></td>
+    <td><strong>我们的场景 C：抖音（AI 提效后）</strong></td>
     <td><strong>&#165;18 &ndash; 30/小时</strong></td>
     <td><strong>&#165;1,500 &ndash; 4,000</strong></td>
-    <td>AI 副驾将任务时间从 3-5 分钟压缩到约 1 分钟（理解、起草、证明生成）。单任务报酬不变，每小时完成任务量提升 3-5 倍。<strong>与外卖/客服时薪持平。</strong></td>
+    <td>AI 将任务时间压缩到约 1 分钟。与外卖/客服时薪持平。</td>
   </tr>
   <tr style="background:#1a2e1a">
-    <td><strong>我们的微任务（现金 + AI 价值）</strong></td>
-    <td><strong>&#165;18-30 现金 + &#165;180-600 AI 价值</strong></td>
+    <td><strong>我们的场景 A：视频剪辑（现金，AI 辅助）</strong></td>
+    <td><strong>&#165;160 &ndash; 300/小时</strong></td>
+    <td><strong>&#165;4,000 &ndash; 10,000+</strong></td>
+    <td>&#165;80-150/视频，使用 sudowork 剪辑技能约 30 分钟完成。<strong>超越家教及所有其他兼职。</strong>最高价值场景。</td>
+  </tr>
+  <tr style="background:#1a2e1a">
+    <td><strong>我们的场景 A：视频剪辑（现金 + AI 价值）</strong></td>
+    <td><strong>&#165;160-300 现金 + &#165;1,600-6,000 AI 价值</strong></td>
     <td>&mdash;</td>
-    <td>AI 提效后，赚取的积分同样提升 3-5 倍。10-20x Token 杠杆 &rarr; 每小时 &#165;180-600 的 AI 算力价值。<strong>对重视 AI 使用权的学生极具吸引力</strong>（职业技能提升、课程作业、个人项目）。</td>
+    <td>在已经很高的现金时薪基础上叠加 10-20x Token 杠杆。在这个收入水平下，Token 杠杆是锦上添花，而非核心价值主张。</td>
   </tr>
 </table>
 <div class="warn">
-  <strong>坦诚评估</strong>：在纯现金时薪上，微任务竞争力不如家教或外卖。价值主张取决于：(a) 学生是否重视 AI 使用权（10-20x 杠杆），(b) 灵活性优势（异步、无通勤、无体力劳动），(c) AI 技能培养叙事（职业 ROI）。如果学生觉得 AI 对自身工作没有用，Token 杠杆就会崩塌，我们就只是一个低薪零工平台。<strong>产品必须确保 sudowork 在学生日常生活中提供真实价值</strong> &mdash; 课程作业、求职申请、学习、个人项目。
+  <strong>场景决定一切</strong>：视频剪辑（场景 A）在纯现金时薪上已超越最好的学生兼职 &mdash; 不需要依赖 Token 杠杆。抖音微任务（场景 C）则需要 Token 杠杆 + 灵活性优势才能与竞品竞争。<strong>以场景 A 启动</strong>，建立可信度后再扩展到低价值场景（此时 Token 杠杆叙事才更重要）。
 </div>
 
 <h3>积分流动性：稳定价格回购</h3>
@@ -748,13 +754,13 @@ sequenceDiagram
   <table>
     <tr><th>任务类型</th><th>交易层（AI 价值）</th><th>执行层（AI 价值）</th><th>备注</th></tr>
     <tr>
-      <td>数据标注（场景 A）</td>
+      <td>数据标注（场景 B）</td>
       <td style="color:var(--green)">高 &mdash; 自动验证格式、抽检准确率</td>
       <td style="color:var(--green)">高 &mdash; AI 预标注，人工修正</td>
       <td>AI 在两层都增值。最强用例。</td>
     </tr>
     <tr>
-      <td>社交互动（场景 B）</td>
+      <td>社交互动（场景 C）</td>
       <td style="color:var(--green)">高 &mdash; 自动验证截图、评论相关性</td>
       <td style="color:var(--orange)">中 &mdash; AI 起草评论，人类执行操作</td>
       <td>执行是物理性的（App 交互）；AI 辅助但无法替代。</td>

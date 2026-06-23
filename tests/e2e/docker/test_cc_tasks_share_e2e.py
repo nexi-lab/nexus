@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
+import subprocess
 import time
 import uuid
 
@@ -789,6 +790,149 @@ class TestCrossNodeConcurrentBurst:
             assert sorted(joiner_entries) == sorted(payloads.keys()), (
                 f"joiner FUSE readdir returned {joiner_entries}, expected {sorted(payloads.keys())}"
             )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Backend-only enumeration — the cc-tasks-list mega-goal shape.
+#
+# Claude Code writes task JSON via plain OS file operations
+# (`fs.writeFileSync("~/.claude/tasks/<session>/<n>.json", ...)`) —
+# nothing in Nexus's syscall surface ever runs.  No `vfs_write`, no
+# metadata propose, no metastore entry.  The bytes live on the host
+# fs the LocalConnector points at.
+#
+# For `cc tasks list` to enumerate those tasks through the FUSE mount,
+# two pieces have to hold:
+#   1. `sys_readdir` must merge the LocalConnector backend's
+#      `list_dir(...)` output into its result set — this was already
+#      in kernel/io.rs:3102-3118, but the DylibObjectStore wrapper
+#      around dylib drivers returned `NotSupported` until
+#      nexus-vfs#67 added the `nexus_driver_readdir` ABI symbol +
+#      the LocalConnector implementation.
+#   2. `sys_stat` must be symmetric — without a metastore entry it
+#      historically returned `None` for backend-owned paths, so every
+#      WinFsp `get_security_by_name` / FUSE `lookup` against the
+#      enumerated entries failed with ENOENT.  nexus-vfs#67's
+#      `sys_stat` backend.list_dir fallback closes that gap.
+#
+# This class pins both pieces by exercising the no-kernel-write path:
+# write directly to `/host/tasks/<session>/<n>.json`, then enumerate +
+# read via the FUSE mount.  A regression in either piece surfaces here.
+# ---------------------------------------------------------------------------
+class TestCcTasksListBackendOnlyEnumeration:
+    """`cc tasks list` mega-goal pin — backend-only host-fs writes are
+    discoverable + readable through the FUSE mount surface without any
+    intervening kernel syscall write.
+
+    Single-node first (the substrate); cross-node enumeration of
+    backend-only entries is plan-deferred to a follow-up that lazily
+    propagates listings across federation.
+    """
+
+    def test_host_fs_only_writes_enumerate_and_read_via_fuse(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        session = _new_session()
+        # Drop three task JSONs straight onto founder's host fs — no
+        # vfs_write, no metastore, no propose.  Mirrors what Claude
+        # Code does at the OS layer outside Nexus.
+        payloads = {
+            "1.json": b'{"id":"1","status":"completed","backend_only":true}',
+            "2.json": b'{"id":"2","status":"in_progress","backend_only":true}',
+            "3.json": b'{"id":"3","status":"pending","backend_only":true}',
+        }
+        for name, data in payloads.items():
+            cc_tasks_share_helpers.host_task_write(
+                topology.founder_container, f"/{session}/{name}", data
+            )
+
+        try:
+            # Step 1: backend-only writes do NOT create metastore
+            # entries — the kernel-side surface knows nothing about
+            # them until enumeration walks the backend.  Pin the
+            # precondition so a future kernel change that quietly
+            # starts propagating these wouldn't silently turn this
+            # test into a different scenario.
+            session_vfs = topology.founder_vfs_path(f"/{session}")
+            pre_stat = runbook_helpers.vfs_stat(topology.founder_grpc, session_vfs, api_key=api_key)
+            # `found` reflects the SSOT view: with PR #67 the kernel's
+            # sys_stat backend-fallback DOES synthesise a DT_DIR
+            # result for this path because the backend list_dir
+            # returns the session dir among the mount's children.
+            # That's exactly the contract this PR ships — the stat
+            # surface is now symmetric with readdir over driver-owned
+            # entries.  Keep the assertion narrow: we need `found`,
+            # `is_directory`, AND `entry_type == 2 (DT_DIR)`.
+            assert pre_stat["result"]["found"], (
+                f"sys_stat must surface the backend-only session dir "
+                f"after PR #67's fallback — got {pre_stat}"
+            )
+            assert pre_stat["result"]["isDirectory"], (
+                f"backend-only session dir should stat as a directory — got {pre_stat}"
+            )
+
+            # Step 2: FUSE-level readdir of the session dir surfaces
+            # every host-fs file we wrote.  This is the path
+            # `cc tasks list` actually walks — the kernel readdir
+            # delegates to the LocalConnector dylib's
+            # nexus_driver_readdir symbol added in PR #67.
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            entries = cc_tasks_share_helpers.mount_listdir(
+                topology.founder_container, session_mount
+            )
+            assert sorted(entries) == sorted(payloads.keys()), (
+                f"FUSE readdir of backend-only session dir got {entries}, "
+                f"expected {sorted(payloads.keys())} — driver_readdir wiring may be broken"
+            )
+
+            # Step 3: lookup each individual file via FUSE — exercises
+            # the sys_stat backend-fallback path on a per-file basis,
+            # the codepath that was returning ENOENT pre-PR.  Without
+            # it, `cat M:\songym-win\<session>\1.json` failed because
+            # WinFsp's get_security_by_name → sys_stat returned None.
+            for name in payloads:
+                file_vfs = topology.founder_vfs_path(f"/{session}/{name}")
+                file_stat = runbook_helpers.vfs_stat(
+                    topology.founder_grpc, file_vfs, api_key=api_key
+                )
+                assert file_stat["result"]["found"], (
+                    f"sys_stat must find backend-only file {name} via "
+                    f"backend.list_dir(parent) fallback — got {file_stat}"
+                )
+                assert not file_stat["result"]["isDirectory"], (
+                    f"backend-only file {name} should stat as a regular file"
+                )
+
+            # Step 4: read the bytes back through the FUSE mount —
+            # full chain `cat /mnt/.../<session>/<n>.json` → FUSE
+            # lookup → sys_stat (backend fallback) → sys_open →
+            # sys_read → LocalConnector backend → host fs.  Confirms
+            # the enumeration entries map back to readable content.
+            for name, expected in payloads.items():
+                file_mount = topology.mount_path_for_vfs(
+                    topology.founder_vfs_path(f"/{session}/{name}")
+                )
+                proc = subprocess.run(
+                    ["docker", "exec", topology.founder_container, "cat", file_mount],
+                    capture_output=True,
+                    timeout=30,
+                )
+                assert proc.returncode == 0, (
+                    f"FUSE read of {name} failed (rc={proc.returncode}): "
+                    f"stderr={proc.stderr.decode(errors='replace')}"
+                )
+                assert proc.stdout == expected, (
+                    f"FUSE read of {name} got {proc.stdout!r}, expected {expected!r}"
+                )
         finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,

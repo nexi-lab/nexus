@@ -97,6 +97,25 @@ fn write_local_connector(drv: &LocalConnectorDriver, path: &str, data: &[u8]) ->
         .map_err(storage_error_to_plugin_code)
 }
 
+/// Enumerate immediate children at `path` (relative to `local_root`).
+///
+/// Wraps the existing `LocalConnectorBackend::list_dir` — the
+/// `ObjectStore` impl already produced the right wire shape
+/// (`Vec<String>` with trailing `/` for directories), so the bridge
+/// is one function call.  Opting in via the `declare_driver_plugin!`
+/// `readdir:` arm makes the kernel's `sys_readdir` surface
+/// `local_root` contents under the mount path — what the
+/// cc-tasks-share Mac↔Win flow needs to find Claude Code session
+/// directories.
+fn readdir_local_connector(
+    drv: &LocalConnectorDriver,
+    path: &str,
+) -> Result<Vec<String>, i32> {
+    drv.backend
+        .list_dir(path)
+        .map_err(storage_error_to_plugin_code)
+}
+
 fn system_ctx() -> OperationContext {
     // Driver runs inside the kernel's trust boundary; the syscall's
     // OperationContext already authorized the request upstream.  We
@@ -119,6 +138,7 @@ declare_driver_plugin!("local-connector", LocalConnectorDriver, {
     create: create_local_connector,
     read: read_local_connector,
     write: write_local_connector,
+    readdir: readdir_local_connector,
 });
 
 #[cfg(test)]

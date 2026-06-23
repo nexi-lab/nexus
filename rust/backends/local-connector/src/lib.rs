@@ -107,10 +107,7 @@ fn write_local_connector(drv: &LocalConnectorDriver, path: &str, data: &[u8]) ->
 /// `local_root` contents under the mount path — what the
 /// cc-tasks-share Mac↔Win flow needs to find Claude Code session
 /// directories.
-fn readdir_local_connector(
-    drv: &LocalConnectorDriver,
-    path: &str,
-) -> Result<Vec<String>, i32> {
+fn readdir_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result<Vec<String>, i32> {
     drv.backend
         .list_dir(path)
         .map_err(storage_error_to_plugin_code)

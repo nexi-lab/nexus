@@ -793,16 +793,16 @@ mod tests {
         // contents (raft/, sm, ...) instead of the configured
         // subtree.
         let root = "/shared/cc-tasks";
-        assert_eq!(kernel_path_for(root, w("\\").as_ucstr()), "/shared/cc-tasks");
+        assert_eq!(
+            kernel_path_for(root, w("\\").as_ucstr()),
+            "/shared/cc-tasks"
+        );
         assert_eq!(
             kernel_path_for(root, w("\\songym-win").as_ucstr()),
             "/shared/cc-tasks/songym-win"
         );
         assert_eq!(
-            kernel_path_for(
-                root,
-                w("\\songym-win\\session-1\\1.json").as_ucstr()
-            ),
+            kernel_path_for(root, w("\\songym-win\\session-1\\1.json").as_ucstr()),
             "/shared/cc-tasks/songym-win/session-1/1.json"
         );
     }

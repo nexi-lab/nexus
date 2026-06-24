@@ -187,8 +187,10 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
         # registered via the factory, not as a direct named service.
         rebac = svc.rebac_manager
         if rebac is None and svc.nexus_fs is not None:
-            # Direct attribute on NexusFS
-            rebac = getattr(svc.nexus_fs, "_rebac_manager", None)
+            # Via service registry on NexusFS
+            _svc_lookup = getattr(svc.nexus_fs, "service", None)
+            if _svc_lookup:
+                rebac = _svc_lookup("rebac_manager")
         if rebac is None and svc.nexus_fs is not None:
             # Inside ReBACService wrapper (registered as "rebac" in cluster profile).
             # service_lookup returns raw instance — attribute access is direct.

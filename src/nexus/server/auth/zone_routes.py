@@ -278,7 +278,7 @@ async def get_zone(
     with auth.session_factory() as session:
         # Check zone access (admins can access any zone)
         nx = get_nexus_instance()
-        rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
+        rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
         if not is_admin:
             if rebac_mgr is None:
                 raise HTTPException(
@@ -460,7 +460,7 @@ async def list_zones(
         else:
             # Regular users only see zones they belong to
             nx = get_nexus_instance() or getattr(request.app.state, "nexus_fs", None)
-            rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
+            rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
             # API-key auth may include zone_id — restrict to that zone
             auth_zone = auth_result.get("zone_id")
             user_zone_ids = (
@@ -575,7 +575,7 @@ async def delete_zone_endpoint(
     with auth.session_factory() as session:
         if not is_admin:
             # Require zone *owner* (not mere member) for destructive operations
-            rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
+            rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
             if rebac_mgr is None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

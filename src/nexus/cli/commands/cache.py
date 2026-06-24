@@ -187,28 +187,25 @@ def stats(
     async def _impl() -> None:
         async with open_filesystem(remote_url, remote_api_key) as nx:
             with timing.phase("server"):
-                # Collect stats from various cache layers
+                # Collect stats from various cache layers via public APIs
                 cache_stats: dict[str, Any] = {}
 
-                # Permission cache stats
                 rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
                 if rm is not None:
-                    if hasattr(rm, "_permission_cache") and rm._permission_cache:
-                        pc = rm._permission_cache
-                        if hasattr(pc, "get_stats"):
-                            cache_stats["permission_cache"] = pc.get_stats()
+                    # Permission cache stats (L1)
+                    perm_stats = rm.get_cache_stats()
+                    if perm_stats:
+                        cache_stats["permission_cache"] = perm_stats
 
                     # Tiger cache stats
-                    if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-                        tc = rm._tiger_cache
-                        if hasattr(tc, "get_stats"):
-                            cache_stats["tiger_cache"] = tc.get_stats()
+                    tiger_stats = rm.get_tiger_cache_stats()
+                    if tiger_stats:
+                        cache_stats["tiger_cache"] = tiger_stats
 
-                # Directory visibility cache
-                if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
-                    dvc = nx._dir_visibility_cache
-                    if hasattr(dvc, "get_metrics"):
-                        cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+                    # Directory visibility cache
+                    dv_metrics = rm.get_dir_visibility_cache_metrics()
+                    if dv_metrics:
+                        cache_stats["dir_visibility_cache"] = dv_metrics
 
                 # File access tracker stats
                 from nexus.server.cache_warmer import get_file_access_tracker
@@ -296,29 +293,16 @@ def clear(
         async with open_filesystem(remote_url, remote_api_key) as nx:
             cleared: list[str] = []
 
-            # Clear permission cache
+            # Clear permission cache via public ReBACManager APIs
             if permissions or clear_all:
-                rm = nx.service("rebac_manager") if hasattr(nx, "service") else None  # Issue #1771
+                rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
                 if rm is not None:
-                    if hasattr(rm, "_permission_cache") and rm._permission_cache:
-                        pc = rm._permission_cache
-                        if hasattr(pc, "clear"):
-                            pc.clear()
+                    if rm.clear_permission_cache():
                         cleared.append("permission")
-
-                    # Also clear tiger cache
-                    if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-                        tc = rm._tiger_cache
-                        if hasattr(tc, "invalidate_all"):
-                            tc.invalidate_all()
+                    if rm.clear_tiger_cache():
                         cleared.append("tiger")
-
-                # Clear directory visibility cache
-                if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
-                    dvc = nx._dir_visibility_cache
-                    if hasattr(dvc, "clear"):
-                        dvc.clear()
-                    cleared.append("dir_visibility")
+                    if rm.clear_dir_visibility_cache():
+                        cleared.append("dir_visibility")
 
             # Clear file access tracker
             if clear_all:

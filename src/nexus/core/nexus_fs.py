@@ -455,6 +455,22 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for Pillar 2 (RecordStoreABC)."""
         return self._record_store
 
+    def llm_start_streaming(
+        self,
+        llm_mount: str,
+        user: str,
+        request_bytes: bytes,
+        stream_path: str,
+    ) -> Any:
+        """Start LLM streaming via the Rust kernel.
+
+        Blocks the calling thread until the SSE completes; wrap in
+        ``asyncio.to_thread`` to keep the event loop free.
+        """
+        if self._kernel is None:
+            raise RuntimeError("Kernel not initialised — cannot start LLM streaming")
+        return self._kernel.llm_start_streaming(llm_mount, user, request_bytes, stream_path)
+
     # _resolve_cred, _build_rust_ctx, _get_context_identity, _validate_path,
     # _parse_context, _ensure_context_ttl,
     # _dispatch_write_events — all moved to InternalMixin (nexus_fs_internal.py)

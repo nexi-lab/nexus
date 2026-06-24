@@ -90,14 +90,14 @@ def llm(
         _stream_path = stream_path or f"/root/llm/.streams/{uuid.uuid4().hex[:12]}"
 
         try:
-            # Rust-kernel-owned streaming. `nx.llm_start_streaming` blocks
+            # Rust-kernel-owned streaming. llm_start_streaming blocks
             # the worker thread until the SSE completes, so we wrap it in
             # `asyncio.to_thread` to keep the event loop free for readers.
             request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
             llm_mount = "/llm" if _stream_path.startswith("/llm") else "/root/llm"
             _task = asyncio.create_task(
                 asyncio.to_thread(
-                    nx._kernel.llm_start_streaming,
+                    nx.llm_start_streaming,
                     llm_mount,
                     "root",
                     request_bytes,

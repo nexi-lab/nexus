@@ -40,33 +40,31 @@
 </head>
 <body>
 
-<h1>P2P AI 辅助微任务结算 <span class="status status-draft">草案 v1.5</span></h1>
+<h1>P2P AI 辅助微任务结算 <span class="status status-draft">草案 v2.0</span></h1>
 <p class="subtitle">
   基于 nexus-vfs 原语构建的 P2P 任务分发与结算协议，适用于 sudowork 平台。<br>
-  每位卖家都有 AI 副驾。每个任务都是学习 AI 协作的机会。
+  你的 AI 副驾负责匹配、执行和结算 &mdash; 从视频剪辑到数据标注。
 </p>
 
 <div class="card">
   <div class="card-title">为什么这很重要</div>
-  <p>这不仅仅是一个微任务平台，而是<strong>大规模推动 AI 辅助劳动力应用</strong>的载体。</p>
-  <p>如今，AI 工具主要被知识工作者使用。大多数劳动力从未在日常工作中体验过 AI 增强。本平台改变了这一点：卖家通过完成微任务赚取收入，在此过程中，他们<strong>学会与 AI 副驾协作</strong> &mdash; 理解任务、生成内容、生产工作证明。他们培养的技能 &mdash; 提示词编写、AI 辅助写作、工具委派 &mdash; 可以直接迁移到他们自身的职业发展中。</p>
-  <p><strong>经济激励（赚取积分）为教育（学习 AI 辅助工作）提供资金。</strong>该平台同时解决了买家对可扩展任务完成的需求和卖家对可获得的 AI 技能培养的需求。这在社会层面意义深远：为更广泛的劳动力 &mdash; 而非仅限于技术精英 &mdash; 降低 AI 应用门槛。</p>
 
-  <h4 style="color:var(--purple);margin-top:1.2rem">对 sudowork 现有协作网络的价值</h4>
-  <p>除了创造新市场，P2P 任务结算还增强了 sudowork 的核心产品理念：<strong>1% 点对点协作网络</strong>。如今，sudowork 支持跨公司、跨领域的多 Agent 协作 &mdash; 但并非所有协作都发生在企业内部。开源贡献者、非营利组织、自由职业专家和跨组织工作组都在没有共享薪资体系的情况下进行协作。这些协作缺乏<strong>经济激励层</strong>：在属于不同组织的两个 sudowork 实例之间，没有原生方式来结算代码审查、设计评审或研究贡献。</p>
-  <p>P2P 任务结算填补了这一空白。它将 sudowork 的协作网络从"我们可以一起工作"升级为<strong>"我们可以一起工作，并且无需信任地进行支付结算"</strong>。这为 1% 点对点网络创造了新的激励：每个新参与者不仅是协作伙伴，还是微任务的潜在买家或卖家。网络效应不断累积 &mdash; 更多参与者意味着更多任务流动性，从而吸引更多参与者。</p>
+  <h4 style="color:var(--purple);margin-top:0.5rem">1. 机会</h4>
+  <p>这不仅仅是一个零工平台。AI 副驾让创意工作 &mdash; 视频剪辑、内容创作 &mdash; 变得人人可及。一个配备 sudowork 剪辑技能的大学生可以在 30 分钟内制作出专业品质的短视频。以每条视频 &#165;80-150 计算，有效时薪为 <strong>&#165;160-300/小时</strong> &mdash; 超过家教、外卖及中国所有其他学生兼职选项。这是 AI 辅助劳动力，在纯现金收入层面已具备竞争力，无需依赖任何 Token 杠杆。</p>
 
-  <h4 style="color:var(--purple);margin-top:1.2rem">Agent 原生匹配 vs 传统 RTB</h4>
-  <p>在线广告使用实时竞价（RTB）：第三方交易所在约 100ms 内匹配买家和卖家。该系统适用于广告，但不适用于劳动力 &mdash; 平台控制所有匹配权力，抽取高额佣金，且不理解任务内容。Agent 原生匹配有本质区别：</p>
+  <h4 style="color:var(--purple);margin-top:1.2rem">2. 对 sudowork 现有协作网络的价值</h4>
+  <p>P2P 任务结算为 sudowork 的跨组织协作网络增加了<strong>经济激励层</strong>。如今，sudowork 支持跨公司、跨领域的多 Agent 协作，但开源贡献者、自由职业专家和跨组织工作组在没有共享薪资体系的情况下协作，缺乏原生的贡献结算方式。P2P 结算将"我们可以一起工作"升级为<strong>"我们可以一起工作，并且无需信任地进行支付结算"</strong>，不断累积网络效应 &mdash; 每个新参与者既是协作伙伴，也是潜在的买家或卖家。</p>
+
+  <h4 style="color:var(--purple);margin-top:1.2rem">3. Agent 原生 vs 平台中介</h4>
+  <p>传统平台（RTB、零工市场）将匹配权中心化并收取高额佣金。Agent 原生匹配有本质区别：</p>
   <table>
-    <tr><th>维度</th><th>RTB（传统）</th><th>Agent 原生（sudowork）</th></tr>
-    <tr><td>匹配权</td><td>中心化交易所（平台决策）</td><td>买方和卖方 Agent 直接协商（P2P）</td></tr>
-    <tr><td>任务拆解</td><td>不可能 &mdash; 平台不理解任务内容</td><td>Agent 将复杂任务拆解为微任务（理解内容）</td></tr>
-    <tr><td>验证</td><td>第三方平台，可见性有限</td><td>本地 Agent 验证（L1 信任域，完整内容访问）</td></tr>
-    <tr><td>任务粒度</td><td>粗粒度（一次广告展示 = 一个单位）</td><td>细粒度 &rarr; 更好的流动性（Agent 可拆分/合并）</td></tr>
-    <tr><td>卖家学习</td><td>无 &mdash; 卖家是被动的广告位</td><td>Agent 通过协作教卖家 AI 技能</td></tr>
+    <tr><th>维度</th><th>平台中介（传统）</th><th>Agent 原生（sudowork）</th></tr>
+    <tr><td>匹配权</td><td>中心化交易所决策</td><td>买方和卖方 Agent 直接协商（P2P）</td></tr>
+    <tr><td>任务理解</td><td>平台不理解任务内容</td><td>Agent 拆解、验证并执行，具有完整内容访问权</td></tr>
+    <tr><td>验证</td><td>第三方平台，可见性有限</td><td>本地 Agent 在 L1 信任域内验证</td></tr>
+    <tr><td>卖家学习</td><td>无 &mdash; 卖家是被动的广告位</td><td>Agent 随时间学习卖家偏好，成为更好的代言人</td></tr>
   </table>
-  <p><strong>卖家的 Agent 会随时间学习其偏好。</strong>不同于 RTB 中每次展示都是独立的冷匹配，sudowork 会积累关于其人类用户的知识：擅长什么类型的任务、偏好的工作时间、质量模式、领域专长。这种本地学习（完全在 L1 内）意味着任务选择随使用而改善 &mdash; Agent 成为人类更好的代言人，而不仅仅是任务路由器。</p>
+  <p><strong>卖家的 Agent 会随时间学习其偏好。</strong>不同于平台匹配中每个任务都是独立的，sudowork 会积累关于其人类用户的知识：擅长什么类型的任务、偏好的工作时间、质量模式、领域专长。这种本地学习（完全在 L1 内）意味着任务选择随使用而改善。</p>
 </div>
 
 <div class="toc">
@@ -80,7 +78,7 @@
     <li><a href="#s5a">5A. 信誉系统</a></li>
     <li><a href="#s6">6. 通过 VFS 交付</a></li>
     <li><a href="#s7">7. 场景</a></li>
-    <li><a href="#s7a">7A. 经济模型：成本分析</a></li>
+    <li><a href="#s7a">7A. 经济模型：端到端成本分析</a></li>
     <li><a href="#s8">8. 开放问题</a></li>
   </ul>
 </div>
@@ -183,7 +181,7 @@ graph TB
   <tr><th>阶段</th><th>买家的 AI</th><th>卖家的 AI</th></tr>
   <tr><td>任务发布</td><td>起草清晰的需求 + 验收标准</td><td>&mdash;</td></tr>
   <tr><td>协商</td><td>评估还价、标记风险</td><td>评估可行性、建议合理定价</td></tr>
-  <tr><td>执行</td><td>&mdash;</td><td>执行工作（标注、浏览、编码等）</td></tr>
+  <tr><td>执行</td><td>&mdash;</td><td>执行工作（剪辑、标注、编码等）</td></tr>
   <tr><td>交付</td><td>&mdash;</td><td>打包交付物、按标准预检</td></tr>
   <tr><td>验证</td><td>AI 按标准自动检查（人类可异步审核 &mdash; 本地偏好，非协议强制）</td><td>&mdash;</td></tr>
   <tr><td>争议</td><td>为买家立场收集证据</td><td>为卖家立场收集证据</td></tr>
@@ -237,12 +235,13 @@ flowchart LR
   },
 
   "terms": {
-    "title": "Label 1000 images for object detection",
+    "title": "Edit 5 product videos for TikTok Shop (30s each)",
     "description": "...",
     "acceptance_criteria": [
-      "All 1000 images labeled",
-      "Bounding boxes in COCO format",
-      "Accuracy spot-check > 95%"
+      "Each video 25-35 seconds, 9:16 aspect ratio, &lt;50MB",
+      "Auto-captions present and accurate (AI-verifiable)",
+      "Background music from approved library",
+      "Creative quality spot-check by buyer (pacing, transitions, brand tone)"
     ],
     "price_points": 500,
     "deadline_utc": "2026-07-15T00:00:00Z",
@@ -354,8 +353,8 @@ flowchart LR
   <div class="card-title">两个独立机制，解决两个不同问题</div>
   <table>
     <tr><th>机制</th><th>解决的问题</th><th>性质</th></tr>
-    <tr><td><strong>预承诺 + 双重签名</strong>（§5）</td><td>这笔交易不会被欺诈</td><td>硬保障（密码学）</td></tr>
-    <tr><td><strong>信誉</strong>（§5A）</td><td>下次选择可靠的对手方</td><td>软信号（统计学）</td></tr>
+    <tr><td><strong>预承诺 + 双重签名</strong>（&sect;5）</td><td>这笔交易不会被欺诈</td><td>硬保障（密码学）</td></tr>
+    <tr><td><strong>信誉</strong>（&sect;5A）</td><td>下次选择可靠的对手方</td><td>软信号（统计学）</td></tr>
   </table>
   <p>信誉<strong>不</strong>参与结算逻辑。它不限制支付，不覆盖预承诺，不解决争议。它是市场上可见的<strong>仪表盘指标</strong> &mdash; 帮助买家选择卖家、卖家选择买家。两个系统有意解耦。</p>
 </div>
@@ -530,11 +529,9 @@ sequenceDiagram
   <p><strong>压力测试</strong>：</p>
   <ul>
     <li><strong>验证</strong>：混合了机器可验证（数量、格式）和主观（准确率）标准。买家的 AI 可自动化前两者；抽检需要 AI + 人工。</li>
-    <li><strong>体量与任务拆解</strong>：单个合约中 81K 元素可能太大 &mdash; 卖家的 Agent 评估投入产出比后可能拒绝。买家的 sudowork 可拆分为约 21 个每 100 张图片的合约。粒度是买家 Agent 的 L1 决策。</li>
     <li><strong>模板合约</strong>：对于"UI 标注"等标准任务类型，买家的 sudowork 可使用预定义模板跳过协商。卖家 Agent 看到"UI 标注，100 张图片，30 积分，72 小时超时"后即时接受/拒绝。是否使用模板是<strong>买家 Agent 的决策</strong>（L1），而非平台强制。</li>
     <li><strong>流水线作为产品能力</strong>：卖家<strong>不需要</strong>自己搭建流水线。sudowork 将 OmniParser + 模型编排作为<strong>产品级能力</strong>提供。卖家说"标注这些图片"，sudowork 处理其余工作。sudowork 产品团队必须为关键任务类型持续提升流水线能力。</li>
     <li><strong>卖家专业化</strong>：完成大量标注任务的卖家可以在本地 GPU（如 DGX）上用积累的任务数据微调本地模型，随时间提升准确率 &rarr; 更高信誉 &rarr; 以更高价格获得更多任务（正反馈循环）。没有 GPU 的卖家，sudowork 的<strong>模型选择元学习</strong>会记住哪种模型最适合哪种任务类型 &mdash; 为所有卖家提供轻量级专业化。</li>
-    <li><strong>部分质量</strong>：如果 900/1000 质量好但 100 质量差怎么办？要求修改还是部分支付？</li>
   </ul>
 </div>
 
@@ -553,10 +550,7 @@ sequenceDiagram
   <p><strong>交付</strong>：交互证明包（截图、时间戳）存入 VFS。</p>
   <p><strong>压力测试</strong>：</p>
   <ul>
-    <li><strong>不可逆性</strong>：不同于代码，卖家无法轻易"取消关注"。工作有现实世界的副作用。即使卖家后来失去兴趣，关注/点赞大概率会保留 &mdash; 买家获得长期价值。</li>
     <li><strong>行为证明</strong>：如何证明互动确实发生了？截图可以伪造。需要考虑证明机制 &mdash; 也许可以使用 sudowork 的 ai-dev-browser 的浏览器自动化日志？</li>
-    <li><strong>真实性</strong>：评论必须"真实" &mdash; 这本质上是主观的。买家的 AI 可以检查评论是否与视频内容相关，但最终需要人类判断。</li>
-    <li><strong>利益对齐</strong>：如果卖家真的对内容感兴趣，他们会成为长期粉丝（双赢）。如果不感兴趣，他们仍然完成了任务但不会继续互动。两种结果都可接受 &mdash; 买家支付的是<em>初始曝光</em>，不是永久承诺。</li>
     <li><strong>微任务经济性</strong>：每个任务 10 积分 = 金额很小。需要高效的合约协商（模板？）和低摩擦的结算。微支付不能有繁重的密码学流程。</li>
   </ul>
 </div>
@@ -566,98 +560,78 @@ sequenceDiagram
   <ul>
     <li><strong>混合验证</strong>：协议必须支持机器可验证和人工判断的标准，并在合约中显式标注。</li>
     <li><strong>证明类型</strong>：不同任务需要不同的证明机制 &mdash; CAS 哈希用于数据文件，截图/日志用于操作行为。协议应与证明类型无关。</li>
-    <li><strong>微任务支持</strong>：场景 C（10 积分）需要轻量级合约。也许可以基于模板的"任务类型"来跳过标准任务的协商。</li>
-    <li><strong>非数字副作用</strong>：某些交付物（社交互动）具有超出合约存续期的现实世界影响。有趣但不是协议层面的关注点。</li>
+    <li><strong>模板合约</strong>：低价值任务（场景 C）需要轻量级合约。基于模板的"任务类型"跳过标准任务的协商。</li>
+    <li><strong>场景决定经济模型</strong>：视频剪辑（场景 A）在纯现金层面具有竞争力。低价值场景依赖 Token 杠杆。协议相同；商业模式按场景调整。</li>
   </ul>
 </div>
 
 <!-- ============================================================ -->
 <h2 id="s7a">7A. 经济模型：端到端成本分析</h2>
 
-<p>以场景 A（视频剪辑）和场景 C（抖音互动）为参考任务。价格以人民币计。</p>
-
-<h3>定位：AI 辅助微任务平台</h3>
-<div class="card">
-  <p>这不仅仅是又一个众包平台。差异化在于：<strong>每位卖家都有一个 AI 副驾</strong>（sudowork），帮助他们理解任务、高效执行并生成交付证明。这降低了技能门槛 &mdash; 更多人可以做更多类型的工作 &mdash; 并提升了质量（AI 在提交前预检交付物）。</p>
-  <p>该平台同时作为 <strong>AI 辅助劳动力的推广载体</strong>：因微任务开始使用 sudowork 的卖家，会自然发现它对自身工作的价值，从而驱动有机增长。</p>
-</div>
-
-<h3>单任务成本明细（场景 C：抖音互动）</h3>
+<h3>1. 单任务成本明细（场景 A：视频剪辑）</h3>
 
 <table>
   <tr><th>项目</th><th>谁承担</th><th>估算</th><th>备注</th></tr>
   <tr>
     <td>任务报酬（卖家劳动）</td>
     <td>买家</td>
-    <td>&#165;0.30 &ndash; 0.50</td>
-    <td>社交互动微任务的市场价格（与现有平台可比）</td>
+    <td>&#165;80 &ndash; 150/视频</td>
+    <td>买家按短视频剪辑市场价发布</td>
   </tr>
   <tr>
-    <td>买家的 AI 成本（发布任务 + 验证）</td>
+    <td>买家的 AI 成本（发布任务 + 验证格式/字幕）</td>
     <td>买家（自有 Token）</td>
-    <td>&lt; &#165;0.01</td>
-    <td>DSV4 上约 1K Token 输入 + 约 100 输出。可忽略不计。</td>
+    <td>&lt; &#165;1</td>
+    <td>起草需求，在 DSV4 上自动检查时长/格式/字幕</td>
   </tr>
   <tr>
-    <td>卖家的 AI 成本（理解任务 + 生成评论 + 证明）</td>
+    <td>卖家的 AI 成本（剪辑技能：自动字幕、模板、音乐）</td>
     <td>卖家（自有 Token）</td>
-    <td>&lt; &#165;0.01</td>
-    <td>DSV4 上约 500-1K Token。卖家自己的投入。</td>
+    <td>&lt; &#165;0.50</td>
+    <td>sudowork 剪辑技能运行在 DSV4 上。卖家自己的投入。</td>
   </tr>
   <tr>
     <td>协议开销（签名 + VFS 操作）</td>
     <td>双方（本地计算）</td>
     <td>~0</td>
-    <td>Ed25519 签名 &lt; 1ms，VFS 写入 &lt; 5&micro;s。P2P 本地操作无网络成本。</td>
+    <td>Ed25519 签名 &lt; 1ms，VFS 写入 &lt; 5&micro;s</td>
   </tr>
   <tr>
     <td>服务器转账 API（结算）</td>
     <td>平台</td>
     <td>~0</td>
-    <td>每个合约一次 HTTP 调用。平台运营成本。</td>
+    <td>每个合约一次 HTTP 调用</td>
   </tr>
   <tr>
     <td><strong>买家总成本</strong></td>
     <td></td>
-    <td><strong>&#165;0.30 &ndash; 0.51</strong></td>
-    <td>任务报酬 + 自有 AI。AI 成本占任务报酬的 &lt; 2%。</td>
+    <td><strong>&#165;81 &ndash; 151</strong></td>
+    <td>任务报酬 + 自有 AI。AI 成本占任务报酬的 &lt; 1%。</td>
   </tr>
   <tr>
     <td><strong>卖家净收入</strong></td>
     <td></td>
-    <td><strong>&#165;0.29 &ndash; 0.49</strong></td>
-    <td>任务报酬减去自有 AI 成本。AI 成本 &lt; 2%。</td>
+    <td><strong>&#165;79.50 &ndash; 149.50</strong></td>
+    <td>任务报酬减去自有 AI 成本。AI 成本 &lt; 1%。</td>
   </tr>
 </table>
 
 <div class="card">
-  <div class="card-title">关键洞察：微任务中 AI 成本可忽略不计</div>
-  <p>以 DSV4 定价（通过 SudoRouter 约 $0.27/M 输入、$1.10/M 输出），一个简单任务消耗 &lt; 2000 Token &mdash; 不到 &#165;0.01。对比 &#165;0.30-0.50 的任务报酬，AI 开销<strong>&lt; 2%</strong>。经济模型可行。</p>
+  <div class="card-title">关键洞察：AI 成本相对于任务报酬可忽略不计</div>
+  <p>以每条视频 &#165;80-150 计算，买卖双方的 AI 总成本低于 &#165;1.50 &mdash; 不到任务报酬的 <strong>1%</strong>。买卖双方的经济模型都很强，无需依赖 Token 杠杆。这是与微任务的根本区别：任务报酬足够高，AI 辅助本质上是免费的。</p>
 </div>
 
-<h3>AI 辅助：卖家的投资决策</h3>
+<h3>2. 卖家的 AI 投资</h3>
 <div class="card">
   <p>卖家的 AI Token 是<strong>卖家自己的投资</strong>，而非平台成本。使用多少 AI 帮助是卖家 L1 信任域内的<strong>本地优化</strong>：</p>
   <ul>
-    <li><strong>高技能卖家</strong>：主要手动完成，AI 使用最少（节省 Token，保留更多利润）</li>
-    <li><strong>低技能卖家</strong>：大量依赖 AI 指导（消耗更多 Token，但能完成原本无法完成的任务）</li>
-    <li><strong>模型选择</strong>：每个卖家自己选择模型。简单任务 &rarr; DSV4 或类似的低成本模型。协议不强制指定模型。</li>
+    <li><strong>高技能卖家</strong>：主要手动完成剪辑，仅使用 AI 进行字幕和格式检查（节省 Token，保留更多利润）</li>
+    <li><strong>低技能卖家</strong>：大量依赖 sudowork 的剪辑技能 &mdash; 模板选择、自动字幕、音乐匹配、节奏调整（消耗更多 Token，但能产出独自无法完成的专业成果）</li>
+    <li><strong>模型选择</strong>：每个卖家自己选择模型。简单格式检查 &rarr; DSV4。创意建议 &rarr; 可能使用更强的模型。协议不强制指定模型。</li>
   </ul>
-  <p>这创造了一个<strong>AI 辅助劳动力的自然市场</strong>：平台使 AI 辅助对微工作变得可及且经济可行，推动采用。</p>
 </div>
 
-<h3>市场背景（中国，2025-2026 数据）</h3>
-<h4 style="color:var(--purple)">微任务平台基准</h4>
-<table>
-  <tr><th>基准</th><th>价格</th><th>来源</th></tr>
-  <tr><td>数据标注：边界框（中国）</td><td>&#165;0.04 &ndash; 0.15/框</td><td>36Kr, GigaBPO</td></tr>
-  <tr><td>数据标注平台时薪（搜活帮、京东微工）</td><td>&#165;15 &ndash; 25/小时</td><td>平台列表</td></tr>
-  <tr><td>蚂蚁微客简单任务</td><td>&#165;0.10 &ndash; 0.50/任务</td><td>平台列表</td></tr>
-  <tr><td>抖音关注（灰色市场）</td><td>&#165;0.05 &ndash; 0.20/关注</td><td>市场观察</td></tr>
-  <tr><td>我们的场景 C（3-5 分钟任务）</td><td>&#165;0.30 &ndash; 0.50/任务 &asymp; &#165;6-10/小时有效时薪</td><td>&mdash;</td></tr>
-</table>
-
-<h4 style="color:var(--purple)">大学生竞品零工收入</h4>
+<h3>3. 大学生竞品零工收入</h3>
 <p>我们的目标市场（大学生）有多种零工选择。微任务结算必须在<strong>总价值</strong>（现金 + AI 使用权）上具有竞争力，而不仅仅是时薪。</p>
 <table>
   <tr><th>零工类型</th><th>时薪</th><th>月收入（估算）</th><th>备注</th></tr>
@@ -692,25 +666,16 @@ sequenceDiagram
   </tr>
 </table>
 <div class="warn">
-  <strong>场景决定一切</strong>：视频剪辑（场景 A）在纯现金时薪上已超越最好的学生兼职 &mdash; 不需要依赖 Token 杠杆。抖音微任务（场景 C）则需要 Token 杠杆 + 灵活性优势才能与竞品竞争。<strong>以场景 A 启动</strong>，建立可信度后再扩展到低价值场景（此时 Token 杠杆叙事才更重要）。
+  <strong>场景决定一切</strong>：视频剪辑（场景 A）在纯现金时薪上已与最好的学生兼职竞争 &mdash; 不需要依赖 Token 杠杆。抖音微任务（场景 C）则需要 Token 杠杆 + 灵活性优势才能与竞品竞争。<strong>以场景 A 启动</strong>，建立可信度后再扩展到低价值场景（此时 Token 杠杆叙事才更重要）。
 </div>
 
-<h3>积分流动性：稳定价格回购</h3>
+<h3>4. Token 经济</h3>
 <div class="card">
-  <p>卖家赚取积分但需要真实货币。sudowork 以原始充值价格的 5-10% 提供<strong>稳定价格回购</strong>。</p>
-  <ul>
-    <li><strong>表述</strong>："退款"或"信用兑换" &mdash; 而非"兑换"或"提现"（避免金融工具分类）</li>
-    <li><strong>机制</strong>：卖家发起回购请求 &rarr; sudoprivacy 按公示回购价将金额充值到卖家的支付方式</li>
-    <li><strong>费率示例</strong>：充值费率 &#165;1 = 100 积分。回购费率：100 积分 = &#165;0.05-0.10</li>
-    <li><strong>政策风险</strong>：需法律审查。将其表述为"未使用信用额度的部分退款"比"货币兑换"更安全。许多游戏平台（Steam、Apple）有类似的信用退款机制。</li>
-  </ul>
-  <p><em>注：回购费率和政策细节在上线前需要法律咨询。此处作为设计选项记录。</em></p>
-</div>
+  <div class="card-title">大学生 $100 种子 Token</div>
+  <p>通过高校合作分发：每位学生注册时获得 <strong>$100 免费 Token</strong>（约 10,000 积分）。这将启动飞轮 &mdash; 学生使用 Token 运行 sudowork 的剪辑技能，完成任务，赚取更多积分，最终成为将子任务（字幕翻译、缩略图设计）分派给其他学生的微买家。Token 在学生网络内流通，形成有机 P2P 经济。这与商业计划书中"每天 &#165;100 免费 Token"策略一致，但锚定在具有明确 ROI 的特定任务类型上。</p>
 
-<h3>积分杠杆：10-20x 价值放大</h3>
-<div class="card">
-  <div class="card-title">为什么 Token 对卖家的价值高于现金</div>
-  <p>回购费率（5-10%）创造了<strong>10-20x 杠杆效应</strong>，自然驱动 AI 采用：</p>
+  <h4 style="margin-top:1rem;color:var(--purple)">10-20x 杠杆：使用 AI vs 兑现</h4>
+  <p>回购费率（原始充值价格的 5-10%）创造了<strong>10-20x 杠杆效应</strong>，自然驱动 AI 采用：</p>
   <table>
     <tr><th>卖家选择</th><th>积分价值</th><th>有效价值</th><th>倍率</th></tr>
     <tr>
@@ -727,13 +692,21 @@ sequenceDiagram
     </tr>
   </table>
   <p><strong>经济逻辑</strong>：模型提供商补贴（如 DSV4 定价）意味着平台的实际算力成本远低于充值价格。这个成本差被作为放大的 AI 价值传递给卖家 &mdash; 50 积分购买 &#165;0.50 的 AI 算力，而平台成本可能仅 &#165;0.05。回购费率（&#165;0.025-0.05）大致匹配平台的真实成本，因此可持续。</p>
-  <p><strong>飞轮</strong>：用积分换 AI 的卖家获得比兑现高 10-20 倍的价值 &rarr; 他们学会 AI 技能 &rarr; 发现 AI 对自身工作的价值 &rarr; 自己购买积分 &rarr; 有机增长。经济激励和教育使命是同一机制。</p>
-  <div class="warn">
-    <strong>关键假设</strong>：这种杠杆只有在 AI 对卖家真正有用时才成立。如果卖家在 AI 辅助工作中找不到价值，他们会想兑现（但得到很少）。平台必须确保 sudowork 在卖家的 L1 信任域内提供真实价值 &mdash; 任务理解、技能发展、可迁移的 AI 素养。
-  </div>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">回购机制</h4>
+  <p>卖家赚取积分但需要真实货币。sudowork 以原始充值价格的 5-10% 提供<strong>稳定价格回购</strong>。</p>
+  <ul>
+    <li><strong>表述</strong>："退款"或"信用兑换" &mdash; 而非"兑换"或"提现"（避免金融工具分类）</li>
+    <li><strong>机制</strong>：卖家发起回购请求 &rarr; sudoprivacy 按公示回购价将金额充值到卖家的支付方式</li>
+    <li><strong>费率示例</strong>：充值费率 &#165;1 = 100 积分。回购费率：100 积分 = &#165;0.05-0.10</li>
+    <li><strong>政策风险</strong>：需法律审查。将其表述为"未使用信用额度的部分退款"比"货币兑换"更安全。先例：Steam Wallet、Apple App Store 信用额度有类似的退款机制。</li>
+  </ul>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">场景适配</h4>
+  <p>对于<strong>场景 A（视频剪辑）</strong>，纯现金收入已具备竞争力 &mdash; &#165;160-300/小时超过所有学生替代方案。Token 杠杆是锦上添花，放大了本已强劲的经济模型。对于<strong>低价值场景</strong>（场景 C：抖音微任务，&#165;0.30-0.50/任务），Token 杠杆成为核心差异化因素 &mdash; 10-20x 的 AI 价值差距才是让这份零工值得做的原因。</p>
 </div>
 
-<h3>目标市场：大学生与应届毕业生（中国）</h3>
+<h3>5. 目标市场：大学生与应届毕业生（中国）</h3>
 <div class="card">
   <p>初始卖家池：<strong>大学生和应届毕业生</strong>。这一群体在多个维度上与平台高度契合：</p>
   <table>
@@ -741,41 +714,35 @@ sequenceDiagram
     <tr><td><strong>供给规模</strong></td><td>中国高校招生处于历史高位（2025 年约 1170 万毕业生），而青年就业率处于历史低位。最大的可用微任务劳动力池。</td></tr>
     <tr><td><strong>AI 接受度</strong></td><td>数字原住民，学习和使用 AI 工具的意愿最高。关键是：更愿意接受<em>Token 作为报酬</em>，因为他们真的会使用 AI &mdash; 10-20x 杠杆（使用 vs 兑现）对重视 AI 使用权的用户效果最佳。</td></tr>
     <tr><td><strong>时间灵活性</strong></td><td>时间安排灵活，可在课间或空闲时间做微任务。非常适合异步、变量的任务流。</td></tr>
-    <tr><td><strong>低机会成本</strong></td><td>学生工资偏低；微任务 &#165;4-10/小时的有效时薪与兼职替代方案（家教、外卖）具有竞争力。</td></tr>
+    <tr><td><strong>收入竞争力</strong></td><td>视频剪辑 &#165;160-300/小时 &mdash; 超过家教（&#165;40-200/小时）及所有其他学生兼职替代方案。</td></tr>
     <tr><td><strong>最大化职业 ROI</strong></td><td>现在学到的 AI 技能将在整个职业生涯中复利增长。一个能编写提示词、委派 AI 任务并验证 AI 输出的应届毕业生，在就业市场上拥有切实的竞争优势。</td></tr>
     <tr><td><strong>网络效应</strong></td><td>校园社交网络驱动口碑传播。一个学生向室友展示 AI 辅助收入，就能在宿舍和院系内引发病毒式采用。</td></tr>
   </table>
-  <p><strong>对学生的宣传语</strong>："做微任务赚钱。你的 AI 副驾帮你更快完成工作，学习雇主看重的技能。你赚的积分可以换取更多 AI 使用 &mdash; 比兑现高 10-20 倍的价值。"</p>
+  <p><strong>对学生的宣传语</strong>："剪视频赚钱。你的 AI 副驾处理难的部分 &mdash; 字幕、模板、音乐、格式。你负责创意审核。&#165;160-300/小时，在宿舍就能做。"</p>
 </div>
 
-<h3>各任务类型的 AI 效率</h3>
+<h3>6. 各任务类型的 AI 效率</h3>
 <div class="card">
   <p>AI 价值因场景而异。下表映射了 AI 在<strong>交易层</strong>（协商、验证、结算）vs <strong>执行层</strong>（实际工作）中的价值。</p>
   <table>
     <tr><th>任务类型</th><th>交易层（AI 价值）</th><th>执行层（AI 价值）</th><th>备注</th></tr>
     <tr>
+      <td>视频剪辑（场景 A）</td>
+      <td style="color:var(--green)">高 &mdash; 自动检查格式、字幕、时长</td>
+      <td style="color:var(--green)">极高 &mdash; AI 完成约 80%（模板、字幕、音乐、节奏）</td>
+      <td>AI 将 2-3 小时的手动任务缩短为 30 分钟。最强经济模型。</td>
+    </tr>
+    <tr>
       <td>数据标注（场景 B）</td>
       <td style="color:var(--green)">高 &mdash; 自动验证格式、抽检准确率</td>
       <td style="color:var(--green)">高 &mdash; AI 预标注，人工修正</td>
-      <td>AI 在两层都增值。最强用例。</td>
+      <td>AI 在两层都增值。成熟的应用场景。</td>
     </tr>
     <tr>
       <td>社交互动（场景 C）</td>
       <td style="color:var(--green)">高 &mdash; 自动验证截图、评论相关性</td>
       <td style="color:var(--orange)">中 &mdash; AI 起草评论，人类执行操作</td>
       <td>执行是物理性的（App 交互）；AI 辅助但无法替代。</td>
-    </tr>
-    <tr>
-      <td>内容写作</td>
-      <td style="color:var(--green)">高 &mdash; 自动检查抄袭、语气、篇幅</td>
-      <td style="color:var(--green)">高 &mdash; AI 起草，人工编辑</td>
-      <td>纯数字任务。AI 可处理大部分执行工作。</td>
-    </tr>
-    <tr>
-      <td>调查问卷</td>
-      <td style="color:var(--orange)">中 &mdash; 完整性检查</td>
-      <td style="color:var(--red)">低 &mdash; 需要真实的人类意见</td>
-      <td>AI 不应伪造问卷回答。仅帮助任务路由。</td>
     </tr>
     <tr>
       <td>插画/代画</td>
@@ -793,10 +760,13 @@ sequenceDiagram
   <p><strong>设计启示</strong>：协议与任务类型无关，但<em>平台引导</em>应将卖家导向 AI 杠杆最高的任务类型 &mdash; 最大化收入效率和 AI 技能发展。</p>
 </div>
 
+<h3>7. 卖家专业化</h3>
+<div class="card">
+  <p>在特定领域积累任务历史的卖家可以通过后训练构建<strong>信誉护城河</strong>。拥有本地 GPU（如 DGX）的卖家可以用已完成的任务数据微调模型 &mdash; 标注图片、视频剪辑模式、代码审查决策 &mdash; 随时间提升质量和速度。更高质量 &rarr; 更高信誉 &rarr; 以更高价格获得更多任务（正反馈循环）。没有 GPU 的卖家，sudowork 的<strong>模型选择元学习</strong>会记住哪种模型最适合哪种任务类型和哪位卖家，为所有人提供轻量级专业化。</p>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="s8">8. 开放问题</h2>
-
-<p style="font-size:0.9rem;color:#8b949e"><em>已解决的条目在 v0.9 中移除："买家无响应超时"（→ §5 B+，合约协商的自动验收）、"多次修订合约"（→ §4，Agent 间协商 <code>max_revisions</code>，无平台限制）。</em></p>
 
 <ol>
   <li>
@@ -816,16 +786,8 @@ sequenceDiagram
     <div class="pref">v1 直接 P2P（买家向已知卖家发送合约邀约）。市场是 v2 功能。已确认：nexus 中无市场代码（已查 git 历史）。需从零构建 &mdash; 任务列表、搜索、卖家档案、分类体系。这是一个重要的构建工作，与结算协议分开。</div>
   </li>
   <li>
-    <strong>部分交付/里程碑付款</strong>：拆分大型任务？
-    <div class="pref">v2。v1 中一个合约 = 一个交付物 = 一次付款。大型任务可手动拆分为多个合约。里程碑支持增加了复杂性（部分签名、部分释放），MVP 不需要。</div>
-  </li>
-  <li>
-    <strong>跨平台</strong>：卖家使用非 sudowork 工具（浏览器、抖音 App、标注工具）？
-    <div class="pref">不是"双方都必须使用 sudowork" &mdash; 而是通过 MCP 服务器和 ai-dev-browser 将外部任务工具集成到 sudowork 中。卖家的 sudowork 负责编排：驱动浏览器进行抖音交互，启动标注工具，截取截图 &mdash; 所有操作都在卖家的 L1 信任域内。协议仍然要求 sudowork 到 sudowork 的通信（L2），但<em>执行</em>工具是可扩展的。MCP 使其即插即用：每种新工具类型只是一个新的 MCP 服务器，无需协议变更。</div>
-  </li>
-  <li>
     <strong>积分回购机制</strong>：卖家如何将赚取的积分转换为真实货币？
-    <div class="pref">以原始充值价格的 5-10% 稳定价格回购（见 §7A）。关键待解决事项：(a) 法律分类 &mdash; "部分退款"表述 vs "货币兑换"风险，需法律审查；(b) 回购费率稳定性 &mdash; 固定费率还是随使用指标浮动；(c) 最低门槛 &mdash; 避免处理成本超过回购金额的微额提现；(d) 频率限制 &mdash; 每日/每周上限以管理现金流。政策风险确实存在：如果监管机构将积分归类为金融工具，合规负担将显著增加。先例：Steam Wallet、Apple App Store 信用额度有类似的退款机制。</div>
+    <div class="pref">以原始充值价格的 5-10% 稳定价格回购（见 &sect;7A）。关键待解决事项：(a) 法律分类 &mdash; "部分退款"表述 vs "货币兑换"风险，需法律审查；(b) 回购费率稳定性 &mdash; 固定费率还是随使用指标浮动；(c) 最低门槛 &mdash; 避免处理成本超过回购金额的微额提现；(d) 频率限制 &mdash; 每日/每周上限以管理现金流。政策风险确实存在：如果监管机构将积分归类为金融工具，合规负担将显著增加。先例：Steam Wallet、Apple App Store 信用额度有类似的退款机制。</div>
   </li>
 </ol>
 
@@ -833,20 +795,8 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>文档历史</strong><br>
-  v1.5 (2026-06-23) &mdash; 新增场景 A：跨境电商视频剪辑（推荐上线场景）。包含 $100 Token 种子模型、学生网络内的 Token 流通、通过合作平台获取跨境买家。场景重新排序：A=视频剪辑，B=数据标注，C=社交互动。<br>
-  v1.4 (2026-06-20) &mdash; 在竞品零工表中新增 AI 提效行：AI 副驾将任务时间压缩 3-5 倍，有效现金时薪达 &#165;18-30/小时（与外卖/客服持平）。Token 杠杆也随产出量同步放大。<br>
-  v1.3 (2026-06-20) &mdash; 场景 A 补充真实生产数据（2,135 张图片，$54.56 全 AI 流水线，比人工标注便宜 8-30 倍）。市场数据修正为 2025-2026 验证数据：边界框标注 &#165;0.04-0.15/框（非 &#165;0.5-2）。新增大学生竞品零工收入对比（家教 &#165;40-200/小时，外卖 &#165;20-30/小时，游戏陪玩 &#165;10-30/小时）。坦诚评估：微任务现金时薪低于替代方案，价值主张取决于 Token 杠杆 + AI 技能培养。新增模板合约（买家 Agent L1 决策）、流水线作为产品能力、卖家通过后训练 + 模型选择元学习实现专业化。<br>
-  v1.2 (2026-06-19) &mdash; AI 效率表新增插画/代画场景。增强 CR 行描述为最高价值脑力劳动。新增"对 sudowork 现有协作网络的价值"章节：P2P 结算作为跨组织协作（非营利组织、开源、自由职业者）的激励层。<br>
-  v1.0 (2026-06-19) &mdash; 积分杠杆：10-20x 价值放大分析（使用 AI vs 兑现）。目标市场：大学生与应届毕业生（供给规模、AI 接受度、职业 ROI、网络效应）。Token 接受度洞察：学生接受 Token 是因为他们重视 AI 使用权。<br>
-  v0.9 (2026-06-19) &mdash; 解决 ShareOne 评论：从开放问题中移除超时 + 多次修订（已在 §5 B+ 和 §4 中解决）。确认无转账 API（需新端点）。确认 nexus 中无市场代码（需从零构建）。跨平台答复：通过 MCP/ai-dev-browser 集成工具，而非要求使用非 sudowork。在"为什么这很重要"中新增 RTB 对比和卖家 Agent 偏好学习。在 §7A 中新增各任务类型 AI 效率表。将积分回购作为正式开放问题，附政策风险分析。<br>
-  v0.8 (2026-06-19) &mdash; 标题更新为"AI 辅助微任务"。新增"为什么这很重要"定位：经济激励资助 AI 技能教育，在知识工作者之外扩大 AI 采用的社会影响。<br>
-  v0.7 (2026-06-19) &mdash; 新增 §7A 经济模型：抖音微任务端到端成本模型、AI 辅助微任务平台定位、卖家 AI 投资逻辑、中国市场基准、积分稳定价格回购机制。<br>
-  v0.6 (2026-06-19) &mdash; 交付流程图增加人类角色 + 同步/异步线型区分。<br>
-  v0.5 (2026-06-19) &mdash; 不强制人工介入。AI 优先验证，人工异步可选。<br>
-  v0.4 (2026-06-19) &mdash; 澄清自动执行条款来自协商（非服务器）。信誉：双向（买家 + 卖家），仅作为市场信号（非结算执行），Agent 代表人类评价（L1 对齐）。<br>
-  v0.3 (2026-06-19) &mdash; 新增买家预承诺（方案 B+）以解决低信任市场中的挟持问题。新增 §5A 信誉系统复用自 nexus（贝叶斯 Beta 模型，VFS 存储）。<br>
-  v0.2 (2026-06-19) &mdash; 修改信任图（我方/对方视角），真实场景（数据标注 + 抖音互动），托管偏好（方案 B），所有开放问题的初步偏好。<br>
-  v0.1 (2026-06-19) &mdash; 初始草案。<br>
+  v2.0 (2026-06-24) &mdash; 全面重写。视频剪辑（跨境电商）作为主要场景。经济模型围绕 &#165;80-150/视频重建。Token 经济整合（$100 种子 + 流通 + 杠杆）。场景重新排序并精简。保留标题中的"微任务" &mdash; 买家 Agent 在协议层将大型工作拆解为微任务，即使单个任务价值较高（&#165;80-150/视频）。<br>
+  v0.1&ndash;v1.5 (2026-06-19 &ndash; 2026-06-23) &mdash; 16 个增量版本。详见 git 历史。<br>
   <br>
   <strong>作者</strong>：elfenlieds7（产品/架构），Claude Opus 4.6（设计辅助）<br>
   <strong>仓库</strong>：<code>nexi-lab/nexus/docs/architecture/p2p-task-settlement.html</code>

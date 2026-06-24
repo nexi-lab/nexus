@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>P2P AI-Assisted Micro-Task Settlement — Design Document</title>
+<title>P2P AI-Assisted Task Settlement — Design Document</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
   :root { --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --border: #30363d; --card: #161b22; --green: #3fb950; --orange: #d29922; --red: #f85149; --purple: #bc8cff; }
@@ -40,33 +40,31 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v1.5</span></h1>
+<h1>P2P AI-Assisted Task Settlement <span class="status status-draft">DRAFT v2.0</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
-  Every seller has an AI copilot. Every task is an opportunity to learn AI-assisted work.
+  Your AI copilot matches, executes, and settles &mdash; from video editing to data labeling.
 </p>
 
 <div class="card">
   <div class="card-title">Why this matters</div>
-  <p>This is not just a micro-task platform. It's a vehicle for <strong>AI-assisted labor adoption at scale</strong>.</p>
-  <p>Today, AI tools are primarily used by knowledge workers. Most of the workforce has never experienced AI augmentation in their daily work. This platform changes that: sellers earn money completing micro-tasks, and in the process, they <strong>learn to collaborate with an AI copilot</strong> &mdash; understanding tasks, generating content, producing proof of work. The skills they develop &mdash; prompt crafting, AI-assisted writing, tool delegation &mdash; transfer directly to their own careers.</p>
-  <p><strong>The economic incentive (earning points) funds the education (learning AI-assisted work).</strong> The platform simultaneously solves the buyer's need for scalable task completion and the seller's need for accessible AI skill-building. This is meaningful at a societal level: lowering the barrier to AI adoption for the broader labor force, not just the tech elite.</p>
 
-  <h4 style="color:var(--purple);margin-top:1.2rem">Value to sudowork's existing collaboration network</h4>
-  <p>Beyond new market creation, P2P task settlement strengthens sudowork's core product thesis: the <strong>1% peer-to-peer collaboration network</strong>. Today, sudowork enables multi-agent collaboration across companies and domains &mdash; but not all collaboration happens within a company. Open-source contributors, nonprofits, freelance experts, and cross-org working groups all collaborate without shared payroll. These collaborations lack an <strong>economic incentive layer</strong>: there's no native way to settle a code review, a design critique, or a research contribution between two sudowork instances that belong to different organizations.</p>
-  <p>P2P task settlement fills this gap. It turns sudowork's collaboration network from "we can work together" into <strong>"we can work together and settle payment trustlessly"</strong>. This creates a new incentive for the 1% peer network: every new participant is not just a collaboration partner but a potential buyer or seller of micro-tasks. The network effect compounds &mdash; more participants means more task liquidity, which attracts more participants.</p>
+  <h4 style="color:var(--purple);margin-top:0.5rem">1. The opportunity</h4>
+  <p>This is not just a gig platform. AI copilots make creative work &mdash; video editing, content creation &mdash; accessible to anyone. A university student equipped with sudowork's editing skill can produce professional-quality short-form video in 30 minutes. At &#165;80-150 per video, the effective hourly rate is <strong>&#165;160-300/h</strong> &mdash; exceeding tutoring, food delivery, and every other student gig option in China. This is AI-assisted labor that is already competitive on pure cash income, before any token leverage.</p>
 
-  <h4 style="color:var(--purple);margin-top:1.2rem">Agent-native matching vs traditional RTB</h4>
-  <p>Online advertising uses Real-Time Bidding (RTB): a 3rd-party exchange matches buyer and seller in ~100ms. This system works for ads but fails for labor &mdash; the platform controls all matching power, takes a large rake, and has no understanding of task content. Agent-native matching is fundamentally different:</p>
+  <h4 style="color:var(--purple);margin-top:1.2rem">2. Value to sudowork's existing collaboration network</h4>
+  <p>P2P task settlement adds an <strong>economic incentive layer</strong> to sudowork's cross-org collaboration network. Today, sudowork enables multi-agent collaboration across companies and domains, but open-source contributors, freelance experts, and cross-org working groups collaborate without shared payroll and have no native way to settle contributions. P2P settlement turns "we can work together" into <strong>"we can work together and settle payment trustlessly"</strong>, compounding the network effect &mdash; every new participant is both a collaboration partner and a potential buyer or seller.</p>
+
+  <h4 style="color:var(--purple);margin-top:1.2rem">3. Agent-native vs platform-mediated</h4>
+  <p>Traditional platforms (RTB, gig marketplaces) centralize matching power and take a large rake. Agent-native matching is fundamentally different:</p>
   <table>
-    <tr><th>Dimension</th><th>RTB (traditional)</th><th>Agent-native (sudowork)</th></tr>
-    <tr><td>Matching power</td><td>Centralized exchange (platform decides)</td><td>Buyer &amp; seller agents negotiate directly (P2P)</td></tr>
-    <tr><td>Task decomposition</td><td>Impossible &mdash; platform doesn't understand task content</td><td>Agent decomposes complex tasks into micro-tasks (understands content)</td></tr>
-    <tr><td>Verification</td><td>3rd-party platform, limited visibility</td><td>Local agent verifies (L1 trust zone, full content access)</td></tr>
-    <tr><td>Task granularity</td><td>Coarse (one ad impression = one unit)</td><td>Fine-grained &rarr; better liquidity (agent can split/merge)</td></tr>
-    <tr><td>Seller learning</td><td>None &mdash; seller is a passive slot</td><td>Agent teaches seller AI skills through collaboration</td></tr>
+    <tr><th>Dimension</th><th>Platform-mediated (traditional)</th><th>Agent-native (sudowork)</th></tr>
+    <tr><td>Matching power</td><td>Centralized exchange decides</td><td>Buyer &amp; seller agents negotiate directly (P2P)</td></tr>
+    <tr><td>Task understanding</td><td>Platform doesn't understand task content</td><td>Agent decomposes, verifies, and executes with full content access</td></tr>
+    <tr><td>Verification</td><td>3rd-party platform, limited visibility</td><td>Local agent verifies within L1 trust zone</td></tr>
+    <tr><td>Seller learning</td><td>None &mdash; seller is a passive slot</td><td>Agent learns seller preferences over time, becomes a better advocate</td></tr>
   </table>
-  <p><strong>The seller's agent learns preferences over time.</strong> Unlike RTB's cold matching where every impression is independent, sudowork accumulates knowledge about its human: what tasks they excel at, preferred working hours, quality patterns, domain expertise. This local learning (entirely within L1) means task selection improves with use &mdash; the agent becomes a better advocate for its human, not just a task router.</p>
+  <p><strong>The seller's agent learns preferences over time.</strong> Unlike platform matching where every task is independent, sudowork accumulates knowledge about its human: what tasks they excel at, preferred working hours, quality patterns, domain expertise. This local learning (entirely within L1) means task selection improves with use.</p>
 </div>
 
 <div class="toc">
@@ -80,7 +78,7 @@
     <li><a href="#s5a">5A. Reputation System</a></li>
     <li><a href="#s6">6. Delivery via VFS</a></li>
     <li><a href="#s7">7. Scenarios</a></li>
-    <li><a href="#s7a">7A. Economics: Cost Model</a></li>
+    <li><a href="#s7a">7A. Economics: End-to-End Cost Model</a></li>
     <li><a href="#s8">8. Open Questions</a></li>
   </ul>
 </div>
@@ -183,7 +181,7 @@ graph TB
   <tr><th>Stage</th><th>Buyer's AI</th><th>Seller's AI</th></tr>
   <tr><td>Task posting</td><td>Draft clear requirements + acceptance criteria</td><td>&mdash;</td></tr>
   <tr><td>Negotiation</td><td>Evaluate counter-offers, flag risks</td><td>Assess feasibility, suggest fair pricing</td></tr>
-  <tr><td>Execution</td><td>&mdash;</td><td>Do the work (labeling, browsing, coding, etc.)</td></tr>
+  <tr><td>Execution</td><td>&mdash;</td><td>Do the work (editing, labeling, coding, etc.)</td></tr>
   <tr><td>Delivery</td><td>&mdash;</td><td>Package deliverables, pre-check against criteria</td></tr>
   <tr><td>Verification</td><td>AI auto-checks against criteria (human may review async &mdash; local preference, not protocol-enforced)</td><td>&mdash;</td></tr>
   <tr><td>Dispute</td><td>Gather evidence for buyer's position</td><td>Gather evidence for seller's position</td></tr>
@@ -237,12 +235,13 @@ flowchart LR
   },
 
   "terms": {
-    "title": "Label 1000 images for object detection",
+    "title": "Edit 5 product videos for TikTok Shop (30s each)",
     "description": "...",
     "acceptance_criteria": [
-      "All 1000 images labeled",
-      "Bounding boxes in COCO format",
-      "Accuracy spot-check > 95%"
+      "Each video 25-35 seconds, 9:16 aspect ratio, &lt;50MB",
+      "Auto-captions present and accurate (AI-verifiable)",
+      "Background music from approved library",
+      "Creative quality spot-check by buyer (pacing, transitions, brand tone)"
     ],
     "price_points": 500,
     "deadline_utc": "2026-07-15T00:00:00Z",
@@ -530,11 +529,9 @@ sequenceDiagram
   <p><strong>Stress tests</strong>:</p>
   <ul>
     <li><strong>Verification</strong>: Mix of machine-verifiable (count, format) and subjective (accuracy) criteria. Buyer's AI can automate the first two; spot-check needs AI + human.</li>
-    <li><strong>Volume &amp; task decomposition</strong>: 81K elements in a single contract may be too large &mdash; seller's agent evaluates ROI and may decline. Buyer's sudowork can split into ~21 contracts of 100 images each. Granularity is buyer agent's L1 decision.</li>
     <li><strong>Template contracts</strong>: For standard task types like "UI labeling", buyer's sudowork can use pre-defined templates that skip negotiation. Seller agent sees "UI labeling, 100 images, 30 points, 72h timeout" and accepts/rejects instantly. Whether to use templates is the <strong>buyer agent's decision</strong> (L1), not platform-mandated.</li>
     <li><strong>Pipeline as product capability</strong>: The seller does <strong>not</strong> build their own pipeline. Sudowork provides OmniParser+model orchestration as a <strong>product-level capability</strong>. Seller says "label these images", sudowork handles the rest. sudowork product team must keep pace with pipeline capabilities for key task types.</li>
     <li><strong>Seller specialization</strong>: A seller who completes many labeling tasks can fine-tune a local model (if they have GPU, e.g. DGX) on accumulated task data, increasing accuracy over time &rarr; higher reputation &rarr; more tasks at higher prices (positive feedback loop). Without GPU, sudowork's <strong>model choice meta-learning</strong> remembers which model works best for which task type &mdash; lightweight specialization for all sellers.</li>
-    <li><strong>Partial quality</strong>: What if 900/1000 are good but 100 are sloppy? Revision or partial payment?</li>
   </ul>
 </div>
 
@@ -553,10 +550,7 @@ sequenceDiagram
   <p><strong>Delivery</strong>: Interaction proof bundle (screenshots, timestamps) in VFS.</p>
   <p><strong>Stress tests</strong>:</p>
   <ul>
-    <li><strong>Non-reversibility</strong>: Unlike code, the seller can't "un-follow" easily. The work has real-world side effects. Even if the seller loses interest later, the follow/like probably persists &mdash; buyer gets long-term value.</li>
     <li><strong>Proof of action</strong>: How to prove the engagement happened? Screenshots can be faked. Need to think about attestation &mdash; perhaps browser automation logs from sudowork's ai-dev-browser?</li>
-    <li><strong>Genuine-ness</strong>: The comment must be "genuine" &mdash; this is inherently subjective. Buyer's AI can check if the comment is contextually relevant to the video content, but ultimately human judgment.</li>
-    <li><strong>Interest alignment</strong>: If the seller genuinely finds the content interesting, they become a long-term follower (win-win). If not, they still did the task but won't engage further. Either outcome is acceptable &mdash; the buyer is paying for <em>initial exposure</em>, not permanent commitment.</li>
     <li><strong>Micro-task economics</strong>: 10 points per task = very small. Need efficient contract negotiation (templates?) and low-friction settlement. Can't have heavyweight crypto for micro-payments.</li>
   </ul>
 </div>
@@ -566,99 +560,79 @@ sequenceDiagram
   <ul>
     <li><strong>Mixed verification</strong>: Protocol must support both machine-verifiable and human-judged criteria, explicitly marked in the contract.</li>
     <li><strong>Proof types</strong>: Different tasks need different proof mechanisms &mdash; CAS hash for data files, screenshots/logs for actions. Protocol should be proof-type-agnostic.</li>
-    <li><strong>Micro-task support</strong>: Scenario C (10 points) needs lightweight contracts. Perhaps template-based "task types" to skip negotiation for standard tasks.</li>
-    <li><strong>Non-digital side effects</strong>: Some deliverables (social engagement) have real-world consequences that outlive the contract. Interesting but not a protocol-level concern.</li>
+    <li><strong>Template contracts</strong>: Low-value tasks (Scenario C) need lightweight contracts. Template-based "task types" skip negotiation for standard tasks.</li>
+    <li><strong>Scenario-dependent economics</strong>: Video editing (Scenario A) is cash-competitive. Lower-value scenarios depend on token leverage. Protocol is the same; business model adapts per scenario.</li>
   </ul>
 </div>
 
 <!-- ============================================================ -->
 <h2 id="s7a">7A. Economics: End-to-End Cost Model</h2>
 
-<p>Using Scenario A (video editing) and C (Douyin engagement) as reference tasks. Prices in CNY.</p>
-
-<h3>Positioning: AI-Assisted Micro-Task Platform</h3>
-<div class="card">
-  <p>This is not just another crowdsourcing platform. The differentiator: <strong>every seller has an AI copilot</strong> (sudowork) that helps them understand tasks, execute efficiently, and generate delivery proofs. This lowers the skill floor &mdash; more people can do more types of work &mdash; and raises quality (AI pre-checks deliverables before submission).</p>
-  <p>The platform simultaneously serves as an <strong>adoption vehicle for AI-assisted labor</strong>: sellers who start using sudowork for micro-tasks naturally discover its value for their own work, driving organic growth.</p>
-</div>
-
-<h3>Per-Task Cost Breakdown (Scenario B: Douyin engagement)</h3>
+<h3>1. Per-Task Cost Breakdown (Scenario A: Video Editing)</h3>
 
 <table>
   <tr><th>Item</th><th>Who pays</th><th>Estimate</th><th>Notes</th></tr>
   <tr>
     <td>Task payment (seller's labor)</td>
     <td>Buyer</td>
-    <td>&#165;0.30 &ndash; 0.50</td>
-    <td>Market rate for social engagement micro-tasks (comparable to existing platforms)</td>
+    <td>&#165;80 &ndash; 150/video</td>
+    <td>Buyer posts at market rate for short-form product video editing</td>
   </tr>
   <tr>
-    <td>Buyer's AI cost (post task + verify)</td>
+    <td>Buyer's AI cost (post task + verify format/captions)</td>
     <td>Buyer (own tokens)</td>
-    <td>&lt; &#165;0.01</td>
-    <td>~1K tokens input + ~100 output on DSV4. Negligible.</td>
+    <td>&lt; &#165;1</td>
+    <td>Draft requirements, auto-check duration/format/captions on DSV4</td>
   </tr>
   <tr>
-    <td>Seller's AI cost (understand task + generate comment + proof)</td>
+    <td>Seller's AI cost (editing skill: auto-caption, template, music)</td>
     <td>Seller (own tokens)</td>
-    <td>&lt; &#165;0.01</td>
-    <td>~500-1K tokens on DSV4. Seller's own investment.</td>
+    <td>&lt; &#165;0.50</td>
+    <td>Sudowork editing skill on DSV4. Seller's own investment.</td>
   </tr>
   <tr>
     <td>Protocol overhead (signatures + VFS ops)</td>
     <td>Both (local compute)</td>
     <td>~0</td>
-    <td>Ed25519 sign &lt; 1ms, VFS write &lt; 5&micro;s. No network cost for P2P local ops.</td>
+    <td>Ed25519 sign &lt; 1ms, VFS write &lt; 5&micro;s</td>
   </tr>
   <tr>
     <td>Server transfer API (settlement)</td>
     <td>Platform</td>
     <td>~0</td>
-    <td>One HTTP call per contract. Platform operational cost.</td>
+    <td>One HTTP call per contract</td>
   </tr>
   <tr>
     <td><strong>Buyer total cost</strong></td>
     <td></td>
-    <td><strong>&#165;0.30 &ndash; 0.51</strong></td>
-    <td>Task payment + own AI. AI cost &lt; 2% of task payment.</td>
+    <td><strong>&#165;81 &ndash; 151</strong></td>
+    <td>Task payment + own AI. AI cost &lt; 1% of task payment.</td>
   </tr>
   <tr>
     <td><strong>Seller net income</strong></td>
     <td></td>
-    <td><strong>&#165;0.29 &ndash; 0.49</strong></td>
-    <td>Task payment minus own AI cost. AI cost &lt; 2%.</td>
+    <td><strong>&#165;79.50 &ndash; 149.50</strong></td>
+    <td>Task payment minus own AI cost. AI cost &lt; 1%.</td>
   </tr>
 </table>
 
 <div class="card">
-  <div class="card-title">Key insight: AI cost is negligible for micro-tasks</div>
-  <p>At DSV4 pricing (~$0.27/M input, ~$1.10/M output via SudoRouter), a simple task consumes &lt; 2000 tokens total &mdash; less than &#165;0.01. Against a &#165;0.30-0.50 task payment, AI overhead is <strong>&lt; 2%</strong>. The economics work.</p>
+  <div class="card-title">Key insight: AI cost is negligible relative to task payment</div>
+  <p>At &#165;80-150 per video, the combined AI cost for buyer and seller is under &#165;1.50 &mdash; less than <strong>1%</strong> of the task payment. Both buyer and seller economics are strong without needing token leverage. This is the fundamental difference from micro-tasks: the task payment is high enough that AI assistance is essentially free.</p>
 </div>
 
-<h3>AI Assistance: Seller's Investment Decision</h3>
+<h3>2. Seller's AI Investment</h3>
 <div class="card">
   <p>The seller's AI tokens are <strong>the seller's own investment</strong>, not the platform's cost. How much AI help to use is a <strong>local optimization</strong> within the seller's L1 trust zone:</p>
   <ul>
-    <li><strong>High-skill seller</strong>: Does most work manually, uses AI minimally (saves tokens, keeps more profit)</li>
-    <li><strong>Low-skill seller</strong>: Relies heavily on AI guidance (spends more tokens, but can complete tasks they otherwise couldn't)</li>
-    <li><strong>Model choice</strong>: Each seller picks their own model. Simple tasks &rarr; DSV4 or similar cheap model. The protocol doesn't mandate a model.</li>
+    <li><strong>High-skill seller</strong>: Does most editing manually, uses AI for captions and format checks only (saves tokens, keeps more profit)</li>
+    <li><strong>Low-skill seller</strong>: Relies heavily on sudowork's editing skill &mdash; template selection, auto-captioning, music matching, pacing (spends more tokens, but produces professional output they couldn't achieve alone)</li>
+    <li><strong>Model choice</strong>: Each seller picks their own model. Simple format checks &rarr; DSV4. Creative suggestions &rarr; may use a stronger model. The protocol doesn't mandate a model.</li>
   </ul>
-  <p>This creates a <strong>natural market for AI-assisted labor</strong>: the platform makes AI assistance accessible and economically viable for micro-work, driving adoption.</p>
 </div>
 
-<h3>Market Context (China, 2025-2026 data)</h3>
-<h4 style="color:var(--purple)">Micro-task platform benchmarks</h4>
-<table>
-  <tr><th>Benchmark</th><th>Price</th><th>Source</th></tr>
-  <tr><td>Data labeling: bounding box (China)</td><td>&#165;0.04 &ndash; 0.15/box</td><td>36Kr, GigaBPO</td></tr>
-  <tr><td>Data labeling platform hourly (搜活帮, 京东微工)</td><td>&#165;15 &ndash; 25/hour</td><td>Platform listings</td></tr>
-  <tr><td>Ant Microwork (蚂蚁微客) simple task</td><td>&#165;0.10 &ndash; 0.50/task</td><td>Platform listings</td></tr>
-  <tr><td>Douyin follow (grey market)</td><td>&#165;0.05 &ndash; 0.20/follow</td><td>Market observation</td></tr>
-  <tr><td>Our Scenario B (3-5 min task)</td><td>&#165;0.30 &ndash; 0.50/task &asymp; &#165;6-10/hour effective</td><td>&mdash;</td></tr>
-</table>
-
-<h4 style="color:var(--purple)">Competing gig income for university students</h4>
-<p>Our target market (university students) has multiple gig options. Micro-task settlement must offer competitive <strong>total value</strong> (cash + AI access), not just hourly rate.</p>
+<h3>3. Competing Gig Income for University Students</h3>
+<p>Our target market (university students) has multiple gig options. Task settlement must offer competitive <strong>total value</strong> (cash + AI access), not just hourly rate.</p>
 <table>
   <tr><th>Gig type</th><th>Hourly rate</th><th>Monthly income (est.)</th><th>Notes</th></tr>
   <tr><td>One-on-one tutoring (家教)</td><td>&#165;40 &ndash; 200/h</td><td>&#165;2,000 &ndash; 8,000</td><td>Highest hourly, but requires subject expertise + scheduling. City-dependent (&#165;60-300 in tier 1).</td></tr>
@@ -695,22 +669,13 @@ sequenceDiagram
   <strong>Scenario matters</strong>: Video editing (Scenario A) is cash-competitive with the best student gigs &mdash; no need to rely on token leverage. Douyin micro-tasks (Scenario C) depend on token leverage + flexibility to compete. <strong>Launch with Scenario A</strong> to establish credibility, then expand to lower-value scenarios where the token leverage narrative matters more.
 </div>
 
-<h3>Points Liquidity: Stable-Price Buyback</h3>
+<h3>4. Token Economy</h3>
 <div class="card">
-  <p>Sellers earn points but need real currency. sudowork offers a <strong>stable-price buyback</strong> at 5-10% of the original charge price.</p>
-  <ul>
-    <li><strong>Framing</strong>: "refund" or "credit redemption" &mdash; not "exchange" or "withdrawal" (avoids financial instrument classification)</li>
-    <li><strong>Mechanism</strong>: Seller requests buyback &rarr; sudoprivacy credits the amount to seller's payment method at the published buyback rate</li>
-    <li><strong>Rate example</strong>: Charge rate &#165;1 = 100 points. Buyback rate: 100 points = &#165;0.05-0.10</li>
-    <li><strong>Policy risk</strong>: Needs legal review. Framing as "partial refund of unused credits" rather than "currency exchange" is safer. Many game platforms (Steam, Apple) have similar credit refund mechanisms.</li>
-  </ul>
-  <p><em>Note: Buyback rate and policy details require legal consultation before launch. Recorded here as design option.</em></p>
-</div>
+  <div class="card-title">$100 seed tokens for university students</div>
+  <p>Distribution via university partnerships: each student receives <strong>$100 free tokens</strong> (&asymp; 10,000 points) upon registration. This seeds the flywheel &mdash; students use tokens to run sudowork's editing skill, complete tasks, earn more points, and eventually become micro-buyers who dispatch sub-tasks (caption translation, thumbnail design) to other students. Tokens circulate within the student network, creating an organic P2P economy. Aligns with the BP's "&#165;100/day free token" strategy but anchored to a specific task type with clear ROI.</p>
 
-<h3>Points Leverage: 10-20x Value Amplification</h3>
-<div class="card">
-  <div class="card-title">Why tokens are worth more than cash to sellers</div>
-  <p>The buyback rate (5-10%) creates a <strong>10-20x leverage effect</strong> that naturally drives AI adoption:</p>
+  <h4 style="margin-top:1rem;color:var(--purple)">10-20x leverage: use AI vs cash out</h4>
+  <p>The buyback rate (5-10% of original charge price) creates a <strong>10-20x leverage effect</strong> that naturally drives AI adoption:</p>
   <table>
     <tr><th>Seller choice</th><th>Points value</th><th>Effective value</th><th>Multiplier</th></tr>
     <tr>
@@ -726,56 +691,58 @@ sequenceDiagram
       <td style="color:var(--red)">0.05-0.1x face value</td>
     </tr>
   </table>
-  <p><strong>The economics</strong>: Model provider subsidies (e.g. DSV4 pricing) mean the platform's actual compute cost is far below the charge rate. This cost gap is passed to sellers as amplified AI value &mdash; 50 points buys &#165;0.50 of AI compute that costs the platform perhaps &#165;0.05. The buyback rate (&#165;0.025-0.05) roughly matches the platform's real cost, so it's sustainable.</p>
-  <p><strong>The flywheel</strong>: Sellers who use points for AI get 10-20x more value than cashing out &rarr; they learn AI skills &rarr; they discover AI's value for their own work &rarr; they buy their own points &rarr; organic growth. The economic incentive and the education mission are the same mechanism.</p>
-  <div class="warn">
-    <strong>Critical assumption</strong>: This leverage only works if AI is genuinely useful to sellers. If sellers can't find value in AI-assisted work, they'll want to cash out (and get very little). The platform must ensure sudowork delivers real value in the seller's L1 trust zone &mdash; task understanding, skill development, career-transferable AI literacy.
-  </div>
+  <p><strong>The economics</strong>: Model provider subsidies (e.g. DSV4 pricing) mean the platform's actual compute cost is far below the charge rate. This cost gap is passed to sellers as amplified AI value &mdash; 50 points buys &#165;0.50 of AI compute that costs the platform perhaps &#165;0.05. The buyback rate roughly matches the platform's real cost, so it's sustainable.</p>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Buyback mechanism</h4>
+  <p>Sellers earn points but need real currency. sudowork offers a <strong>stable-price buyback</strong> at 5-10% of the original charge price.</p>
+  <ul>
+    <li><strong>Framing</strong>: "refund" or "credit redemption" &mdash; not "exchange" or "withdrawal" (avoids financial instrument classification)</li>
+    <li><strong>Mechanism</strong>: Seller requests buyback &rarr; sudoprivacy credits the amount to seller's payment method at the published buyback rate</li>
+    <li><strong>Rate example</strong>: Charge rate &#165;1 = 100 points. Buyback rate: 100 points = &#165;0.05-0.10</li>
+    <li><strong>Policy risk</strong>: Needs legal review. Framing as "partial refund of unused credits" rather than "currency exchange" is safer. Precedent: Steam Wallet, Apple App Store credits have similar refund mechanisms.</li>
+  </ul>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Scenario framing</h4>
+  <p>For <strong>Scenario A (video editing)</strong>, cash income alone is competitive &mdash; &#165;160-300/h exceeds all student alternatives. Token leverage is a bonus that amplifies already-strong economics. For <strong>lower-value scenarios</strong> (Scenario C: Douyin micro-tasks at &#165;0.30-0.50/task), token leverage becomes the primary differentiator &mdash; the 10-20x AI value gap is what makes the gig worth doing.</p>
 </div>
 
-<h3>Target Market: University Students &amp; Fresh Graduates (China)</h3>
+<h3>5. Target Market: University Students &amp; Fresh Graduates (China)</h3>
 <div class="card">
   <p>Initial seller pool: <strong>university students and fresh graduates</strong> (&#22823;&#23398;&#29983;/&#24212;&#23626;&#29983;). This demographic is uniquely aligned with the platform on multiple dimensions:</p>
   <table>
     <tr><th>Dimension</th><th>Why it aligns</th></tr>
-    <tr><td><strong>Supply volume</strong></td><td>China's university enrollment is at a historic high (~11.7M graduates in 2025), while youth employment rates are at historic lows. Largest available micro-task labor pool.</td></tr>
+    <tr><td><strong>Supply volume</strong></td><td>China's university enrollment is at a historic high (~11.7M graduates in 2025), while youth employment rates are at historic lows. Largest available task labor pool.</td></tr>
     <tr><td><strong>AI willingness</strong></td><td>Digital natives, highest willingness to learn and use AI tools. Crucially: more willing to accept <em>tokens as compensation</em> because they'll actually use the AI &mdash; the 10-20x leverage (use vs cash out) works best for users who value AI access.</td></tr>
-    <tr><td><strong>Time flexibility</strong></td><td>Flexible schedules, can do micro-tasks between classes or during free time. Ideal for async, variable-volume task flows.</td></tr>
-    <tr><td><strong>Low opportunity cost</strong></td><td>Student wages are low; &#165;4-10/hour effective rate from micro-tasks is competitive with part-time alternatives (tutoring, food delivery).</td></tr>
+    <tr><td><strong>Time flexibility</strong></td><td>Flexible schedules, can do tasks between classes or during free time. Ideal for async, variable-volume task flows.</td></tr>
+    <tr><td><strong>Competitive income</strong></td><td>&#165;160-300/h for video editing &mdash; exceeds tutoring (&#165;40-200/h) and all other student gig alternatives.</td></tr>
     <tr><td><strong>Maximum career ROI</strong></td><td>AI skills learned now compound over an entire career. A graduating student who can prompt-craft, delegate to AI, and verify AI output has a tangible competitive advantage in the job market.</td></tr>
     <tr><td><strong>Network effects</strong></td><td>Campus social networks drive organic word-of-mouth. One student showing AI-assisted earnings to roommates creates viral adoption within dorms and departments.</td></tr>
   </table>
-  <p><strong>The pitch to students</strong>: "Earn money doing micro-tasks. Your AI copilot helps you work faster and learn skills employers want. The points you earn buy more AI &mdash; 10-20x more value than cashing out."</p>
+  <p><strong>The pitch to students</strong>: "Earn money editing videos. Your AI copilot handles the hard parts &mdash; captions, templates, music, format. You handle creative review. &#165;160-300/h, from your dorm."</p>
 </div>
 
-<h3>AI Efficiency by Task Type</h3>
+<h3>6. AI Efficiency by Task Type</h3>
 <div class="card">
   <p>AI value varies by scenario. The table below maps where AI helps most &mdash; at the <strong>transaction layer</strong> (negotiation, verification, settlement) vs the <strong>execution layer</strong> (doing the actual work).</p>
   <table>
     <tr><th>Task type</th><th>Transaction layer (AI value)</th><th>Execution layer (AI value)</th><th>Notes</th></tr>
     <tr>
-      <td>Data labeling (Scenario A)</td>
-      <td style="color:var(--green)">High &mdash; auto-verify format, spot-check accuracy</td>
-      <td style="color:var(--green)">High &mdash; AI pre-labels, human corrects</td>
-      <td>AI adds value at both layers. Strongest use case.</td>
+      <td>Video editing (Scenario A)</td>
+      <td style="color:var(--green)">High &mdash; auto-check format, captions, duration</td>
+      <td style="color:var(--green)">Very High &mdash; AI does ~80% (template, caption, music, pacing)</td>
+      <td>AI transforms 2-3h manual task into 30min. Strongest economics.</td>
     </tr>
     <tr>
-      <td>Social engagement (Scenario B)</td>
+      <td>Data labeling (Scenario B)</td>
+      <td style="color:var(--green)">High &mdash; auto-verify format, spot-check accuracy</td>
+      <td style="color:var(--green)">High &mdash; AI pre-labels, human corrects</td>
+      <td>AI adds value at both layers. Well-established use case.</td>
+    </tr>
+    <tr>
+      <td>Social engagement (Scenario C)</td>
       <td style="color:var(--green)">High &mdash; auto-verify screenshots, comment relevance</td>
       <td style="color:var(--orange)">Medium &mdash; AI drafts comment, human performs action</td>
       <td>Execution is physical (app interaction); AI assists but can't replace.</td>
-    </tr>
-    <tr>
-      <td>Content writing</td>
-      <td style="color:var(--green)">High &mdash; auto-check plagiarism, tone, length</td>
-      <td style="color:var(--green)">High &mdash; AI drafts, human edits</td>
-      <td>Pure cyber task. AI can handle most of execution.</td>
-    </tr>
-    <tr>
-      <td>Survey / questionnaire</td>
-      <td style="color:var(--orange)">Medium &mdash; completeness check</td>
-      <td style="color:var(--red)">Low &mdash; requires genuine human opinion</td>
-      <td>AI should NOT fabricate survey responses. Helps with task routing only.</td>
     </tr>
     <tr>
       <td>Illustration / commissioned art (代画)</td>
@@ -793,10 +760,13 @@ sequenceDiagram
   <p><strong>Design implication</strong>: The protocol is task-type-agnostic, but the <em>platform guidance</em> should steer sellers toward task types where AI leverage is highest &mdash; maximizing both earnings efficiency and AI skill development.</p>
 </div>
 
+<h3>7. Seller Specialization</h3>
+<div class="card">
+  <p>Sellers who accumulate task history in a specific domain can build a <strong>reputation moat</strong> through post-training. A seller with local GPU (e.g. DGX) can fine-tune a model on their completed task data &mdash; labeled images, edited video patterns, code review decisions &mdash; increasing quality and speed over time. Higher quality &rarr; higher reputation &rarr; more tasks at higher prices (positive feedback loop). For sellers without GPU, sudowork's <strong>model choice meta-learning</strong> remembers which model works best for which task type and which seller, providing lightweight specialization for everyone.</p>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="s8">8. Open Questions</h2>
-
-<p style="font-size:0.9rem;color:#8b949e"><em>Resolved items removed in v0.9: "Timeout on buyer non-response" (→ §5 B+, contract-negotiated auto-accept), "Multi-revision contracts" (→ §4, agent-to-agent negotiate <code>max_revisions</code>, no platform limit).</em></p>
 
 <ol>
   <li>
@@ -816,16 +786,8 @@ sequenceDiagram
     <div class="pref">Direct P2P for v1 (buyer sends contract offer to a known seller). Marketplace is a v2 feature. Confirmed: no marketplace code exists in nexus (checked git history). Need to build from scratch &mdash; task listing, search, seller profiles, category taxonomy. This is a significant build, separate from the settlement protocol.</div>
   </li>
   <li>
-    <strong>Partial delivery / milestone payments</strong>: Split large tasks?
-    <div class="pref">v2. For v1, one contract = one deliverable = one payment. Large tasks can be manually split into multiple contracts. Milestone support adds complexity (partial signatures, partial releases) that isn't needed for MVP.</div>
-  </li>
-  <li>
-    <strong>Cross-platform</strong>: Seller uses non-sudowork tools (browser, Douyin app, labeling tools)?
-    <div class="pref">Not "both parties must use sudowork" &mdash; rather, integrate external task tools into sudowork via MCP servers and ai-dev-browser. The seller's sudowork orchestrates: it drives the browser for Douyin interactions, launches labeling tools, captures screenshots &mdash; all within the seller's L1 trust zone. The protocol still requires sudowork-to-sudowork communication (L2), but the <em>execution</em> tools are extensible. MCP makes this plug-and-play: each new tool type is just a new MCP server, no protocol changes needed.</div>
-  </li>
-  <li>
     <strong>Points buyback mechanism</strong>: How do sellers convert earned points to real currency?
-    <div class="pref">Stable-price buyback at 5-10% of original charge price (see §7A). Key open items: (a) legal classification &mdash; "partial refund" framing vs "currency exchange" risk, needs legal review; (b) buyback rate stability &mdash; fixed rate or floating with usage metrics; (c) minimum threshold &mdash; avoid micro-withdrawals that cost more to process than they're worth; (d) frequency limits &mdash; daily/weekly caps to manage cash flow. Policy risk is real: if regulators classify points as a financial instrument, compliance burden increases significantly. Precedent: Steam Wallet, Apple App Store credits have similar refund mechanisms.</div>
+    <div class="pref">Stable-price buyback at 5-10% of original charge price (see &sect;7A). Key open items: (a) legal classification &mdash; "partial refund" framing vs "currency exchange" risk, needs legal review; (b) buyback rate stability &mdash; fixed rate or floating with usage metrics; (c) minimum threshold &mdash; avoid micro-withdrawals that cost more to process than they're worth; (d) frequency limits &mdash; daily/weekly caps to manage cash flow. Policy risk is real: if regulators classify points as a financial instrument, compliance burden increases significantly. Precedent: Steam Wallet, Apple App Store credits have similar refund mechanisms.</div>
   </li>
 </ol>
 
@@ -833,20 +795,8 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
-  v1.5 (2026-06-23) &mdash; New Scenario A: Video Editing for Cross-Border E-Commerce (recommended launch scenario). Includes $100 token seed model, token circulation within student network, cross-border buyer supply via partner platforms. Reordered scenarios: A=video editing, B=data labeling, C=social engagement.<br>
-  v1.4 (2026-06-20) &mdash; Added AI throughput row to competing gig table: AI copilot compresses task time 3-5x, bringing effective cash rate to &#165;18-30/h (matches delivery/customer service). Token leverage also scales with throughput.<br>
-  v1.3 (2026-06-20) &mdash; Scenario A enriched with real production data (2,135 images, $54.56 full-AI pipeline, 8-30x cheaper than human labeling). Market context corrected with 2025-2026 verified data: bounding box &#165;0.04-0.15/box (not &#165;0.5-2). Added competing gig income comparison for university students (tutoring &#165;40-200/h, delivery &#165;20-30/h, game companion &#165;10-30/h). Honest assessment: micro-task cash rate is lower than alternatives, value proposition depends on token leverage + AI skill-building. Added template contracts (buyer agent L1 decision), pipeline as product capability, seller specialization via post-training + model choice meta-learning.<br>
-  v1.2 (2026-06-19) &mdash; Added illustration/代画 scenario to AI Efficiency table. Enhanced CR row as highest-value brain work. Added "Value to sudowork's existing collaboration network" section: P2P settlement as incentive layer for cross-org collaboration (nonprofits, open-source, freelancers).<br>
-  v1.0 (2026-06-19) &mdash; Points leverage: 10-20x value amplification analysis (use AI vs cash out). Target market: university students &amp; fresh graduates (supply volume, AI willingness, career ROI, network effects). Token acceptance insight: students accept tokens because they value AI access.<br>
-  v0.9 (2026-06-19) &mdash; Resolved ShareOne comments: removed timeout + multi-revision from open questions (already resolved in §5 B+ and §4). Confirmed no transfer API exists (need new endpoint). Confirmed no marketplace code in nexus (build from scratch). Cross-platform answer: integrate tools via MCP/ai-dev-browser, not require non-sudowork. Added RTB comparison and seller agent preference learning to "Why this matters". Added AI efficiency by task type table to §7A. Added points buyback as formal open question with policy risk analysis.<br>
-  v0.8 (2026-06-19) &mdash; Title updated to "AI-Assisted Micro-Task". Added "Why this matters" positioning: economic incentive funds AI skill education, societal impact of broadening AI adoption beyond knowledge workers.<br>
-  v0.7 (2026-06-19) &mdash; Added §7A Economics: E2E cost model for Douyin micro-task, AI-assist micro-task platform positioning, seller AI investment rationale, China market benchmarks, points stable-price buyback mechanism.<br>
-  v0.6 (2026-06-19) &mdash; Delivery diagram with human actors + sync/async line distinction.<br>
-  v0.5 (2026-06-19) &mdash; No forced human-in-the-loop. AI-first verification, human async optional.<br>
-  v0.4 (2026-06-19) &mdash; Clarified auto-execute terms come from negotiate (not server). Reputation: bilateral (buyer + seller), marketplace signal only (not settlement enforcement), agent rates on behalf of human (L1 alignment).<br>
-  v0.3 (2026-06-19) &mdash; Added Buyer Pre-commitment (Option B+) to close hostage problem in low-trust markets. Added §5A Reputation System reuse from nexus (Bayesian Beta model, VFS storage).<br>
-  v0.2 (2026-06-19) &mdash; Revised trust diagram (our/their perspective), real scenarios (data labeling + Douyin engagement), escrow preference (Option B), initial preferences on all open questions.<br>
-  v0.1 (2026-06-19) &mdash; Initial draft.<br>
+  v2.0 (2026-06-24) &mdash; Full rewrite. Video editing (cross-border e-commerce) as primary scenario. Economics rebuilt around &#165;80-150/video model. Token economy consolidated ($100 seed + circulation + leverage). Scenarios reordered and tightened. Title changed from "Micro-Task" to "Task" &mdash; &#165;160-300/h video editing is not a micro-task.<br>
+  v0.1&ndash;v1.5 (2026-06-19 &ndash; 2026-06-23) &mdash; 16 incremental versions. See git history for details.<br>
   <br>
   <strong>Authors</strong>: elfenlieds7 (product/architecture), Claude Opus 4.6 (design assistance)<br>
   <strong>Repo</strong>: <code>nexi-lab/nexus/docs/architecture/p2p-task-settlement.html</code>

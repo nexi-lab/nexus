@@ -821,7 +821,7 @@ sequenceDiagram
   </li>
   <li>
     <strong>发现/市场</strong>：买家如何找到卖家？
-    <div class="pref">v1 直接 P2P（买家向已知卖家发送合约邀约）。市场是 v2 功能。已确认：nexus 中无市场代码（已查 git 历史）。需从零构建 &mdash; 任务列表、搜索、卖家档案、分类体系。这是一个重要的构建工作，与结算协议分开。</div>
+    <div class="pref">v1：<strong>KOOK 社区服务器用于发现 + 直接 P2P 用于结算</strong>。买家在 KOOK 频道发布任务需求，卖家看到后通过 sudowork 发起合约协商。KOOK 的服务器创建、消息和机器人功能<strong>免费</strong> &mdash; 无市场佣金，无隐藏费用（VIP 仅用于语音功能如屏幕分享和 AI 降噪）。KOOK <strong>不</strong>参与结算 &mdash; 仅作为发现渠道。演进路径：KOOK 社区 &rarr; sudowork 内置任务板（简单列表视图） &rarr; 完整市场（搜索 + 推荐 + 卖家档案）。每一步由 PMF 信号决定是否推进。风险：如果 KOOK 未来对商业用途收费，迁移成本低（飞书群/Telegram 群可直接替代）。自建市场是重大工程（搜索、档案、分类体系）&mdash; v1 阶段为时过早。</div>
   </li>
   <li>
     <strong>积分回购机制</strong>：卖家如何将赚取的积分转换为真实货币？

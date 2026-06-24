@@ -821,7 +821,7 @@ sequenceDiagram
   </li>
   <li>
     <strong>Discovery / Marketplace</strong>: How do buyers find sellers?
-    <div class="pref">Direct P2P for v1 (buyer sends contract offer to a known seller). Marketplace is a v2 feature. Confirmed: no marketplace code exists in nexus (checked git history). Need to build from scratch &mdash; task listing, search, seller profiles, category taxonomy. This is a significant build, separate from the settlement protocol.</div>
+    <div class="pref">v1: <strong>KOOK community server for discovery + direct P2P for settlement</strong>. Buyers post task needs in a KOOK channel, sellers see and initiate contract negotiation via sudowork. KOOK is free for server creation, messaging, and bots &mdash; no marketplace rake, no hidden fees (VIP only for voice features like screen sharing and AI noise reduction). KOOK does <strong>not</strong> participate in settlement &mdash; it's a discovery channel only. Evolution path: KOOK community &rarr; sudowork built-in task board (simple list view) &rarr; full marketplace (search + recommendation + seller profiles). Each step gated by PMF signal. Risk: if KOOK charges for commercial use later, migration cost is low (Feishu group / Telegram group are drop-in replacements). Self-built marketplace is a significant build (search, profiles, taxonomy) &mdash; premature for v1.</div>
   </li>
   <li>
     <strong>Points buyback mechanism</strong>: How do sellers convert earned points to real currency?

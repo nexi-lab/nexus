@@ -1416,7 +1416,7 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 ["test", "-e", host_full],
                 check=False,
             )
-            assert check.returncode != 0, (
+            assert check.rc != 0, (
                 f"founder host fs still has {host_full} after joiner FUSE unlink — "
                 f"C5 sys_unlink FederationPeerClient dispatch broke."
             )

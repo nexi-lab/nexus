@@ -450,6 +450,11 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the runtime configuration object."""
         return self._config
 
+    @property
+    def record_store(self) -> Any | None:
+        """Public accessor for Pillar 2 (RecordStoreABC)."""
+        return self._record_store
+
     # _resolve_cred, _build_rust_ctx, _get_context_identity, _validate_path,
     # _parse_context, _ensure_context_ttl,
     # _dispatch_write_events — all moved to InternalMixin (nexus_fs_internal.py)

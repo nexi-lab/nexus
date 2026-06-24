@@ -35,7 +35,7 @@ async def adispose_async_engines(nx: "NexusFS") -> None:
     (still live) async engine, which is better than silently orphaning
     the store.
     """
-    record_store = getattr(nx, "_record_store", None)
+    record_store = getattr(nx, "record_store", None)
     if record_store is None:
         return
     aclose_fn = getattr(record_store, "aclose", None)

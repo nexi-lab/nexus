@@ -52,7 +52,7 @@ def _get_delegation_service(request: Request) -> Any:
         # Fallback: resolve from NexusFS service registry
         nx = getattr(state, "nexus_fs", None)
         if nx is not None:
-            record_store = getattr(nx, "_record_store", None)
+            record_store = getattr(nx, "record_store", None)
     if record_store is None:
         raise HTTPException(status_code=503, detail="RecordStore not available")
 

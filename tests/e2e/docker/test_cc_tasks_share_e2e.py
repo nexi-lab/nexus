@@ -939,3 +939,262 @@ class TestCcTasksListBackendOnlyEnumeration:
                 ["rm", "-rf", f"/host/tasks/{session}"],
                 check=False,
             )
+
+
+# ---------------------------------------------------------------------------
+# Cross-node backend-only enumeration — the `cc tasks list` Mac↔Win
+# user-facing shape.
+#
+# Same `Claude Code writes JSON directly to ~/.claude/tasks/<session>/`
+# scenario as TestCcTasksListBackendOnlyEnumeration above, but the
+# enumerator is the OTHER node — the Mac↔Win operator workflow where
+# host-fs writes on Mac must surface in Win's `cc tasks list` without
+# any Nexus syscall ever firing on the writer side.
+#
+# Three things must hold for cross-node readdir of host-fs-only writes:
+#
+#   1. Same-zone DT_MOUNT rows replicate via raft so the joiner LEARNS
+#      that `/shared/cc-tasks/<founder>` is a mount.  Already lands —
+#      `dlc.mount`'s DT_MOUNT write goes to the parent zone's replicated
+#      metastore.
+#
+#   2. The joiner's VFSRouter must install A routing entry for the
+#      mount path.  Pre-PR, `wire_mount_core`'s same-zone branch
+#      returned `Ok(())` without installing anything, so joiner's
+#      `route()` on `/shared/cc-tasks/founder/...` fell through to
+#      root and every sys_* returned not_found.  Closed by
+#      nexus-vfs C3 — install a placeholder MountEntry with
+#      backend=None + target_zone_id=Some when the local side has no
+#      driver-mount.
+#
+#   3. With backend=None, the existing `backend.list_dir(...)` merge
+#      in sys_readdir is skipped.  C4 added the FederationPeerClient
+#      dispatch arm: route.backend.is_none() + target_zone_id.is_some()
+#      → call `NexusVFSService.Readdir` on a non-self voter of the
+#      target zone.  That voter — the SSOT side with the LocalConnector
+#      backend — answers via its own backend.list_dir of the host fs.
+#
+# This class pins the new C3+C4 path by exercising it cross-node:
+# write to founder's host fs, never touch any kernel syscall, then
+# enumerate from the JOINER via FUSE readdir and assert the bytes
+# round-trip back via gRPC Read (which uses the existing sys_read
+# zone_peers fan-out — sys_stat dispatch through FederationPeerClient
+# is the next gap and is intentionally NOT exercised here).
+# ---------------------------------------------------------------------------
+class TestCcTasksListBackendOnlyCrossNodeEnumeration:
+    """Cross-node readdir of backend-only host-fs writes — Mac↔Win shape.
+
+    Five-step workflow with strict data flow:
+
+      (1) founder writes 3 task JSONs DIRECTLY to its host fs — no
+          FUSE, no kernel syscall, no metastore propose.
+      (2) sanity — the entries are visible via founder's FUSE readdir
+          (the single-node substrate from PR #67).
+      (3) joiner's FUSE readdir of the SAME federated dir surfaces
+          the same entry NAMES via the new C3 placeholder MountEntry
+          + C4 sys_readdir FederationPeerClient dispatch.  This is
+          the new capability THIS PR introduces.
+      (4) joiner's gRPC `NexusVFSService.Read` on each enumerated
+          entry returns founder's bytes byte-exact — verifies the
+          enumeration result isn't fabricated, the entries point at
+          real readable content.
+      (5) cleanup — `rm -rf /host/tasks/<session>` on founder.
+
+    Data flow: (1)→(3) the entry NAMES the joiner enumerates ARE the
+    files (1) wrote; (3)→(4) each name (3) returned is the input to
+    (4)'s read.  Strong causal links — no step is "also called after".
+
+    What this test does NOT yet cover (deferred follow-up):
+      - Joiner FUSE `cat` of the enumerated entries.  FUSE `cat`
+        flows through sys_stat first; sys_stat's FederationPeerClient
+        dispatch is the next plan item (sister of this PR's sys_readdir
+        dispatch).  Until that lands, joiner-side FUSE `cat` of a
+        backend-only entry returns ENOENT — pinned in a separate
+        xfail test below so the day sys_stat dispatch lands flips it
+        green automatically.
+      - `cc tasks list` end-to-end on joiner.  Same blocker — the CLI
+        reads each session's metadata via sys_stat.
+    """
+
+    def test_founder_host_fs_writes_visible_via_joiner_fuse_readdir(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        session = _new_session()
+        # Three host-fs-only payloads.  No FUSE write, no vfs_write —
+        # bytes appear at /host/tasks/<session>/<name> on founder
+        # ONLY.  Mirrors `fs.writeFileSync('~/.claude/tasks/...', ...)`
+        # in Claude Code on Mac.
+        payloads = {
+            "1.json": b'{"id":"1","status":"completed","writer":"founder-host-fs"}',
+            "2.json": b'{"id":"2","status":"in_progress","writer":"founder-host-fs"}',
+            "3.json": b'{"id":"3","status":"pending","writer":"founder-host-fs"}',
+        }
+        for name, data in payloads.items():
+            cc_tasks_share_helpers.host_task_write(
+                topology.founder_container, f"/{session}/{name}", data
+            )
+
+        try:
+            # Step 1: sanity — bytes are physically on founder's host
+            # fs.  Establishes the workflow precondition; without it
+            # the rest of the chain is meaningless.
+            for name, expected in payloads.items():
+                actual = cc_tasks_share_helpers.host_task_read(
+                    topology.founder_container, f"/{session}/{name}"
+                )
+                assert actual == expected, (
+                    f"founder host_task_write didn't land at /host/tasks/{session}/{name}: "
+                    f"got {actual!r}, expected {expected!r}"
+                )
+
+            # Step 2: single-node substrate — founder's FUSE readdir
+            # of the session dir shows every entry via PR #67's
+            # backend.list_dir merge.  Same path the existing
+            # TestCcTasksListBackendOnlyEnumeration pins — re-verified
+            # here so a failure in step 3 (cross-node) can be cleanly
+            # blamed on the cross-node arm, not the substrate.
+            session_vfs = topology.founder_vfs_path(f"/{session}")
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            founder_entries = cc_tasks_share_helpers.mount_listdir(
+                topology.founder_container, session_mount
+            )
+            assert sorted(founder_entries) == sorted(payloads.keys()), (
+                f"founder single-node FUSE readdir broke — got {founder_entries}, "
+                f"expected {sorted(payloads.keys())}.  PR #67 substrate regressed?"
+            )
+
+            # Step 3: THE C3+C4 CAPABILITY — joiner's FUSE readdir of
+            # the SAME federated session dir surfaces founder's
+            # host-fs-only entries.  Path:
+            #   joiner FUSE ls
+            #     → fuser dispatch
+            #     → KernelHandle.sys_readdir(/shared/cc-tasks/founder/<sess>)
+            #     → vfs_router.route(...) returns the placeholder
+            #       MountEntry C3 installed (backend=None,
+            #       target_zone_id=Some(sharedzone))
+            #     → metastore merge: no entries (founder never wrote
+            #       through any syscall — no metadata exists)
+            #     → backend.list_dir branch SKIPPED (backend is None)
+            #     → C4 federation-peer dispatch branch FIRES
+            #     → FederationPeerClient.list_dir(peer=founder,
+            #                                     path=<session>)
+            #     → founder's NexusVFSService.Readdir handler
+            #     → founder's kernel sys_readdir → its LocalConnector
+            #       backend.list_dir → host fs
+            #     → entries flow back to joiner, merged into seen
+            #
+            # An eventual-consistency window covers the placeholder
+            # install (apply-cb fires after raft commit replicates).
+            # 30 s budget matches the existing cross-node tests.
+            deadline = time.monotonic() + 30
+            joiner_entries: list[str] = []
+            last_error: str | None = None
+            while time.monotonic() < deadline:
+                try:
+                    joiner_entries = cc_tasks_share_helpers.mount_listdir(
+                        topology.joiner_container, session_mount
+                    )
+                    if sorted(joiner_entries) == sorted(payloads.keys()):
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = repr(exc)
+                time.sleep(0.5)
+            assert sorted(joiner_entries) == sorted(payloads.keys()), (
+                f"joiner cross-node FUSE readdir of backend-only entries failed — "
+                f"got {joiner_entries}, expected {sorted(payloads.keys())} "
+                f"(last_error={last_error}).  C3 placeholder MountEntry or C4 "
+                f"sys_readdir FederationPeerClient dispatch broken?"
+            )
+
+            # Step 4: each enumerated entry is REAL — joiner gRPC
+            # Read returns founder's bytes byte-exact.  Uses
+            # NexusVFSService.Read rather than FUSE cat because
+            # sys_stat dispatch through FederationPeerClient is the
+            # next plan item; until it lands, FUSE cat of a host-fs-
+            # only entry on the joiner returns ENOENT (FUSE lookup
+            # gates on sys_stat).  gRPC Read uses the existing
+            # sys_read zone_peers fan-out (PeerBlobClient.ReadBlob
+            # through founder's BlobFetcher) which doesn't need the
+            # joiner-side stat to succeed.
+            for name, expected in payloads.items():
+                file_vfs = topology.founder_vfs_path(f"/{session}/{name}")
+                read_resp = runbook_helpers.vfs_read(
+                    topology.joiner_grpc,
+                    file_vfs,
+                    api_key=api_key,
+                    timeout=30,
+                )
+                actual = (read_resp.get("result") or {}).get("content")
+                assert actual == expected, (
+                    f"joiner cross-node Read of {name} returned {actual!r}, "
+                    f"expected {expected!r}. zone_peers fan-out / founder "
+                    f"BlobFetcher may have regressed. full resp={read_resp}"
+                )
+
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+    @pytest.mark.xfail(
+        reason="sys_stat FederationPeerClient dispatch is the next plan item; until "
+        "it lands, joiner-side FUSE lookup of a backend-only entry returns ENOENT. "
+        "This xfail PIN flips green automatically the day sys_stat dispatch ships, "
+        "providing a regression catch on the user-facing 'cat through FUSE' path.",
+        strict=True,
+    )
+    def test_joiner_fuse_cat_of_backend_only_entries_blocked_on_sys_stat_dispatch(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        session = _new_session()
+        payload = b'{"id":"x","writer":"founder-host-fs"}'
+        cc_tasks_share_helpers.host_task_write(
+            topology.founder_container, f"/{session}/x.json", payload
+        )
+        try:
+            # Wait for the joiner to see the entry via readdir so we
+            # know C3+C4 are in effect — the xfail is specifically
+            # about sys_stat, not about readdir failing too.
+            session_vfs = topology.founder_vfs_path(f"/{session}")
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if "x.json" in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, session_mount
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail(
+                    "joiner never saw x.json via readdir — readdir dispatch broke; "
+                    "this xfail is conditional on readdir working, so the test "
+                    "infrastructure precondition is missing."
+                )
+
+            # The actual assertion that will (still) fail: joiner FUSE
+            # cat returns the bytes.  When sys_stat dispatch lands,
+            # this test starts passing and the xfail(strict=True) flips
+            # it red, telling us to remove the marker.
+            file_mount = topology.mount_path_for_vfs(
+                topology.founder_vfs_path(f"/{session}/x.json")
+            )
+            joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                topology.joiner_container, file_mount
+            )
+            assert joiner_bytes == payload, (
+                f"joiner FUSE cat got {joiner_bytes!r}, expected {payload!r}"
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )

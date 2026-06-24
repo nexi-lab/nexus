@@ -1480,6 +1480,32 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
         # would show up as a length mismatch, not just a content one.
         payload = b'{"id":"c","status":"new","title":"Drafted via cross-node FUSE write"}'
         try:
+            # Seed the session directory on founder host fs first — the
+            # realistic shape the operator workflow has (Mac CC creates
+            # the session dir, then Win operator writes new files into
+            # it via the FUSE mount).  Without an existing parent dir,
+            # the FUSE create-write call fails with "Directory
+            # nonexistent" because neither the kernel nor the plugin
+            # implicitly mkdir's parent paths.  Wait until the joiner
+            # side sees the seeded dir via readdir so we know raft has
+            # replicated the parent before issuing the FUSE write.
+            cc_tasks_share_helpers.host_task_ensure_dir(topology.founder_container, f"/{session}")
+            parent_vfs = topology.founder_vfs_path("")
+            parent_mount = topology.mount_path_for_vfs(parent_vfs.rstrip("/"))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if session in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, parent_mount
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail(
+                    f"joiner never saw seeded session dir {session} via readdir "
+                    "— sys_readdir federation peer dispatch broke or raft drain hung; "
+                    "sys_write test prerequisite missing."
+                )
+
             # Step 1: joiner FUSE create + write — full chain through
             # kernel sys_write → FederationPeerClient.write →
             # founder NexusVFSService.Write → founder sys_write →

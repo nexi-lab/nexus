@@ -192,7 +192,7 @@ graph TB
 
 <pre class="mermaid">
 flowchart LR
-    A([Draft]) -->|seller proposes| B([Negotiating])
+    A([Draft]) -->|either party proposes| B([Negotiating])
     B -->|counter-offers| B
     B -->|both sign| C([Agreed])
     B -->|withdraw| X([Cancelled])
@@ -261,6 +261,16 @@ flowchart LR
 </div>
 
 <p>双方签署 <code>terms</code>。一旦 <code>status=agreed</code>，条款不可变。<code>contract_id = sha256(canonical_json(terms))</code>。</p>
+
+<h3>卖家发起的合约（反向派遣）</h3>
+<div class="card">
+  <p>默认流程是<strong>买家发起</strong>：买家发布任务，卖家接单。但协议同样支持<strong>卖家发起</strong>的合约，即卖家主动提案并寻找买家。</p>
+  <p><strong>示例</strong>：公司内一位工程师发现了一个 bug，主动提案："我来修复这个认证问题，预计 2 小时，200 积分。"团队负责人的 sudowork（买家）评估提案后，还价或接受。</p>
+  <p><strong>协议变更</strong>：合约数据结构新增一个字段：</p>
+  <pre style="color:var(--fg);font-size:0.85rem;margin:0.5rem 0">  "initiated_by": "buyer" | "seller"</pre>
+  <p><code>Draft</code> 之后的一切完全相同 &mdash; 相同的状态机、协商、双重签名、预承诺和结算流程。唯一的区别是<strong>谁创建了 Draft</strong>。</p>
+  <p><strong>适用场景</strong>：公司内部工作（主动任务提案）、开源贡献（贡献者提出修复，维护者是买家）、自由职业推销（卖家向潜在买家展示技能）。</p>
+</div>
 
 <!-- ============================================================ -->
 <h2 id="s5">5. 托管问题</h2>

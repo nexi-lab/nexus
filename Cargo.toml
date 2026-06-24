@@ -83,6 +83,14 @@ incremental = true
 [profile.dev.package."*"]
 opt-level = 2
 
+# Patched fuser: macOS build.rs supports libfuse3 feature for FUSE-T.
+# Upstream fuser 0.17 hardcodes libfuse2 on macOS; FUSE-T's .pkg only
+# ships libfuse3.  This patch adds a cfg(feature = "libfuse3") branch
+# to the macOS build.rs path so fuse-plugin links against libfuse3
+# natively.  Tracks upstream issue cberner/fuser#273.
+[patch.crates-io]
+fuser = { path = "rust/vendor/fuser-0.17.0-fuset" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

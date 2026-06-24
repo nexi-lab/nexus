@@ -30,8 +30,15 @@ tracing = "0.1"
 # below shares one body.  Windows support sits in a separate WinFsp
 # adapter (different binding crate, different trait shape) — gated
 # under the `cfg(target_os = "windows")` block below.
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 fuser = "0.17"
+
+# On macOS, use libfuse3 feature so fuser links against FUSE-T's
+# native libfuse3 instead of the libfuse2 compat shim.  The .pkg
+# installer (sudowork's FuseTInstallService) only ships libfuse3;
+# the brew formula ships both.  Linking libfuse3 covers both paths.
+[target.'cfg(target_os = "macos")'.dependencies]
+fuser = { version = "0.17", features = ["libfuse3"] }
 # Errno constants for translating kernel-callback failures into POSIX
 # errors that FUSE clients understand.  Linux+macOS share libc; the
 # WinFsp adapter pulls in `windows_sys` for its NTSTATUS equivalents.

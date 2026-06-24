@@ -41,15 +41,17 @@
 //!
 //! ## Platform support
 //!
-//! Linux (`libfuse3`) and macOS (`macFUSE`) share one cfg-gated body
-//! — `fuser`'s `Filesystem` trait + `spawn_mount2` work identically
-//! on both.  Operators install the platform-native FUSE userspace
-//! out-of-band (apt `libfuse3-3` / brew `macfuse`) before launching
-//! `nexusd-cluster --plugin-dir`.  Windows shipping waits on a
-//! separate WinFsp adapter — different binding crate (winfsp-rs),
-//! different mount API surface; tracked as a follow-up PR.  On
-//! Windows today the plugin compiles to a no-op cdylib so the
-//! workspace builds cleanly across the matrix.
+//! Linux (`libfuse3`) and macOS (`FUSE-T` via `libfuse3`) share one
+//! cfg-gated body — `fuser`'s `Filesystem` trait + `spawn_mount2`
+//! work identically on both.  On macOS, fuser links against FUSE-T's
+//! native `libfuse3` (not the legacy libfuse2 compat shim) so both
+//! `.pkg` and `brew` FUSE-T installations work out of the box.
+//! Operators install the platform-native FUSE userspace out-of-band
+//! (apt `libfuse3-3` / `FUSE-T.pkg` / `brew install fuse-t`) before
+//! launching `nexusd-cluster --plugin-dir`.  Windows uses a separate
+//! WinFsp adapter — different binding crate (winfsp-rs), different
+//! mount API surface.  On Windows today the plugin compiles to a
+//! no-op cdylib so the workspace builds cleanly across the matrix.
 
 // `kernel_callbacks` and `path_index` are platform-agnostic — both
 // the fuser-based fs (Linux/macOS) and the WinFsp-based fs_winfsp

@@ -891,8 +891,6 @@ dependencies = [
 [[package]]
 name = "fuser"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80a5eca878900c2e39e9e52fd797954b7fc39eeefc8558257114bfea6a698fcf"
 dependencies = [
  "bitflags",
  "libc",
@@ -1556,6 +1554,7 @@ dependencies = [
  "fuser",
  "libc",
  "nexus-plugin-abi",
+ "tempfile",
  "tracing",
  "widestring",
  "windows-sys 0.52.0",

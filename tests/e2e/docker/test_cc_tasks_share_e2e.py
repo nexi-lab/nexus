@@ -1544,13 +1544,31 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
             # Exercises the read half (PR #4413 sys_read federation
             # peer fetch) against the write the same suite just made,
             # confirming the cross-node loop closes end-to-end.
-            joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
-                topology.joiner_container, file_mount
-            )
+            #
+            # Bounded wait: the post-write FUSE-level lookup-cache /
+            # readdir-cache on the joiner side can briefly show the
+            # file as missing while the founder's metastore.put round-
+            # trips back through raft to the joiner.  This is the same
+            # eventually-consistent shape the founder→joiner read tests
+            # above already accept; surface a hang as a timeout rather
+            # than the misleading "No such file" rc=1 raw failure.
+            deadline = time.monotonic() + 30
+            joiner_bytes: bytes | None = None
+            last_err: Exception | None = None
+            while time.monotonic() < deadline:
+                try:
+                    joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                        topology.joiner_container, file_mount
+                    )
+                    if joiner_bytes == payload:
+                        break
+                except Exception as err:
+                    last_err = err
+                time.sleep(0.5)
             assert joiner_bytes == payload, (
                 f"joiner FUSE read got {joiner_bytes!r} for the file it "
-                f"just wrote, expected {payload!r}. sys_read federation "
-                "peer dispatch broke or stale-cache hit."
+                f"just wrote, expected {payload!r} (last_err={last_err!r}). "
+                "sys_read federation peer dispatch broke or stale-cache hit."
             )
         finally:
             runbook_helpers.docker_exec(

@@ -129,15 +129,19 @@ fn delete_file_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result
 
 /// Remove a backend directory by path (sister of `delete_file_local_connector`).
 ///
-/// Delegates to `LocalConnectorBackend::rmdir` with `recursive=false`
-/// — the v1 driver-rmdir ABI is single-dir only.  Closes the
-/// symmetric ghost-directory gap that `delete_file` left behind:
-/// pre-opt-in, FUSE `rmdir` cleared the metastore row but the host
-/// fs directory persisted and the `sys_stat` backend.stat fallback
-/// (also in ABI v4) kept surfacing it.
-fn rmdir_local_connector(drv: &LocalConnectorDriver, path: &str) -> Result<(), i32> {
+/// Plugin ABI v5 (nexus-vfs#70's C1) extends `nexus_driver_rmdir` with
+/// the `recursive` flag the `ObjectStore::rmdir` trait already carries.
+/// We thread it straight through so `sys_rmdir(path, recursive=true)`
+/// reaches the host fs as a single `fs::remove_dir_all` call — one
+/// syscall family instead of the kernel walking children and calling
+/// us N+1 times.
+fn rmdir_local_connector(
+    drv: &LocalConnectorDriver,
+    path: &str,
+    recursive: bool,
+) -> Result<(), i32> {
     drv.backend
-        .rmdir(path, false)
+        .rmdir(path, recursive)
         .map_err(storage_error_to_plugin_code)
 }
 

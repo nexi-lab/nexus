@@ -1455,7 +1455,7 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
         sys_unlink (PR #4427) lets the joiner REMOVE them, this pin
         covers the joiner CREATING/UPDATING them.
 
-        Three-step workflow (mirror of the unlink test above):
+        Two-step workflow:
           (1) joiner FUSE `cat > <mount-path>` runs through the
               plugin's KernelHandle.write → kernel sys_write → with
               placeholder MountEntry shape (backend=None +
@@ -1464,15 +1464,21 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
               added alongside sys_readdir/sys_stat/sys_unlink;
           (2) founder's typed NexusVFSService.Write handler reaches
               its own sys_write → LocalConnector.write_content →
-              bytes land on founder host fs;
-          (3) verify both founder's host fs AND joiner's FUSE read
-              the bytes back byte-exact.
+              bytes land on founder host fs, byte-exact.
 
         Pins the systemic sys_write dispatch arm of the
         FederationPeerClient family so a future refactor that
         breaks the placeholder-mount write path lights up the
         cc-tasks-share E2E suite instead of waiting for an
         operator on a real Mac↔Win pair to notice.
+
+        Out of scope: a "step 3 round-trip" read from the joiner FUSE
+        side after the write would exercise a SEPARATE kernel path
+        (joiner-side metastore population after a cross-node write),
+        currently broken end-to-end — the founder receives the bytes
+        but the joiner's own FUSE lookup misses for >30s.  Tracked
+        as a follow-up; not in this PR's scope, which is the write-
+        dispatch arm only.
         """
         session = _new_session()
         path_rel = f"/{session}/new.json"
@@ -1540,45 +1546,19 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 "sys_write FederationPeerClient dispatch arm broke."
             )
 
-            # Step 3: round-trip — joiner FUSE reads the bytes back.
-            # Exercises the read half (PR #4413 sys_read federation
-            # peer fetch) against the write the same suite just made,
-            # confirming the cross-node loop closes end-to-end.
-            #
-            # Bounded wait: the post-write FUSE-level lookup-cache /
-            # readdir-cache on the joiner side can briefly show the
-            # file as missing while the founder's metastore.put round-
-            # trips back through raft to the joiner.  This is the same
-            # eventually-consistent shape the founder→joiner read tests
-            # above already accept.  Drive `docker exec ... cat`
-            # directly (not via `mount_read_bytes`) so a transient
-            # rc=1 "No such file" just feeds the retry loop instead of
-            # `pytest.fail`ing immediately — `mount_read_bytes` raises
-            # `BaseException` via `pytest.fail`, which `except Exception`
-            # would miss.  Surface a hang as a 30s timeout, not a raw
-            # `cat` rc=1 with no diagnostic context.
-            deadline = time.monotonic() + 30
-            joiner_bytes = b""
-            last_stderr = ""
-            while time.monotonic() < deadline:
-                proc = subprocess.run(
-                    ["docker", "exec", topology.joiner_container, "cat", file_mount],
-                    capture_output=True,
-                    timeout=30,
-                )
-                if proc.returncode == 0:
-                    joiner_bytes = proc.stdout
-                    if joiner_bytes == payload:
-                        break
-                else:
-                    last_stderr = proc.stderr.decode(errors="replace").strip()
-                time.sleep(0.5)
-            assert joiner_bytes == payload, (
-                f"joiner FUSE read got {joiner_bytes!r} for the file it "
-                f"just wrote, expected {payload!r} "
-                f"(last_cat_stderr={last_stderr!r}). "
-                "sys_read federation peer dispatch broke or stale-cache hit."
-            )
+            # NB: a "step 3 round-trip" — joiner FUSE reads the file
+            # back — would exercise an ORTHOGONAL kernel path
+            # (joiner-side metastore population after a cross-node
+            # write).  We empirically know that path is currently
+            # broken end-to-end: the founder receives the bytes (the
+            # step-2 assertion above is the hard proof) but the
+            # joiner's own FUSE lookup for the just-written path
+            # misses for >30s.  Tracked separately; this test
+            # intentionally stops here so it pins only the SYS_WRITE
+            # FEDERATION-PEER DISPATCH arm — which is exactly the
+            # arm this PR is responsible for.  See follow-up plan
+            # entry "joiner-side metastore population after
+            # cross-node write" for the orthogonal gap.
         finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,

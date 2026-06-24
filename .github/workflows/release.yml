@@ -9,7 +9,10 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Only match bare version tags (v1.2.3), not plugin tags
+      # (fuse-v0.4.2, vault-v0.3.0, local-connector-v0.2.0).
+      # Plugin releases have their own workflows with prefixed patterns.
+      - "v[0-9]*"
 
 permissions:
   contents: write

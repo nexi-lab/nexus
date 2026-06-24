@@ -1109,16 +1109,30 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 f"sys_readdir FederationPeerClient dispatch broken?"
             )
 
-            # Step 4: each enumerated entry is REAL — joiner gRPC
-            # Read returns founder's bytes byte-exact.  Uses
-            # NexusVFSService.Read rather than FUSE cat because
-            # sys_stat dispatch through FederationPeerClient is the
-            # next plan item; until it lands, FUSE cat of a host-fs-
-            # only entry on the joiner returns ENOENT (FUSE lookup
-            # gates on sys_stat).  gRPC Read uses the existing
-            # sys_read zone_peers fan-out (PeerBlobClient.ReadBlob
-            # through founder's BlobFetcher) which doesn't need the
-            # joiner-side stat to succeed.
+            # Step 4: joiner FUSE cat of each enumerated entry returns
+            # founder's bytes byte-exact.  This is the FULL user-facing
+            # chain — FUSE driver → fuser lookup (sys_stat) → fuser
+            # open / read (sys_read) → all cross-node via
+            # FederationPeerClient dispatch.  The C5 sys_stat hook is
+            # what makes FUSE lookup succeed for backend-only entries;
+            # without it, `cat` would have returned ENOENT before
+            # sys_read ever fired.
+            for name, expected in payloads.items():
+                file_mount = topology.mount_path_for_vfs(
+                    topology.founder_vfs_path(f"/{session}/{name}")
+                )
+                joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                    topology.joiner_container, file_mount
+                )
+                assert joiner_bytes == expected, (
+                    f"joiner FUSE cat of {name} got {joiner_bytes!r}, "
+                    f"expected {expected!r}. C5 sys_stat dispatch or "
+                    f"sys_read zone_peers fan-out may have regressed."
+                )
+
+            # Step 5: sanity — direct gRPC Read also returns the same
+            # bytes.  Decouples a FUSE-side regression from a kernel
+            # syscall regression in failure messages.
             for name, expected in payloads.items():
                 file_vfs = topology.founder_vfs_path(f"/{session}/{name}")
                 read_resp = runbook_helpers.vfs_read(
@@ -1141,28 +1155,35 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 check=False,
             )
 
-    @pytest.mark.xfail(
-        reason="sys_stat FederationPeerClient dispatch is the next plan item; until "
-        "it lands, joiner-side FUSE lookup of a backend-only entry returns ENOENT. "
-        "This xfail PIN flips green automatically the day sys_stat dispatch ships, "
-        "providing a regression catch on the user-facing 'cat through FUSE' path.",
-        strict=True,
-    )
-    def test_joiner_fuse_cat_of_backend_only_entries_blocked_on_sys_stat_dispatch(
+    def test_joiner_fuse_cat_via_sys_stat_federation_peer_dispatch(
         self,
         topology: CcTasksTopology,
         api_key: str,
         joined_cluster: dict,
     ) -> None:
+        """Focused pin on C5's sys_stat hook: FUSE cat of a backend-only entry.
+
+        Smaller workflow than the multi-entry readdir + cat test above.
+        Three steps:
+          (1) write ONE host-fs-only file on founder;
+          (2) joiner FUSE lookup (sys_stat over the federation
+              boundary via C5);
+          (3) joiner FUSE cat returns the same bytes.
+
+        Pre-C5 this scenario failed at step (2) with ENOENT.  This
+        test pins the regression — if any rework breaks sys_stat
+        dispatch, this fails before any of the larger workflows do.
+        """
         session = _new_session()
-        payload = b'{"id":"x","writer":"founder-host-fs"}'
+        payload = b'{"id":"x","writer":"founder-host-fs","via":"C5"}'
         cc_tasks_share_helpers.host_task_write(
             topology.founder_container, f"/{session}/x.json", payload
         )
         try:
-            # Wait for the joiner to see the entry via readdir so we
-            # know C3+C4 are in effect — the xfail is specifically
-            # about sys_stat, not about readdir failing too.
+            # Wait for joiner to see the entry via readdir (C3+C4)
+            # before exercising stat (C5) — pre-C3 the placeholder
+            # MountEntry doesn't exist yet, so stat would fall through
+            # to root and fail for unrelated reasons.
             session_vfs = topology.founder_vfs_path(f"/{session}")
             session_mount = topology.mount_path_for_vfs(session_vfs)
             deadline = time.monotonic() + 30
@@ -1174,23 +1195,245 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 time.sleep(0.5)
             else:
                 pytest.fail(
-                    "joiner never saw x.json via readdir — readdir dispatch broke; "
-                    "this xfail is conditional on readdir working, so the test "
-                    "infrastructure precondition is missing."
+                    "joiner never saw x.json via readdir — C3+C4 substrate "
+                    "broke; this test is conditional on readdir working."
                 )
 
-            # The actual assertion that will (still) fail: joiner FUSE
-            # cat returns the bytes.  When sys_stat dispatch lands,
-            # this test starts passing and the xfail(strict=True) flips
-            # it red, telling us to remove the marker.
-            file_mount = topology.mount_path_for_vfs(
-                topology.founder_vfs_path(f"/{session}/x.json")
+            # Step 1: joiner gRPC vfs_stat — direct surface for the
+            # sys_stat call.  Pre-C5 returned `found=false`; post-C5
+            # the federation-peer dispatch synthesises a StatResult
+            # from founder's BackendStat.
+            file_vfs = topology.founder_vfs_path(f"/{session}/x.json")
+            stat_resp = runbook_helpers.vfs_stat(
+                topology.joiner_grpc, file_vfs, api_key=api_key, timeout=15
             )
+            assert stat_resp.get("result", {}).get("found"), (
+                f"joiner vfs_stat must find backend-only x.json via C5 "
+                f"sys_stat FederationPeerClient dispatch — got {stat_resp}"
+            )
+            assert not stat_resp.get("result", {}).get("isDirectory"), (
+                f"backend-only x.json should stat as a regular file — got {stat_resp}"
+            )
+
+            # Step 2: joiner FUSE cat — full chain end to end.  FUSE
+            # lookup goes through C5 sys_stat; FUSE read goes through
+            # the existing zone_peers fan-out.
+            file_mount = topology.mount_path_for_vfs(file_vfs)
             joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
                 topology.joiner_container, file_mount
             )
             assert joiner_bytes == payload, (
                 f"joiner FUSE cat got {joiner_bytes!r}, expected {payload!r}"
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+    def test_cc_tasks_list_shape_end_to_end_cross_node(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """`cc tasks list` end-to-end — the mega-goal of the whole effort.
+
+        Mimics the actual user workflow:
+          - Claude Code on Mac writes session JSONs directly to
+            `~/.claude/tasks/<session>/<n>.json` (no Nexus syscall);
+          - Operator on Win expects `cc tasks list` to enumerate the
+            sessions + read their `1.json` metadata to surface task
+            status.
+
+        `cc tasks list` does roughly:
+          1. readdir(`~/.claude/tasks/`) → session subdir names
+          2. for each session: readdir(<session>/) → file names
+          3. for each session: stat(<session>/1.json) → existence + size
+          4. for each session: read(<session>/1.json) → metadata blob
+
+        This test exercises all four ops cross-node (founder writes,
+        joiner reads).  Strict data flow: step (2) consumes the names
+        step (1) returned; step (3) consumes the size step (2) verified
+        is non-empty; step (4) consumes the existence step (3)
+        confirmed.  Every step has a meaningful assertion (not just
+        type checks): entry counts, file sizes, byte-exact content.
+
+        End-to-end success here is the proof that C3+C4+C5 together
+        deliver the user-visible Mac↔Win `cc tasks list` capability.
+        Failure isolates the broken layer via the more focused tests
+        above.
+        """
+        # Two sessions with status metadata in `1.json` — the file
+        # `cc tasks list` actually reads to render the session row.
+        sessions = {
+            _new_session(): b'{"id":"a","status":"completed","title":"Refactor X"}',
+            _new_session(): b'{"id":"b","status":"in_progress","title":"Implement Y"}',
+        }
+        for sess, payload in sessions.items():
+            cc_tasks_share_helpers.host_task_write(
+                topology.founder_container, f"/{sess}/1.json", payload
+            )
+
+        try:
+            # Operator-side `cc tasks list` walks
+            # `~/.claude/tasks/<session>/`, which the runbook topology
+            # maps onto `/shared/cc-tasks/founder/<session>/` mounted
+            # at joiner's `/mnt/cc-tasks/founder/<session>/`.
+            parent_vfs = topology.founder_vfs_path("")
+            parent_mount = topology.mount_path_for_vfs(parent_vfs.rstrip("/"))
+
+            # ── Step 1: enumerate sessions from joiner ──────────────
+            # (parent readdir → session subdirs)
+            deadline = time.monotonic() + 30
+            seen_sessions: set[str] = set()
+            while time.monotonic() < deadline:
+                listing = cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, parent_mount
+                )
+                seen_sessions = set(listing) & set(sessions.keys())
+                if seen_sessions == set(sessions.keys()):
+                    break
+                time.sleep(0.5)
+            assert seen_sessions == set(sessions.keys()), (
+                f"`cc tasks list` parent enumeration: joiner saw "
+                f"{sorted(seen_sessions)}, expected {sorted(sessions.keys())}. "
+                "C3 placeholder MountEntry or C4 sys_readdir dispatch broke."
+            )
+
+            # ── Step 2: per session, list contents (the per-session
+            # readdir `cc tasks list` does to find `1.json`) ─────────
+            session_files: dict[str, list[str]] = {}
+            for sess in sessions:
+                sess_mount = topology.mount_path_for_vfs(topology.founder_vfs_path(f"/{sess}"))
+                session_files[sess] = cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, sess_mount
+                )
+                assert "1.json" in session_files[sess], (
+                    f"session {sess} per-dir enumeration broke — got "
+                    f"{session_files[sess]}, expected '1.json' to be present"
+                )
+
+            # ── Step 3: per session, stat `1.json` (the FUSE lookup
+            # that gates the actual content read) ───────────────────
+            for sess, expected_payload in sessions.items():
+                file_vfs = topology.founder_vfs_path(f"/{sess}/1.json")
+                stat_resp = runbook_helpers.vfs_stat(
+                    topology.joiner_grpc, file_vfs, api_key=api_key, timeout=15
+                )
+                result = stat_resp.get("result", {})
+                assert result.get("found"), (
+                    f"`cc tasks list` stat for {sess}/1.json failed — got "
+                    f"{stat_resp}. C5 sys_stat FederationPeerClient dispatch broke."
+                )
+                assert not result.get("isDirectory"), (
+                    f"{sess}/1.json should stat as a file; got {stat_resp}"
+                )
+                # Size from peer's BackendStat survives the dispatch.
+                reported_size = int(result.get("size", 0))
+                assert reported_size == len(expected_payload), (
+                    f"{sess}/1.json size mismatch — peer's BackendStat said "
+                    f"{reported_size}, payload is {len(expected_payload)} bytes"
+                )
+
+            # ── Step 4: per session, read the JSON metadata (the
+            # actual content `cc tasks list` parses) ────────────────
+            for sess, expected_payload in sessions.items():
+                file_mount = topology.mount_path_for_vfs(
+                    topology.founder_vfs_path(f"/{sess}/1.json")
+                )
+                joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                    topology.joiner_container, file_mount
+                )
+                assert joiner_bytes == expected_payload, (
+                    f"`cc tasks list` content read for {sess}/1.json got "
+                    f"{joiner_bytes!r}, expected {expected_payload!r}"
+                )
+        finally:
+            for sess in sessions:
+                runbook_helpers.docker_exec(
+                    topology.founder_container,
+                    ["rm", "-rf", f"/host/tasks/{sess}"],
+                    check=False,
+                )
+
+    def test_joiner_fuse_unlink_propagates_to_founder_host_fs(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Operator-side `rm` from the federation peer reaches SSOT host fs.
+
+        Three-step workflow:
+          (1) founder writes a file directly to host fs (no Nexus syscall);
+          (2) joiner FUSE `rm` propagates via C5's sys_unlink dispatch
+              → founder's typed Delete handler → founder's sys_unlink
+              → founder's LocalConnector delete_file → host fs row gone;
+          (3) verify both founder's host fs AND joiner's FUSE see the
+              entry as gone.
+
+        Pins the systemic sys_unlink dispatch arm of C5 alongside the
+        sys_readdir / sys_stat hooks.
+        """
+        session = _new_session()
+        path_rel = f"/{session}/to-delete.json"
+        cc_tasks_share_helpers.host_task_write(
+            topology.founder_container, path_rel, b'{"will":"be deleted"}'
+        )
+        try:
+            # Wait for joiner to see the entry via stat (C5) so we
+            # know unlink will hit the dispatched arm, not the early
+            # not-found path.
+            file_vfs = topology.founder_vfs_path(path_rel)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                stat_resp = runbook_helpers.vfs_stat(
+                    topology.joiner_grpc, file_vfs, api_key=api_key, timeout=10
+                )
+                if stat_resp.get("result", {}).get("found"):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail(
+                    "joiner never saw the file via stat — C5 sys_stat "
+                    "dispatch broke; unlink test prerequisite missing."
+                )
+
+            # Step 1: joiner FUSE unlink — full chain through C5
+            # sys_unlink → FederationPeerClient.delete_file →
+            # founder NexusVFSService.Delete → founder sys_unlink →
+            # founder LocalConnector → host fs.
+            file_mount = topology.mount_path_for_vfs(file_vfs)
+            cc_tasks_share_helpers.mount_unlink(topology.joiner_container, file_mount)
+
+            # Step 2: founder's host fs no longer has the file —
+            # the SSOT side honoured the delete.
+            host_full = f"/host/tasks{path_rel}"
+            check = runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["test", "-e", host_full],
+                check=False,
+            )
+            assert check.returncode != 0, (
+                f"founder host fs still has {host_full} after joiner FUSE unlink — "
+                f"C5 sys_unlink FederationPeerClient dispatch broke."
+            )
+
+            # Step 3: joiner's FUSE readdir no longer surfaces the entry —
+            # the cross-node view caught up with the SSOT.
+            session_mount = topology.mount_path_for_vfs(topology.founder_vfs_path(f"/{session}"))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if "to-delete.json" not in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, session_mount
+                ):
+                    return
+                time.sleep(0.5)
+            pytest.fail(
+                "joiner FUSE readdir still lists to-delete.json after unlink — "
+                "post-delete enumeration cache stale or dispatch broke."
             )
         finally:
             runbook_helpers.docker_exec(

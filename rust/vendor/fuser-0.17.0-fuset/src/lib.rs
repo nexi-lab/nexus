@@ -1,5 +1,5 @@
 // Vendored upstream code — suppress warnings from unmodified sources.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code, unused_imports, unfulfilled_lint_expectations)]
 
 //! FUSE userspace library implementation
 //!

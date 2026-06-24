@@ -192,7 +192,7 @@ graph TB
 
 <pre class="mermaid">
 flowchart LR
-    A([Draft]) -->|seller proposes| B([Negotiating])
+    A([Draft]) -->|either party proposes| B([Negotiating])
     B -->|counter-offers| B
     B -->|both sign| C([Agreed])
     B -->|withdraw| X([Cancelled])
@@ -261,6 +261,16 @@ flowchart LR
 </div>
 
 <p>Both parties sign <code>terms</code>. Once <code>status=agreed</code>, terms are immutable. <code>contract_id = sha256(canonical_json(terms))</code>.</p>
+
+<h3>Seller-Initiated Contracts (reverse dispatch)</h3>
+<div class="card">
+  <p>The default flow is <strong>buyer-initiated</strong>: buyer posts a task, seller accepts. But the protocol also supports <strong>seller-initiated</strong> contracts, where the seller proposes work and finds a buyer.</p>
+  <p><strong>Example</strong>: An engineer at a company spots a bug and proposes: "I'll fix this authentication issue, estimated 2h, 200 points." The team lead's sudowork (buyer) evaluates the proposal, counter-offers or accepts.</p>
+  <p><strong>Protocol change</strong>: One additional field in the contract data structure:</p>
+  <pre style="color:var(--fg);font-size:0.85rem;margin:0.5rem 0">  "initiated_by": "buyer" | "seller"</pre>
+  <p>Everything after <code>Draft</code> is identical &mdash; the same state machine, negotiation, dual-signature, pre-commitment, and settlement flow. The only difference is <strong>who creates the Draft</strong>.</p>
+  <p><strong>Use cases</strong>: Internal company work (proactive task proposals), open-source contributions (contributor proposes a fix, maintainer is buyer), freelance pitches (seller markets their skills to potential buyers).</p>
+</div>
 
 <!-- ============================================================ -->
 <h2 id="s5">5. The Escrow Problem</h2>

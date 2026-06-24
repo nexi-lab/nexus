@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>P2P AI-Assisted Task Settlement — Design Document</title>
+<title>P2P AI-Assisted Micro-Task Settlement — Design Document</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
   :root { --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --border: #30363d; --card: #161b22; --green: #3fb950; --orange: #d29922; --red: #f85149; --purple: #bc8cff; }
@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>P2P AI-Assisted Task Settlement <span class="status status-draft">DRAFT v2.0</span></h1>
+<h1>P2P AI-Assisted Micro-Task Settlement <span class="status status-draft">DRAFT v2.0</span></h1>
 <p class="subtitle">
   A peer-to-peer task dispatch and settlement protocol for sudowork, built on nexus-vfs primitives.<br>
   Your AI copilot matches, executes, and settles &mdash; from video editing to data labeling.
@@ -795,7 +795,7 @@ sequenceDiagram
 
 <div class="version-info">
   <strong>Document history</strong><br>
-  v2.0 (2026-06-24) &mdash; Full rewrite. Video editing (cross-border e-commerce) as primary scenario. Economics rebuilt around &#165;80-150/video model. Token economy consolidated ($100 seed + circulation + leverage). Scenarios reordered and tightened. Title changed from "Micro-Task" to "Task" &mdash; &#165;160-300/h video editing is not a micro-task.<br>
+  v2.0 (2026-06-24) &mdash; Full rewrite. Video editing (cross-border e-commerce) as primary scenario. Economics rebuilt around &#165;80-150/video model. Token economy consolidated ($100 seed + circulation + leverage). Scenarios reordered and tightened. Kept "Micro-Task" in title &mdash; buyer agent decomposes large jobs into micro-tasks at the protocol layer, even when individual task value is high (&#165;80-150/video).<br>
   v0.1&ndash;v1.5 (2026-06-19 &ndash; 2026-06-23) &mdash; 16 incremental versions. See git history for details.<br>
   <br>
   <strong>Authors</strong>: elfenlieds7 (product/architecture), Claude Opus 4.6 (design assistance)<br>

@@ -1550,24 +1550,33 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
             # file as missing while the founder's metastore.put round-
             # trips back through raft to the joiner.  This is the same
             # eventually-consistent shape the founder→joiner read tests
-            # above already accept; surface a hang as a timeout rather
-            # than the misleading "No such file" rc=1 raw failure.
+            # above already accept.  Drive `docker exec ... cat`
+            # directly (not via `mount_read_bytes`) so a transient
+            # rc=1 "No such file" just feeds the retry loop instead of
+            # `pytest.fail`ing immediately — `mount_read_bytes` raises
+            # `BaseException` via `pytest.fail`, which `except Exception`
+            # would miss.  Surface a hang as a 30s timeout, not a raw
+            # `cat` rc=1 with no diagnostic context.
             deadline = time.monotonic() + 30
-            joiner_bytes: bytes | None = None
-            last_err: Exception | None = None
+            joiner_bytes = b""
+            last_stderr = ""
             while time.monotonic() < deadline:
-                try:
-                    joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
-                        topology.joiner_container, file_mount
-                    )
+                proc = subprocess.run(
+                    ["docker", "exec", topology.joiner_container, "cat", file_mount],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if proc.returncode == 0:
+                    joiner_bytes = proc.stdout
                     if joiner_bytes == payload:
                         break
-                except Exception as err:
-                    last_err = err
+                else:
+                    last_stderr = proc.stderr.decode(errors="replace").strip()
                 time.sleep(0.5)
             assert joiner_bytes == payload, (
                 f"joiner FUSE read got {joiner_bytes!r} for the file it "
-                f"just wrote, expected {payload!r} (last_err={last_err!r}). "
+                f"just wrote, expected {payload!r} "
+                f"(last_cat_stderr={last_stderr!r}). "
                 "sys_read federation peer dispatch broke or stale-cache hit."
             )
         finally:

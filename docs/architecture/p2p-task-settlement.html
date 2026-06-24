@@ -406,6 +406,34 @@ flowchart LR
 
 <div class="pref">Reuse <code>reputation_math.py</code> pure functions (Beta scoring + time decay + composite). Replace ORM with VFS JSON. Bilateral rating (buyer + seller). Reputation is a marketplace signal only &mdash; does not gate settlement.</div>
 
+<h3>Portable Credentials: from reputation to employment</h3>
+<div class="card">
+  <p>China has ~11.7M university graduates per year (2025) and record-low youth employment rates. AI skill-building alone helps, but students need <strong>verifiable proof</strong> that employers recognize. The reputation system provides exactly this &mdash; a tamper-evident, employer-verifiable work history.</p>
+
+  <p><strong>Two tiers of certification</strong> (potential partnership with Ministry of Education contacts):</p>
+  <table>
+    <tr><th>Tier</th><th>Criteria</th><th>What it proves</th></tr>
+    <tr>
+      <td><strong>AI Work Proficiency</strong> (通用)</td>
+      <td>Complete N tasks across any category, composite reputation &gt; threshold, sustained over M months</td>
+      <td>This person can collaborate with AI tools to produce professional-quality output &mdash; prompt crafting, AI-assisted execution, quality verification.</td>
+    </tr>
+    <tr>
+      <td><strong>Domain Specialist</strong> (垂直)</td>
+      <td>Complete N tasks in a specific domain (e.g. video editing, data labeling, code review), domain quality score &gt; threshold</td>
+      <td>This person is a verified practitioner in [domain], with quantified quality metrics from real commercial work.</td>
+    </tr>
+  </table>
+
+  <p><strong>Why this is better than traditional certificates</strong>: A paper certificate says "this institution vouches for this person." Our credential says "this person completed 200 video editing tasks for real buyers, with a mean quality score of 0.92, verified by CAS-addressed task records that any employer can audit." The proof is in the work history, not the issuer's reputation.</p>
+
+  <p><strong>The full loop</strong>: Student receives $100 seed tokens &rarr; completes tasks &rarr; earns points + learns AI skills + builds reputation &rarr; earns portable credential &rarr; <strong>credential helps land a job</strong>. The platform doesn't just provide income during university &mdash; it builds a verifiable career asset that outlasts the platform itself.</p>
+
+  <div class="warn">
+    <strong>Social context</strong>: Youth unemployment is a pressing societal issue in China. A platform that simultaneously provides (a) income, (b) AI skill development, and (c) employer-recognized credentials addresses all three dimensions. The Ministry of Education partnership would lend institutional legitimacy, while the on-chain work history provides substance that traditional credentials lack.
+  </div>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="s6">6. Delivery via VFS</h2>
 
@@ -725,7 +753,7 @@ sequenceDiagram
     <tr><td><strong>AI willingness</strong></td><td>Digital natives, highest willingness to learn and use AI tools. Crucially: more willing to accept <em>tokens as compensation</em> because they'll actually use the AI &mdash; the 10-20x leverage (use vs cash out) works best for users who value AI access.</td></tr>
     <tr><td><strong>Time flexibility</strong></td><td>Flexible schedules, can do tasks between classes or during free time. Ideal for async, variable-volume task flows.</td></tr>
     <tr><td><strong>Competitive income</strong></td><td>&#165;160-300/h for video editing &mdash; exceeds tutoring (&#165;40-200/h) and all other student gig alternatives.</td></tr>
-    <tr><td><strong>Maximum career ROI</strong></td><td>AI skills learned now compound over an entire career. A graduating student who can prompt-craft, delegate to AI, and verify AI output has a tangible competitive advantage in the job market.</td></tr>
+    <tr><td><strong>Maximum career ROI</strong></td><td>AI skills learned now compound over an entire career. A graduating student who can prompt-craft, delegate to AI, and verify AI output has a tangible competitive advantage in the job market. Reputation-based portable credentials (&sect;5A) provide employer-verifiable proof of these skills &mdash; income, skill-building, and career certification in one loop.</td></tr>
     <tr><td><strong>Network effects</strong></td><td>Campus social networks drive organic word-of-mouth. One student showing AI-assisted earnings to roommates creates viral adoption within dorms and departments.</td></tr>
   </table>
   <p><strong>The pitch to students</strong>: "Earn money editing videos. Your AI copilot handles the hard parts &mdash; captions, templates, music, format. You handle creative review. &#165;160-300/h, from your dorm."</p>

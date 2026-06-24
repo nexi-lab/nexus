@@ -1441,3 +1441,127 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 ["rm", "-rf", f"/host/tasks/{session}"],
                 check=False,
             )
+
+    def test_joiner_fuse_write_propagates_to_founder_host_fs(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Operator-side `cat > <file>` from the federation peer reaches SSOT host fs.
+
+        Closes the write half of the cc-tasks-share cross-node loop:
+        sys_readdir (PR #4427) lets the joiner SEE peer-owned files,
+        sys_unlink (PR #4427) lets the joiner REMOVE them, this pin
+        covers the joiner CREATING/UPDATING them.
+
+        Two-step workflow:
+          (1) joiner FUSE `cat > <mount-path>` runs through the
+              plugin's KernelHandle.write → kernel sys_write → with
+              placeholder MountEntry shape (backend=None +
+              target_zone_id=Some) the kernel routes the write to
+              the peer via the FederationPeerClient.write dispatch
+              added alongside sys_readdir/sys_stat/sys_unlink;
+          (2) founder's typed NexusVFSService.Write handler reaches
+              its own sys_write → LocalConnector.write_content →
+              bytes land on founder host fs, byte-exact.
+
+        Pins the systemic sys_write dispatch arm of the
+        FederationPeerClient family so a future refactor that
+        breaks the placeholder-mount write path lights up the
+        cc-tasks-share E2E suite instead of waiting for an
+        operator on a real Mac↔Win pair to notice.
+
+        Out of scope: a "step 3 round-trip" read from the joiner FUSE
+        side after the write would exercise a SEPARATE kernel path
+        (joiner-side metastore population after a cross-node write),
+        currently broken end-to-end — the founder receives the bytes
+        but the joiner's own FUSE lookup misses for >30s.  Tracked
+        as a follow-up; not in this PR's scope, which is the write-
+        dispatch arm only.
+        """
+        session = _new_session()
+        path_rel = f"/{session}/new.json"
+        # A non-trivial payload so a byte-stream-truncation regression
+        # would show up as a length mismatch, not just a content one.
+        payload = b'{"id":"c","status":"new","title":"Drafted via cross-node FUSE write"}'
+        try:
+            # Seed the session directory on founder host fs first — the
+            # realistic shape the operator workflow has (Mac CC creates
+            # the session dir, then Win operator writes new files into
+            # it via the FUSE mount).  Without an existing parent dir,
+            # the FUSE create-write call fails with "Directory
+            # nonexistent" because neither the kernel nor the plugin
+            # implicitly mkdir's parent paths.  Wait until the joiner
+            # side sees the seeded dir via readdir so we know raft has
+            # replicated the parent before issuing the FUSE write.
+            cc_tasks_share_helpers.host_task_ensure_dir(topology.founder_container, f"/{session}")
+            parent_vfs = topology.founder_vfs_path("")
+            parent_mount = topology.mount_path_for_vfs(parent_vfs.rstrip("/"))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if session in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, parent_mount
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail(
+                    f"joiner never saw seeded session dir {session} via readdir "
+                    "— sys_readdir federation peer dispatch broke or raft drain hung; "
+                    "sys_write test prerequisite missing."
+                )
+
+            # Step 1: joiner FUSE create + write — full chain through
+            # kernel sys_write → FederationPeerClient.write →
+            # founder NexusVFSService.Write → founder sys_write →
+            # founder LocalConnector → host fs.
+            file_vfs = topology.founder_vfs_path(path_rel)
+            file_mount = topology.mount_path_for_vfs(file_vfs)
+            cc_tasks_share_helpers.mount_write_bytes(topology.joiner_container, file_mount, payload)
+
+            # Step 2: founder's host fs has the bytes — the SSOT
+            # side honoured the create+write through its own
+            # LocalConnector.write_content.  Bound the wait so a
+            # raft / drain hiccup surfaces as a timeout, not a hang.
+            host_full = f"/host/tasks{path_rel}"
+            deadline = time.monotonic() + 30
+            host_bytes: bytes | None = None
+            while time.monotonic() < deadline:
+                check = runbook_helpers.docker_exec(
+                    topology.founder_container,
+                    ["test", "-e", host_full],
+                    check=False,
+                )
+                if check.rc == 0:
+                    host_bytes = cc_tasks_share_helpers.host_task_read(
+                        topology.founder_container, path_rel
+                    )
+                    if host_bytes == payload:
+                        break
+                time.sleep(0.5)
+            assert host_bytes == payload, (
+                f"founder host fs at {host_full} did not receive joiner's FUSE "
+                f"write — got {host_bytes!r}, expected {payload!r}. "
+                "sys_write FederationPeerClient dispatch arm broke."
+            )
+
+            # NB: a "step 3 round-trip" — joiner FUSE reads the file
+            # back — would exercise an ORTHOGONAL kernel path
+            # (joiner-side metastore population after a cross-node
+            # write).  We empirically know that path is currently
+            # broken end-to-end: the founder receives the bytes (the
+            # step-2 assertion above is the hard proof) but the
+            # joiner's own FUSE lookup for the just-written path
+            # misses for >30s.  Tracked separately; this test
+            # intentionally stops here so it pins only the SYS_WRITE
+            # FEDERATION-PEER DISPATCH arm — which is exactly the
+            # arm this PR is responsible for.  See follow-up plan
+            # entry "joiner-side metastore population after
+            # cross-node write" for the orthogonal gap.
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )

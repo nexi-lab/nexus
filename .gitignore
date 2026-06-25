@@ -269,3 +269,7 @@ privatevar/
 # never source-controlled.
 nexus-zones/
 nexus_witness_data/
+
+# redb database files (runtime artifacts from nexusd-cluster / tests)
+*.redb
+:memory:.redb

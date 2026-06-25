@@ -1726,7 +1726,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/cache/hot-files
-      source: src/nexus/server/api/v2/routers/cache.py:136
+      source: src/nexus/server/api/v2/routers/cache.py:139
   profiles:
     lite: supported
     sandbox: supported
@@ -4772,7 +4772,7 @@ operations:
   transports:
     http:
       name: GET /metrics/pool
-      source: src/nexus/server/api/core/health.py:209
+      source: src/nexus/server/api/core/health.py:212
   profiles:
     lite: supported
     sandbox: supported

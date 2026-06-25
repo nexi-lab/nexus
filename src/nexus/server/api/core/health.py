@@ -98,7 +98,10 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
 
     # Check ReBAC + circuit breaker (Issue #726)
     rebac_health: dict[str, Any] = {"status": "disabled"}
-    has_rebac = state.async_rebac_manager or getattr(state.nexus_fs, "_rebac_manager", None)
+    _nx = state.nexus_fs
+    has_rebac = state.async_rebac_manager or (
+        _nx.service("rebac_manager") if (_nx and hasattr(_nx, "service")) else None
+    )
     if has_rebac:
         cb = getattr(state, "rebac_circuit_breaker", None)
         if cb:

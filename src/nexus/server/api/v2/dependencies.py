@@ -91,7 +91,7 @@ async def get_operation_logger(
     from nexus.storage.operation_logger import OperationLogger
 
     context = get_operation_context(auth_result)
-    _record_store = getattr(nexus_fs, "_record_store", None)
+    _record_store = getattr(nexus_fs, "record_store", None)
     session_factory = (
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )
@@ -118,7 +118,7 @@ async def get_exchange_audit_logger(
     context = _get_operation_context(auth_result)
     zone_id = context.zone_id or ROOT_ZONE_ID
 
-    _record_store = getattr(nexus_fs, "_record_store", None)
+    _record_store = getattr(nexus_fs, "record_store", None)
     if _record_store is None:
         raise HTTPException(status_code=503, detail="RecordStore not initialized")
     return ExchangeAuditLogger(record_store=_record_store), zone_id
@@ -141,7 +141,7 @@ async def get_aspect_service(
     from nexus.storage.aspect_service import AspectService
 
     context = get_operation_context(auth_result)
-    _record_store = getattr(nexus_fs, "_record_store", None)
+    _record_store = getattr(nexus_fs, "record_store", None)
     session_factory = (
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )
@@ -171,7 +171,7 @@ async def get_catalog_service(
     from nexus.storage.aspect_service import AspectService
 
     context = get_operation_context(auth_result)
-    _record_store = getattr(nexus_fs, "_record_store", None)
+    _record_store = getattr(nexus_fs, "record_store", None)
     session_factory = (
         _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
     )

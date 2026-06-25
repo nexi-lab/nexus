@@ -61,7 +61,7 @@ def _make_lineage_dependency() -> Any:
         from nexus.storage.lineage_service import LineageService
 
         context = get_operation_context(auth_result)
-        _record_store = getattr(nexus_fs, "_record_store", None)
+        _record_store = getattr(nexus_fs, "record_store", None)
         session_factory = (
             _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
         )

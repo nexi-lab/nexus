@@ -325,7 +325,7 @@ def create_app(
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     _cfg_profile = None
-    _nx_cfg_for_profile = getattr(nexus_fs, "_config", None)
+    _nx_cfg_for_profile = getattr(nexus_fs, "config", None)
     if _nx_cfg_for_profile is not None:
         _cfg_profile_val = getattr(_nx_cfg_for_profile, "profile", None)
         if _cfg_profile_val:
@@ -363,7 +363,7 @@ def create_app(
 
     # Apply FeaturesConfig overrides (Issue #1389 — was unused in server)
     _features_overrides: dict[str, bool] = {}
-    _nx_config = getattr(nexus_fs, "_config", None)
+    _nx_config = getattr(nexus_fs, "config", None)
     if _nx_config is not None and hasattr(_nx_config, "features") and _nx_config.features:
         _features_overrides = _nx_config.features.to_overrides()
 
@@ -376,7 +376,7 @@ def create_app(
     # Expose RecordStoreABC and its session factories on app.state (if available).
     # This is the canonical way for async endpoints to get database sessions
     # without bypassing the RecordStore abstraction with raw URLs.
-    _record_store = getattr(nexus_fs, "_record_store", None)
+    _record_store = getattr(nexus_fs, "record_store", None)
     app.state.record_store = _record_store
     if _record_store is not None:
         try:
@@ -501,7 +501,7 @@ def create_app(
         except Exception as _exc:
             logger.debug("PayRPCService unavailable: %s", _exc)
         # --- Audit (Issue #1133) ---
-        _record_store = getattr(nexus_fs, "_record_store", None)
+        _record_store = getattr(nexus_fs, "record_store", None)
         if _record_store is not None:
             try:
                 from nexus.server.rpc.services.audit_rpc import AuditRPCService

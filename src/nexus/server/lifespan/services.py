@@ -398,9 +398,7 @@ def _startup_access_manifest(app: "FastAPI", svc: "LifespanServices") -> None:
     """Wire AccessManifestService to app.state for REST API."""
     if not svc.nexus_fs:
         return
-    record_store = getattr(svc.nexus_fs, "_record_store", None) or getattr(
-        svc, "record_store", None
-    )
+    record_store = getattr(svc.nexus_fs, "record_store", None) or getattr(svc, "record_store", None)
     rebac_mgr = svc.rebac_manager
     if record_store is None or rebac_mgr is None:
         logger.debug("[ACCESS-MANIFEST] Skipped — record_store or rebac_manager not available")

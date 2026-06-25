@@ -114,18 +114,21 @@ async def get_cache_stats(
 
     cache_stats: dict[str, Any] = {}
 
-    rm = getattr(nexus_fs, "_rebac_manager", None)
+    rm = nexus_fs.service("rebac_manager") if hasattr(nexus_fs, "service") else None
     if rm is not None:
-        pc = getattr(rm, "_permission_cache", None)
-        if pc is not None and hasattr(pc, "get_stats"):
-            cache_stats["permission_cache"] = pc.get_stats()
-        tc = getattr(rm, "_tiger_cache", None)
-        if tc is not None and hasattr(tc, "get_stats"):
-            cache_stats["tiger_cache"] = tc.get_stats()
-
-    dvc = getattr(nexus_fs, "_dir_visibility_cache", None)
-    if dvc is not None and hasattr(dvc, "get_metrics"):
-        cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+        perm_stats = rm.get_cache_stats() if hasattr(rm, "get_cache_stats") else None
+        if perm_stats:
+            cache_stats["permission_cache"] = perm_stats
+        tiger_stats = rm.get_tiger_cache_stats() if hasattr(rm, "get_tiger_cache_stats") else None
+        if tiger_stats:
+            cache_stats["tiger_cache"] = tiger_stats
+        dv_metrics = (
+            rm.get_dir_visibility_cache_metrics()
+            if hasattr(rm, "get_dir_visibility_cache_metrics")
+            else None
+        )
+        if dv_metrics:
+            cache_stats["dir_visibility_cache"] = dv_metrics
 
     tracker = get_file_access_tracker()
     cache_stats["file_access_tracker"] = tracker.get_stats()

@@ -42,7 +42,7 @@ def _get_record_store(request: Request) -> Any:
     """Get record_store from NexusFS or app.state."""
     nx = getattr(request.app.state, "nexus_fs", None)
     if nx is not None:
-        rs = getattr(nx, "_record_store", None)
+        rs = getattr(nx, "record_store", None)
         if rs is not None:
             return rs
     rs = getattr(request.app.state, "record_store", None)

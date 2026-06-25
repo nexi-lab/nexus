@@ -30,16 +30,25 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #85 (Phase 2 of
-# the bottom-up re-attempt of reverted PR #82): HAL surface
-# extension — adds rename + setattr methods to the
-# FederationPeerClient trait + matching Noop + FederationClient
-# async + sync bridges + backends StubClient impls.  No kernel
-# call site uses the new methods yet (Phase 3a / 3b / 3c will
-# add per-syscall short-circuits one at a time, each with its
-# own E2E gate, using the corrected design from
-# `feedback_defer_to_peer_only_for_byte_ops`).  E2E-validated
-# against Federation E2E + cc-tasks-share E2E suites before merge.
+# E2E-GATING PIN at nexus-vfs PR #86's BRANCH HEAD (not main yet)
+# — same pattern Phases 1 & 2 used and validated end-to-end.
+#
+# nexus-vfs #86 is Phase 3a of the bottom-up re-attempt of
+# reverted PR #82: sys_mkdir's federation-peer SIDE EFFECT for
+# placeholder mounts.  First kernel-side BEHAVIOUR change in the
+# rebuilt stack (Phase 1 was a pure refactor; Phase 2 was HAL
+# surface only).  CORRECTED design vs reverted PR #82:
+# supplement-not-replace.  New §2.7 short-circuit in mkdir()
+# fires `federation_peer_mkdir` as a SIDE EFFECT (no early
+# return), then the LEGACY local-side flow (existence check +
+# metastore.put + ensure_parent_directories + OBSERVE) STILL
+# runs.  Result: SSOT-side host fs gets the directory created
+# (fixes the Win-operator-creates-CC-session → Mac-CC-walks-
+# host-fs gap), AND joiner's local routing remains immediate
+# (the regression PR #82 introduced).  Raft LWW dedupes the
+# double DT_DIR put — correct raft usage for routing-state ops.
+# See `feedback_defer_to_peer_only_for_byte_ops` memory for full
+# rationale.
 # Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
 # #58 sealed-keystore signing trust root, #60 KernelHandle v3
 # sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
@@ -54,13 +63,13 @@ exclude = ["nexus-fuse"]
 # dispatch to kernel/federation.rs, #85 HAL extension (rename +
 # setattr).  Bump alongside the rest of nexus-vfs updates when
 # a downstream change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "fc16c58661583cbad934a7cb87716734ee951409" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "3517e9348fff95707a0e856b3c6c0a72b7378448" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

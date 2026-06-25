@@ -37,6 +37,7 @@ jobs:
       cos_subdir: nexus-vault/release
       version_tag_prefix: vault-v
       signing_key_source: github-secret
+      override_ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
       # 7.5 MiB — matches the loosest pre-reusable platform budget (macOS).
       # Stricter than the reusable's 8 MiB default; tightens regression
       # detection for the only plugin where we've measured a stable size.

@@ -75,6 +75,15 @@ on:
         required: false
         type: string
         default: ""
+      override_ref:
+        description: |
+          Override GITHUB_REF for workflow_dispatch retries. Pass the
+          full tag ref (e.g. `refs/tags/fuse-v0.4.2`). When empty, falls
+          back to GITHUB_REF (normal tag-push path). This unblocks
+          dispatch-based release retries without delete+repush tag.
+        required: false
+        type: string
+        default: ""
 
     secrets:
       PLUGIN_SIGNING_PRIVKEY:
@@ -353,10 +362,13 @@ jobs:
         id: version
         env:
           PREFIX: refs/tags/${{ inputs.version_tag_prefix }}
+          OVERRIDE_REF: ${{ inputs.override_ref }}
         run: |
-          VERSION="${GITHUB_REF#${PREFIX}}"
-          if [ "$VERSION" = "$GITHUB_REF" ]; then
-            echo "::error::tag $GITHUB_REF does not start with prefix ${{ inputs.version_tag_prefix }}"
+          # Use override_ref when set (workflow_dispatch retry), else GITHUB_REF (tag push).
+          EFFECTIVE_REF="${OVERRIDE_REF:-$GITHUB_REF}"
+          VERSION="${EFFECTIVE_REF#${PREFIX}}"
+          if [ "$VERSION" = "$EFFECTIVE_REF" ]; then
+            echo "::error::ref $EFFECTIVE_REF does not start with prefix ${{ inputs.version_tag_prefix }}"
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"

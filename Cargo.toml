@@ -30,16 +30,23 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #80 (sys_write
-# defers fully to federation peer for backend-less placeholder
-# mounts).  Closes the joiner-readback gap PR #4433's docker E2E
-# exposed: founder host fs received bytes byte-exact after a
-# joiner FUSE write, but joiner's OWN subsequent FUSE lookup
-# missed for >30s because the old shape had joiner ALSO propose
-# its own metastore.put (double-propose racing founder's
-# replicated apply through raft).  #80 makes founder the single
-# proposer for placeholder-mount writes — mirror of #77's
-# sys_unlink short-circuit.
+# E2E-GATING PIN at nexus-vfs PR #84's BRANCH HEAD (not main yet):
+# this nexus PR exists solely to run Federation E2E + cc-tasks-share
+# E2E against the unmerged Phase 1 refactor.  Per the lesson from
+# the reverted PR #82, merging kernel work BEFORE the full E2E
+# suite validates it leaves regressions in develop until the next
+# companion PR catches them.  Once #84's CI on this nexus PR shows
+# Federation E2E + cc-tasks-share E2E green, nexus-vfs #84 admin-
+# merges to main, and this PR's pin re-bumps to the resulting main
+# merge commit.  If E2E catches a regression, nexus-vfs #84 gets
+# fixed BEFORE merging.
+#
+# nexus-vfs #84 is a pure file-organization refactor (zero
+# behavioural delta): relocates `dispatch_federation_peer` + 5
+# `federation_peer_X` helpers + 2 slot accessors from io.rs / mod.rs
+# to kernel/federation.rs (their architecturally correct home per
+# docs/KERNEL-ARCHITECTURE.md §3).  No syscall ABI / plugin ABI /
+# trait change.
 # Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
 # #58 sealed-keystore signing trust root, #60 KernelHandle v3
 # sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
@@ -52,13 +59,13 @@ exclude = ["nexus-fuse"]
 # reentrancy, #80 sys_write defer-to-peer.  Bump alongside the
 # rest of nexus-vfs updates when a downstream change needs newer
 # kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "de3bdef3f0dc38a6c11dccda51ec3a9c339ffd43" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

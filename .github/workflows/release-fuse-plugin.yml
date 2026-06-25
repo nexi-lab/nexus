@@ -23,6 +23,12 @@ on:
   push:
     tags:
       - "fuse-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. fuse-v0.5.0). Used for retry without delete+repush."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -39,6 +45,7 @@ jobs:
       signing_key_source: vault
       signing_key_name: kernel-dogfood-v1
       platforms: '["linux-x86_64", "macos-arm64", "macos-x86_64"]'
+      override_ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
       release_description: |
         Nexus FUSE service plugin for nexusd-cluster.
 

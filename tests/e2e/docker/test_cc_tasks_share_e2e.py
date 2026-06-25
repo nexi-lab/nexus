@@ -1587,3 +1587,358 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 ["rm", "-rf", f"/host/tasks/{session}"],
                 check=False,
             )
+
+    def test_joiner_fuse_mkdir_propagates_to_founder_host_fs(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Operator-side `mkdir` from the federation peer reaches SSOT host fs.
+
+        Closes the cross-node mkdir half of the cc-tasks-share loop
+        (sister of sys_unlink / sys_write / sys_rename / sys_setattr).
+        This is the FIRST step of the Mac↔Win cc-tasks-share workflow:
+        Win operator creates a brand-new CC session dir via FUSE; Mac
+        CC then walks ~/.claude/tasks/ directly via host fs (NOT via
+        Nexus) and must find that session dir there.
+
+        Four-step workflow (data flows step → step):
+          (1) joiner FUSE `mkdir /mnt/cc-tasks/founder/<session>` runs
+              through the plugin's KernelHandle.mkdir → kernel
+              sys_mkdir → with placeholder MountEntry shape (backend=
+              None + target_zone_id=Some) the kernel routes the mkdir
+              to the peer via the FederationPeerClient.mkdir dispatch
+              added in nexus-vfs#82;
+          (2) founder's typed NexusVFSService.Mkdir handler reaches
+              its own sys_mkdir → LocalConnector.backend.mkdir → host
+              fs has the directory;
+          (3) verify founder host fs has the directory (the SSOT side
+              honoured the create through its own LocalConnector);
+          (4) joiner FUSE writes a JSON inside the new dir (the
+              realistic continuation — operator creates session, then
+              CC writes session state).  Bytes land on founder host
+              fs byte-exact, proving the dir created in step 1 is the
+              one step 4's write lands into.
+
+        Pins the systemic sys_mkdir dispatch arm of the
+        FederationPeerClient family.  Pre-nexus-vfs#82 shape registered
+        DT_DIR metadata in raft but neither node ran backend.mkdir —
+        SSOT-side host fs got no directory and every subsequent
+        host-fs-level read from the SSOT side missed.
+        """
+        session = _new_session()
+        sess_path_rel = f"/{session}"
+        file_path_rel = f"/{session}/1.json"
+        payload = b'{"id":"session-init","status":"created","title":"First session metadata"}'
+        try:
+            # Step 1: joiner FUSE mkdir for the new session dir.
+            session_vfs = topology.founder_vfs_path(sess_path_rel)
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            cc_tasks_share_helpers.mount_mkdir(topology.joiner_container, session_mount)
+
+            # Step 2: founder host fs has the directory.  Bounded wait
+            # tolerates the founder-side apply window — sys_mkdir
+            # defer-to-peer fires the RPC synchronously so this is
+            # usually immediate, but a transient peer-discovery blip
+            # would otherwise surface as a hang.
+            host_session_dir = f"/host/tasks{sess_path_rel}"
+            deadline = time.monotonic() + 30
+            saw_dir = False
+            while time.monotonic() < deadline:
+                check = runbook_helpers.docker_exec(
+                    topology.founder_container,
+                    ["test", "-d", host_session_dir],
+                    check=False,
+                )
+                if check.rc == 0:
+                    saw_dir = True
+                    break
+                time.sleep(0.5)
+            assert saw_dir, (
+                f"founder host fs at {host_session_dir} did not receive "
+                "joiner's FUSE mkdir — sys_mkdir FederationPeerClient "
+                "dispatch arm (nexus-vfs#82) broke."
+            )
+
+            # Step 3: joiner FUSE write inside the just-created dir.
+            # Data flow: the dir created in step 1 is the parent of
+            # the file step 3 writes; without step 1's success step 3
+            # would error "Directory nonexistent" (proven by PR #4433's
+            # earlier seed-dir fix).
+            file_vfs = topology.founder_vfs_path(file_path_rel)
+            file_mount = topology.mount_path_for_vfs(file_vfs)
+            cc_tasks_share_helpers.mount_write_bytes(topology.joiner_container, file_mount, payload)
+
+            # Step 4: founder host fs has the bytes byte-exact.
+            host_file = f"/host/tasks{file_path_rel}"
+            deadline = time.monotonic() + 30
+            host_bytes: bytes | None = None
+            while time.monotonic() < deadline:
+                check = runbook_helpers.docker_exec(
+                    topology.founder_container,
+                    ["test", "-e", host_file],
+                    check=False,
+                )
+                if check.rc == 0:
+                    host_bytes = cc_tasks_share_helpers.host_task_read(
+                        topology.founder_container, file_path_rel
+                    )
+                    if host_bytes == payload:
+                        break
+                time.sleep(0.5)
+            assert host_bytes == payload, (
+                f"founder host fs at {host_file} did not receive bytes "
+                f"after joiner mkdir-then-write — got {host_bytes!r}, "
+                f"expected {payload!r}.  Either the mkdir didn't actually "
+                "materialise the parent dir (step 1+2 false positive) "
+                "or the subsequent sys_write regressed."
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+    def test_joiner_fuse_rename_propagates_to_founder_host_fs(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Operator-side `mv` from the federation peer reaches SSOT host fs.
+
+        Closes the cross-node rename half of the cc-tasks-share loop.
+        Real user pattern: CC's atomic-write convention (write to
+        `.tmp`, rename to final).  Without sys_rename defer-to-peer,
+        joiner's metastore moved the row but neither node ran
+        backend.rename — SSOT-side host fs still had the `.tmp`
+        residue with NOTHING at the intended final name.
+
+        Four-step workflow:
+          (1) seed file on founder host fs at `<session>/draft.tmp`
+              with payload bytes (the realistic precondition: an
+              earlier write put the .tmp there);
+          (2) wait for joiner readdir to enumerate `<session>/`
+              (data flow guard: the next step depends on the joiner
+              having the rename's source path materialised in route);
+          (3) joiner FUSE `mv draft.tmp final.json` runs through the
+              plugin's KernelHandle.rename → kernel sys_rename →
+              FederationPeerClient.rename dispatch (nexus-vfs#82) →
+              founder NexusVFSService.Rename → founder sys_rename →
+              LocalConnector.backend.rename → host fs has final.json
+              with the same bytes, draft.tmp gone;
+          (4) verify founder host fs: final.json exists with payload
+              byte-exact AND draft.tmp is gone (both halves of the
+              rename atomicity contract).
+
+        Pins the systemic sys_rename dispatch arm of the
+        FederationPeerClient family.
+        """
+        session = _new_session()
+        old_path_rel = f"/{session}/draft.tmp"
+        new_path_rel = f"/{session}/final.json"
+        payload = b'{"id":"d","status":"draft-promoted-to-final","title":"Atomic rename"}'
+        try:
+            # Step 1: seed the .tmp file on founder host fs (the
+            # realistic predecessor of the rename).
+            cc_tasks_share_helpers.host_task_write(
+                topology.founder_container, old_path_rel, payload
+            )
+
+            # Step 2: wait for joiner to see the session via readdir.
+            # Data flow: the rename in step 3 needs the source path
+            # routed via the placeholder mount, which depends on the
+            # parent dir + DT_REG row replicating to joiner via raft.
+            parent_vfs = topology.founder_vfs_path("")
+            parent_mount = topology.mount_path_for_vfs(parent_vfs.rstrip("/"))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if session in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, parent_mount
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail(
+                    f"joiner never saw seeded session dir {session} via readdir "
+                    "— sys_readdir federation peer dispatch broke or raft "
+                    "drain hung; sys_rename test prerequisite missing."
+                )
+
+            # Step 3: joiner FUSE rename — full chain through
+            # kernel sys_rename → FederationPeerClient.rename →
+            # founder NexusVFSService.Rename → founder sys_rename →
+            # founder LocalConnector → host fs.
+            old_mount = topology.mount_path_for_vfs(topology.founder_vfs_path(old_path_rel))
+            new_mount = topology.mount_path_for_vfs(topology.founder_vfs_path(new_path_rel))
+            cc_tasks_share_helpers.mount_rename(topology.joiner_container, old_mount, new_mount)
+
+            # Step 4a: founder host fs has the NEW name with byte-
+            # exact payload.
+            new_host = f"/host/tasks{new_path_rel}"
+            deadline = time.monotonic() + 30
+            host_new_bytes: bytes | None = None
+            while time.monotonic() < deadline:
+                check = runbook_helpers.docker_exec(
+                    topology.founder_container,
+                    ["test", "-e", new_host],
+                    check=False,
+                )
+                if check.rc == 0:
+                    host_new_bytes = cc_tasks_share_helpers.host_task_read(
+                        topology.founder_container, new_path_rel
+                    )
+                    if host_new_bytes == payload:
+                        break
+                time.sleep(0.5)
+            assert host_new_bytes == payload, (
+                f"founder host fs at {new_host} did not receive the renamed "
+                f"file — got {host_new_bytes!r}, expected {payload!r}.  "
+                "sys_rename FederationPeerClient dispatch arm (nexus-vfs#82) broke."
+            )
+
+            # Step 4b: founder host fs no longer has the OLD name.
+            # Two-halves-of-atomicity check: a rename that creates the
+            # new path but leaves the old behind would silently corrupt
+            # CC's atomic-write contract.
+            old_host = f"/host/tasks{old_path_rel}"
+            deadline = time.monotonic() + 30
+            old_gone = False
+            while time.monotonic() < deadline:
+                check = runbook_helpers.docker_exec(
+                    topology.founder_container,
+                    ["test", "-e", old_host],
+                    check=False,
+                )
+                if check.rc != 0:
+                    old_gone = True
+                    break
+                time.sleep(0.5)
+            assert old_gone, (
+                f"founder host fs still has the OLD name {old_host} after "
+                "joiner FUSE rename — backend.rename didn't fire on the "
+                "SSOT side, atomicity contract broken."
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+    def test_joiner_fuse_touch_propagates_modified_at_to_founder_metastore(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        """Operator-side `touch -m` from the federation peer updates SSOT metastore.
+
+        Closes the cross-node setattr half of the cc-tasks-share loop
+        (DT_REG metadata-update path).  CC and standard tooling fire
+        FUSE setattr via `utimensat()` (touch, build-system stat
+        cache invalidations, file-watcher resync).  Without sys_setattr
+        DT_REG defer-to-peer (nexus-vfs#82), joiner's local
+        metastore.put for the new modified_at_ms raft-replicated to the
+        SSOT side, but the SSOT-side backend (LocalConnector) never
+        saw the call — divergence between metastore-of-record and
+        host-fs-truth on the SSOT side.
+
+        Four-step workflow:
+          (1) seed file on founder host fs (a typical CC session
+              JSON's predecessor state);
+          (2) wait for joiner gRPC stat to see the file AND capture
+              the initial modified_at_ms (the BASELINE the assertion
+              compares against);
+          (3) joiner FUSE `touch -m <file>` runs through the plugin's
+              KernelHandle.setattr → kernel sys_setattr DT_REG with
+              modified_at_ms = now → FederationPeerClient.setattr
+              dispatch (nexus-vfs#82) → founder NexusVFSService.Setattr
+              → founder sys_setattr → founder's metastore.put with new
+              modified_at_ms (and raft replicates back to joiner);
+          (4) verify both nodes' gRPC stat report modified_at_ms
+              strictly GREATER than the baseline from step 2 — i.e.
+              the setattr propagated AND the metastore-of-record on
+              the founder side reflects the joiner-triggered touch.
+
+        Pins the systemic sys_setattr (DT_REG) dispatch arm of the
+        FederationPeerClient family.
+        """
+        session = _new_session()
+        path_rel = f"/{session}/state.json"
+        payload = b'{"id":"touch-target","status":"initial","title":"For touch-modify test"}'
+        try:
+            # Step 1: seed file on founder host fs.
+            cc_tasks_share_helpers.host_task_write(topology.founder_container, path_rel, payload)
+
+            # Step 2: joiner gRPC stat sees the file + capture baseline
+            # modified_at_ms.  Data flow: step 3's touch must produce a
+            # strictly-greater modified_at_ms than this baseline,
+            # otherwise the assertion in step 4 can't distinguish the
+            # post-touch state from the pre-touch state.
+            file_vfs = topology.founder_vfs_path(path_rel)
+            deadline = time.monotonic() + 30
+            baseline_modified_at_ms: int | None = None
+            while time.monotonic() < deadline:
+                stat_resp = runbook_helpers.vfs_stat(
+                    topology.joiner_grpc, file_vfs, api_key=api_key, timeout=10
+                )
+                result = stat_resp.get("result", {})
+                if result.get("found"):
+                    baseline_modified_at_ms = int(result.get("modifiedAtMs", 0))
+                    if baseline_modified_at_ms > 0:
+                        break
+                time.sleep(0.5)
+            assert baseline_modified_at_ms and baseline_modified_at_ms > 0, (
+                "joiner never saw seeded file via gRPC stat with a non-zero "
+                "modified_at_ms baseline — sys_setattr test prerequisite missing."
+            )
+
+            # Step 3: joiner FUSE touch.  `touch <file>` without
+            # explicit time updates BOTH atime and mtime to "now",
+            # exercising FUSE setattr with modified_at_ms = now.
+            # We give it a small sleep before to guarantee the kernel
+            # clock has ticked past the baseline (millisecond
+            # granularity — 1.5s buffer is generous).
+            time.sleep(1.5)
+            file_mount = topology.mount_path_for_vfs(file_vfs)
+            runbook_helpers.docker_exec(
+                topology.joiner_container,
+                ["touch", file_mount],
+                check=True,
+            )
+
+            # Step 4: founder gRPC stat reports modified_at_ms STRICTLY
+            # GREATER than baseline.  Strict-greater (not just non-
+            # zero) catches a defer-to-peer regression that propagated
+            # the put back as the OLD modified_at_ms (would happen if
+            # the short-circuit dispatched but the peer used a stale
+            # timestamp from its own metastore).
+            deadline = time.monotonic() + 30
+            new_modified_at_ms: int | None = None
+            while time.monotonic() < deadline:
+                stat_resp = runbook_helpers.vfs_stat(
+                    topology.founder_grpc, file_vfs, api_key=api_key, timeout=10
+                )
+                result = stat_resp.get("result", {})
+                if result.get("found"):
+                    candidate = int(result.get("modifiedAtMs", 0))
+                    if candidate > baseline_modified_at_ms:
+                        new_modified_at_ms = candidate
+                        break
+                time.sleep(0.5)
+            assert new_modified_at_ms and new_modified_at_ms > baseline_modified_at_ms, (
+                f"founder gRPC stat modified_at_ms did not advance past "
+                f"baseline {baseline_modified_at_ms} after joiner touch — "
+                f"got {new_modified_at_ms} (or None).  sys_setattr DT_REG "
+                "FederationPeerClient dispatch arm (nexus-vfs#82) broke OR "
+                "raft replication of the SSOT-side metastore.put hung."
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )

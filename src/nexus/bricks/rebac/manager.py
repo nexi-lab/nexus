@@ -4245,6 +4245,39 @@ class ReBACManager:
         """Get cache statistics. Delegates to CacheCoordinator."""
         return self._cache_coordinator.get_cache_stats()
 
+    def get_tiger_cache_stats(self) -> dict[str, Any] | None:
+        """Get tiger bitmap cache statistics, or None if tiger cache is not initialised."""
+        if hasattr(self, "_tiger_cache") and self._tiger_cache is not None:
+            return self._tiger_cache.get_stats()
+        return None
+
+    def get_dir_visibility_cache_metrics(self) -> dict[str, Any] | None:
+        """Get directory visibility cache metrics, or None if not initialised."""
+        dvc = self.dir_visibility_cache
+        if dvc is not None and hasattr(dvc, "get_metrics"):
+            return dvc.get_metrics()
+        return None
+
+    def clear_permission_cache(self) -> bool:
+        """Clear the L1 permission cache (nuclear invalidate). Returns True."""
+        self._cache_coordinator.invalidate_all()
+        return True
+
+    def clear_tiger_cache(self) -> bool:
+        """Clear tiger bitmap in-memory cache. Returns True if cleared."""
+        if hasattr(self, "_tiger_cache") and self._tiger_cache is not None:
+            self._tiger_cache.clear_memory_cache()
+            return True
+        return False
+
+    def clear_dir_visibility_cache(self) -> bool:
+        """Clear directory visibility cache. Returns True if cleared."""
+        dvc = self.dir_visibility_cache
+        if dvc is not None and hasattr(dvc, "clear"):
+            dvc.clear()
+            return True
+        return False
+
     def reset_cache_stats(self) -> None:
         """Reset cache statistics. Delegates to CacheCoordinator."""
         self._cache_coordinator.reset_cache_stats()

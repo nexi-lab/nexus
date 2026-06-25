@@ -88,7 +88,7 @@ def reindex(
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        record_store = getattr(nx, "_record_store", None)
+        record_store = getattr(nx, "record_store", None)
         if record_store is None:
             # Fall back to REST API for remote presets (shared/demo)
             _reindex_via_rest(

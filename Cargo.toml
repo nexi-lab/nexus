@@ -30,16 +30,16 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #80 (sys_write
-# defers fully to federation peer for backend-less placeholder
-# mounts).  Closes the joiner-readback gap PR #4433's docker E2E
-# exposed: founder host fs received bytes byte-exact after a
-# joiner FUSE write, but joiner's OWN subsequent FUSE lookup
-# missed for >30s because the old shape had joiner ALSO propose
-# its own metastore.put (double-propose racing founder's
-# replicated apply through raft).  #80 makes founder the single
-# proposer for placeholder-mount writes — mirror of #77's
-# sys_unlink short-circuit.
+# Pinned at the nexus-vfs main commit that landed #82 (closes the
+# FULL cross-node mutation matrix: sys_mkdir + sys_rename +
+# sys_setattr DT_REG all defer fully to the SSOT peer, mirroring
+# PR #77 sys_unlink + PR #80 sys_write).  Single-proposer raft
+# semantics across the entire mutation surface.  Also relocates
+# the federation-peer dispatch convention from kernel/io.rs to
+# kernel/federation.rs — its architecturally correct home per
+# docs/KERNEL-ARCHITECTURE.md §3 (file-organization fix; zero
+# behavioural delta).  Closes the kernel side of the Mac↔Win
+# cc-tasks-share workflow.
 # Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
 # #58 sealed-keystore signing trust root, #60 KernelHandle v3
 # sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
@@ -49,16 +49,18 @@ exclude = ["nexus-fuse"]
 # FederationPeerClient + DRIVER_RMDIR ABI v5, #75 placeholder
 # inherits parent metastore, #76–#78 sys_unlink dispatch chain,
 # #79 DRY federation-peer-mount predicate + PeerBlobClient
-# reentrancy, #80 sys_write defer-to-peer.  Bump alongside the
-# rest of nexus-vfs updates when a downstream change needs newer
-# kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "775a1a16a5bcd71aa649699faa31b97eac2d684e" }
+# reentrancy, #80 sys_write defer-to-peer, #81 preserve miss-on-
+# dispatch-failure semantics, #82 sys_mkdir/rename/setattr
+# defer-to-peer + kernel/federation.rs architecture fix.
+# Bump alongside the rest of nexus-vfs updates when a downstream
+# change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "aa86f93cd7067e8406b264d204d0c49e191105b7" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

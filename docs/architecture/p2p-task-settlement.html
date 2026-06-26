@@ -367,6 +367,15 @@ flowchart LR
     </tr>
   </table>
   <p><strong>Trust assumption</strong>: Server will honestly execute valid transfers (L3 limited trust). If server refuses to process a valid dual-signed transfer, the signed messages serve as auditable evidence &mdash; same recourse as a bank failing to process a wire transfer.</p>
+
+  <div class="warn">
+    <strong>Legal standing in China</strong>: Our Ed25519 dual-sig meets all four conditions of a "reliable electronic signature" under Article 14 of the <em>Electronic Signature Law</em> (private key is user-exclusive, user-controlled at signing, signature tamper-detectable, content tamper-detectable). <strong>Technically valid</strong> &mdash; but in court, burden of proof is harder than CA-backed platforms (e.g. 法大大, e签宝) which have Ministry of Industry CA licenses and identity verification (ID + face recognition). Our signatures prove "this key signed this message" but not "this key belongs to Zhang San" without extra evidence. <strong>Recommendation</strong>:
+    <ul style="margin-top:0.5rem">
+      <li><strong>Daily micro-tasks (&#165;0.30-150)</strong>: Our dual-sig is sufficient. Low value &rarr; litigation probability near zero. Signed records + CAS serve as evidence chain.</li>
+      <li><strong>High-value contracts (&#165;1000+)</strong>: Optionally integrate a CA-backed e-signature API (法大大/e签宝 SaaS) as an "enhanced signing" mode. We don't need a CA license ourselves &mdash; just API integration.</li>
+      <li><strong>Buyback vouchers involving cash</strong>: CA-backed signing recommended. Cash flows increase litigation risk; CA signatures have "strong evidentiary force" in Chinese courts.</li>
+    </ul>
+  </div>
 </div>
 
 <!-- ============================================================ -->

@@ -340,6 +340,35 @@ flowchart LR
   <p><strong>从方案 B（双重签名）开始</strong>。它并不比 D 复杂多少，但提供了真正的密码学保障。服务器只需一个新端点：<code>POST /transfer</code>，验证双重签名。方案 D 作为不需要正式合约的社区的备选方案。</p>
 </div>
 
+<h3>安全保障：为什么双签无需区块链也是安全的</h3>
+<div class="card">
+  <p>协议使用 <strong>Ed25519 签名 + CAS 内容寻址</strong> &mdash; 无需区块链。三层保护：</p>
+  <table>
+    <tr><th>威胁</th><th>保护</th><th>原理</th></tr>
+    <tr>
+      <td>一方否认签署</td>
+      <td><strong>不可否认性</strong></td>
+      <td>Ed25519 签名在数学上绑定到签名者的私钥。"我没签过"可被证伪。</td>
+    </tr>
+    <tr>
+      <td>一方单独行动</td>
+      <td><strong>双签要求</strong></td>
+      <td>服务器要求 <code>buyer_sig + seller_sig</code> 才执行任何转账。任何一方都不能单方面动用资金。</td>
+    </tr>
+    <tr>
+      <td>合约/记录被篡改</td>
+      <td><strong>CAS 哈希</strong></td>
+      <td>所有合约和交易记录在 VFS 上 CAS 寻址。改一个字节 &rarr; 哈希变化 &rarr; 篡改可检测。</td>
+    </tr>
+    <tr>
+      <td>服务器伪造交易</td>
+      <td><strong>服务器没有私钥</strong></td>
+      <td>服务器无法伪造签名。它只能验证和执行。被攻破的服务器无法窃取资金 &mdash; 只能拒绝服务（拒绝处理，而非盗窃）。</td>
+    </tr>
+  </table>
+  <p><strong>信任假设</strong>：服务器会诚实执行有效转账（L3 有限信任）。如果服务器拒绝处理有效的双签转账，已签署的消息可作为可审计的证据 &mdash; 与银行拒绝处理电汇的追索方式相同。</p>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="s5a">5A. 信誉系统（复用 nexus 已有实现）</h2>
 
@@ -739,6 +768,27 @@ sequenceDiagram
     <li><strong>费率示例</strong>：充值费率 &#165;1 = 100 积分。回购费率：100 积分 = &#165;0.05-0.10</li>
     <li><strong>政策风险</strong>：需法律审查。将其表述为"未使用信用额度的部分退款"比"货币兑换"更安全。先例：Steam Wallet、Apple App Store 信用额度有类似的退款机制。</li>
   </ul>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">二级市场：回购凭证</h4>
+  <p>Token 具有真实经济价值（模型 API、技能、SaaS）&mdash; 二级市场<strong>必然会自然形成</strong>，无论我们是否促进（与游戏币、Steam 余额等一样）。不受管控的场外交易有欺诈风险且不可见（无数据）。为将二级市场保持在<strong>我们视野范围内</strong>，同时不触碰监管边界，我们引入<strong>回购凭证</strong>：</p>
+  <ol>
+    <li>A（Token 买方）向数牍存入 &#165;X &rarr; 获得价值 &#165;X 的<strong>回购凭证</strong>（100% 回购，但<strong>不可用于 AI 或任何服务</strong> &mdash; 纯粹是退款权）</li>
+    <li>A 将凭证转让给 B（通过 dual-sig）&harr; B 将 Token 转让给 A（通过 dual-sig）</li>
+    <li>B 向数牍出示凭证 &rarr; 获得 &#165;X 现金</li>
+  </ol>
+  <p><strong>凭证与 Token 之间的兑换比率由 A 和 B 自行协商</strong> &mdash; 平台不设定也不建议比率。A 可能用 &#165;50 凭证换 70 Token（B 用 70 Token 换回 &#165;50 现金 = 71% 比率），或双方同意的任何其他比率。</p>
+  <table>
+    <tr><th>设计约束</th><th>要求</th><th>原因</th></tr>
+    <tr><td>凭证不可购买 AI/服务</td><td>是</td><td>区别于虚拟货币 &mdash; 它是<strong>预付费退款权</strong></td></tr>
+    <tr><td>凭证仅限单次转让</td><td>是</td><td>A &rarr; B 仅一次，不可再次流通 &rarr; 不构成可交易工具</td></tr>
+    <tr><td>凭证金额 = 存入金额</td><td>是</td><td>100% 回购，无金融衍生品特征</td></tr>
+    <tr><td>平台不设定兑换比率</td><td>是</td><td>避免"交易所"或"市场"的监管定性</td></tr>
+    <tr><td>所有转让由服务器记录</td><td>已实现</td><td>双签转账（&sect;5）已使服务器拥有完整可见性 &mdash; 无需额外基础设施</td></tr>
+  </table>
+  <p><strong>实现效果</strong>：卖家获得比 5% 回购更好的提现比率（市场决定，预计 20-40%）。买家以面值获得 Token（无折扣）。平台对二级市场流向拥有完整可见性，同时不作为中介参与。无新增监管风险 &mdash; 凭证是预付费退款权（类似 2025 年最高法预付式消费司法解释中的 7 日无条件退款），而非虚拟货币。</p>
+  <div class="warn">
+    <strong>监管说明</strong>：此机制在实施前需要法律审查。核心辩护点在于凭证是 (a) 无功能的（不能购买服务），(b) 不流通的（单次转让），(c) 固定价值的（100% 存入金额）。这些属性使其区别于 2026 年八部委通告中定义的虚拟货币。然而，<strong>实质重于形式</strong>原则意味着监管机构可能会审视整体资金流向（A 付现金 &rarr; B 收到现金 &rarr; Token 转移），而不仅仅看标签。
+  </div>
 
   <h4 style="margin-top:1rem;color:var(--purple)">场景适配</h4>
   <p>对于<strong>场景 A（视频剪辑）</strong>，纯现金收入已具备竞争力 &mdash; &#165;160-300/小时超过所有学生替代方案。Token 杠杆是锦上添花，放大了本已强劲的经济模型。对于<strong>低价值场景</strong>（场景 C：抖音微任务，&#165;0.30-0.50/任务），Token 杠杆成为核心差异化因素 &mdash; 10-20x 的 AI 价值差距才是让这份零工值得做的原因。</p>

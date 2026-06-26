@@ -340,6 +340,35 @@ flowchart LR
   <p><strong>Start with Option B (dual-signature)</strong>. It's not much harder than D, but provides real cryptographic guarantees. Server needs only one new endpoint: <code>POST /transfer</code> that verifies dual signatures. Option D as fallback for communities that don't need formal contracts.</p>
 </div>
 
+<h3>Security Guarantees: why dual-sig is safe without blockchain</h3>
+<div class="card">
+  <p>The protocol uses <strong>Ed25519 signatures + CAS content-addressing</strong> &mdash; no blockchain needed. Three layers of protection:</p>
+  <table>
+    <tr><th>Threat</th><th>Protection</th><th>How</th></tr>
+    <tr>
+      <td>Party denies signing</td>
+      <td><strong>Non-repudiation</strong></td>
+      <td>Ed25519 signature is mathematically bound to the signer's private key. "I didn't sign" is provably false.</td>
+    </tr>
+    <tr>
+      <td>One party acts alone</td>
+      <td><strong>Dual-sig requirement</strong></td>
+      <td>Server requires <code>buyer_sig + seller_sig</code> to execute any transfer. Neither party can move funds unilaterally.</td>
+    </tr>
+    <tr>
+      <td>Contract/records tampered</td>
+      <td><strong>CAS hash</strong></td>
+      <td>All contracts and transaction records are CAS-addressed in VFS. Change one byte &rarr; hash changes &rarr; tampering is detectable.</td>
+    </tr>
+    <tr>
+      <td>Server forges a transaction</td>
+      <td><strong>Server has no private keys</strong></td>
+      <td>Server cannot forge signatures. It can only verify and execute. A compromised server cannot steal funds &mdash; only fail to process (denial of service, not theft).</td>
+    </tr>
+  </table>
+  <p><strong>Trust assumption</strong>: Server will honestly execute valid transfers (L3 limited trust). If server refuses to process a valid dual-signed transfer, the signed messages serve as auditable evidence &mdash; same recourse as a bank failing to process a wire transfer.</p>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="s5a">5A. Reputation System (reuse from nexus)</h2>
 
@@ -739,6 +768,27 @@ sequenceDiagram
     <li><strong>Rate example</strong>: Charge rate &#165;1 = 100 points. Buyback rate: 100 points = &#165;0.05-0.10</li>
     <li><strong>Policy risk</strong>: Needs legal review. Framing as "partial refund of unused credits" rather than "currency exchange" is safer. Precedent: Steam Wallet, Apple App Store credits have similar refund mechanisms.</li>
   </ul>
+
+  <h4 style="margin-top:1rem;color:var(--purple)">Secondary market: buyback vouchers</h4>
+  <p>Tokens have real economic value (model APIs, skills, SaaS) &mdash; a secondary market <strong>will form naturally</strong>, whether we facilitate it or not (same as game currency, Steam balance, etc.). Unmanaged off-platform trading is risky (fraud) and invisible (no data). To keep the secondary market <strong>within our visibility</strong> while staying out of regulatory scope, we introduce <strong>buyback vouchers</strong>:</p>
+  <ol>
+    <li>A (buyer of tokens) deposits &#165;X with sudoprivacy &rarr; receives a <strong>buyback voucher</strong> worth &#165;X (100% buyback, but <strong>cannot be used for AI or any service</strong> &mdash; it is purely a refund right)</li>
+    <li>A transfers the voucher to B (via dual-sig) &harr; B transfers tokens to A (via dual-sig)</li>
+    <li>B presents the voucher to sudoprivacy &rarr; receives &#165;X cash</li>
+  </ol>
+  <p><strong>The exchange rate between voucher and tokens is negotiated by A and B</strong> &mdash; the platform does not set or suggest a rate. A might pay &#165;50 voucher for 70 tokens (B gets &#165;50 cash for 70 tokens = 71% rate), or any other ratio they agree on.</p>
+  <table>
+    <tr><th>Design constraint</th><th>Requirement</th><th>Why</th></tr>
+    <tr><td>Voucher cannot buy AI/services</td><td>Yes</td><td>Distinguishes it from virtual currency &mdash; it's a <strong>prepaid refund right</strong></td></tr>
+    <tr><td>Voucher single-transfer only</td><td>Yes</td><td>A &rarr; B only, no further circulation &rarr; not a tradable instrument</td></tr>
+    <tr><td>Voucher amount = deposit amount</td><td>Yes</td><td>100% buyback, no financial derivative characteristics</td></tr>
+    <tr><td>Platform does not set exchange rate</td><td>Yes</td><td>Avoids "exchange" or "marketplace" regulatory classification</td></tr>
+    <tr><td>All transfers recorded by server</td><td>Already done</td><td>Dual-sig transfers (&sect;5) already give server full visibility &mdash; no extra infrastructure needed</td></tr>
+  </table>
+  <p><strong>What this achieves</strong>: Sellers get a better cash-out rate than 5% buyback (market-determined, likely 20-40%). Buyers get tokens at face value (no discount). Platform has full visibility into secondary market flows without participating as an intermediary. No new regulatory exposure &mdash; vouchers are prepaid refund rights (similar to 7-day unconditional refund under 2025 Supreme Court prepaid consumption interpretation), not virtual currency.</p>
+  <div class="warn">
+    <strong>Regulatory note</strong>: This mechanism requires legal review before implementation. The key defense is that vouchers are (a) non-functional (can't buy services), (b) non-circulating (single transfer), (c) fixed-value (100% of deposit). These properties distinguish them from virtual currency under the 2026 eight-ministry circular. Nevertheless, the <strong>substance-over-form</strong> doctrine means regulators may look at the overall flow (A pays cash &rarr; B receives cash &rarr; tokens move) regardless of labeling.
+  </div>
 
   <h4 style="margin-top:1rem;color:var(--purple)">Scenario framing</h4>
   <p>For <strong>Scenario A (video editing)</strong>, cash income alone is competitive &mdash; &#165;160-300/h exceeds all student alternatives. Token leverage is a bonus that amplifies already-strong economics. For <strong>lower-value scenarios</strong> (Scenario C: Douyin micro-tasks at &#165;0.30-0.50/task), token leverage becomes the primary differentiator &mdash; the 10-20x AI value gap is what makes the gig worth doing.</p>

@@ -225,12 +225,12 @@ flowchart LR
 
   "buyer": {
     "user_id": "...",
-    "public_key": "ed25519:...",
+    "public_key": "sm2:...",
     "signature": "..."
   },
   "seller": {
     "user_id": "...",
-    "public_key": "ed25519:...",
+    "public_key": "sm2:...",
     "signature": "..."
   },
 
@@ -305,7 +305,7 @@ flowchart LR
     "to_seller": "seller_user_id",
     "condition": "delivery_submitted AND NOT rejected_within_timeout",
     "timeout_hours": 72,
-    "buyer_signature": "ed25519:..."
+    "buyer_signature": "sm2:..."
   }</pre>
   <p>This pre-signed message is stored on the server at contract creation time.</p>
   <p><strong>Settlement paths</strong>:</p>
@@ -342,13 +342,13 @@ flowchart LR
 
 <h3>Security Guarantees: why dual-sig is safe without blockchain</h3>
 <div class="card">
-  <p>The protocol uses <strong>Ed25519 signatures + CAS content-addressing</strong> &mdash; no blockchain needed. Three layers of protection:</p>
+  <p>The protocol uses <strong>SM2 signatures (China national standard, default) + CAS content-addressing</strong> &mdash; no blockchain needed. Ed25519 available as alternative for international scenarios. Three layers of protection:</p>
   <table>
     <tr><th>Threat</th><th>Protection</th><th>How</th></tr>
     <tr>
       <td>Party denies signing</td>
       <td><strong>Non-repudiation</strong></td>
-      <td>Ed25519 signature is mathematically bound to the signer's private key. "I didn't sign" is provably false.</td>
+      <td>SM2/Ed25519 signature is mathematically bound to the signer's private key. "I didn't sign" is provably false.</td>
     </tr>
     <tr>
       <td>One party acts alone</td>
@@ -369,7 +369,7 @@ flowchart LR
   <p><strong>Trust assumption</strong>: Server will honestly execute valid transfers (L3 limited trust). If server refuses to process a valid dual-signed transfer, the signed messages serve as auditable evidence &mdash; same recourse as a bank failing to process a wire transfer.</p>
 
   <div class="warn">
-    <strong>Legal standing in China</strong>: Our Ed25519 dual-sig meets all four conditions of a "reliable electronic signature" under Article 14 of the <em>Electronic Signature Law</em> (private key is user-exclusive, user-controlled at signing, signature tamper-detectable, content tamper-detectable). <strong>Technically valid</strong> &mdash; but in court, burden of proof is harder than CA-backed platforms (e.g. 法大大, e签宝) which have Ministry of Industry CA licenses and identity verification (ID + face recognition). Our signatures prove "this key signed this message" but not "this key belongs to Zhang San" without extra evidence. <strong>Recommendation</strong>:
+    <strong>Legal standing in China</strong>: Our SM2 dual-sig meets all four conditions of a "reliable electronic signature" under Article 14 of the <em>Electronic Signature Law</em> (private key is user-exclusive, user-controlled at signing, signature tamper-detectable, content tamper-detectable). Using SM2 (national cryptographic standard) rather than Ed25519 aligns with the 2025 CPS regulatory trend and may carry additional weight in compliance review. <strong>Technically valid</strong> &mdash; but in court, burden of proof is harder than CA-backed platforms (e.g. 法大大, e签宝) which have Ministry of Industry CA licenses and identity verification (ID + face recognition). Our signatures prove "this key signed this message" but not "this key belongs to Zhang San" without extra evidence. <strong>Recommendation</strong>:
     <ul style="margin-top:0.5rem">
       <li><strong>Daily micro-tasks (&#165;0.30-150)</strong>: Our dual-sig is sufficient. Low value &rarr; litigation probability near zero. Signed records + CAS serve as evidence chain.</li>
       <li><strong>High-value contracts (&#165;1000+)</strong>: Optionally integrate a CA-backed e-signature API (法大大/e签宝 SaaS) as an "enhanced signing" mode. We don't need a CA license ourselves &mdash; just API integration.</li>
@@ -670,7 +670,7 @@ sequenceDiagram
     <td>Protocol overhead (signatures + VFS ops)</td>
     <td>Both (local compute)</td>
     <td>~0</td>
-    <td>Ed25519 sign &lt; 1ms, VFS write &lt; 5&micro;s</td>
+    <td>SM2 sign &lt; 1ms, VFS write &lt; 5&micro;s</td>
   </tr>
   <tr>
     <td>Server transfer API (settlement)</td>
@@ -876,7 +876,7 @@ sequenceDiagram
   </li>
   <li>
     <strong>Points transfer API</strong>: Does sudoprivacy already support user-to-user transfers?
-    <div class="pref">Confirmed: no transfer API exists. Current system is charge (pay sudoprivacy) and consume (use LLM) only. Need new endpoint: <code>POST /api/v1/transfer</code> with dual-signature verification. The transfer must accept <code>(release_msg + buyer_sig + seller_sig)</code>, verify both Ed25519 signatures against the contract terms, and atomically move points between accounts. Minimal surface &mdash; one new endpoint, no escrow state.</div>
+    <div class="pref">Confirmed: no transfer API exists. Current system is charge (pay sudoprivacy) and consume (use LLM) only. Need new endpoint: <code>POST /api/v1/transfer</code> with dual-signature verification. The transfer must accept <code>(release_msg + buyer_sig + seller_sig)</code>, verify both SM2 signatures against the contract terms, and atomically move points between accounts. Minimal surface &mdash; one new endpoint, no escrow state.</div>
   </li>
   <li>
     <strong>Discovery / Marketplace</strong>: How do buyers find sellers?

@@ -225,12 +225,12 @@ flowchart LR
 
   "buyer": {
     "user_id": "...",
-    "public_key": "ed25519:...",
+    "public_key": "sm2:...",
     "signature": "..."
   },
   "seller": {
     "user_id": "...",
-    "public_key": "ed25519:...",
+    "public_key": "sm2:...",
     "signature": "..."
   },
 
@@ -305,7 +305,7 @@ flowchart LR
     "to_seller": "seller_user_id",
     "condition": "delivery_submitted AND NOT rejected_within_timeout",
     "timeout_hours": 72,
-    "buyer_signature": "ed25519:..."
+    "buyer_signature": "sm2:..."
   }</pre>
   <p>此预签消息在合约创建时存储在服务器上。</p>
   <p><strong>结算路径</strong>：</p>
@@ -342,13 +342,13 @@ flowchart LR
 
 <h3>安全保障：为什么双签无需区块链也是安全的</h3>
 <div class="card">
-  <p>协议使用 <strong>Ed25519 签名 + CAS 内容寻址</strong> &mdash; 无需区块链。三层保护：</p>
+  <p>协议使用 <strong>SM2 签名（国密标准，默认）+ CAS 内容寻址</strong> &mdash; 无需区块链。国际场景可选 Ed25519。三层保护：</p>
   <table>
     <tr><th>威胁</th><th>保护</th><th>原理</th></tr>
     <tr>
       <td>一方否认签署</td>
       <td><strong>不可否认性</strong></td>
-      <td>Ed25519 签名在数学上绑定到签名者的私钥。"我没签过"可被证伪。</td>
+      <td>SM2/Ed25519 签名在数学上绑定到签名者的私钥。"我没签过"可被证伪。</td>
     </tr>
     <tr>
       <td>一方单独行动</td>
@@ -369,7 +369,7 @@ flowchart LR
   <p><strong>信任假设</strong>：服务器会诚实执行有效转账（L3 有限信任）。如果服务器拒绝处理有效的双签转账，已签署的消息可作为可审计的证据 &mdash; 与银行拒绝处理电汇的追索方式相同。</p>
 
   <div class="warn">
-    <strong>中国法律效力</strong>：我们的 Ed25519 双签满足《电子签名法》第十四条"可靠电子签名"的全部四个条件（私钥为签名人专有、签署时仅签名人控制、签名可检测篡改、内容可检测篡改）。<strong>技术上有效</strong> &mdash; 但上法庭时，举证难度高于有 CA 牌照的平台（如法大大、e签宝），后者有工信部 CA 许可证和实名认证（身份证 + 人脸识别）。我们的签名证明"这个密钥签了这条消息"，但无法直接证明"这个密钥属于张三"，需要额外举证。<strong>建议</strong>：
+    <strong>中国法律效力</strong>：我们的 SM2 双签满足《电子签名法》第十四条"可靠电子签名"的全部四个条件（私钥为签名人专有、签署时仅签名人控制、签名可检测篡改、内容可检测篡改）。使用 SM2（国密标准）而非 Ed25519，与 2025 年 CPS 监管趋势一致，在合规审查中可能获得额外加分。<strong>技术上有效</strong> &mdash; 但上法庭时，举证难度高于有 CA 牌照的平台（如法大大、e签宝），后者有工信部 CA 许可证和实名认证（身份证 + 人脸识别）。我们的签名证明"这个密钥签了这条消息"，但无法直接证明"这个密钥属于张三"，需要额外举证。<strong>建议</strong>：
     <ul style="margin-top:0.5rem">
       <li><strong>日常微任务（&#165;0.30-150）</strong>：我们的双签足够。金额小 &rarr; 诉讼概率极低。签名记录 + CAS 作为证据链已够。</li>
       <li><strong>高价值合约（&#165;1000+）</strong>：可选接入 CA 电子签名 API（法大大/e签宝 SaaS）作为"加强签约"模式。我们无需自己申请 CA 牌照 &mdash; 只需 API 集成。</li>
@@ -670,7 +670,7 @@ sequenceDiagram
     <td>协议开销（签名 + VFS 操作）</td>
     <td>双方（本地计算）</td>
     <td>~0</td>
-    <td>Ed25519 签名 &lt; 1ms，VFS 写入 &lt; 5&micro;s</td>
+    <td>SM2 签名 &lt; 1ms，VFS 写入 &lt; 5&micro;s</td>
   </tr>
   <tr>
     <td>服务器转账 API（结算）</td>
@@ -876,7 +876,7 @@ sequenceDiagram
   </li>
   <li>
     <strong>积分转账 API</strong>：sudoprivacy 是否已支持用户间转账？
-    <div class="pref">已确认：无转账 API。当前系统仅支持充值（向 sudoprivacy 付款）和消费（使用 LLM）。需要新端点：<code>POST /api/v1/transfer</code>，带双重签名验证。转账接口必须接受 <code>(release_msg + buyer_sig + seller_sig)</code>，验证双方 Ed25519 签名是否匹配合约条款，并原子性地在账户间移动积分。最小接口 &mdash; 一个新端点，无托管状态。</div>
+    <div class="pref">已确认：无转账 API。当前系统仅支持充值（向 sudoprivacy 付款）和消费（使用 LLM）。需要新端点：<code>POST /api/v1/transfer</code>，带双重签名验证。转账接口必须接受 <code>(release_msg + buyer_sig + seller_sig)</code>，验证双方 SM2 签名是否匹配合约条款，并原子性地在账户间移动积分。最小接口 &mdash; 一个新端点，无托管状态。</div>
   </li>
   <li>
     <strong>发现/市场</strong>：买家如何找到卖家？

@@ -95,7 +95,8 @@ USER root
 # daemon to be root.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         fuse3 \
-        libfuse3-3 \
+        && (apt-get install -y --no-install-recommends libfuse3-4 \
+            || apt-get install -y --no-install-recommends libfuse3-3) \
     && rm -rf /var/lib/apt/lists/*
 
 # `/plugins`     — --plugin-dir scan target.

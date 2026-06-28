@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=b98324a7d#b98324a7d339468d5ad1e4a7d45083c398c9e350"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=e0c419c405a7d8f7d7493143fe94435f906f7dfd#e0c419c405a7d8f7d7493143fe94435f906f7dfd"
 dependencies = [
  "ahash",
  "base64",
@@ -550,7 +550,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=b98324a7d#b98324a7d339468d5ad1e4a7d45083c398c9e350"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=e0c419c405a7d8f7d7493143fe94435f906f7dfd#e0c419c405a7d8f7d7493143fe94435f906f7dfd"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1175,9 +1175,9 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
+checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
 dependencies = [
  "typenum",
 ]
@@ -1333,7 +1333,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=b98324a7d#b98324a7d339468d5ad1e4a7d45083c398c9e350"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=e0c419c405a7d8f7d7493143fe94435f906f7dfd#e0c419c405a7d8f7d7493143fe94435f906f7dfd"
 dependencies = [
  "ahash",
  "base64",
@@ -1384,7 +1384,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=b98324a7d#b98324a7d339468d5ad1e4a7d45083c398c9e350"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=e0c419c405a7d8f7d7493143fe94435f906f7dfd#e0c419c405a7d8f7d7493143fe94435f906f7dfd"
 dependencies = [
  "ahash",
  "base64",
@@ -1576,7 +1576,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=b98324a7d#b98324a7d339468d5ad1e4a7d45083c398c9e350"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=e0c419c405a7d8f7d7493143fe94435f906f7dfd#e0c419c405a7d8f7d7493143fe94435f906f7dfd"
 
 [[package]]
 name = "nexus-vault"

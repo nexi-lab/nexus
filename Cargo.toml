@@ -54,13 +54,13 @@ exclude = ["nexus-fuse"]
 # dispatch to kernel/federation.rs, #85 HAL extension (rename +
 # setattr).  Bump alongside the rest of nexus-vfs updates when
 # a downstream change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "18a661228120ccbfaf8a6710788ce9cfe69bc6ed" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "20d54ebe7920d82e0057759d61fefe6748076079" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

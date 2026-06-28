@@ -1,0 +1,114 @@
+name: Auto Plugin Release
+
+# Automatically cut plugin release tags when the nexus-vfs rev pin
+# changes in Cargo.toml. This ensures plugin artifacts always match
+# the nexusd-cluster binary's ABI — no manual tag ceremony, no dev
+# signing keys needed for testing.
+#
+# Flow:
+#   1. PR merges to develop with Cargo.toml nexus-vfs rev change
+#   2. This workflow detects the rev diff
+#   3. Determines next semver for each plugin (patch bump from latest tag)
+#   4. Cuts annotated tags → triggers release-{vault,fuse,local-connector}-plugin.yml
+#
+# The individual release workflows handle build + sign + COS upload.
+# Vault must complete before fuse/local-connector (dogfood signing).
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "Cargo.toml"
+
+permissions:
+  contents: write
+
+jobs:
+  check-rev-change:
+    name: Detect nexus-vfs rev change
+    runs-on: ubuntu-latest
+    outputs:
+      rev_changed: ${{ steps.diff.outputs.rev_changed }}
+      new_rev: ${{ steps.diff.outputs.new_rev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if nexus-vfs rev changed
+        id: diff
+        run: |
+          OLD_REV=$(git show HEAD~1:Cargo.toml | grep -oP '(?<=rev = ")[a-f0-9]{40}' | sort -u | head -1 || echo "")
+          NEW_REV=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ "$OLD_REV" != "$NEW_REV" ] && [ -n "$NEW_REV" ]; then
+            echo "rev_changed=true" >> "$GITHUB_OUTPUT"
+            echo "new_rev=${NEW_REV}" >> "$GITHUB_OUTPUT"
+            echo "nexus-vfs rev changed: ${OLD_REV:0:12} → ${NEW_REV:0:12}"
+          else
+            echo "rev_changed=false" >> "$GITHUB_OUTPUT"
+            echo "nexus-vfs rev unchanged (${NEW_REV:0:12})"
+          fi
+
+  cut-tags:
+    name: Cut plugin release tags
+    needs: check-rev-change
+    if: needs.check-rev-change.outputs.rev_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history for tag listing
+
+      - name: Determine next versions and cut tags
+        env:
+          NEW_REV: ${{ needs.check-rev-change.outputs.new_rev }}
+        run: |
+          set -euo pipefail
+
+          next_patch() {
+            local prefix="$1"
+            local latest
+            latest=$(git tag -l "${prefix}*" --sort=-v:refname | head -1 || echo "")
+            if [ -z "$latest" ]; then
+              echo "${prefix}0.1.0"
+              return
+            fi
+            local version="${latest#${prefix}}"
+            local major minor patch
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "${prefix}${major}.${minor}.$((patch + 1))"
+          }
+
+          VAULT_TAG=$(next_patch "vault-v")
+          FUSE_TAG=$(next_patch "fuse-v")
+          LC_TAG=$(next_patch "local-connector-v")
+
+          echo "Cutting tags: $VAULT_TAG, $FUSE_TAG, $LC_TAG"
+          echo "nexus-vfs rev: ${NEW_REV:0:12}"
+
+          MSG="rebuild against nexus-vfs ${NEW_REV:0:12} (auto-release on rev bump)"
+
+          # Vault first (other plugins depend on it for dogfood signing)
+          git tag -a "$VAULT_TAG" HEAD -m "vault ${VAULT_TAG#vault-v} — $MSG"
+          git push origin "$VAULT_TAG"
+          echo "vault_tag=$VAULT_TAG" >> "$GITHUB_ENV"
+
+          # Fuse + local-connector can go together (both use dogfood signing
+          # which fetches the latest vault-v* release — vault must be
+          # released first, but the tag push triggers are async so there's
+          # a race. The release-plugin-reusable workflow retries vault
+          # fetch, so in practice this works. If it doesn't, workflow_dispatch
+          # retry is available.)
+          git tag -a "$FUSE_TAG" HEAD -m "fuse-plugin ${FUSE_TAG#fuse-v} — $MSG"
+          git tag -a "$LC_TAG" HEAD -m "local-connector ${LC_TAG#local-connector-v} — $MSG"
+          git push origin "$FUSE_TAG" "$LC_TAG"
+
+          echo "### Auto Plugin Release" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "nexus-vfs rev: \`${NEW_REV:0:12}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Plugin | Tag |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| vault | $VAULT_TAG |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| fuse | $FUSE_TAG |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| local-connector | $LC_TAG |" >> "$GITHUB_STEP_SUMMARY"

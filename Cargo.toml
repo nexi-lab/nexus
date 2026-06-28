@@ -30,37 +30,27 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed #85 (Phase 2 of
-# the bottom-up re-attempt of reverted PR #82): HAL surface
-# extension — adds rename + setattr methods to the
-# FederationPeerClient trait + matching Noop + FederationClient
-# async + sync bridges + backends StubClient impls.  No kernel
-# call site uses the new methods yet (Phase 3a / 3b / 3c will
-# add per-syscall short-circuits one at a time, each with its
-# own E2E gate, using the corrected design from
-# `feedback_defer_to_peer_only_for_byte_ops`).  E2E-validated
-# against Federation E2E + cc-tasks-share E2E suites before merge.
-# Builds on prior landmarks: #57 plugin-as-gRPC-service routing,
-# #58 sealed-keystore signing trust root, #60 KernelHandle v3
-# sys_stat_batch, #61 per-call EC/SC primitives, #62 CLI flag rename,
-# #63 EC hot-path activation revert, #65 EC drain hardening, #66
-# voter-default flip, #67 driver-readdir ABI v4, #68
-# driver-delete-file + driver-stat, #69 driver-rmdir, #70
-# FederationPeerClient + DRIVER_RMDIR ABI v5, #75 placeholder
-# inherits parent metastore, #76–#78 sys_unlink dispatch chain,
-# #79 DRY federation-peer-mount predicate + PeerBlobClient
-# reentrancy, #80 sys_write defer-to-peer, #81 preserve miss-on-
-# dispatch-failure semantics, #84 relocate federation-peer
-# dispatch to kernel/federation.rs, #85 HAL extension (rename +
-# setattr).  Bump alongside the rest of nexus-vfs updates when
-# a downstream change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "87e52733cc1a053d136416403262b4a732831c0d" }
+# Pinned at the nexus-vfs `fix/grpc-readdir-basename-symmetry`
+# branch tip (PR #92): gRPC `readdir` handler strips full-path
+# entries down to POSIX basenames at the transport boundary,
+# symmetric with the FFI bridge that already strips.  This fixes
+# the Mac↔Win `cc tasks list` Direction-A smoke wedge, where
+# macOS FUSE-T silently dropped `reply.add(name)` entries whose
+# names contained `/` (Windows WinFsp auto-extracted the trailing
+# segment and masked the bug for months).  No kernel ABI change —
+# `Kernel::sys_readdir` (Tier 1) still returns full VFS paths for
+# its 18+ Tier 2 callers (vault storage, password_vault, ACP) that
+# benefit from full-path-return for compose convenience.
+# Builds on the prior pin (87e52733c — root-SOLO contract).
+# Bump alongside the rest of nexus-vfs updates when a downstream
+# change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a7411f47f9e2417a150a3db74959758250f8d58f" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

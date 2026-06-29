@@ -185,7 +185,7 @@ def test_startup_cache_warmup_cancellation_is_not_logged_as_error(monkeypatch, c
     assert task.callback is not None
     with caplog.at_level(logging.ERROR, logger=permissions.__name__):
         task.callback(task)
-    assert caplog.records == []
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 @pytest.mark.asyncio

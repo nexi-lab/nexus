@@ -31,6 +31,8 @@ USER_KEY = os.environ.get("NEXUS_DEMO_USER_KEY", "")
 GRPC_PORT = os.environ.get("NEXUS_GRPC_PORT", "2029")
 HERB_SEARCH_PATH = "/workspace/demo/herb"
 AUTO_INDEX_MARKER = "zephyr marker"
+PLAN_AUTH_ORIGINAL = "- Configure authentication"
+PLAN_AUTH_EDITED = "- Configure auth (test-edit)"
 
 passed = 0
 failed = 0
@@ -67,6 +69,11 @@ def check(name: str, condition: bool, detail: str = "") -> None:
             msg += f" — {detail}"
         print(msg, flush=True)
     results.append((name, condition, detail))
+
+
+def _plan_auth_line_restored(text: str) -> bool:
+    lines = text.splitlines()
+    return PLAN_AUTH_ORIGINAL in lines and PLAN_AUTH_EDITED not in lines
 
 
 def _status_json_reachable(stdout: str) -> tuple[bool, str]:
@@ -321,7 +328,7 @@ def main() -> None:
         "edit",
         {
             "path": "/workspace/demo/plan.md",
-            "edits": [["Confgiure auth (test-edt)", "Configure authentication"]],
+            "edits": [["- Confgiure auth (test-edt)", PLAN_AUTH_ORIGINAL]],
             "fuzzy_threshold": 0.7,
         },
     )
@@ -330,6 +337,16 @@ def main() -> None:
         "edit (fuzzy restore)",
         result.get("success") and result.get("applied_count") == 1,
         str(result),
+    )
+    step("RPC sys_read verifying fuzzy restore is exact")
+    content = t.call_rpc("sys_read", {"path": "/workspace/demo/plan.md"})
+    text = content.decode() if isinstance(content, bytes) else str(content)
+    lines = text.splitlines()
+    check(
+        "fuzzy restore preserved original line",
+        _plan_auth_line_restored(text),
+        f"original exact line={PLAN_AUTH_ORIGINAL in lines}, "
+        f"edited exact line={PLAN_AUTH_EDITED in lines}",
     )
 
     step("RPC edit OCC conflict (expect exception)")

@@ -1,0 +1,217 @@
+name: FUSE Plugin macOS NFS E2E
+
+# Runs `tests/e2e/macos/test_fuse_plugin_nfs_e2e.py` against a real NFS
+# localhost mount on a `macos-latest` runner.
+#
+# When FUSE-T is broken on macOS (Tahoe: go-nfsv4 panic, SMB EOF, FSKit
+# entitlement missing), the FUSE plugin falls back to an in-process
+# NFSv3 server mounted via `mount_nfs`.  This suite exercises that
+# fallback path.
+#
+# Flow: build nexusd-cluster + plugin → spawn cluster with NFS fallback
+# active → pytest workflows with gRPC cross-check → teardown.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'rust/services/fuse-plugin/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tests/e2e/macos/**'
+      - '.github/workflows/fuse-plugin-macos-nfs-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuse-plugin-macos-nfs-e2e:
+    name: FUSE Plugin macOS NFS E2E
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect macOS-NFS-relevant changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          if grep -Eq '^(rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/macos/)' /tmp/changed_files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip — no relevant changes
+        if: steps.changes.outputs.run != 'true'
+        run: |
+          echo "No FUSE-plugin-relevant macOS changes; skipping."
+
+      - name: Install Rust toolchain
+        if: steps.changes.outputs.run == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Install Python 3.14
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Rust cache
+        if: steps.changes.outputs.run == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fuse-plugin-macos-nfs-e2e
+
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        if: steps.changes.outputs.run == 'true'
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            # macOS grep doesn't support -P; fallback to sed.
+            sha=$(sed -n 's/.*rev = "\([a-f0-9]\{40\}\)".*/\1/p' Cargo.toml | sort -u | head -1)
+          fi
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Install nexusd-cluster from nexus-vfs (pinned)
+        if: steps.changes.outputs.run == 'true'
+        env:
+          REV: ${{ steps.vfs_rev.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cargo install --locked \
+            --git https://github.com/nexi-lab/nexus-vfs \
+            --rev "$REV" \
+            --bin nexusd-cluster nexus-cluster
+
+      - name: Build + sign FUSE plugin dylib
+        if: steps.changes.outputs.run == 'true'
+        env:
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available"
+            exit 1
+          fi
+          cargo build --release -p nexus-fuse-plugin
+          pip install --quiet cryptography
+          python scripts/sign_plugin.py \
+            target/release/libnexus_fuse_plugin.dylib
+
+      - name: Prepare plugin dir + mount point
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.nexus/plugins
+          cp target/release/libnexus_fuse_plugin.dylib ~/.nexus/plugins/
+          cp target/release/libnexus_fuse_plugin.dylib.sig ~/.nexus/plugins/
+          mkdir -p /tmp/nexus-nfs-e2e
+
+      - name: "Run FUSE plugin macOS NFS E2E (daemon + tests)"
+        if: steps.changes.outputs.run == 'true'
+        env:
+          NEXUS_FUSE_MACOS_NFS_E2E: "1"
+          NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
+          NEXUS_FUSE_MOUNT_POINT: "/tmp/nexus-nfs-e2e"
+          NEXUS_FUSE_VFS_ROOT: "/"
+          NEXUS_BIND_ADDR: "0.0.0.0:2126"
+          NEXUS_NO_TLS: "true"
+          NEXUS_BOOTSTRAP_MODE: "dynamic"
+        run: |
+          set -euo pipefail
+          DATADIR="$HOME/.nexus/data"
+          PLUGINDIR="$HOME/.nexus/plugins"
+          mkdir -p "$DATADIR"
+
+          # Spawn daemon in background.
+          nexusd-cluster \
+            --plugin-dir "$PLUGINDIR" \
+            --bind-addr "0.0.0.0:2126" \
+            --data-dir "$DATADIR" \
+            --no-tls \
+            --bootstrap-mode dynamic \
+            > nexusd.log 2> nexusd.err.log &
+          DAEMON_PID=$!
+          echo "nexusd-cluster started, pid=$DAEMON_PID"
+
+          # Wait for gRPC + NFS mount ready.
+          READY=false
+          for i in $(seq 1 90); do
+            GRPC_OK=false
+            if nc -z 127.0.0.1 2126 2>/dev/null; then
+              GRPC_OK=true
+            fi
+            MOUNT_OK=false
+            if mount | grep -q "/tmp/nexus-nfs-e2e"; then
+              MOUNT_OK=true
+            fi
+            if [ "$GRPC_OK" = "true" ] && [ "$MOUNT_OK" = "true" ]; then
+              echo "Cluster healthy (gRPC + NFS mount) after ${i}s"
+              READY=true
+              break
+            fi
+            if [ $((i % 10)) -eq 1 ]; then
+              ALIVE=$(kill -0 "$DAEMON_PID" 2>/dev/null && echo "yes" || echo "no")
+              echo "iter=$i grpcOK=$GRPC_OK mountOK=$MOUNT_OK alive=$ALIVE"
+            fi
+            sleep 2
+          done
+
+          TEST_RC=1
+          if [ "$READY" = "true" ]; then
+            pip install -e ".[test]"
+            python -m pytest tests/e2e/macos/test_fuse_plugin_nfs_e2e.py -v --no-header -o "addopts=" && TEST_RC=0 || TEST_RC=$?
+          else
+            echo "::error::Timed out waiting for cluster ready (180s)"
+            echo "=== mount output ==="
+            mount
+            echo "=== daemon alive? ==="
+            kill -0 "$DAEMON_PID" 2>/dev/null && echo "yes" || echo "no (exited)"
+          fi
+
+          # Teardown.
+          kill "$DAEMON_PID" 2>/dev/null || true
+          wait "$DAEMON_PID" 2>/dev/null || true
+
+          echo "=== nexusd.log (last 100 lines) ==="
+          tail -100 nexusd.log 2>/dev/null || true
+          echo "=== nexusd.err.log (last 100 lines) ==="
+          tail -100 nexusd.err.log 2>/dev/null || true
+
+          # Unmount if still mounted.
+          umount /tmp/nexus-nfs-e2e 2>/dev/null || true
+
+          exit $TEST_RC
+
+      - name: Upload daemon logs as artifact
+        if: always() && steps.changes.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexusd-nfs-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            nexusd.log
+            nexusd.err.log
+          if-no-files-found: warn
+          retention-days: 14

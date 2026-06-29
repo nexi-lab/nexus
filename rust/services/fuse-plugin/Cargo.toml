@@ -45,6 +45,11 @@ fuser = "0.17"
 # the brew formula ships both.  Linking libfuse3 covers both paths.
 [target.'cfg(target_os = "macos")'.dependencies]
 fuser = { version = "0.17", features = ["libfuse3"] }
+# NFS localhost fallback — when FUSE-T is broken or missing on macOS,
+# we run an in-process NFSv3 server and let the native NFS client mount.
+nfsserve = "0.11"
+async-trait = "0.1"
+tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "sync", "macros", "io-util"] }
 
 # `winfsp` is the Rust binding around the WinFsp Windows user-space
 # filesystem framework.  Different trait shape from fuser
@@ -60,6 +65,8 @@ fuser = { version = "0.17", features = ["libfuse3"] }
 # touching /Library/Filesystems on the developer's host. macOS-only
 # because that's the only target where `fuse_t_detect` compiles.
 tempfile = "3"
+# NFS integration tests need a tokio runtime for async NFSFileSystem methods.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winfsp = "0.13"

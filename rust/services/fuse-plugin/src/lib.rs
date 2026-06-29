@@ -63,6 +63,9 @@ mod path_index;
 mod fs;
 
 #[cfg(target_os = "macos")]
+pub mod fs_nfs;
+
+#[cfg(target_os = "macos")]
 mod fuse_t_detect;
 
 #[cfg(target_os = "windows")]
@@ -94,6 +97,11 @@ struct FusePlugin {
     /// a free-form message.
     #[cfg(target_os = "macos")]
     prereq_missing: Mutex<Option<&'static str>>,
+    /// NFS localhost mount handle — populated when the fuser mount fails
+    /// on macOS and the NFS fallback succeeds.  Dropping the handle
+    /// unmounts and shuts down the NFS server.
+    #[cfg(target_os = "macos")]
+    nfs_handle: Mutex<Option<fs_nfs::NfsMountHandle>>,
     #[cfg(target_os = "windows")]
     host: Mutex<
         Option<winfsp::host::FileSystemHost<fs_winfsp::NexusWinFsp, winfsp::host::CoarseGuard>>,
@@ -107,6 +115,8 @@ impl FusePlugin {
             session: Mutex::new(None),
             #[cfg(target_os = "macos")]
             prereq_missing: Mutex::new(None),
+            #[cfg(target_os = "macos")]
+            nfs_handle: Mutex::new(None),
             #[cfg(target_os = "windows")]
             host: Mutex::new(None),
         }
@@ -165,7 +175,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             // plugin instance (destroy joins the worker thread before
             // dropping the box).
             let kernel_clone = unsafe { kernel_handle_clone(_kernel) };
-            let fs = fs::NexusFs::new(kernel_clone, vfs_root);
+            let fs = fs::NexusFs::new(kernel_clone, vfs_root.clone());
 
             // Default fuser::Config is sufficient for cc-tasks-share's
             // flat-file read/write workflow.  Operators who need uid/gid
@@ -190,13 +200,61 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     *plugin.session.lock().unwrap() = Some(session);
                 }
                 Err(e) => {
-                    eprintln!("[nexus-fuse-plugin] mount FAILED at {mount_point}: {e}");
-                    tracing::error!(
-                        target: "nexus::fuse",
-                        mount_point = %mount_point,
-                        error = %e,
-                        "FUSE mount failed; plugin will report status=unmounted"
-                    );
+                    // On macOS, fuser mount failure is expected when
+                    // FUSE-T is broken (macOS 26 Tahoe).  Fall back to
+                    // an in-process NFSv3 localhost server mounted via
+                    // the native `mount_nfs` binary.
+                    #[cfg(target_os = "macos")]
+                    {
+                        eprintln!(
+                            "[nexus-fuse-plugin] fuser mount failed ({e}), falling back to NFS localhost"
+                        );
+                        tracing::warn!(
+                            target: "nexus::fuse",
+                            mount_point = %mount_point,
+                            error = %e,
+                            "fuser mount failed; attempting NFS localhost fallback"
+                        );
+                        let kernel_nfs = unsafe { kernel_handle_clone(_kernel) };
+                        let nfs_fs = fs_nfs::NexusNfs::new(kernel_nfs, vfs_root.clone());
+                        match fs_nfs::spawn_nfs_mount(nfs_fs, &mount_point) {
+                            Ok(handle) => {
+                                eprintln!(
+                                    "[nexus-fuse-plugin] NFS mount OK at {mount_point} (port {})",
+                                    handle.port()
+                                );
+                                tracing::info!(
+                                    target: "nexus::fuse",
+                                    mount_point = %mount_point,
+                                    port = handle.port(),
+                                    "NFS localhost fallback mounted"
+                                );
+                                *plugin.nfs_handle.lock().unwrap() = Some(handle);
+                            }
+                            Err(nfs_err) => {
+                                eprintln!(
+                                    "[nexus-fuse-plugin] NFS fallback also failed: {nfs_err}"
+                                );
+                                tracing::error!(
+                                    target: "nexus::fuse",
+                                    mount_point = %mount_point,
+                                    fuser_error = %e,
+                                    nfs_error = %nfs_err,
+                                    "Both fuser and NFS mounts failed"
+                                );
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        eprintln!("[nexus-fuse-plugin] mount FAILED at {mount_point}: {e}");
+                        tracing::error!(
+                            target: "nexus::fuse",
+                            mount_point = %mount_point,
+                            error = %e,
+                            "FUSE mount failed; plugin will report status=unmounted"
+                        );
+                    }
                 }
             }
         } else {
@@ -369,12 +427,18 @@ fn dispatch_fuse(svc: &FusePlugin, method: &str, _payload: &[u8]) -> Result<Vec<
             }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                let mounted = svc.session.lock().unwrap().is_some();
-                Ok(if mounted {
-                    b"mounted".to_vec()
-                } else {
-                    b"unmounted".to_vec()
-                })
+                let fuse_mounted = svc.session.lock().unwrap().is_some();
+                if fuse_mounted {
+                    return Ok(b"mounted".to_vec());
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let nfs_mounted = svc.nfs_handle.lock().unwrap().is_some();
+                    if nfs_mounted {
+                        return Ok(b"mounted-nfs".to_vec());
+                    }
+                }
+                Ok(b"unmounted".to_vec())
             }
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
@@ -390,10 +454,19 @@ fn dispatch_fuse(svc: &FusePlugin, method: &str, _payload: &[u8]) -> Result<Vec<
                     // Dropping the BackgroundSession sends the unmount
                     // ioctl and joins the worker thread.
                     drop(session);
-                    Ok(b"ok".to_vec())
-                } else {
-                    Ok(b"not-mounted".to_vec())
+                    return Ok(b"ok".to_vec());
                 }
+                #[cfg(target_os = "macos")]
+                {
+                    let nfs = svc.nfs_handle.lock().unwrap().take();
+                    if nfs.is_some() {
+                        // Dropping NfsMountHandle runs `umount` and
+                        // stops the tokio runtime.
+                        drop(nfs);
+                        return Ok(b"ok".to_vec());
+                    }
+                }
+                Ok(b"not-mounted".to_vec())
             }
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {

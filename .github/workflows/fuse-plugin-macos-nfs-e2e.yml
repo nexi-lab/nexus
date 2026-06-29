@@ -193,7 +193,11 @@ jobs:
               GRPC_OK=true
             fi
             MOUNT_OK=false
-            if mount | grep -q "/tmp/nexus-nfs-e2e"; then
+            # Check if the mount point is live by testing for a
+            # directory that only exists when the VFS is mounted.
+            # `mount | grep` doesn't reliably show FUSE-T or NFS
+            # mounts in all mount output formats on macOS.
+            if [ -d "/tmp/nexus-nfs-e2e" ] && ls /tmp/nexus-nfs-e2e >/dev/null 2>&1; then
               MOUNT_OK=true
             fi
             if [ "$GRPC_OK" = "true" ] && [ "$MOUNT_OK" = "true" ]; then

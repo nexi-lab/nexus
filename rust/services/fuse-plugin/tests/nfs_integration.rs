@@ -178,10 +178,7 @@ unsafe extern "C" fn mock_sys_readdir(
     0
 }
 
-unsafe extern "C" fn mock_sys_unlink(
-    kernel: *const c_void,
-    path: *const c_char,
-) -> i32 {
+unsafe extern "C" fn mock_sys_unlink(kernel: *const c_void, path: *const c_char) -> i32 {
     let mock = &*(kernel as *const MockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let mut entries = mock.entries.lock().unwrap();
@@ -191,10 +188,7 @@ unsafe extern "C" fn mock_sys_unlink(
     }
 }
 
-unsafe extern "C" fn mock_sys_mkdir(
-    kernel: *const c_void,
-    path: *const c_char,
-) -> i32 {
+unsafe extern "C" fn mock_sys_mkdir(kernel: *const c_void, path: *const c_char) -> i32 {
     let mock = &*(kernel as *const MockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let mut entries = mock.entries.lock().unwrap();
@@ -211,10 +205,7 @@ unsafe extern "C" fn mock_sys_mkdir(
     0
 }
 
-unsafe extern "C" fn mock_sys_rmdir(
-    kernel: *const c_void,
-    path: *const c_char,
-) -> i32 {
+unsafe extern "C" fn mock_sys_rmdir(kernel: *const c_void, path: *const c_char) -> i32 {
     let mock = &*(kernel as *const MockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let mut entries = mock.entries.lock().unwrap();
@@ -370,8 +361,14 @@ async fn mkdir_and_readdir() {
         .iter()
         .map(|e| String::from_utf8_lossy(&e.name).to_string())
         .collect();
-    assert!(names.contains(&"subdir".to_string()), "missing subdir in {names:?}");
-    assert!(names.contains(&"file.txt".to_string()), "missing file.txt in {names:?}");
+    assert!(
+        names.contains(&"subdir".to_string()),
+        "missing subdir in {names:?}"
+    );
+    assert!(
+        names.contains(&"file.txt".to_string()),
+        "missing file.txt in {names:?}"
+    );
     assert!(result.end);
 }
 
@@ -461,8 +458,7 @@ async fn readdir_pagination_with_start_after() {
 
     // Create 5 files.
     for i in 0..5 {
-        let name: nfsserve::nfs::filename3 =
-            format!("file-{i}.txt").as_bytes().into();
+        let name: nfsserve::nfs::filename3 = format!("file-{i}.txt").as_bytes().into();
         nfs.create(root, &name, Default::default()).await.unwrap();
     }
 
@@ -552,7 +548,10 @@ async fn workflow_session_lifecycle() {
     let mut task_ids = Vec::new();
     for (name, payload) in &tasks {
         let fname: nfsserve::nfs::filename3 = name.as_bytes().into();
-        let (fid, _) = nfs.create(sess_id, &fname, Default::default()).await.unwrap();
+        let (fid, _) = nfs
+            .create(sess_id, &fname, Default::default())
+            .await
+            .unwrap();
         nfs.write(fid, 0, payload.as_bytes()).await.unwrap();
         task_ids.push(fid);
     }
@@ -578,7 +577,9 @@ async fn workflow_session_lifecycle() {
     }
 
     // Step 6: rmdir session.
-    nfs.remove(root, &"session".as_bytes().into()).await.unwrap();
+    nfs.remove(root, &"session".as_bytes().into())
+        .await
+        .unwrap();
     let err = nfs.lookup(root, &sess_name).await.unwrap_err();
     assert!(is_nfs_err(err, nfsstat3::NFS3ERR_NOENT));
 }

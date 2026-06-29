@@ -79,6 +79,10 @@ jobs:
         with:
           shared-key: fuse-plugin-macos-nfs-e2e
 
+      - name: Install protobuf compiler
+        if: steps.changes.outputs.run == 'true'
+        run: brew install protobuf
+
       - name: Read NEXUS_VFS_REV from Cargo.toml
         if: steps.changes.outputs.run == 'true'
         id: vfs_rev

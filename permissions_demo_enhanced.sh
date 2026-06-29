@@ -466,11 +466,9 @@ print_success "Admin has ownership of $DEMO_BASE"
 
 print_subsection "1.1 Understanding Permission Roles"
 echo "  NOTE: In this ReBAC implementation:"
-echo "    OWNER:  read ✗  write ✓  execute ✓  (can write & manage, but not read!)"
+echo "    OWNER:  read ✓  write ✓  execute ✓  (full control)"
 echo "    EDITOR: read ✓  write ✓  execute ✗  (can read & write, but can't manage)"
 echo "    VIEWER: read ✓  write ✗  execute ✗  (read-only)"
-echo ""
-echo "  This is the actual behavior - owners need editor/viewer role for read!"
 echo ""
 
 log_step "create API keys for alice, bob, charlie in zone=default"
@@ -497,22 +495,18 @@ nexus rebac create user bob direct_editor file $DEMO_BASE/test-file.txt
 echo "    → nexus rebac create user charlie direct_viewer file $DEMO_BASE/test-file.txt" >&2
 nexus rebac create user charlie direct_viewer file $DEMO_BASE/test-file.txt
 
-print_test "Verify alice (owner) has write+execute (but NOT read in this model)"
-log_step "rebac check alice write/execute on test-file.txt (expect GRANTED)"
+print_test "Verify alice (owner) has read+write+execute"
+log_step "rebac check alice read/write/execute on test-file.txt (expect GRANTED)"
+ALICE_READ=$(nexus rebac check user alice read file $DEMO_BASE/test-file.txt 2>&1)
 ALICE_WRITE=$(nexus rebac check user alice write file $DEMO_BASE/test-file.txt 2>&1)
 ALICE_EXEC=$(nexus rebac check user alice execute file $DEMO_BASE/test-file.txt 2>&1)
+echo "    alice read:    $(echo "$ALICE_READ" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
 echo "    alice write:   $(echo "$ALICE_WRITE" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
 echo "    alice execute: $(echo "$ALICE_EXEC" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
-if echo "$ALICE_WRITE" | grep -q "GRANTED" && echo "$ALICE_EXEC" | grep -q "GRANTED"; then
-    print_success "✅ Owner has write + execute (as expected in this ReBAC model)"
-
-    ALICE_READ=$(nexus rebac check user alice read file $DEMO_BASE/test-file.txt 2>&1)
-    echo "    alice read: $(echo "$ALICE_READ" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
-    if echo "$ALICE_READ" | grep -q "DENIED"; then
-        print_info "Note: Owner does NOT have read (needs editor/viewer role for that)"
-    fi
+if echo "$ALICE_READ" | grep -q "GRANTED" && echo "$ALICE_WRITE" | grep -q "GRANTED" && echo "$ALICE_EXEC" | grep -q "GRANTED"; then
+    print_success "✅ Owner has read + write + execute"
 else
-    print_error "Owner permissions incorrect! write=$(echo "$ALICE_WRITE"|grep -oE 'GRANTED|DENIED'|head -1) execute=$(echo "$ALICE_EXEC"|grep -oE 'GRANTED|DENIED'|head -1)"
+    print_error "Owner permissions incorrect! read=$(echo "$ALICE_READ" | grep -oE 'GRANTED|DENIED' | head -1) write=$(echo "$ALICE_WRITE" | grep -oE 'GRANTED|DENIED' | head -1) execute=$(echo "$ALICE_EXEC" | grep -oE 'GRANTED|DENIED' | head -1)"
 fi
 
 print_test "Verify bob (editor) has read+write but NOT execute"

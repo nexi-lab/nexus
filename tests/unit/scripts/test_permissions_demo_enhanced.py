@@ -43,3 +43,21 @@ def test_tuple_id_capture_filters_log_noise_to_uuid_only() -> None:
     assert "grep -Eo" in tuple_block
     assert "[0-9a-fA-F]{8}" in tuple_block
     assert "tail -1" in tuple_block
+
+
+def test_owner_role_requires_read_write_and_execute() -> None:
+    text = SCRIPT.read_text()
+    owner_block = text[
+        text.index('print_subsection "1.1 Understanding Permission Roles"') : text.index(
+            'print_test "Verify bob (editor)'
+        )
+    ]
+
+    assert "OWNER:  read ✓  write ✓  execute ✓" in owner_block
+    assert "owners need editor/viewer role for read" not in owner_block
+    assert "ALICE_READ=$(nexus rebac check user alice read file" in owner_block
+    assert (
+        'if echo "$ALICE_READ" | grep -q "GRANTED" '
+        '&& echo "$ALICE_WRITE" | grep -q "GRANTED" '
+        '&& echo "$ALICE_EXEC" | grep -q "GRANTED"; then'
+    ) in owner_block

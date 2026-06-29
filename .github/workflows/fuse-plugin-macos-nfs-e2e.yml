@@ -79,11 +79,21 @@ jobs:
         with:
           shared-key: fuse-plugin-macos-nfs-e2e
 
-      - name: Install protobuf compiler
+      # protobuf-build 0.14.1 hard-codes `major == 3 && minor >= 1` in
+      # its version check.  Newer protoc (v27+) uses a different major
+      # version scheme.  The bundled protoc fallback also fails on
+      # macOS aarch64 (no match in the OS/arch table).  Fix: install
+      # protoc 3.x and point PROTOC to it.
+      - name: Install protoc 3.x (protobuf-build compatible)
         if: steps.changes.outputs.run == 'true'
-        uses: arduino/setup-protoc@v3
-        with:
-          version: '27.x'
+        run: |
+          set -euo pipefail
+          # Download protoc 3.25.1 for macOS (universal binary).
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-osx-universal_binary.zip"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
+          protoc --version
+          echo "PROTOC=/usr/local/bin/protoc" >> "$GITHUB_ENV"
 
       - name: Read NEXUS_VFS_REV from Cargo.toml
         if: steps.changes.outputs.run == 'true'

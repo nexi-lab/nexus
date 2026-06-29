@@ -79,6 +79,13 @@ jobs:
         with:
           shared-key: fuse-plugin-macos-nfs-e2e
 
+      # macFUSE provides libfuse3 headers needed to compile the fuser
+      # crate.  Even though this E2E exercises the NFS fallback (not
+      # fuser), the fuse-plugin cdylib links both paths in one binary.
+      - name: Install macFUSE (libfuse3 build dependency)
+        if: steps.changes.outputs.run == 'true'
+        run: brew install --cask macfuse
+
       # protobuf-build 0.14.1 hard-codes `major == 3 && minor >= 1` in
       # its version check.  Newer protoc (v27+) uses a different major
       # version scheme.  The bundled protoc fallback also fails on

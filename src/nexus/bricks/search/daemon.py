@@ -3815,7 +3815,23 @@ class SearchDaemon:
             # Fallback delete-propagation path: resolves DELETE events only
             # (always content_resolved) — the gate has nothing to do.
             return resolved
-        return await self._gate_unresolved(consumer_name, resolved)
+        collapsed = self._collapse_resolved_mutations(resolved)
+        retained_event_ids = {mutation.event.event_id for mutation in collapsed}
+        discarded_event_ids = list(
+            dict.fromkeys(
+                mutation.event.event_id
+                for mutation in resolved
+                if mutation.event.event_id not in retained_event_ids
+            )
+        )
+        if discarded_event_ids:
+            # Persist the durable cleanup before dropping in-memory retry state.
+            # If persistence fails, the exception keeps the batch checkpoint from
+            # advancing past a parked record that still needs operator attention.
+            await self._park_store.remove(consumer_name, discarded_event_ids)
+            for event_id in discarded_event_ids:
+                self._unresolved_attempts.pop((consumer_name, event_id), None)
+        return await self._gate_unresolved(consumer_name, collapsed)
 
     async def _gate_unresolved(
         self,
@@ -3943,7 +3959,7 @@ class SearchDaemon:
         embedding_active = (
             self._indexing_pipeline is not None and self._embedding_provider is not None
         )
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations("fts", events))
+        resolved = await self._resolve_mutations("fts", events)
         for mutation in resolved:
             is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
                 mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
@@ -4000,9 +4016,7 @@ class SearchDaemon:
     async def _consume_embedding_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._indexing_pipeline is None or self._embedding_provider is None:
             return
-        resolved = self._collapse_resolved_mutations(
-            await self._resolve_mutations("embedding", events)
-        )
+        resolved = await self._resolve_mutations("embedding", events)
         for mutation in resolved:
             # Codex review R10 #1 (high): treat resolved-empty UPSERTs
             # as DELETEs (real truncation). Combined with the explicit

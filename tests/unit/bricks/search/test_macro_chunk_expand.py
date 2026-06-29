@@ -63,6 +63,23 @@ async def test_expand_single_batched_fetch_and_section_dedup():
 
 
 @pytest.mark.asyncio
+async def test_expand_over_budget_section_uses_anchor_specific_window():
+    rows = [
+        _row(i, heading="A", tokens=100, text=f"chunk-{i}", ls=i + 1, le=i + 1) for i in range(12)
+    ]
+    fetcher = _FakeFetcher(rows)
+    res = [_Result("/a.md", 1), _Result("/a.md", 10)]
+
+    out = await expand_results(res, fetcher, ExpansionConfig(token_budget=300, window=12))
+
+    assert "chunk-1" in out[0].macro_text
+    assert "chunk-10" in out[1].macro_text
+    assert out[0].macro_text != out[1].macro_text
+    assert (out[0].macro_line_start, out[0].macro_line_end) == (1, 3)
+    assert (out[1].macro_line_start, out[1].macro_line_end) == (10, 12)
+
+
+@pytest.mark.asyncio
 async def test_expand_missing_anchor_leaves_result_untouched():
     fetcher = _FakeFetcher([])  # eventual-consistency gap: nothing returned
     res = [_Result("/a.md", 5)]

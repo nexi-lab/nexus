@@ -186,10 +186,9 @@ async def expand_results(
         if not by_index or r.chunk_index not in by_index:
             continue  # gap — leave chunk_text as-is
         try:
-            s_lo, s_hi = _section_bounds(by_index, r.chunk_index)
-            key = (r.path, s_lo, s_hi)
+            w_lo, w_hi = _window_for_anchor(by_index, r.chunk_index, cfg, _is_code_path(r.path))
+            key = (r.path, w_lo, w_hi)
             if key not in section_cache:
-                w_lo, w_hi = _window_for_anchor(by_index, r.chunk_index, cfg, _is_code_path(r.path))
                 section_cache[key] = _stitch(by_index, w_lo, w_hi)
             text, ls, le = section_cache[key]
             r.macro_text = text

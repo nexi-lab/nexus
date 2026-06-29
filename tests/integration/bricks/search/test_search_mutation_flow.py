@@ -8,6 +8,8 @@ import pytest
 
 from nexus.bricks.search.daemon import SearchDaemon
 from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
+from nexus.bricks.search.mutation_parking import ParkedEvent, UnresolvedMutationError
+from nexus.bricks.search.mutation_resolver import ResolvedMutation
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 
@@ -232,6 +234,167 @@ def _make_session_factory(rows: list[tuple[str, str, str]]):
         return _FakeSession()
 
     return _factory
+
+
+def _event(event_id: str, op: SearchMutationOp, sequence: int) -> SearchMutationEvent:
+    return SearchMutationEvent(
+        event_id=event_id,
+        operation_id=event_id,
+        op=op,
+        path="/docs/readme.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=datetime.now(UTC).replace(tzinfo=None),
+        sequence_number=sequence,
+    )
+
+
+def _mutation(
+    event: SearchMutationEvent,
+    *,
+    content: str | None,
+    content_resolved: bool,
+) -> ResolvedMutation:
+    return ResolvedMutation(
+        event=event,
+        zone_id=ROOT_ZONE_ID,
+        virtual_path="/docs/readme.md",
+        path_id="pid-1",
+        doc_id="/docs/readme.md",
+        content=content,
+        content_resolved=content_resolved,
+        failure_kind=None if content_resolved else "transient",
+        failure_detail=None if content_resolved else "reader unavailable",
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_mutations_collapses_delete_before_unresolved_gate() -> None:
+    daemon = SearchDaemon()
+    stale_upsert = _event("evt-upsert", SearchMutationOp.UPSERT, 1)
+    newest_delete = _event("evt-delete", SearchMutationOp.DELETE, 2)
+    daemon._unresolved_attempts[("fts", stale_upsert.event_id)] = 7
+    daemon._mutation_resolver = SimpleNamespace(
+        resolve_batch=AsyncMock(
+            return_value=[
+                _mutation(stale_upsert, content=None, content_resolved=False),
+                _mutation(newest_delete, content=None, content_resolved=True),
+            ]
+        )
+    )
+
+    resolved = await daemon._resolve_mutations("fts", [stale_upsert, newest_delete])
+
+    assert [mutation.event.event_id for mutation in resolved] == ["evt-delete"]
+    assert not daemon._unresolved_attempts
+
+
+@pytest.mark.asyncio
+async def test_resolve_mutations_collapses_newer_resolved_upsert_before_gate() -> None:
+    daemon = SearchDaemon()
+    stale_upsert = _event("evt-stale", SearchMutationOp.UPSERT, 1)
+    newest_upsert = _event("evt-new", SearchMutationOp.UPSERT, 2)
+    daemon._unresolved_attempts[("embedding", stale_upsert.event_id)] = 7
+    daemon._mutation_resolver = SimpleNamespace(
+        resolve_batch=AsyncMock(
+            return_value=[
+                _mutation(stale_upsert, content=None, content_resolved=False),
+                _mutation(newest_upsert, content="fresh", content_resolved=True),
+            ]
+        )
+    )
+
+    resolved = await daemon._resolve_mutations("embedding", [stale_upsert, newest_upsert])
+
+    assert [mutation.event.event_id for mutation in resolved] == ["evt-new"]
+    assert resolved[0].content == "fresh"
+    assert not daemon._unresolved_attempts
+
+
+@pytest.mark.asyncio
+async def test_resolve_mutations_removes_collapsed_parked_event() -> None:
+    settings_store = _SettingsStore()
+    daemon = SearchDaemon(settings_store=settings_store)
+    stale_upsert = _event("evt-parked", SearchMutationOp.UPSERT, 1)
+    newest_delete = _event("evt-delete", SearchMutationOp.DELETE, 2)
+    stale_mutation = _mutation(stale_upsert, content=None, content_resolved=False)
+    await daemon._park_store.park(
+        ParkedEvent.from_mutation(
+            "fts",
+            stale_mutation,
+            kind="transient",
+            detail="reader unavailable",
+            attempts=3,
+        )
+    )
+    daemon._mutation_resolver = SimpleNamespace(
+        resolve_batch=AsyncMock(
+            return_value=[
+                stale_mutation,
+                _mutation(newest_delete, content=None, content_resolved=True),
+            ]
+        )
+    )
+
+    resolved = await daemon._resolve_mutations("fts", [stale_upsert, newest_delete])
+
+    assert [mutation.event.event_id for mutation in resolved] == ["evt-delete"]
+    assert not daemon._park_store.contains("fts", stale_upsert.event_id)
+
+
+@pytest.mark.asyncio
+async def test_resolve_mutations_propagates_collapsed_park_removal_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_store = _SettingsStore()
+    daemon = SearchDaemon(settings_store=settings_store)
+    stale_upsert = _event("evt-parked", SearchMutationOp.UPSERT, 1)
+    newest_delete = _event("evt-delete", SearchMutationOp.DELETE, 2)
+    stale_mutation = _mutation(stale_upsert, content=None, content_resolved=False)
+    await daemon._park_store.park(
+        ParkedEvent.from_mutation(
+            "fts",
+            stale_mutation,
+            kind="transient",
+            detail="reader unavailable",
+            attempts=3,
+        )
+    )
+    remove = AsyncMock(side_effect=OSError("park persistence failed"))
+    monkeypatch.setattr(daemon._park_store, "remove", remove)
+    daemon._mutation_resolver = SimpleNamespace(
+        resolve_batch=AsyncMock(
+            return_value=[
+                stale_mutation,
+                _mutation(newest_delete, content=None, content_resolved=True),
+            ]
+        )
+    )
+
+    with pytest.raises(OSError, match="park persistence failed"):
+        await daemon._resolve_mutations("fts", [stale_upsert, newest_delete])
+
+    assert daemon._park_store.contains("fts", stale_upsert.event_id)
+
+
+@pytest.mark.asyncio
+async def test_resolve_mutations_keeps_newest_unresolved_upsert_blocking() -> None:
+    daemon = SearchDaemon()
+    resolved_upsert = _event("evt-resolved", SearchMutationOp.UPSERT, 1)
+    newest_unresolved = _event("evt-unresolved", SearchMutationOp.UPSERT, 2)
+    daemon._unresolved_attempts[("fts", newest_unresolved.event_id)] = 4
+    daemon._mutation_resolver = SimpleNamespace(
+        resolve_batch=AsyncMock(
+            return_value=[
+                _mutation(resolved_upsert, content="old", content_resolved=True),
+                _mutation(newest_unresolved, content=None, content_resolved=False),
+            ]
+        )
+    )
+
+    with pytest.raises(UnresolvedMutationError):
+        await daemon._resolve_mutations("fts", [resolved_upsert, newest_unresolved])
+
+    assert daemon._unresolved_attempts[("fts", newest_unresolved.event_id)] == 5
 
 
 @pytest.mark.asyncio

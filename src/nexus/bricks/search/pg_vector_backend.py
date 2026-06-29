@@ -17,6 +17,7 @@ protocol shape so isinstance() checks pass immediately.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -25,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from nexus.bricks.search.macro_chunk import ChunkRow
 from nexus.bricks.search.results import BaseSearchResult
+
+_EMBEDDING_DIMENSION = 1536
 
 # ---------------------------------------------------------------------------
 # SQL template
@@ -43,6 +46,7 @@ _SEMANTIC_SQL = text("""
     FROM document_chunks c
     JOIN file_paths fp ON c.path_id = fp.path_id
     WHERE c.embedding IS NOT NULL
+      AND l2_norm(c.embedding) > 0
       AND fp.zone_id = :zone_id
       AND fp.virtual_path LIKE :prefix || '%'
       AND fp.deleted_at IS NULL
@@ -163,11 +167,11 @@ class PgVectorBackend:
             (nearest neighbours first). ``vector_score`` is populated with the
             cosine similarity (1 − distance).
         """
-        # Empty-vector guard: pgvector rejects ``CAST('[]' AS halfvec)`` with
-        # ``zero-length vector not allowed`` (and a 1536-dim halfvec can't
-        # accept a 0-length input regardless). Fail fast so callers that
-        # forgot to embed the query get an empty list rather than a 500.
-        if not query_vector:
+        if len(query_vector) != _EMBEDDING_DIMENSION:
+            return []
+        if any(not math.isfinite(component) for component in query_vector):
+            return []
+        if math.sqrt(sum(component * component for component in query_vector)) <= 0:
             return []
         # pgvector expects '[0.1,0.2,...]' string for halfvec CAST.
         qvec_str = str(list(query_vector))
@@ -189,17 +193,25 @@ class PgVectorBackend:
                 .all()
             )
 
-        return [
-            BaseSearchResult(
-                path=r["path"],
-                chunk_text=r["chunk_text"],
-                score=float(r["score"]),
-                chunk_index=int(r["chunk_index"]),
-                vector_score=float(r["score"]),
-                zone_id=zone_id,
+        results: list[BaseSearchResult] = []
+        for r in rows:
+            score = r["score"]
+            if score is None:
+                continue
+            score_float = float(score)
+            if not math.isfinite(score_float):
+                continue
+            results.append(
+                BaseSearchResult(
+                    path=r["path"],
+                    chunk_text=r["chunk_text"],
+                    score=score_float,
+                    chunk_index=int(r["chunk_index"]),
+                    vector_score=score_float,
+                    zone_id=zone_id,
+                )
             )
-            for r in rows
-        ]
+        return results
 
     # -------------------------------------------------------------------------
     # Neighbor fetch — NeighborFetcher protocol (macro-chunk expansion, T6)

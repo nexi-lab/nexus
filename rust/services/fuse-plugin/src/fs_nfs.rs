@@ -79,7 +79,11 @@ impl NexusNfs {
         let is_dir = entry_type == DT_DIR || entry_type == DT_MOUNT;
         let now = nfs_now();
         Ok(fattr3 {
-            ftype: if is_dir { ftype3::NF3DIR } else { ftype3::NF3REG },
+            ftype: if is_dir {
+                ftype3::NF3DIR
+            } else {
+                ftype3::NF3REG
+            },
             mode: if is_dir { 0o755 } else { 0o644 },
             nlink: if is_dir { 2 } else { 1 },
             uid: unsafe { libc::getuid() },
@@ -100,8 +104,8 @@ impl NexusNfs {
 
     /// Stat a path and return its fattr3.
     fn stat_fattr(&self, id: fileid3, path: &str) -> Result<fattr3, nfsstat3> {
-        let json = kernel_callbacks::sys_stat(&self.kernel, path)
-            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+        let json =
+            kernel_callbacks::sys_stat(&self.kernel, path).map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
         self.make_fattr(id, &json)
     }
 }
@@ -151,8 +155,8 @@ impl NFSFileSystem for NexusNfs {
         count: u32,
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let full = kernel_callbacks::sys_read(&self.kernel, &path)
-            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+        let full =
+            kernel_callbacks::sys_read(&self.kernel, &path).map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
         let start = offset as usize;
         if start >= full.len() {
             return Ok((vec![], true));
@@ -167,8 +171,7 @@ impl NFSFileSystem for NexusNfs {
             return Err(nfsstat3::NFS3ERR_IO);
         }
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        kernel_callbacks::sys_write(&self.kernel, &path, data)
-            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        kernel_callbacks::sys_write(&self.kernel, &path, data).map_err(|_| nfsstat3::NFS3ERR_IO)?;
         self.stat_fattr(id, &path)
     }
 
@@ -181,8 +184,7 @@ impl NFSFileSystem for NexusNfs {
         let parent = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
-        kernel_callbacks::sys_write(&self.kernel, &path, &[])
-            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        kernel_callbacks::sys_write(&self.kernel, &path, &[]).map_err(|_| nfsstat3::NFS3ERR_IO)?;
         let id = self.inode_for(&path);
         let attr = self.stat_fattr(id, &path)?;
         Ok((id, attr))
@@ -200,8 +202,7 @@ impl NFSFileSystem for NexusNfs {
         if kernel_callbacks::sys_stat(&self.kernel, &path).is_ok() {
             return Err(nfsstat3::NFS3ERR_EXIST);
         }
-        kernel_callbacks::sys_write(&self.kernel, &path, &[])
-            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        kernel_callbacks::sys_write(&self.kernel, &path, &[]).map_err(|_| nfsstat3::NFS3ERR_IO)?;
         Ok(self.inode_for(&path))
     }
 
@@ -225,8 +226,7 @@ impl NFSFileSystem for NexusNfs {
         let path = join_path(&parent, name);
         // Try unlink first (file), fall back to rmdir (directory).
         if kernel_callbacks::sys_unlink(&self.kernel, &path).is_err() {
-            kernel_callbacks::sys_rmdir(&self.kernel, &path)
-                .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+            kernel_callbacks::sys_rmdir(&self.kernel, &path).map_err(|_| nfsstat3::NFS3ERR_IO)?;
         }
         self.paths.lock().unwrap().forget(&path);
         Ok(())
@@ -241,8 +241,7 @@ impl NFSFileSystem for NexusNfs {
     ) -> Result<(), nfsstat3> {
         let from_parent = self.path_for(from_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let to_parent = self.path_for(to_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let from_name =
-            std::str::from_utf8(from_filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
+        let from_name = std::str::from_utf8(from_filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let to_name = std::str::from_utf8(to_filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let old_path = join_path(&from_parent, from_name);
         let new_path = join_path(&to_parent, to_name);
@@ -283,7 +282,11 @@ impl NFSFileSystem for NexusNfs {
                 fileid: child_id,
                 name: name.as_bytes().into(),
                 attr: fattr3 {
-                    ftype: if is_dir { ftype3::NF3DIR } else { ftype3::NF3REG },
+                    ftype: if is_dir {
+                        ftype3::NF3DIR
+                    } else {
+                        ftype3::NF3REG
+                    },
                     mode: if is_dir { 0o755 } else { 0o644 },
                     nlink: if is_dir { 2 } else { 1 },
                     uid: unsafe { libc::getuid() },
@@ -395,9 +398,7 @@ pub fn spawn_nfs_mount(
     let mount_output = std::process::Command::new("/sbin/mount_nfs")
         .args([
             "-o",
-            &format!(
-                "nolocks,noresvport,vers=3,tcp,port={port},mountport={port}"
-            ),
+            &format!("nolocks,noresvport,vers=3,tcp,port={port},mountport={port}"),
             "localhost:/",
             mount_point,
         ])

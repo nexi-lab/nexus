@@ -25,10 +25,13 @@ import asyncio
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_DIR, DT_MOUNT, DT_REG
+from nexus.core.pagination import PaginatedResult
 from nexus.server.zone_execution import run_zone_scoped
 
 if TYPE_CHECKING:
@@ -36,6 +39,11 @@ if TYPE_CHECKING:
     from nexus.storage.local_disk_cache import LocalDiskCache
 
 logger = logging.getLogger(__name__)
+
+_DISCOVERY_PAGE_SIZE = 256
+_DISCOVERY_ENTRY_MULTIPLIER = 16
+_DISCOVERY_LISTING_MULTIPLIER = 4
+_DISCOVERY_MIN_LISTINGS = 4
 
 # =============================================================================
 # Configuration
@@ -520,18 +528,13 @@ class CacheWarmer:
                 f"include_content={include_content}, max_files={max_files}"
             )
 
-            # Get files using glob
-            pattern = self._build_glob_pattern(path, depth)
-            search = self._nexus.service("search")
-            assert search is not None, "SearchService required for cache warmup"
-            files = search.glob(pattern, path="/", context=context)
-            files = files[:max_files]
+            files = await self._discover_files_for_warmup(path, depth, max_files, context)
 
             logger.info(f"[WARMUP] Found {len(files)} files to warm")
 
             # Parallel metadata warmup
             metadata_tasks = [self._warmup_metadata(f, zone_id, context) for f in files]
-            await asyncio.gather(*metadata_tasks, return_exceptions=True)
+            metadata_results = await asyncio.gather(*metadata_tasks, return_exceptions=True)
 
             # Content warmup for small files if requested
             if include_content:
@@ -543,7 +546,7 @@ class CacheWarmer:
                 await asyncio.gather(*content_tasks, return_exceptions=True)
 
             self._current_stats.duration_seconds = time.time() - start_time
-            self._current_stats.files_warmed = len(files)
+            self._current_stats.files_warmed = sum(result is True for result in metadata_results)
 
             logger.info(f"[WARMUP] Directory warmup complete: {self._current_stats.to_dict()}")
 
@@ -556,6 +559,103 @@ class CacheWarmer:
 
         finally:
             self._is_warming = False
+
+    async def _discover_files_for_warmup(
+        self,
+        path: str,
+        depth: int,
+        max_files: int,
+        context: Any | None,
+    ) -> list[str]:
+        """Discover files with bounded non-recursive directory listing."""
+        if max_files <= 0 or depth <= 0:
+            return []
+
+        files: list[str] = []
+        queue: deque[tuple[str, int]] = deque([(path or "/", 1)])
+        entry_budget = max(_DISCOVERY_PAGE_SIZE, max_files * _DISCOVERY_ENTRY_MULTIPLIER)
+        minimum_pages = (entry_budget + _DISCOVERY_PAGE_SIZE - 1) // _DISCOVERY_PAGE_SIZE
+        listing_budget = max(
+            _DISCOVERY_MIN_LISTINGS,
+            minimum_pages * _DISCOVERY_LISTING_MULTIPLIER,
+        )
+        entries_examined = 0
+        listings = 0
+
+        while (
+            queue
+            and len(files) < max_files
+            and entries_examined < entry_budget
+            and listings < listing_budget
+        ):
+            current_path, current_depth = queue.popleft()
+            cursor: str | None = None
+
+            while (
+                len(files) < max_files
+                and entries_examined < entry_budget
+                and listings < listing_budget
+            ):
+                limit = min(_DISCOVERY_PAGE_SIZE, entry_budget - entries_examined)
+                result = await asyncio.to_thread(
+                    self._nexus.sys_readdir,
+                    current_path,
+                    recursive=False,
+                    details=True,
+                    limit=limit,
+                    cursor=cursor,
+                    context=context,
+                )
+                listings += 1
+                entries, cursor, has_more = self._coerce_readdir_page(result)
+
+                for entry in entries[: entry_budget - entries_examined]:
+                    entries_examined += 1
+                    entry_path, entry_type = self._entry_path_and_type(entry)
+                    if not entry_path or entry_path == current_path:
+                        continue
+                    if entry_type in (DT_DIR, DT_MOUNT):
+                        if current_depth < depth:
+                            queue.append((entry_path, current_depth + 1))
+                        continue
+                    if entry_type == DT_REG:
+                        files.append(entry_path)
+                        if len(files) >= max_files:
+                            break
+
+                if not has_more or cursor is None:
+                    break
+
+        if queue and len(files) < max_files:
+            logger.info(
+                "[WARMUP] Discovery budget reached after %d entries and %d listings",
+                entries_examined,
+                listings,
+            )
+
+        return files
+
+    @staticmethod
+    def _coerce_readdir_page(result: Any) -> tuple[list[Any], str | None, bool]:
+        if isinstance(result, PaginatedResult):
+            return result.items, result.next_cursor, result.has_more
+        if isinstance(result, dict) and "items" in result:
+            return (
+                list(result.get("items") or []),
+                result.get("next_cursor"),
+                bool(result.get("has_more")),
+            )
+        return list(result or []), None, False
+
+    @staticmethod
+    def _entry_path_and_type(entry: Any) -> tuple[str | None, int | None]:
+        if isinstance(entry, dict):
+            return entry.get("path") or entry.get("name"), entry.get("entry_type")
+        if isinstance(entry, tuple) and len(entry) >= 2:
+            return entry[0], entry[1]
+        return getattr(entry, "path", None) or getattr(entry, "name", None), getattr(
+            entry, "entry_type", None
+        )
 
     async def warmup_from_history(
         self,
@@ -770,7 +870,7 @@ class CacheWarmer:
 
             # Warm metadata
             metadata_tasks = [self._warmup_metadata(p, zone_id, context) for p in paths]
-            await asyncio.gather(*metadata_tasks, return_exceptions=True)
+            metadata_results = await asyncio.gather(*metadata_tasks, return_exceptions=True)
 
             # Warm content if requested
             if include_content:
@@ -781,7 +881,7 @@ class CacheWarmer:
                 await asyncio.gather(*content_tasks, return_exceptions=True)
 
             self._current_stats.duration_seconds = time.time() - start_time
-            self._current_stats.files_warmed = len(paths)
+            self._current_stats.files_warmed = sum(result is True for result in metadata_results)
 
             return self._current_stats
 
@@ -807,26 +907,23 @@ class CacheWarmer:
         self,
         path: str,
         _zone_id: str,
-        _context: Any | None,
-    ) -> None:
+        context: Any | None,
+    ) -> bool:
         """Warm metadata cache for a single file."""
         async with self._semaphore:
             try:
-                # Check if file exists (warms exists cache)
-                exists = self._nexus.access(path)
-                if not exists:
+                metadata = await asyncio.to_thread(self._nexus.sys_stat, path, context=context)
+                if metadata is None:
                     self._current_stats.skipped += 1
-                    return
+                    return False
 
-                # Get metadata (warms path cache)
-                # This internally triggers the metadata cache
-                metadata = self._nexus.metadata.get(path)
-                if metadata:
-                    self._current_stats.metadata_warmed += 1
+                self._current_stats.metadata_warmed += 1
+                return True
 
             except Exception as e:
                 logger.debug(f"[WARMUP] Metadata warmup failed for {path}: {e}")
                 self._current_stats.errors += 1
+                return False
 
     async def _warmup_content(
         self,
@@ -850,9 +947,13 @@ class CacheWarmer:
                     # ``content_id``, which is the canonical identifier the L2
                     # cache keys on.
                     if self._local_disk_cache and isinstance(content, bytes):
-                        metadata = self._nexus.metadata.get(path)
-                        if metadata and metadata.content_id:
-                            content_id = metadata.content_id
+                        metadata = await asyncio.to_thread(
+                            self._nexus.sys_stat,
+                            path,
+                            context=context,
+                        )
+                        content_id = self._metadata_field(metadata, "content_id")
+                        if content_id:
                             self._local_disk_cache.put(
                                 content_id,
                                 content,
@@ -874,13 +975,26 @@ class CacheWarmer:
 
         for path in paths:
             try:
-                metadata = self._nexus.metadata.get(path)
-                if metadata and metadata.size and metadata.size < threshold:
+                metadata = await asyncio.to_thread(
+                    self._nexus.sys_stat,
+                    path,
+                    context=_context,
+                )
+                size = self._metadata_field(metadata, "size")
+                if size is not None and size < threshold:
                     small_files.append(path)
             except Exception as e:
                 logger.debug("Failed to check metadata for path %s: %s", path, e)
 
         return small_files
+
+    @staticmethod
+    def _metadata_field(metadata: Any, field: str) -> Any:
+        if metadata is None:
+            return None
+        if isinstance(metadata, dict):
+            return metadata.get(field)
+        return getattr(metadata, field, None)
 
     async def _warmup_permission_check(
         self,

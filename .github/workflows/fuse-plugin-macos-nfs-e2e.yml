@@ -88,9 +88,10 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         run: |
           set -euo pipefail
-          # Download protoc 3.25.1 for macOS (universal binary).
+          # Download protoc 3.21.12 (last release with 3.x version output).
+          # protoc v22+ changed versioning to drop the 3. prefix.
           curl -fsSL -o /tmp/protoc.zip \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-osx-universal_binary.zip"
+            "https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-osx-universal_binary.zip"
           sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
           protoc --version
           echo "PROTOC=/usr/local/bin/protoc" >> "$GITHUB_ENV"

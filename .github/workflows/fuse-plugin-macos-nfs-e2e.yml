@@ -81,7 +81,9 @@ jobs:
 
       - name: Install protobuf compiler
         if: steps.changes.outputs.run == 'true'
-        run: brew install protobuf
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '27.x'
 
       - name: Read NEXUS_VFS_REV from Cargo.toml
         if: steps.changes.outputs.run == 'true'

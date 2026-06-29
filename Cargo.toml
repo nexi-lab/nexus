@@ -30,22 +30,49 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed PR #94
-# (051bc598, merged 2026-06-29): warn-loud diagnostics on the
-# three silent-failure paths of `dispatch_federation_peer`
-# (target_zone_id=None / zone_peers empty / all peers RPC failed).
-# Pure observability — no contract change.  Drives the Federation
-# E2E + cc-tasks-share E2E suites against the new logs so the
-# Mac↔Win Direction-A re-investigation has ground-truth signals.
-# Bump alongside the rest of nexus-vfs updates when a downstream
+# Pinned at the nexus-vfs main commit that landed PRs #96 + #97
+# (542a11ee, merged 2026-06-29): Federation HAL collapse.  The
+# `FederationPeerClient` HAL trait + Kernel slot are deleted;
+# the 9 per-syscall peer_* RPCs (read/write/stat/list_dir/
+# delete_file/rmdir/mkdir/rename/setattr) are absorbed into the
+# single `DistributedCoordinator` trait (§3.B.1 HAL).  Kernel
+# syscall sites reach the SSOT peer through
+# `RouteResult::supplement_*` / `via_federation_*` behavior
+# methods — `is_federation_peer_mount()` is now a one-place
+# predicate inside RouteResult's own module.  `FederationPeerBackend`
+# (dead ObjectStore impl, wrong storage pillar) deleted alongside.
+# PR #94's three warn-loud observability paths
+# (target_zone_id=None / zone_peers empty / all peers RPC failed)
+# preserved verbatim and moved from kernel into
+# `RaftDistributedCoordinator::dispatch_to_peers` (its natural
+# home — that's where `zone_peers` SSOT lives).
+#
+# Companion architecture fix (#97) lands
+# `FederationWriteOutcome` (named 3-variant enum for the sys_write
+# three-state need) in its correct home `kernel/src/federation/
+# route_outcomes.rs` rather than `core/vfs_router.rs` (where
+# §4 says only kernel primitives belong), and adds a new
+# `.github/workflows/kernel-architecture.yml` CI gate that
+# enforces §3 tier-directory file allowlists + §6.1 crate
+# dependency edges so future placement errors fail at PR-review
+# time with a clear error citing the architecture doc.
+#
+# Syscall ABI / plugin ABI / raft `Command` contracts unchanged
+# across both PRs.  +16 new behavioral pins in nexus-vfs
+# (7 dispatch loop + 9 RouteResult methods).  Drives the Federation
+# E2E + cc-tasks-share E2E + Self-Contained E2E (PR #92-class
+# regression catcher) suites against the collapsed dispatch path
+# so any kernel-side regression surfaces before the Mac↔Win
+# Direction-A re-investigation lands its eventual fix.  Bump
+# alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "051bc598439d2cb801e2dc0c282407a4dbd158a0" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

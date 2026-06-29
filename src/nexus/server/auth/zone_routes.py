@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 
-from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.bricks.auth.zone_helpers import (
     create_zone,
     normalize_to_slug,
@@ -106,25 +105,42 @@ def _trigger_federation_remove_zone(nx: Any, zone_id: str) -> bool:
 
 
 def _inline_zone_finalizer_deletes(session: Any, zone_id: str) -> None:
-    """Run the three zone-scoped DELETEs that previously lived in the K8s-
-    finalizer-pattern services (SearchZoneFinalizer for entities +
-    relationships, ReBACZoneFinalizer for rebac_tuples).
+    """Delete zone graph data and every ReBAC tuple that references the zone.
 
-    Inlined here as part of the K8s-finalizer abstraction simplification
-    (PR 7b).  No FK constraints exist between these tables and ``zones``;
-    orphan rows only waste storage.  Idempotent — running this twice for
-    the same zone is harmless.
+    Graph dependents are removed explicitly before their entities so cleanup
+    remains correct when SQLite foreign-key enforcement is disabled. ReBAC
+    cleanup includes tuple ownership and cross-zone subject/object references.
+    Every statement is idempotent, so retrying cleanup is harmless.
     """
+    session.execute(
+        text(
+            "DELETE FROM entity_mentions WHERE entity_id IN ("
+            "SELECT entity_id FROM entities WHERE zone_id = :zid)"
+        ),
+        {"zid": zone_id},
+    )
+    session.execute(
+        text(
+            "DELETE FROM relationships "
+            "WHERE zone_id = :zid "
+            "OR source_entity_id IN ("
+            "SELECT entity_id FROM entities WHERE zone_id = :zid) "
+            "OR target_entity_id IN ("
+            "SELECT entity_id FROM entities WHERE zone_id = :zid)"
+        ),
+        {"zid": zone_id},
+    )
     session.execute(
         text("DELETE FROM entities WHERE zone_id = :zid"),
         {"zid": zone_id},
     )
     session.execute(
-        text("DELETE FROM relationships WHERE zone_id = :zid"),
-        {"zid": zone_id},
-    )
-    session.execute(
-        text("DELETE FROM rebac_tuples WHERE zone_id = :zid"),
+        text(
+            "DELETE FROM rebac_tuples "
+            "WHERE zone_id = :zid "
+            "OR subject_zone_id = :zid "
+            "OR object_zone_id = :zid"
+        ),
         {"zid": zone_id},
     )
 
@@ -158,18 +174,18 @@ def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
 
 @router.post("", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_zone_endpoint(
-    request: CreateZoneRequest,
+    zone_request: CreateZoneRequest,
+    request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneResponse:
     """Create a new zone.
 
     The authenticated user will be added as owner of the new zone.
 
     Args:
-        request: Zone creation request
+        zone_request: Zone creation request body
+        request: FastAPI request used to resolve the app-scoped DB session
         auth_result: Authenticated identity (JWT, API key, or static admin key)
-        auth: Authentication provider for DB session access
 
     Returns:
         Created zone information
@@ -181,20 +197,21 @@ async def create_zone_endpoint(
     """
     user_id = auth_result["subject_id"]
 
-    with auth.session_factory() as session:
+    session_factory = _get_session_factory(request)
+    with session_factory() as session:
         # Determine zone_id
-        if request.zone_id:
+        if zone_request.zone_id:
             # Validate provided zone_id
-            is_valid, error_msg = validate_zone_id(request.zone_id)
+            is_valid, error_msg = validate_zone_id(zone_request.zone_id)
             if not is_valid:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=error_msg,
                 )
-            zone_id = request.zone_id
+            zone_id = zone_request.zone_id
         else:
             # Generate zone_id from name
-            suggested_slug = normalize_to_slug(request.name)
+            suggested_slug = normalize_to_slug(zone_request.name)
             zone_id = suggest_zone_id(suggested_slug, session)
 
         # Create zone
@@ -202,9 +219,9 @@ async def create_zone_endpoint(
             zone = create_zone(
                 session=session,
                 zone_id=zone_id,
-                name=request.name,
-                domain=request.domain,
-                description=request.description,
+                name=zone_request.name,
+                domain=zone_request.domain,
+                description=zone_request.description,
             )
 
             # Add authenticated user as zone owner via ReBAC
@@ -250,7 +267,6 @@ async def get_zone(
     zone_id: str,
     request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneResponse:
     """Get zone information by ID.
 
@@ -259,9 +275,8 @@ async def get_zone(
 
     Args:
         zone_id: Zone identifier
-        request: FastAPI request (for ``app.state.policy_gate`` lookup)
+        request: FastAPI request for policy-gate and DB-session lookup
         auth_result: Authenticated identity (JWT, API key, or static admin key)
-        auth: Authentication provider for DB session access
 
     Returns:
         Zone information
@@ -275,7 +290,8 @@ async def get_zone(
     user_id = auth_result["subject_id"]
     is_admin = auth_result.get("is_admin", False)
 
-    with auth.session_factory() as session:
+    session_factory = _get_session_factory(request)
+    with session_factory() as session:
         # Check zone access (admins can access any zone)
         nx = get_nexus_instance()
         rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
@@ -390,11 +406,26 @@ async def _zone_access_approved_via_gate(
 
 
 def _get_session_factory(request: Request) -> Any:
-    """Get a DB session factory from auth provider or NexusFS."""
-    # Try auth provider first
+    """Resolve the app-scoped, provider-backed, or NexusFS DB session factory."""
+    sf = getattr(request.app.state, "session_factory", None)
+    if sf is not None:
+        return sf
+
+    provider = getattr(request.app.state, "auth_provider", None)
+    sf = getattr(provider, "session_factory", None)
+    if sf is not None:
+        return sf
+    for attr in ("providers", "_providers"):
+        for child in getattr(provider, attr, ()) or ():
+            sf = getattr(child, "session_factory", None)
+            if sf is not None:
+                return sf
+
     try:
         auth = get_auth_provider()
-        return auth.session_factory
+        sf = getattr(auth, "session_factory", None)
+        if sf is not None:
+            return sf
     except HTTPException:
         pass
     # Fallback: NexusFS.SessionLocal
@@ -418,8 +449,7 @@ async def list_zones(
     """List zones the authenticated user belongs to.
 
     Global admins can see all zones. Regular users only see zones
-    they are members of. Works with both DatabaseLocalAuth and
-    API key authentication.
+    they are members of. Works with JWT and API-key authentication.
 
     Args:
         auth_result: Authenticated identity (JWT, API key, or static admin key)
@@ -522,8 +552,8 @@ class ZoneDeprovisionResponse(BaseModel):
 )
 async def delete_zone_endpoint(
     zone_id: str,
+    request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneDeprovisionResponse:
     """Delete (deprovision) a zone.
 
@@ -544,8 +574,8 @@ async def delete_zone_endpoint(
 
     Args:
         zone_id: Zone identifier
+        request: FastAPI request used to resolve the app-scoped DB session
         auth_result: Authenticated identity (JWT, API key, or static admin key)
-        auth: Authentication provider for DB session access
 
     Raises:
         403: User is not zone owner or global admin, or zone is ROOT_ZONE_ID
@@ -572,7 +602,8 @@ async def delete_zone_endpoint(
 
     nx = get_nexus_instance()
 
-    with auth.session_factory() as session:
+    session_factory = _get_session_factory(request)
+    with session_factory() as session:
         if not is_admin:
             # Require zone *owner* (not mere member) for destructive operations
             rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None

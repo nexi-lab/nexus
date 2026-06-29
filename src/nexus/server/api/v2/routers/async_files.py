@@ -18,7 +18,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from nexus._rust_compat import grep_files_mmap
 from nexus.bricks.search.primitives.glob_helpers import glob_filter
 from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
@@ -40,6 +39,7 @@ from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+_PERMISSION_ERRORS = (NexusPermissionError, AccessDeniedError, PermissionError)
 
 
 def _gate_zone(
@@ -199,6 +199,30 @@ async def _maybe_await(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
     return value
+
+
+async def _call_sync_or_async(callable_obj: Any, /, *args: Any, **kwargs: Any) -> Any:
+    """Call VFS APIs without running synchronous I/O on the request event loop."""
+    if inspect.iscoroutinefunction(callable_obj) or inspect.iscoroutinefunction(
+        type(callable_obj).__call__
+    ):
+        return await callable_obj(*args, **kwargs)
+
+    value = await asyncio.to_thread(callable_obj, *args, **kwargs)
+    return await _maybe_await(value)
+
+
+def _entry_path(entry: Any) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("path") or entry.get("name")
+    return getattr(entry, "path", None) or getattr(entry, "name", None)
+
+
+async def _read_grep_file(fs: Any, virtual_path: str, context: Any) -> Any:
+    """Read a virtual grep candidate without blocking the request event loop."""
+    return await _call_sync_or_async(fs.read, virtual_path, context=context)
 
 
 def _encode_read_payload(
@@ -806,7 +830,7 @@ def create_async_files_router(
 
         except HTTPException:
             raise
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -943,7 +967,7 @@ def create_async_files_router(
                     if not _skip_access:
                         try:
                             _accessible = fs.access(path, context=context)
-                        except NexusPermissionError as e:
+                        except _PERMISSION_ERRORS as e:
                             raise HTTPException(status_code=403, detail=str(e)) from e
                         if not _accessible:
                             raise NexusFileNotFoundError(path)
@@ -1179,7 +1203,7 @@ def create_async_files_router(
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list handler above).
             raise
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1232,7 +1256,9 @@ def create_async_files_router(
 
         async def _work() -> Response:
             fs = await _get_fs()
-            meta = fs.sys_stat(path, context=context)  # raises -> 403 if denied
+            meta = await _call_sync_or_async(
+                fs.sys_stat, path, context=context
+            )  # raises -> 403 if denied
             if meta is None:
                 # sys_stat returns None when the VFS cannot resolve the path to an
                 # object. Fail closed: never mint a bearer S3/R2 URL for a key we
@@ -1318,6 +1344,8 @@ def create_async_files_router(
 
             try:
                 signed = signer(rel, expires_in=ttl, method="GET", context=context)
+            except _PERMISSION_ERRORS:
+                raise
             except Exception as e:
                 logger.exception(f"read-url signing error: {e}")
                 raise HTTPException(status_code=500, detail=f"signing failed: {e}") from e
@@ -1342,7 +1370,12 @@ def create_async_files_router(
         # path/query zone is rejected (400) before any stat/sign, and the stat +
         # mount resolution + signing all run in the resolved target zone — so an
         # out-of-band storage URL can't be minted across a tenant boundary.
-        return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+        try:
+            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+        except HTTPException:
+            raise
+        except _PERMISSION_ERRORS as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
 
     @router.get("/md-structure")
     async def md_structure(
@@ -1381,7 +1414,7 @@ def create_async_files_router(
             return await _run_for_context(context, {"path": path}, _work)
         except HTTPException:
             raise
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1506,7 +1539,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1539,7 +1572,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1775,7 +1808,7 @@ def create_async_files_router(
             # fields clients need for re-auth.  Wrapping as 500 would
             # drop the signal.
             raise
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1811,7 +1844,7 @@ def create_async_files_router(
                 _work,
             )
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except FileExistsError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
@@ -1850,7 +1883,7 @@ def create_async_files_router(
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list and /read handlers).
             raise
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1903,7 +1936,7 @@ def create_async_files_router(
                 _work,
             )
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1952,7 +1985,7 @@ def create_async_files_router(
                 )
 
             return await _run_for_context(context, request, _work)
-        except (NexusPermissionError, AccessDeniedError) as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -2018,7 +2051,7 @@ def create_async_files_router(
             return await _run_for_context(context, request, _work)
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        except (NexusPermissionError, AccessDeniedError) as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -2086,7 +2119,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, {"path": path}, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -2124,7 +2157,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, request, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -2181,7 +2214,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, request, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -2227,7 +2260,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, request, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -2304,7 +2337,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, request, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -2330,10 +2363,10 @@ def create_async_files_router(
             async def _work() -> GlobResponse:
                 fs = await _get_fs()
 
-                # List all files under the base path
-                # sys_readdir is async — call directly, not via to_thread
-                all_paths = await _maybe_await(
-                    fs.sys_readdir(path, recursive=True, context=context)
+                # List all files without blocking the zone runner when a
+                # synchronous NexusFS implementation performs recursive I/O.
+                all_paths = await _call_sync_or_async(
+                    fs.sys_readdir, path, recursive=True, context=context
                 )
 
                 # Apply glob pattern filter
@@ -2355,7 +2388,7 @@ def create_async_files_router(
 
             return await _run_for_context(context, {"path": path}, _work)
 
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -2384,37 +2417,60 @@ def create_async_files_router(
             async def _work() -> GrepResponse:
                 fs = await _get_fs()
 
-                # List all files under the base path
-                # sys_readdir is async — call directly, not via to_thread
-                all_paths = await _maybe_await(
-                    fs.sys_readdir(path, recursive=True, context=context)
-                )
+                flags = re.IGNORECASE if ignore_case else 0
+                try:
+                    compiled = re.compile(pattern, flags)
+                except re.error as e:
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid regex pattern: {e}"
+                    ) from e
 
-                # Try Rust mmap grep first
-                results = await asyncio.to_thread(
-                    grep_files_mmap,
-                    pattern,
-                    all_paths,
-                    ignore_case=ignore_case,
-                    max_results=limit,
+                all_paths = await _call_sync_or_async(
+                    fs.sys_readdir, path, recursive=True, context=context
                 )
+                virtual_paths: list[str] = []
+                for entry in all_paths:
+                    entry_path = _entry_path(entry)
+                    if entry_path:
+                        virtual_paths.append(entry_path)
 
-                # Fallback to Python re if Rust is unavailable
-                if results is None:
-                    flags = re.IGNORECASE if ignore_case else 0
+                results: list[dict[str, Any]] = []
+                used_search_service = False
+                service_lookup = getattr(fs, "service", None)
+                if callable(service_lookup):
                     try:
-                        compiled = re.compile(pattern, flags)
-                    except re.error as e:
-                        raise HTTPException(
-                            status_code=400, detail=f"Invalid regex pattern: {e}"
-                        ) from e
+                        search = service_lookup("search")
+                    except _PERMISSION_ERRORS:
+                        raise
+                    except Exception:
+                        logger.debug("Search service lookup failed", exc_info=True)
+                    else:
+                        if search is not None:
+                            try:
+                                service_results = await _maybe_await(
+                                    search.grep(
+                                        pattern=pattern,
+                                        path=path,
+                                        ignore_case=ignore_case,
+                                        max_results=limit,
+                                        files=virtual_paths,
+                                        context=context,
+                                    )
+                                )
+                                if service_results is not None:
+                                    results = list(service_results)[:limit]
+                                    used_search_service = True
+                            except _PERMISSION_ERRORS:
+                                raise
+                            except Exception:
+                                logger.debug("Search service grep failed", exc_info=True)
 
-                    results = []
-                    for file_path in all_paths:
+                if not used_search_service:
+                    for file_path in virtual_paths:
                         if len(results) >= limit:
                             break
                         try:
-                            content = fs.read(file_path, context=context)
+                            content = await _read_grep_file(fs, file_path, context)
                             if isinstance(content, bytes):
                                 content = content.decode("utf-8", errors="replace")
                             elif isinstance(content, dict):
@@ -2434,11 +2490,31 @@ def create_async_files_router(
                                     )
                                     if len(results) >= limit:
                                         break
+                        except _PERMISSION_ERRORS:
+                            raise
                         except Exception:
-                            # Skip files that can't be read (binary, permissions, etc.)
+                            # Skip non-permission failures for individual files.
                             continue
 
-                total = len(results)
+                normalized_results: list[dict[str, Any]] = []
+                for result in results[:limit]:
+                    content = str(result.get("content", ""))
+                    match_text = result.get("match")
+                    if match_text is None:
+                        derived_match = compiled.search(content)
+                        if derived_match is None:
+                            continue
+                        match_text = derived_match.group(0)
+                    normalized_results.append(
+                        {
+                            "file": str(result.get("file", "")),
+                            "line": int(result.get("line", 0)),
+                            "content": content,
+                            "match": str(match_text),
+                        }
+                    )
+
+                total = len(normalized_results)
                 truncated = total >= limit
                 matches = [
                     GrepMatch(
@@ -2447,7 +2523,7 @@ def create_async_files_router(
                         content=r["content"],
                         match=r["match"],
                     )
-                    for r in results[:limit]
+                    for r in normalized_results
                 ]
 
                 return GrepResponse(
@@ -2462,7 +2538,7 @@ def create_async_files_router(
 
         except HTTPException:
             raise
-        except NexusPermissionError as e:
+        except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

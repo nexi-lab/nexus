@@ -7,12 +7,16 @@ storage. nexus stays out of the byte path.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Callable
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 from nexus.server.api.v2.routers.async_files import create_async_files_router
 from nexus.server.dependencies import get_auth_result
 
@@ -42,6 +46,22 @@ class _PlainBackend:
     """A non-S3 backend with NO generate_signed_url (e.g. local)."""
 
 
+class _DenyingSignableBackend:
+    """S3-shaped signer that denies URL generation."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def generate_signed_url(
+        self,
+        path: str,  # noqa: ARG002
+        expires_in: int = 3600,  # noqa: ARG002
+        method: str = "GET",  # noqa: ARG002
+        context: object = None,  # noqa: ARG002
+    ) -> dict[str, object]:
+        raise self.error
+
+
 class _GcsLikeBackend:
     """A signing backend whose generate_signed_url has NO ``method`` param (like
     PathGCSBackend). read-url must 409 it, not call it into a TypeError -> 500."""
@@ -58,9 +78,16 @@ class _GcsLikeBackend:
 _DEFAULT_STAT = {"content_id": "abc123", "size": 12, "is_directory": False}
 
 
-def _make_client(mounts: dict[str, object], stat_result: object = _DEFAULT_STAT) -> TestClient:
+def _make_client(
+    mounts: dict[str, object],
+    stat_result: object = _DEFAULT_STAT,
+    *,
+    stat_error: Exception | Callable[..., object] | None = None,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
     fs = MagicMock()
     fs.sys_stat.return_value = stat_result
+    fs.sys_stat.side_effect = stat_error
     # The endpoint resolves the owning mount via this dict.
     fs._mounted_backend_instances = mounts
 
@@ -73,7 +100,7 @@ def _make_client(mounts: dict[str, object], stat_result: object = _DEFAULT_STAT)
         "zone_id": "root",
         "is_admin": True,
     }
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 @pytest.fixture()
@@ -95,6 +122,36 @@ def test_read_url_s3_mount_returns_presigned_url(s3_backend: _SignableBackend) -
     assert body["path"] == "/workspace/demo/file.md"
     # Path handed to the backend is mount-relative (mount prefix stripped).
     assert s3_backend.calls == [("demo/file.md", 120, "GET")]
+
+
+def test_read_url_sync_stat_runs_off_event_loop(s3_backend: _SignableBackend) -> None:
+    """A synchronous authorization stat does not block the zone event loop."""
+    event_loop_threads: list[int] = []
+    stat_threads: list[int] = []
+
+    def _stat(*_args: object, **_kwargs: object) -> object:
+        stat_threads.append(threading.get_ident())
+        return _DEFAULT_STAT
+
+    async def _auth_result() -> dict[str, object]:
+        event_loop_threads.append(threading.get_ident())
+        return {
+            "authenticated": True,
+            "user_id": "alice",
+            "groups": [],
+            "zone_id": "root",
+            "is_admin": True,
+        }
+
+    client = _make_client({"/workspace": s3_backend}, stat_error=_stat)
+    cast(FastAPI, client.app).dependency_overrides[get_auth_result] = _auth_result
+
+    resp = client.get("/read-url", params={"path": "/workspace/demo/file.md"})
+
+    assert resp.status_code == 200
+    assert stat_threads
+    assert event_loop_threads
+    assert stat_threads[0] != event_loop_threads[0]
 
 
 def test_read_url_longest_mount_prefix_wins() -> None:
@@ -154,6 +211,47 @@ def test_read_url_stat_none_returns_404_without_signing(s3_backend: _SignableBac
 
     assert resp.status_code == 404
     assert s3_backend.calls == []  # signer must not have been called
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        PermissionError("Access denied"),
+        NexusPermissionError(path="/workspace/secret.txt", message="Access denied"),
+        AccessDeniedError(message="Access denied", path="/workspace/secret.txt"),
+    ],
+    ids=["builtin", "rebac", "namespace"],
+)
+def test_read_url_permission_errors_return_403(error: Exception) -> None:
+    client = _make_client(
+        {"/workspace": _SignableBackend()},
+        stat_error=error,
+        raise_server_exceptions=False,
+    )
+
+    resp = client.get("/read-url", params={"path": "/workspace/secret.txt"})
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        PermissionError("Access denied"),
+        NexusPermissionError(path="secret.txt", message="Access denied"),
+        AccessDeniedError(message="Access denied", path="secret.txt"),
+    ],
+    ids=["builtin", "rebac", "namespace"],
+)
+def test_read_url_signer_permission_errors_return_403(error: Exception) -> None:
+    client = _make_client(
+        {"/workspace": _DenyingSignableBackend(error)},
+        raise_server_exceptions=False,
+    )
+
+    resp = client.get("/read-url", params={"path": "/workspace/secret.txt"})
+
+    assert resp.status_code == 403
 
 
 def test_read_url_method_less_signer_returns_409() -> None:

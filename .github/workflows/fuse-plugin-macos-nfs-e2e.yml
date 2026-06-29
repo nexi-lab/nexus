@@ -79,14 +79,15 @@ jobs:
         with:
           shared-key: fuse-plugin-macos-nfs-e2e
 
-      # macFUSE provides libfuse3 headers + runtime dylib needed to
-      # compile and load the fuser crate.  The fuse_t_detect module
-      # checks for FUSE-T specifically (not macFUSE), so with only
-      # macFUSE installed the detection returns NotFound → the plugin
-      # falls through to the NFS localhost fallback.
-      - name: Install macFUSE (libfuse3 build + runtime dependency)
+      # FUSE-T provides libfuse3 headers + runtime dylib needed to
+      # compile and load the fuser crate.  On CI runners, FUSE-T's
+      # go-nfsv4 backend is broken (the bug that motivated this PR),
+      # so fuser::spawn_mount2 will fail → NFS fallback triggers.
+      # We install via brew (not .pkg) because brew doesn't need
+      # system prompts or kext loading.
+      - name: Install FUSE-T (libfuse3 build + runtime dependency)
         if: steps.changes.outputs.run == 'true'
-        run: brew install --cask macfuse
+        run: brew install fuse-t
 
       # protobuf-build 0.14.1 hard-codes `major == 3 && minor >= 1` in
       # its version check.  Newer protoc (v27+) uses a different major

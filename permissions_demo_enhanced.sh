@@ -611,8 +611,14 @@ BOB_GROUP_WRITE=$(nexus rebac check user bob write file $DEMO_BASE 2>&1)
 echo "    bob write on $DEMO_BASE: $(echo "$BOB_GROUP_WRITE" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
 if echo "$BOB_GROUP_WRITE" | grep -q "GRANTED"; then
     print_success "✅ Bob has access via group:project1-editors#member"
-    log_step "rebac explain bob write on team-file.txt"
-    nexus rebac explain user bob write file $DEMO_BASE/team-file.txt 2>/dev/null | head -5 || true
+    log_step "rebac explain bob write on $DEMO_BASE"
+    EXPLAIN_OUT=$(nexus rebac explain user bob write file $DEMO_BASE 2>&1) && EXPLAIN_RC=0 || EXPLAIN_RC=$?
+    echo "$EXPLAIN_OUT" | head -5
+    if [ "$EXPLAIN_RC" -eq 0 ] && echo "$EXPLAIN_OUT" | grep -q "GRANTED"; then
+        print_success "✅ Group permission explanation is granted"
+    else
+        print_error "Group explanation failed (exit=$EXPLAIN_RC): $(echo "$EXPLAIN_OUT" | head -3)"
+    fi
 else
     print_error "Group membership not working! output: $(echo "$BOB_GROUP_WRITE" | head -3)"
 fi

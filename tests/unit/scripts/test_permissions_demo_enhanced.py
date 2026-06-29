@@ -61,3 +61,19 @@ def test_owner_role_requires_read_write_and_execute() -> None:
         '&& echo "$ALICE_WRITE" | grep -q "GRANTED" '
         '&& echo "$ALICE_EXEC" | grep -q "GRANTED"; then'
     ) in owner_block
+
+
+def test_group_explanation_targets_and_requires_the_granted_parent() -> None:
+    text = SCRIPT.read_text()
+    explain_block = text[
+        text.index('log_step "rebac check user bob write file $DEMO_BASE') : text.index(
+            'print_subsection "2.4 PROVE group composition'
+        )
+    ]
+    assert (
+        "EXPLAIN_OUT=$(nexus rebac explain user bob write file $DEMO_BASE 2>&1) "
+        "&& EXPLAIN_RC=0 || EXPLAIN_RC=$?"
+    ) in explain_block
+    assert ('[ "$EXPLAIN_RC" -eq 0 ] && echo "$EXPLAIN_OUT" | grep -q "GRANTED"') in explain_block
+    assert 'print_error "Group explanation failed' in explain_block
+    assert "$DEMO_BASE/team-file.txt" not in explain_block

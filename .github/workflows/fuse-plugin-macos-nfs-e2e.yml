@@ -82,9 +82,19 @@ jobs:
       # macFUSE provides libfuse3 headers needed to compile the fuser
       # crate.  Even though this E2E exercises the NFS fallback (not
       # fuser), the fuse-plugin cdylib links both paths in one binary.
+      #
+      # Install macFUSE for headers, then remove the kext so
+      # fuse_t_detect reports "not installed" → NFS fallback triggers.
+      # GHA macOS runners don't allow loading third-party kexts anyway.
       - name: Install macFUSE (libfuse3 build dependency)
         if: steps.changes.outputs.run == 'true'
-        run: brew install --cask macfuse
+        run: |
+          brew install --cask macfuse
+          # Remove the FUSE-T/macFUSE filesystem bundle so the plugin's
+          # fuse_t_detect reports NotFound and falls through to NFS.
+          sudo rm -rf /Library/Filesystems/macfuse.fs 2>/dev/null || true
+          sudo rm -rf /Library/Filesystems/fuse-t.fs 2>/dev/null || true
+          sudo rm -rf /Library/Filesystems/osxfuse.fs 2>/dev/null || true
 
       # protobuf-build 0.14.1 hard-codes `major == 3 && minor >= 1` in
       # its version check.  Newer protoc (v27+) uses a different major
@@ -169,14 +179,16 @@ jobs:
           PLUGINDIR="$HOME/.nexus/plugins"
           mkdir -p "$DATADIR"
 
-          # Spawn daemon in background.
+          # Spawn daemon in background.  Tee stderr so startup progress
+          # is visible in the CI log during the wait loop (nexusd-cluster
+          # logs to stderr via tracing).
           nexusd-cluster \
             --plugin-dir "$PLUGINDIR" \
             --bind-addr "0.0.0.0:2126" \
             --data-dir "$DATADIR" \
             --no-tls \
             --bootstrap-mode dynamic \
-            > nexusd.log 2> nexusd.err.log &
+            > nexusd.log 2> >(tee nexusd.err.log) &
           DAEMON_PID=$!
           echo "nexusd-cluster started, pid=$DAEMON_PID"
 

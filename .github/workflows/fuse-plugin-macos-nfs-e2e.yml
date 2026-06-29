@@ -79,22 +79,14 @@ jobs:
         with:
           shared-key: fuse-plugin-macos-nfs-e2e
 
-      # macFUSE provides libfuse3 headers needed to compile the fuser
-      # crate.  Even though this E2E exercises the NFS fallback (not
-      # fuser), the fuse-plugin cdylib links both paths in one binary.
-      #
-      # Install macFUSE for headers, then remove the kext so
-      # fuse_t_detect reports "not installed" → NFS fallback triggers.
-      # GHA macOS runners don't allow loading third-party kexts anyway.
-      - name: Install macFUSE (libfuse3 build dependency)
+      # macFUSE provides libfuse3 headers + runtime dylib needed to
+      # compile and load the fuser crate.  The fuse_t_detect module
+      # checks for FUSE-T specifically (not macFUSE), so with only
+      # macFUSE installed the detection returns NotFound → the plugin
+      # falls through to the NFS localhost fallback.
+      - name: Install macFUSE (libfuse3 build + runtime dependency)
         if: steps.changes.outputs.run == 'true'
-        run: |
-          brew install --cask macfuse
-          # Remove the FUSE-T/macFUSE filesystem bundle so the plugin's
-          # fuse_t_detect reports NotFound and falls through to NFS.
-          sudo rm -rf /Library/Filesystems/macfuse.fs 2>/dev/null || true
-          sudo rm -rf /Library/Filesystems/fuse-t.fs 2>/dev/null || true
-          sudo rm -rf /Library/Filesystems/osxfuse.fs 2>/dev/null || true
+        run: brew install --cask macfuse
 
       # protobuf-build 0.14.1 hard-codes `major == 3 && minor >= 1` in
       # its version check.  Newer protoc (v27+) uses a different major

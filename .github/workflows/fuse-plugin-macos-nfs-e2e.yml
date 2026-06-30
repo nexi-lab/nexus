@@ -79,12 +79,15 @@ jobs:
         with:
           shared-key: fuse-plugin-macos-nfs-e2e
 
-      # macFUSE provides libfuse3 headers needed to compile the fuser
-      # crate.  Even though this E2E exercises the NFS fallback (not
-      # fuser), the fuse-plugin cdylib links both paths in one binary.
-      - name: Install macFUSE (libfuse3 build dependency)
+      # FUSE-T provides libfuse3 headers + runtime dylib needed to
+      # compile and load the fuser crate.  On CI runners, FUSE-T's
+      # go-nfsv4 backend is broken (the bug that motivated this PR),
+      # so fuser::spawn_mount2 will fail → NFS fallback triggers.
+      # We install via brew (not .pkg) because brew doesn't need
+      # system prompts or kext loading.
+      - name: Install FUSE-T (libfuse3 build + runtime dependency)
         if: steps.changes.outputs.run == 'true'
-        run: brew install --cask macfuse
+        run: brew install fuse-t
 
       # protobuf-build 0.14.1 hard-codes `major == 3 && minor >= 1` in
       # its version check.  Newer protoc (v27+) uses a different major
@@ -169,14 +172,16 @@ jobs:
           PLUGINDIR="$HOME/.nexus/plugins"
           mkdir -p "$DATADIR"
 
-          # Spawn daemon in background.
+          # Spawn daemon in background.  Tee stderr so startup progress
+          # is visible in the CI log during the wait loop (nexusd-cluster
+          # logs to stderr via tracing).
           nexusd-cluster \
             --plugin-dir "$PLUGINDIR" \
             --bind-addr "0.0.0.0:2126" \
             --data-dir "$DATADIR" \
             --no-tls \
             --bootstrap-mode dynamic \
-            > nexusd.log 2> nexusd.err.log &
+            > nexusd.log 2> >(tee nexusd.err.log) &
           DAEMON_PID=$!
           echo "nexusd-cluster started, pid=$DAEMON_PID"
 
@@ -188,7 +193,11 @@ jobs:
               GRPC_OK=true
             fi
             MOUNT_OK=false
-            if mount | grep -q "/tmp/nexus-nfs-e2e"; then
+            # Check if the mount point is live by testing for a
+            # directory that only exists when the VFS is mounted.
+            # `mount | grep` doesn't reliably show FUSE-T or NFS
+            # mounts in all mount output formats on macOS.
+            if [ -d "/tmp/nexus-nfs-e2e" ] && ls /tmp/nexus-nfs-e2e >/dev/null 2>&1; then
               MOUNT_OK=true
             fi
             if [ "$GRPC_OK" = "true" ] && [ "$MOUNT_OK" = "true" ]; then

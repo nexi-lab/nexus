@@ -154,14 +154,44 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                 use fuse_t_detect::{is_fuse_t_installed, DetectionResult};
                 if matches!(is_fuse_t_installed(), DetectionResult::NotFound) {
                     eprintln!(
-                        "[nexus-fuse-plugin] FUSE-T not installed; mount at {mount_point} skipped (status=fuse-t-missing)"
+                        "[nexus-fuse-plugin] FUSE-T not installed; trying NFS localhost fallback"
                     );
                     tracing::warn!(
                         target: "nexus::fuse",
                         mount_point = %mount_point,
-                        "FUSE-T not installed; supervisor must install before mount can succeed"
+                        "FUSE-T not installed; attempting NFS localhost fallback"
                     );
-                    *plugin.prereq_missing.lock().unwrap() = Some("fuse-t");
+                    let vfs_root =
+                        std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
+                    let kernel_nfs = unsafe { kernel_handle_clone(_kernel) };
+                    let nfs_fs = fs_nfs::NexusNfs::new(kernel_nfs, vfs_root);
+                    match fs_nfs::spawn_nfs_mount(nfs_fs, &mount_point) {
+                        Ok(handle) => {
+                            eprintln!(
+                                "[nexus-fuse-plugin] NFS mount OK at {mount_point} (port {})",
+                                handle.port()
+                            );
+                            tracing::info!(
+                                target: "nexus::fuse",
+                                mount_point = %mount_point,
+                                port = handle.port(),
+                                "NFS localhost fallback mounted (FUSE-T not installed)"
+                            );
+                            *plugin.nfs_handle.lock().unwrap() = Some(handle);
+                        }
+                        Err(nfs_err) => {
+                            eprintln!(
+                                "[nexus-fuse-plugin] NFS fallback failed: {nfs_err}; status=fuse-t-missing"
+                            );
+                            tracing::error!(
+                                target: "nexus::fuse",
+                                mount_point = %mount_point,
+                                error = %nfs_err,
+                                "NFS fallback failed; falling back to prereq_missing"
+                            );
+                            *plugin.prereq_missing.lock().unwrap() = Some("fuse-t");
+                        }
+                    }
                     return Box::new(plugin);
                 }
             }

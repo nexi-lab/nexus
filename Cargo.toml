@@ -30,49 +30,55 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs main commit that landed PRs #96 + #97
-# (542a11ee, merged 2026-06-29): Federation HAL collapse.  The
-# `FederationPeerClient` HAL trait + Kernel slot are deleted;
-# the 9 per-syscall peer_* RPCs (read/write/stat/list_dir/
-# delete_file/rmdir/mkdir/rename/setattr) are absorbed into the
-# single `DistributedCoordinator` trait (§3.B.1 HAL).  Kernel
-# syscall sites reach the SSOT peer through
-# `RouteResult::supplement_*` / `via_federation_*` behavior
-# methods — `is_federation_peer_mount()` is now a one-place
-# predicate inside RouteResult's own module.  `FederationPeerBackend`
-# (dead ObjectStore impl, wrong storage pillar) deleted alongside.
-# PR #94's three warn-loud observability paths
-# (target_zone_id=None / zone_peers empty / all peers RPC failed)
-# preserved verbatim and moved from kernel into
-# `RaftDistributedCoordinator::dispatch_to_peers` (its natural
-# home — that's where `zone_peers` SSOT lives).
+# Pinned at the nexus-vfs commit that landed PR #98
+# (d4fd15aa, 2026-06-30): uniform local-first sys_write contract.
+# Replaces PR #80's federation-peer-mount defer-to-peer write
+# behavior with a uniform "every sys_write is local-first" rule.
 #
-# Companion architecture fix (#97) lands
-# `FederationWriteOutcome` (named 3-variant enum for the sys_write
-# three-state need) in its correct home `kernel/src/federation/
-# route_outcomes.rs` rather than `core/vfs_router.rs` (where
-# §4 says only kernel primitives belong), and adds a new
-# `.github/workflows/kernel-architecture.yml` CI gate that
-# enforces §3 tier-directory file allowlists + §6.1 crate
-# dependency edges so future placement errors fail at PR-review
-# time with a clear error citing the architecture doc.
+# WHAT CHANGED for downstream tests:
+# * sys_write on a federation-peer-mount placeholder no longer
+#   defers bytes to the SSOT peer via RPC.  Instead the placeholder
+#   wires an auto-attached PathLocalBackend rooted at
+#   `<data_dir>/federation-cache/<zone>/<sanitized-mount>/` so the
+#   write lands on the WRITER's local fs.
+# * sys_read on federation-peer-mount paths now consults
+#   FileMetadata.last_writer_address: if last_writer differs from
+#   the local self_address, skip the local backend probe (it may
+#   hold orphan bytes from a prior local write that the peer's
+#   write superseded) and federation-fetch from the actual writer.
+# * The "joiner writes via FUSE -> bytes land on FOUNDER host fs"
+#   contract from PR #80 is GONE.  Under the new contract bytes
+#   land on the JOINER host fs (in the federation-cache dir); the
+#   founder reads them via the new federation peer-fetch fallback.
 #
-# Syscall ABI / plugin ABI / raft `Command` contracts unchanged
-# across both PRs.  +16 new behavioral pins in nexus-vfs
-# (7 dispatch loop + 9 RouteResult methods).  Drives the Federation
-# E2E + cc-tasks-share E2E + Self-Contained E2E (PR #92-class
-# regression catcher) suites against the collapsed dispatch path
-# so any kernel-side regression surfaces before the Mac↔Win
-# Direction-A re-investigation lands its eventual fix.  Bump
-# alongside the rest of nexus-vfs updates when a downstream
+# DELETED kernel surface:
+# * RouteResult::via_federation_write + FederationWriteOutcome enum
+# * DistributedCoordinator::peer_write trait method
+# * FederationGrpcOps::write trait method
+# * transport::FederationClient::write impl
+#
+# Syscall ABI / plugin ABI / raft Command contracts unchanged.
+# Predecessors: PR #94 (observability), #96 (federation HAL
+# collapse), #97 (FederationWriteOutcome placement fix + new
+# kernel-architecture CI lint).
+#
+# E2E test impact (cc-tasks-share + federation-runbook): tests
+# that assert byte residence on the FOUNDER host fs after a joiner
+# write need to assert on JOINER host fs (federation-cache subdir)
+# instead, plus a new federation-fetch round-trip assertion to
+# confirm the founder can READ the joiner's bytes.  Tests that
+# only assert byte-exact end-to-end (read returns what was
+# written) should pass unchanged.
+#
+# Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "542a11ee4ff9a2c2f96c9e61f2a86ec528a9ab23" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f85886b1876605e9940843fea97e55ef056ce54b" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

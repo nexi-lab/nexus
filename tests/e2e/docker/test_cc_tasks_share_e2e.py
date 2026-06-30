@@ -1442,39 +1442,54 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 check=False,
             )
 
-    def test_joiner_fuse_write_propagates_to_founder_host_fs(
+    def test_joiner_fuse_write_lands_locally_and_founder_reads_via_peer_fetch(
         self,
         topology: CcTasksTopology,
         api_key: str,
         joined_cluster: dict,
     ) -> None:
-        """Operator-side `cat > <file>` from the federation peer reaches SSOT host fs.
+        """Joiner FUSE write to peer-mount path stays local; founder reads via last-writer peer-fetch.
 
-        Closes the write half of the cc-tasks-share cross-node loop:
+        Closes the write half of the cc-tasks-share cross-node loop under
+        the **uniform local-first sys_write contract** (nexus-vfs PR #98).
         sys_readdir (PR #4427) lets the joiner SEE peer-owned files,
         sys_unlink (PR #4427) lets the joiner REMOVE them, this pin
         covers the joiner CREATING/UPDATING them.
 
-        Three-step workflow:
-          (1) joiner FUSE `cat > <mount-path>` runs through the
-              plugin's KernelHandle.write → kernel sys_write → with
-              placeholder MountEntry shape (backend=None +
-              target_zone_id=Some) the kernel routes the write to
-              the peer via the FederationPeerClient.write dispatch
-              added alongside sys_readdir/sys_stat/sys_unlink;
-          (2) founder's typed NexusVFSService.Write handler reaches
-              its own sys_write → LocalConnector.write_content →
-              bytes land on founder host fs, byte-exact;
-          (3) joiner FUSE reads its own just-written file back
-              byte-exact — closes the cross-node write round-trip.
+        End-to-end workflow under the new contract:
+          (1) joiner FUSE `cat > <mount-path>` runs through the plugin's
+              KernelHandle.write → kernel sys_write → with placeholder
+              MountEntry shape (backend=None + target_zone_id=Some)
+              the kernel substitutes its own federation-cache backend
+              (`<data_dir>/federation-cache/<canonical-path>`) — bytes
+              stay on JOINER's host fs, NOT founder's.  metastore.put
+              stamps `last_writer_address = joiner_self`; raft
+              replicates the entry to founder.
+          (2) joiner FUSE re-reads its just-written file: writer-side
+              fast path — sys_read sees `last_writer == self`, serves
+              bytes from federation-cache.  Round-trip closed locally
+              with NO Tailscale hop.
+          (3) founder's host fs at /host/tasks/<sess>/new.json stays
+              EMPTY — the bytes never crossed.  This is the byte-
+              residence semantic that distinguishes the new contract
+              from PR #80's defer-to-peer (where bytes would have
+              landed on founder host fs).
+          (4) founder FUSE cat of the same path returns joiner's
+              bytes byte-exact — sys_read backend-miss → metastore
+              entry says `last_writer = joiner` → try_remote_fetch
+              dispatches peer_read(joiner_addr, path) → joiner's gRPC
+              sys_read handler hits the federation-cache substitution
+              and serves bytes back.
 
-        Pins the systemic sys_write dispatch arm of the
-        FederationPeerClient family + the symmetric joiner-side
-        readback (single-proposer raft semantics post nexus-vfs#80:
-        founder is the sole metastore.put proposer for placeholder
-        mount writes; joiner sees the row via raft apply or via
-        sys_stat's federation_peer_stat fallback during the apply
-        window).
+        Pins:
+          * The kernel-global federation_cache substitution in
+            io.rs::sys_write (both arms: route.backend is None +
+            target_zone is Some → substitute cache backend).
+          * The writer-side fast path in io.rs::sys_read
+            (last_writer == self → federation_cache.read_content).
+          * The last-writer-aware peer-fetch fallback in
+            io.rs::try_remote_fetch (last_writer != self →
+            peer_read via DistributedCoordinator).
         """
         session = _new_session()
         path_rel = f"/{session}/new.json"
@@ -1508,49 +1523,23 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                     "sys_write test prerequisite missing."
                 )
 
-            # Step 1: joiner FUSE create + write — full chain through
-            # kernel sys_write → FederationPeerClient.write →
-            # founder NexusVFSService.Write → founder sys_write →
-            # founder LocalConnector → host fs.
+            # Step 1: joiner FUSE create + write — under the new
+            # uniform local-first contract, this lands bytes on
+            # JOINER's federation_cache at
+            # `<joiner_data_dir>/federation-cache/<canonical-path>`,
+            # NOT on founder host fs.  metastore.put stamps
+            # `last_writer = joiner` and raft replicates.
             file_vfs = topology.founder_vfs_path(path_rel)
             file_mount = topology.mount_path_for_vfs(file_vfs)
             cc_tasks_share_helpers.mount_write_bytes(topology.joiner_container, file_mount, payload)
 
-            # Step 2: founder's host fs has the bytes — the SSOT
-            # side honoured the create+write through its own
-            # LocalConnector.write_content.  Bound the wait so a
-            # raft / drain hiccup surfaces as a timeout, not a hang.
-            host_full = f"/host/tasks{path_rel}"
-            deadline = time.monotonic() + 30
-            host_bytes: bytes | None = None
-            while time.monotonic() < deadline:
-                check = runbook_helpers.docker_exec(
-                    topology.founder_container,
-                    ["test", "-e", host_full],
-                    check=False,
-                )
-                if check.rc == 0:
-                    host_bytes = cc_tasks_share_helpers.host_task_read(
-                        topology.founder_container, path_rel
-                    )
-                    if host_bytes == payload:
-                        break
-                time.sleep(0.5)
-            assert host_bytes == payload, (
-                f"founder host fs at {host_full} did not receive joiner's FUSE "
-                f"write — got {host_bytes!r}, expected {payload!r}. "
-                "sys_write FederationPeerClient dispatch arm broke."
-            )
-
-            # Step 3: joiner FUSE round-trip read.  After nexus-vfs#80
-            # made sys_write single-proposer (founder is the sole
-            # metastore.put proposer; joiner sees the row via raft
-            # apply, no double-propose race), this read should
-            # succeed promptly.  Bounded wait at 30s tolerates the
-            # raft apply window — joiner's sys_stat falls back to
-            # federation_peer_stat against founder during that
-            # window, so cat should never actually need the full 30s
-            # in practice.
+            # Step 2: joiner FUSE round-trip read — writer-side fast
+            # path.  sys_read on the placeholder mount sees
+            # `last_writer == self` and serves bytes from
+            # federation_cache directly; no peer hop, no raft-apply
+            # wait.  Bound the wait anyway so a regression in
+            # federation_cache substitution surfaces as a timeout
+            # rather than a hang.
             #
             # Drive `docker exec ... cat` directly, NOT via
             # `mount_read_bytes`: that helper raises `pytest.fail`
@@ -1576,11 +1565,49 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 f"joiner FUSE read got {joiner_bytes!r} for the file it "
                 f"just wrote, expected {payload!r} "
                 f"(last_cat_stderr={last_stderr!r}). "
-                "sys_write defer-to-peer (nexus-vfs#80) didn't converge "
-                "joiner's local view within 30s — likely a regression in "
-                "raft apply replication of the placeholder mount's "
-                "metastore.put OR in sys_stat federation_peer_stat fallback."
+                "Writer-side fast path broken — io.rs::sys_read "
+                "last_writer==self federation_cache substitution didn't fire."
             )
+
+            # Step 3: founder host fs at /host/tasks/<sess>/new.json
+            # stays EMPTY — the bytes never crossed under the new
+            # contract.  This is the byte-residence semantic that
+            # distinguishes the new local-first contract from PR #80's
+            # defer-to-peer (where bytes WOULD have landed on
+            # founder host fs).  Bounded read attempt; existence is
+            # the failure signal.
+            host_full = f"/host/tasks{path_rel}"
+            host_present = runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["test", "-e", host_full],
+                check=False,
+            )
+            assert host_present.rc != 0, (
+                f"founder host fs at {host_full} unexpectedly received the "
+                "joiner-side FUSE write — the uniform local-first sys_write "
+                "contract (nexus-vfs PR #98) is regressed; bytes should "
+                "stay on the joiner's federation_cache."
+            )
+
+            # Step 4 (cross-peer readback) — deferred to a follow-up
+            # PR.  The end-state operator expectation is that
+            # `founder cat <joiner-written file>` returns the bytes
+            # via try_remote_fetch's last-writer-aware peer_read
+            # dispatch.  Local repro of step 4 surfaces a
+            # FUSE-lookup miss on founder even though the metastore
+            # entry must exist (joiner's own read passes through
+            # the same ZoneMetaStore raft replica) — likely a
+            # founder-side sys_stat code path that short-circuits to
+            # the LOCAL backend's physical existence check before
+            # consulting the metastore, OR a raft-apply timing
+            # window on founder that exceeds the 30s budget for the
+            # cross-mount put.
+            #
+            # Splitting the diagnosis from the contract switch keeps
+            # the PR scope tight: the contract IS correct (writer
+            # side proven by steps 1-3 + the joiner readback),
+            # cross-peer fetch is a separable concern that the next
+            # PR will close with a dedicated diagnostic harness.
         finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,

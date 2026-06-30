@@ -477,6 +477,231 @@ class TestSymlinkEscapeAtAllLayers:
 
 
 # ---------------------------------------------------------------------------
+# nexus-vfs PR #101 regression pin — `nexusd-cluster join` against a FRESH
+# data dir (joiner never booted its daemon before the join sidecar runs).
+# ---------------------------------------------------------------------------
+#
+# Pre-PR #101, the offline `nexusd-cluster join` sidecar wrote a DT_MOUNT
+# entry under `parent_zone=root` but did NOT bootstrap the local root zone
+# first.  When called against a data dir where the joiner's daemon had
+# never booted (so root/raft/ did not yet exist), the mount propose
+# silently no-op'd: the joiner daemon's later restart-mode boot loaded
+# only the remote zone, wire_mount warned "root zone not loaded —
+# distributed locks NOT installed", and the operator-facing FUSE mount
+# at /shared/cc-tasks/joiner came up empty.
+#
+# The existing `joined_cluster` fixture above does NOT exercise this
+# path because it boots the joiner ONCE before stopping it for the join
+# sidecar — that first boot bootstraps root, so the sidecar finds an
+# already-populated data dir and mount_async lands cleanly even without
+# the PR #101 fix.  Mac↔Win operators following the runbook's
+# "wipe + join" sequence on a brand-new node had no such first boot,
+# which is what wedged the Mac↔Win L1 smoke until PR #101.
+#
+# This class pins the joiner-only-flow (no pre-boot, no env-var-driven
+# bootstrap) so a future regression of PR #101 surfaces as a docker E2E
+# failure here rather than as a silent Mac↔Win smoke wedge hours into
+# manual debug.
+
+
+@pytest.fixture(scope="module")
+def joiner_fresh_data_dir_then_join_sidecar(
+    topology: CcTasksTopology,
+) -> dict:
+    """Wipe joiner's data volume, then run `nexusd-cluster join` against
+    the empty volume — the path PR #101 fixed.
+
+    Steps mirror the "operator wipes joiner and starts over" runbook
+    flow.  Order matters: the wipe MUST happen between
+    docker_stop (release redb lock) and run_nexusd_cluster_join (the
+    sidecar that has to bootstrap root before writing DT_MOUNT under
+    it).  Pre-PR #101 the sidecar exited 0 but produced a half-installed
+    state; post-PR #101 it bootstraps root SOLO first and exits 0
+    cleanly.
+    """
+    cluster_image = os.environ.get("NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest")
+    runbook_helpers.wait_healthy([topology.founder_grpc, topology.joiner_grpc])
+    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
+
+    founder_node_id = runbook_helpers.fetch_node_id(topology.founder_container)
+    joiner_volume = f"{topology.joiner_container}-data"
+
+    runbook_helpers.docker_stop(topology.joiner_container)
+    try:
+        # Wipe the joiner's data volume — emulates the operator's
+        # `rm -rf ~/.nexus-vfs/data && mkdir -p ~/.nexus-vfs/data`
+        # step on a brand-new Mac/Win box.  No `.node_id`, no root
+        # raft state, no metastore.  PR #101's auto-bootstrap is what
+        # lets join succeed against this state.
+        wipe_cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{joiner_volume}:/app/data",
+            "--entrypoint",
+            "sh",
+            cluster_image,
+            "-c",
+            "rm -rf /app/data/* /app/data/.[!.]* 2>/dev/null; true",
+        ]
+        subprocess.run(wipe_cmd, check=True, capture_output=True, text=True, timeout=60)
+
+        join_proc = runbook_helpers.run_nexusd_cluster_join(
+            target_container=topology.joiner_container,
+            target_volume=joiner_volume,
+            founder_node_id=founder_node_id,
+            founder_addr=topology.founder_grpc,
+            zone_id="sharedzone",
+            local_path="/shared",
+            hostname="joiner",
+            cluster_image=cluster_image,
+            network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-net"),
+        )
+    finally:
+        runbook_helpers.docker_start(topology.joiner_container)
+
+    runbook_helpers.wait_healthy([topology.joiner_grpc])
+    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
+    runbook_helpers.wait_zone_ready(topology.joiner_grpc, "sharedzone")
+
+    # FUSE plugin re-spawns on joiner restart — wait for the mount.
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if cc_tasks_share_helpers.mount_is_fuse_mountpoint(
+            topology.joiner_container, topology.fuse_mount_point
+        ):
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail("joiner FUSE mount did not come back up after fresh-join restart")
+
+    return {
+        "founder_node_id": founder_node_id,
+        "join_returncode": join_proc.returncode,
+        "join_stdout": join_proc.stdout or "",
+        "join_stderr": join_proc.stderr or "",
+    }
+
+
+class TestJoinSidecarBootstrapsRoot:
+    """Pin PR #101's `nexusd-cluster join` auto-bootstraps-parent-zone fix.
+
+    Regression-protects the cross-machine flow where a fresh joiner
+    (no env-var-driven bootstrap, no prior daemon boot) runs the
+    offline `nexusd-cluster join` sidecar as its FIRST interaction
+    with the data dir.  Pre-PR #101 this silently produced a
+    half-installed namespace; post-PR #101 the sidecar SOLO-bootstraps
+    the parent zone first.
+    """
+
+    def test_join_sidecar_against_fresh_data_dir_makes_fuse_see_both_subtrees(
+        self,
+        topology: CcTasksTopology,
+        joiner_fresh_data_dir_then_join_sidecar: dict,
+    ) -> None:
+        # 1. Join sidecar must have exited cleanly.  Pre-PR #101 the
+        #    sidecar also exited 0 (the silent failure mode) — the
+        #    downstream FUSE assertions are what catch the regression.
+        assert joiner_fresh_data_dir_then_join_sidecar["join_returncode"] == 0, (
+            "nexusd-cluster join sidecar non-zero exit on a fresh data dir; "
+            "join_stderr=\n" + joiner_fresh_data_dir_then_join_sidecar["join_stderr"]
+        )
+
+        # 2. Joiner FUSE must enumerate BOTH the joiner's own subtree
+        #    (its own LocalConnector via sharedzone mount) AND the
+        #    founder's subtree (federation peer-fetch via root → /shared
+        #    → sharedzone → founder placeholder).  Pre-PR #101 both
+        #    would have come back empty / ENOENT because the joiner's
+        #    local root zone never got bootstrapped, leaving no /shared
+        #    namespace stitching.
+        joiner_listing = cc_tasks_share_helpers.mount_listdir(
+            topology.joiner_container,
+            topology.fuse_mount_point,
+        )
+        assert "joiner" in joiner_listing, (
+            f"joiner FUSE mount missing own subtree at "
+            f"{topology.fuse_mount_point}/joiner/ — got {joiner_listing}. "
+            "Local-connector sharedzone mount did not wire; root zone "
+            "likely not bootstrapped by PR #101's join-sidecar fix."
+        )
+        assert "founder" in joiner_listing, (
+            f"joiner FUSE mount missing peer subtree at "
+            f"{topology.fuse_mount_point}/founder/ — got {joiner_listing}. "
+            "Cross-zone DT_MOUNT for /shared not installed under root; "
+            "indicates PR #101's auto-bootstrap of parent zone did not "
+            "fire (the wire_mount-root-not-loaded wedge)."
+        )
+
+    def test_joiner_can_read_founders_host_fs_via_fuse_post_fresh_join(
+        self,
+        topology: CcTasksTopology,
+        joiner_fresh_data_dir_then_join_sidecar: dict,
+        api_key: str,
+    ) -> None:
+        """Concrete bytes round-trip through the fresh-join setup.
+
+        A regression of PR #101 surfaces as a silent empty mount in
+        the structural test above; this test sharpens the diagnostic
+        by writing a known payload on founder's host fs and asserting
+        the joiner can read those exact bytes through its FUSE mount
+        (the federation peer-fetch round-trip).
+        """
+        session = _new_session()
+        payload = b"PR #101 regression-pin: joiner-only-flow OK\n"
+        cc_tasks_share_helpers.host_task_write(
+            topology.founder_container, f"/{session}/1.json", payload
+        )
+        try:
+            file_vfs = f"/shared/cc-tasks/founder/{session}/1.json"
+            file_mount = topology.mount_path_for_vfs(file_vfs)
+
+            # Wait for sys_stat on joiner to see the entry (raft
+            # metastore replication via the local-first sys_write
+            # contract — same pattern as the cross-peer round-trip
+            # tests above).
+            deadline = time.monotonic() + 30
+            stat_found = False
+            last_err = ""
+            while time.monotonic() < deadline:
+                stat_resp = runbook_helpers.vfs_stat(
+                    topology.joiner_grpc,
+                    file_vfs,
+                    zone_id="sharedzone",
+                    api_key=api_key,
+                    timeout=5,
+                )
+                if stat_resp.get("result", {}).get("found"):
+                    stat_found = True
+                    break
+                last_err = repr(stat_resp.get("error") or stat_resp.get("result"))
+                time.sleep(0.5)
+            assert stat_found, (
+                f"joiner sys_stat({file_vfs}) never returned found=true "
+                f"within 30s after fresh-join — metastore replication via "
+                f"sharedzone broken on the joiner-only-flow path "
+                f"(last_resp={last_err})."
+            )
+
+            joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                topology.joiner_container, file_mount
+            )
+            assert joiner_bytes == payload, (
+                f"joiner FUSE cat got {joiner_bytes!r}, expected {payload!r}. "
+                "Federation peer-fetch broken on the joiner-only-flow path; "
+                "either DT_MOUNT for /shared was not wired under root "
+                "(PR #101 regression) or KernelBlobFetcher / try_remote_fetch "
+                "regressed (PR #99 territory)."
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Cross-node lazy-materialisation workflow — the real cc-tasks-share goal.
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
@@ -1624,231 +1849,6 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 "KernelBlobFetcher::read federation_cache substitution "
                 "regressed, OR try_remote_fetch's peer_read RPC fails "
                 "to reach the writer."
-            )
-        finally:
-            runbook_helpers.docker_exec(
-                topology.founder_container,
-                ["rm", "-rf", f"/host/tasks/{session}"],
-                check=False,
-            )
-
-
-# ---------------------------------------------------------------------------
-# nexus-vfs PR #101 regression pin — `nexusd-cluster join` against a FRESH
-# data dir (joiner never booted its daemon before the join sidecar runs).
-# ---------------------------------------------------------------------------
-#
-# Pre-PR #101, the offline `nexusd-cluster join` sidecar wrote a DT_MOUNT
-# entry under `parent_zone=root` but did NOT bootstrap the local root zone
-# first.  When called against a data dir where the joiner's daemon had
-# never booted (so root/raft/ did not yet exist), the mount propose
-# silently no-op'd: the joiner daemon's later restart-mode boot loaded
-# only the remote zone, wire_mount warned "root zone not loaded —
-# distributed locks NOT installed", and the operator-facing FUSE mount
-# at /shared/cc-tasks/joiner came up empty.
-#
-# The existing `joined_cluster` fixture above does NOT exercise this
-# path because it boots the joiner ONCE before stopping it for the join
-# sidecar — that first boot bootstraps root, so the sidecar finds an
-# already-populated data dir and mount_async lands cleanly even without
-# the PR #101 fix.  Mac↔Win operators following the runbook's
-# "wipe + join" sequence on a brand-new node had no such first boot,
-# which is what wedged the Mac↔Win L1 smoke until PR #101.
-#
-# This class pins the joiner-only-flow (no pre-boot, no env-var-driven
-# bootstrap) so a future regression of PR #101 surfaces as a docker E2E
-# failure here rather than as a silent Mac↔Win smoke wedge hours into
-# manual debug.
-
-
-@pytest.fixture(scope="module")
-def joiner_fresh_data_dir_then_join_sidecar(
-    topology: CcTasksTopology,
-) -> dict:
-    """Wipe joiner's data volume, then run `nexusd-cluster join` against
-    the empty volume — the path PR #101 fixed.
-
-    Steps mirror the "operator wipes joiner and starts over" runbook
-    flow.  Order matters: the wipe MUST happen between
-    docker_stop (release redb lock) and run_nexusd_cluster_join (the
-    sidecar that has to bootstrap root before writing DT_MOUNT under
-    it).  Pre-PR #101 the sidecar exited 0 but produced a half-installed
-    state; post-PR #101 it bootstraps root SOLO first and exits 0
-    cleanly.
-    """
-    cluster_image = os.environ.get("NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest")
-    runbook_helpers.wait_healthy([topology.founder_grpc, topology.joiner_grpc])
-    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
-
-    founder_node_id = runbook_helpers.fetch_node_id(topology.founder_container)
-    joiner_volume = f"{topology.joiner_container}-data"
-
-    runbook_helpers.docker_stop(topology.joiner_container)
-    try:
-        # Wipe the joiner's data volume — emulates the operator's
-        # `rm -rf ~/.nexus-vfs/data && mkdir -p ~/.nexus-vfs/data`
-        # step on a brand-new Mac/Win box.  No `.node_id`, no root
-        # raft state, no metastore.  PR #101's auto-bootstrap is what
-        # lets join succeed against this state.
-        wipe_cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "-v",
-            f"{joiner_volume}:/app/data",
-            "--entrypoint",
-            "sh",
-            cluster_image,
-            "-c",
-            "rm -rf /app/data/* /app/data/.[!.]* 2>/dev/null; true",
-        ]
-        subprocess.run(wipe_cmd, check=True, capture_output=True, text=True, timeout=60)
-
-        join_proc = runbook_helpers.run_nexusd_cluster_join(
-            target_container=topology.joiner_container,
-            target_volume=joiner_volume,
-            founder_node_id=founder_node_id,
-            founder_addr=topology.founder_grpc,
-            zone_id="sharedzone",
-            local_path="/shared",
-            hostname="joiner",
-            cluster_image=cluster_image,
-            network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-net"),
-        )
-    finally:
-        runbook_helpers.docker_start(topology.joiner_container)
-
-    runbook_helpers.wait_healthy([topology.joiner_grpc])
-    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
-    runbook_helpers.wait_zone_ready(topology.joiner_grpc, "sharedzone")
-
-    # FUSE plugin re-spawns on joiner restart — wait for the mount.
-    deadline = time.time() + 60
-    while time.time() < deadline:
-        if cc_tasks_share_helpers.mount_is_fuse_mountpoint(
-            topology.joiner_container, topology.fuse_mount_point
-        ):
-            break
-        time.sleep(0.5)
-    else:
-        pytest.fail("joiner FUSE mount did not come back up after fresh-join restart")
-
-    return {
-        "founder_node_id": founder_node_id,
-        "join_returncode": join_proc.returncode,
-        "join_stdout": join_proc.stdout or "",
-        "join_stderr": join_proc.stderr or "",
-    }
-
-
-class TestJoinSidecarBootstrapsRoot:
-    """Pin PR #101's `nexusd-cluster join` auto-bootstraps-parent-zone fix.
-
-    Regression-protects the cross-machine flow where a fresh joiner
-    (no env-var-driven bootstrap, no prior daemon boot) runs the
-    offline `nexusd-cluster join` sidecar as its FIRST interaction
-    with the data dir.  Pre-PR #101 this silently produced a
-    half-installed namespace; post-PR #101 the sidecar SOLO-bootstraps
-    the parent zone first.
-    """
-
-    def test_join_sidecar_against_fresh_data_dir_makes_fuse_see_both_subtrees(
-        self,
-        topology: CcTasksTopology,
-        joiner_fresh_data_dir_then_join_sidecar: dict,
-    ) -> None:
-        # 1. Join sidecar must have exited cleanly.  Pre-PR #101 the
-        #    sidecar also exited 0 (the silent failure mode) — the
-        #    downstream FUSE assertions are what catch the regression.
-        assert joiner_fresh_data_dir_then_join_sidecar["join_returncode"] == 0, (
-            "nexusd-cluster join sidecar non-zero exit on a fresh data dir; "
-            "join_stderr=\n" + joiner_fresh_data_dir_then_join_sidecar["join_stderr"]
-        )
-
-        # 2. Joiner FUSE must enumerate BOTH the joiner's own subtree
-        #    (its own LocalConnector via sharedzone mount) AND the
-        #    founder's subtree (federation peer-fetch via root → /shared
-        #    → sharedzone → founder placeholder).  Pre-PR #101 both
-        #    would have come back empty / ENOENT because the joiner's
-        #    local root zone never got bootstrapped, leaving no /shared
-        #    namespace stitching.
-        joiner_listing = cc_tasks_share_helpers.mount_listdir(
-            topology.joiner_container,
-            topology.fuse_mount_point,
-        )
-        assert "joiner" in joiner_listing, (
-            f"joiner FUSE mount missing own subtree at "
-            f"{topology.fuse_mount_point}/joiner/ — got {joiner_listing}. "
-            "Local-connector sharedzone mount did not wire; root zone "
-            "likely not bootstrapped by PR #101's join-sidecar fix."
-        )
-        assert "founder" in joiner_listing, (
-            f"joiner FUSE mount missing peer subtree at "
-            f"{topology.fuse_mount_point}/founder/ — got {joiner_listing}. "
-            "Cross-zone DT_MOUNT for /shared not installed under root; "
-            "indicates PR #101's auto-bootstrap of parent zone did not "
-            "fire (the wire_mount-root-not-loaded wedge)."
-        )
-
-    def test_joiner_can_read_founders_host_fs_via_fuse_post_fresh_join(
-        self,
-        topology: CcTasksTopology,
-        joiner_fresh_data_dir_then_join_sidecar: dict,
-        api_key: str,
-    ) -> None:
-        """Concrete bytes round-trip through the fresh-join setup.
-
-        A regression of PR #101 surfaces as a silent empty mount in
-        the structural test above; this test sharpens the diagnostic
-        by writing a known payload on founder's host fs and asserting
-        the joiner can read those exact bytes through its FUSE mount
-        (the federation peer-fetch round-trip).
-        """
-        session = _new_session()
-        payload = b"PR #101 regression-pin: joiner-only-flow OK\n"
-        cc_tasks_share_helpers.host_task_write(
-            topology.founder_container, f"/{session}/1.json", payload
-        )
-        try:
-            file_vfs = f"/shared/cc-tasks/founder/{session}/1.json"
-            file_mount = topology.mount_path_for_vfs(file_vfs)
-
-            # Wait for sys_stat on joiner to see the entry (raft
-            # metastore replication via the local-first sys_write
-            # contract — same pattern as the cross-peer round-trip
-            # tests above).
-            deadline = time.monotonic() + 30
-            stat_found = False
-            last_err = ""
-            while time.monotonic() < deadline:
-                stat_resp = runbook_helpers.vfs_stat(
-                    topology.joiner_grpc,
-                    file_vfs,
-                    zone_id="sharedzone",
-                    api_key=api_key,
-                    timeout=5,
-                )
-                if stat_resp.get("result", {}).get("found"):
-                    stat_found = True
-                    break
-                last_err = repr(stat_resp.get("error") or stat_resp.get("result"))
-                time.sleep(0.5)
-            assert stat_found, (
-                f"joiner sys_stat({file_vfs}) never returned found=true "
-                f"within 30s after fresh-join — metastore replication via "
-                f"sharedzone broken on the joiner-only-flow path "
-                f"(last_resp={last_err})."
-            )
-
-            joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
-                topology.joiner_container, file_mount
-            )
-            assert joiner_bytes == payload, (
-                f"joiner FUSE cat got {joiner_bytes!r}, expected {payload!r}. "
-                "Federation peer-fetch broken on the joiner-only-flow path; "
-                "either DT_MOUNT for /shared was not wired under root "
-                "(PR #101 regression) or KernelBlobFetcher / try_remote_fetch "
-                "regressed (PR #99 territory)."
             )
         finally:
             runbook_helpers.docker_exec(

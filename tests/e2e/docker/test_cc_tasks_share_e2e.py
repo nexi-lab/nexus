@@ -1589,25 +1589,41 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 "stay on the joiner's federation_cache."
             )
 
-            # Step 4 (cross-peer readback) — deferred to a follow-up
-            # PR.  The end-state operator expectation is that
-            # `founder cat <joiner-written file>` returns the bytes
-            # via try_remote_fetch's last-writer-aware peer_read
-            # dispatch.  Local repro of step 4 surfaces a
-            # FUSE-lookup miss on founder even though the metastore
-            # entry must exist (joiner's own read passes through
-            # the same ZoneMetaStore raft replica) — likely a
-            # founder-side sys_stat code path that short-circuits to
-            # the LOCAL backend's physical existence check before
-            # consulting the metastore, OR a raft-apply timing
-            # window on founder that exceeds the 30s budget for the
-            # cross-mount put.
-            #
-            # Splitting the diagnosis from the contract switch keeps
-            # the PR scope tight: the contract IS correct (writer
-            # side proven by steps 1-3 + the joiner readback),
-            # cross-peer fetch is a separable concern that the next
-            # PR will close with a dedicated diagnostic harness.
+            # Step 4 (cross-peer readback DIAG): founder FUSE cat to
+            # exercise the trace logs from
+            # nexus-vfs#fix/founder-cross-peer-fetch
+            # ([diag_pr98] target).  Failure is EXPECTED — the
+            # purpose of this run is to dump founder + joiner logs
+            # so we can confirm whether founder's mount has a
+            # metastore Arc at all.
+            deadline = time.monotonic() + 30
+            founder_bytes = b""
+            last_stderr = ""
+            while time.monotonic() < deadline:
+                proc = subprocess.run(
+                    ["docker", "exec", topology.founder_container, "cat", file_mount],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if proc.returncode == 0:
+                    founder_bytes = proc.stdout
+                    if founder_bytes == payload:
+                        break
+                else:
+                    last_stderr = proc.stderr.decode(errors="replace").strip()
+                time.sleep(0.5)
+            # Dump container logs so the diag_pr98 warns surface.
+            for container in (topology.founder_container, topology.joiner_container):
+                print(f"=== docker logs --tail 400 {container} ===", flush=True)
+                subprocess.run(
+                    ["docker", "logs", "--tail", "400", container],
+                    timeout=30,
+                )
+            assert founder_bytes == payload, (
+                f"[diag run] founder FUSE cat got {founder_bytes!r}, expected "
+                f"{payload!r} (last_cat_stderr={last_stderr!r}). "
+                "Look for `diag_pr98` warn lines in the dumped docker logs."
+            )
         finally:
             runbook_helpers.docker_exec(
                 topology.founder_container,

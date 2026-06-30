@@ -186,7 +186,8 @@ Key contract rules:
 
 * **`--bootstrap-mode` is required when federation is in play** (PR #4028).  Pass `static` for env-driven topology (`NEXUS_FEDERATION_*` carry the cluster shape, used across first boot and subsequent container restarts), `restart` for operator-managed resume where persisted ConfState is the source of truth (no env needed), `dynamic` for runtime-API-driven setups.
 * **`--peers` lists only the *other* machines.**  Self-listed peers are rejected at parse (PR #4014).
-* **`NEXUS_HOSTNAME` should be the node's Tailscale IP** for unambiguous self-detection across machines.
+* **`--advertise-addr` / `NEXUS_ADVERTISE_ADDR` is the reachable network endpoint advertised to peers** — MUST be set to the Tailscale IP (`<tailscale_ip>:<port>`) for cross-machine federation.  Decoupled from `--hostname` since nexus-vfs PR #101: `--hostname` is now display-only (ZoneManager registry label + TLS cert SANs), the network identity comes from `--advertise-addr`.  Falls back to `{hostname}:{bind_port}` if unset (single-node tests work unchanged), but cross-machine setups MUST pin `--advertise-addr` explicitly — a bare OS hostname does not resolve through the Tailscale overlay and surfaces as "ConfState install timeout" minutes after the initial JoinZone RPC succeeded.  Boot logs a warning when the resolved address looks unreachable (wildcard, loopback with peers, or bare hostname with peers configured).
+* **`NEXUS_HOSTNAME` is the display label** (post-PR #101).  Falls back to OS hostname.  Use whatever you want for log readability; the address peers actually dial comes from `NEXUS_ADVERTISE_ADDR`.
 * **`NEXUS_DATA_DIR` and `--data-dir` must point to the same directory.**
 * **`--no-tls` is fine for local testing.**  Without it the daemon auto-detects certs in `<data-dir>/tls/`.
 * **Windows MSYS / Git Bash operators**: set `MSYS_NO_PATHCONV=1` in the shell *before* exporting `NEXUS_FEDERATION_MOUNTS`, or single-quote the value (`'NEXUS_FEDERATION_MOUNTS=/shared=sharedzone'`).  Without one of these, the shell rewrites the leading `/shared` into `C:/Program Files/Git/shared` before `nexusd-cluster` ever sees the env var; the daemon then boots with `mount_count=0` and the `/shared` namespace stays un-federated.  Post-nexus-vfs#39 the cluster binary refuses to start in this state and names the workaround in the error; on older binaries the symptom is a silent zero-mount federation that surfaces as downstream raft replication failures hours later.
@@ -196,7 +197,7 @@ Key contract rules:
 ```bash
 rm -rf /tmp/nexus-fed-data && mkdir -p /tmp/nexus-fed-data
 
-NEXUS_HOSTNAME=<A_tailscale_ip> \
+NEXUS_ADVERTISE_ADDR=<A_tailscale_ip>:2126 \
 NEXUS_NO_TLS=true \
 NEXUS_FEDERATION_ZONES=sharedzone \
 NEXUS_FEDERATION_MOUNTS=/shared=sharedzone \
@@ -222,37 +223,22 @@ The `Static topology applied` line should land within ~400 ms of `Zone 'root' re
 
 **3b. Joiner (machine B, first boot)**
 
-Step B-1: bring up B's own local root.
+Step B-1: join A's `sharedzone` against a fresh data dir (offline subcommand, no daemon running).
 
 ```bash
 rm -rf /tmp/nexus-fed-data && mkdir -p /tmp/nexus-fed-data
 
-NEXUS_HOSTNAME=<B_tailscale_ip> \
-NEXUS_NO_TLS=true \
-target/release/nexusd-cluster \
-  --bind-addr 0.0.0.0:2126 \
-  --data-dir /tmp/nexus-fed-data \
-  --no-tls \
-  --bootstrap-mode static \
-  > /tmp/nexus-mac.log 2>&1 &
-
-until grep -q "Zone 'root' registered" /tmp/nexus-mac.log; do sleep 1; done
-pkill -f nexusd-cluster
-sleep 2
-```
-
-Step B-2: join A's `sharedzone` (offline subcommand, daemon stopped).
-
-```bash
 target/release/nexusd-cluster join \
   "<A_node_id>@<A_tailscale_ip>:2126" \
   sharedzone \
   /shared \
-  --hostname <B_tailscale_ip> \
+  --advertise-addr <B_tailscale_ip>:2126 \
   --data-dir /tmp/nexus-fed-data \
   --no-tls \
   --as <learner|voter>
 ```
+
+Since nexus-vfs PR #101 the `join` subcommand auto-bootstraps the local parent zone (root) when `<data_dir>/root/raft/` is missing — the historical "Step B-1: bring up B's own local root, then kill the daemon, then run join" two-step is no longer required.  The single `join` invocation on a fresh data dir SOLO-bootstraps root, joins `sharedzone` via JoinZone RPC, and writes the `/shared → sharedzone` DT_MOUNT entry under root in one shot.  Idempotent — running it against a data dir that already holds root is a no-op for the bootstrap step.
 
 `--as` picks the membership role on `sharedzone` (default `voter`):
 
@@ -267,10 +253,10 @@ Joined remote zone 'sharedzone' as <learner|voter> (via http://<A_tailscale_ip>:
 
 Each node's local root zone owns its DT_MOUNT routing entries.  `join` writes B's DT_MOUNT into B's local root.  A's local root has its own DT_MOUNT for `/shared` (from the `NEXUS_FEDERATION_MOUNTS` env at A's boot).  They do not need to agree on root-zone membership — the parent zone for each side's DT_MOUNT is *that side's* local root.  See [Key design decisions](#key-design-decisions) for the rationale.
 
-Step B-3: restart B's daemon in restart mode.
+Step B-2: start B's daemon in restart mode (the join sidecar already wrote the data dir).
 
 ```bash
-NEXUS_HOSTNAME=<B_tailscale_ip> \
+NEXUS_ADVERTISE_ADDR=<B_tailscale_ip>:2126 \
 NEXUS_NO_TLS=true \
 target/release/nexusd-cluster \
   --bind-addr 0.0.0.0:2126 \

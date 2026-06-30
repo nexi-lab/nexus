@@ -175,8 +175,10 @@ def nexus_server(isolated_db, tmp_path):
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        # Use process group so we can kill all child processes
-        preexec_fn=os.setsid if sys.platform != "win32" else None,
+        # Use a process group so cleanup can terminate all children.  Python's
+        # native flag performs setsid safely in the child; preexec_fn can
+        # deadlock when pytest has already started background threads.
+        start_new_session=sys.platform != "win32",
     )
 
     # Event-driven readiness: drain stdout/stderr in background threads and

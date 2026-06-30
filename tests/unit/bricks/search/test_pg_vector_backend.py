@@ -185,6 +185,112 @@ def test_satisfies_protocol():
     assert isinstance(b, SearchBackend)
 
 
+class _MockRows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _MockConnection:
+    def __init__(self, engine):
+        self._engine = engine
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc_info):
+        return False
+
+    async def execute(self, statement, params):
+        self._engine.statements.append(str(statement))
+        self._engine.params.append(params)
+        return _MockRows(self._engine.rows)
+
+
+class _MockEngine:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+        self.connect_count = 0
+        self.statements = []
+        self.params = []
+
+    def connect(self):
+        self.connect_count += 1
+        return _MockConnection(self)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query_vector",
+    [
+        [],
+        [0.0] * 1536,
+        [float("nan")] + [0.0] * 1535,
+        [float("inf")] + [0.0] * 1535,
+        [float("-inf")] + [0.0] * 1535,
+    ],
+)
+async def test_semantic_search_rejects_invalid_query_vectors_without_connection(query_vector):
+    engine = _MockEngine()
+    backend = PgVectorBackend(engine=engine)
+
+    assert await backend.semantic_search(query_vector, "/", k=10, zone_id="z") == []
+    assert engine.connect_count == 0
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_rejects_wrong_dimension_without_connection():
+    engine = _MockEngine()
+    backend = PgVectorBackend(engine=engine)
+
+    assert await backend.semantic_search([1.0] * 1535, "/", k=10, zone_id="z") == []
+    assert engine.connect_count == 0
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_filters_non_finite_scores_and_guards_stored_norm():
+    engine = _MockEngine(
+        rows=[
+            {
+                "path": "/z/good.txt",
+                "chunk_text": "good",
+                "score": 0.75,
+                "chunk_index": 1,
+            },
+            {
+                "path": "/z/null.txt",
+                "chunk_text": "null",
+                "score": None,
+                "chunk_index": 2,
+            },
+            {
+                "path": "/z/nan.txt",
+                "chunk_text": "nan",
+                "score": float("nan"),
+                "chunk_index": 3,
+            },
+            {
+                "path": "/z/inf.txt",
+                "chunk_text": "inf",
+                "score": float("inf"),
+                "chunk_index": 4,
+            },
+        ]
+    )
+    backend = PgVectorBackend(engine=engine)
+
+    hits = await backend.semantic_search([1.0] + [0.0] * 1535, "/z/", k=10, zone_id="z")
+
+    assert [hit.path for hit in hits] == ["/z/good.txt"]
+    assert hits[0].score == 0.75
+    assert "l2_norm(c.embedding) > 0" in engine.statements[0]
+
+
 @pytest.mark.asyncio
 async def test_semantic_search_orders_by_cosine(
     backend: PgVectorBackend, postgres_engine_clean: AsyncEngine

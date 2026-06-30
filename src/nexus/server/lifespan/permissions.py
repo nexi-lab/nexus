@@ -36,7 +36,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
     await _startup_durable_invalidation(app, svc)  # Issue #3396
     bg_tasks.extend(await _startup_tiger_cache(app, svc))
     bg_tasks.extend(_startup_backfill(app, svc))
-    _startup_cache_warmup(app, svc)
+    bg_tasks.extend(_startup_cache_warmup(app, svc))
     await _startup_circuit_breaker(app, svc)
 
     return bg_tasks
@@ -446,12 +446,16 @@ def _startup_backfill(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.
     return bg_tasks
 
 
-def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
+def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """File cache warmup on server startup (Issue #1076)."""
     if not svc.nexus_fs:
-        return
+        return []
 
     try:
+        if not _parse_cache_warmup_enabled():
+            logger.info("[WARMUP] Server startup warmup disabled")
+            return []
+
         warmup_max_files = int(os.getenv("NEXUS_CACHE_WARMUP_MAX_FILES", "1000"))
         warmup_depth = int(os.getenv("NEXUS_CACHE_WARMUP_DEPTH", "2"))
         _nexus_fs_warmup = svc.nexus_fs  # Capture for closure
@@ -477,14 +481,43 @@ def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
                 stats.metadata_warmed,
             )
 
-        asyncio.create_task(_warmup_file_cache())
+        task = asyncio.create_task(_warmup_file_cache())
+        task.add_done_callback(_observe_cache_warmup_task)
         logger.info(
             "[WARMUP] Server startup warmup started (max_files=%d, depth=%d)",
             warmup_max_files,
             warmup_depth,
         )
+        return [task]
+    except (ValueError, TypeError) as e:
+        logger.warning("[WARMUP] Server startup warmup skipped due to invalid config: %s", e)
+        return []
     except Exception as e:
         logger.debug("[WARMUP] Server startup warmup skipped: %s", e)
+        return []
+
+
+def _observe_cache_warmup_task(task: asyncio.Future[None]) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.debug("[WARMUP] Server startup warmup cancelled")
+    except Exception:
+        logger.exception("[WARMUP] Server startup warmup failed")
+
+
+def _parse_cache_warmup_enabled() -> bool:
+    raw = os.getenv("NEXUS_CACHE_WARMUP_ENABLED")
+    if raw is None:
+        return True
+
+    value = raw.strip().lower()
+    if value in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "f", "no", "n", "off"}:
+        return False
+
+    raise ValueError(f"invalid NEXUS_CACHE_WARMUP_ENABLED={raw!r}")
 
 
 async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:

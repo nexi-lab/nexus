@@ -100,7 +100,7 @@ async def app_with_auth():
 
     client = TestClient(app)
 
-    yield {"client": client, "nx": nx}
+    yield {"client": client, "nx": nx, "session_factory": SessionLocal}
 
     # Cleanup
     nx.close()
@@ -186,10 +186,10 @@ class TestZonePermissions:
     """Verify ReBAC permissions on zone endpoints."""
 
     def test_unauthenticated_delete_returns_error(self, app_with_auth):
-        """DELETE without token → 422 (missing header)."""
+        """DELETE without token → 401 from the unified auth dependency."""
         client = app_with_auth["client"]
         resp = client.delete("/api/zones/perm-test-zone")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_outsider_cannot_get_zone(self, app_with_auth, outsider_token, zone_id):
         """Non-member cannot GET a zone they don't belong to."""
@@ -313,6 +313,160 @@ class TestDeprovisionLifecycle:
             data = get_resp.json()
             assert data["phase"] in ("Terminating", "Terminated")
             assert data["is_active"] is False
+
+    def test_deprovision_removes_only_target_zone_graph_and_rebac_rows(
+        self,
+        app_with_auth,
+        owner_token,
+    ):
+        """Finalizer deletes all target references and preserves control rows."""
+        from sqlalchemy import text
+
+        client = app_with_auth["client"]
+        session_factory = app_with_auth["session_factory"]
+        headers = {"Authorization": f"Bearer {owner_token}"}
+        target_zone = "cleanup-target-zone"
+        control_zone = "cleanup-control-zone"
+
+        for zone_id, name in (
+            (target_zone, "Cleanup Target"),
+            (control_zone, "Cleanup Control"),
+        ):
+            response = client.post(
+                "/api/zones",
+                json={"name": name, "zone_id": zone_id},
+                headers=headers,
+            )
+            assert response.status_code == 201, response.text
+
+        with session_factory() as session:
+            # This regression must exercise the explicit cleanup statements,
+            # not SQLite's optional ON DELETE CASCADE behavior.
+            assert session.execute(text("PRAGMA foreign_keys")).scalar_one() == 0
+
+            for prefix, zone_id in (("target", target_zone), ("control", control_zone)):
+                session.execute(
+                    text(
+                        "INSERT INTO entities ("
+                        "entity_id, zone_id, canonical_name, entity_type, merge_count, "
+                        "created_at, updated_at) VALUES ("
+                        ":source_id, :zone_id, :source_name, 'CONCEPT', 1, "
+                        "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), ("
+                        ":target_id, :zone_id, :target_name, 'CONCEPT', 1, "
+                        "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                    ),
+                    {
+                        "source_id": f"{prefix}-source",
+                        "target_id": f"{prefix}-target",
+                        "zone_id": zone_id,
+                        "source_name": f"{prefix} source",
+                        "target_name": f"{prefix} target",
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO relationships ("
+                        "relationship_id, zone_id, source_entity_id, target_entity_id, "
+                        "relationship_type, weight, confidence, created_at) VALUES ("
+                        ":relationship_id, :zone_id, :source_id, :target_id, "
+                        "'RELATES_TO', 1.0, 1.0, CURRENT_TIMESTAMP)"
+                    ),
+                    {
+                        "relationship_id": f"{prefix}-relationship",
+                        "zone_id": zone_id,
+                        "source_id": f"{prefix}-source",
+                        "target_id": f"{prefix}-target",
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO entity_mentions ("
+                        "mention_id, entity_id, confidence, mention_text, created_at) VALUES ("
+                        ":mention_id, :entity_id, 1.0, :mention_text, CURRENT_TIMESTAMP)"
+                    ),
+                    {
+                        "mention_id": f"{prefix}-mention",
+                        "entity_id": f"{prefix}-source",
+                        "mention_text": f"{prefix} mention",
+                    },
+                )
+
+            for tuple_id, tuple_zone, subject_zone, object_zone in (
+                ("target-owned-tuple", target_zone, target_zone, target_zone),
+                ("target-subject-cross-tuple", control_zone, target_zone, control_zone),
+                ("target-object-cross-tuple", control_zone, control_zone, target_zone),
+                ("control-tuple", control_zone, control_zone, control_zone),
+            ):
+                session.execute(
+                    text(
+                        "INSERT INTO rebac_tuples ("
+                        "tuple_id, zone_id, subject_zone_id, object_zone_id, subject_type, "
+                        "subject_id, relation, object_type, object_id, created_at) VALUES ("
+                        ":tuple_id, :tuple_zone, :subject_zone, :object_zone, 'user', "
+                        ":subject_id, 'viewer', 'zone', :object_id, CURRENT_TIMESTAMP)"
+                    ),
+                    {
+                        "tuple_id": tuple_id,
+                        "tuple_zone": tuple_zone,
+                        "subject_zone": subject_zone,
+                        "object_zone": object_zone,
+                        "subject_id": f"{tuple_id}-subject",
+                        "object_id": f"{tuple_id}-object",
+                    },
+                )
+            session.commit()
+
+        delete_response = client.delete(f"/api/zones/{target_zone}", headers=headers)
+        assert delete_response.status_code == 202, delete_response.text
+
+        with session_factory() as session:
+            target_entity_count = session.execute(
+                text("SELECT COUNT(*) FROM entities WHERE zone_id = :zone_id"),
+                {"zone_id": target_zone},
+            ).scalar_one()
+            control_entity_count = session.execute(
+                text("SELECT COUNT(*) FROM entities WHERE zone_id = :zone_id"),
+                {"zone_id": control_zone},
+            ).scalar_one()
+            assert target_entity_count == 0
+            assert control_entity_count == 2
+
+            target_relationship_count = session.execute(
+                text("SELECT COUNT(*) FROM relationships WHERE zone_id = :zone_id"),
+                {"zone_id": target_zone},
+            ).scalar_one()
+            control_relationship_count = session.execute(
+                text("SELECT COUNT(*) FROM relationships WHERE zone_id = :zone_id"),
+                {"zone_id": control_zone},
+            ).scalar_one()
+            assert target_relationship_count == 0
+            assert control_relationship_count == 1
+
+            target_mention_count = session.execute(
+                text("SELECT COUNT(*) FROM entity_mentions WHERE mention_id = :mention_id"),
+                {"mention_id": "target-mention"},
+            ).scalar_one()
+            control_mention_count = session.execute(
+                text("SELECT COUNT(*) FROM entity_mentions WHERE mention_id = :mention_id"),
+                {"mention_id": "control-mention"},
+            ).scalar_one()
+
+            target_tuple_reference_count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM rebac_tuples "
+                    "WHERE zone_id = :zone_id "
+                    "OR subject_zone_id = :zone_id "
+                    "OR object_zone_id = :zone_id"
+                ),
+                {"zone_id": target_zone},
+            ).scalar_one()
+            control_tuple_count = session.execute(
+                text("SELECT COUNT(*) FROM rebac_tuples WHERE tuple_id = :tuple_id"),
+                {"tuple_id": "control-tuple"},
+            ).scalar_one()
+            assert (target_mention_count, target_tuple_reference_count) == (0, 0)
+            assert control_mention_count == 1
+            assert control_tuple_count == 1
 
 
 # ---------------------------------------------------------------------------

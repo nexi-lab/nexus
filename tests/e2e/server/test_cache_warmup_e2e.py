@@ -12,6 +12,13 @@ Run with:
 
 import pytest
 
+AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
+
+
+@pytest.fixture(autouse=True)
+def _authenticate_test_app(test_app):
+    test_app.headers.update(AUTH_HEADERS)
+
 
 class TestCacheWarmupAPI:
     """End-to-end tests for Cache Warmup API endpoints."""
@@ -79,6 +86,8 @@ class TestCacheWarmupAPI:
 
         assert data["status"] == "completed"
         assert "files_warmed" in data
+        assert data["files_warmed"] >= 2
+        assert data["metadata_warmed"] >= 2
         assert "duration_seconds" in data
         assert data["duration_seconds"] >= 0
 
@@ -111,7 +120,9 @@ class TestCacheWarmupAPI:
 
         assert data["status"] == "completed"
         assert "content_warmed" in data
+        assert data["content_warmed"] >= 1
         assert "bytes_warmed" in data
+        assert data["bytes_warmed"] > 0
 
     @pytest.mark.asyncio
     async def test_cache_warmup_requires_path_or_user(self, test_app):

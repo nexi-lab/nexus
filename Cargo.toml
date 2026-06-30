@@ -30,10 +30,28 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs commit that landed PR #98
-# (d4fd15aa, 2026-06-30): uniform local-first sys_write contract.
-# Replaces PR #80's federation-peer-mount defer-to-peer write
-# behavior with a uniform "every sys_write is local-first" rule.
+# Pinned at the nexus-vfs commit that landed PR #101
+# (196437ca8, 2026-07-01): symmetric peer bootstrap.  Cumulative
+# stack: PR #98 (uniform local-first sys_write), PR #99
+# (KernelBlobFetcher federation cache SSOT-symmetric fix), PR #100
+# (runtime trust dir + SSOT allowlist), PR #101 (--advertise-addr
+# decoupled from --hostname + nexusd-cluster join auto-bootstraps
+# parent zone).
+#
+# PR #101 closes two cross-machine federation contract gaps that
+# wedged the Mac↔Win cc-tasks-share L1 smoke:
+# 1. --advertise-addr / NEXUS_ADVERTISE_ADDR — explicit network
+#    endpoint, decoupled from --hostname (display label).  Required
+#    for cross-machine federation over overlay networks (Tailscale,
+#    WireGuard, VPN) where the OS hostname does not resolve through
+#    the overlay.  Falls back to {hostname}:{bind_port} for back-
+#    compat — single-node tests unchanged.
+# 2. `nexusd-cluster join` auto-bootstraps the parent zone (SOLO,
+#    matches the per-node SOLO contract) when the data dir is fresh.
+#    Lets joiner-only-flow (no env-var-driven pre-bootstrap) work
+#    out of the box.
+#
+# PR #98 contract (preserved):
 #
 # WHAT CHANGED for downstream tests:
 # * sys_write on a federation-peer-mount placeholder no longer
@@ -72,13 +90,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ce1b1c88f8a0b353163ecc5f78ed19e299086cb6" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

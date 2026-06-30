@@ -1534,37 +1534,20 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
             cc_tasks_share_helpers.mount_write_bytes(topology.joiner_container, file_mount, payload)
 
             # Step 2: joiner FUSE round-trip read — writer-side fast
-            # path.  sys_read on the placeholder mount sees
-            # `last_writer == self` and serves bytes from
+            # path is synchronous (sys_read on the placeholder mount
+            # sees `last_writer == self` and serves bytes from
             # federation_cache directly; no peer hop, no raft-apply
-            # wait.  Bound the wait anyway so a regression in
-            # federation_cache substitution surfaces as a timeout
-            # rather than a hang.
-            #
-            # Drive `docker exec ... cat` directly, NOT via
-            # `mount_read_bytes`: that helper raises `pytest.fail`
-            # on rc!=0, which raises `BaseException`, which
-            # `except Exception` would miss in a retry loop.
-            deadline = time.monotonic() + 30
-            joiner_bytes = b""
-            last_stderr = ""
-            while time.monotonic() < deadline:
-                proc = subprocess.run(
-                    ["docker", "exec", topology.joiner_container, "cat", file_mount],
-                    capture_output=True,
-                    timeout=30,
-                )
-                if proc.returncode == 0:
-                    joiner_bytes = proc.stdout
-                    if joiner_bytes == payload:
-                        break
-                else:
-                    last_stderr = proc.stderr.decode(errors="replace").strip()
-                time.sleep(0.5)
+            # wait).  `mount_write_bytes` above returns only after
+            # sys_write's federation_cache write + metastore.put both
+            # commit on joiner — by the time we get here, the entry
+            # IS in joiner's local metastore + federation_cache.
+            # Single read, no polling.
+            joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                topology.joiner_container, file_mount
+            )
             assert joiner_bytes == payload, (
                 f"joiner FUSE read got {joiner_bytes!r} for the file it "
-                f"just wrote, expected {payload!r} "
-                f"(last_cat_stderr={last_stderr!r}). "
+                f"just wrote, expected {payload!r}. "
                 "Writer-side fast path broken — io.rs::sys_read "
                 "last_writer==self federation_cache substitution didn't fire."
             )
@@ -1591,38 +1574,53 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
 
             # Step 4: founder FUSE cat returns joiner's bytes byte-
             # exact via the last-writer-aware cross-peer fetch chain.
-            # Founder's sys_read finds the raft-replicated metastore
-            # entry with `last_writer = joiner`, misses its
-            # LocalConnector backend (joiner wrote to its own
-            # federation_cache, not founder's host fs), then
-            # `try_remote_fetch` dispatches `peer_read` to joiner.
-            # On joiner, `KernelBlobFetcher::read` (the ReadBlob
-            # handler) consults the kernel-global federation cache
-            # for placeholder-mount paths (nexus-vfs#99 SSOT-symmetric
-            # fix) and serves bytes back.  founder caches the bytes
-            # locally and returns them to the FUSE plugin → cat.
-            # Bounded wait tolerates raft-apply latency for the
-            # cross-mount put on founder.
+            #
+            # The wait here is for raft replication of joiner's
+            # metastore.put to land on founder's sharedzone state
+            # machine — a known async latency window.  Decompose into:
+            #
+            #   (a) event-driven wait on founder's gRPC sys_stat
+            #       returning `found=true` for the file path (binary
+            #       signal: either replicated or not — no byte
+            #       comparison ambiguity);
+            #   (b) single deterministic cat once (a) succeeds —
+            #       sys_read goes backend-miss → try_remote_fetch →
+            #       joiner's KernelBlobFetcher::read consults the
+            #       kernel-global federation cache (nexus-vfs#99
+            #       SSOT-symmetric fix) and serves bytes back; founder
+            #       caches them locally + returns them to FUSE.
+            #
+            # Replaces the previous "cat in a polling loop with
+            # byte-equality match" pattern which conflated three
+            # failure signals (replication latency, transient grpc
+            # errors, partial-byte reads) into one timeout.
+            file_zone = "sharedzone"
             deadline = time.monotonic() + 30
-            founder_bytes = b""
-            last_stderr = ""
+            stat_found = False
+            last_stat_err = ""
             while time.monotonic() < deadline:
-                proc = subprocess.run(
-                    ["docker", "exec", topology.founder_container, "cat", file_mount],
-                    capture_output=True,
-                    timeout=30,
+                stat_resp = runbook_helpers.vfs_stat(
+                    topology.founder_grpc, file_vfs, zone_id=file_zone, timeout=5
                 )
-                if proc.returncode == 0:
-                    founder_bytes = proc.stdout
-                    if founder_bytes == payload:
-                        break
-                else:
-                    last_stderr = proc.stderr.decode(errors="replace").strip()
+                stat_inner = stat_resp.get("result", {})
+                if stat_inner.get("found"):
+                    stat_found = True
+                    break
+                last_stat_err = repr(stat_resp.get("error") or stat_inner)
                 time.sleep(0.5)
+            assert stat_found, (
+                f"founder gRPC sys_stat({file_vfs}) never returned found=true "
+                f"within 30s — raft replication of joiner's metastore.put did "
+                f"not land on founder (last_resp={last_stat_err})."
+            )
+
+            # (b) Now read the bytes — single deterministic call.
+            founder_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                topology.founder_container, file_mount
+            )
             assert founder_bytes == payload, (
                 f"founder FUSE cat got {founder_bytes!r}, expected "
-                f"{payload!r} (last_cat_stderr={last_stderr!r}). "
-                "Cross-peer fetch broken — nexus-vfs#99's "
+                f"{payload!r}.  Cross-peer fetch broken — nexus-vfs#99's "
                 "KernelBlobFetcher::read federation_cache substitution "
                 "regressed, OR try_remote_fetch's peer_read RPC fails "
                 "to reach the writer."

@@ -1730,22 +1730,44 @@ class TestSysReaddirObservation:
                 f"{founder_listing}."
             )
 
-            # ── Step 3: wait for raft to replicate the DT_DIR row ──
+            # ── Step 2b: founder mount_listdir on session/ triggers DT_REG obs ─
+            #
+            # The step-2 top-level `ls` only enumerates direct children
+            # of the mount root, i.e. the session subdir itself; the
+            # nested `1.json` DT_REG is not observed until the operator
+            # (or CC's session-scan) descends INTO the session dir.  A
+            # second `ls /mnt/cc-tasks/founder/<session>/` fires FUSE →
+            # sys_readdir on the session dir → backend.list_dir returns
+            # `1.json` → observation loop calls backend.stat for its
+            # size and stamps a DT_REG row with `content_id =
+            # Some(backend_path)` and `last_writer_address = founder`.
+            # This mirrors CC's actual access pattern (top-level list,
+            # then per-session drill-down when the user opens one).
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            session_listing = cc_tasks_share_helpers.mount_listdir(
+                topology.founder_container, session_mount
+            )
+            assert "1.json" in session_listing, (
+                f"founder mount_listdir on {session_mount!r} did not see "
+                f"'1.json'.  Nested backend.list_dir failed before we "
+                f"can test the DT_REG observation contract.  Got "
+                f"{session_listing}."
+            )
+
+            # ── Step 3: wait for raft to replicate BOTH observed rows ──
             #
             # `wait_nodes_caught_up` blocks until both peers agree on
             # sharedzone's committed index — the strong signal that the
-            # observation-proposed row has landed on joiner's metastore
-            # and is queryable.  Same pattern the existing cross-node
-            # FUSE workflow test above uses to gate on metadata
-            # visibility.  Probe on the DT_DIR path (session_vfs); the
-            # child `1.json` DT_REG will not have a metastore row (by
-            # design — see step 5 below).
+            # observation-proposed rows (DT_DIR from step 2 + DT_REG
+            # from step 2b) have landed on joiner's metastore and are
+            # queryable.  Probe on the DT_REG path (file_vfs) so we
+            # gate on the strictly-later of the two propose commits.
             runbook_helpers.wait_nodes_caught_up(
                 [topology.founder_grpc, topology.joiner_grpc],
                 "sharedzone",
                 api_key=api_key,
                 timeout=30,
-                probe_path=session_vfs,
+                probe_path=file_vfs,
             )
 
             # ── Step 4a: joiner vfs_stat on session DT_DIR ──

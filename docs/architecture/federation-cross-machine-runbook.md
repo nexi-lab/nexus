@@ -333,6 +333,24 @@ After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route 
 
 This is the substrate the `cc tasks list` cross-machine workflow rides — operator's CC daemon on A drops `~/.claude/tasks/<n>.json` directly to host fs (no Nexus syscall), and a second CC daemon on B reads them through `/shared/cc-tasks/A/<n>.json`.
 
+#### Peer-shared variant (recommended for native `cc tasks list` flat merged view — nexus-vfs PR #102)
+
+The topology above is *peer-namespaced*: each peer's LocalConnector mounts under `/shared/cc-tasks/<peer-name>/`, so `ls /shared/cc-tasks/` shows `A/` + `B/` subdirs — not a flat merged UUID list.  Operator can navigate but Claude Code's native `cc tasks list` (which walks `~/.claude/tasks/` expecting flat UUID sessions) sees only whichever half its session dir resolves to.
+
+Since PR #102 (`ee7e645d4`, sys_readdir SSOT-symmetric observation), a **peer-shared** topology is available: **both peers mount their LocalConnector at the SAME VFS path**, with no peer-name suffix.  Example:
+
+```bash
+# On A:
+--mount-driver 'local-connector:sharedzone:/shared/cc-tasks:{"local_root":"/home/me/.claude/tasks"}'
+
+# On B:
+--mount-driver 'local-connector:sharedzone:/shared/cc-tasks:{"local_root":"/home/me/.claude/tasks"}'
+```
+
+Each peer's `--mount-driver` installs its OWN LocalConnector at `/shared/cc-tasks/` locally (preserved via `vfs_router.has()` even when the raft-replicated DT_MOUNT's config differs — see `wire_mount_core` at `distributed_coordinator.rs:2337`).  Direct host-fs writes on either peer are observed into metastore during sys_readdir, and raft replicates the row (stamped with `last_writer_address = self`) so the OTHER peer sees the entry via `metastore.list` — no scatter RPC, no schema change.  The FUSE surface at `~/.claude/tasks/` (mounted over a renamed `tasks.local/` to avoid intra-node circular where LocalConnector's `local_root` = FUSE mount point) then presents a flat merged UUID list combining both peers' sessions.
+
+Trade-off relative to the peer-namespaced variant: writes on either peer land in the raft-replicated metastore under the same VFS path.  For CC's append-only session pattern (each session UUID is written once, per-machine) collisions are effectively impossible.  Workloads with the same VFS path being concurrently mutated by both peers should stick with the peer-namespaced variant, where the peer-name suffix serves as a natural conflict domain.
+
 ### Step 3g — Expose the federated VFS as a real OS mount via FUSE
 
 §3f gets the bytes across; `cc tasks list` (which is just `ls ~/.claude/tasks/`) needs the bytes to surface as **real files in the OS filesystem** so plain POSIX tools see them.  The `nexus-fuse-plugin` cdylib does exactly that — it spawns a fuser-backed FUSE event loop in the same process as the kernel and routes POSIX ops through the same `KernelHandle` callbacks the kernel exports to any other plugin.

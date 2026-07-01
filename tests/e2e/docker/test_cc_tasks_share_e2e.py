@@ -1631,3 +1631,191 @@ class TestCcTasksListBackendOnlyCrossNodeEnumeration:
                 ["rm", "-rf", f"/host/tasks/{session}"],
                 check=False,
             )
+
+
+# ---------------------------------------------------------------------------
+# nexus-vfs PR #102 regression pin — SSOT-symmetric sys_readdir observation.
+# ---------------------------------------------------------------------------
+#
+# Motivating scenario (Phase γ-A native cc-tasks-list UX):
+#
+#   Claude Code writes `~/.claude/tasks/<uuid>/1.json` directly to the
+#   operator's host filesystem, bypassing every Nexus syscall.  Before
+#   PR #102 the metastore had no row for that path — sys_readdir on the
+#   writing node's LocalConnector saw the entry via backend.list_dir
+#   but never proposed a metadata row to metastore, so peer daemons
+#   couldn't enumerate the entry through their own metastore.list step.
+#   Cross-peer readdir worked only via federation-dispatch on placeholder
+#   mounts (peer-namespaced topology).  Peer-shared mount topologies
+#   (both peers `--mount-driver` at the SAME VFS path) had no way for a
+#   peer's readdir to find entries written directly on another peer's
+#   host fs.
+#
+#   PR #102 adds `observe_backend_readdir_entry` mirroring the read-path
+#   `observe_backend_content` helper.  Every backend entry sys_readdir
+#   observes that metastore doesn't already know about gets a metadata
+#   row proposed with `last_writer_address = self`; raft replicates,
+#   and a peer's sys_readdir sees the entry via metastore.list alone.
+
+
+class TestSysReaddirObservation:
+    """Pin nexus-vfs PR #102's SSOT-symmetric readdir observation.
+
+    Regression-protects the Phase γ-A native `cc tasks list` UX
+    against future changes to `sys_readdir` that would strip the
+    `observe_backend_readdir_entry` call, or against changes to the
+    observation helper that would stop stamping
+    `last_writer_address`.  Both regressions would surface here as
+    the joiner's `vfs_stat` reporting an empty `lastWriterAddress`
+    for a path written directly to founder's host fs.
+    """
+
+    def test_founder_direct_hostfs_write_seeds_joiner_metastore_via_readdir_observation(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        # Reuses the existing joined_cluster fixture — no fresh joiner
+        # topology needed.  The observation flow is orthogonal to the
+        # cluster's bootstrap history.
+        _ = joined_cluster
+
+        # ── Step 1: Direct host-fs write on founder (bypasses sys_write) ─
+        #
+        # `host_task_write` shells into founder's container and writes
+        # bytes at `/host/tasks/<session>/1.json` on founder's host fs
+        # — the operator's host fs — WITHOUT going through Nexus's
+        # sys_write.  Metastore starts with no row for the parent
+        # `<session>/` DT_DIR or the child `1.json` DT_REG on either
+        # peer.  This mirrors Claude Code's actual write pattern —
+        # session directories materialise when CC persists task state.
+        session = _new_session()
+        payload = b'{"id":"1","status":"pending","writer":"founder-host-fs-direct-obs"}'
+        cc_tasks_share_helpers.host_task_write(
+            topology.founder_container, f"/{session}/1.json", payload
+        )
+
+        try:
+            file_vfs = topology.founder_vfs_path(f"/{session}/1.json")
+            file_mount = topology.mount_path_for_vfs(file_vfs)
+            session_vfs = topology.founder_vfs_path(f"/{session}")
+
+            # ── Step 2: founder mount_listdir triggers DT_DIR observation ─
+            #
+            # `ls /mnt/cc-tasks/founder/` on founder's container fires
+            # FUSE → sys_readdir → backend.list_dir returns "<session>/"
+            # (trailing slash indicates a DT_DIR entry) → the observation
+            # loop calls `observe_backend_readdir_entry` with entry_type
+            # = DT_DIR → metastore.put stamps a row with
+            # last_writer_address = founder.  Raft replicates the row
+            # to joiner.
+            #
+            # Only DT_DIR entries are observed by design (nexus-vfs PR
+            # #102 + #103 division of labour): directories carry no
+            # byte content so the size=0 placeholder is semantically
+            # correct, and cross-peer directory enumeration is what
+            # `cc tasks list` needs.  DT_REG entries stay backend-only
+            # and route via the existing federation-dispatch fetch on
+            # read — accurate size + content_id come from the writer's
+            # backend on demand.
+            tasks_root_mount = topology.mount_path_for_vfs(topology.founder_vfs_path(""))
+            founder_listing = cc_tasks_share_helpers.mount_listdir(
+                topology.founder_container, tasks_root_mount
+            )
+            assert session in founder_listing, (
+                f"founder mount_listdir did not see the session dir "
+                f"{session!r} — sys_readdir backend.list_dir surface broken "
+                f"before we can test the observation contract.  Got "
+                f"{founder_listing}."
+            )
+
+            # ── Step 3: wait for raft to replicate the DT_DIR row ──
+            #
+            # `wait_nodes_caught_up` blocks until both peers agree on
+            # sharedzone's committed index — the strong signal that the
+            # observation-proposed row has landed on joiner's metastore
+            # and is queryable.  Same pattern the existing cross-node
+            # FUSE workflow test above uses to gate on metadata
+            # visibility.  Probe on the DT_DIR path (session_vfs); the
+            # child `1.json` DT_REG will not have a metastore row (by
+            # design — see step 5 below).
+            runbook_helpers.wait_nodes_caught_up(
+                [topology.founder_grpc, topology.joiner_grpc],
+                "sharedzone",
+                api_key=api_key,
+                timeout=30,
+                probe_path=session_vfs,
+            )
+
+            # ── Step 4: joiner vfs_stat on session DT_DIR — REGRESSION PIN ─
+            #
+            # Without PR #102, joiner's metastore has no DT_DIR row for
+            # the session subdir.  vfs_stat either returns found=False
+            # (metastore miss with no backend stat fallback for
+            # peer-dispatched paths) or falls through to federation
+            # dispatch → founder's backend.stat → a response whose
+            # `lastWriterAddress` is empty because the backend layer
+            # has no self_address to stamp.
+            #
+            # With PR #102 (+ PR #103 DT_DIR restriction), joiner's
+            # metastore holds the raft-replicated observation row.
+            # vfs_stat returns `found=True` and `lastWriterAddress`
+            # contains the founder container's hostname/IP — the strong
+            # signal that observation both fired on founder AND
+            # replicated to joiner.
+            joiner_stat = runbook_helpers.vfs_stat(
+                topology.joiner_grpc,
+                session_vfs,
+                zone_id="sharedzone",
+                api_key=api_key,
+                timeout=10,
+            )
+            stat_result = joiner_stat.get("result") or {}
+            assert stat_result.get("found"), (
+                f"joiner vfs_stat({session_vfs}) did not find the DT_DIR entry "
+                f"after founder observation should have replicated.  Either "
+                f"observe_backend_readdir_entry did not fire, or the "
+                f"metastore.put propose did not commit to sharedzone. "
+                f"joiner_stat={joiner_stat}"
+            )
+            last_writer = stat_result.get("lastWriterAddress") or ""
+            assert "founder" in last_writer, (
+                f"joiner's metastore row has lastWriterAddress={last_writer!r}; "
+                f"expected the founder container's address (contains "
+                f"'founder').  observe_backend_readdir_entry did not stamp "
+                f"self_address, OR the response bypassed metastore and hit "
+                f"backend.stat directly (which cannot stamp lastWriterAddress). "
+                f"stat={joiner_stat}"
+            )
+
+            # ── Step 5 (bonus): joiner FUSE cat via federation dispatch ──
+            #
+            # Not the observation regression-pin (step 4 is).  Verifies
+            # the DT_REG read path stays healthy AFTER the DT_DIR
+            # observation — files are NOT observed (per PR #103) so
+            # this read goes through the existing federation-dispatch
+            # fetch: joiner FUSE → sys_read → metastore miss for
+            # `1.json` → placeholder mount routes to sharedzone peer →
+            # founder's BlobFetcher → founder's LocalConnector →
+            # founder's host fs.  Byte-exact match confirms PR #98/#99
+            # remains uninjured and that DT_REG entries stay on the
+            # correct read path.
+            joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                topology.joiner_container, file_mount
+            )
+            assert joiner_bytes == payload, (
+                f"joiner FUSE cross-node read got {joiner_bytes!r}, expected "
+                f"{payload!r}.  DT_DIR observation replicated correctly "
+                f"(step 4 passed) but the DT_REG bytes round-trip broke — "
+                f"either PR #98/#99 (try_remote_fetch + KernelBlobFetcher "
+                f"federation cache substitution) regressed, OR PR #103's "
+                f"DT_DIR restriction accidentally started observing DT_REG "
+                f"again (which mis-teaches sys_read with size=0)."
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )

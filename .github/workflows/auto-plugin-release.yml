@@ -65,6 +65,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Annotated tags (`git tag -a`) are commit-shaped objects that
+          # embed a tagger identity, so git refuses to create them
+          # without user.email + user.name set. `actions/checkout@v4`
+          # wires the push credential but not the identity — configure
+          # the standard github-actions[bot] identity here so this step
+          # doesn't exit 128 on the first `git tag -a` call.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           next_patch() {
             local prefix="$1"
             local latest

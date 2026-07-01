@@ -30,44 +30,47 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs commit that landed PR #103
-# (c042117ab, 2026-07-01): DT_DIR-only restriction on sys_readdir
-# observation.  Cumulative stack: PR #98 (uniform local-first
-# sys_write), PR #99 (KernelBlobFetcher federation cache
-# SSOT-symmetric fix), PR #100 (runtime trust dir + SSOT allowlist),
-# PR #101 (--advertise-addr decoupled from --hostname +
-# nexusd-cluster join auto-bootstraps parent zone), PR #102
-# (sys_readdir observes DT_DIR backend entries), PR #103 (restrict
-# observation to DT_DIR — fix for PR #102 shipping a DT_REG
-# regression that broke sys_read byte-exact via stub metastore
-# rows).
+# Pinned at the nexus-vfs commit that landed PR #105
+# (291f5fa72, 2026-07-01): sys_readdir observation stamps
+# `size = backend.stat().size` for DT_REG entries (was hard-
+# coded 0), so POSIX `read()` / `cat` — which consult
+# `stat.st_size` for read length — return actual bytes on
+# observed rows instead of empty.  Cumulative stack:
+# PR #98 (uniform local-first sys_write), PR #99 (KernelBlobFetcher
+# federation cache SSOT-symmetric fix), PR #100 (runtime trust
+# dir + SSOT allowlist), PR #101 (--advertise-addr decoupled from
+# --hostname + nexusd-cluster join auto-bootstraps parent zone),
+# PR #102 (sys_readdir observes DT_DIR backend entries), PR #103
+# (restrict observation to DT_DIR — defensive workaround for the
+# byte-read regression PR #102 shipped), PR #104 (root-cause fix
+# — content_id stamping + drops PR #103's restriction), PR #105
+# (size stamping — observation queries backend.stat for DT_REG so
+# POSIX read consults the correct st_size).
 #
-# PR #102 + #103 close the Phase γ-A native cc-tasks-list UX gap:
+# PR #102 + #103 + #104 close the Phase γ-A native cc-tasks-list
+# UX gap end-to-end (both enumeration AND drill-down byte reads):
 # Claude Code writes ~/.claude/tasks/<uuid>/1.json directly to host
-# fs (bypassing sys_write), so metastore had no row for the
-# <uuid>/ subdir and peer daemons couldn't enumerate the session
-# via `cc tasks list`.  sys_readdir now proposes a metadata row
-# with last_writer_address=self for every DT_DIR backend entry the
-# metastore doesn't already know about; raft replicates the row
-# and a peer's metastore.list step returns the subdir naturally —
-# no new mount type, no schema change, no scatter RPC.  Enables
-# the peer-shared mount topology (both peers `--mount-driver` at
-# the SAME VFS path, e.g. /shared/cc-tasks) which makes CC's
-# native `cc tasks list` show a flat merged UUID list from both
-# peers.
+# fs (bypassing sys_write).  sys_readdir observes the backend
+# entries into metastore with `last_writer_address = self` +
+# `content_id = Some(backend_path)`; raft replicates.  Peer's
+# sys_readdir returns the entry via metastore.list; peer's
+# sys_read uses metastore hit → last_writer-aware
+# `try_remote_fetch` → writer's backend.read_content(cid) →
+# byte-exact.  No new mount type, no schema change, no scatter
+# RPC — reuses the try_remote_fetch pathway PR #98/#99 already
+# validates.  Enables the peer-shared mount topology (both peers
+# `--mount-driver` at the SAME VFS path, e.g. /shared/cc-tasks)
+# which makes CC's native `cc tasks list` show a flat merged UUID
+# list from both peers, and drilling into a session returns
+# byte-exact content from the writer.
 #
-# DT_REG entries stay backend-only and route via existing
-# federation-dispatch fetch on read (PR #98/#99 pathway).  Rationale
-# for the split (per PR #103):
-# * DT_DIR observation — the row can carry `size = 0, content_id =
-#   None` because directories have no byte content; enables
-#   cross-peer flat directory enumeration.
-# * DT_REG observation was in PR #102's initial ship but broke
-#   cross-peer byte reads: the stub row (size = 0, no content_id)
-#   was authoritative for the read path and returned empty bytes
-#   instead of federation-dispatching to the writer's backend.
-#   PR #103 restricts observation to DT_DIR only, restoring the
-#   correct division of labour.
+# PR #104 also fixes a latent bug in the read-path helper
+# `observe_backend_content` (introduced in PR #98) that stamped
+# content_id=None.  Second cross-peer reads on the same path
+# would have dead-ended in try_remote_fetch → self → FileNotFound;
+# not caught by tests because they only exercised one cross-peer
+# read.  Same root-cause fix applies (stamp content_id from the
+# route's backend_path), same SSOT rationale.
 #
 # PR #101 (preserved) closes two cross-machine federation contract
 # gaps that wedged the Mac↔Win cc-tasks-share L1 smoke:
@@ -121,13 +124,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "c042117abdd61f8b5a5d50cc58fb2b63928dcf9d" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

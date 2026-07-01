@@ -1730,88 +1730,168 @@ class TestSysReaddirObservation:
                 f"{founder_listing}."
             )
 
-            # ── Step 3: wait for raft to replicate the DT_DIR row ──
+            # ── Step 2b: founder mount_listdir on session/ triggers DT_REG obs ─
+            #
+            # The step-2 top-level `ls` only enumerates direct children
+            # of the mount root, i.e. the session subdir itself; the
+            # nested `1.json` DT_REG is not observed until the operator
+            # (or CC's session-scan) descends INTO the session dir.  A
+            # second `ls /mnt/cc-tasks/founder/<session>/` fires FUSE →
+            # sys_readdir on the session dir → backend.list_dir returns
+            # `1.json` → observation loop calls backend.stat for its
+            # size and stamps a DT_REG row with `content_id =
+            # Some(backend_path)` and `last_writer_address = founder`.
+            # This mirrors CC's actual access pattern (top-level list,
+            # then per-session drill-down when the user opens one).
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            session_listing = cc_tasks_share_helpers.mount_listdir(
+                topology.founder_container, session_mount
+            )
+            assert "1.json" in session_listing, (
+                f"founder mount_listdir on {session_mount!r} did not see "
+                f"'1.json'.  Nested backend.list_dir failed before we "
+                f"can test the DT_REG observation contract.  Got "
+                f"{session_listing}."
+            )
+
+            # ── Step 3: wait for raft to replicate BOTH observed rows ──
             #
             # `wait_nodes_caught_up` blocks until both peers agree on
             # sharedzone's committed index — the strong signal that the
-            # observation-proposed row has landed on joiner's metastore
-            # and is queryable.  Same pattern the existing cross-node
-            # FUSE workflow test above uses to gate on metadata
-            # visibility.  Probe on the DT_DIR path (session_vfs); the
-            # child `1.json` DT_REG will not have a metastore row (by
-            # design — see step 5 below).
+            # observation-proposed rows (DT_DIR from step 2 + DT_REG
+            # from step 2b) have landed on joiner's metastore and are
+            # queryable.  Probe on the DT_REG path (file_vfs) so we
+            # gate on the strictly-later of the two propose commits.
             runbook_helpers.wait_nodes_caught_up(
                 [topology.founder_grpc, topology.joiner_grpc],
                 "sharedzone",
                 api_key=api_key,
                 timeout=30,
-                probe_path=session_vfs,
+                probe_path=file_vfs,
             )
 
-            # ── Step 4: joiner vfs_stat on session DT_DIR — REGRESSION PIN ─
+            # ── Step 4a: joiner vfs_stat on session DT_DIR ──
             #
-            # Without PR #102, joiner's metastore has no DT_DIR row for
-            # the session subdir.  vfs_stat either returns found=False
-            # (metastore miss with no backend stat fallback for
-            # peer-dispatched paths) or falls through to federation
-            # dispatch → founder's backend.stat → a response whose
-            # `lastWriterAddress` is empty because the backend layer
-            # has no self_address to stamp.
-            #
-            # With PR #102 (+ PR #103 DT_DIR restriction), joiner's
-            # metastore holds the raft-replicated observation row.
-            # vfs_stat returns `found=True` and `lastWriterAddress`
-            # contains the founder container's hostname/IP — the strong
-            # signal that observation both fired on founder AND
-            # replicated to joiner.
-            joiner_stat = runbook_helpers.vfs_stat(
+            # PR #102 DT_DIR observation regression pin.  Without
+            # observation, joiner's metastore has no DT_DIR row for
+            # the session subdir; vfs_stat either returns found=False
+            # or falls through to federation dispatch, in which case
+            # `lastWriterAddress` is empty because backend.stat can't
+            # stamp it.  With observation, joiner's metastore holds
+            # the raft-replicated row with lastWriterAddress = founder.
+            joiner_dir_stat = runbook_helpers.vfs_stat(
                 topology.joiner_grpc,
                 session_vfs,
                 zone_id="sharedzone",
                 api_key=api_key,
                 timeout=10,
             )
-            stat_result = joiner_stat.get("result") or {}
-            assert stat_result.get("found"), (
-                f"joiner vfs_stat({session_vfs}) did not find the DT_DIR entry "
-                f"after founder observation should have replicated.  Either "
-                f"observe_backend_readdir_entry did not fire, or the "
-                f"metastore.put propose did not commit to sharedzone. "
-                f"joiner_stat={joiner_stat}"
+            dir_result = joiner_dir_stat.get("result") or {}
+            assert dir_result.get("found"), (
+                f"joiner vfs_stat({session_vfs}) did not find the DT_DIR "
+                f"entry after founder observation should have replicated. "
+                f"Either observe_backend_readdir_entry did not fire, or "
+                f"the metastore.put propose did not commit to sharedzone. "
+                f"joiner_stat={joiner_dir_stat}"
             )
-            last_writer = stat_result.get("lastWriterAddress") or ""
-            assert "founder" in last_writer, (
-                f"joiner's metastore row has lastWriterAddress={last_writer!r}; "
-                f"expected the founder container's address (contains "
-                f"'founder').  observe_backend_readdir_entry did not stamp "
-                f"self_address, OR the response bypassed metastore and hit "
-                f"backend.stat directly (which cannot stamp lastWriterAddress). "
-                f"stat={joiner_stat}"
+            dir_last_writer = dir_result.get("lastWriterAddress") or ""
+            assert "founder" in dir_last_writer, (
+                f"joiner's DT_DIR row has lastWriterAddress="
+                f"{dir_last_writer!r}; expected the founder container's "
+                f"address (contains 'founder'). observe_backend_readdir_"
+                f"entry did not stamp self_address correctly. "
+                f"stat={joiner_dir_stat}"
             )
 
-            # ── Step 5 (bonus): joiner FUSE cat via federation dispatch ──
+            # ── Step 4b: joiner vfs_stat on 1.json DT_REG ──
             #
-            # Not the observation regression-pin (step 4 is).  Verifies
-            # the DT_REG read path stays healthy AFTER the DT_DIR
-            # observation — files are NOT observed (per PR #103) so
-            # this read goes through the existing federation-dispatch
-            # fetch: joiner FUSE → sys_read → metastore miss for
-            # `1.json` → placeholder mount routes to sharedzone peer →
-            # founder's BlobFetcher → founder's LocalConnector →
-            # founder's host fs.  Byte-exact match confirms PR #98/#99
-            # remains uninjured and that DT_REG entries stay on the
-            # correct read path.
+            # PR #104 DT_REG observation regression pin.  Pre-PR #104
+            # (i.e. under PR #103's defensive restriction) DT_REG
+            # entries were NOT observed.  Joiner's vfs_stat on 1.json
+            # would miss its metastore and fall through to federation
+            # dispatch to founder — the response's `lastWriterAddress`
+            # would be empty (backend.stat cannot stamp).
+            #
+            # Post-PR #104, DT_REG entries ARE observed with
+            # content_id=Some(backend_path), so joiner's metastore
+            # holds the row with lastWriterAddress = founder.  Non-
+            # empty `founder` in lastWriterAddress is the strong
+            # signal that the row was raft-replicated from founder's
+            # observation, not synthesised via backend.stat dispatch.
+            joiner_file_stat = runbook_helpers.vfs_stat(
+                topology.joiner_grpc,
+                file_vfs,
+                zone_id="sharedzone",
+                api_key=api_key,
+                timeout=10,
+            )
+            file_result = joiner_file_stat.get("result") or {}
+            assert file_result.get("found"), (
+                f"joiner vfs_stat({file_vfs}) did not find the DT_REG "
+                f"entry. PR #104 should have observed 1.json into "
+                f"metastore with content_id=Some(backend_path). "
+                f"stat={joiner_file_stat}"
+            )
+            file_last_writer = file_result.get("lastWriterAddress") or ""
+            assert "founder" in file_last_writer, (
+                f"joiner's DT_REG row has lastWriterAddress="
+                f"{file_last_writer!r}; expected 'founder'.  PR #104's "
+                f"observation did not stamp the DT_REG row, OR the "
+                f"response bypassed metastore. stat={joiner_file_stat}"
+            )
+
+            # ── Step 5: joiner FUSE cat — byte-exact via observation ──
+            #
+            # Verifies the DT_REG read path under PR #104's new
+            # content_id-stamping contract: joiner FUSE → sys_read →
+            # metastore hit (from observation) → content_id=Some(
+            # backend_path) + last_writer=founder → try_remote_fetch
+            # → founder's kernel → metastore hit + last_writer=self →
+            # founder.backend.read_content(backend_path) → bytes.
+            #
+            # Pre-PR #104 this read would return empty (b'') because
+            # observation stamped content_id=None, which turned the
+            # metastore hit into a dead-end on the writer side:
+            # sys_read at line ~461 short-circuits to `content = None`
+            # for content_id_opt.is_none() and falls to
+            # try_remote_fetch → self → FileNotFound.  Empty bytes is
+            # exactly what CI caught on the initial PR #4464 run.
             joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
                 topology.joiner_container, file_mount
             )
             assert joiner_bytes == payload, (
-                f"joiner FUSE cross-node read got {joiner_bytes!r}, expected "
-                f"{payload!r}.  DT_DIR observation replicated correctly "
-                f"(step 4 passed) but the DT_REG bytes round-trip broke — "
-                f"either PR #98/#99 (try_remote_fetch + KernelBlobFetcher "
-                f"federation cache substitution) regressed, OR PR #103's "
-                f"DT_DIR restriction accidentally started observing DT_REG "
-                f"again (which mis-teaches sys_read with size=0)."
+                f"joiner FUSE cross-node read got {joiner_bytes!r}, "
+                f"expected {payload!r}. PR #104's content_id stamping "
+                f"regressed — metastore-hit + content_id=None dead-ends "
+                f"in try_remote_fetch → self → FileNotFound, matching "
+                f"the exact failure PR #103 defensively worked around. "
+                f"Check observe_backend_readdir_entry's content_id "
+                f"parameter is threaded from sys_readdir's wire-up loop."
+            )
+
+            # ── Step 6: joiner FUSE cat AGAIN — second-read regression ──
+            #
+            # PR #104 also fixes a latent bug in observe_backend_content
+            # (the read-path helper, existing since PR #98) — it stamped
+            # content_id=None, so a SECOND read of any peer-observed
+            # file would dead-end at try_remote_fetch → self →
+            # FileNotFound on the writer side.  Not caught by existing
+            # tests because they only exercised one cross-peer read.
+            #
+            # This step re-reads the same file to pin the fix: post-
+            # PR #104, observe_backend_content also stamps
+            # content_id=Some(backend_path), so the metastore row from
+            # step 5's fan-out observation round-trips correctly.
+            joiner_bytes_second = cc_tasks_share_helpers.mount_read_bytes(
+                topology.joiner_container, file_mount
+            )
+            assert joiner_bytes_second == payload, (
+                f"joiner FUSE second read got {joiner_bytes_second!r}, "
+                f"expected {payload!r}. observe_backend_content stamped "
+                f"content_id=None (the pre-PR-#104 latent bug), causing "
+                f"the second read's metastore hit to dead-end.  Verify "
+                f"observe_backend_content passes Some(route.backend_path) "
+                f"to build_metadata in the read-path helper."
             )
         finally:
             runbook_helpers.docker_exec(

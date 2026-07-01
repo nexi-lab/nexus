@@ -30,16 +30,29 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs commit that landed PR #101
-# (196437ca8, 2026-07-01): symmetric peer bootstrap.  Cumulative
-# stack: PR #98 (uniform local-first sys_write), PR #99
+# Pinned at the nexus-vfs commit that landed PR #102
+# (ee7e645d4, 2026-07-01): sys_readdir SSOT-symmetric observation.
+# Cumulative stack: PR #98 (uniform local-first sys_write), PR #99
 # (KernelBlobFetcher federation cache SSOT-symmetric fix), PR #100
 # (runtime trust dir + SSOT allowlist), PR #101 (--advertise-addr
 # decoupled from --hostname + nexusd-cluster join auto-bootstraps
-# parent zone).
+# parent zone), PR #102 (sys_readdir observes backend-only entries
+# into metastore).
 #
-# PR #101 closes two cross-machine federation contract gaps that
-# wedged the Mac↔Win cc-tasks-share L1 smoke:
+# PR #102 closes the Phase γ-A native cc-tasks-list UX gap: Claude
+# Code writes ~/.claude/tasks/<uuid>/1.json directly to host fs
+# (bypassing sys_write), so metastore had no row and peer daemons
+# couldn't enumerate the entry.  sys_readdir now proposes a metadata
+# row with last_writer_address=self for every backend entry the
+# metastore doesn't already know about; raft replicates the row and
+# a peer's metastore.list step returns the entry naturally — no new
+# mount type, no schema change, no scatter RPC.  Enables the
+# peer-shared mount topology (both peers `--mount-driver` at the
+# SAME VFS path, e.g. /shared/cc-tasks) which makes CC's native
+# `cc tasks list` show a flat merged UUID list from both peers.
+#
+# PR #101 (preserved) closes two cross-machine federation contract
+# gaps that wedged the Mac↔Win cc-tasks-share L1 smoke:
 # 1. --advertise-addr / NEXUS_ADVERTISE_ADDR — explicit network
 #    endpoint, decoupled from --hostname (display label).  Required
 #    for cross-machine federation over overlay networks (Tailscale,
@@ -90,13 +103,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "196437ca8ab5cbfea12dc660a797dbcccabaa506" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "ee7e645d44d63ce110b16f3665848a318c489cd5" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

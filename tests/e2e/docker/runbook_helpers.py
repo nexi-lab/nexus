@@ -658,19 +658,23 @@ def docker_logs(container: str, *, tail: int = 1000, since: str | None = None) -
     return (proc.stdout or "") + (proc.stderr or "")
 
 
-_NODE_ID_LOG_RE = re.compile(r"Zone 'root' registered \(node_id=(\d+)")
+_NODE_ID_LOG_RE = re.compile(r"Zone 'root' registered \(local_node_id=(\d+)")
 
 
 def fetch_node_id(container: str, *, timeout: float = 30) -> int:
     """Extract the daemon's opaque node_id from its boot log.
 
     Mirrors the runbook §3b operator step verbatim: "Wait for:
-    `Zone 'root' registered (node_id=<A_node_id>, peers=1)`".  That
-    log line is the user-facing contract for "what's this node's id";
-    the on-disk `.node_id` file is a Rust-internal `u64::to_le_bytes()`
-    binary detail that the runbook itself never inspects.  Reading the
-    log keeps the test aligned with the operator's vantage point and
-    insulated from persistence-format changes.
+    `Zone 'root' registered (local_node_id=<A_node_id>, peers=1)`".
+    The `local_node_id` prefix (renamed from `node_id` in the
+    peer-identity-surface refactor) disambiguates this node's own id
+    from a `peer_node_id` field that names a remote peer — the two
+    concepts previously shared the same field name and caused
+    operator/AI misdiagnosis under n>2 topologies.  The on-disk
+    `.node_id` file is a Rust-internal `u64::to_le_bytes()` binary
+    detail the runbook itself never inspects.  Reading the log keeps
+    the test aligned with the operator's vantage point and insulated
+    from persistence-format changes.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -680,8 +684,8 @@ def fetch_node_id(container: str, *, timeout: float = 30) -> int:
             return int(m.group(1))
         time.sleep(1)
     pytest.fail(
-        f"Could not find `Zone 'root' registered (node_id=...)` in "
-        f"{container} logs within {timeout}s; daemon may not have "
+        f"Could not find `Zone 'root' registered (local_node_id=...)` "
+        f"in {container} logs within {timeout}s; daemon may not have "
         f"completed root-zone bootstrap."
     )
 

@@ -163,6 +163,15 @@ services:
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: joiner:2126
       NEXUS_DATA_DIR: /app/data
+      # `identity.json` (nexus-vfs PR #106) — node-bound peer address
+      # book that survives `<NEXUS_DATA_DIR>` cleanup.  Volume-mounted
+      # SEPARATELY from `NEXUS_DATA_DIR` so a data-volume wipe scenario
+      # does not lose the persisted `--peer-addr` the sidecar just
+      # recorded.  Shared with the `nexusd-cluster join` sidecar (see
+      # `runbook_helpers.run_nexusd_cluster_join`) so the sidecar's
+      # post-JoinZone `identity::persist_peers` lands here where the
+      # main daemon's next boot loads it.
+      NEXUS_IDENTITY_DIR: /app/identity
       NEXUS_NO_TLS: "true"
       # Joiner does NOT set FEDERATION_ZONES at first boot — the test
       # fixture's `nexusd-cluster join` CLI seeds sharedzone's
@@ -175,6 +184,7 @@ services:
       RUST_LOG: info,nexus_raft=info
     volumes:
       - cc_tasks_joiner_data:/app/data
+      - cc_tasks_joiner_identity:/app/identity
       - cc_tasks_joiner_hostfs:/host/tasks
     networks:
       - nexus-cc-tasks-net
@@ -262,5 +272,11 @@ volumes:
     name: nexus-cc-tasks-founder-hostfs
   cc_tasks_joiner_data:
     name: nexus-cc-tasks-joiner-data
+  # `identity.json` (nexus-vfs PR #106) — cache-loss-safe peer address
+  # book, mounted at `/app/identity` on both the joiner service AND the
+  # transient `nexusd-cluster join` sidecar so the sidecar's post-JoinZone
+  # `identity::persist_peers` write persists across the sidecar's exit.
+  cc_tasks_joiner_identity:
+    name: nexus-cc-tasks-joiner-identity
   cc_tasks_joiner_hostfs:
     name: nexus-cc-tasks-joiner-hostfs

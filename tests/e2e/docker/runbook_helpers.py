@@ -377,7 +377,9 @@ def wait_healthy(grpc_addrs: Iterable[str], timeout: float = HEALTH_TIMEOUT) -> 
 
     Hard-fails on timeout — runbook tests cannot proceed past boot if
     a voter isn't reachable; silent skip would mask a real cluster
-    boot regression.
+    boot regression.  On timeout, dumps container logs so CI
+    transcripts carry the daemon's own boot log without needing a
+    re-run with manual diagnostics.
     """
     deadline = time.time() + timeout
     for addr in grpc_addrs:
@@ -387,7 +389,20 @@ def wait_healthy(grpc_addrs: Iterable[str], timeout: float = HEALTH_TIMEOUT) -> 
                 break
             time.sleep(2)
         else:
-            pytest.fail(f"Timed out waiting for {addr} to become healthy")
+            host = addr.split(":", 1)[0]
+            candidates = [host, f"nexus-cc-tasks-{host}", f"nexus-runbook-{host}"]
+            log_dump = ""
+            for container in candidates:
+                try:
+                    logs = docker_logs(container, tail=200)
+                except subprocess.SubprocessError:
+                    continue
+                if logs:
+                    log_dump = f"\n--- {container} (tail 200) ---\n{logs}"
+                    break
+            pytest.fail(
+                f"Timed out waiting for {addr} to become healthy{log_dump or ' (no container logs)'}"
+            )
 
 
 def uid() -> str:
@@ -683,6 +698,8 @@ def run_nexusd_cluster_join(
     cluster_image: str | None = None,
     network: str | None = None,
     data_dir: str = "/app/data",
+    identity_volume: str | None = None,
+    identity_dir: str = "/app/identity",
     timeout: float = 120,
     as_role: str = "voter",
 ) -> subprocess.CompletedProcess:
@@ -728,23 +745,36 @@ def run_nexusd_cluster_join(
         hostname,
         "-v",
         f"{target_volume}:{data_dir}",
-        # Override the image's `ENTRYPOINT ["nexusd-cluster"]` so we
-        # can pass `join` as the subcommand instead of an arg.
-        "--entrypoint",
-        "nexusd-cluster",
-        image,
-        "join",
-        f"{founder_node_id}@{founder_addr}",
-        zone_id,
-        local_path,
-        "--data-dir",
-        data_dir,
-        "--no-tls",
-        "--hostname",
-        hostname,
-        "--as",
-        as_role,
     ]
+    # `identity_volume` mounts the same host volume the target daemon
+    # uses for its `NEXUS_IDENTITY_DIR` so the sidecar's post-JoinZone
+    # `identity::persist_peers` write persists across the sidecar's
+    # exit and the target daemon reads it on its next boot.  Without
+    # this mount the sidecar writes to its own transient fs and every
+    # restart of the target daemon loses the leader peer address.
+    if identity_volume is not None:
+        cmd.extend(["-v", f"{identity_volume}:{identity_dir}"])
+        cmd.extend(["-e", f"NEXUS_IDENTITY_DIR={identity_dir}"])
+    cmd.extend(
+        [
+            # Override the image's `ENTRYPOINT ["nexusd-cluster"]` so we
+            # can pass `join` as the subcommand instead of an arg.
+            "--entrypoint",
+            "nexusd-cluster",
+            image,
+            "join",
+            f"{founder_node_id}@{founder_addr}",
+            zone_id,
+            local_path,
+            "--data-dir",
+            data_dir,
+            "--no-tls",
+            "--hostname",
+            hostname,
+            "--as",
+            as_role,
+        ]
+    )
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 

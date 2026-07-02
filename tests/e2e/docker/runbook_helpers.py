@@ -377,7 +377,9 @@ def wait_healthy(grpc_addrs: Iterable[str], timeout: float = HEALTH_TIMEOUT) -> 
 
     Hard-fails on timeout — runbook tests cannot proceed past boot if
     a voter isn't reachable; silent skip would mask a real cluster
-    boot regression.
+    boot regression.  On timeout, dumps container logs so CI
+    transcripts carry the daemon's own boot log without needing a
+    re-run with manual diagnostics.
     """
     deadline = time.time() + timeout
     for addr in grpc_addrs:
@@ -387,7 +389,20 @@ def wait_healthy(grpc_addrs: Iterable[str], timeout: float = HEALTH_TIMEOUT) -> 
                 break
             time.sleep(2)
         else:
-            pytest.fail(f"Timed out waiting for {addr} to become healthy")
+            host = addr.split(":", 1)[0]
+            candidates = [host, f"nexus-cc-tasks-{host}", f"nexus-runbook-{host}"]
+            log_dump = ""
+            for container in candidates:
+                try:
+                    logs = docker_logs(container, tail=200)
+                except subprocess.SubprocessError:
+                    continue
+                if logs:
+                    log_dump = f"\n--- {container} (tail 200) ---\n{logs}"
+                    break
+            pytest.fail(
+                f"Timed out waiting for {addr} to become healthy{log_dump or ' (no container logs)'}"
+            )
 
 
 def uid() -> str:

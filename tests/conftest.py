@@ -121,6 +121,44 @@ def pytest_addoption(parser):
     )
 
 
+def pytest_configure(config):
+    """Register custom markers.
+
+    ``wedge_watchdog`` is our systematic answer to the "test hangs
+    forever on a wedged filesystem syscall" failure class.  Any test
+    that touches a live FUSE/NFS/kernel-fs mount can hit an infinite
+    kernel-level block if the backend is stalled — Python cannot
+    interrupt an in-progress ``stat()`` / ``open()`` syscall.  Without
+    a watchdog the ONLY recovery is the wall-clock workflow timeout,
+    which is silent, uninformative, and burns runner minutes.
+
+    Usage:
+
+        @pytest.mark.wedge_watchdog                 # default 60s
+        def test_something(mount): ...
+
+        @pytest.mark.wedge_watchdog(seconds=120)    # custom budget
+        def test_slower(mount): ...
+
+    Implementation: the ``pytest_collection_modifyitems`` hook below
+    translates a ``wedge_watchdog`` marker into pytest-timeout's
+    ``timeout`` marker with ``method="thread"``.  ``thread`` method
+    calls ``pytest.exit`` from a watchdog thread that hard-fails the
+    test with a Python-side traceback — visible in the CI log,
+    unlike a workflow-level kill.  Tests can override the seconds
+    kwarg per-test; sub-directories can auto-apply via a local
+    ``conftest.py`` that adds the marker in
+    ``pytest_collection_modifyitems``.
+    """
+    config.addinivalue_line(
+        "markers",
+        "wedge_watchdog(seconds=60): watchdog-timeout the test if it hangs "
+        "on a kernel-level filesystem syscall.  Backed by pytest-timeout "
+        "method=thread so wedged syscalls surface with diagnostic tracebacks "
+        "instead of silent workflow-timeout kills.",
+    )
+
+
 def pytest_collection_modifyitems(config, items):
     if not config.getoption("--run-quarantine"):
         skip_quarantine = pytest.mark.skip(reason="Quarantined: use --run-quarantine to run")
@@ -136,6 +174,31 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "sandbox_memory" in item.keywords:
                 item.add_marker(skip_mem)
+
+    # ``wedge_watchdog`` marker → pytest-timeout translation.
+    #
+    # We intentionally do NOT set a default timeout in pyproject
+    # (see the "No per-test timeout" comment there — profile+optimize,
+    # don't kill).  But fs-vulnerable tests have a unique failure mode
+    # (kernel-level syscall hang) that profiling can't fix and only a
+    # watchdog can surface.  Applying via a marker keeps the escape
+    # hatch scoped: only tests that opt in get the watchdog.
+    for item in items:
+        watchdog = item.get_closest_marker("wedge_watchdog")
+        if watchdog is None:
+            continue
+        seconds = watchdog.kwargs.get("seconds")
+        if seconds is None and watchdog.args:
+            seconds = watchdog.args[0]
+        if seconds is None:
+            seconds = 60  # sane default; individual tests can override
+        # pytest-timeout method="thread" instead of the default signal
+        # method: signal is SIGALRM which is unavailable in worker
+        # threads (Python raises "signal only works in main thread"),
+        # and pytest-xdist runs tests in threads by default.  Thread
+        # method spawns a watchdog thread that calls pytest.exit —
+        # cross-platform, xdist-safe, and produces a visible traceback.
+        item.add_marker(pytest.mark.timeout(seconds, method="thread"))
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,194 @@
+# cc-tasks-peer-shared E2E — peer-shared mount topology
+# =========================================================================
+# Companion to `docker-compose.cc-tasks-share.yml` — SAME plugin stack,
+# SAME network topology, but the LocalConnector mount driver points at
+# `/shared/cc-tasks` (no `/founder` / `/joiner` suffix) on BOTH nodes.
+# Each side's LocalConnector reads its own container-local `/host/tasks/`;
+# sys_readdir observation writes into sharedzone metastore; raft
+# replicates; the merged view surfaces via `metastore.list` on either
+# node's FUSE mount.
+#
+# This is the production Win↔Mac shape (per `start-founder.sh` and
+# `federation-cross-machine-runbook.md`).  The namespaced companion
+# (`docker-compose.cc-tasks-share.yml`) covers the historical
+# `/shared/cc-tasks/<hostname>` shape used by earlier smoke workflows.
+# Both shapes exercise DT_MOUNT idempotency + raft-replicated metastore,
+# but only this one exercises the same-VFS-path rebind semantics that
+# make `cc tasks list` a flat merged UUID list on both peers.
+#
+# Distinct container / volume / network / name so this compose can run
+# alongside the namespaced compose without conflict.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-peer-shared.yml up -d founder joiner
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-peer-shared.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.cc-tasks-peer-shared.yml down -v
+
+x-fuse-runtime: &fuse-runtime
+  privileged: true
+  devices:
+    - /dev/fuse
+  cap_add:
+    - SYS_ADMIN
+  security_opt:
+    - apparmor:unconfined
+
+x-bootstrap-entrypoint: &bootstrap-entrypoint
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      if [ -f "$$DATA_DIR/.node_id" ]; then
+        MODE=restart
+        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
+      else
+        MODE=static
+      fi
+      exec nexusd-cluster \
+        --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+        --data-dir "$$DATA_DIR" \
+        --no-tls \
+        --plugin-dir /plugins \
+        --mount-driver "$$NEXUS_MOUNT_DRIVER" \
+        --bootstrap-mode "$$MODE"
+  command: []
+
+services:
+  founder:
+    <<: [*bootstrap-entrypoint, *fuse-runtime]
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.local-connector-plugin
+      secrets:
+        - plugin_signing_key
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-ps-founder
+    hostname: founder
+    environment:
+      NEXUS_HOSTNAME: founder
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      NEXUS_FEDERATION_ZONES: sharedzone
+      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      # Peer-shared: SAME VFS path on both nodes.  Each side's
+      # LocalConnector points at its own container-local `/host/tasks/`;
+      # sys_readdir observation replicates the entry list via sharedzone
+      # metastore so both sides get the merged view.
+      NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks:{"local_root":"/host/tasks"}'
+      NEXUS_FUSE_MOUNT_POINT: /mnt/cc-tasks
+      NEXUS_FUSE_VFS_ROOT: /shared/cc-tasks
+      RUST_LOG: info,nexus_raft=info
+    volumes:
+      - cc_tasks_ps_founder_data:/app/data
+      - cc_tasks_ps_founder_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-ps-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null &&
+          grep -qE ' /mnt/cc-tasks fuse' /proc/mounts
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  joiner:
+    <<: [*bootstrap-entrypoint, *fuse-runtime]
+    image: nexus-local-connector-plugin:latest
+    container_name: nexus-cc-tasks-ps-joiner
+    hostname: joiner
+    environment:
+      NEXUS_HOSTNAME: joiner
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: joiner:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_IDENTITY_DIR: /app/identity
+      NEXUS_NO_TLS: "true"
+      # Joiner: SAME VFS path as founder — the peer-shared shape.
+      NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks:{"local_root":"/host/tasks"}'
+      NEXUS_FUSE_MOUNT_POINT: /mnt/cc-tasks
+      NEXUS_FUSE_VFS_ROOT: /shared/cc-tasks
+      RUST_LOG: info,nexus_raft=info
+    volumes:
+      - cc_tasks_ps_joiner_data:/app/data
+      - cc_tasks_ps_joiner_identity:/app/identity
+      - cc_tasks_ps_joiner_hostfs:/host/tasks
+    networks:
+      - nexus-cc-tasks-ps-net
+    depends_on:
+      founder:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-cc-tasks-ps-test
+    profiles:
+      - run
+    depends_on:
+      founder:
+        condition: service_healthy
+      joiner:
+        condition: service_healthy
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NEXUS_CC_TASKS_PEER_SHARED_E2E: "1"
+      NEXUS_FOUNDER_GRPC: founder:2126
+      NEXUS_JOINER_GRPC: joiner:2126
+      NEXUS_FOUNDER_CONTAINER: nexus-cc-tasks-ps-founder
+      NEXUS_JOINER_CONTAINER: nexus-cc-tasks-ps-joiner
+      NEXUS_CLUSTER_IMAGE: nexus-local-connector-plugin:latest
+      NEXUS_CC_TASKS_NETWORK: nexus-cc-tasks-ps-net
+      NEXUS_LOCAL_CONNECTOR_ZONE: sharedzone
+      # Peer-shared: both sides mount at the SAME VFS root.  Tests
+      # exercise merged-view + cross-node byte-exact behavior at this
+      # shared path, not per-node namespaced subtrees.
+      NEXUS_LOCAL_CONNECTOR_VFS_ROOT: /shared/cc-tasks
+      NEXUS_FUSE_MOUNT_POINT: /mnt/cc-tasks
+    networks:
+      - nexus-cc-tasks-ps-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_cc_tasks_peer_shared_e2e.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-cc-tasks-ps-net:
+    name: nexus-cc-tasks-ps-net
+    driver: bridge
+
+secrets:
+  plugin_signing_key:
+    environment: PLUGIN_SIGNING_PRIVKEY
+
+volumes:
+  cc_tasks_ps_founder_data:
+    name: nexus-cc-tasks-ps-founder-data
+  cc_tasks_ps_founder_hostfs:
+    name: nexus-cc-tasks-ps-founder-hostfs
+  cc_tasks_ps_joiner_data:
+    name: nexus-cc-tasks-ps-joiner-data
+  cc_tasks_ps_joiner_identity:
+    name: nexus-cc-tasks-ps-joiner-identity
+  cc_tasks_ps_joiner_hostfs:
+    name: nexus-cc-tasks-ps-joiner-hostfs

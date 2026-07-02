@@ -66,18 +66,31 @@ def joined_cluster(topology: CcTasksTopology) -> dict:
     then auto-replays --mount-driver on its restart.  Post-#109 the
     sidecar accepts bare `host:port` (no `<id>@` prefix).
     """
+    runbook_helpers.wait_zone_ready(topology.founder_grpc, "sharedzone")
     founder_node_id = runbook_helpers.fetch_node_id(topology.founder_container)
-    return runbook_helpers.run_nexusd_cluster_join(
-        target_container=topology.joiner_container,
-        target_volume="nexus-cc-tasks-ps-joiner-data",
-        founder_node_id=founder_node_id,
-        founder_addr="founder:2126",
-        cluster_image=os.environ.get("NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest"),
-        network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-ps-net"),
-        zone_id="sharedzone",
-        mount_path="/shared",
-        identity_volume="nexus-cc-tasks-ps-joiner-identity",
-    ) | {"founder_node_id": founder_node_id}
+    runbook_helpers.docker_stop(topology.joiner_container)
+    try:
+        join_proc = runbook_helpers.run_nexusd_cluster_join(
+            target_container=topology.joiner_container,
+            target_volume="nexus-cc-tasks-ps-joiner-data",
+            founder_node_id=founder_node_id,
+            founder_addr=topology.founder_grpc,
+            zone_id="sharedzone",
+            local_path="/shared",
+            hostname="joiner",
+            cluster_image=os.environ.get(
+                "NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest"
+            ),
+            network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-ps-net"),
+            identity_volume="nexus-cc-tasks-ps-joiner-identity",
+        )
+        assert join_proc.returncode == 0, (
+            f"nexusd-cluster join sidecar failed: rc={join_proc.returncode} "
+            f"stdout={join_proc.stdout!r} stderr={join_proc.stderr!r}"
+        )
+    finally:
+        runbook_helpers.docker_start(topology.joiner_container)
+    return {"founder_node_id": founder_node_id}
 
 
 @pytest.fixture(scope="module")

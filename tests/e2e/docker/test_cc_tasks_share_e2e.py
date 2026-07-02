@@ -1975,11 +1975,14 @@ class TestIdentityPeerPersistence:
         # Schema version pinned by `SCHEMA_VERSION` in
         # `rust/raft/src/identity.rs`; a mismatch means either an
         # intentional schema bump (update this test) or an accidental
-        # rollback (fix the code).  The peer entry must be present
-        # exactly as `NodeAddress::to_raft_peer_str()` renders it —
-        # `<node_id>@<host>:<port>` — because that's how
-        # `NodeAddress::parse_peer_list` at boot expects to consume
-        # it.
+        # rollback (fix the code).  Identity peer entries are the
+        # operator-facing `host:port` shape post nexus-vfs #109 —
+        # `NodeAddress::to_operator_str` serializes without the
+        # `<node_id>@` prefix so subsequent cold-boot load through
+        # `parse_operator_addr` never trips the id-prefix rejection.
+        # The daemon still learns the founder's real node_id at
+        # runtime via `learn_peer_address` on the first inbound raft
+        # message — it never needs to be encoded in the address book.
         assert identity.get("schema_version") == 1, (
             f"identity schema_version mismatch: expected 1, got "
             f"{identity.get('schema_version')!r}. Full identity: {identity!r}"
@@ -1988,19 +1991,17 @@ class TestIdentityPeerPersistence:
         assert isinstance(peers, list), (
             f"identity.peers must be a list, got {type(peers).__name__}: {peers!r}"
         )
-        # `founder_node_id` is the u64 raft ID minted at founder's
-        # first boot (`read_or_mint_node_id` — the SSOT for this
-        # value).  The sidecar was invoked with
-        # `<founder_id>@founder:2126`, so identity's peer entry MUST
-        # reference the same id AND the founder container's raft
-        # endpoint hostname:port.  This proves
-        # `identity::persist_peers` received the exact peer string
-        # the sidecar's CLI parsed — no silent truncation or
-        # substitution somewhere in the path.
-        founder_peer = f"{founder_node_id}@{topology.founder_grpc}"
+        # Founder peer entry = bare `host:port` (topology.founder_grpc).
+        # `founder_node_id` is still fetched via `joined_cluster` above
+        # so a schema regression that ever re-introduces id encoding
+        # surfaces here as an inequality (kept in the debug output for
+        # diagnosis, not part of the expected value).
+        _ = founder_node_id
+        founder_peer = topology.founder_grpc
         assert founder_peer in peers, (
             f"identity.peers does not contain the founder peer "
             f"{founder_peer!r}. The sidecar's `identity::persist_peers` "
             f"either did not run, wrote to the wrong path, or wrote a "
-            f"different peer string. Full identity.peers={peers!r}"
+            f"different peer string.  Full identity.peers={peers!r} "
+            f"(founder_node_id={founder_node_id})"
         )

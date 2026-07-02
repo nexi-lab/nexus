@@ -763,7 +763,12 @@ def run_nexusd_cluster_join(
             "nexusd-cluster",
             image,
             "join",
-            f"{founder_node_id}@{founder_addr}",
+            # Bare `host:port` is the ONLY accepted operator-facing
+            # form post nexus-vfs #109.  `founder_node_id` is unused
+            # by the CLI (kept as a keyword arg for source-diff-
+            # compat; the daemon learns founder's real id from the
+            # first inbound raft message via `learn_peer_address`).
+            founder_addr,
             zone_id,
             local_path,
             "--data-dir",

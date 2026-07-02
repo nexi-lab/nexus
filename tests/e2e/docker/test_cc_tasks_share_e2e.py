@@ -34,6 +34,7 @@ suite is green; this E2E is the regression guard before that smoke.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import subprocess
 import time
@@ -521,6 +522,11 @@ def joined_cluster(topology: CcTasksTopology) -> dict:
                 "NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest"
             ),
             network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-net"),
+            # nexus-vfs PR #106 — sidecar shares the joiner's identity
+            # volume so `identity::persist_peers` after JoinZone lands
+            # where the main daemon's next boot loads it.  Volume name
+            # matches the compose file's `cc_tasks_joiner_identity`.
+            identity_volume=f"{topology.joiner_container}-identity",
         )
     finally:
         runbook_helpers.docker_start(topology.joiner_container)
@@ -1899,3 +1905,102 @@ class TestSysReaddirObservation:
                 ["rm", "-rf", f"/host/tasks/{session}"],
                 check=False,
             )
+
+
+class TestIdentityPeerPersistence:
+    """Pin nexus-vfs PR #106's identity.json peer-address persistence.
+
+    Regression-protects the S3 cache-loss-recovery foundation: the
+    ``nexusd-cluster join`` sidecar records the leader ``--peer-addr``
+    into ``identity.json`` after JoinZone so subsequent daemon
+    restarts (with ``NEXUS_PEERS`` unset per the entrypoint's
+    ``MODE=restart`` branch) still have a transport-layer seed for
+    the founder.
+
+    Without this pin, silent regressions in ``run_join``'s
+    ``identity::persist_peers`` call, or in ``open_zone_manager``'s
+    identity load, would surface only as "operator wiped data_dir +
+    can't remember peers = daemon stuck" in production — the exact
+    scenario S3 is meant to prevent.
+    """
+
+    def test_joiner_identity_json_contains_founder_peer_after_join(
+        self,
+        topology: CcTasksTopology,
+        joined_cluster: dict,
+    ) -> None:
+        # ── Step 1: joined_cluster fixture (setup) ──────────────────
+        #
+        # The fixture ran the runbook §3b offline
+        # `nexusd-cluster join <founder_id>@founder:2126 sharedzone
+        # /shared` sidecar against the joiner's data + identity
+        # volumes.  Under nexus-vfs PR #106 that CLI call MUST have
+        # invoked `identity::persist_peers` after the JoinZone RPC
+        # committed the AddNode ConfChange.  Fixture also restarted
+        # the joiner daemon, whose `open_zone_manager` boot path
+        # separately calls `identity::load` + `persist_peers` on the
+        # CLI peer set — the persisted union survives across both.
+        founder_node_id = joined_cluster["founder_node_id"]
+
+        # ── Step 2: read joiner's identity.json (the causal output) ─
+        #
+        # The compose mounts `cc_tasks_joiner_identity` at
+        # `/app/identity` on the joiner service AND on the sidecar,
+        # matching `NEXUS_IDENTITY_DIR`.  A container-level `cat`
+        # avoids depending on the joiner's Python runtime being
+        # importable — this test is a substrate-level regression
+        # pin, not a service-tier flow.
+        cat_result = runbook_helpers.docker_exec(
+            topology.joiner_container,
+            ["cat", "/app/identity/identity.json"],
+        )
+        assert cat_result.rc == 0, (
+            f"joiner's /app/identity/identity.json missing (rc={cat_result.rc}). "
+            f"Either the compose volume mount or the sidecar's "
+            f"`identity::persist_peers` write is broken. "
+            f"stderr={cat_result.stderr!r}"
+        )
+        try:
+            identity = json.loads(cat_result.stdout)
+        except json.JSONDecodeError as e:
+            pytest.fail(
+                f"joiner's /app/identity/identity.json is not valid JSON "
+                f"({e}). The sidecar's `identity::persist_peers` either "
+                f"failed to write or wrote a schema this test does not "
+                f"understand. Raw content: {cat_result.stdout!r}"
+            )
+
+        # ── Step 3: schema + persisted-peer content assertions ──────
+        #
+        # Schema version pinned by `SCHEMA_VERSION` in
+        # `rust/raft/src/identity.rs`; a mismatch means either an
+        # intentional schema bump (update this test) or an accidental
+        # rollback (fix the code).  The peer entry must be present
+        # exactly as `NodeAddress::to_raft_peer_str()` renders it —
+        # `<node_id>@<host>:<port>` — because that's how
+        # `NodeAddress::parse_peer_list` at boot expects to consume
+        # it.
+        assert identity.get("schema_version") == 1, (
+            f"identity schema_version mismatch: expected 1, got "
+            f"{identity.get('schema_version')!r}. Full identity: {identity!r}"
+        )
+        peers = identity.get("peers")
+        assert isinstance(peers, list), (
+            f"identity.peers must be a list, got {type(peers).__name__}: {peers!r}"
+        )
+        # `founder_node_id` is the u64 raft ID minted at founder's
+        # first boot (`read_or_mint_node_id` — the SSOT for this
+        # value).  The sidecar was invoked with
+        # `<founder_id>@founder:2126`, so identity's peer entry MUST
+        # reference the same id AND the founder container's raft
+        # endpoint hostname:port.  This proves
+        # `identity::persist_peers` received the exact peer string
+        # the sidecar's CLI parsed — no silent truncation or
+        # substitution somewhere in the path.
+        founder_peer = f"{founder_node_id}@{topology.founder_grpc}"
+        assert founder_peer in peers, (
+            f"identity.peers does not contain the founder peer "
+            f"{founder_peer!r}. The sidecar's `identity::persist_peers` "
+            f"either did not run, wrote to the wrong path, or wrote a "
+            f"different peer string. Full identity.peers={peers!r}"
+        )

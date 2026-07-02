@@ -683,6 +683,8 @@ def run_nexusd_cluster_join(
     cluster_image: str | None = None,
     network: str | None = None,
     data_dir: str = "/app/data",
+    identity_volume: str | None = None,
+    identity_dir: str = "/app/identity",
     timeout: float = 120,
     as_role: str = "voter",
 ) -> subprocess.CompletedProcess:
@@ -728,23 +730,36 @@ def run_nexusd_cluster_join(
         hostname,
         "-v",
         f"{target_volume}:{data_dir}",
-        # Override the image's `ENTRYPOINT ["nexusd-cluster"]` so we
-        # can pass `join` as the subcommand instead of an arg.
-        "--entrypoint",
-        "nexusd-cluster",
-        image,
-        "join",
-        f"{founder_node_id}@{founder_addr}",
-        zone_id,
-        local_path,
-        "--data-dir",
-        data_dir,
-        "--no-tls",
-        "--hostname",
-        hostname,
-        "--as",
-        as_role,
     ]
+    # `identity_volume` mounts the same host volume the target daemon
+    # uses for its `NEXUS_IDENTITY_DIR` so the sidecar's post-JoinZone
+    # `identity::persist_peers` write persists across the sidecar's
+    # exit and the target daemon reads it on its next boot.  Without
+    # this mount the sidecar writes to its own transient fs and every
+    # restart of the target daemon loses the leader peer address.
+    if identity_volume is not None:
+        cmd.extend(["-v", f"{identity_volume}:{identity_dir}"])
+        cmd.extend(["-e", f"NEXUS_IDENTITY_DIR={identity_dir}"])
+    cmd.extend(
+        [
+            # Override the image's `ENTRYPOINT ["nexusd-cluster"]` so we
+            # can pass `join` as the subcommand instead of an arg.
+            "--entrypoint",
+            "nexusd-cluster",
+            image,
+            "join",
+            f"{founder_node_id}@{founder_addr}",
+            zone_id,
+            local_path,
+            "--data-dir",
+            data_dir,
+            "--no-tls",
+            "--hostname",
+            hostname,
+            "--as",
+            as_role,
+        ]
+    )
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 

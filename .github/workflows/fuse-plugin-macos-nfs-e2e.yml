@@ -230,23 +230,14 @@ jobs:
             # That's necessary but not sufficient — a wedged FUSE
             # backend can pass both and then hang on a subsequent
             # `stat` / `mkdir`.  This probe exercises the actual test
-            # syscalls with hard subprocess timeouts so a wedge
-            # surfaces BEFORE pytest builds up 30 seconds of daemon
-            # log noise.  Each subprocess call is bounded — if any
-            # hits its timeout, we skip pytest and dump diagnostics.
-            echo "=== wedge probe (mount + mkdir + rmdir) ==="
-            PROBE_OK=true
-            PROBE_DIR="/tmp/nexus-nfs-e2e/.wedge-probe-$$"
-            if ! timeout 5 stat /tmp/nexus-nfs-e2e >/dev/null 2>&1; then
-              echo "::error::wedge probe: stat mount timed out"; PROBE_OK=false
-            elif ! timeout 5 mkdir -p "$PROBE_DIR" 2>/dev/null; then
-              echo "::error::wedge probe: mkdir on mount timed out or failed"; PROBE_OK=false
-            elif ! timeout 5 rmdir "$PROBE_DIR" 2>/dev/null; then
-              echo "::error::wedge probe: rmdir on mount timed out or failed"; PROBE_OK=false
-            fi
+            # syscalls via Python's `subprocess.run(timeout=...)` (GNU
+            # `timeout` is not on macOS by default) so a wedge surfaces
+            # BEFORE pytest builds up 30 seconds of daemon log noise.
+            echo "=== wedge probe (stat + mkdir + rmdir) ==="
+            python3 scripts/wedge_probe.py /tmp/nexus-nfs-e2e && PROBE_OK=true || PROBE_OK=false
             if [ "$PROBE_OK" != "true" ]; then
-              echo "=== mount output ==="
-              timeout 5 mount || echo "(mount hung)"
+              echo "=== mount output (5s timeout via Python) ==="
+              python3 -c "import subprocess; print(subprocess.run(['mount'], capture_output=True, text=True, timeout=5).stdout)" || echo "(mount hung)"
               echo "=== daemon alive? ==="
               kill -0 "$DAEMON_PID" 2>/dev/null && echo "yes (alive but wedged)" || echo "no (exited)"
             else
@@ -258,8 +249,8 @@ jobs:
             fi
           else
             echo "::error::Timed out waiting for cluster ready (180s)"
-            echo "=== mount output ==="
-            timeout 5 mount || echo "(mount hung)"
+            echo "=== mount output (5s timeout via Python) ==="
+            python3 -c "import subprocess; print(subprocess.run(['mount'], capture_output=True, text=True, timeout=5).stdout)" || echo "(mount hung)"
             echo "=== daemon alive? ==="
             kill -0 "$DAEMON_PID" 2>/dev/null && echo "yes" || echo "no (exited)"
           fi

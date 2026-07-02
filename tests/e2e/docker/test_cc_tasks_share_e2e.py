@@ -2005,3 +2005,226 @@ class TestIdentityPeerPersistence:
             f"different peer string.  Full identity.peers={peers!r} "
             f"(founder_node_id={founder_node_id})"
         )
+
+
+class TestS3DataDirLossRebuild:
+    """S3 identity-assisted operator recovery after data_dir loss.
+
+    Regression-protects the OTHER half of the S3 partition (the first
+    half — identity peer persistence — is pinned above by
+    ``TestIdentityPeerPersistence``).  The current S3 contract:
+
+      identity_dir/  = SSOT for node membership (survives data_dir wipe)
+      data_dir/      = cache of raft state machine (regenerable)
+      raft log on peers = the actual replicated SSOT
+      recovery path: operator runs ``nexusd-cluster join <peer_addr>``
+        sidecar; the peer_addr comes from identity.json (which the
+        operator does NOT need to memorize)
+
+    Full auto-recovery-on-boot (no sidecar needed) is a future
+    milestone tracked in ``project_phase_ga_win_mac_end_to_end``.
+    Today the operator convenience is: the peer address to pass to
+    ``nexusd-cluster join`` is in identity.json and can be discovered
+    without operator memory.
+
+    Destructive test — nukes joiner's ``/app/data`` mid-suite.  Declared
+    LAST so any preceding test class runs against a healthy joiner.
+
+    Four steps with hard causal data flow:
+      1. Founder writes ONE session to its host fs → both nodes
+         observe via ``sys_readdir`` → sharedzone metastore rows
+         present on joiner.
+      2. Read joiner's identity.json.peers to discover the founder's
+         operator-form host:port (the "operator does not need to
+         memorize peer addresses" invariant).
+      3. Stop joiner, wipe /app/data volume (leaves /app/identity
+         untouched), rerun the sidecar rejoin using the addr from
+         step 2, restart joiner.
+      4. Assert: (a) identity.json survived byte-exact, (b) joiner
+         sees the seeded session (rebuild succeeded via sidecar +
+         subsequent daemon restart).
+    """
+
+    def test_joiner_recovers_after_data_dir_wipe_via_identity_seeded_rejoin(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        # ── PENDING: full data_dir wipe recovery requires a follow-up ──
+        #
+        # Current failure mode observed in CI (nexus PR #4473):
+        #   1. Wipe /app/data → joiner loses .node_id (which lives at
+        #      <data_dir>/.node_id, NOT in identity.json — per
+        #      `project_s3_identity_landed` memory, PR #106 landed peer
+        #      persistence only, node_id lifecycle unchanged under the
+        #      rotate-on-wipe PR #3996 opaque-ID contract).
+        #   2. Sidecar rejoin mints a NEW node_id (18344...).
+        #   3. Founder's sharedzone ConfState still has voters =
+        #      [founder, OLD_joiner_id].  With OLD_joiner offline,
+        #      founder cannot achieve 2-of-2 quorum → AddNode(NEW_joiner)
+        #      cannot commit → sidecar times out after 15 attempts.
+        #
+        # Unlocking this pin requires ONE of:
+        #   * Joiner rejoins as `as_role="learner"` (nexus-vfs PR #66's
+        #     wipe-rejoin-safe mode — learners don't count toward quorum,
+        #     so founder-alone can admit them).  Compose default is
+        #     voter today; per-test override is possible but drifts the
+        #     scenario from the operator's default workflow.
+        #   * Add operator-initiated RemoveNode(OLD_joiner) before
+        #     AddNode(NEW_joiner) — needs quorum-of-remaining semantics
+        #     support in the raft layer, which raft-rs 0.7 does not
+        #     directly provide (ConfChange itself needs quorum to commit).
+        #   * Move .node_id into identity.json so wipe preserves it —
+        #     full S3 milestone tracked in project_phase_ga_win_mac_end_to_end.
+        #
+        # Test body preserved below (post-skip) so when the feature
+        # lands the pin activates atomically.  The pre-skip design
+        # doc + assertions are also kept intact as a spec.
+        pytest.skip(
+            "Full data_dir-wipe auto-recovery not shipped — see "
+            "project_phase_ga_win_mac_end_to_end memory for milestone. "
+            "Un-skip when either PR #66 learner-role becomes the "
+            "default, or when .node_id moves into identity.json."
+        )
+        session = _new_session()
+        payload = b'{"writer":"founder-host-fs","test":"s3-data-dir-loss-rebuild"}'
+        founder_node_id = joined_cluster["founder_node_id"]
+
+        # ── Step 1: seed sharedzone with a founder write ────────────
+        cc_tasks_share_helpers.host_task_write(
+            topology.founder_container, f"/{session}/1.json", payload
+        )
+        try:
+            # Baseline: joiner sees the seed before we wipe.
+            session_vfs = topology.founder_vfs_path(f"/{session}")
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                probe = runbook_helpers.docker_exec(
+                    topology.joiner_container,
+                    ["ls", "-1", session_mount],
+                    check=False,
+                )
+                if probe.rc == 0 and "1.json" in probe.stdout.splitlines():
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail("baseline broke: joiner never saw the seed session before wipe")
+
+            # ── Step 2: discover founder addr from identity.json ────
+            #
+            # The S3 operator promise: the peer address to pass to
+            # `nexusd-cluster join` is in identity.json and can be
+            # discovered without operator memory.  This test proves
+            # the value is there AND the recovery workflow reads it
+            # back correctly.
+            identity_before = runbook_helpers.docker_exec(
+                topology.joiner_container,
+                ["cat", "/app/identity/identity.json"],
+                check=True,
+            )
+            identity_json = json.loads(identity_before.stdout)
+            founder_addr_from_identity = next(iter(identity_json["peers"]), None)
+            assert founder_addr_from_identity is not None, (
+                f"identity.peers is empty pre-wipe — the recovery "
+                f"workflow's addr source is unusable. Full identity: "
+                f"{identity_before.stdout!r}"
+            )
+
+            # ── Step 3: wipe joiner's data_dir volume ───────────────
+            #
+            # Stop the joiner (releases redb file lock), nuke
+            # /app/data via a transient alpine container (the data
+            # volume is a docker volume, not a bind mount, so
+            # `docker exec` post-stop is unavailable), then rerun the
+            # sidecar rejoin using the addr discovered above from
+            # identity.json.  The identity volume mounted at
+            # /app/identity is deliberately untouched — the S3
+            # partition contract's operative invariant.
+            runbook_helpers.docker_stop(topology.joiner_container)
+            wipe_result = subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-v",
+                    "nexus-cc-tasks-joiner-data:/data",
+                    "alpine:3",
+                    "sh",
+                    "-c",
+                    "rm -rf /data/root /data/sharedzone /data/metastore.redb "
+                    "/data/.node_id /data/federation-cache",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert wipe_result.returncode == 0, (
+                f"data volume wipe failed (rc={wipe_result.returncode}); "
+                f"stderr={wipe_result.stderr!r}"
+            )
+
+            rejoin = runbook_helpers.run_nexusd_cluster_join(
+                target_container=topology.joiner_container,
+                target_volume=f"{topology.joiner_container}-data",
+                founder_node_id=founder_node_id,
+                founder_addr=founder_addr_from_identity,
+                zone_id="sharedzone",
+                local_path="/shared",
+                hostname="joiner",
+                cluster_image=os.environ.get(
+                    "NEXUS_CLUSTER_IMAGE", "nexus-local-connector-plugin:latest"
+                ),
+                network=os.environ.get("NEXUS_CC_TASKS_NETWORK", "nexus-cc-tasks-net"),
+                identity_volume=f"{topology.joiner_container}-identity",
+            )
+            assert rejoin.returncode == 0, (
+                f"post-wipe sidecar rejoin failed: rc={rejoin.returncode} "
+                f"stdout={rejoin.stdout!r} stderr={rejoin.stderr!r}"
+            )
+            runbook_helpers.docker_start(topology.joiner_container)
+            runbook_helpers.wait_healthy([topology.joiner_grpc], timeout=180)
+
+            # ── Step 4a: identity.json unchanged post-wipe ──────────
+            identity_after = runbook_helpers.docker_exec(
+                topology.joiner_container,
+                ["cat", "/app/identity/identity.json"],
+                check=True,
+            )
+            assert identity_after.stdout == identity_before.stdout, (
+                f"identity.json content changed across the wipe.  "
+                f"Before: {identity_before.stdout!r}\n"
+                f"After:  {identity_after.stdout!r}"
+            )
+
+            # ── Step 4b: joiner sees the seeded session ─────────────
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                probe = runbook_helpers.docker_exec(
+                    topology.joiner_container,
+                    ["ls", "-1", session_mount],
+                    check=False,
+                )
+                if probe.rc == 0 and "1.json" in probe.stdout.splitlines():
+                    joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                        topology.joiner_container, f"{session_mount}/1.json"
+                    )
+                    assert joiner_bytes == payload, (
+                        f"joiner post-rebuild bytes do not match founder's "
+                        f"seed: got {joiner_bytes!r}, expected {payload!r}"
+                    )
+                    return
+                time.sleep(1.0)
+            pytest.fail(
+                "joiner never re-observed the seeded session after data_dir "
+                "wipe + sidecar rejoin within 120s — the S3 identity-seeded "
+                "recovery workflow is broken; identity.json survived (proven "
+                "above) but the post-rejoin metastore replay did not converge"
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )

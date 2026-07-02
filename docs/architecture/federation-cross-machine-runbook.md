@@ -229,7 +229,7 @@ Step B-1: join A's `sharedzone` against a fresh data dir (offline subcommand, no
 rm -rf /tmp/nexus-fed-data && mkdir -p /tmp/nexus-fed-data
 
 target/release/nexusd-cluster join \
-  "<A_node_id>@<A_tailscale_ip>:2126" \
+  "<A_tailscale_ip>:2126" \
   sharedzone \
   /shared \
   --advertise-addr <B_tailscale_ip>:2126 \
@@ -238,7 +238,11 @@ target/release/nexusd-cluster join \
   --as <learner|voter>
 ```
 
+The `join` positional argument is bare `host:port` — nexus-vfs PR #109 retired the legacy `<A_node_id>@<A_tailscale_ip>:2126` form on the operator surface.  Passing an `<id>@host:port` shape now fails loud with a migration message pointing at the bare form.  The daemon learns A's real `node_id` at runtime from the first inbound raft message (`transport::learn_peer_address` in `nexus-vfs/rust/raft/src/transport/server.rs`), so operators never carry the opaque id across peers.
+
 Since nexus-vfs PR #101 the `join` subcommand auto-bootstraps the local parent zone (root) when `<data_dir>/root/raft/` is missing — the historical "Step B-1: bring up B's own local root, then kill the daemon, then run join" two-step is no longer required.  The single `join` invocation on a fresh data dir SOLO-bootstraps root, joins `sharedzone` via JoinZone RPC, and writes the `/shared → sharedzone` DT_MOUNT entry under root in one shot.  Idempotent — running it against a data dir that already holds root is a no-op for the bootstrap step.
+
+Since nexus-vfs PR #106 the `join` sidecar also persists A's address into `identity.json` at a platform-native user-data path (`%LOCALAPPDATA%\Nexus\identity.json` / `~/Library/Application Support/Nexus/identity.json` / `$XDG_DATA_HOME/nexus/identity.json`).  Subsequent cold-boots of B's daemon load the persisted peer list — operators do not re-specify `--peers` on every restart, and a `<NEXUS_DATA_DIR>` wipe by a cache-cleaner does not force the operator to remember A's address.  See federation-architecture.md § 6.3.1 for the identity vs cache-dir split contract.
 
 `--as` picks the membership role on `sharedzone` (default `voter`):
 
@@ -323,7 +327,7 @@ nexusd-cluster --bootstrap-mode static \
 # 2. Offline join (daemon stopped) — seeds sharedzone's ConfState + log into B's data dir.
 #    Bare `join` defaults to `--as voter` (symmetric peer); pass `--as learner` for
 #    owner-pattern wipe-rejoin safety instead.
-nexusd-cluster join <A_node_id>@<A_addr> sharedzone /shared --data-dir ./data --hostname B
+nexusd-cluster join <A_addr> sharedzone /shared --data-dir ./data --hostname B
 
 # 3. Restart — entrypoint auto-detects restart mode; sharedzone replays from disk and
 #    --mount-driver runs successfully because the zone is now loaded.
@@ -385,6 +389,8 @@ ls /mnt/cc-tasks/A/session-x/    # → 1.json (same machine, via LocalConnector)
 # And on machine B:
 ls /mnt/cc-tasks/A/session-x/    # → 1.json (federation fan-out + LocalConnector on A)
 ```
+
+Since nexus-vfs PR #108 (Direction B fan-out on empty local backend), the machine-B side of the above sequence does not need an operator-side warm-up `ls` on A before B's readdir hits — `sys_readdir` on a federated zone with empty local metastore + backend now dispatches to peer voters via `DistributedCoordinator::peer_list_dir` and merges the entries into B's response.  A `ReaddirRequest.from_peer` flag breaks the fan-out loop when a 3+ node topology would otherwise ping-pong (the receiving handler routes to `Kernel::sys_readdir_peer_dispatch`, which skips its own fan-out).  The extension mirrors the `try_remote_fetch` pattern already used by `sys_read` — sender-issues-RPC, remote-handles-everything, observation ownership stays with the writer.
 
 The FUSE plugin and LocalConnector compose without coupling — LocalConnector is the *write* surface (host fs is the SSOT, every write goes there bypassing Nexus), FUSE plugin is the *unified read* surface (`ls` sees both local + remote tasks through the federated VFS).  The cc-tasks-share Docker E2E (`tests/e2e/docker/test_cc_tasks_share_e2e.py`) regression-guards the full chain — FUSE op → KernelHandle v3 callback → DT_MOUNT routing → federation fan-out (when crossing nodes) → peer LocalConnector → host fs — as longer cross-layer workflows on a founder + joiner topology.
 
@@ -617,6 +623,10 @@ The bug-class history matters here — the same shape regressed twice during the
 | nexus-vfs #18 | Catch up kernel-tier state in nexus-vfs to nexus `c18db70dd` snapshot (previous fresh-import had silently fallen ~40 files behind); add reverse repo-boundary CI gate |
 | nexus-vfs #23 | ZoneManager async wrappers — `mount_async` / `apply_topology_async` / `create_zone_async` / `share_subtree_core_async` / `bootstrap_static_async`.  Hosts the `spawn_blocking` hop inside the type rather than at every async caller |
 | nexus-vfs #25 | F1: `is_leader()` derives from `leader_id()` (single atomic SSOT).  F2: `forward_to_leader` retries `submit_to_channel` locally when leader is self instead of RPC-forwarding via the self-address (which hairpins on Tailscale-on-Windows/macOS).  Eliminates the `Forward to leader failed leader=<self>` warning at every founder boot |
+| nexus-vfs #106 | Identity vs cache-dir split — `identity.json` persists the raft transport peer address book + last-known peers at a platform-native user-data path (%LOCALAPPDATA%\Nexus / ~/Library/Application Support/Nexus / $XDG_DATA_HOME/nexus).  Cache-cleaners removing `<NEXUS_DATA_DIR>` no longer force operators to re-specify `--peers`; sidecar `nexusd-cluster join` also updates the file so subsequent cold-boots recover known peers |
+| nexus-vfs #107 | `identity.json` peers are transport-only, NOT bootstrap seeds — root's per-node SOLO invariant would otherwise fire on joiner restart after `nexusd-cluster join` recorded a leader address to identity.  Identity's persisted peer list still seeds `ZoneManager`'s transport peer map |
+| nexus-vfs #108 | `sys_readdir` fan-out on empty local backend — Direction B (peer lists a session UUID it has never observed locally) returns peer-side entries via `DistributedCoordinator::peer_list_dir` on the first `ls` without an operator-side warm-up ceremony.  `ReaddirRequest.from_peer` flag guards 3+ node topologies against ping-pong loops |
+| nexus-vfs #109 | Operator vs raft-internal peer parse split — CLI/env (`--peers`, `NEXUS_PEERS`, `nexusd-cluster join <peer_addr>`, `identity.json` load) go through `PeerAddress::parse_operator_addr` which hard-rejects `<id>@host:port` with a migration message.  Raft-internal round-trips (founder self-registration, ConfChange context, `create_zone` address-book keying) keep the dual-form `PeerAddress::parse`.  Identity peer persistence uses `to_operator_str` (bare `host:port`) so cold-boot load never trips the id-prefix rejection |
 
 ---
 

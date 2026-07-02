@@ -211,7 +211,7 @@ target/release/nexusd-cluster \
 Wait for:
 
 ```
-Zone 'root' registered (node_id=<A_node_id>, peers=1)
+Zone 'root' registered (local_node_id=<A_node_id>, peers=1)
 Zone 'sharedzone' registered ...
 install_mount_apply_cb: slot set parent_zone_id=root
 install_mount_apply_cb: slot set parent_zone_id=sharedzone
@@ -219,7 +219,7 @@ wire_mount: installing distributed locks bound to ROOT zone parent_zone=root mou
 Static topology applied: 1 mounts via raft consensus
 ```
 
-The `Static topology applied` line should land within ~400 ms of `Zone 'root' registered` on a healthy 1-voter founder.  If it takes ~10 s and you see a `Forward to leader failed leader=<A_node_id>` warning in between, you're running a pre-nexus-vfs-#25 binary — rebuild.
+The `Static topology applied` line should land within ~400 ms of `Zone 'root' registered` on a healthy 1-voter founder.  If it takes ~10 s and you see a `Forward to leader failed leader_node_id=<...> leader_addr=<host:port>` warning in between, you're running a pre-nexus-vfs-#25 binary — rebuild.  (Field name convention: `local_node_id` = this daemon; `peer_node_id` / `leader_node_id` = a remote node; `_addr` fields carry the directly pingable `host:port`.  If you see a bare `node_id=<u64>` or `peer=<u64>` in a log line, you're on a pre-#110 binary.)
 
 **3b. Joiner (machine B, first boot)**
 
@@ -563,7 +563,8 @@ It walks every zone subdirectory, reads ConfState + HardState + log indices dire
 | `Zone 'root' registered (peers=1)` then silence | JoinZone went to self or founder unreachable | Check founder is listening on `:2126`; set `NEXUS_HOSTNAME` to the Tailscale IP |
 | `peer list contains self ...` | Self listed in `--peers` | Remove your own IP from `--peers` (PR #4014's other-only contract) |
 | `to_commit X is out of range [last_index 0]` | Stale raft state from a previous session | Wipe data dir on both sides, restart fresh |
-| `not leader, leader hint: None` | Quorum not formed | Ensure both daemons running and connected |
+| `not leader, leader hint: None` | Quorum not formed OR leader address not yet learned | Ensure both daemons running and connected; on cold-boot expect ~1 election cycle before the hint resolves |
+| `not leader, leader hint: Some("<host:port>")` | Local node is a follower; leader is at that address | Retarget the failing operation at the leader (`nexusd-cluster` propose paths auto-forward; direct RPC clients should follow the hint) |
 | `Clamping inbound raft commit hint` | Follower has empty log, leader sending heartbeats | Normal during catch-up; wait for InstallSnapshot |
 | `Cannot start a runtime from within a runtime` | Old pre-#4011 binary | Rebuild against current main |
 | `Cannot drop a runtime in a context where blocking is not allowed` in `run_join` | Pre-nexus-vfs-#23 binary; `zm.mount` called directly from async | Rebuild against current nexus-vfs main |

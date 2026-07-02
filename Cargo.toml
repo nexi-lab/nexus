@@ -30,12 +30,17 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs commit that landed PR #105
-# (291f5fa72, 2026-07-01): sys_readdir observation stamps
-# `size = backend.stat().size` for DT_REG entries (was hard-
-# coded 0), so POSIX `read()` / `cat` — which consult
-# `stat.st_size` for read length — return actual bytes on
-# observed rows instead of empty.  Cumulative stack:
+# Pinned at the nexus-vfs commit that landed PR #106
+# (a52f13015, 2026-07-02): identity.json persists the raft
+# transport peer address book at platform-native user-data path
+# (%LOCALAPPDATA%\Nexus, ~/Library/Application Support/Nexus,
+# $XDG_DATA_HOME/nexus).  Boot merges CLI --peers with the
+# persisted list, `nexusd-cluster join` sidecar records the
+# leader --peer-addr so subsequent restarts (with NEXUS_PEERS
+# unset per the entrypoint) still have a transport seed.
+# node_id lifecycle unchanged — stays at <data_dir>/.node_id
+# under the rotate-on-wipe PR #3996 opaque-ID contract.
+# Cumulative stack:
 # PR #98 (uniform local-first sys_write), PR #99 (KernelBlobFetcher
 # federation cache SSOT-symmetric fix), PR #100 (runtime trust
 # dir + SSOT allowlist), PR #101 (--advertise-addr decoupled from
@@ -124,13 +129,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "291f5fa72104a02d95a099818376d3f267e094b6" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "a52f130157995e00428d5b72c2f6eeb944d1e531" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

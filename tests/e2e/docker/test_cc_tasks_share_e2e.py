@@ -2005,3 +2005,168 @@ class TestIdentityPeerPersistence:
             f"different peer string.  Full identity.peers={peers!r} "
             f"(founder_node_id={founder_node_id})"
         )
+
+
+class TestS3DataDirLossRebuild:
+    """S3 rebuild-from-peer contract: joiner survives data_dir loss.
+
+    Regression-protects the OTHER half of the S3 partition (the first
+    half — identity peer persistence — is pinned above by
+    ``TestIdentityPeerPersistence``).  The full contract:
+
+      identity_dir/  = SSOT for node membership (survives data_dir wipe)
+      data_dir/      = cache of raft state machine (regenerable)
+      raft log on peers = the actual replicated SSOT
+
+    When joiner's ``data_dir`` disappears (Storage Sense, antivirus,
+    operator ``rm -rf`` mistake), the daemon must NOT need operator
+    intervention to recover: identity.json's persisted peer list seeds
+    the transport peer map, joiner boots empty, leader-driven
+    ``InstallSnapshot`` (the existing ``MsgSnapshot`` code path
+    ``node.rs`` handles at the receiver side) rebuilds sharedzone's
+    state from the peer.
+
+    Destructive test — nukes joiner's ``/app/data`` mid-suite.  Declared
+    LAST so any preceding test class runs against a healthy joiner.
+    Fixture rebuilds joiner into a healthy state by test end (via the
+    S3 auto-recovery path itself — the very thing being validated).
+
+    Three steps with hard causal data flow:
+      1. Founder writes ONE session to its host fs → both nodes observe
+         via ``sys_readdir`` → sharedzone metastore rows present on joiner.
+      2. Stop joiner, wipe the joiner's ``/app/data`` volume via a
+         transient alpine container (leaves ``/app/identity`` untouched
+         — the S3 partition invariant), restart joiner.
+      3. Assert: (a) joiner's identity.json survived unchanged, (b) joiner's
+         boot log shows local_node_id LOADED (not minted, per rotate-on-
+         wipe contract for pure-data-loss scenarios), and (c) joiner sees
+         the session written in step 1 (proving the metastore state
+         rebuilt via raft snapshot install from founder).
+    """
+
+    def test_joiner_boots_and_rebuilds_after_data_dir_wipe(
+        self,
+        topology: CcTasksTopology,
+        api_key: str,
+        joined_cluster: dict,
+    ) -> None:
+        session = _new_session()
+        payload = b'{"writer":"founder-host-fs","test":"s3-data-dir-loss-rebuild"}'
+
+        # ── Step 1: seed sharedzone with a founder write ────────────
+        cc_tasks_share_helpers.host_task_write(
+            topology.founder_container, f"/{session}/1.json", payload
+        )
+        try:
+            # Wait for joiner to observe the entry via readdir + raft
+            # (baseline: joiner sees it before we wipe).
+            session_vfs = topology.founder_vfs_path(f"/{session}")
+            session_mount = topology.mount_path_for_vfs(session_vfs)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if "1.json" in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, session_mount
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail("baseline broke: joiner never saw the seed session before wipe")
+
+            # Snapshot identity.json BEFORE wipe so we can prove it
+            # survives the destructive step.
+            identity_before = runbook_helpers.docker_exec(
+                topology.joiner_container,
+                ["cat", "/app/identity/identity.json"],
+            )
+            assert identity_before.rc == 0, (
+                f"identity.json missing pre-wipe (rc={identity_before.rc}); "
+                f"baseline for the rebuild test is broken."
+            )
+
+            # ── Step 2: wipe joiner's data_dir volume ───────────────
+            #
+            # Stop the joiner (releases redb file lock), nuke
+            # /app/data contents via a transient alpine container (the
+            # data volume is a docker volume, not a bind mount, so
+            # `docker exec` post-stop is unavailable), then restart
+            # the joiner service.  The identity volume mounted at
+            # /app/identity is deliberately untouched — the S3
+            # partition contract's operative invariant.
+            runbook_helpers.docker_stop(topology.joiner_container)
+            wipe_result = subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-v",
+                    "nexus-cc-tasks-joiner-data:/data",
+                    "alpine:3",
+                    "sh",
+                    "-c",
+                    "rm -rf /data/root /data/sharedzone /data/metastore.redb "
+                    "/data/.node_id /data/federation-cache",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert wipe_result.returncode == 0, (
+                f"data volume wipe failed (rc={wipe_result.returncode}); "
+                f"stderr={wipe_result.stderr!r}"
+            )
+
+            runbook_helpers.docker_start(topology.joiner_container)
+            runbook_helpers.wait_healthy([topology.joiner_grpc], timeout=180)
+
+            # ── Step 3a: identity.json unchanged post-wipe ──────────
+            identity_after = runbook_helpers.docker_exec(
+                topology.joiner_container,
+                ["cat", "/app/identity/identity.json"],
+            )
+            assert identity_after.rc == 0, (
+                f"identity.json missing POST-wipe (rc={identity_after.rc}); "
+                f"the S3 partition invariant (identity survives data_dir wipe) "
+                f"is broken."
+            )
+            assert identity_after.stdout == identity_before.stdout, (
+                f"identity.json content changed across the wipe.  "
+                f"Before: {identity_before.stdout!r}\n"
+                f"After:  {identity_after.stdout!r}"
+            )
+
+            # ── Step 3b: joiner rejoined + sees the seeded session ──
+            #
+            # The rebuild-from-peer via MsgSnapshot is what we're
+            # pinning: joiner's data_dir is empty (we just wiped it),
+            # its identity.json points at founder, on boot it opens
+            # the sharedzone via `bootstrap_or_join_zone` which
+            # detects the missing state and delegates to the JoinZone
+            # retry loop, which the leader answers by shipping the
+            # snapshot via MsgSnapshot -> node.rs receiver side
+            # applies it via storage.apply_snapshot + sm.restore_snapshot.
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if "1.json" in cc_tasks_share_helpers.mount_listdir(
+                    topology.joiner_container, session_mount
+                ):
+                    joiner_bytes = cc_tasks_share_helpers.mount_read_bytes(
+                        topology.joiner_container, f"{session_mount}/1.json"
+                    )
+                    assert joiner_bytes == payload, (
+                        f"joiner post-rebuild bytes do not match founder's "
+                        f"seed: got {joiner_bytes!r}, expected {payload!r}"
+                    )
+                    return
+                time.sleep(1.0)
+            pytest.fail(
+                "joiner never re-observed the seeded session after data_dir "
+                "wipe within 60s — S3 rebuild-from-peer path is broken; "
+                "identity survived (proven above) but sharedzone raft state "
+                "did not rebuild via MsgSnapshot / InstallSnapshot"
+            )
+        finally:
+            runbook_helpers.docker_exec(
+                topology.founder_container,
+                ["rm", "-rf", f"/host/tasks/{session}"],
+                check=False,
+            )

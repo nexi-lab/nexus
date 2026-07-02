@@ -62,8 +62,15 @@ RUN apt-get update && \
 COPY --from=builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/
 
 # Non-root runtime user
+#
+# Pre-creates BOTH `/app/data` (raft state cache) AND `/app/identity`
+# (node-bound peer address book from nexus-vfs PR #106) so downstream
+# compose stacks that mount named volumes at either path inherit the
+# `nexus:nexus` ownership.  Without pre-creation, Docker mounts the
+# volume as root-owned and the `nexus` user hits `Permission denied`
+# on the first `identity::persist_peers` write.
 RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
-    mkdir -p /app/data && \
+    mkdir -p /app/data /app/identity && \
     chown -R nexus:nexus /app
 
 USER nexus

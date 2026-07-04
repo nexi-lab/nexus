@@ -302,8 +302,11 @@ Node A and node B each mount their own LocalConnector under a hostname-namespace
 
 Operator flow (mirrors what `dockerfiles/docker-compose.cc-tasks-share.yml` automates):
 
+**⚠️ Discipline: EXACTLY ONE node in a federation is the founder.**  Both nodes running the founder recipe (both setting `NEXUS_FEDERATION_ZONES=sharedzone` on fresh data dirs) auto-creates the zone as SOLO on each node with itself as sole voter → two independent raft clusters that happen to share a zone name → split-brain that raft cannot reconcile.  nexus-vfs PR #112 landed a hard guard for this: if `identity.json` has persisted peers and the launcher still sets `NEXUS_FEDERATION_ZONES`, the daemon refuses to boot and names both correct roles.  Prefer running the guard-protected recipes below rather than relying on the guard as backstop.
+
 ```bash
-# On A (founder of sharedzone):
+# On A (FOUNDER of sharedzone) — auto-creates the zone SOLO, then waits for
+# joiners to sidecar-join against it.  EXACTLY ONE node runs this recipe.
 NEXUS_FEDERATION_ZONES=sharedzone \
 NEXUS_FEDERATION_MOUNTS=/shared=sharedzone \
 nexusd-cluster --bootstrap-mode static \
@@ -311,23 +314,28 @@ nexusd-cluster --bootstrap-mode static \
   --mount-driver 'local-connector:sharedzone:/shared/cc-tasks/A:{"local_root":"/home/me/.claude/tasks"}' \
   ...
 
-# On B (joiner):
-# 1. First boot — daemon ignores --mount-driver because sharedzone is not yet loaded
-#    locally; the substrate explicitly skips operator driver mounts on zones that
-#    don't exist yet, preventing a parallel-bootstrap split-brain.
-nexusd-cluster --bootstrap-mode static \
+# On B (JOINER of A's sharedzone) — does NOT set NEXUS_FEDERATION_ZONES /
+# NEXUS_FEDERATION_MOUNTS (those trigger auto-create on B).  Sequence is:
+#
+# 1. Offline sidecar join (daemon stopped) — seeds sharedzone's ConfState + log
+#    into B's data dir + persists A's addr into identity.json.
+#
+#    Bare `<HOST:PORT>` is the ONLY accepted peer form post nexus-vfs PR #109
+#    (the `<node_id>@<host:port>` shape was retired at the CLI boundary).
+#    Bare `join` defaults to `--as voter` (symmetric peer); pass `--as learner`
+#    for owner-pattern wipe-rejoin safety instead.
+nexusd-cluster join <A_host:port> sharedzone /shared \
+  --data-dir ./data --hostname B --no-tls
+
+# 2. Start B's main daemon — RESTART mode picks up sharedzone from disk;
+#    --mount-driver runs on the resumed zone; no auto-create anywhere.
+nexusd-cluster --bootstrap-mode restart \
   --plugin-dir ./plugins \
   --mount-driver 'local-connector:sharedzone:/shared/cc-tasks/B:{"local_root":"/home/me/.claude/tasks"}' \
   ...
-
-# 2. Offline join (daemon stopped) — seeds sharedzone's ConfState + log into B's data dir.
-#    Bare `join` defaults to `--as voter` (symmetric peer); pass `--as learner` for
-#    owner-pattern wipe-rejoin safety instead.
-nexusd-cluster join <A_node_id>@<A_addr> sharedzone /shared --data-dir ./data --hostname B
-
-# 3. Restart — entrypoint auto-detects restart mode; sharedzone replays from disk and
-#    --mount-driver runs successfully because the zone is now loaded.
 ```
+
+If you accidentally started B with `NEXUS_FEDERATION_ZONES=sharedzone` set on empty data dir before doing the sidecar join, the split-brain guard now catches it — the error message tells you which role you meant (wipe identity to become founder, or unset the env var + run sidecar to become joiner).
 
 After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount), miss locally, fan out to A, and return A's host-fs bytes.  Subsequent reads take Mode A.  Symmetric on A reading `/shared/cc-tasks/B/...`.
 

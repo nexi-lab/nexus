@@ -30,8 +30,28 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
-# Pinned at the nexus-vfs commit that landed PR #106 + #107 + #108 + #109 + #110 + #111
-# (e3b1f8901, 2026-07-03): PR #111 completes the audit PR #110 began —
+# Pinned at the nexus-vfs commit that landed PR #106..#112 (92f332391, 2026-07-04):
+# PR #112 lands two bootstrap-safety fixes:
+#   (1) split-brain guard — run_daemon refuses `bootstrap_static_async` when
+#       `identity.json` already lists persisted peers.  Prevents the
+#       "both-founder" misconfig (two nodes each auto-creating sharedzone
+#       SOLO on empty data_dir + accidental parallel `NEXUS_FEDERATION_ZONES=
+#       sharedzone` both wedging the federation with independent commit
+#       histories that raft cannot merge).  Error message names both
+#       correct roles: (a) wipe identity if you meant founder; (b) unset
+#       NEXUS_FEDERATION_ZONES + run sidecar `join` if you meant joiner.
+#   (2) fail-loud gRPC bind — `ZoneManager::start` used to `tracing::error!`
+#       + swallow tonic serve errors, leaving daemon half-alive (raft + FUSE
+#       + LocalConnector all up, no gRPC listener).  Now exits(1) so
+#       supervisors + operator's `echo $?` see the failure at the right
+#       level.  Bind failure is unrecoverable from inside the process.
+# Companion rename in the same PR: `ZoneManagerBundle.peer_addrs` →
+# `cli_peer_addrs`, new `identity_persisted_peers` field.  Docstring on
+# the struct explains why the two peer fields are NOT unified (see PR
+# body's trade-off analysis — merging breaks either root SOLO invariant
+# or S3 reconnect contract).
+#
+# PR #111 completes the audit PR #110 began —
 # 11 additional tracing sites where the field name was ambiguous
 # (`peer = <u64>`, `leader = <u64>`, `node_id = <peer.node_id>`) all
 # renamed to the disambiguated `peer_node_id` / `leader_node_id` +
@@ -176,13 +196,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "e3b1f890152e044d3da14f20f5ce5b166f631aad" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "92f3323916fcd71f26ee0b0eaacf2a5b9f1cf5ae" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

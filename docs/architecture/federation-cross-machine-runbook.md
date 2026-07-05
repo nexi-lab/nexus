@@ -182,6 +182,37 @@ Windows extra: open a Developer Command Prompt for VS Build Tools first so `cl.e
 
 ### Step 3 — Bootstrap the cluster
 
+#### S3 unified bring-up (nexus-vfs #113, 2026-07-05)
+
+Since nexus-vfs PR #113 the daemon reads `(identity.peers, --peers,
+NEXUS_FEDERATION_ZONES)` at boot and dispatches deterministically:
+
+| # | identity.peers | CLI --peers | NEXUS_FEDERATION_ZONES | Action |
+|---|---|---|---|---|
+| 1 | empty | empty | set | Founder — auto-create SOLO |
+| 2 | empty | empty | unset | Rootless (daemon up, no zone auto-boot) |
+| 3 | empty | non-empty | unset | Fresh joiner — Phase B: no auto-JoinZone, use `join` sidecar for the first join |
+| 4 | non-empty | any | unset | **Returning joiner — auto-rejoins zones from `identity.zones`** (Phase B) |
+| 5 | non-empty | any | set | **FAIL LOUD** — split-brain trap (this node already knows peers) |
+| 6 | empty | non-empty | set | **FAIL LOUD** — ambiguous ("I'm a founder, but here are my peers") |
+
+**Operator implications**
+
+* Rows 5 + 6 are the two both-founder split-brain configurations we
+  hit in the field on 2026-07-04.  The daemon refuses to boot on
+  either, with an operator-actionable hint.  Match your launcher to
+  ROW 1 (founder) or ROW 3/4 (joiner) — never both.
+* Row 4 replaces the two-step "start daemon in restart mode + hope
+  ConfState is there" flow.  A joiner that has completed at least
+  one JoinZone against a federation zone gets an `identity.zones`
+  entry via the ConfChange apply callback; a subsequent boot with a
+  wiped `data_dir` (identity survives at the platform-native path
+  — `%LOCALAPPDATA%\Nexus\identity.json` on Windows, `~/Library/
+  Application Support/Nexus/identity.json` on macOS) auto-rejoins
+  without operator intervention.
+* Voter wipe-rejoin is still on the follow-up list — see
+  `docs/federation-architecture.md` § 6.3.1 in nexus-vfs.
+
 Key contract rules:
 
 * **`--bootstrap-mode` is required when federation is in play** (PR #4028).  Pass `static` for env-driven topology (`NEXUS_FEDERATION_*` carry the cluster shape, used across first boot and subsequent container restarts), `restart` for operator-managed resume where persisted ConfState is the source of truth (no env needed), `dynamic` for runtime-API-driven setups.

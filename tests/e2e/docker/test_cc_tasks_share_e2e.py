@@ -1983,8 +1983,14 @@ class TestIdentityPeerPersistence:
         # The daemon still learns the founder's real node_id at
         # runtime via `learn_peer_address` on the first inbound raft
         # message — it never needs to be encoded in the address book.
-        assert identity.get("schema_version") == 1, (
-            f"identity schema_version mismatch: expected 1, got "
+        #
+        # nexus-vfs #113 (S3 Phase B, 2026-07-05) bumped the schema to
+        # v2 to add a `zones` per-zone membership snapshot populated
+        # by the ConfChange apply callback.  v1 files still load
+        # (backward-compat covered by `v1_file_loads_with_empty_zones_
+        # and_reports_on_disk_version` on the Rust side).
+        assert identity.get("schema_version") == 2, (
+            f"identity schema_version mismatch: expected 2, got "
             f"{identity.get('schema_version')!r}. Full identity: {identity!r}"
         )
         peers = identity.get("peers")

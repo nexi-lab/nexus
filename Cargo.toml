@@ -31,7 +31,7 @@ exclude = ["nexus-fuse"]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
 # Pinned at the nexus-vfs commit that landed PR #113 -- S3 unified bring-up
-# (Phase A + B + C + D) on top of PR #106..#112 (4aad3ff3e2, 2026-07-05):
+# (Phase A + B + C + D + E) on top of PR #106..#112 (d7cc21d69b, 2026-07-05):
 # PR #112 lands two bootstrap-safety fixes:
 #   (1) split-brain guard — run_daemon refuses `bootstrap_static_async` when
 #       `identity.json` already lists persisted peers.  Prevents the
@@ -197,13 +197,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "4aad3ff3e26ed36e2927e8c791ff78c3c3079224" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d7cc21d69bae292fb452166cf6ad72c2db5fea02" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

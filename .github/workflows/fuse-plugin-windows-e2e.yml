@@ -243,18 +243,18 @@ jobs:
           $env:NEXUS_BIND_ADDR = "0.0.0.0:2126"
           $env:NEXUS_NO_TLS = "true"
           $env:NEXUS_DATA_DIR = $datadir
-          $env:NEXUS_BOOTSTRAP_MODE = "dynamic"
 
-          # Spawn daemon as child of THIS pwsh — it lives until we
-          # stop it (or until this pwsh exits at end of step, which
-          # is also when teardown runs).
+          # Phase G (nexus-vfs #118): no --bootstrap-mode; the fresh
+          # empty data_dir + empty peers + no federation env = row 2
+          # (RootlessDynamic).  Runtime API drives zone formation
+          # (which is exactly what this FUSE plugin E2E does via
+          # the plugin's own runtime create_zone calls).
           $proc = Start-Process -FilePath nexusd-cluster `
             -ArgumentList @(
               "--plugin-dir", $plugindir,
               "--bind-addr", "0.0.0.0:2126",
               "--data-dir", $datadir,
-              "--no-tls",
-              "--bootstrap-mode", "dynamic"
+              "--no-tls"
             ) `
             -RedirectStandardOutput nexusd.log `
             -RedirectStandardError nexusd.err.log `

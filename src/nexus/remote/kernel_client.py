@@ -367,7 +367,11 @@ class KernelClient:
         )
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
-        env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")
+        # Phase G (nexus-vfs #118): daemon auto-detects boot from
+        # (data_dir, identity, --peers, NEXUS_FEDERATION_*).  Empty
+        # data_dir + no peers + no federation env => row 2
+        # (RootlessDynamic) — matches the pre-Phase-G intent of
+        # `NEXUS_BOOTSTRAP_MODE=dynamic` (runtime API drives).
 
         # Redirect stdout/stderr to temp files to avoid pipe buffer deadlock.
         # The OS pipe buffer (~65KB) fills up when the Rust binary emits

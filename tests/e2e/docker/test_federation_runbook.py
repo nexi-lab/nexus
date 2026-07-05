@@ -9,11 +9,11 @@ regress silently.
 
 Test methods are CLI-driven where the runbook is CLI-driven.  The
 operator flow goes through ``nexusd-cluster share`` / ``join`` /
-``--bootstrap-mode`` — *not* the legacy ``federation_share`` /
-``federation_join`` RPCs.  The legacy suite exercised only the RPC
-surface, so the CLI path (where PR #4293, nexus-vfs #23, nexus-vfs
-#25 all landed their fixes) was completely uncovered.  This file
-covers it.
+the auto-detected boot decision (Phase G retired ``--bootstrap-mode``)
+— *not* the legacy ``federation_share`` / ``federation_join`` RPCs.
+The legacy suite exercised only the RPC surface, so the CLI path
+(where PR #4293, nexus-vfs #23, nexus-vfs #25 all landed their
+fixes) was completely uncovered.  This file covers it.
 
 There are **no** ``pytest.skip`` calls.  Anything that would
 historically have skipped (method missing, CLI subcommand missing,
@@ -248,8 +248,8 @@ def joined_cluster(topology: RunbookTopology, api_key: str) -> dict:
            `nexusd-cluster join <id>@founder:2126 sharedzone /shared`
            against the joiner's data volume.  Mirrors runbook §3b's
            "daemon down, separate process against persisted data dir".
-      B-4: `docker start` joiner — auto-detect entrypoint picks
-           `--bootstrap-mode restart` from `.node_id` presence.
+      B-4: `docker start` joiner — daemon's Phase G row 0 auto-
+           detects restart-from-disk via `<data_dir>/root/raft/`.
       B-5: gate on the joiner observing sharedzone with a stable leader
            (the SSOT signal that the post-#33 founder bootstrap → joiner
            replay → AddLearnerNode-for-self path landed cleanly).
@@ -888,116 +888,15 @@ class TestRunbookOperatorErgonomics:
             f"regressed.\nstderr={combined}"
         )
 
-    def test_bootstrap_mode_required_when_federation_active(
-        self,
-        topology: RunbookTopology,
-    ) -> None:
-        """Boot daemon WITHOUT `--bootstrap-mode` while federation env
-        vars are present — must fail loud with the documented error.
-
-        Pins the PR #4028 startup validator.  We probe the validator
-        by running the binary briefly inside an existing container
-        with a scratch data-dir and the federation env vars set; the
-        binary must exit non-zero with the documented message before
-        opening any port.
-        """
-        from tests.e2e.docker.runbook_helpers import docker_exec, uid
-
-        suffix = uid()
-        scratch = f"/tmp/validator-{suffix}"
-        result = docker_exec(
-            topology.joiner_container,
-            [
-                "env",
-                f"NEXUS_DATA_DIR={scratch}",
-                "NEXUS_FEDERATION_ZONES=probe",
-                "NEXUS_FEDERATION_MOUNTS=/probe=probe",
-                "NEXUS_NO_TLS=true",
-                "timeout",
-                "5",
-                "nexusd-cluster",
-                "--bind-addr",
-                "0.0.0.0:2199",
-                "--data-dir",
-                scratch,
-                "--no-tls",
-            ],
-            timeout=20,
-        )
-        # We want a fast validator failure, not a timeout (timeout
-        # returns 124).  Either the binary exits non-zero with the
-        # documented message, or the validator was bypassed.
-        combined = result.stdout + result.stderr
-        assert result.rc != 0, (
-            "`nexusd-cluster` without --bootstrap-mode under federation "
-            "env did NOT fail — PR #4028 boot validator was bypassed."
-            f"\nstdout/stderr: {combined[-2000:]}"
-        )
-        assert "bootstrap" in combined.lower() and "mode" in combined.lower(), (
-            "validator error message does not mention bootstrap mode — "
-            "either the wrong error fired or the validator silently "
-            "succeeded.  Expected PR #4028's "
-            "`NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation`."
-            f"\nstdout/stderr: {combined[-2000:]}"
-        )
-
-    def test_dynamic_mode_rejects_existing_data_dir(
-        self,
-        topology: RunbookTopology,
-    ) -> None:
-        """`--bootstrap-mode dynamic` on a data dir that already holds
-        a `root` zone must fail with the documented validator error.
-
-        Pins PR #4028's dynamic-mode state-x-flag rejection.  Dynamic
-        mode is runtime-API driven (cluster shape arrives via
-        `share` / `join` RPCs), so persisted state would conflict
-        with the model.  The validator emits
-        `bootstrap mode = dynamic, but data dir already holds a
-        'root' zone` and the binary exits before opening any port.
-
-        Probes against the joiner's existing /app/data, which has a
-        root zone from the joiner's first-boot static topology — no
-        joined_cluster fixture needed.
-        """
-        from tests.e2e.docker.runbook_helpers import docker_exec
-
-        result = docker_exec(
-            topology.joiner_container,
-            [
-                "timeout",
-                "5",
-                "nexusd-cluster",
-                "--bind-addr",
-                # Numeric port, well above the daemon's 2126 and clear
-                # of any other test probes (test_self_in_peers uses 2199).
-                "0.0.0.0:2197",
-                "--data-dir",
-                "/app/data",
-                "--no-tls",
-                "--bootstrap-mode",
-                "dynamic",
-            ],
-            timeout=20,
-        )
-        import re
-
-        # tracing's structured fields embed ANSI escape codes between
-        # every key/value when stdout is a tty (which `docker exec`
-        # makes it).  Strip them before substring checks.
-        combined = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
-        lowered = combined.lower()
-        assert result.rc != 0, (
-            "`nexusd-cluster --bootstrap-mode dynamic` on a non-empty data dir "
-            "did NOT fail — PR #4028 state-x-flag validator was bypassed."
-            f"\nstdout/stderr: {combined[-2000:]}"
-        )
-        assert "dynamic" in lowered and (
-            "already" in lowered or "fresh" in lowered or "wipe" in lowered
-        ), (
-            "validator error message did not match the documented shape "
-            "(`bootstrap mode = dynamic, but data dir already holds a "
-            f"'root' zone`).\nstdout/stderr: {combined[-2000:]}"
-        )
+    # nexus-vfs PR #118 (S3 Phase G) retired --bootstrap-mode + the
+    # validate_bootstrap_mode fn.  The two tests formerly here
+    # (test_bootstrap_mode_required_when_federation_active +
+    # test_dynamic_mode_rejects_existing_data_dir) pinned a contract
+    # that no longer exists — the daemon auto-detects boot semantics
+    # from (data_dir_has_root, identity, --peers, NEXUS_FEDERATION_*)
+    # via plan_boot_action.  The row-5 / row-6 fail-loud paths that
+    # matter (both-founder split-brain, ambiguous fresh-founder) are
+    # covered by the Rust integration test test_unified_bringup.rs.
 
     def test_self_in_peers_rejected_at_parse(
         self,
@@ -1024,8 +923,6 @@ class TestRunbookOperatorErgonomics:
                 "--data-dir",
                 scratch,
                 "--no-tls",
-                "--bootstrap-mode",
-                "static",
                 "--peers",
                 # NEXUS_HOSTNAME=joiner is set in compose env, so
                 # joiner:2126 is "self" for the parse-time check.

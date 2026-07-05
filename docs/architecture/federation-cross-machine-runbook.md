@@ -243,13 +243,12 @@ NEXUS_ADVERTISE_ADDR=<B_tailscale_ip>:2126 \
     --bind-addr 0.0.0.0:2126 \
     --data-dir /tmp/nexus-fed-data \
     --peers <A_tailscale_ip>:2126 \
-    --no-tls \
-    --bootstrap-mode static
+    --no-tls
 ```
 
 Key contract rules:
 
-* **`--bootstrap-mode` is required when federation is in play** (PR #4028).  Pass `static` for env-driven topology (`NEXUS_FEDERATION_*` carry the cluster shape, used across first boot and subsequent container restarts), `restart` for operator-managed resume where persisted ConfState is the source of truth (no env needed), `dynamic` for runtime-API-driven setups.
+* **No `--bootstrap-mode` flag as of nexus-vfs PR #118 (Phase G).**  The daemon auto-detects boot semantics from `(data_dir_has_root, identity contents, --peers, NEXUS_FEDERATION_*)` via [`plan_boot_action`](../../rust/raft/src/bootstrap.rs).  Row 0 (data_dir has persisted state) → resume from disk; rows 1-6 (fresh data_dir) → matrix-driven dispatch.  Env vars on a restart boot are advisory — persisted ConfState is authoritative.
 * **`--peers` lists only the *other* machines.**  Self-listed peers are rejected at parse (PR #4014).
 * **`--advertise-addr` / `NEXUS_ADVERTISE_ADDR` is the reachable network endpoint advertised to peers** — MUST be set to the Tailscale IP (`<tailscale_ip>:<port>`) for cross-machine federation.  Decoupled from `--hostname` since nexus-vfs PR #101: `--hostname` is now display-only (ZoneManager registry label + TLS cert SANs), the network identity comes from `--advertise-addr`.  Falls back to `{hostname}:{bind_port}` if unset (single-node tests work unchanged), but cross-machine setups MUST pin `--advertise-addr` explicitly — a bare OS hostname does not resolve through the Tailscale overlay and surfaces as "ConfState install timeout" minutes after the initial JoinZone RPC succeeded.  Boot logs a warning when the resolved address looks unreachable (wildcard, loopback with peers, or bare hostname with peers configured).
 * **`NEXUS_HOSTNAME` is the display label** (post-PR #101).  Falls back to OS hostname.  Use whatever you want for log readability; the address peers actually dial comes from `NEXUS_ADVERTISE_ADDR`.
@@ -269,8 +268,7 @@ NEXUS_FEDERATION_MOUNTS=/shared=sharedzone \
 target/release/nexusd-cluster \
   --bind-addr 0.0.0.0:2126 \
   --data-dir /tmp/nexus-fed-data \
-  --no-tls \
-  --bootstrap-mode static
+  --no-tls
 ```
 
 Wait for:
@@ -327,12 +325,11 @@ target/release/nexusd-cluster \
   --bind-addr 0.0.0.0:2126 \
   --data-dir /tmp/nexus-fed-data \
   --no-tls \
-  --bootstrap-mode restart \
   > /tmp/nexus-mac.log 2>&1 &
 sleep 8
 ```
 
-Under `restart`, do **not** pass `--peers`, `--bootstrap-new`, `NEXUS_FEDERATION_ZONES`, or `NEXUS_FEDERATION_MOUNTS` — the persisted ConfState and DT_MOUNT entries are the source of truth.
+The daemon auto-detects "resume from disk" from `<data_dir>/root/raft/` presence (Phase G row 0) and treats any env vars still exported as advisory — persisted ConfState + DT_MOUNT entries are the source of truth on restart.
 
 ### Step 3e — Expose host paths via LocalConnector
 
@@ -371,30 +368,22 @@ Operator flow (mirrors what `dockerfiles/docker-compose.cc-tasks-share.yml` auto
 
 ```bash
 # On A (FOUNDER of sharedzone) — auto-creates the zone SOLO, then waits for
-# joiners to sidecar-join against it.  EXACTLY ONE node runs this recipe.
+# joiners to point at it.  EXACTLY ONE node runs this recipe.
 NEXUS_FEDERATION_ZONES=sharedzone \
 NEXUS_FEDERATION_MOUNTS=/shared=sharedzone \
-nexusd-cluster --bootstrap-mode static \
+nexusd-cluster \
   --plugin-dir ./plugins \
   --mount-driver 'local-connector:sharedzone:/shared/cc-tasks/A:{"local_root":"/home/me/.claude/tasks"}' \
   ...
 
-# On B (JOINER of A's sharedzone) — does NOT set NEXUS_FEDERATION_ZONES /
-# NEXUS_FEDERATION_MOUNTS (those trigger auto-create on B).  Sequence is:
+# On B (JOINER of A's sharedzone) — nexus-vfs PR #115 (Phase D) means
+# B just needs --peers, no offline sidecar.  DiscoverZones RPC pulls
+# A's federation mount table; B auto-JoinZones sharedzone.
 #
-# 1. Offline sidecar join (daemon stopped) — seeds sharedzone's ConfState + log
-#    into B's data dir + persists A's addr into identity.json.
-#
-#    Bare `<HOST:PORT>` is the ONLY accepted peer form post nexus-vfs PR #109
-#    (the `<node_id>@<host:port>` shape was retired at the CLI boundary).
-#    Bare `join` defaults to `--as voter` (symmetric peer); pass `--as learner`
-#    for owner-pattern wipe-rejoin safety instead.
-nexusd-cluster join <A_host:port> sharedzone /shared \
-  --data-dir ./data --hostname B --no-tls
-
-# 2. Start B's main daemon — RESTART mode picks up sharedzone from disk;
-#    --mount-driver runs on the resumed zone; no auto-create anywhere.
-nexusd-cluster --bootstrap-mode restart \
+# Subsequent boots (data_dir persisted): Phase G row 0 -- daemon
+# resumes from disk regardless of env vars.
+nexusd-cluster \
+  --peers <A_host:port> \
   --plugin-dir ./plugins \
   --mount-driver 'local-connector:sharedzone:/shared/cc-tasks/B:{"local_root":"/home/me/.claude/tasks"}' \
   ...
@@ -619,15 +608,20 @@ It walks every zone subdirectory, reads ConfState + HardState + log indices dire
 | Clash Verge blocks Tailscale | TUN mode intercepts coordination traffic | Add Headscale IP + `100.64.0.0/10` to `route-exclude-address` in the *active profile's* merge file (not just the global one) |
 | `nc -zv` to peer succeeds momentarily, then grpcurl times out | Tailscale dropped between the two; or Clash proxy remnant (`127.0.0.1:7897` enabled with nothing listening) intercepting HTTP/2 | Restart Tailscale; clean Clash proxy state (disable system proxy + clear DNS) |
 
-### Bootstrap mode (PR #4028)
+### Bootstrap
+
+nexus-vfs PR #118 (Phase G) retired the operator-declared
+`--bootstrap-mode` flag.  The daemon auto-detects boot semantics
+from `(data_dir_has_root, identity contents, --peers,
+NEXUS_FEDERATION_*)` via the [`plan_boot_action`](../../../nexus-vfs/rust/raft/src/bootstrap.rs) matrix.  Nothing to pass at the CLI beyond
+what the deployment recipe actually declares (peers if joining,
+federation env if founding).
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation` | Missing `--bootstrap-mode` flag | Pass `static`, `restart`, or `dynamic` |
-| `bootstrap mode = dynamic, but data dir already holds a 'root' zone` | Dynamic mode requires a fresh data dir; persisted state is reserved for static or restart | Pass `--bootstrap-mode restart` to resume persisted state, or wipe the data dir to start over |
-| `bootstrap mode = dynamic forbids NEXUS_BOOTSTRAP_NEW / NEXUS_PEERS` | Dynamic mode is runtime-API driven; cluster shape arrives via `share` / `join` RPCs, not env | Drop the env/flag, or switch to `--bootstrap-mode static` |
-| `bootstrap mode = restart, but data dir is empty` | First-time boot with `restart` | Use `static` for the first boot |
-| `bootstrap mode = restart forbids NEXUS_PEERS / --peers` | Passing peers under `restart` | Drop the flag — persisted ConfState carries the address book |
+| `split-brain guard: NEXUS_FEDERATION_ZONES is set ... but identity.json already lists peers` | Row 5 misconfig: this node has persisted peers AND you set founder env on a fresh data_dir | Either (a) FOUNDER — `rm IDENTITY_DIR/identity.json` then re-run, or (b) JOINER — unset `NEXUS_FEDERATION_*` and let identity.zones auto-rejoin |
+| `nexusd-cluster boot refused (ambiguous_fresh_founder_with_peers)` | Row 6 misconfig: `--peers` + `NEXUS_FEDERATION_ZONES` both set with empty identity | Choose one: FOUNDER (drop --peers) or JOINER (drop the ZONES env) |
+| Daemon skipped root bootstrap when you expected it to auto-create | Row 2 (RootlessDynamic) — no peers, no zones, no identity | Set `NEXUS_FEDERATION_ZONES=<zone>` to declare founder intent, or pass `--peers <addr>` to declare joiner intent |
 
 ### Raft
 
@@ -703,8 +697,8 @@ The bug-class history matters here — the same shape regressed twice during the
   * pre-nexus-vfs-#23 nested-tokio panic on the join's mount path
   * pre-nexus-vfs-#25 founder self-forward hairpin
 * nexus `tests/e2e/docker/test_federation_runbook.py::TestFounderBootstrap` — convergence budget + zero `Forward to leader failed leader=` warnings.
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestRestartReplay` — `--bootstrap-mode restart` replays persisted `DT_MOUNT` entries; pre-existing files stay readable post-reboot.
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestRestartReplay` — restart-from-disk (Phase G row 0) replays persisted `DT_MOUNT` entries; pre-existing files stay readable post-reboot.
 * nexus `tests/e2e/docker/test_federation_runbook.py::TestWitnessQuorumHA` — 3-voter quorum survives founder loss; ConfState recovers to 3 voters on restart.
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestRunbookOperatorErgonomics` — `share --mount-at`, `--bootstrap-mode` validator, `--peers <self>` rejection.
+* nexus `tests/e2e/docker/test_federation_runbook.py::TestRunbookOperatorErgonomics` — `share --mount-at`, Phase A/G boot-decision matrix (split-brain guard, ambiguous fresh-founder guard), `--peers <self>` rejection.
 
 The Step-4 byte-exact L1 read across two real machines (Mac↔Win over Tailscale) remains a manual gate for the Tailscale-specific surface; the CI runbook tests cover the cross-process semantics in-network, but do not exercise the Tailscale path itself.

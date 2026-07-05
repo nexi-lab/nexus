@@ -133,8 +133,6 @@ def cluster_grpc(tmp_path: Path) -> Iterator[str]:
                     candidate_addr,
                     "--data-dir",
                     str(data_dir),
-                    "--bootstrap-mode",
-                    "static",
                 ],
                 # Capture the daemon's own logs into cluster.log so a boot
                 # failure is diagnosable (the bin crate target is

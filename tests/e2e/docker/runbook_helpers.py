@@ -721,8 +721,8 @@ def run_nexusd_cluster_join(
       1. `docker_stop(target_container)` — releases the redb lock.
       2. `run_nexusd_cluster_join(...)` — this function, runs join.
       3. `docker_start(target_container)` — daemon comes back up,
-         entrypoint auto-detects bootstrap-mode=restart from on-disk
-         state and replays DT_MOUNT via apply-cb (runbook §3c).
+         Phase G row 0 auto-resumes from on-disk state and replays
+         DT_MOUNT via apply-cb (runbook §3c).
 
     ``as_role`` is the operator-chosen membership role passed to
     ``nexusd-cluster join --as <role>``.  Default is ``"voter"`` to

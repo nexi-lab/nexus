@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=3c7eeb6021d40192c5a8f538b8097ecb0f374304#3c7eeb6021d40192c5a8f538b8097ecb0f374304"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=79b367d19ce91b00801b8854ff8463683791c03f#79b367d19ce91b00801b8854ff8463683791c03f"
 dependencies = [
  "ahash",
  "base64",
@@ -289,7 +289,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -550,7 +550,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=3c7eeb6021d40192c5a8f538b8097ecb0f374304#3c7eeb6021d40192c5a8f538b8097ecb0f374304"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=79b367d19ce91b00801b8854ff8463683791c03f#79b367d19ce91b00801b8854ff8463683791c03f"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1259,7 +1259,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -1315,15 +1315,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,7 +1334,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=3c7eeb6021d40192c5a8f538b8097ecb0f374304#3c7eeb6021d40192c5a8f538b8097ecb0f374304"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=79b367d19ce91b00801b8854ff8463683791c03f#79b367d19ce91b00801b8854ff8463683791c03f"
 dependencies = [
  "ahash",
  "base64",
@@ -1394,7 +1385,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=3c7eeb6021d40192c5a8f538b8097ecb0f374304#3c7eeb6021d40192c5a8f538b8097ecb0f374304"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=79b367d19ce91b00801b8854ff8463683791c03f#79b367d19ce91b00801b8854ff8463683791c03f"
 dependencies = [
  "ahash",
  "base64",
@@ -1589,7 +1580,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=3c7eeb6021d40192c5a8f538b8097ecb0f374304#3c7eeb6021d40192c5a8f538b8097ecb0f374304"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=79b367d19ce91b00801b8854ff8463683791c03f#79b367d19ce91b00801b8854ff8463683791c03f"
 
 [[package]]
 name = "nexus-vault"
@@ -1896,7 +1887,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools",
  "log",
  "multimap",
  "petgraph",
@@ -1917,7 +1908,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn",
@@ -3042,7 +3033,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
  "windows-collections",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-future",
  "windows-link 0.1.3",
  "windows-numerics",
@@ -3054,7 +3045,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -3066,21 +3057,8 @@ dependencies = [
  "windows-implement",
  "windows-interface",
  "windows-link 0.1.3",
- "windows-result 0.3.4",
- "windows-strings 0.4.2",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
+ "windows-result",
+ "windows-strings",
 ]
 
 [[package]]
@@ -3089,7 +3067,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
  "windows-threading",
 ]
@@ -3134,7 +3112,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
 ]
 
@@ -3148,30 +3126,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-result"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
-dependencies = [
- "windows-link 0.2.1",
-]
-
-[[package]]
 name = "windows-strings"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-strings"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
-dependencies = [
- "windows-link 0.2.1",
 ]
 
 [[package]]

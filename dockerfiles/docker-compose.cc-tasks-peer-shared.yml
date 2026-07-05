@@ -33,6 +33,9 @@ x-fuse-runtime: &fuse-runtime
   security_opt:
     - apparmor:unconfined
 
+# S3 Phase G: `--bootstrap-mode` retired; the daemon auto-detects
+# boot semantics via `plan_boot_action`.  See the cc-tasks-share
+# compose's entrypoint anchor docstring for the full contract.
 x-bootstrap-entrypoint: &bootstrap-entrypoint
   entrypoint:
     - /bin/bash
@@ -40,19 +43,12 @@ x-bootstrap-entrypoint: &bootstrap-entrypoint
     - |
       set -e
       DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
-      if [ -f "$$DATA_DIR/.node_id" ]; then
-        MODE=restart
-        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
-      else
-        MODE=static
-      fi
       exec nexusd-cluster \
         --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
         --data-dir "$$DATA_DIR" \
         --no-tls \
         --plugin-dir /plugins \
-        --mount-driver "$$NEXUS_MOUNT_DRIVER" \
-        --bootstrap-mode "$$MODE"
+        --mount-driver "$$NEXUS_MOUNT_DRIVER"
   command: []
 
 services:

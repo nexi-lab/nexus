@@ -72,10 +72,13 @@ x-fuse-runtime: &fuse-runtime
   security_opt:
     - apparmor:unconfined
 
-# Auto-detect bootstrap mode shared via YAML anchor — same pattern the
-# federation-runbook compose uses.  First boot reads the static-only
-# env (FEDERATION_ZONES / MOUNTS), persists ConfState, then restart
-# strips them so PR #4028's mode-x-env validator passes on next boot.
+# Shared entrypoint anchor.  S3 Phase G collapsed the boot-mode
+# decision into `nexus_raft::bootstrap::plan_boot_action` — the daemon
+# auto-detects restart (via `<data_dir>/root/raft/` presence),
+# fresh founder (via `NEXUS_FEDERATION_ZONES` set), fresh joiner
+# (via `--peers`), or wipe-recovery (via identity.zones populated).
+# No operator-declared `--bootstrap-mode` needed; leftover env vars
+# are advisory on restart (persisted ConfState is authoritative).
 x-bootstrap-entrypoint: &bootstrap-entrypoint
   entrypoint:
     - /bin/bash
@@ -83,19 +86,12 @@ x-bootstrap-entrypoint: &bootstrap-entrypoint
     - |
       set -e
       DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
-      if [ -f "$$DATA_DIR/.node_id" ]; then
-        MODE=restart
-        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
-      else
-        MODE=static
-      fi
       exec nexusd-cluster \
         --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
         --data-dir "$$DATA_DIR" \
         --no-tls \
         --plugin-dir /plugins \
-        --mount-driver "$$NEXUS_MOUNT_DRIVER" \
-        --bootstrap-mode "$$MODE"
+        --mount-driver "$$NEXUS_MOUNT_DRIVER"
   command: []
 
 services:

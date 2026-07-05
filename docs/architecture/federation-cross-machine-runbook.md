@@ -182,16 +182,20 @@ Windows extra: open a Developer Command Prompt for VS Build Tools first so `cl.e
 
 ### Step 3 — Bootstrap the cluster
 
-#### S3 unified bring-up (nexus-vfs #113, 2026-07-05)
+#### S3 unified bring-up (nexus-vfs #113 + #114 + #115, 2026-07-05)
 
 Since nexus-vfs PR #113 the daemon reads `(identity.peers, --peers,
-NEXUS_FEDERATION_ZONES)` at boot and dispatches deterministically:
+NEXUS_FEDERATION_ZONES)` at boot and dispatches deterministically.
+PR #115 (Phase D) closes the row-3 gap: the fresh joiner now
+auto-discovers the founder's federation zones via a `DiscoverZones`
+RPC and auto-JoinZones each one, so an initial join no longer
+needs the offline `nexusd-cluster join` sidecar.
 
 | # | identity.peers | CLI --peers | NEXUS_FEDERATION_ZONES | Action |
 |---|---|---|---|---|
 | 1 | empty | empty | set | Founder — auto-create SOLO |
 | 2 | empty | empty | unset | Rootless (daemon up, no zone auto-boot) |
-| 3 | empty | non-empty | unset | Fresh joiner — Phase B: no auto-JoinZone, use `join` sidecar for the first join |
+| 3 | empty | non-empty | unset | **Fresh joiner — DiscoverZones + auto-JoinZone** (Phase D) |
 | 4 | non-empty | any | unset | **Returning joiner — auto-rejoins zones from `identity.zones`** (Phase B) |
 | 5 | non-empty | any | set | **FAIL LOUD** — split-brain trap (this node already knows peers) |
 | 6 | empty | non-empty | set | **FAIL LOUD** — ambiguous ("I'm a founder, but here are my peers") |
@@ -202,6 +206,14 @@ NEXUS_FEDERATION_ZONES)` at boot and dispatches deterministically:
   hit in the field on 2026-07-04.  The daemon refuses to boot on
   either, with an operator-actionable hint.  Match your launcher to
   ROW 1 (founder) or ROW 3/4 (joiner) — never both.
+* **Row 3 auto-discovery** — fresh joiner boots with only
+  `--peers <founder>` (no `NEXUS_FEDERATION_ZONES`, no
+  `NEXUS_FEDERATION_MOUNTS`).  It calls DiscoverZones against each
+  peer, unions the responder-reported `(mount_path, zone_id)` pairs,
+  and dispatches per-zone `bootstrap_or_join_zone`.  The offline
+  `nexusd-cluster join` sidecar is no longer required for the
+  initial join — it is retained as an operator escape hatch for
+  runtime-added zones (post-cluster-formation `share`).
 * Row 4 replaces the two-step "start daemon in restart mode + hope
   ConfState is there" flow.  A joiner that has completed at least
   one JoinZone against a federation zone gets an `identity.zones`
@@ -210,8 +222,30 @@ NEXUS_FEDERATION_ZONES)` at boot and dispatches deterministically:
   — `%LOCALAPPDATA%\Nexus\identity.json` on Windows, `~/Library/
   Application Support/Nexus/identity.json` on macOS) auto-rejoins
   without operator intervention.
-* Voter wipe-rejoin is still on the follow-up list — see
-  `docs/federation-architecture.md` § 6.3.1 in nexus-vfs.
+* **RemoveVoter (PR #114)** — `nexusd-cluster remove-voter <peer>
+  <zone_id> --target <old_node_id>` prunes a genuinely-dead voter
+  or learner from a zone's ConfState.  Straight `RemoveNode`
+  ConfChange through raft-rs's public API; follower redirects
+  auto-resolve to the leader.  Not required to unblock wipe-rejoin
+  under rotate-on-wipe (a wiped voter's fresh node_id joins fine as
+  a new voter), but useful for cluster hygiene after host
+  destruction or SSD-swap-without-transfer.
+* Same-node_id-across-wipe recovery is on the follow-up list — see
+  `docs/federation-architecture.md` § 6.3.1 in nexus-vfs for the
+  three-part protocol design.
+
+**Row 3 concrete command:**
+
+```bash
+# Joiner — one command, no sidecar:
+NEXUS_ADVERTISE_ADDR=<B_tailscale_ip>:2126 \
+  target/release/nexusd-cluster \
+    --bind-addr 0.0.0.0:2126 \
+    --data-dir /tmp/nexus-fed-data \
+    --peers <A_tailscale_ip>:2126 \
+    --no-tls \
+    --bootstrap-mode static
+```
 
 Key contract rules:
 

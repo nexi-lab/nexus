@@ -716,12 +716,12 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           DATA_DIR=$(mktemp -d)
-          # Smoke uses static + empty peers → single-node default
-          # (creates own root 1-voter zone).  --bootstrap-mode is
-          # required since BootstrapMode validator landed.
+          # Smoke: empty peers + no federation env + empty data_dir
+          # → Phase G row 2 (RootlessDynamic).  Daemon comes up
+          # rootless; that is exactly what this smoke exercises
+          # (gRPC + tracing + tokio runtime start-and-shutdown).
           RUST_LOG=info nexusd-cluster \
-            --no-tls --data-dir "$DATA_DIR" \
-            --bootstrap-mode static &
+            --no-tls --data-dir "$DATA_DIR" &
           PID=$!
           echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot..."
 

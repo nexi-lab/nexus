@@ -175,22 +175,21 @@ jobs:
           NEXUS_FUSE_VFS_ROOT: "/"
           NEXUS_BIND_ADDR: "0.0.0.0:2126"
           NEXUS_NO_TLS: "true"
-          NEXUS_BOOTSTRAP_MODE: "dynamic"
         run: |
           set -euo pipefail
           DATADIR="$HOME/.nexus/data"
           PLUGINDIR="$HOME/.nexus/plugins"
           mkdir -p "$DATADIR"
 
-          # Spawn daemon in background.  Tee stderr so startup progress
-          # is visible in the CI log during the wait loop (nexusd-cluster
-          # logs to stderr via tracing).
+          # Phase G (nexus-vfs #118): no --bootstrap-mode; empty
+          # data_dir + no peers + no federation env => row 2
+          # (RootlessDynamic).  Runtime API drives zone formation
+          # via the plugin.
           nexusd-cluster \
             --plugin-dir "$PLUGINDIR" \
             --bind-addr "0.0.0.0:2126" \
             --data-dir "$DATADIR" \
             --no-tls \
-            --bootstrap-mode dynamic \
             > nexusd.log 2> >(tee nexusd.err.log) &
           DAEMON_PID=$!
           echo "nexusd-cluster started, pid=$DAEMON_PID"

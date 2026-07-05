@@ -40,11 +40,10 @@
 #     second start the data dir is no longer empty, so we must switch
 #     to `restart` — without operator intervention.
 #
-# The script derives the bootstrap mode from on-disk state, which IS
-# the runbook's mental model: "did I bootstrap before?".  Under
-# `restart` it also unsets the static-only env vars (NEXUS_FEDERATION_*,
-# NEXUS_PEERS, NEXUS_BOOTSTRAP_NEW) so the validator's mode-x-env
-# matrix check passes.
+# S3 Phase G (nexus-vfs #118): the daemon auto-detects boot semantics
+# via `plan_boot_action`; no operator declaration needed.  Row 0
+# (data_dir has persisted state) → resume from disk regardless of
+# env vars, so leftover NEXUS_FEDERATION_* on restart is harmless.
 x-runbook-entrypoint: &runbook-entrypoint
   entrypoint:
     - /bin/bash
@@ -52,17 +51,10 @@ x-runbook-entrypoint: &runbook-entrypoint
     - |
       set -e
       DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
-      if [ -f "$$DATA_DIR/.node_id" ]; then
-        MODE=restart
-        unset NEXUS_FEDERATION_ZONES NEXUS_FEDERATION_MOUNTS NEXUS_PEERS NEXUS_BOOTSTRAP_NEW
-      else
-        MODE=static
-      fi
       exec nexusd-cluster \
         --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
         --data-dir "$$DATA_DIR" \
-        --no-tls \
-        --bootstrap-mode "$$MODE"
+        --no-tls
   command: []
 
 services:
@@ -130,7 +122,6 @@ services:
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_DATA_DIR: /home/nexus/data
       NEXUS_NO_TLS: "true"
-      NEXUS_BOOTSTRAP_MODE: static
       # Witness self-detects from NEXUS_PEERS (its own boot path keeps
       # the legacy contract — see bin/witness.rs in nexus-vfs).
       NEXUS_PEERS: founder:2126,joiner:2126,witness:2126

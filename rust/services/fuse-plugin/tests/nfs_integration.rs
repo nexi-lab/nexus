@@ -528,6 +528,50 @@ async fn read_past_eof_returns_empty() {
     assert!(eof);
 }
 
+/// When the VFS root path doesn't exist yet (mount-driver loads after
+/// fuse plugin), getattr on root must return a synthetic directory
+/// instead of NOENT — otherwise the NFS MOUNT RPC fails and mount_nfs
+/// errors with "No such file or directory".
+#[tokio::test]
+async fn getattr_root_synthetic_when_vfs_path_missing() {
+    let mock = new_mock_box();
+    let handle = mock_kernel_handle(&mock);
+    // VFS root "/not/yet/mounted" doesn't exist in the mock kernel.
+    let nfs = NexusNfs::new(handle, "/not/yet/mounted".to_string());
+
+    // Root getattr must succeed with a synthetic directory.
+    let attr = nfs.getattr(nfs.root_dir()).await.unwrap();
+    assert!(is_ftype(attr.ftype, ftype3::NF3DIR));
+    assert_eq!(attr.fileid, 1);
+    assert_eq!(attr.size, 0);
+}
+
+/// readdir on root must return empty (not error) when VFS root isn't
+/// mounted yet.
+#[tokio::test]
+async fn readdir_root_empty_when_vfs_path_missing() {
+    let mock = new_mock_box();
+    let handle = mock_kernel_handle(&mock);
+    let nfs = NexusNfs::new(handle, "/not/yet/mounted".to_string());
+
+    let result = nfs.readdir(nfs.root_dir(), 0, 100).await.unwrap();
+    assert!(result.entries.is_empty());
+    assert!(result.end);
+}
+
+/// Non-root inode getattr must still return NOENT for missing paths
+/// (only root gets the synthetic fallback).
+#[tokio::test]
+async fn getattr_nonroot_still_returns_noent_for_missing() {
+    let mock = new_mock_box();
+    let handle = mock_kernel_handle(&mock);
+    let nfs = NexusNfs::new(handle, "/not/yet/mounted".to_string());
+
+    // Inode 999 doesn't exist anywhere.
+    let err = nfs.getattr(999).await.unwrap_err();
+    assert!(is_nfs_err(err, nfsstat3::NFS3ERR_NOENT));
+}
+
 /// Workflow test: full session lifecycle mirroring the pytest E2E.
 /// mkdir → write N files → readdir → read each → unlink each → rmdir.
 #[tokio::test]

@@ -102,6 +102,33 @@ impl NexusNfs {
         })
     }
 
+    /// Synthetic directory attr for the root when the VFS path isn't
+    /// mounted yet.  The NFS MOUNT RPC calls `getattr(root)` — if this
+    /// returns NOENT the mount fails.  Returning a minimal empty dir
+    /// lets the mount succeed; real content appears once the
+    /// mount-driver wires the path.
+    fn synthetic_dir_attr(&self, id: fileid3) -> fattr3 {
+        let now = nfs_now();
+        fattr3 {
+            ftype: ftype3::NF3DIR,
+            mode: 0o755,
+            nlink: 2,
+            uid: unsafe { libc::getuid() },
+            gid: unsafe { libc::getgid() },
+            size: 0,
+            used: 0,
+            rdev: specdata3 {
+                specdata1: 0,
+                specdata2: 0,
+            },
+            fsid: 0,
+            fileid: id,
+            atime: now,
+            mtime: now,
+            ctime: now,
+        }
+    }
+
     /// Stat a path and return its fattr3.
     fn stat_fattr(&self, id: fileid3, path: &str) -> Result<fattr3, nfsstat3> {
         let json =
@@ -141,7 +168,17 @@ impl NFSFileSystem for NexusNfs {
 
     async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3> {
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        self.stat_fattr(id, &path)
+        match self.stat_fattr(id, &path) {
+            Ok(attr) => Ok(attr),
+            Err(_) if id == NFS_ROOT_ID => {
+                // VFS root path may not exist yet (mount-driver loads
+                // after the fuse plugin).  Return a synthetic empty
+                // directory so the NFS MOUNT RPC succeeds; real
+                // content appears once the mount-driver wires the path.
+                Ok(self.synthetic_dir_attr(id))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn setattr(&self, _id: fileid3, _setattr: sattr3) -> Result<fattr3, nfsstat3> {
@@ -258,8 +295,17 @@ impl NFSFileSystem for NexusNfs {
         max_entries: usize,
     ) -> Result<ReadDirResult, nfsstat3> {
         let parent_path = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let json = kernel_callbacks::sys_readdir(&self.kernel, &parent_path)
-            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        let json = match kernel_callbacks::sys_readdir(&self.kernel, &parent_path) {
+            Ok(j) => j,
+            Err(_) if dirid == NFS_ROOT_ID => {
+                // VFS root not mounted yet — return empty listing.
+                return Ok(ReadDirResult {
+                    entries: vec![],
+                    end: true,
+                });
+            }
+            Err(_) => return Err(nfsstat3::NFS3ERR_IO),
+        };
         let entries = parse_readdir(&json);
 
         let mut result_entries = Vec::new();

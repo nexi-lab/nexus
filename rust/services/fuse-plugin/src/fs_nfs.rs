@@ -18,7 +18,7 @@
 //! runtime spawned by `spawn_nfs_mount`.  All NFS ops translate to the
 //! same `kernel_callbacks::sys_*` wrappers that fuser uses.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -38,11 +38,17 @@ use crate::path_index::{join_path, PathIndex};
 /// identically regardless of which adapter creates it.
 const NFS_ROOT_ID: fileid3 = 1;
 
+/// Plugin ABI error code for "path not found" — mirrors
+/// `PluginResult::NotFound` on the kernel side.
+const PLUGIN_RESULT_NOT_FOUND: i32 = -1;
+
 /// NFS filesystem backed by Nexus kernel syscalls.
 pub struct NexusNfs {
     kernel: KernelHandle,
     paths: Mutex<PathIndex>,
     next_inode: AtomicU64,
+    /// Set once after the first synthetic-root warning to avoid log spam.
+    warned_synthetic: AtomicBool,
 }
 
 // SAFETY: KernelHandle is a bag of function pointers + an opaque ptr
@@ -59,6 +65,7 @@ impl NexusNfs {
             kernel,
             paths: Mutex::new(PathIndex::with_root(NFS_ROOT_ID, vfs_root)),
             next_inode: AtomicU64::new(NFS_ROOT_ID + 1),
+            warned_synthetic: AtomicBool::new(false),
         }
     }
 
@@ -168,16 +175,27 @@ impl NFSFileSystem for NexusNfs {
 
     async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3> {
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        match self.stat_fattr(id, &path) {
-            Ok(attr) => Ok(attr),
-            Err(_) if id == NFS_ROOT_ID => {
-                // VFS root path may not exist yet (mount-driver loads
+        match kernel_callbacks::sys_stat(&self.kernel, &path) {
+            Ok(json) => self.make_fattr(id, &json),
+            Err(PLUGIN_RESULT_NOT_FOUND) if id == NFS_ROOT_ID => {
+                // VFS root path not mounted yet (mount-driver loads
                 // after the fuse plugin).  Return a synthetic empty
                 // directory so the NFS MOUNT RPC succeeds; real
                 // content appears once the mount-driver wires the path.
+                if !self.warned_synthetic.swap(true, Ordering::Relaxed) {
+                    eprintln!(
+                        "[nexus-fuse-plugin] VFS root not found, serving synthetic empty dir \
+                         (mount-driver may not have loaded yet)"
+                    );
+                    tracing::warn!(
+                        target: "nexus::fuse",
+                        vfs_root = %path,
+                        "NFS root getattr returning synthetic dir — VFS path not yet mounted"
+                    );
+                }
                 Ok(self.synthetic_dir_attr(id))
             }
-            Err(e) => Err(e),
+            Err(_) => Err(nfsstat3::NFS3ERR_NOENT),
         }
     }
 
@@ -297,7 +315,7 @@ impl NFSFileSystem for NexusNfs {
         let parent_path = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let json = match kernel_callbacks::sys_readdir(&self.kernel, &parent_path) {
             Ok(j) => j,
-            Err(_) if dirid == NFS_ROOT_ID => {
+            Err(PLUGIN_RESULT_NOT_FOUND) if dirid == NFS_ROOT_ID => {
                 // VFS root not mounted yet — return empty listing.
                 return Ok(ReadDirResult {
                     entries: vec![],

@@ -393,9 +393,7 @@ fn cleanup_stale_nfs_mount(mount_point: &str) {
                         let stale_path = &after_on[..paren_idx];
                         // Don't re-unmount what we already did above
                         if stale_path != mount_point {
-                            eprintln!(
-                                "[nexus-fuse-plugin] cleaning stale NFS mount: {stale_path}"
-                            );
+                            eprintln!("[nexus-fuse-plugin] cleaning stale NFS mount: {stale_path}");
                             let _ = std::process::Command::new("/sbin/umount")
                                 .args(["-f", stale_path])
                                 .output();

@@ -212,7 +212,10 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     let vfs_root =
                         std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
                     try_nfs_fallback(
-                        &plugin, _kernel, &mount_point, &vfs_root,
+                        &plugin,
+                        _kernel,
+                        &mount_point,
+                        &vfs_root,
                         "FUSE-T not installed",
                     );
                     if plugin.nfs_handle.lock().unwrap().is_none() {
@@ -249,7 +252,10 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                         if !is_mount_live(&mount_point) {
                             drop(session);
                             try_nfs_fallback(
-                                &plugin, _kernel, &mount_point, &vfs_root,
+                                &plugin,
+                                _kernel,
+                                &mount_point,
+                                &vfs_root,
                                 "fuser returned Ok but mount is not live (FUSE-T silent failure)",
                             );
                             return Box::new(plugin);
@@ -267,7 +273,10 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     #[cfg(target_os = "macos")]
                     {
                         try_nfs_fallback(
-                            &plugin, _kernel, &mount_point, &vfs_root,
+                            &plugin,
+                            _kernel,
+                            &mount_point,
+                            &vfs_root,
                             &format!("fuser mount failed ({e})"),
                         );
                     }

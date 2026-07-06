@@ -123,6 +123,62 @@ impl FusePlugin {
     }
 }
 
+/// Try NFS localhost fallback — single implementation shared by all
+/// macOS fallback paths (FUSE-T missing, fuser error, fuser silent fail).
+#[cfg(target_os = "macos")]
+fn try_nfs_fallback(
+    plugin: &FusePlugin,
+    kernel: &KernelHandle,
+    mount_point: &str,
+    vfs_root: &str,
+    reason: &str,
+) {
+    eprintln!("[nexus-fuse-plugin] {reason}, falling back to NFS localhost");
+    tracing::warn!(
+        target: "nexus::fuse",
+        mount_point = %mount_point,
+        reason = %reason,
+        "attempting NFS localhost fallback"
+    );
+    let kernel_nfs = unsafe { kernel_handle_clone(kernel) };
+    let nfs_fs = fs_nfs::NexusNfs::new(kernel_nfs, vfs_root.to_string());
+    match fs_nfs::spawn_nfs_mount(nfs_fs, mount_point) {
+        Ok(handle) => {
+            eprintln!(
+                "[nexus-fuse-plugin] NFS mount OK at {mount_point} (port {})",
+                handle.port()
+            );
+            tracing::info!(
+                target: "nexus::fuse",
+                mount_point = %mount_point,
+                port = handle.port(),
+                "NFS localhost fallback mounted"
+            );
+            *plugin.nfs_handle.lock().unwrap() = Some(handle);
+        }
+        Err(nfs_err) => {
+            eprintln!("[nexus-fuse-plugin] NFS fallback also failed: {nfs_err}");
+            tracing::error!(
+                target: "nexus::fuse",
+                mount_point = %mount_point,
+                nfs_error = %nfs_err,
+                "NFS fallback failed"
+            );
+        }
+    }
+}
+
+/// Check if a mount point has a live filesystem attached (macOS).
+/// Returns false if the mount point doesn't appear in `mount` output,
+/// which means FUSE-T returned Ok but silently disconnected.
+#[cfg(target_os = "macos")]
+fn is_mount_live(mount_point: &str) -> bool {
+    std::process::Command::new("/sbin/mount")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(mount_point))
+        .unwrap_or(false)
+}
+
 /// Plugin-lifecycle `create`: read operator config from env, build the
 /// FUSE filesystem instance, and spawn the event loop in a background
 /// thread.  Returns the boxed `FusePlugin` even when the mount fails —
@@ -153,44 +209,17 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             {
                 use fuse_t_detect::{is_fuse_t_installed, DetectionResult};
                 if matches!(is_fuse_t_installed(), DetectionResult::NotFound) {
-                    eprintln!(
-                        "[nexus-fuse-plugin] FUSE-T not installed; trying NFS localhost fallback"
-                    );
-                    tracing::warn!(
-                        target: "nexus::fuse",
-                        mount_point = %mount_point,
-                        "FUSE-T not installed; attempting NFS localhost fallback"
-                    );
                     let vfs_root =
                         std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
-                    let kernel_nfs = unsafe { kernel_handle_clone(_kernel) };
-                    let nfs_fs = fs_nfs::NexusNfs::new(kernel_nfs, vfs_root);
-                    match fs_nfs::spawn_nfs_mount(nfs_fs, &mount_point) {
-                        Ok(handle) => {
-                            eprintln!(
-                                "[nexus-fuse-plugin] NFS mount OK at {mount_point} (port {})",
-                                handle.port()
-                            );
-                            tracing::info!(
-                                target: "nexus::fuse",
-                                mount_point = %mount_point,
-                                port = handle.port(),
-                                "NFS localhost fallback mounted (FUSE-T not installed)"
-                            );
-                            *plugin.nfs_handle.lock().unwrap() = Some(handle);
-                        }
-                        Err(nfs_err) => {
-                            eprintln!(
-                                "[nexus-fuse-plugin] NFS fallback failed: {nfs_err}; status=fuse-t-missing"
-                            );
-                            tracing::error!(
-                                target: "nexus::fuse",
-                                mount_point = %mount_point,
-                                error = %nfs_err,
-                                "NFS fallback failed; falling back to prereq_missing"
-                            );
-                            *plugin.prereq_missing.lock().unwrap() = Some("fuse-t");
-                        }
+                    try_nfs_fallback(
+                        &plugin,
+                        _kernel,
+                        &mount_point,
+                        &vfs_root,
+                        "FUSE-T not installed",
+                    );
+                    if plugin.nfs_handle.lock().unwrap().is_none() {
+                        *plugin.prereq_missing.lock().unwrap() = Some("fuse-t");
                     }
                     return Box::new(plugin);
                 }
@@ -214,13 +243,24 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             let mount_config = fuser::Config::default();
             match fuser::spawn_mount2(fs, &mount_point, &mount_config) {
                 Ok(session) => {
-                    // eprintln complements tracing: a dlopen'd cdylib
-                    // owns a separate tracing global, so the plugin's
-                    // `tracing::info!` calls don't reach the cluster's
-                    // subscriber.  stderr lands in the daemon's stderr
-                    // regardless, which is what compose / `docker logs`
-                    // capture — the operator's only mount-status SoT
-                    // until the cluster grows a plugin-tracing bridge.
+                    // Post-mount validation: FUSE-T on macOS 26 Tahoe
+                    // returns Ok from spawn_mount2 but the mount silently
+                    // disconnects immediately (go-nfsv4 backend crash).
+                    #[cfg(target_os = "macos")]
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if !is_mount_live(&mount_point) {
+                            drop(session);
+                            try_nfs_fallback(
+                                &plugin,
+                                _kernel,
+                                &mount_point,
+                                &vfs_root,
+                                "fuser returned Ok but mount is not live (FUSE-T silent failure)",
+                            );
+                            return Box::new(plugin);
+                        }
+                    }
                     eprintln!("[nexus-fuse-plugin] mount OK at {mount_point}");
                     tracing::info!(
                         target: "nexus::fuse",
@@ -230,50 +270,15 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     *plugin.session.lock().unwrap() = Some(session);
                 }
                 Err(e) => {
-                    // On macOS, fuser mount failure is expected when
-                    // FUSE-T is broken (macOS 26 Tahoe).  Fall back to
-                    // an in-process NFSv3 localhost server mounted via
-                    // the native `mount_nfs` binary.
                     #[cfg(target_os = "macos")]
                     {
-                        eprintln!(
-                            "[nexus-fuse-plugin] fuser mount failed ({e}), falling back to NFS localhost"
+                        try_nfs_fallback(
+                            &plugin,
+                            _kernel,
+                            &mount_point,
+                            &vfs_root,
+                            &format!("fuser mount failed ({e})"),
                         );
-                        tracing::warn!(
-                            target: "nexus::fuse",
-                            mount_point = %mount_point,
-                            error = %e,
-                            "fuser mount failed; attempting NFS localhost fallback"
-                        );
-                        let kernel_nfs = unsafe { kernel_handle_clone(_kernel) };
-                        let nfs_fs = fs_nfs::NexusNfs::new(kernel_nfs, vfs_root.clone());
-                        match fs_nfs::spawn_nfs_mount(nfs_fs, &mount_point) {
-                            Ok(handle) => {
-                                eprintln!(
-                                    "[nexus-fuse-plugin] NFS mount OK at {mount_point} (port {})",
-                                    handle.port()
-                                );
-                                tracing::info!(
-                                    target: "nexus::fuse",
-                                    mount_point = %mount_point,
-                                    port = handle.port(),
-                                    "NFS localhost fallback mounted"
-                                );
-                                *plugin.nfs_handle.lock().unwrap() = Some(handle);
-                            }
-                            Err(nfs_err) => {
-                                eprintln!(
-                                    "[nexus-fuse-plugin] NFS fallback also failed: {nfs_err}"
-                                );
-                                tracing::error!(
-                                    target: "nexus::fuse",
-                                    mount_point = %mount_point,
-                                    fuser_error = %e,
-                                    nfs_error = %nfs_err,
-                                    "Both fuser and NFS mounts failed"
-                                );
-                            }
-                        }
                     }
                     #[cfg(not(target_os = "macos"))]
                     {

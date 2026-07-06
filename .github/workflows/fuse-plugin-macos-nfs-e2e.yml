@@ -254,17 +254,26 @@ jobs:
             kill -0 "$DAEMON_PID" 2>/dev/null && echo "yes" || echo "no (exited)"
           fi
 
-          # Teardown.
+          # Teardown — force-unmount BEFORE killing daemon so the NFS
+          # server's tokio runtime doesn't block on active connections.
+          umount -f /tmp/nexus-nfs-e2e 2>/dev/null || true
+
+          # SIGTERM first, then SIGKILL after 5s grace period.
+          # `wait` can hang indefinitely if the NFS server's tokio
+          # runtime has active connections; the SIGKILL ensures we
+          # never exceed the job timeout on teardown.
           kill "$DAEMON_PID" 2>/dev/null || true
+          for i in $(seq 1 10); do
+            kill -0 "$DAEMON_PID" 2>/dev/null || break
+            sleep 0.5
+          done
+          kill -9 "$DAEMON_PID" 2>/dev/null || true
           wait "$DAEMON_PID" 2>/dev/null || true
 
           echo "=== nexusd.log (last 100 lines) ==="
           tail -100 nexusd.log 2>/dev/null || true
           echo "=== nexusd.err.log (last 100 lines) ==="
           tail -100 nexusd.err.log 2>/dev/null || true
-
-          # Unmount if still mounted.
-          umount /tmp/nexus-nfs-e2e 2>/dev/null || true
 
           exit $TEST_RC
 

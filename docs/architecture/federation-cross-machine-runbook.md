@@ -413,6 +413,35 @@ Each peer's `--mount-driver` installs its OWN LocalConnector at `/shared/cc-task
 
 Trade-off relative to the peer-namespaced variant: writes on either peer land in the raft-replicated metastore under the same VFS path.  For CC's append-only session pattern (each session UUID is written once, per-machine) collisions are effectively impossible.  Workloads with the same VFS path being concurrently mutated by both peers should stick with the peer-namespaced variant, where the peer-name suffix serves as a natural conflict domain.
 
+##### Named-list scope — no rename dance required
+
+When the shared task list is CC's named-list scope (`CLAUDE_CODE_TASK_LIST_ID=<name>` in `.claude/settings.local.json`'s `env` field routes `TaskCreate`/`TaskList` to `~/.claude/tasks/<name>/*.json` instead of session-uuid subdirs), the peer-shared shape simplifies further: **the LocalConnector's `local_root` IS the CC task-list dir itself**, and no §3g rename dance is needed.
+
+Recipe (Win↔Mac cross-machine, per elfenlieds7 dispatcher-worker-merger workflow):
+
+```bash
+# On BOTH nodes (same VFS path, per-node local_root)
+--mount-driver 'local-connector:sharedzone:/shared/tasks-nexus-project:{"local_root":"'"$HOME"'/.claude/tasks/nexus-project"}'
+```
+
+Behavior after each node's daemon comes up:
+
+1. Each side's LocalConnector observes its own local `~/.claude/tasks/nexus-project/*.json` via `sys_readdir` → metastore.put (raft-replicated with `last_writer_address=self`).
+2. Cross-node reads (`ls`, `cat`, CC's `TaskGet`) on the merged view route through `sys_read` → `try_remote_fetch` (kernel/src/kernel/io.rs:522-598) → peer's LocalConnector → bytes come back.
+3. **Read-triggered local materialization**: `try_remote_fetch` caches the fetched blob back to the reader's local backend via `route.backend.write_content(...)` (io.rs:594-597) — critical for failover per its docstring.  Consequence: after any FUSE `ls`/`cat` on the merged view, the remote entries appear as **real files on the reader's local disk** at `~/.claude/tasks/<name>/`.  CC's native `TaskList`/`TaskGet` then sees the union directly — no shadow-mount, no `tasks.local/` rename.
+
+Verified bidirectionally Win↔Mac 2026-07-06 via `comm -13 <(ls ~/.claude/tasks/nexus-project/ | sort) <(ls "$NEXUS_FUSE_MOUNT_POINT/" | sort)` on both sides = empty (local disk ≡ FUSE mount).  Regression-guarded by the peer-shared Docker E2E suite (`tests/e2e/docker/test_cc_tasks_peer_shared_e2e.py`).
+
+Compared to the workspace-scope pattern in §3g, the named-list variant sidesteps the intra-node circular (`local_root == FUSE mount point`) by decoupling the CC task-dir from the FUSE mount point entirely: LocalConnector reads/writes `~/.claude/tasks/<name>/`, the FUSE plugin surfaces the union at `~/.claude-federated/tasks/<name>/`, and CC's task-list env var pins its native reads to the LocalConnector-managed dir where materialization has already landed.
+
+##### Caveats for named-list scope
+
+Two limitations that don't affect the workspace-scope pattern in §3g surface for the named-list variant:
+
+1. **CC uses monotonic integer task IDs, not UUIDs.**  Each machine's CC mints the next ID via a local `.highwatermark` file, so two workers that both call `TaskCreate` before federation replicates will independently mint the SAME integer ID with DIFFERENT contents.  After replication, each side keeps its own `<id>.json` (the local write, present before the raft entry arrived, wins on that side).  The workspace-scope pattern in §3g sidesteps this by naming session dirs with UUIDs; the named-list variant reintroduces the collision risk because integer IDs are dense and independently assigned.  Mitigation: for workflows with two writers concurrently creating tasks, use the peer-namespaced variant (§3f above the peer-shared subsection) — the `/<peer-name>/` suffix serves as a natural conflict domain.  Or run one machine as the sole task-list writer and treat the other as read-only.
+
+2. **CC caches the task list in-memory per session.**  `TaskList` and `TaskGet` read `~/.claude/tasks/<name>/` on demand, but a running CC session may hold a stale count from an earlier read.  Federation-materialized files that appeared after CC started are on disk but not always in CC's rendered view — verify with `ls ~/.claude/tasks/<name>/*.json | wc -l` against what `TaskList` shows.  If the counts differ, the CC session's task-list index is stale (not a federation sync gap).  This is a CC-internals limitation, not fixable in nexus code.
+
 ### Step 3g — Expose the federated VFS as a real OS mount via FUSE
 
 §3f gets the bytes across; `cc tasks list` (which is just `ls ~/.claude/tasks/`) needs the bytes to surface as **real files in the OS filesystem** so plain POSIX tools see them.  The `nexus-fuse-plugin` cdylib does exactly that — it spawns a fuser-backed FUSE event loop in the same process as the kernel and routes POSIX ops through the same `KernelHandle` callbacks the kernel exports to any other plugin.

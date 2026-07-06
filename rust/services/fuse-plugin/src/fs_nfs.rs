@@ -348,10 +348,12 @@ pub struct NfsMountHandle {
 
 impl Drop for NfsMountHandle {
     fn drop(&mut self) {
-        // Best-effort unmount — `umount` may fail if the mount was
-        // already torn down (e.g. `diskutil unmount` from Finder).
+        // Best-effort force-unmount — `-f` is essential on macOS
+        // because a normal unmount can hang if any process has an
+        // open fd on the mount.  May fail if the mount was already
+        // torn down (e.g. `diskutil unmount` from Finder).
         let _ = std::process::Command::new("/sbin/umount")
-            .arg(&self.mount_point)
+            .args(["-f", &self.mount_point])
             .output();
     }
 }
@@ -362,6 +364,49 @@ impl NfsMountHandle {
     }
 }
 
+/// Force-unmount any stale NFS mount at `mount_point`.
+///
+/// macOS allows only **one** `localhost:/` NFS mount at a time.  When
+/// the daemon is killed with SIGKILL, `Drop` doesn't run → the stale
+/// mount blocks all subsequent `mount_nfs` calls with "No such file or
+/// directory".  This function is idempotent: if there is no stale mount
+/// the `umount -f` simply fails and we ignore the error.
+fn cleanup_stale_nfs_mount(mount_point: &str) {
+    // 1. Force-unmount the target mount point (may be stale).
+    let _ = std::process::Command::new("/sbin/umount")
+        .args(["-f", mount_point])
+        .output();
+
+    // 2. Scan for any other stale nexus NFS mounts (e.g. /tmp/nexus-nfs-*)
+    //    from previously crashed daemon instances.
+    if let Ok(output) = std::process::Command::new("/sbin/mount").output() {
+        let mount_table = String::from_utf8_lossy(&output.stdout);
+        for line in mount_table.lines() {
+            // NFS mounts from us look like:
+            //   localhost:/ on /tmp/nexus-nfs-XXXX (nfs, ...)
+            //   localhost:/ on /Users/.../nexus-project (nfs, ...)
+            if line.contains("localhost:/") && line.contains("nfs") {
+                // Extract the mount path: "... on <path> (..."
+                if let Some(on_idx) = line.find(" on ") {
+                    let after_on = &line[on_idx + 4..];
+                    if let Some(paren_idx) = after_on.find(" (") {
+                        let stale_path = &after_on[..paren_idx];
+                        // Don't re-unmount what we already did above
+                        if stale_path != mount_point {
+                            eprintln!(
+                                "[nexus-fuse-plugin] cleaning stale NFS mount: {stale_path}"
+                            );
+                            let _ = std::process::Command::new("/sbin/umount")
+                                .args(["-f", stale_path])
+                                .output();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Bind an NFS server on localhost, mount it at `mount_point`, and
 /// return the handle.  The NFS server runs in a dedicated tokio
 /// runtime so it doesn't interfere with fuser's thread model.
@@ -369,6 +414,11 @@ pub fn spawn_nfs_mount(
     nfs_fs: NexusNfs,
     mount_point: &str,
 ) -> Result<NfsMountHandle, Box<dyn std::error::Error>> {
+    // Clean up stale NFS mounts from crashed daemon instances before
+    // we bind a new NFS server.  Without this, macOS rejects the new
+    // mount_nfs with "No such file or directory".
+    cleanup_stale_nfs_mount(mount_point);
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -378,6 +428,7 @@ pub fn spawn_nfs_mount(
     let (port, listener) = rt.block_on(async {
         let listener = NFSTcpListener::bind("127.0.0.1:0", nfs_fs).await?;
         let port = listener.get_listen_port();
+        eprintln!("[nexus-fuse-plugin] NFS server bound to 127.0.0.1:{port}");
         Ok::<_, std::io::Error>((port, listener))
     })?;
 
@@ -388,6 +439,18 @@ pub fn spawn_nfs_mount(
             eprintln!("[nexus-fuse-plugin] NFS server error: {e}");
         }
     });
+
+    // Ensure mount point directory exists.
+    std::fs::create_dir_all(mount_point)?;
+
+    // Wait for the NFS server to start accepting connections.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 
     // Mount via macOS native `mount_nfs`.  Options:
     //   nolocks  — no NLM (kernel doesn't support locking)

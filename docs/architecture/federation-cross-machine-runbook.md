@@ -434,6 +434,14 @@ Verified bidirectionally Win↔Mac 2026-07-06 via `comm -13 <(ls ~/.claude/tasks
 
 Compared to the workspace-scope pattern in §3g, the named-list variant sidesteps the intra-node circular (`local_root == FUSE mount point`) by decoupling the CC task-dir from the FUSE mount point entirely: LocalConnector reads/writes `~/.claude/tasks/<name>/`, the FUSE plugin surfaces the union at `~/.claude-federated/tasks/<name>/`, and CC's task-list env var pins its native reads to the LocalConnector-managed dir where materialization has already landed.
 
+##### Caveats for named-list scope
+
+Two limitations that don't affect the workspace-scope pattern in §3g surface for the named-list variant:
+
+1. **CC uses monotonic integer task IDs, not UUIDs.**  Each machine's CC mints the next ID via a local `.highwatermark` file, so two workers that both call `TaskCreate` before federation replicates will independently mint the SAME integer ID with DIFFERENT contents.  After replication, each side keeps its own `<id>.json` (the local write, present before the raft entry arrived, wins on that side).  The workspace-scope pattern in §3g sidesteps this by naming session dirs with UUIDs; the named-list variant reintroduces the collision risk because integer IDs are dense and independently assigned.  Mitigation: for workflows with two writers concurrently creating tasks, use the peer-namespaced variant (§3f above the peer-shared subsection) — the `/<peer-name>/` suffix serves as a natural conflict domain.  Or run one machine as the sole task-list writer and treat the other as read-only.
+
+2. **CC caches the task list in-memory per session.**  `TaskList` and `TaskGet` read `~/.claude/tasks/<name>/` on demand, but a running CC session may hold a stale count from an earlier read.  Federation-materialized files that appeared after CC started are on disk but not always in CC's rendered view — verify with `ls ~/.claude/tasks/<name>/*.json | wc -l` against what `TaskList` shows.  If the counts differ, the CC session's task-list index is stale (not a federation sync gap).  This is a CC-internals limitation, not fixable in nexus code.
+
 ### Step 3g — Expose the federated VFS as a real OS mount via FUSE
 
 §3f gets the bytes across; `cc tasks list` (which is just `ls ~/.claude/tasks/`) needs the bytes to surface as **real files in the OS filesystem** so plain POSIX tools see them.  The `nexus-fuse-plugin` cdylib does exactly that — it spawns a fuser-backed FUSE event loop in the same process as the kernel and routes POSIX ops through the same `KernelHandle` callbacks the kernel exports to any other plugin.

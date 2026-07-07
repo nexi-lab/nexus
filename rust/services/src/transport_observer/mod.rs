@@ -43,6 +43,24 @@ use std::time::Duration;
 use parking_lot::RwLock;
 
 use kernel::core::dispatch::{FileEvent, FileEventType, MutationObserver};
+use kernel::kernel::{Kernel, KernelError};
+
+/// Service tag used for `Kernel::register_service_observer` bookkeeping.
+/// Matches the crate feature flag (`service-transport-observer`) minus the
+/// `service-` prefix so operator-visible surfaces (logs, future
+/// unregister API) share a single identifier with the build gate.
+pub(crate) const SERVICE_NAME: &str = "transport-observer";
+
+/// Observer-registry key.  Distinct from the service tag because
+/// `ObserverRegistry` unregisters by observer name; kept identical
+/// here since transport-observer registers exactly one observer.
+pub(crate) const OBSERVER_NAME: &str = "transport-observer";
+
+/// Poll cadence for `TailscaleResolver`.  30s matches Tailscale's own
+/// endpoint-change notification interval closely enough that operators
+/// won't observe stale classifications for realistic connection
+/// lifetimes.
+const TAILSCALE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Classification of the network path an opaque remote address is
 /// currently reachable through.  Consumer of the substrate lookup.
@@ -285,6 +303,51 @@ impl TransportObserverService {
     pub fn unknown_count(&self) -> u64 {
         self.unknown_count.load(Ordering::Relaxed)
     }
+}
+
+/// Boot-time install for `TransportObserverService`.
+///
+/// Constructs a [`TailscaleResolver`] with the crate's default 30s
+/// refresh cadence, wraps it with [`TransportPolicy::Warn`], and
+/// registers the service with kernel dispatch under the
+/// [`SERVICE_NAME`] tag filtering [`FileEventType::RemoteFetch`].
+///
+/// Mirrors the shape of [`services::audit::install_root`] — same
+/// LSM-style boot flow, called once by the cluster main during daemon
+/// bring-up when the `service-transport-observer` feature is enabled.
+/// Discards the service `Arc`; use [`install_with`] instead when the
+/// caller needs to hold a reference (tests, custom bootstrappers).
+pub fn install(kernel: &Arc<Kernel>) -> Result<(), KernelError> {
+    let resolver = TailscaleResolver::spawn(TAILSCALE_REFRESH_INTERVAL);
+    install_with(
+        kernel,
+        resolver as Arc<dyn TransportPathResolver>,
+        TransportPolicy::Warn,
+    )
+    .map(|_| ())
+}
+
+/// DI variant of [`install`] — accepts a pre-built resolver + policy so
+/// tests can drive the service through kernel dispatch without spawning
+/// the Tailscale poller thread, and custom bootstrappers can plug in
+/// alternate substrate resolvers.  Returns the service `Arc` so the
+/// caller can read the counters after dispatch.
+pub fn install_with(
+    kernel: &Arc<Kernel>,
+    resolver: Arc<dyn TransportPathResolver>,
+    policy: TransportPolicy,
+) -> Result<Arc<TransportObserverService>, KernelError> {
+    let svc = Arc::new(TransportObserverService::new(resolver, policy));
+    // Discriminant IS the bit value (see kernel `FileEventType`
+    // `= 1 << N` variants); matches the `as u32` idiom in
+    // `services::audit::install_root`.
+    kernel.register_service_observer(
+        SERVICE_NAME,
+        Arc::clone(&svc) as Arc<dyn MutationObserver>,
+        OBSERVER_NAME.to_string(),
+        FileEventType::RemoteFetch as u32,
+    );
+    Ok(svc)
 }
 
 impl MutationObserver for TransportObserverService {
@@ -640,5 +703,63 @@ mod tests {
             0,
             "must not classify as Direct post-refresh"
         );
+    }
+
+    // ── Integration test: install() through kernel dispatch ──────────
+    //
+    // Verifies the full boot-wire path — install_with() registers the
+    // observer with the correct event mask, kernel.dispatch_observers
+    // fans out to it, and only RemoteFetch events reach on_mutation.
+    // Uses install_with (StaticResolver) so the test does not spawn the
+    // TailscaleResolver poller thread or shell out to `tailscale`.
+    #[test]
+    fn install_wires_observer_and_receives_dispatched_remote_fetch() {
+        use kernel::kernel::Kernel;
+
+        let kernel = Arc::new(Kernel::new());
+        let mut map = HashMap::new();
+        map.insert("100.64.0.21".to_string(), TransportPath::Direct);
+        map.insert(
+            "100.64.0.22".to_string(),
+            TransportPath::Relay {
+                via: "headscale".to_string(),
+            },
+        );
+        let resolver: Arc<dyn TransportPathResolver> = Arc::new(StaticResolver(map));
+        let svc =
+            install_with(&kernel, resolver, TransportPolicy::Warn).expect("install_with succeeds");
+
+        // Non-RemoteFetch events routed through kernel dispatch must be
+        // filtered by the event mask before reaching the service — the
+        // observer is registered with RemoteFetch.bit() only, so
+        // FileWrite must not increment any counter.
+        // FileEvent::with_zone is the public constructor for peer-crate
+        // observer tests (FileEvent::new is pub(crate)).
+        kernel.dispatch_observers(&FileEvent::with_zone(
+            FileEventType::FileWrite,
+            "/x.json",
+            "root",
+        ));
+        assert_eq!(svc.direct_count(), 0);
+        assert_eq!(svc.relay_warn_count(), 0);
+        assert_eq!(svc.unknown_count(), 0);
+
+        // Direct-peer RemoteFetch must reach on_mutation and increment
+        // the direct counter.
+        kernel.dispatch_observers(&FileEvent::remote_fetch(
+            "/shared/x.json",
+            "100.64.0.21:2126",
+            4096,
+        ));
+        assert_eq!(svc.direct_count(), 1);
+
+        // Relay-peer RemoteFetch must increment the warn counter.
+        kernel.dispatch_observers(&FileEvent::remote_fetch(
+            "/shared/y.json",
+            "100.64.0.22:2126",
+            2048,
+        ));
+        assert_eq!(svc.relay_warn_count(), 1);
+        assert_eq!(svc.direct_count(), 1, "direct counter unchanged by relay");
     }
 }

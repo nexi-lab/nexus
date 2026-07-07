@@ -1,6 +1,6 @@
 # Cross-Machine Federation over Tailscale/Headscale — Complete Runbook
 
-**Status:** verified end-to-end on 2026-06-06, Mac↔Win L1 federation cross-node read passes byte-exact.
+**Status:** verified end-to-end Mac↔Win — L1 federation cross-node read is byte-exact; Step 3f peer-shared named-list variant delivers a bidirectionally-materialised merged view that CC's native `TaskGet` / `TaskList` reads directly.
 
 > **Doc SSOT.**  This file supersedes nexi-lab/nexus discussion #2596 ("Cross-Machine Federation over Tailscale/Headscale — Complete Runbook").  That discussion is now closed and should be removed; new content for this surface goes here.
 
@@ -714,6 +714,11 @@ The bug-class history matters here — the same shape regressed twice during the
 | nexus-vfs #18 | Catch up kernel-tier state in nexus-vfs to nexus `c18db70dd` snapshot (previous fresh-import had silently fallen ~40 files behind); add reverse repo-boundary CI gate |
 | nexus-vfs #23 | ZoneManager async wrappers — `mount_async` / `apply_topology_async` / `create_zone_async` / `share_subtree_core_async` / `bootstrap_static_async`.  Hosts the `spawn_blocking` hop inside the type rather than at every async caller |
 | nexus-vfs #25 | F1: `is_leader()` derives from `leader_id()` (single atomic SSOT).  F2: `forward_to_leader` retries `submit_to_channel` locally when leader is self instead of RPC-forwarding via the self-address (which hairpins on Tailscale-on-Windows/macOS).  Eliminates the `Forward to leader failed leader=<self>` warning at every founder boot |
+| nexus-vfs #102 | `sys_readdir` SSOT-symmetric observation — enables the peer-shared merged view (Step 3f peer-shared variant): both peers mount their LocalConnector at the same VFS path, `sys_readdir` observation writes sharedzone metastore rows, raft replicates so the merged UUID list surfaces on both peers |
+| nexus-vfs #106..#112 | Identity JSON at platform-native path, peer persistence, split-brain guard (`identity.json` + `NEXUS_FEDERATION_ZONES` simultaneously refused), gRPC bind fail-loud on error |
+| nexus-vfs #113..#118 | S3 完全体 unified bring-up — 6-row `plan_boot_action` decision matrix (`plan_boot_action`), `DiscoverZones` RPC for fresh-joiner auto-discovery (Row 3), `identity.zones` mirror for returning joiner (Row 4), `RemoveVoter` RPC, `--bootstrap-mode` CLI flag retired.  Result: one-command daemon start on both founder and joiner side |
+| nexus-vfs #120 | S3 Phase H — `identity.zones[].as_role` respected on Row 4 rejoin.  A wiped-then-restored learner rejoins as learner (`AddLearnerNode`), preserving the 1-voter+N-learners topology; wipe-cycle no longer inflates the voter set |
+| nexus-vfs #121..#122 | `FileEventType::RemoteFetch` + `remote_addr` on `FileEvent` — kernel-tier plumbing for cross-node data-movement observability.  Fires from `try_remote_fetch` after each successful blob delivery.  Consumers subscribe through the standard `MutationObserver` trait |
 
 ---
 

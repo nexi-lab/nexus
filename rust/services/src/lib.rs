@@ -82,11 +82,3 @@ pub mod password_vault;
 // mount with PasswordVaultService. Loaded as part of the vault cdylib plugin.
 #[cfg(feature = "service-generic-secrets")]
 pub mod generic_secrets;
-// TransportObserverService — data-privacy warning + metric on cross-node
-// `sys_read` (via `try_remote_fetch`) events whose current network path
-// traverses a relay hop instead of a direct P2P transport. Filters
-// `FileEventType::RemoteFetch` (nexus-vfs PR #121) and classifies each
-// event's opaque `remote_addr` through a substrate-specific resolver
-// (Tailscale today; trait accepts alternate substrate resolvers).
-#[cfg(feature = "service-transport-observer")]
-pub mod transport_observer;

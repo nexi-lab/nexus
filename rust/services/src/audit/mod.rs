@@ -38,6 +38,7 @@ use kernel::core::dispatch::{
     FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook,
 };
 use kernel::kernel::{Kernel, KernelError};
+use kernel::service_registry::ServiceHandle;
 
 /// DT_STREAM entry-type discriminant (mirrors `kernel::core::dcache::DT_STREAM`).
 const DT_STREAM: i32 = 4;
@@ -210,6 +211,12 @@ impl<K: KernelAbi> NativeInterceptHook for AuditHook<K> {
     }
 }
 
+/// Service name enlisted in `ServiceRegistry` for audit's hook-only
+/// ownership.  Public so operators + future observability surfaces
+/// (`nexus service-list`, metrics endpoints) reach for the same name
+/// audit uses at enlist time.
+pub const AUDIT_SERVICE_NAME: &str = "audit";
+
 /// Boot-time DI entry point — install an `AuditHook` for `zone_id`.
 ///
 /// Service-tier responsibility (this whole module). Three steps, each
@@ -222,16 +229,21 @@ impl<K: KernelAbi> NativeInterceptHook for AuditHook<K> {
 /// 2. `AuditHook::new(kernel, stream_path, zone_id)` — local services
 ///    concern: build the hook impl that holds an `Arc<K>` for syscall
 ///    callbacks.
-/// 3. `kernel.register_native_hook(Box::new(hook))` — install-time
-///    control plane (LSM-style); kernel records the hook in its
-///    native dispatch registry without ever knowing the concrete type.
+/// 3. `kernel.register_service_hook(handle, Box::new(hook))` — install-time
+///    control plane (LSM-style with enforced ownership); kernel records
+///    the hook in its native dispatch registry under the `handle`'s
+///    service entry so `unregister_service(AUDIT_SERVICE_NAME)`
+///    batch-removes every audit hook and observer at once.
 ///
-/// Idempotent: `sys_setattr` for an existing DT_STREAM is a no-op
-/// re-open; the `register_native_hook` side is not — calling `install`
-/// twice for the same zone double-registers the hook. Callers
-/// (typically `nexus.__init__` boot path) call this exactly once per zone.
+/// Idempotent on the `sys_setattr` side (existing DT_STREAM is a no-op
+/// re-open).  The hook-registration side is not idempotent — calling
+/// `install` twice for the same zone under the same handle double-
+/// registers the hook.  Callers (typically `install_root` +
+/// `ZoneAuditAutoWire`) guarantee once-per-zone through their own
+/// bookkeeping.
 pub fn install<K: KernelAbi>(
     kernel: Arc<K>,
+    handle: &ServiceHandle,
     zone_id: &str,
     stream_path: &str,
 ) -> Result<(), KernelError> {
@@ -241,7 +253,7 @@ pub fn install<K: KernelAbi>(
         stream_path.to_string(),
         zone_id.to_string(),
     );
-    kernel.register_native_hook(Box::new(hook));
+    kernel.register_service_hook(handle, Box::new(hook));
     Ok(())
 }
 
@@ -290,17 +302,31 @@ pub fn install_root(
     root_zone_id: &str,
     stream_path: &str,
 ) -> Result<(), KernelError> {
-    install(Arc::clone(kernel), root_zone_id, stream_path)?;
+    // Enlist audit as a hook-only service in `ServiceRegistry`.  The
+    // handle carries the identity that every subsequent
+    // `register_service_hook` / `register_service_observer` binds to,
+    // so `kernel.unregister_service(AUDIT_SERVICE_NAME)` batch-removes
+    // the root-zone hook, every per-zone hook the auto-wire installed,
+    // AND the auto-wire observer itself in one call.  Idempotent on
+    // re-enlist of the same name (returns a fresh handle to the same
+    // entry).
+    let handle = kernel
+        .enlist_hook_only_service(AUDIT_SERVICE_NAME)
+        .map_err(|e| KernelError::IOError(format!("enlist audit service: {e}")))?;
+
+    install(Arc::clone(kernel), &handle, root_zone_id, stream_path)?;
 
     let mut seeded = HashSet::new();
     seeded.insert(root_zone_id.to_string());
 
     let auto_wire = Arc::new(ZoneAuditAutoWire {
         kernel: Arc::clone(kernel),
+        handle: handle.clone(),
         installed: Mutex::new(seeded),
         stream_path: stream_path.to_string(),
     });
-    kernel.register_observer(
+    kernel.register_service_observer(
+        &handle,
         auto_wire,
         ZoneAuditAutoWire::OBSERVER_NAME.to_string(),
         FileEventType::Mount as u32,
@@ -314,6 +340,12 @@ pub fn install_root(
 /// re-mount events are no-ops.
 struct ZoneAuditAutoWire {
     kernel: Arc<Kernel>,
+    /// Cloned from the handle `install_root` obtained at enlist time.
+    /// Cheap (single `Arc<String>` bump) and shares the same
+    /// `ServiceRegistry` entry so per-zone hooks installed from
+    /// `on_mutation` batch-remove alongside the root-zone hook and the
+    /// observer when audit is unregistered.
+    handle: ServiceHandle,
     /// Zones the observer has already wired AuditHook for. The
     /// root zone is seeded into this set by [`install_root`] before
     /// the observer is registered, so a re-mount of the root zone
@@ -341,7 +373,12 @@ impl MutationObserver for ZoneAuditAutoWire {
                 return;
             }
         }
-        if let Err(e) = install(Arc::clone(&self.kernel), &zone_id, &self.stream_path) {
+        if let Err(e) = install(
+            Arc::clone(&self.kernel),
+            &self.handle,
+            &zone_id,
+            &self.stream_path,
+        ) {
             tracing::warn!(
                 zone = %zone_id,
                 error = ?e,
@@ -580,15 +617,28 @@ mod tests {
     fn dt_mount_dispatch_reaches_zone_audit_auto_wire_observer() {
         let kernel = fresh_federated_kernel();
 
+        // Enlist audit as a hook-only service so we can install hooks
+        // and observer through the enforced-ownership surface.
+        let handle = kernel
+            .enlist_hook_only_service(AUDIT_SERVICE_NAME)
+            .expect("enlist audit");
+
         // Pre-seed the audit DT_STREAM for the root zone via
         // `install` so the observer's per-zone `install` calls can
         // succeed against the federated kernel.
-        install(Arc::clone(&kernel), "root", "/__sys__/audit/traces/").expect("install root");
+        install(
+            Arc::clone(&kernel),
+            &handle,
+            "root",
+            "/__sys__/audit/traces/",
+        )
+        .expect("install root");
 
         // Construct + register the auto-wire ourselves so we can
         // inspect its `installed` HashSet after the dispatch fires.
         let auto_wire = Arc::new(ZoneAuditAutoWire {
             kernel: Arc::clone(&kernel),
+            handle: handle.clone(),
             installed: Mutex::new({
                 let mut s = HashSet::new();
                 s.insert("root".to_string());
@@ -596,7 +646,8 @@ mod tests {
             }),
             stream_path: "/__sys__/audit/traces/".to_string(),
         });
-        kernel.register_observer(
+        kernel.register_service_observer(
+            &handle,
             Arc::clone(&auto_wire) as Arc<dyn MutationObserver>,
             ZoneAuditAutoWire::OBSERVER_NAME.to_string(),
             FileEventType::Mount as u32,
@@ -729,6 +780,13 @@ mod tests {
     #[test]
     fn zone_audit_auto_wire_dedups_by_zone_id() {
         let kernel = fresh_kernel();
+        // Enlist audit so the auto-wire has a valid handle to hold —
+        // the HashSet short-circuit path never actually reaches the
+        // handle, so we could stub any name, but going through the real
+        // enlist keeps the test consistent with production shape.
+        let handle = kernel
+            .enlist_hook_only_service(AUDIT_SERVICE_NAME)
+            .expect("enlist audit");
         let mut seeded = HashSet::new();
         // Pre-seed every zone we'll fire events for — the HashSet
         // check short-circuits before install() runs, so we exercise
@@ -738,6 +796,7 @@ mod tests {
 
         let auto_wire = ZoneAuditAutoWire {
             kernel,
+            handle,
             installed: Mutex::new(seeded),
             stream_path: "/__sys__/audit/traces/".to_string(),
         };

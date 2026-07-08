@@ -214,7 +214,6 @@ fn create_dt_stream<K: KernelAbi>(
 mod tests {
     use super::*;
     use kernel::core::agents::registry::{AgentKind, AgentState, RepoMount};
-    use kernel::kernel::convenience::KernelConvenience;
     use kernel::kernel::Kernel;
     use kernel::ROOT_ZONE_ID;
 

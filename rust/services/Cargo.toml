@@ -14,15 +14,6 @@ default = []
 # Per-service features.  Each gates one `pub mod` line in lib.rs so
 # slim Rust binaries (nexus-cluster) link only the services they want.
 service-audit = []
-# TransportObserverService — data-privacy warning when cross-node
-# `sys_read` (via `try_remote_fetch`) bytes traverse a relay hop
-# instead of a direct P2P transport.  Filters
-# `FileEventType::RemoteFetch` (nexus-vfs PR #121) and classifies
-# each event's opaque `remote_addr` via a substrate-specific
-# resolver (Tailscale today; the trait accepts plug-in resolvers
-# for future substrates).  Warn / metric emission only; no I/O
-# refusal on the sys_read hot path.
-service-transport-observer = []
 service-agents = []
 service-managed-agent = []
 service-acp = []

@@ -586,10 +586,6 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
         kernel
             .vfs_router_arc()
             .add_mount("/proc", "root", None, false);
-        kernel.register_native_hook(Box::new(
-            workspace_boundary_hook::WorkspaceBoundaryHook::new(),
-        ));
-        kernel.register_native_hook(Box::new(mailbox_stamping_hook::MailboxStampingHook::new()));
 
         // Holding `Arc<Kernel>` inside the service does create a
         // Kernel ↔ Service Arc cycle, but services live for process
@@ -640,6 +636,28 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
 
         let svc_for_return = Arc::clone(&svc);
         kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
+
+        // Register the two hooks the service owns via the enforced
+        // ownership surface — the handle binds each hook to this
+        // service's `ServiceRegistry` entry so
+        // `Kernel::unregister_service("managed_agent")` / `swap_managed_service`
+        // batch-remove them alongside the service instance.  Hooks are
+        // stateless so ordering (enlist-then-hook) has no correctness
+        // dependency; the two-step flow matches the pattern
+        // `services::audit::install_root` established: enlist the
+        // owning entity first, then plug hooks in through the handle.
+        let handle = kernel
+            .service_handle(Self::NAME)
+            .expect("just enlisted managed_agent above; handle must exist");
+        kernel.register_service_hook(
+            &handle,
+            Box::new(workspace_boundary_hook::WorkspaceBoundaryHook::new()),
+        );
+        kernel.register_service_hook(
+            &handle,
+            Box::new(mailbox_stamping_hook::MailboxStampingHook::new()),
+        );
+
         Ok(svc_for_return)
     }
 }
@@ -1012,7 +1030,6 @@ mod tests {
     mod procfs {
         use super::*;
         use kernel::core::agents::registry::AgentSignal;
-        use kernel::kernel::convenience::KernelConvenience;
         use kernel::kernel::Kernel;
         use kernel::ROOT_ZONE_ID;
 
@@ -1241,6 +1258,7 @@ mod tests {
                 request_id: "req-cross-link".into(),
                 context_zone_id: None,
                 zone_perms: vec![],
+                propagates_cross_node: false,
             };
 
             // Use UFCS through KernelAbi so we get the single-path
@@ -1299,6 +1317,7 @@ mod tests {
                 request_id: "req-stamp".into(),
                 context_zone_id: None,
                 zone_perms: vec![],
+                propagates_cross_node: false,
             };
 
             KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, &llm_authored, 0)

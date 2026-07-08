@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529#82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=218213dadbc6ca662284a81562b83617f42f1a95#218213dadbc6ca662284a81562b83617f42f1a95"
 dependencies = [
  "ahash",
  "base64",
@@ -550,7 +550,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529#82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=218213dadbc6ca662284a81562b83617f42f1a95#218213dadbc6ca662284a81562b83617f42f1a95"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1334,7 +1334,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529#82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=218213dadbc6ca662284a81562b83617f42f1a95#218213dadbc6ca662284a81562b83617f42f1a95"
 dependencies = [
  "ahash",
  "base64",
@@ -1385,7 +1385,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529#82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=218213dadbc6ca662284a81562b83617f42f1a95#218213dadbc6ca662284a81562b83617f42f1a95"
 dependencies = [
  "ahash",
  "base64",
@@ -1580,7 +1580,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529#82d5fc2f015b3cb7c9af48d0b2839d8b9f4e6529"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=218213dadbc6ca662284a81562b83617f42f1a95#218213dadbc6ca662284a81562b83617f42f1a95"
 
 [[package]]
 name = "nexus-vault"

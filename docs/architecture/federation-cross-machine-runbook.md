@@ -1,6 +1,6 @@
 # Cross-Machine Federation over Tailscale/Headscale — Complete Runbook
 
-**Status:** verified end-to-end Mac↔Win — L1 federation cross-node read is byte-exact; Step 3f peer-shared named-list variant delivers a bidirectionally-materialised merged view that CC's native `TaskGet` / `TaskList` reads directly.
+**Status:** verified end-to-end Mac↔Win — same-LAN **and cross-LAN over the Headscale DERP relay** (2026-07-10).  L1 cross-node read is byte-exact both directions; the §3f peer-shared named-list variant delivers a bidirectionally-materialised merged view CC's native `TaskGet` / `TaskList` reads directly; a peer's out-of-band writes are stamped `last_writer` and become cross-node-visible **synchronously on `readdir`** (metadata-sync on-access seed, nexus-vfs #133 — no wait for the reconcile tick).  On a relayed path the `transport_observer` service logs a data-privacy caution per cross-node fetch.  Additional machines onboard with the Row-3 joiner recipe and self-verify via the relay-free [Step 5 CRUD handshake](#step-5--crud-handshake-no-human-relay).
 
 > **Doc SSOT.**  This file supersedes nexi-lab/nexus discussion #2596 ("Cross-Machine Federation over Tailscale/Headscale — Complete Runbook").  That discussion is now closed and should be removed; new content for this surface goes here.
 
@@ -8,10 +8,12 @@
 
 ## What this covers
 
-A 2-node Nexus federation cluster across two machines (typically macOS + Windows) connected via Tailscale VPN, with:
+A Nexus federation cluster across **N machines** (typically macOS + Windows + …) connected via Tailscale VPN, with:
 
-* L1 cross-machine CRUD byte-exact in both directions
-* The full operator flow: Tailscale setup → build → bootstrap → share/join → smoke
+* L1 cross-machine CRUD byte-exact in every direction
+* The full operator flow: Tailscale setup → build → bootstrap → share/join → smoke → CRUD handshake
+
+**N-node scaling.**  Exactly **one** machine is the founder (Row 1 of the bring-up matrix below); **every additional machine — the 2nd, 3rd, … Nth — joins with the identical Row-3 joiner recipe** pointed at the founder.  Nothing in the joiner path is 2-node-specific.  A new machine with zero prior context follows Steps 1→5 top to bottom; [Step 5](#step-5--crud-handshake-no-human-relay) is a **relay-free** acceptance gate — the machines confirm each other purely through the shared task list (CRUD), so no operator has to shuttle messages between them.
 
 If you only need the conceptual picture without the operator commands, jump to [Architecture](#architecture) and [Key design decisions](#key-design-decisions).  The [Operator flow](#operator-flow) sections are the concrete commands.
 
@@ -335,15 +337,31 @@ The daemon auto-detects "resume from disk" from `<data_dir>/root/raft/` presence
 
 The `local-connector` driver dylib projects a host filesystem subtree (e.g. `~/.claude/tasks/`) into the VFS at an operator-named path.  Reads and writes through the VFS surface flow through to the configured `local_root` on the host fs — the LocalConnector's defining SSOT property.
 
-Drop the dylib into `NEXUS_PLUGIN_DIR` and mount it at boot:
+**Getting the signed plugin dylibs (fresh machine).**  Both driver-plugin dylibs
+you need — `local-connector` (this step) and `fuse` (§3g) — are published as
+GitHub releases on the **`nexi-lab/nexus`** repo, each signed against the
+production `kernel-dogfood-v1` key that `nexusd-cluster` trusts by default.  A
+fresh machine needs **no dev-key / trust-dir setup** when it uses these release
+dylibs.  Download the latest of each series for your platform:
 
 ```bash
-mkdir -p ./plugins
-cp /path/to/libnexus_local_connector.so ./plugins/
+mkdir -p ~/.nexus/plugins
+# Resolve the latest tag of each series (releases move; don't hardcode):
+LC_TAG=$(gh release list --repo nexi-lab/nexus | grep -oE 'local-connector-v[0-9.]+' | head -1)
+FUSE_TAG=$(gh release list --repo nexi-lab/nexus | grep -oE 'fuse-v[0-9.]+' | head -1)
+# Pick the asset matching your platform: linux-x86_64 | macos-arm64 | macos-x86_64 | windows-x86_64
+PLAT=linux-x86_64
+gh release download "$LC_TAG"   --repo nexi-lab/nexus --pattern "*${PLAT}*" --dir ~/.nexus/plugins
+gh release download "$FUSE_TAG" --repo nexi-lab/nexus --pattern "*${PLAT}*" --dir ~/.nexus/plugins
+# Each asset ships the dylib + its .sig; unpack tarballs in place if the asset is a *.tar.gz.
+```
 
+Then mount the connector at boot:
+
+```bash
 target/release/nexusd-cluster \
   ... \
-  --plugin-dir ./plugins \
+  --plugin-dir ~/.nexus/plugins \
   --mount-driver 'local-connector:root:/tasks:{"local_root":"/home/me/.claude/tasks"}'
 ```
 
@@ -360,7 +378,7 @@ The CI regression for this surface lives in `tests/e2e/docker/test_cc_tasks_shar
 
 ### Step 3f — Cross-node host-fs sharing (cc-tasks-share-style)
 
-Node A and node B each mount their own LocalConnector under a hostname-namespaced path inside the same federated zone.  Reads on B for a path under A's mount resolve to A's host fs without manual sync — the lazy-observe substrate routes them via Mode B (cold fan-out) on the first read and Mode A (`try_remote_fetch` via `last_writer_address`) on every subsequent read (see `docs/federation-architecture.md §6.7`).
+Node A and node B each mount their own LocalConnector under a hostname-namespaced path inside the same federated zone.  Reads on B for a path under A's mount resolve to A's host fs without manual sync.  A's **metadata-sync** keeps A's metastore authoritative for its own out-of-band content — an initial walk at mount, a synchronous **on-access seed** on every `sys_readdir`, and a periodic reconcile backstop (nexus-vfs #133; see `KERNEL-ARCHITECTURE.md §4.5` and `docs/observer-backend-contract.md`).  Raft replicates each row stamped `last_writer_address = A`, so B's metastore already carries the entry; B's read then routes via `try_remote_fetch` keyed on `last_writer_address` to fetch A's bytes (and caches them locally).  There is **no read-miss fan-out** — the lazy cold-discovery path was removed in the metadata-sync cutover (nexus-vfs #132/#133); the metastore is the single source of truth for cross-node existence.
 
 Operator flow (mirrors what `dockerfiles/docker-compose.cc-tasks-share.yml` automates):
 
@@ -391,7 +409,7 @@ nexusd-cluster \
 
 If you accidentally started B with `NEXUS_FEDERATION_ZONES=sharedzone` set on empty data dir before doing the sidecar join, the split-brain guard now catches it — the error message tells you which role you meant (wipe identity to become founder, or unset the env var + run sidecar to become joiner).
 
-After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount), miss locally, fan out to A, and return A's host-fs bytes.  Subsequent reads take Mode A.  Symmetric on A reading `/shared/cc-tasks/B/...`.
+After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount).  A's metadata-sync has already published the entry's row to the replicated metastore (`last_writer_address = A`), so B's read resolves the origin locally and issues a single `try_remote_fetch` to A that returns A's host-fs bytes (then caches them locally).  Symmetric on A reading `/shared/cc-tasks/B/...`.
 
 This is the substrate the `cc tasks list` cross-machine workflow rides — operator's CC daemon on A drops `~/.claude/tasks/<n>.json` directly to host fs (no Nexus syscall), and a second CC daemon on B reads them through `/shared/cc-tasks/A/<n>.json`.
 
@@ -448,14 +466,11 @@ Two limitations that don't affect the workspace-scope pattern in §3g surface fo
 
 Drop the signed dylib + `.sig` into `NEXUS_PLUGIN_DIR` (same dir LocalConnector lives in) and set two env vars before launching `nexusd-cluster`:
 
-```bash
-mkdir -p ~/.nexus/plugins
-# Download the latest fuse-v* release for your platform
-gh release download fuse-v0.2.0 \
-    --pattern '*linux-x86_64.tar.gz' \
-    --dir /tmp/      # → libnexus_fuse_plugin.so + .sig
-tar -xzf /tmp/nexus-fuse-plugin-*-linux-x86_64.tar.gz -C ~/.nexus/plugins/
+The `fuse` dylib is downloaded alongside `local-connector` in §3e (latest
+`fuse-v*` release from `nexi-lab/nexus`, production-signed).  With both dylibs
+already in `~/.nexus/plugins`, set the two FUSE env vars before launching:
 
+```bash
 export NEXUS_FUSE_MOUNT_POINT=/mnt/cc-tasks       # absolute path; must exist + be empty
 export NEXUS_FUSE_VFS_ROOT=/shared/cc-tasks       # VFS path the mount root maps to
 
@@ -474,10 +489,10 @@ ls /mnt/cc-tasks/A/              # → A's ~/.claude/tasks/ contents
 echo '{"task":"foo"}' > ~/.claude/tasks/session-x/1.json
 ls /mnt/cc-tasks/A/session-x/    # → 1.json (same machine, via LocalConnector)
 # And on machine B:
-ls /mnt/cc-tasks/A/session-x/    # → 1.json (federation fan-out + LocalConnector on A)
+ls /mnt/cc-tasks/A/session-x/    # → 1.json (cross-node try_remote_fetch → LocalConnector on A)
 ```
 
-The FUSE plugin and LocalConnector compose without coupling — LocalConnector is the *write* surface (host fs is the SSOT, every write goes there bypassing Nexus), FUSE plugin is the *unified read* surface (`ls` sees both local + remote tasks through the federated VFS).  The cc-tasks-share Docker E2E (`tests/e2e/docker/test_cc_tasks_share_e2e.py`) regression-guards the full chain — FUSE op → KernelHandle v3 callback → DT_MOUNT routing → federation fan-out (when crossing nodes) → peer LocalConnector → host fs — as longer cross-layer workflows on a founder + joiner topology.
+The FUSE plugin and LocalConnector compose without coupling — LocalConnector is the *write* surface (host fs is the SSOT, every write goes there bypassing Nexus), FUSE plugin is the *unified read* surface (`ls` sees both local + remote tasks through the federated VFS).  The cc-tasks-share Docker E2E (`tests/e2e/docker/test_cc_tasks_share_e2e.py`) regression-guards the full chain — FUSE op → KernelHandle v3 callback → DT_MOUNT routing → cross-node `try_remote_fetch` (when crossing nodes) → peer LocalConnector → host fs — as longer cross-layer workflows on a founder + joiner topology.
 
 Platform matrix:
 
@@ -587,6 +602,48 @@ Expected:
 ```
 
 `base64 -d aGVsbG8gZnJvbSB3aW4=` → `hello from win`.  Byte-exact match with what A wrote = L1 cross-machine federation read passes.
+
+### Step 5 — CRUD handshake (no human relay)
+
+Step 4 is a low-level grpcurl smoke an operator drives on one machine.  Step 5 is the **onboarding acceptance gate**: once §3f (peer-shared named-list) and §3g (FUSE) are up on every node, each machine confirms it is fully federated **by itself, through the shared task list** — no operator shuttling messages between machines.  This is how a freshly-added Nth node and the existing nodes "shake hands."
+
+Assumes every node runs the §3f peer-shared named-list recipe at the **same** VFS path `/shared/tasks-nexus-project`, FUSE-mounted at `~/.claude-federated/tasks/nexus-project`, with `local_root = ~/.claude/tasks/nexus-project`.
+
+**1. Announce yourself.**  Drop a uniquely-named marker into your connector root (direct host write, no syscall), then `ls` the FUSE mount so the on-access seed publishes its row (`last_writer = you`) and raft replicates it:
+
+```bash
+NODE=win3                                    # your node's short name — must be unique
+CONN=~/.claude/tasks/nexus-project
+FUSE=~/.claude-federated/tasks/nexus-project
+printf '{"probe":"%s","ts":"%s"}' "$NODE" "$(date -u +%FT%TZ)" > "$CONN/zz-node-$NODE.json"
+ls "$FUSE" >/dev/null                         # fire the readdir seed
+```
+
+**2. Discover the others.**  Read every OTHER node's marker through the merged FUSE view.  A successful `cat` of a peer's marker is a cross-node fetch routed by `last_writer`, so it proves **both** planes end-to-end: the row replicated (control plane) AND the bytes came back (data plane):
+
+```bash
+ls "$FUSE"/zz-node-*.json                      # expect one marker per live node
+for f in "$FUSE"/zz-node-*.json; do echo "== $f =="; cat "$f"; echo; done
+```
+
+**Handshake is COMPLETE** when every node sees a `zz-node-<name>.json` for every other node *and* can `cat` each one's content.  The new node is then fully federated — discovered purely through CRUD, zero operator relay.
+
+**Cross-LAN (different networks / hotspot).**  Works identically when a node is on another network.  Direct WireGuard fails through mobile CGNAT, Tailscale falls back to the Headscale DERP relay, and raft + fetch traffic keeps flowing over DERP (confirm with `tailscale status` showing the peer as `relay "headscale"` and `tailscale ping <peer>` reporting `via DERP`).  On the reading node the daemon logs a data-privacy caution per relayed fetch — this is expected and correct:
+
+```
+WARN transport_observer: distributed-VFS remote-fetch traversed relay — data-privacy caution
+  remote_addr=<peer_ip>:2126 via=headscale path=/shared/tasks-nexus-project/zz-node-<name>.json bytes=<n>
+```
+
+The raft transport re-dials each peer at most once per `DEFAULT_CLIENT_TTL` (60s), so a network switch self-heals within a minute; a brief data-plane blip during the switch is normal.
+
+**Cleanup.**  Delete your marker at the **host source**, not through the FUSE mount:
+
+```bash
+rm -f "$CONN/zz-node-$NODE.json"               # host-source delete (reliable on all platforms)
+```
+
+**Windows delete gotcha.**  On Windows, delete through the FUSE mount with a **native** tool — PowerShell `Remove-Item`, Python `os.remove`, or any real `DeleteFileW` caller — **not** bash/MSYS `rm` (nor `cmd`'s `del`).  MSYS `rm` on a WinFsp mount does not issue a real `DeleteFileW`; it silently no-ops and leaves the host file intact.  A real `DeleteFileW` (verified 2026-07-10 via `Remove-Item`) correctly removes **both** the file and the replicated metastore row via `sys_unlink`.  On macOS/Linux, `rm` on the FUSE mount works normally.  (Deleting only the host-source file — bypassing the mount — leaves the metastore row as a harmless additive-only "ghost"; a later read returns `ENOENT` from the backend, see `observer-backend-contract.md §3.3`.)
 
 ---
 

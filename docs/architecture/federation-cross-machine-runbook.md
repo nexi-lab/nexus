@@ -643,7 +643,7 @@ The raft transport re-dials each peer at most once per `DEFAULT_CLIENT_TTL` (60s
 rm -f "$CONN/zz-node-$NODE.json"               # host-source delete (reliable on all platforms)
 ```
 
-Delete at the **host source** — it is reliable on every platform.  Deleting through the **FUSE mount** is currently unreliable on Windows/WinFsp: a `rm` against the mount can silently no-op and leave the host file intact (observed 2026-07-10 on a post-fix plugin; the WinFsp `cleanup`-delete path is under investigation).  Do not depend on FUSE-mount deletes for cleanup.  Note also that deleting the host file alone leaves the replicated metastore row as a harmless additive-only "ghost" — a later read returns `ENOENT` from the backend (see `observer-backend-contract.md §3.3`); only a delete that reaches `sys_unlink` removes the row.
+**Windows delete gotcha.**  On Windows, delete through the FUSE mount with a **native** tool — PowerShell `Remove-Item`, Python `os.remove`, or any real `DeleteFileW` caller — **not** bash/MSYS `rm` (nor `cmd`'s `del`).  MSYS `rm` on a WinFsp mount does not issue a real `DeleteFileW`; it silently no-ops and leaves the host file intact.  A real `DeleteFileW` (verified 2026-07-10 via `Remove-Item`) correctly removes **both** the file and the replicated metastore row via `sys_unlink`.  On macOS/Linux, `rm` on the FUSE mount works normally.  (Deleting only the host-source file — bypassing the mount — leaves the metastore row as a harmless additive-only "ghost"; a later read returns `ENOENT` from the backend, see `observer-backend-contract.md §3.3`.)
 
 ---
 

@@ -1,6 +1,6 @@
 # Cross-Machine Federation over Tailscale/Headscale — Complete Runbook
 
-**Status:** verified end-to-end Mac↔Win — same-LAN **and cross-LAN over the Headscale DERP relay** (2026-07-10).  L1 cross-node read is byte-exact both directions; the §3f peer-shared named-list variant delivers a bidirectionally-materialised merged view CC's native `TaskGet` / `TaskList` reads directly; a peer's out-of-band writes are stamped `last_writer` and become cross-node-visible **synchronously on `readdir`** (metadata-sync on-access seed, nexus-vfs #133 — no wait for the reconcile tick).  On a relayed path the `transport_observer` service logs a data-privacy caution per cross-node fetch.  Additional machines onboard with the Row-3 joiner recipe and self-verify via the relay-free [Step 5 CRUD handshake](#step-5--crud-handshake-no-human-relay).
+**Status:** verified end-to-end Mac↔Win — same-LAN **and cross-LAN over the Headscale DERP relay** (2026-07-10).  L1 cross-node read is byte-exact both directions; the §3g peer-shared named-list variant (CC reads **through** the FUSE mount at its task-list path) delivers a merged view CC's native `TaskGet` / `TaskList` reads directly, with peer content fetched **on demand per read** (no local materialization); a peer's out-of-band writes are stamped `last_writer` and become cross-node-visible **synchronously on `readdir`** (metadata-sync on-access seed, nexus-vfs #133 — no wait for the reconcile tick).  On a relayed path the `transport_observer` service logs a data-privacy caution per cross-node fetch.  Additional machines onboard with the Row-3 joiner recipe and self-verify via the relay-free [Step 5 CRUD handshake](#step-5--crud-handshake-no-human-relay).
 
 > **Doc SSOT.**  This file supersedes nexi-lab/nexus discussion #2596 ("Cross-Machine Federation over Tailscale/Headscale — Complete Runbook").  That discussion is now closed and should be removed; new content for this surface goes here.
 
@@ -378,7 +378,7 @@ The CI regression for this surface lives in `tests/e2e/docker/test_cc_tasks_shar
 
 ### Step 3f — Cross-node host-fs sharing (cc-tasks-share-style)
 
-Node A and node B each mount their own LocalConnector under a hostname-namespaced path inside the same federated zone.  Reads on B for a path under A's mount resolve to A's host fs without manual sync.  A's **metadata-sync** keeps A's metastore authoritative for its own out-of-band content — an initial walk at mount, a synchronous **on-access seed** on every `sys_readdir`, and a periodic reconcile backstop (nexus-vfs #133; see `KERNEL-ARCHITECTURE.md §4.5` and `docs/observer-backend-contract.md`).  Raft replicates each row stamped `last_writer_address = A`, so B's metastore already carries the entry; B's read then routes via `try_remote_fetch` keyed on `last_writer_address` to fetch A's bytes (and caches them locally).  There is **no read-miss fan-out** — the lazy cold-discovery path was removed in the metadata-sync cutover (nexus-vfs #132/#133); the metastore is the single source of truth for cross-node existence.
+Node A and node B each mount their own LocalConnector under a hostname-namespaced path inside the same federated zone.  Reads on B for a path under A's mount resolve to A's host fs without manual sync.  A's **metadata-sync** keeps A's metastore authoritative for its own out-of-band content — an initial walk at mount, a synchronous **on-access seed** on every `sys_readdir`, and a periodic reconcile backstop (nexus-vfs #133; see `KERNEL-ARCHITECTURE.md §4.5` and `docs/observer-backend-contract.md`).  Raft replicates each row stamped `last_writer_address = A`, so B's metastore already carries the entry; B's read then routes via `try_remote_fetch` keyed on `last_writer_address` to fetch A's bytes on demand (a pure read — no local cache-back).  There is **no read-miss fan-out** — the lazy cold-discovery path was removed in the metadata-sync cutover (nexus-vfs #132/#133); the metastore is the single source of truth for cross-node existence.
 
 Operator flow (mirrors what `dockerfiles/docker-compose.cc-tasks-share.yml` automates):
 
@@ -409,7 +409,7 @@ nexusd-cluster \
 
 If you accidentally started B with `NEXUS_FEDERATION_ZONES=sharedzone` set on empty data dir before doing the sidecar join, the split-brain guard now catches it — the error message tells you which role you meant (wipe identity to become founder, or unset the env var + run sidecar to become joiner).
 
-After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount).  A's metadata-sync has already published the entry's row to the replicated metastore (`last_writer_address = A`), so B's read resolves the origin locally and issues a single `try_remote_fetch` to A that returns A's host-fs bytes (then caches them locally).  Symmetric on A reading `/shared/cc-tasks/B/...`.
+After the restart, reads on B for any path under `/shared/cc-tasks/A/...` route through `/sharedzone/shared` (the federation mount).  A's metadata-sync has already published the entry's row to the replicated metastore (`last_writer_address = A`), so B's read resolves the origin locally and issues a single `try_remote_fetch` to A that returns A's host-fs bytes on demand (no local cache-back).  Symmetric on A reading `/shared/cc-tasks/B/...`.
 
 This is the substrate the `cc tasks list` cross-machine workflow rides — operator's CC daemon on A drops `~/.claude/tasks/<n>.json` directly to host fs (no Nexus syscall), and a second CC daemon on B reads them through `/shared/cc-tasks/A/<n>.json`.
 
@@ -431,34 +431,34 @@ Each peer's `--mount-driver` installs its OWN LocalConnector at `/shared/cc-task
 
 Trade-off relative to the peer-namespaced variant: writes on either peer land in the raft-replicated metastore under the same VFS path.  For CC's append-only session pattern (each session UUID is written once, per-machine) collisions are effectively impossible.  Workloads with the same VFS path being concurrently mutated by both peers should stick with the peer-namespaced variant, where the peer-name suffix serves as a natural conflict domain.
 
-##### Named-list scope — no rename dance required
+##### Named-list scope — §3g FUSE-at-CC-path (read ⊥ cache ⊥ materialize)
 
-When the shared task list is CC's named-list scope (`CLAUDE_CODE_TASK_LIST_ID=<name>` in `.claude/settings.local.json`'s `env` field routes `TaskCreate`/`TaskList` to `~/.claude/tasks/<name>/*.json` instead of session-uuid subdirs), the peer-shared shape simplifies further: **the LocalConnector's `local_root` IS the CC task-list dir itself**, and no §3g rename dance is needed.
+When the shared task list is CC's named-list scope (`CLAUDE_CODE_TASK_LIST_ID=<name>` in `.claude/settings.local.json`'s `env` field routes `TaskCreate`/`TaskList` to `~/.claude/tasks/<name>/*.json` instead of session-uuid subdirs), CC reads its task list **through the FUSE mount**.  The FUSE mount point IS `~/.claude/tasks/<name>` itself; the LocalConnector's `local_root` is a renamed sibling `~/.claude/tasks.local/<name>` that holds only *this* machine's own task files.  This is the same rename that the workspace-scope peer-shared variant uses to avoid the intra-node circular (`local_root == FUSE mount point`) — the named-list scope follows it too.
 
-Recipe (Win↔Mac cross-machine, per elfenlieds7 dispatcher-worker-merger workflow):
+Recipe (Win↔Mac cross-machine, per elfenlieds7 dispatcher-worker-merger workflow; automated by `start-common.sh`):
 
 ```bash
-# On BOTH nodes (same VFS path, per-node local_root)
---mount-driver 'local-connector:sharedzone:/shared/tasks-nexus-project:{"local_root":"'"$HOME"'/.claude/tasks/nexus-project"}'
+# On BOTH nodes: LocalConnector backs a renamed sibling; the FUSE mount = the CC path.
+--mount-driver 'local-connector:sharedzone:/shared/tasks-nexus-project:{"local_root":"'"$HOME"'/.claude/tasks.local/nexus-project"}'
+export NEXUS_FUSE_MOUNT_POINT="$HOME/.claude/tasks/nexus-project"   # = CC's read path
+export NEXUS_FUSE_VFS_ROOT=/shared/tasks-nexus-project
 ```
 
 Behavior after each node's daemon comes up:
 
-1. Each side's LocalConnector observes its own local `~/.claude/tasks/nexus-project/*.json` via `sys_readdir` → metastore.put (raft-replicated with `last_writer_address=self`).
-2. Cross-node reads (`ls`, `cat`, CC's `TaskGet`) on the merged view route through `sys_read` → `try_remote_fetch` (kernel/src/kernel/io.rs:522-598) → peer's LocalConnector → bytes come back.
-3. **Read-triggered local materialization**: `try_remote_fetch` caches the fetched blob back to the reader's local backend via `route.backend.write_content(...)` (io.rs:594-597) — critical for failover per its docstring.  Consequence: after any FUSE `ls`/`cat` on the merged view, the remote entries appear as **real files on the reader's local disk** at `~/.claude/tasks/<name>/`.  CC's native `TaskList`/`TaskGet` then sees the union directly — no shadow-mount, no `tasks.local/` rename.
+1. Each side's LocalConnector observes its own local `~/.claude/tasks.local/nexus-project/*.json` via `sys_readdir` → `metastore.put` (raft-replicated with `last_writer_address=self`).
+2. CC's `TaskList`/`TaskGet` (and plain `ls`/`cat`) read **through the FUSE mount** at `~/.claude/tasks/nexus-project`.  A `readdir` returns the merged union directly from the raft-replicated metastore rows; a `read` of a peer-owned entry routes `sys_read` → `try_remote_fetch` (`kernel/src/kernel/io.rs`, `Kernel::try_remote_fetch`) → the peer's LocalConnector → bytes come back on demand.
+3. **No local materialization.**  The read is pure: `try_remote_fetch` returns the peer bytes without writing them back to the reader's disk.  Peer entries never appear as real files in the reader's `tasks.local/` backend — they exist only in the replicated metastore and are fetched per-read.  The merged view needs no content replication: readdir rows raft-replicate, content is fetched on access.  This §3g invariant is regression-guarded by the peer-shared Docker E2E (`tests/e2e/docker/test_cc_tasks_peer_shared_e2e.py`), which asserts a cross-node FUSE read does **not** materialize the peer's file in the reader's host dir.
 
-Verified bidirectionally Win↔Mac 2026-07-06 via `comm -13 <(ls ~/.claude/tasks/nexus-project/ | sort) <(ls "$NEXUS_FUSE_MOUNT_POINT/" | sort)` on both sides = empty (local disk ≡ FUSE mount).  Regression-guarded by the peer-shared Docker E2E suite (`tests/e2e/docker/test_cc_tasks_peer_shared_e2e.py`).
-
-Compared to the workspace-scope pattern in §3g, the named-list variant sidesteps the intra-node circular (`local_root == FUSE mount point`) by decoupling the CC task-dir from the FUSE mount point entirely: LocalConnector reads/writes `~/.claude/tasks/<name>/`, the FUSE plugin surfaces the union at `~/.claude-federated/tasks/<name>/`, and CC's task-list env var pins its native reads to the LocalConnector-managed dir where materialization has already landed.
+> **Superseded §3f note (historical — do not reintroduce).**  An earlier variant pointed the LocalConnector's `local_root` at the CC path directly (`~/.claude/tasks/<name>`), with CC reading that raw dir and bypassing FUSE.  It worked only because `try_remote_fetch` cached every fetched blob back into the local backend, *materializing* peer entries into the raw dir so CC's native reads saw them.  That hot-path cache-back conflated read/cache/materialize and justified itself with a `TestLeaderFailover::test_failover_and_recovery` that never existed in the tree.  It was deleted in favor of §3g; cc-tasks is append-only with raft-replicated rows, so no failover content cache is needed.  Do not point a LocalConnector `local_root` at a raw CC read path again.
 
 ##### Caveats for named-list scope
 
-Two limitations that don't affect the workspace-scope pattern in §3g surface for the named-list variant:
+Two CC-internals limitations, independent of the §3g substrate:
 
-1. **CC uses monotonic integer task IDs, not UUIDs.**  Each machine's CC mints the next ID via a local `.highwatermark` file, so two workers that both call `TaskCreate` before federation replicates will independently mint the SAME integer ID with DIFFERENT contents.  After replication, each side keeps its own `<id>.json` (the local write, present before the raft entry arrived, wins on that side).  The workspace-scope pattern in §3g sidesteps this by naming session dirs with UUIDs; the named-list variant reintroduces the collision risk because integer IDs are dense and independently assigned.  Mitigation: for workflows with two writers concurrently creating tasks, use the peer-namespaced variant (§3f above the peer-shared subsection) — the `/<peer-name>/` suffix serves as a natural conflict domain.  Or run one machine as the sole task-list writer and treat the other as read-only.
+1. **CC uses monotonic integer task IDs, not UUIDs.**  Each machine's CC mints the next ID via a local `.highwatermark` file, so two workers that both call `TaskCreate` before federation replicates will independently mint the SAME integer ID with DIFFERENT contents.  After replication, each side keeps its own `<id>.json` (the local write, present before the raft entry arrived, wins on that side).  (The workspace-scope pattern names session dirs with UUIDs and sidesteps this; the named-list scope's dense, independently-assigned integer IDs reintroduce the collision risk.)  Mitigation: for workflows with two writers concurrently creating tasks, use the peer-namespaced variant (§3f above the peer-shared subsection) — the `/<peer-name>/` suffix serves as a natural conflict domain.  Or run one machine as the sole task-list writer and treat the other as read-only.
 
-2. **CC caches the task list in-memory per session.**  `TaskList` and `TaskGet` read `~/.claude/tasks/<name>/` on demand, but a running CC session may hold a stale count from an earlier read.  Federation-materialized files that appeared after CC started are on disk but not always in CC's rendered view — verify with `ls ~/.claude/tasks/<name>/*.json | wc -l` against what `TaskList` shows.  If the counts differ, the CC session's task-list index is stale (not a federation sync gap).  This is a CC-internals limitation, not fixable in nexus code.
+2. **CC caches the task list in-memory per session.**  `TaskList` and `TaskGet` read `~/.claude/tasks/<name>/` on demand, but a running CC session may hold a stale count from an earlier read.  Federation entries that appeared through the FUSE mount after CC started are visible via `ls` but not always in CC's rendered view — verify with `ls ~/.claude/tasks/<name>/*.json | wc -l` against what `TaskList` shows.  If the counts differ, the CC session's task-list index is stale (not a federation sync gap).  This is a CC-internals limitation, not fixable in nexus code.
 
 ### Step 3g — Expose the federated VFS as a real OS mount via FUSE
 
@@ -605,16 +605,16 @@ Expected:
 
 ### Step 5 — CRUD handshake (no human relay)
 
-Step 4 is a low-level grpcurl smoke an operator drives on one machine.  Step 5 is the **onboarding acceptance gate**: once §3f (peer-shared named-list) and §3g (FUSE) are up on every node, each machine confirms it is fully federated **by itself, through the shared task list** — no operator shuttling messages between machines.  This is how a freshly-added Nth node and the existing nodes "shake hands."
+Step 4 is a low-level grpcurl smoke an operator drives on one machine.  Step 5 is the **onboarding acceptance gate**: once the §3g peer-shared named-list mount (FUSE at the CC task-list path) is up on every node, each machine confirms it is fully federated **by itself, through the shared task list** — no operator shuttling messages between machines.  This is how a freshly-added Nth node and the existing nodes "shake hands."
 
-Assumes every node runs the §3f peer-shared named-list recipe at the **same** VFS path `/shared/tasks-nexus-project`, FUSE-mounted at `~/.claude-federated/tasks/nexus-project`, with `local_root = ~/.claude/tasks/nexus-project`.
+Assumes every node runs the §3g peer-shared named-list recipe at the **same** VFS path `/shared/tasks-nexus-project`, FUSE-mounted at the CC task-list path `~/.claude/tasks/nexus-project`, with `local_root = ~/.claude/tasks.local/nexus-project` (the LocalConnector backend holding this machine's own markers).
 
 **1. Announce yourself.**  Drop a uniquely-named marker into your connector root (direct host write, no syscall), then `ls` the FUSE mount so the on-access seed publishes its row (`last_writer = you`) and raft replicates it:
 
 ```bash
 NODE=win3                                    # your node's short name — must be unique
-CONN=~/.claude/tasks/nexus-project
-FUSE=~/.claude-federated/tasks/nexus-project
+CONN=~/.claude/tasks.local/nexus-project      # LocalConnector backend (your own markers)
+FUSE=~/.claude/tasks/nexus-project            # FUSE mount = CC's read path (merged view)
 printf '{"probe":"%s","ts":"%s"}' "$NODE" "$(date -u +%FT%TZ)" > "$CONN/zz-node-$NODE.json"
 ls "$FUSE" >/dev/null                         # fire the readdir seed
 ```

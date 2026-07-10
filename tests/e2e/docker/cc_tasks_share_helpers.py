@@ -171,6 +171,26 @@ def host_task_ensure_dir(container: str, relpath: str) -> None:
     runbook_helpers.docker_exec(container, ["mkdir", "-p", _host_path(relpath)], check=True)
 
 
+def host_path_exists(container: str, relpath: str) -> bool:
+    """``test -e /host/tasks/<relpath>`` on ``<container>`` — the reader's
+    raw LocalConnector backend dir.
+
+    Backs the §3g read-⊥-materialize guard: after a cross-node read that
+    goes *through the FUSE mount*, the peer's bytes must NOT have been
+    written back as a real file in the reader's own host dir.  Returns
+    ``True`` iff the path physically exists on the reader's LocalConnector
+    backend.  On the pre-decouple kernel (``try_remote_fetch`` cache-back)
+    this returned ``True`` for a freshly-read peer file; post-decouple it
+    must be ``False``.
+    """
+    proc = subprocess.run(
+        ["docker", "exec", container, "test", "-e", _host_path(relpath)],
+        capture_output=True,
+        timeout=10,
+    )
+    return proc.returncode == 0
+
+
 def host_task_symlink(container: str, link_relpath: str, target_relpath: str) -> None:
     """Create ``link_relpath`` -> ``target_relpath`` inside ``/host/tasks``.
 

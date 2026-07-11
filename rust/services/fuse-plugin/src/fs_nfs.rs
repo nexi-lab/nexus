@@ -199,8 +199,15 @@ impl NFSFileSystem for NexusNfs {
         }
     }
 
-    async fn setattr(&self, _id: fileid3, _setattr: sattr3) -> Result<fattr3, nfsstat3> {
-        Err(nfsstat3::NFS3ERR_NOENT)
+    async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
+        let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        // Handle truncate (size=0): shell `>` redirect and open(O_TRUNC)
+        // send setattr(size=0) before writing new content.
+        if let nfsserve::nfs::set_size3::size(0) = setattr.size {
+            kernel_callbacks::sys_write(&self.kernel, &path, &[])
+                .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        }
+        self.stat_fattr(id, &path)
     }
 
     async fn read(

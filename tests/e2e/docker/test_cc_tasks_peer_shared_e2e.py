@@ -259,7 +259,8 @@ class TestPeerSharedMergedView:
 # Workflow 2: cross-node byte-exact reads via try_remote_fetch.
 # ---------------------------------------------------------------------------
 class TestPeerSharedCrossNodeByteExact:
-    """Each side reads OTHER's file byte-exact via try_remote_fetch.
+    """Each side reads OTHER's file byte-exact via try_remote_fetch, and
+    the read does NOT materialize the peer's bytes on the reader's disk.
 
     Peer-shared invariant: when node A's FUSE cat lands on a path whose
     metastore row's `last_writer_address` is node B, try_remote_fetch
@@ -268,10 +269,21 @@ class TestPeerSharedCrossNodeByteExact:
     for founder→joiner + joiner→founder read; the differentiator here
     is that both writes target the SAME VFS subtree.
 
-    Three steps:
+    §3g read-⊥-materialize invariant: reads go THROUGH the FUSE mount
+    (`/mnt/cc-tasks`), which is a distinct path from each node's raw
+    LocalConnector backend dir (`/host/tasks`).  `try_remote_fetch`
+    returns the peer bytes on demand and writes nothing back locally, so
+    after a cross-node read the peer's file must be absent from the
+    reader's own host dir.  (On the pre-decouple kernel the hot-path
+    cache-back materialized it there — that behaviour is what this guard
+    now forbids.)  The merged view needs no such materialization: readdir
+    rows raft-replicate, content is fetched per-read.
+
+    Four steps:
       1. Each side writes to host fs + triggers observation.
       2. Founder cats joiner's file via FUSE → byte-exact from joiner.
       3. Joiner cats founder's file via FUSE → byte-exact from founder.
+      4. Neither peer file materialized in the reader's raw host dir.
     """
 
     def test_each_side_reads_other_side_bytes_via_peer_fetch(
@@ -333,6 +345,28 @@ class TestPeerSharedCrossNodeByteExact:
                 founder_file_on_joiner,
                 founder_bytes,
                 "joiner never got founder's bytes via peer-fetch",
+            )
+
+            # Step 4: §3g read-⊥-materialize guard.  Both cross-node reads
+            # above completed (byte-exact) through the FUSE mount.  On the
+            # decoupled kernel `try_remote_fetch` writes nothing back, so
+            # the peer's file must NOT exist in the reader's raw host dir.
+            # The reader wrote only its OWN session there; the peer's
+            # session appearing on local disk would mean the hot-path
+            # cache-back is still materializing (pre-decouple regression).
+            assert not cc_tasks_share_helpers.host_path_exists(
+                topology.founder_container, f"/{joiner_sess}/b.json"
+            ), (
+                "joiner's file was materialized in founder's raw host dir after a "
+                "cross-node FUSE read — the read-path cache-back is back (read ⊥ "
+                "materialize violated)"
+            )
+            assert not cc_tasks_share_helpers.host_path_exists(
+                topology.joiner_container, f"/{founder_sess}/a.json"
+            ), (
+                "founder's file was materialized in joiner's raw host dir after a "
+                "cross-node FUSE read — the read-path cache-back is back (read ⊥ "
+                "materialize violated)"
             )
         finally:
             runbook_helpers.docker_exec(

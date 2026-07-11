@@ -1,7 +1,7 @@
 """Federation runbook-binding E2E suite.
 
 Each test class maps 1-to-1 to a section of
-``docs/architecture/federation-cross-machine-runbook.md``.  The whole
+``docs/architecture/federation-cross-machine-runbook.html``.  The whole
 point of this file is to lock the cross-machine federation L1
 milestone (Win↔Mac sharedzone byte-exact read, landed 2026-06-06)
 into CI so the six-months bug class we just spent fixing cannot

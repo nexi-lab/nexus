@@ -9,7 +9,7 @@
 # node's FUSE mount.
 #
 # This is the production Win↔Mac shape (per `start-founder.sh` and
-# `federation-cross-machine-runbook.md`).  The namespaced companion
+# `federation-cross-machine-runbook.html`).  The namespaced companion
 # (`docker-compose.cc-tasks-share.yml`) covers the historical
 # `/shared/cc-tasks/<hostname>` shape used by earlier smoke workflows.
 # Both shapes exercise DT_MOUNT idempotency + raft-replicated metastore,

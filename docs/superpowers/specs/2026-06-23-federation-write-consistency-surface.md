@@ -104,5 +104,5 @@ When the EC kernel-hot-path activation is reattempted, the originally-planned `t
 * nexus-vfs PR #62 — operator CLI flag rename (`--as`, not `--as-role`).
 * nexus-vfs PR #63 — kernel hot path activation revert + doc / regression-test sync.
 * nexus-vfs `propose_ec_local` (rust/raft/src/raft/node.rs) — the EC write primitive ZoneMetaStore would route to once the EC drain is hardened.
-* Companion runbook section: `docs/architecture/federation-cross-machine-runbook.md` "Consistency model" (between §3g and §4).
+* Companion runbook section: `docs/architecture/federation-cross-machine-runbook.html` "Consistency model" (between §3g and §4).
 * Manual smoke that motivated the change: 2026-06-22 Mac↔Win Federation L1 over Tailscale.  Substrate proven both directions byte-exact via SC; the bidirectional-write gap for `--as learner` joiners is documented but currently the operator workaround is `--as voter`.

@@ -27,7 +27,7 @@ session directory + ``try/finally`` cleanup so concurrent runs (xdist)
 don't trip over shared paths.
 
 The "share" goal — Mac↔Win VPN topology — is verified manually per
-``docs/architecture/federation-cross-machine-runbook.md`` once this
+``docs/architecture/federation-cross-machine-runbook.html`` once this
 suite is green; this E2E is the regression guard before that smoke.
 """
 

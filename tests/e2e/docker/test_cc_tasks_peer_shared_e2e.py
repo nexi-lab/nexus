@@ -5,7 +5,7 @@ kernel + LocalConnector driver + FUSE service), but exercises the
 **peer-shared** mount shape where BOTH nodes mount their LocalConnector
 at the SAME VFS path (``/shared/cc-tasks``, no per-hostname suffix).
 This is the production Win↔Mac topology that ``start-founder.sh`` and
-``federation-cross-machine-runbook.md`` deploy.
+``federation-cross-machine-runbook.html`` deploy.
 
 The namespaced companion suite (``test_cc_tasks_share_e2e.py``) covers
 the historical ``/shared/cc-tasks/<hostname>`` shape.  Both shapes

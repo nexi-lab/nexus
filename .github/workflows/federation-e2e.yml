@@ -3,7 +3,7 @@ name: Federation E2E
 # Runs `tests/e2e/docker/test_federation_runbook.py` against the
 # 3-voter HA cluster in
 # `dockerfiles/docker-compose.federation-runbook.yml`.  The suite
-# binds 1-to-1 to docs/architecture/federation-cross-machine-runbook.md
+# binds 1-to-1 to docs/architecture/federation-cross-machine-runbook.html
 # and locks the cross-machine L1 milestone (Win↔Mac sharedzone byte-
 # exact read, landed 2026-06-06) into CI so the six-months bug class
 # the runbook describes cannot regress silently.

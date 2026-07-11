@@ -12,7 +12,7 @@
 # Each node owns its own local root zone. `nexusd-cluster join` (run by
 # the test container against the joiner and witness) writes the local
 # DT_MOUNT into each node's local root, pointing at the sharedzone
-# raft group. See docs/architecture/federation-cross-machine-runbook.md
+# raft group. See docs/architecture/federation-cross-machine-runbook.html
 # for the operator-level write-up of the same flow.
 #
 # Lifecycle contract — the fixture (not Docker) owns daemon lifecycle.

@@ -358,6 +358,58 @@ class TestSessionLifecycle:
 # ─────────────────────────────────────────────────────────────────────
 
 
+class TestOverwriteExistingFile:
+    """Rewrite an EXISTING file through the WinFsp mount — CC's `TaskUpdate`
+    workflow (a task's `.json` is overwritten in place as its status
+    changes).
+
+    Regression guard for the §3g overwrite gap: WinFsp routes
+    ``open(path, "w")`` / CREATE_ALWAYS on an *existing* file to the
+    ``FileSystemContext::overwrite`` disposition, whose trait default is
+    ``STATUS_INVALID_DEVICE_REQUEST``.  Without the plugin's ``overwrite``
+    override every task UPDATE failed (the create → read → delete lifecycle
+    above masked it — nothing rewrote a file that already existed).  §3f
+    never exposed this because CC wrote the raw host dir natively, not
+    through FUSE.
+    """
+
+    def test_overwrite_existing_task_replaces_content(
+        self, topology: Topology, session_name: str
+    ) -> None:
+        sess_rel = f".claude/tasks/{session_name}"
+        rel = f"{sess_rel}/task-upd.json"
+        mount = topology.mount_path(rel)
+        vfs = topology.vfs_path(rel)
+        v1 = '{"id":7,"status":"todo","title":"v1"}'
+        v2 = '{"id":7,"status":"done","title":"v2-updated-and-longer"}'
+        try:
+            _cmd(["mkdir", topology.mount_path(sess_rel)])
+            # Create the file (fresh write — the create disposition).
+            _write_file(mount, v1)
+            first = _vfs_read(topology.cluster_grpc, vfs)
+            assert "error" not in first, f"initial vfs_read failed: {first}"
+            assert v1 in _decode_content(first).decode("utf-8", errors="replace")
+
+            # OVERWRITE the existing file — `open(path,"w")` on a file that
+            # already exists.  This is the op that returned EINVAL before
+            # the `overwrite` handler existed.
+            _write_file(mount, v2)
+            _wait_path_via_grpc(topology, vfs, expect_found=True)
+
+            # The kernel SSOT must now hold v2 and NONE of v1 (whole-file
+            # rewrite, not append).
+            second = _vfs_read(topology.cluster_grpc, vfs)
+            assert "error" not in second, f"post-overwrite vfs_read failed: {second}"
+            body = _decode_content(second).decode("utf-8", errors="replace")
+            assert v2 in body, f"overwrite did not replace content — expected {v2!r}, got {body!r}"
+            assert '"title":"v1"' not in body, f"stale v1 content survived the overwrite: {body!r}"
+        finally:
+            try:
+                os.remove(mount)
+            except OSError:
+                pass
+
+
 class TestMidSessionRename:
     def test_rename_preserves_content_and_remaps_inode(
         self, topology: Topology, session_name: str

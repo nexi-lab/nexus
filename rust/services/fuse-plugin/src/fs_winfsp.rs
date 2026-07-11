@@ -391,6 +391,37 @@ impl FileSystemContext for NexusWinFsp {
         })
     }
 
+    /// Overwrite (truncate) an EXISTING file — WinFsp's CREATE_ALWAYS /
+    /// FILE_OVERWRITE(_IF) / FILE_SUPERSEDE disposition on a file that
+    /// already exists (e.g. `open(path, "w")`, `writeFile`, CC's
+    /// `TaskUpdate`). The `FileSystemContext` trait default returns
+    /// `STATUS_INVALID_DEVICE_REQUEST`, so without this override every
+    /// truncating open of an existing file failed — a §3g regression that
+    /// §3f never exposed (CC wrote the raw host dir natively, not FUSE).
+    ///
+    /// The kernel's `sys_write` is whole-file (O_TRUNC) rewrite semantics,
+    /// so truncation is an empty-payload write — the exact pattern
+    /// `create` uses for a fresh file; the subsequent `write` handler then
+    /// replaces the content at offset 0. Kernel syscall surface unchanged.
+    fn overwrite(
+        &self,
+        context: &Self::FileContext,
+        _file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
+        _replace_file_attributes: bool,
+        _allocation_size: u64,
+        _extra_buffer: Option<&[u8]>,
+        file_info: &mut FileInfo,
+    ) -> Result<(), FspError> {
+        winfsp_diag!("overwrite path={}", context.path);
+        if context.is_dir {
+            return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
+        }
+        kernel_callbacks::sys_write(&self.kernel, &context.path, &[])
+            .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
+        Self::populate_file_info(file_info, 0, false);
+        Ok(())
+    }
+
     fn get_file_info(
         &self,
         context: &Self::FileContext,

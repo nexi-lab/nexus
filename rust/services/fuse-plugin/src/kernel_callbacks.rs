@@ -329,11 +329,7 @@ pub async fn sys_read_async(kernel: &KernelHandle, path: &str) -> Result<Vec<u8>
 }
 
 /// Async wrapper around [`sys_write`].
-pub async fn sys_write_async(
-    kernel: &KernelHandle,
-    path: &str,
-    data: &[u8],
-) -> Result<(), i32> {
+pub async fn sys_write_async(kernel: &KernelHandle, path: &str, data: &[u8]) -> Result<(), i32> {
     let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
     let fn_ptr = kernel.sys_write;
     let kptr = kernel.kernel_ptr as usize;
@@ -341,8 +337,7 @@ pub async fn sys_write_async(
     let owned_data = data.to_vec();
     tokio::task::spawn_blocking(move || {
         let kptr = kptr as *const std::ffi::c_void;
-        let rc =
-            unsafe { (fn_ptr)(kptr, c_path.as_ptr(), owned_data.as_ptr(), owned_data.len()) };
+        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), owned_data.as_ptr(), owned_data.len()) };
         if rc != 0 {
             return Err(rc);
         }
@@ -353,10 +348,7 @@ pub async fn sys_write_async(
 }
 
 /// Async wrapper around [`sys_readdir`].
-pub async fn sys_readdir_async(
-    kernel: &KernelHandle,
-    parent_path: &str,
-) -> Result<String, i32> {
+pub async fn sys_readdir_async(kernel: &KernelHandle, parent_path: &str) -> Result<String, i32> {
     let c_path = CString::new(parent_path).map_err(|_| ERRNO_IO_RAW)?;
     let fn_ptr = kernel.sys_readdir;
     let kptr = kernel.kernel_ptr as usize;

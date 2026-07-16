@@ -725,10 +725,7 @@ unsafe extern "C" fn mock_sys_readdir_for_slow(
     0
 }
 
-unsafe extern "C" fn mock_sys_unlink_for_slow(
-    kernel: *const c_void,
-    path: *const c_char,
-) -> i32 {
+unsafe extern "C" fn mock_sys_unlink_for_slow(kernel: *const c_void, path: *const c_char) -> i32 {
     let mock = &*(kernel as *const SlowMockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let mut entries = mock.entries.lock().unwrap();
@@ -738,10 +735,7 @@ unsafe extern "C" fn mock_sys_unlink_for_slow(
     }
 }
 
-unsafe extern "C" fn mock_sys_mkdir_for_slow(
-    kernel: *const c_void,
-    path: *const c_char,
-) -> i32 {
+unsafe extern "C" fn mock_sys_mkdir_for_slow(kernel: *const c_void, path: *const c_char) -> i32 {
     let mock = &*(kernel as *const SlowMockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let mut entries = mock.entries.lock().unwrap();
@@ -758,10 +752,7 @@ unsafe extern "C" fn mock_sys_mkdir_for_slow(
     0
 }
 
-unsafe extern "C" fn mock_sys_rmdir_for_slow(
-    kernel: *const c_void,
-    path: *const c_char,
-) -> i32 {
+unsafe extern "C" fn mock_sys_rmdir_for_slow(kernel: *const c_void, path: *const c_char) -> i32 {
     let mock = &*(kernel as *const SlowMockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let mut entries = mock.entries.lock().unwrap();
@@ -856,13 +847,8 @@ async fn spawn_blocking_prevents_starvation() {
     );
 
     // Verify all 10 stat calls actually executed (not short-circuited).
-    let count = mock
-        .stat_count
-        .load(std::sync::atomic::Ordering::Relaxed);
-    assert_eq!(
-        count, n as u64,
-        "expected {n} stat calls, got {count}"
-    );
+    let count = mock.stat_count.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count, n as u64, "expected {n} stat calls, got {count}");
 }
 
 /// Full concurrent lifecycle with slow callbacks — create + write +
@@ -888,14 +874,10 @@ async fn concurrent_slow_lifecycle() {
         let nfs = nfs.clone();
         tasks.push(tokio::spawn(async move {
             let root = nfs.root_dir();
-            let fname: nfsserve::nfs::filename3 =
-                format!("slow-{i}.txt").as_bytes().into();
+            let fname: nfsserve::nfs::filename3 = format!("slow-{i}.txt").as_bytes().into();
 
             // Create (write + stat).
-            let (fid, _) = nfs
-                .create(root, &fname, Default::default())
-                .await
-                .unwrap();
+            let (fid, _) = nfs.create(root, &fname, Default::default()).await.unwrap();
 
             // Write content (write + stat).
             let payload = format!("payload-{i}");

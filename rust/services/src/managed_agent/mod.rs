@@ -46,10 +46,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use kernel::abi::KernelSyscall;
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentKind, AgentRegistry, AgentState, RepoMount,
 };
+use kernel::kernel::syscall::KernelSyscall;
 use kernel::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;

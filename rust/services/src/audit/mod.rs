@@ -33,10 +33,10 @@ use contracts::{is_system_path, OperationContext};
 use parking_lot::Mutex;
 use serde::Serialize;
 
-use kernel::abi::KernelSyscall;
 use kernel::core::dispatch::{
     FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook,
 };
+use kernel::kernel::syscall::KernelSyscall;
 use kernel::kernel::{Kernel, KernelError};
 use kernel::service_registry::ServiceHandle;
 

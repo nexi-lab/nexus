@@ -38,7 +38,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use kernel::abi::KernelSyscall;
+use kernel::kernel::syscall::KernelSyscall;
 use kernel::kernel::{KernelError, OperationContext};
 
 const PIPE_CAPACITY: usize = 1 << 20;

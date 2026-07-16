@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use kernel::abi::KernelSyscall;
+use kernel::kernel::syscall::KernelSyscall;
 use kernel::kernel::{Kernel, OperationContext};
 use kernel::service_registry::{RustCallError, RustService};
 

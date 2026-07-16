@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use kernel::abi::KernelAbi;
+use kernel::abi::KernelSyscall;
 use kernel::kernel::{Kernel, OperationContext};
 use kernel::service_registry::{RustCallError, RustService};
 
@@ -162,7 +162,7 @@ pub(crate) type OnTerminateCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
 // ── Service ─────────────────────────────────────────────────────────────
 
-pub(crate) struct AcpService<K: KernelAbi> {
+pub(crate) struct AcpService<K: KernelSyscall> {
     kernel: Arc<K>,
     default_zone: String,
     agent_registry: RwLock<Option<Arc<dyn AgentRegistry>>>,
@@ -179,7 +179,7 @@ struct ActiveSession {
     fd_paths: [String; 3],
 }
 
-impl<K: KernelAbi> AcpService<K> {
+impl<K: KernelSyscall> AcpService<K> {
     pub(crate) const NAME: &'static str = "acp";
 
     pub(crate) fn new(kernel: Arc<K>, default_zone: String) -> Self {
@@ -414,9 +414,9 @@ impl AcpService<Kernel> {
 }
 
 // `persist_result` lives in the generic impl because its body only
-// touches the `KernelAbi` trait surface (`sys_write`); the
+// touches the `KernelSyscall` trait surface (`sys_write`); the
 // `call_agent` path (which is generic over K) needs to call it.
-impl<K: KernelAbi> AcpService<K> {
+impl<K: KernelSyscall> AcpService<K> {
     pub(crate) fn persist_result(
         &self,
         result: &AcpResult,
@@ -449,7 +449,7 @@ impl<K: KernelAbi> AcpService<K> {
 // ── call_agent (unix only — depends on AcpSubprocess) ──────────────────
 
 #[cfg(unix)]
-impl<K: KernelAbi> AcpService<K> {
+impl<K: KernelSyscall> AcpService<K> {
     /// Run a one-shot ACP call against `req.agent_id`. See module
     /// docs for the lifecycle. Errors map onto AcpResult fields:
     ///   - timeout            -> timed_out=true, exit_code=-1
@@ -844,7 +844,7 @@ fn build_metadata(
 
 // ── RustService dispatch ────────────────────────────────────────────────
 
-impl<K: KernelAbi> RustService for AcpService<K> {
+impl<K: KernelSyscall> RustService for AcpService<K> {
     fn name(&self) -> &str {
         Self::NAME
     }
@@ -921,7 +921,7 @@ struct AcpCallReq {
     context: AcpContext,
 }
 
-fn dispatch_acp_call<K: KernelAbi>(
+fn dispatch_acp_call<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -957,7 +957,7 @@ fn dispatch_acp_call<K: KernelAbi>(
     }
 }
 
-fn dispatch_list_configs<K: KernelAbi>(
+fn dispatch_list_configs<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -978,7 +978,7 @@ fn dispatch_list_configs<K: KernelAbi>(
     encode(&out)
 }
 
-fn dispatch_list_processes<K: KernelAbi>(
+fn dispatch_list_processes<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -1008,7 +1008,7 @@ struct AcpKillReq {
     context: AcpContext,
 }
 
-fn dispatch_kill<K: KernelAbi>(
+fn dispatch_kill<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -1029,7 +1029,7 @@ struct AcpSetSystemPromptReq {
     context: AcpContext,
 }
 
-fn dispatch_set_system_prompt<K: KernelAbi>(
+fn dispatch_set_system_prompt<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -1050,7 +1050,7 @@ struct AcpAgentReq {
     context: AcpContext,
 }
 
-fn dispatch_get_system_prompt<K: KernelAbi>(
+fn dispatch_get_system_prompt<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -1071,7 +1071,7 @@ struct AcpSetEnabledSkillsReq {
     context: AcpContext,
 }
 
-fn dispatch_set_enabled_skills<K: KernelAbi>(
+fn dispatch_set_enabled_skills<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -1085,7 +1085,7 @@ fn dispatch_set_enabled_skills<K: KernelAbi>(
     }))
 }
 
-fn dispatch_get_enabled_skills<K: KernelAbi>(
+fn dispatch_get_enabled_skills<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {
@@ -1110,7 +1110,7 @@ fn default_history_limit() -> usize {
     50
 }
 
-fn dispatch_history<K: KernelAbi>(
+fn dispatch_history<K: KernelSyscall>(
     svc: &AcpService<K>,
     payload: &[u8],
 ) -> Result<Vec<u8>, RustCallError> {

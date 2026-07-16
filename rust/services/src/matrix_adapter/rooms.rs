@@ -63,7 +63,7 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn require_kernel<K: kernel::abi::KernelAbi>(
+fn require_kernel<K: kernel::abi::KernelSyscall>(
     state: &AdapterState<K>,
 ) -> Result<&Arc<K>, AdapterError> {
     state
@@ -79,7 +79,7 @@ fn require_kernel<K: kernel::abi::KernelAbi>(
 /// we synthesise a minimal `m.room.create` + `m.room.member` set so
 /// stock clients see a sensible room. ReBAC-derived membership is a
 /// D3 follow-up; today the requesting user is reported as joined.
-pub async fn room_state<K: kernel::abi::KernelAbi>(
+pub async fn room_state<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
@@ -92,7 +92,7 @@ pub async fn room_state<K: kernel::abi::KernelAbi>(
 /// `GET /_matrix/client/v3/rooms/{rid}/state/{event_type}/{state_key}`
 /// — single state event. Same synthesis as `room_state`, filtered by
 /// `event_type` + `state_key`.
-pub async fn room_state_event<K: kernel::abi::KernelAbi>(
+pub async fn room_state_event<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path((room_id, event_type, state_key)): Path<(String, String, String)>,
@@ -138,7 +138,7 @@ fn default_dir() -> String {
 /// chunk so the client sees newest-first. Real backwards seek lands
 /// in D3 alongside `/sync` once the stream offsets surface a "tail"
 /// query.
-pub async fn room_messages<K: kernel::abi::KernelAbi>(
+pub async fn room_messages<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
@@ -207,7 +207,7 @@ pub async fn room_messages<K: kernel::abi::KernelAbi>(
 
 /// `GET /_matrix/client/v3/rooms/{rid}/joined_members` — D2 returns
 /// the requesting user only. D3 derives this from ReBAC.
-pub async fn joined_members<K: kernel::abi::KernelAbi>(
+pub async fn joined_members<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
@@ -230,7 +230,7 @@ pub async fn joined_members<K: kernel::abi::KernelAbi>(
 /// MailboxStampingHook rewrites `from` from OperationContext, so the
 /// adapter cannot forge sender even if the client's PDU body claims
 /// otherwise.
-pub async fn room_send<K: kernel::abi::KernelAbi>(
+pub async fn room_send<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path((room_id, _event_type, _txn_id)): Path<(String, String, String)>,
@@ -288,7 +288,7 @@ pub struct CreateRoomRequest {
 /// `/agents/{name}/chat-with-me` DT_STREAM. The Matrix client sees a
 /// fresh room_id; subsequent `/send` writes round-trip through the
 /// path-based codec.
-pub async fn create_room<K: kernel::abi::KernelAbi>(
+pub async fn create_room<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
     Json(req): Json<CreateRoomRequest>,
@@ -324,7 +324,7 @@ pub async fn create_room<K: kernel::abi::KernelAbi>(
 /// stream path to the user's joined-rooms set so `/sync` pumps it.
 /// ReBAC-backed authorisation is a follow-up; today the join is
 /// admitted unconditionally for any caller with a valid token.
-pub async fn room_join<K: kernel::abi::KernelAbi>(
+pub async fn room_join<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
@@ -341,7 +341,7 @@ pub async fn room_join<K: kernel::abi::KernelAbi>(
 
 /// `POST /_matrix/client/v3/rooms/{rid}/leave` — removes the room
 /// from the user's joined-rooms set.
-pub async fn room_leave<K: kernel::abi::KernelAbi>(
+pub async fn room_leave<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
@@ -393,7 +393,7 @@ fn synth_state_events(stream_path: &str, server_name: &str, user_id: &str) -> Ve
 /// `services::managed_agent::proc_entry::create_dt_stream` — the two
 /// callers (managed-agent spawn vs Matrix createRoom) share the same
 /// DT_STREAM contract, just at different paths.
-fn create_chat_stream<K: kernel::abi::KernelAbi>(
+fn create_chat_stream<K: kernel::abi::KernelSyscall>(
     kernel: &std::sync::Arc<K>,
     path: &str,
 ) -> Result<(), AdapterError> {

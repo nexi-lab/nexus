@@ -46,7 +46,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use kernel::abi::KernelAbi;
+use kernel::abi::KernelSyscall;
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentKind, AgentRegistry, AgentState, RepoMount,
 };
@@ -180,13 +180,13 @@ impl std::error::Error for ManagedAgentError {}
 // Services rlib does NOT depend on the sudocode crate (cross-repo
 // git-deps would couple services' build to a specific sudocode rev,
 // which is the wrong layer for cross-repo coupling — same reason
-// `KernelAbi` lives at the trait boundary). Instead, services
+// `KernelSyscall` lives at the trait boundary). Instead, services
 // declares a small DI trait that nexus's binary edge
 // (`profiles/cluster` for all builds — the sole binary edge
 // Python wheel) implements by wrapping `sudocode_runtime::spawn_task`.
 // The trait method is `dyn`-dispatched but only fires once per
 // `start_session` call (out of the hot path); the spawn body itself
-// is fully monomorphised over `K: KernelAbi` inside the concrete
+// is fully monomorphised over `K: KernelSyscall` inside the concrete
 // impl, so there's no per-`sys_read` vtable cost.
 
 /// Per-pid spawn handle returned by [`SpawnTask::spawn`]. Concrete
@@ -232,7 +232,7 @@ pub enum AgentLoopState {
 /// runtime crate the deployment chose (today: sudocode); generic K
 /// keeps the spawn body monomorphised against the same kernel
 /// concrete that the service holds.
-pub trait SpawnTask<K: KernelAbi>: Send + Sync + 'static {
+pub trait SpawnTask<K: KernelSyscall>: Send + Sync + 'static {
     /// Spawn the per-pid runtime body. Returns an opaque handle the
     /// service stores in its `spawn_handles` sidecar; the
     /// on_terminate observer aborts via the handle on session
@@ -257,7 +257,7 @@ pub trait SpawnTask<K: KernelAbi>: Send + Sync + 'static {
 
 // ── Service ─────────────────────────────────────────────────────────────
 
-pub(crate) struct ManagedAgentService<K: KernelAbi> {
+pub(crate) struct ManagedAgentService<K: KernelSyscall> {
     /// Shared kernel handle for `start_session` to stamp the per-pid
     /// procfs subtree (`/proc/{pid}/`, `/proc/{pid}/workspace/`,
     /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for
@@ -279,7 +279,7 @@ pub(crate) struct ManagedAgentService<K: KernelAbi> {
     spawn_handles: Arc<dashmap::DashMap<String, Box<dyn SpawnHandle>>>,
 }
 
-impl<K: KernelAbi> ManagedAgentService<K> {
+impl<K: KernelSyscall> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
     /// Service constructor.  Production callers reach this through
@@ -532,10 +532,10 @@ impl<K: KernelAbi> ManagedAgentService<K> {
 // Production install path stays specific to the concrete `Kernel`
 // because `register_on_terminate` is an inherent accessor on
 // `AgentRegistry` reached through `kernel.agent_registry()` — that
-// accessor is deliberately *not* on the `KernelAbi` trait (the v2
+// accessor is deliberately *not* on the `KernelSyscall` trait (the v2
 // audit pulled kernel-internal struct accessors out of the
 // service-facing surface). Lifecycle methods stay generic above so
-// non-Kernel `K: KernelAbi` test fixtures and future runtime targets
+// non-Kernel `K: KernelSyscall` test fixtures and future runtime targets
 // (sudo-code in-process spawn) compile without `Kernel`.
 impl ManagedAgentService<kernel::kernel::Kernel> {
     /// Install the service into a freshly-constructed kernel:
@@ -674,7 +674,7 @@ impl From<ManagedAgentError> for RustCallError {
     }
 }
 
-impl<K: KernelAbi> RustService for ManagedAgentService<K> {
+impl<K: KernelSyscall> RustService for ManagedAgentService<K> {
     fn name(&self) -> &str {
         Self::NAME
     }
@@ -1261,14 +1261,14 @@ mod tests {
                 propagates_cross_node: false,
             };
 
-            // Use UFCS through KernelAbi so we get the single-path
+            // Use UFCS through KernelSyscall so we get the single-path
             // trait wrappers (sys_read_single / sys_write_with_link_depth)
             // — the inherent Kernel::sys_read/sys_write are now batch-shaped
             // (&[ReadRequest] / &[WriteRequest]).
-            KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, payload, 0)
+            KernelSyscall::sys_write(kernel.as_ref(), &shortcut, &ctx, payload, 0)
                 .expect("sys_write through workspace shortcut DT_LINK");
 
-            let read = KernelAbi::sys_read(
+            let read = KernelSyscall::sys_read(
                 kernel.as_ref(),
                 &canonical,
                 &ctx,
@@ -1320,10 +1320,10 @@ mod tests {
                 propagates_cross_node: false,
             };
 
-            KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, &llm_authored, 0)
+            KernelSyscall::sys_write(kernel.as_ref(), &shortcut, &ctx, &llm_authored, 0)
                 .expect("sys_write through workspace shortcut DT_LINK");
 
-            let read = KernelAbi::sys_read(kernel.as_ref(), &canonical, &ctx, 0, 0)
+            let read = KernelSyscall::sys_read(kernel.as_ref(), &canonical, &ctx, 0, 0)
                 .expect("sys_read on canonical chat-with-me");
             let bytes = read.data.expect("stream data present");
             let json: serde_json::Value =

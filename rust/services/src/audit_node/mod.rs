@@ -13,7 +13,7 @@
 //!    learner, and register the `/audit/traces/` DT_STREAM locally on each
 //!    joined zone (no `AuditHook` — consumer, not producer).
 //!
-//! 2. **Collect/gather loop** (this module, generic over `K: KernelAbi`):
+//! 2. **Collect/gather loop** (this module, generic over `K: KernelSyscall`):
 //!    poll every joined zone's `/audit/traces/` stream from the persisted
 //!    offset, append new entries to the audit-node's local zone, and
 //!    persist the new offset. Local layout:
@@ -23,7 +23,7 @@
 //!    /{audit_zone}/collect/{source_zone}/offset    ← last-read position
 //!    ```
 //!
-//! The collect loop is synchronous (the `KernelAbi` syscalls are blocking)
+//! The collect loop is synchronous (the `KernelSyscall` syscalls are blocking)
 //! and runs on a dedicated OS thread; [`AuditNode::stop`] wakes it
 //! promptly via a condvar. Integration correctness (cross-zone routing,
 //! DT_STREAM offset chaining) is exercised by the docker federation E2E
@@ -36,7 +36,7 @@ use std::time::Duration;
 use contracts::OperationContext;
 use parking_lot::{Condvar, Mutex};
 
-use kernel::abi::KernelAbi;
+use kernel::abi::KernelSyscall;
 
 mod bootstrap;
 
@@ -60,7 +60,7 @@ pub struct AuditCheckpoint {
 }
 
 /// Audit-node service: collect/gather loop over joined production zones.
-pub struct AuditNode<K: KernelAbi> {
+pub struct AuditNode<K: KernelSyscall> {
     kernel: Arc<K>,
     audit_zone_id: String,
     stream_path: String,
@@ -74,7 +74,7 @@ pub struct AuditNode<K: KernelAbi> {
     wakeup: Condvar,
 }
 
-impl<K: KernelAbi> AuditNode<K> {
+impl<K: KernelSyscall> AuditNode<K> {
     /// Construct with default stream path / batch size / poll interval.
     pub fn new(kernel: Arc<K>, audit_zone_id: impl Into<String>) -> Self {
         Self::with_config(

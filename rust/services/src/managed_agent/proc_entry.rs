@@ -28,7 +28,7 @@
 
 use contracts::OperationContext;
 
-use kernel::abi::KernelAbi;
+use kernel::abi::KernelSyscall;
 use kernel::core::agents::registry::AgentDescriptor;
 
 const DT_DIR: i32 = 1;
@@ -61,7 +61,7 @@ fn sys_ctx() -> OperationContext {
 /// Stamp the per-pid metastore subtree at start_session time. Idempotent
 /// against re-spawn / restart paths — every `sys_setattr` call accepts
 /// a matching existing entry as a successful no-op.
-pub(crate) fn register_proc_entry<K: KernelAbi>(
+pub(crate) fn register_proc_entry<K: KernelSyscall>(
     kernel: &K,
     desc: &AgentDescriptor,
 ) -> Result<(), String> {
@@ -118,7 +118,7 @@ pub(crate) fn register_proc_entry<K: KernelAbi>(
 /// canonical chat-with-me DT_STREAM also goes here — its lifetime is
 /// the pid's; any persistent inbox lives at `/agents/{name}/chat-with-me`
 /// instead.
-pub(crate) fn unregister_proc_entry<K: KernelAbi>(kernel: &K, desc: &AgentDescriptor) {
+pub(crate) fn unregister_proc_entry<K: KernelSyscall>(kernel: &K, desc: &AgentDescriptor) {
     let pid = desc.pid.as_str();
     let pid_root = format!("/proc/{pid}");
     let workspace_root = format!("/proc/{pid}/workspace");
@@ -145,7 +145,7 @@ pub(crate) fn unregister_proc_entry<K: KernelAbi>(kernel: &K, desc: &AgentDescri
     let _ = kernel.sys_unlink(&pid_root, &ctx, false);
 }
 
-fn create_dt_dir<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), String> {
+fn create_dt_dir<K: KernelSyscall>(kernel: &K, path: &str) -> Result<(), String> {
     kernel
         .sys_setattr(
             path, DT_DIR, /* backend_name */ "", /* backend */ None,
@@ -161,7 +161,7 @@ fn create_dt_dir<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), String> {
         .map_err(|e| format!("sys_setattr(DT_DIR at {path:?}): {e:?}"))
 }
 
-fn create_dt_link<K: KernelAbi>(kernel: &K, path: &str, target: &str) -> Result<(), String> {
+fn create_dt_link<K: KernelSyscall>(kernel: &K, path: &str, target: &str) -> Result<(), String> {
     kernel
         .sys_setattr(
             path,
@@ -190,7 +190,7 @@ fn create_dt_link<K: KernelAbi>(kernel: &K, path: &str, target: &str) -> Result<
         .map_err(|e| format!("sys_setattr(DT_LINK at {path:?} → {target:?}): {e:?}"))
 }
 
-fn create_dt_stream<K: KernelAbi>(
+fn create_dt_stream<K: KernelSyscall>(
     kernel: &K,
     path: &str,
     capacity: usize,

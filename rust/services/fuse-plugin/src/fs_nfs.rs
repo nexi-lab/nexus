@@ -136,10 +136,12 @@ impl NexusNfs {
         }
     }
 
-    /// Stat a path and return its fattr3.
-    fn stat_fattr(&self, id: fileid3, path: &str) -> Result<fattr3, nfsstat3> {
-        let json =
-            kernel_callbacks::sys_stat(&self.kernel, path).map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+    /// Stat a path and return its fattr3.  Runs the C FFI call on a
+    /// blocking thread so the tokio worker is not starved.
+    async fn stat_fattr_async(&self, id: fileid3, path: &str) -> Result<fattr3, nfsstat3> {
+        let json = kernel_callbacks::sys_stat_async(&self.kernel, path)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
         self.make_fattr(id, &json)
     }
 }
@@ -169,13 +171,15 @@ impl NFSFileSystem for NexusNfs {
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
         // Stat first — only allocate inode on positive hit.
-        kernel_callbacks::sys_stat(&self.kernel, &path).map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+        kernel_callbacks::sys_stat_async(&self.kernel, &path)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
         Ok(self.inode_for(&path))
     }
 
     async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3> {
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        match kernel_callbacks::sys_stat(&self.kernel, &path) {
+        match kernel_callbacks::sys_stat_async(&self.kernel, &path).await {
             Ok(json) => self.make_fattr(id, &json),
             Err(PLUGIN_RESULT_NOT_FOUND) if id == NFS_ROOT_ID => {
                 // VFS root path not mounted yet (mount-driver loads
@@ -204,10 +208,11 @@ impl NFSFileSystem for NexusNfs {
         // Handle truncate (size=0): shell `>` redirect and open(O_TRUNC)
         // send setattr(size=0) before writing new content.
         if let nfsserve::nfs::set_size3::size(0) = setattr.size {
-            kernel_callbacks::sys_write(&self.kernel, &path, &[])
+            kernel_callbacks::sys_write_async(&self.kernel, &path, &[])
+                .await
                 .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         }
-        self.stat_fattr(id, &path)
+        self.stat_fattr_async(id, &path).await
     }
 
     async fn read(
@@ -217,8 +222,9 @@ impl NFSFileSystem for NexusNfs {
         count: u32,
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let full =
-            kernel_callbacks::sys_read(&self.kernel, &path).map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+        let full = kernel_callbacks::sys_read_async(&self.kernel, &path)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
         let start = offset as usize;
         if start >= full.len() {
             return Ok((vec![], true));
@@ -233,8 +239,10 @@ impl NFSFileSystem for NexusNfs {
             return Err(nfsstat3::NFS3ERR_IO);
         }
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        kernel_callbacks::sys_write(&self.kernel, &path, data).map_err(|_| nfsstat3::NFS3ERR_IO)?;
-        self.stat_fattr(id, &path)
+        kernel_callbacks::sys_write_async(&self.kernel, &path, data)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        self.stat_fattr_async(id, &path).await
     }
 
     async fn create(
@@ -246,9 +254,11 @@ impl NFSFileSystem for NexusNfs {
         let parent = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
-        kernel_callbacks::sys_write(&self.kernel, &path, &[]).map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        kernel_callbacks::sys_write_async(&self.kernel, &path, &[])
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         let id = self.inode_for(&path);
-        let attr = self.stat_fattr(id, &path)?;
+        let attr = self.stat_fattr_async(id, &path).await?;
         Ok((id, attr))
     }
 
@@ -261,10 +271,15 @@ impl NFSFileSystem for NexusNfs {
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
         // Check existence first.
-        if kernel_callbacks::sys_stat(&self.kernel, &path).is_ok() {
+        if kernel_callbacks::sys_stat_async(&self.kernel, &path)
+            .await
+            .is_ok()
+        {
             return Err(nfsstat3::NFS3ERR_EXIST);
         }
-        kernel_callbacks::sys_write(&self.kernel, &path, &[]).map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        kernel_callbacks::sys_write_async(&self.kernel, &path, &[])
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         Ok(self.inode_for(&path))
     }
 
@@ -276,9 +291,11 @@ impl NFSFileSystem for NexusNfs {
         let parent = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let name = std::str::from_utf8(dirname).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
-        kernel_callbacks::sys_mkdir(&self.kernel, &path).map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        kernel_callbacks::sys_mkdir_async(&self.kernel, &path)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         let id = self.inode_for(&path);
-        let attr = self.stat_fattr(id, &path)?;
+        let attr = self.stat_fattr_async(id, &path).await?;
         Ok((id, attr))
     }
 
@@ -287,8 +304,13 @@ impl NFSFileSystem for NexusNfs {
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
         // Try unlink first (file), fall back to rmdir (directory).
-        if kernel_callbacks::sys_unlink(&self.kernel, &path).is_err() {
-            kernel_callbacks::sys_rmdir(&self.kernel, &path).map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        if kernel_callbacks::sys_unlink_async(&self.kernel, &path)
+            .await
+            .is_err()
+        {
+            kernel_callbacks::sys_rmdir_async(&self.kernel, &path)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         }
         self.paths.lock().unwrap().forget(&path);
         Ok(())
@@ -307,7 +329,8 @@ impl NFSFileSystem for NexusNfs {
         let to_name = std::str::from_utf8(to_filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let old_path = join_path(&from_parent, from_name);
         let new_path = join_path(&to_parent, to_name);
-        kernel_callbacks::sys_rename(&self.kernel, &old_path, &new_path)
+        kernel_callbacks::sys_rename_async(&self.kernel, &old_path, &new_path)
+            .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         self.paths.lock().unwrap().rename(&old_path, &new_path);
         Ok(())
@@ -320,7 +343,7 @@ impl NFSFileSystem for NexusNfs {
         max_entries: usize,
     ) -> Result<ReadDirResult, nfsstat3> {
         let parent_path = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let json = match kernel_callbacks::sys_readdir(&self.kernel, &parent_path) {
+        let json = match kernel_callbacks::sys_readdir_async(&self.kernel, &parent_path).await {
             Ok(j) => j,
             Err(PLUGIN_RESULT_NOT_FOUND) if dirid == NFS_ROOT_ID => {
                 // VFS root not mounted yet — return empty listing.
@@ -527,6 +550,12 @@ pub fn spawn_nfs_mount(
     //   tcp      — TCP transport
     //   port=P   — NFS server port
     //   mountport=P — mount daemon port (same, nfsserve handles both)
+    //
+    // NOTE: `soft,timeo=50` was considered for defense-in-depth but
+    // rejected — Raft leader election / redb compaction can exceed 5s,
+    // and `soft` turns that into EIO (data loss) instead of a retry.
+    // The `spawn_blocking` wrappers fix the root cause (tokio worker
+    // starvation) so the NFS client no longer sees "not responding".
     let mount_output = std::process::Command::new("/sbin/mount_nfs")
         .args([
             "-o",

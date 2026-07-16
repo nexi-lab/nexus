@@ -2,10 +2,10 @@
 //!
 //! Zone creation + learner join reach the federation through
 //! `kernel.distributed_coordinator()`, which is a kernel-internal
-//! accessor not exposed on the `KernelAbi` trait. Like
+//! accessor not exposed on the `KernelSyscall` trait. Like
 //! `audit::install_root`, this path is therefore gated to `K = Kernel`
 //! (production wiring); the generic collect loop in the parent module
-//! stays `K: KernelAbi`.
+//! stays `K: KernelSyscall`.
 
 use kernel::kernel::Kernel;
 

@@ -34,7 +34,7 @@ pub fn parse_bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
 /// Axum `from_fn_with_state` middleware. Reads the bearer token,
 /// resolves it through the [`AuthBackend`], stamps the resolved
 /// [`AuthSession`] into request extensions, and delegates to `next`.
-pub async fn require_access_token<K: kernel::abi::KernelAbi>(
+pub async fn require_access_token<K: kernel::abi::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     mut req: Request,
     next: Next,

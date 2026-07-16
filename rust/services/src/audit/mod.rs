@@ -33,7 +33,7 @@ use contracts::{is_system_path, OperationContext};
 use parking_lot::Mutex;
 use serde::Serialize;
 
-use kernel::abi::KernelAbi;
+use kernel::abi::KernelSyscall;
 use kernel::core::dispatch::{
     FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook,
 };
@@ -76,12 +76,12 @@ pub struct AuditRecord {
 /// appended via `kernel.sys_write(audit_path, …)`. DT_STREAM
 /// short-circuits inside `sys_write` (kernel `io.rs`), so audit writes
 /// don't recursively re-enter the audit hook.
-pub struct AuditHook<K: KernelAbi> {
+pub struct AuditHook<K: KernelSyscall> {
     sender: mpsc::SyncSender<AuditRecord>,
     _kernel: Arc<K>,
 }
 
-impl<K: KernelAbi> AuditHook<K> {
+impl<K: KernelSyscall> AuditHook<K> {
     /// Background flush channel capacity. At ~300 B per JSON record this is
     /// ~2.5 MB worst-case before try_send drops records (best-effort audit).
     const CHANNEL_CAP: usize = 8192;
@@ -175,7 +175,7 @@ fn audit_writer_ctx(zone_id: &str) -> OperationContext {
     ctx
 }
 
-impl<K: KernelAbi> NativeInterceptHook for AuditHook<K> {
+impl<K: KernelSyscall> NativeInterceptHook for AuditHook<K> {
     fn name(&self) -> &str {
         "audit"
     }
@@ -241,7 +241,7 @@ pub const AUDIT_SERVICE_NAME: &str = "audit";
 /// registers the hook.  Callers (typically `install_root` +
 /// `ZoneAuditAutoWire`) guarantee once-per-zone through their own
 /// bookkeeping.
-pub fn install<K: KernelAbi>(
+pub fn install<K: KernelSyscall>(
     kernel: Arc<K>,
     handle: &ServiceHandle,
     zone_id: &str,
@@ -266,7 +266,7 @@ pub fn install<K: KernelAbi>(
 /// must not register the `AuditHook` writer.
 ///
 /// Idempotent on repeated calls per zone (same shape as `install`).
-pub fn prepare_stream_only<K: KernelAbi>(
+pub fn prepare_stream_only<K: KernelSyscall>(
     kernel: &K,
     zone_id: &str,
     stream_path: &str,
@@ -289,7 +289,7 @@ pub fn prepare_stream_only<K: KernelAbi>(
 ///      internal `HashSet<String>` so a re-mount is a harmless
 ///      no-op.
 ///
-/// `K = Kernel`-specific (not generic over `K: KernelAbi`) because
+/// `K = Kernel`-specific (not generic over `K: KernelSyscall`) because
 /// `kernel.register_observer` is a kernel-internal accessor — same
 /// reason `ManagedAgentService::install_returning` is gated to
 /// `K = Kernel`. Slim builds that ship a non-Kernel `K` use
@@ -388,7 +388,7 @@ impl MutationObserver for ZoneAuditAutoWire {
     }
 }
 
-fn setup_audit_stream<K: KernelAbi>(
+fn setup_audit_stream<K: KernelSyscall>(
     kernel: &K,
     zone_id: &str,
     stream_path: &str,
@@ -728,7 +728,7 @@ mod tests {
             /* agent_id */ Some("agent-test"),
             /* is_system */ false,
         );
-        KernelAbi::sys_write(kernel.as_ref(), target, &writer_ctx, b"payload", 0)
+        KernelSyscall::sys_write(kernel.as_ref(), target, &writer_ctx, b"payload", 0)
             .expect("sys_write target payload");
 
         // Poll the audit stream until the flush thread has drained
@@ -743,9 +743,13 @@ mod tests {
         let mut captured: Option<Vec<u8>> = None;
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(10));
-            if let Ok(read) =
-                KernelAbi::sys_read(kernel.as_ref(), "/__sys__/audit/traces/", &reader_ctx, 0, 0)
-            {
+            if let Ok(read) = KernelSyscall::sys_read(
+                kernel.as_ref(),
+                "/__sys__/audit/traces/",
+                &reader_ctx,
+                0,
+                0,
+            ) {
                 if let Some(data) = read.data {
                     if !data.is_empty() {
                         captured = Some(data);

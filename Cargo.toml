@@ -209,13 +209,13 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "79b6798f87f237d282410838f21f28019a6e9bef" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "d0a11fa2d2fa3ae5ecbbc19f3a0537afce4f5c8c" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

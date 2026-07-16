@@ -272,7 +272,7 @@ pub fn sys_rename(kernel: &KernelHandle, old_path: &str, new_path: &str) -> Resu
     Ok(())
 }
 
-// ── async wrappers (spawn_blocking) ────────────────────────────────
+// ── async wrappers (spawn_blocking, macOS NFS only) ────────────────
 //
 // Each function copies the relevant function pointer + `kernel_ptr`
 // into the closure, allocates `CString` arguments on the caller's
@@ -288,155 +288,173 @@ pub fn sys_rename(kernel: &KernelHandle, old_path: &str, new_path: &str) -> Resu
 // This prevents NFS async methods from starving the 2-thread tokio
 // runtime when kernel callbacks take > 0 time (Raft consensus,
 // redb I/O, etc.).
+//
+// Gated to macOS because the NFS adapter and tokio dep are macOS-only;
+// Linux uses fuser (sync), Windows uses WinFsp (sync).
+#[cfg(target_os = "macos")]
+pub use nfs_async::*;
 
-/// Async wrapper around [`sys_stat`] — runs the C FFI call on a
-/// blocking thread via `tokio::task::spawn_blocking`.
-pub async fn sys_stat_async(kernel: &KernelHandle, path: &str) -> Result<String, i32> {
-    let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_stat;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let mut out_buf: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), &mut out_buf, &mut out_len) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        consume_string_out(out_buf, out_len)
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+#[cfg(target_os = "macos")]
+mod nfs_async {
+    use super::*;
 
-/// Async wrapper around [`sys_read`].
-pub async fn sys_read_async(kernel: &KernelHandle, path: &str) -> Result<Vec<u8>, i32> {
-    let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_read;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let mut out_buf: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), &mut out_buf, &mut out_len) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        consume_bytes_out(out_buf, out_len)
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+    /// Async wrapper around [`super::sys_stat`] — runs the C FFI call on a
+    /// blocking thread via `tokio::task::spawn_blocking`.
+    pub async fn sys_stat_async(kernel: &KernelHandle, path: &str) -> Result<String, i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_stat;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let mut out_buf: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+            let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), &mut out_buf, &mut out_len) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            consume_string_out(out_buf, out_len)
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 
-/// Async wrapper around [`sys_write`].
-pub async fn sys_write_async(kernel: &KernelHandle, path: &str, data: &[u8]) -> Result<(), i32> {
-    let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_write;
-    let kptr = kernel.kernel_ptr as usize;
-    // Copy data into an owned Vec so it can move into the closure.
-    let owned_data = data.to_vec();
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), owned_data.as_ptr(), owned_data.len()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+    /// Async wrapper around [`sys_read`].
+    pub async fn sys_read_async(kernel: &KernelHandle, path: &str) -> Result<Vec<u8>, i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_read;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let mut out_buf: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+            let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), &mut out_buf, &mut out_len) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            consume_bytes_out(out_buf, out_len)
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 
-/// Async wrapper around [`sys_readdir`].
-pub async fn sys_readdir_async(kernel: &KernelHandle, parent_path: &str) -> Result<String, i32> {
-    let c_path = CString::new(parent_path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_readdir;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let mut out_buf: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), &mut out_buf, &mut out_len) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        consume_string_out(out_buf, out_len)
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+    /// Async wrapper around [`sys_write`].
+    pub async fn sys_write_async(
+        kernel: &KernelHandle,
+        path: &str,
+        data: &[u8],
+    ) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_write;
+        let kptr = kernel.kernel_ptr as usize;
+        // Copy data into an owned Vec so it can move into the closure.
+        let owned_data = data.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let rc =
+                unsafe { (fn_ptr)(kptr, c_path.as_ptr(), owned_data.as_ptr(), owned_data.len()) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 
-/// Async wrapper around [`sys_unlink`].
-pub async fn sys_unlink_async(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
-    let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_unlink;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+    /// Async wrapper around [`sys_readdir`].
+    pub async fn sys_readdir_async(
+        kernel: &KernelHandle,
+        parent_path: &str,
+    ) -> Result<String, i32> {
+        let c_path = CString::new(parent_path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_readdir;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let mut out_buf: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+            let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr(), &mut out_buf, &mut out_len) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            consume_string_out(out_buf, out_len)
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 
-/// Async wrapper around [`sys_mkdir`].
-pub async fn sys_mkdir_async(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
-    let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_mkdir;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+    /// Async wrapper around [`sys_unlink`].
+    pub async fn sys_unlink_async(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_unlink;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr()) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 
-/// Async wrapper around [`sys_rmdir`].
-pub async fn sys_rmdir_async(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
-    let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_rmdir;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
-}
+    /// Async wrapper around [`sys_mkdir`].
+    pub async fn sys_mkdir_async(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_mkdir;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr()) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 
-/// Async wrapper around [`sys_rename`].
-pub async fn sys_rename_async(
-    kernel: &KernelHandle,
-    old_path: &str,
-    new_path: &str,
-) -> Result<(), i32> {
-    let c_old = CString::new(old_path).map_err(|_| ERRNO_IO_RAW)?;
-    let c_new = CString::new(new_path).map_err(|_| ERRNO_IO_RAW)?;
-    let fn_ptr = kernel.sys_rename;
-    let kptr = kernel.kernel_ptr as usize;
-    tokio::task::spawn_blocking(move || {
-        let kptr = kptr as *const std::ffi::c_void;
-        let rc = unsafe { (fn_ptr)(kptr, c_old.as_ptr(), c_new.as_ptr()) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        Ok(())
-    })
-    .await
-    .unwrap_or(Err(ERRNO_IO_RAW))
+    /// Async wrapper around [`sys_rmdir`].
+    pub async fn sys_rmdir_async(kernel: &KernelHandle, path: &str) -> Result<(), i32> {
+        let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_rmdir;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let rc = unsafe { (fn_ptr)(kptr, c_path.as_ptr()) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
+
+    /// Async wrapper around [`sys_rename`].
+    pub async fn sys_rename_async(
+        kernel: &KernelHandle,
+        old_path: &str,
+        new_path: &str,
+    ) -> Result<(), i32> {
+        let c_old = CString::new(old_path).map_err(|_| ERRNO_IO_RAW)?;
+        let c_new = CString::new(new_path).map_err(|_| ERRNO_IO_RAW)?;
+        let fn_ptr = kernel.sys_rename;
+        let kptr = kernel.kernel_ptr as usize;
+        tokio::task::spawn_blocking(move || {
+            let kptr = kptr as *const std::ffi::c_void;
+            let rc = unsafe { (fn_ptr)(kptr, c_old.as_ptr(), c_new.as_ptr()) };
+            if rc != 0 {
+                return Err(rc);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or(Err(ERRNO_IO_RAW))
+    }
 }
 
 // ── kernel-side JSON shape parsers ──────────────────────────────────

@@ -33,7 +33,7 @@ pub type JoinedRooms = Arc<parking_lot::RwLock<HashMap<String, HashSet<String>>>
 
 /// Shared adapter state — composed once at boot and cloned into each
 /// handler. Cheap to clone (`Arc` and `String`).
-pub struct AdapterState<K: kernel::abi::KernelSyscall> {
+pub struct AdapterState<K: kernel::kernel::syscall::KernelSyscall> {
     pub auth: AuthBackendRef,
     /// Matrix server-name suffix for the homeserver. Used in
     /// `LoginResponse.home_server` and the room-id ↔ stream-path
@@ -47,7 +47,7 @@ pub struct AdapterState<K: kernel::abi::KernelSyscall> {
     pub joined_rooms: JoinedRooms,
 }
 
-impl<K: kernel::abi::KernelSyscall> AdapterState<K> {
+impl<K: kernel::kernel::syscall::KernelSyscall> AdapterState<K> {
     /// Convenience constructor with an empty joined-rooms set.
     /// Production builds compose state by hand because they wire
     /// extra config; tests use this constructor.
@@ -64,7 +64,7 @@ impl<K: kernel::abi::KernelSyscall> AdapterState<K> {
 // Hand-written `Clone` because `#[derive(Clone)]` would require
 // `K: Clone`, but we hold an `Arc<K>` which is `Clone` regardless of
 // `K`'s own clone-ability.
-impl<K: kernel::abi::KernelSyscall> Clone for AdapterState<K> {
+impl<K: kernel::kernel::syscall::KernelSyscall> Clone for AdapterState<K> {
     fn clone(&self) -> Self {
         Self {
             auth: self.auth.clone(),
@@ -79,7 +79,7 @@ impl<K: kernel::abi::KernelSyscall> Clone for AdapterState<K> {
 /// endpoints with the token-protected ones; downstream PRs (D2/D3)
 /// add room read/write + sync routes underneath the same shared
 /// state without restructuring the boot wire-up.
-pub fn build_router<K: kernel::abi::KernelSyscall>(state: AdapterState<K>) -> Router {
+pub fn build_router<K: kernel::kernel::syscall::KernelSyscall>(state: AdapterState<K>) -> Router {
     // Public — no token middleware. `login` is the only way to get one.
     let public = Router::new().route("/_matrix/client/v3/login", post(login::<K>));
 
@@ -136,7 +136,7 @@ pub fn build_router<K: kernel::abi::KernelSyscall>(state: AdapterState<K>) -> Ro
     public.merge(protected).with_state(state)
 }
 
-async fn login<K: kernel::abi::KernelSyscall>(
+async fn login<K: kernel::kernel::syscall::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AdapterError> {
@@ -174,7 +174,7 @@ async fn login<K: kernel::abi::KernelSyscall>(
     }))
 }
 
-async fn logout<K: kernel::abi::KernelSyscall>(
+async fn logout<K: kernel::kernel::syscall::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
 ) -> Result<Json<EmptyResponse>, AdapterError> {

@@ -28,8 +28,8 @@
 
 use contracts::OperationContext;
 
-use kernel::abi::KernelSyscall;
 use kernel::core::agents::registry::AgentDescriptor;
+use kernel::kernel::syscall::KernelSyscall;
 
 const DT_DIR: i32 = 1;
 const DT_STREAM: i32 = 4;

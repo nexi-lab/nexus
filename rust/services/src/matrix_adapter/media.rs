@@ -35,7 +35,7 @@ use crate::matrix_adapter::router::AdapterState;
 /// chat surface without forcing a streaming upload path on D3.
 const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 
-fn require_kernel<K: kernel::abi::KernelSyscall>(
+fn require_kernel<K: kernel::kernel::syscall::KernelSyscall>(
     state: &AdapterState<K>,
 ) -> Result<&Arc<K>, AdapterError> {
     state
@@ -48,7 +48,7 @@ fn require_kernel<K: kernel::abi::KernelSyscall>(
 /// `/media/{media_id}` and return the resulting `mxc://` URI. The
 /// caller's `Content-Type` (best-effort) is stamped onto the
 /// metastore entry so `/download` can echo it back.
-pub async fn upload<K: kernel::abi::KernelSyscall>(
+pub async fn upload<K: kernel::kernel::syscall::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
     headers: HeaderMap,
@@ -180,7 +180,7 @@ pub async fn upload<K: kernel::abi::KernelSyscall>(
 /// `server_name`; D3 only serves the local one and returns
 /// `M_BAD_JSON` for cross-server requests (federation media is a
 /// future concern).
-pub async fn download<K: kernel::abi::KernelSyscall>(
+pub async fn download<K: kernel::kernel::syscall::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
     Path((server, media_id)): Path<(String, String)>,
@@ -254,7 +254,7 @@ pub async fn download<K: kernel::abi::KernelSyscall>(
 /// `GET /_matrix/media/v3/thumbnail/{server}/{media_id}` — D3 returns
 /// the original asset. Matrix spec permits this when the homeserver
 /// does not generate thumbnails.
-pub async fn thumbnail<K: kernel::abi::KernelSyscall>(
+pub async fn thumbnail<K: kernel::kernel::syscall::KernelSyscall>(
     state: State<AdapterState<K>>,
     session: Extension<AuthSession>,
     path: Path<(String, String)>,

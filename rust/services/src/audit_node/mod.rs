@@ -36,7 +36,7 @@ use std::time::Duration;
 use contracts::OperationContext;
 use parking_lot::{Condvar, Mutex};
 
-use kernel::abi::KernelSyscall;
+use kernel::kernel::syscall::KernelSyscall;
 
 mod bootstrap;
 

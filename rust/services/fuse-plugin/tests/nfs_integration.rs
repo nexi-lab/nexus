@@ -559,6 +559,355 @@ async fn readdir_root_empty_when_vfs_path_missing() {
     assert!(result.end);
 }
 
+// ── Slow-callback mock for starvation tests ──────────────────────
+//
+// Same in-memory storage as MockKernel, but `sys_stat` sleeps for a
+// configurable duration to simulate real kernel I/O (Raft consensus,
+// redb reads).  This proves `spawn_blocking` prevents tokio worker
+// starvation: with only 2 tokio workers, N concurrent slow stats
+// would serialize (N/2 × delay) if run directly on the workers, but
+// complete in ~1×delay when offloaded to the blocking thread pool.
+
+use std::sync::atomic::AtomicU64 as AU64;
+use std::time::{Duration, Instant};
+
+struct SlowMockKernel {
+    entries: Mutex<HashMap<String, MockEntry>>,
+    /// Per-stat sleep duration (simulates real kernel I/O latency).
+    stat_delay: Duration,
+    /// Counter: how many stat calls have completed.
+    stat_count: AU64,
+}
+
+impl SlowMockKernel {
+    fn new(stat_delay: Duration) -> Self {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "/".to_string(),
+            MockEntry {
+                is_dir: true,
+                data: vec![],
+            },
+        );
+        Self {
+            entries: Mutex::new(entries),
+            stat_delay,
+            stat_count: AU64::new(0),
+        }
+    }
+}
+
+/// Slow `sys_stat` — sleeps `stat_delay` before responding.
+unsafe extern "C" fn slow_mock_sys_stat(
+    kernel: *const c_void,
+    path: *const c_char,
+    out_buf: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    // Simulate blocking kernel I/O.
+    std::thread::sleep(mock.stat_delay);
+    mock.stat_count
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path_str = CStr::from_ptr(path).to_str().unwrap();
+    let entries = mock.entries.lock().unwrap();
+    match entries.get(path_str) {
+        Some(entry) => {
+            let entry_type = if entry.is_dir { 1u64 } else { 0u64 };
+            let json = format!(
+                r#"{{"path":"{}","entry_type":{},"size":{},"zone_id":"root"}}"#,
+                path_str,
+                entry_type,
+                entry.data.len()
+            );
+            write_out(out_buf, out_len, json.as_bytes());
+            0
+        }
+        None => -1,
+    }
+}
+
+/// Slow `sys_write` — sleeps `stat_delay` before responding.
+unsafe extern "C" fn slow_mock_sys_write(
+    kernel: *const c_void,
+    path: *const c_char,
+    data: *const u8,
+    data_len: usize,
+) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    std::thread::sleep(mock.stat_delay);
+    let path_str = CStr::from_ptr(path).to_str().unwrap();
+    let content = std::slice::from_raw_parts(data, data_len).to_vec();
+    let mut entries = mock.entries.lock().unwrap();
+    entries.insert(
+        path_str.to_string(),
+        MockEntry {
+            is_dir: false,
+            data: content,
+        },
+    );
+    0
+}
+
+/// Slow `sys_read` — sleeps `stat_delay` before responding.
+unsafe extern "C" fn slow_mock_sys_read(
+    kernel: *const c_void,
+    path: *const c_char,
+    out_buf: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    std::thread::sleep(mock.stat_delay);
+    let path_str = CStr::from_ptr(path).to_str().unwrap();
+    let entries = mock.entries.lock().unwrap();
+    match entries.get(path_str) {
+        Some(entry) if !entry.is_dir => {
+            write_out(out_buf, out_len, &entry.data);
+            0
+        }
+        _ => -1,
+    }
+}
+
+fn slow_mock_kernel_handle(mock: &SlowMockKernel) -> KernelHandle {
+    KernelHandle {
+        sys_read: slow_mock_sys_read,
+        sys_write: slow_mock_sys_write,
+        sys_stat: slow_mock_sys_stat,
+        // readdir/unlink/mkdir/rmdir/rename use the fast mock —
+        // only stat/read/write need to be slow to prove the point.
+        sys_readdir: mock_sys_readdir_for_slow,
+        sys_unlink: mock_sys_unlink_for_slow,
+        sys_mkdir: mock_sys_mkdir_for_slow,
+        sys_rmdir: mock_sys_rmdir_for_slow,
+        sys_rename: mock_sys_rename_for_slow,
+        sys_stat_batch: mock_sys_stat_batch_for_slow,
+        kernel_ptr: mock as *const SlowMockKernel as *const c_void,
+    }
+}
+
+// Thin forwarding stubs — SlowMockKernel has the same entry layout as
+// MockKernel, so we can reuse the logic with the right cast.
+unsafe extern "C" fn mock_sys_readdir_for_slow(
+    kernel: *const c_void,
+    parent_path: *const c_char,
+    out_buf: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    let parent = CStr::from_ptr(parent_path).to_str().unwrap();
+    let entries = mock.entries.lock().unwrap();
+    if !entries.contains_key(parent) {
+        return -1;
+    }
+    let prefix = if parent == "/" {
+        "/".to_string()
+    } else {
+        format!("{}/", parent)
+    };
+    let mut children = Vec::new();
+    for (path, entry) in entries.iter() {
+        if path == parent {
+            continue;
+        }
+        if let Some(name) = path.strip_prefix(&prefix) {
+            if !name.contains('/') {
+                let entry_type = if entry.is_dir { 1 } else { 0 };
+                children.push(format!(
+                    r#"{{"name":"{}","entry_type":{}}}"#,
+                    name, entry_type
+                ));
+            }
+        }
+    }
+    let json = format!("[{}]", children.join(","));
+    write_out(out_buf, out_len, json.as_bytes());
+    0
+}
+
+unsafe extern "C" fn mock_sys_unlink_for_slow(kernel: *const c_void, path: *const c_char) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    let path_str = CStr::from_ptr(path).to_str().unwrap();
+    let mut entries = mock.entries.lock().unwrap();
+    match entries.remove(path_str) {
+        Some(_) => 0,
+        None => -1,
+    }
+}
+
+unsafe extern "C" fn mock_sys_mkdir_for_slow(kernel: *const c_void, path: *const c_char) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    let path_str = CStr::from_ptr(path).to_str().unwrap();
+    let mut entries = mock.entries.lock().unwrap();
+    if entries.contains_key(path_str) {
+        return -3;
+    }
+    entries.insert(
+        path_str.to_string(),
+        MockEntry {
+            is_dir: true,
+            data: vec![],
+        },
+    );
+    0
+}
+
+unsafe extern "C" fn mock_sys_rmdir_for_slow(kernel: *const c_void, path: *const c_char) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    let path_str = CStr::from_ptr(path).to_str().unwrap();
+    let mut entries = mock.entries.lock().unwrap();
+    match entries.remove(path_str) {
+        Some(e) if e.is_dir => 0,
+        Some(e) => {
+            entries.insert(path_str.to_string(), e);
+            -2
+        }
+        None => -1,
+    }
+}
+
+unsafe extern "C" fn mock_sys_rename_for_slow(
+    kernel: *const c_void,
+    old_path: *const c_char,
+    new_path: *const c_char,
+) -> i32 {
+    let mock = &*(kernel as *const SlowMockKernel);
+    let old = CStr::from_ptr(old_path).to_str().unwrap();
+    let new = CStr::from_ptr(new_path).to_str().unwrap();
+    let mut entries = mock.entries.lock().unwrap();
+    match entries.remove(old) {
+        Some(entry) => {
+            entries.insert(new.to_string(), entry);
+            0
+        }
+        None => -1,
+    }
+}
+
+unsafe extern "C" fn mock_sys_stat_batch_for_slow(
+    _kernel: *const c_void,
+    _paths_json: *const c_char,
+    out_buf: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    write_out(out_buf, out_len, b"[]");
+    0
+}
+
+/// **Core starvation regression test.**
+///
+/// Proves that `spawn_blocking` wrappers prevent tokio worker
+/// starvation with slow kernel callbacks.
+///
+/// Setup:
+/// - 2 tokio worker threads (matches production NFS runtime)
+/// - Mock callbacks that sleep 50ms per call (simulates Raft/redb)
+/// - 10 concurrent getattr calls
+///
+/// Expected behavior:
+/// - **With spawn_blocking (current code):** All 10 stats run in
+///   parallel on the blocking thread pool.  Wall time ≈ 50–150ms.
+/// - **Without spawn_blocking (bug):** Only 2 stats can run at a
+///   time (both tokio workers blocked).  Wall time ≈ 250ms+.
+///
+/// We assert wall time < 200ms — tight enough to catch the 5×
+/// serialization but loose enough for CI jitter.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawn_blocking_prevents_starvation() {
+    let delay = Duration::from_millis(50);
+    let mock = Box::new(SlowMockKernel::new(delay));
+    let handle = slow_mock_kernel_handle(&mock);
+    let nfs = std::sync::Arc::new(NexusNfs::new(handle, "/".to_string()));
+
+    let n = 10usize;
+    let start = Instant::now();
+
+    let mut tasks = Vec::new();
+    for _ in 0..n {
+        let nfs = nfs.clone();
+        tasks.push(tokio::spawn(async move {
+            // getattr(root) calls sys_stat_async internally.
+            nfs.getattr(nfs.root_dir()).await.unwrap();
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+
+    let elapsed = start.elapsed();
+
+    // If spawn_blocking works: ~50ms (parallel).
+    // If broken (sync on tokio): ~250ms (10/2 × 50ms serialized).
+    // Use 200ms threshold — generous for CI but still catches 5× regression.
+    assert!(
+        elapsed < Duration::from_millis(200),
+        "10 concurrent stats with 50ms delay took {:?} — \
+         spawn_blocking may not be working (expected < 200ms)",
+        elapsed
+    );
+
+    // Verify all 10 stat calls actually executed (not short-circuited).
+    let count = mock.stat_count.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count, n as u64, "expected {n} stat calls, got {count}");
+}
+
+/// Full concurrent lifecycle with slow callbacks — create + write +
+/// read across 10 files in parallel on a 2-worker runtime.
+///
+/// Each file touches 3 slow syscalls (write for create, stat for
+/// fattr, read) = 30 slow calls total.  Without spawn_blocking on
+/// 2 workers this would take 30/2 × 50ms = 750ms.  With
+/// spawn_blocking: ~150ms (3 sequential slow calls per file, all
+/// files in parallel).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_slow_lifecycle() {
+    let delay = Duration::from_millis(50);
+    let mock = Box::new(SlowMockKernel::new(delay));
+    let handle = slow_mock_kernel_handle(&mock);
+    let nfs = std::sync::Arc::new(NexusNfs::new(handle, "/".to_string()));
+
+    let n = 10usize;
+    let start = Instant::now();
+
+    let mut tasks = Vec::new();
+    for i in 0..n {
+        let nfs = nfs.clone();
+        tasks.push(tokio::spawn(async move {
+            let root = nfs.root_dir();
+            let fname: nfsserve::nfs::filename3 = format!("slow-{i}.txt").as_bytes().into();
+
+            // Create (write + stat).
+            let (fid, _) = nfs.create(root, &fname, Default::default()).await.unwrap();
+
+            // Write content (write + stat).
+            let payload = format!("payload-{i}");
+            nfs.write(fid, 0, payload.as_bytes()).await.unwrap();
+
+            // Read back.
+            let (data, eof) = nfs.read(fid, 0, 4096).await.unwrap();
+            assert_eq!(data, payload.as_bytes());
+            assert!(eof);
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+
+    let elapsed = start.elapsed();
+
+    // 5 slow calls per file (create=write+stat, write=write+stat, read),
+    // sequential per file but all files in parallel.
+    // With spawn_blocking: ~250ms (5 × 50ms sequential per file).
+    // Without (2 workers): ~1250ms (50 calls / 2 × 50ms).
+    // Use 500ms threshold.
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "10 concurrent file lifecycles with 50ms delay took {:?} — \
+         spawn_blocking may not be working (expected < 500ms)",
+        elapsed
+    );
+}
+
 /// Non-root inode getattr must still return NOENT for missing paths
 /// (only root gets the synthetic fallback).
 #[tokio::test]

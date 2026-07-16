@@ -142,7 +142,7 @@ jobs:
           REV: ${{ steps.vfs_rev.outputs.sha }}
         run: |
           set -euo pipefail
-          cargo install --locked \
+          RUSTFLAGS="" cargo install --locked \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "$REV" \
             --bin nexusd-cluster nexus-cluster

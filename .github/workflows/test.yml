@@ -201,7 +201,7 @@ jobs:
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1
           fi
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          RUSTFLAGS="" cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
@@ -704,13 +704,13 @@ jobs:
             exit 1
           fi
           echo "Installing nexusd-cluster at pinned nexus-vfs rev $REV"
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          RUSTFLAGS="" cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           # Also install the full profile — the binary the Docker image
           # actually ships (nexusd-full, symlinked to nexus-cluster).
           # Same main.rs, but a full-profile-only build/feature
           # regression must not slip past the gate on the slim binary.
           echo "Installing nexusd-full at pinned nexus-vfs rev $REV"
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-full nexus-full
+          RUSTFLAGS="" cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-full nexus-full
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'

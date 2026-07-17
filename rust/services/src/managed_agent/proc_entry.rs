@@ -82,15 +82,12 @@ pub(crate) fn register_proc_entry<K: KernelSyscall>(
         create_dt_dir(kernel, dir)?;
     }
 
-    // Canonical chat-with-me stream — wal-backed when federation is up
-    // so writes raft-replicate, in-memory otherwise (test mode).
+    // Canonical chat-with-me stream. The `io_profile` waterfall lets the
+    // KERNEL pick the backing — wal (raft-replicated) when federation is up,
+    // in-memory otherwise. The service no longer reads federation state; it
+    // just expresses the preference order and `setattr_stream` resolves it.
     let cwm_canonical = format!("/proc/{pid}/chat-with-me");
-    let profile = if kernel.is_federation_initialized() {
-        "wal"
-    } else {
-        "memory"
-    };
-    create_dt_stream(kernel, &cwm_canonical, CHAT_STREAM_CAPACITY, profile)?;
+    create_dt_stream(kernel, &cwm_canonical, CHAT_STREAM_CAPACITY, "wal,memory")?;
 
     // /proc/{pid}/agent → /agents/{desc.name} (Linux /proc/{pid}/exe
     // analogue). Target may not exist yet; DT_LINK rows are not

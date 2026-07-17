@@ -51,6 +51,9 @@ services:
       NEXUS_FEDERATION_ZONES: sharedzone
       NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
       RUST_LOG: info,nexus_raft=info
+      # Plain logs so the CI assertion's `field=value` greps aren't split by
+      # tracing's ANSI colour codes (the assert also strips ANSI defensively).
+      NO_COLOR: "1"
     volumes:
       - ./mtls-certs/founder:/certs:ro
     # Ready only once `sharedzone` exists on disk. The daemon's DiscoverZones
@@ -77,6 +80,9 @@ services:
       # No zones of its own — discover + auto-join the founder's over mTLS.
       NEXUS_PEERS: founder:2126
       RUST_LOG: info,nexus_raft=info
+      # Plain logs so the CI assertion's `field=value` greps aren't split by
+      # tracing's ANSI colour codes (the assert also strips ANSI defensively).
+      NO_COLOR: "1"
     volumes:
       - ./mtls-certs/joiner:/certs:ro
 

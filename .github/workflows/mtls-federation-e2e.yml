@@ -100,8 +100,16 @@ jobs:
           # The joiner must DiscoverZones + JoinZone the founder over mTLS and
           # the founder must commit the AddNode for it. Poll the founder log
           # for the converged voter set [1, 2].
-          deadline=$((SECONDS + 120))
+          # The daemon colours its logs (tracing ANSI), which puts escape
+          # sequences between a field name and its `=value`; strip them so
+          # `field=value` greps match. `docker logs` on some hosts strips ANSI
+          # for us, GitHub's runner does not.
+          strip_ansi() { sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g'; }
+          deadline=$((SECONDS + 150))
+          flog=""; jlog=""
           while [ $SECONDS -lt $deadline ]; do
+            flog=$(docker logs nexus-mtls-founder 2>&1 | strip_ansi)
+            jlog=$(docker logs nexus-mtls-joiner 2>&1 | strip_ansi)
             # STABLE convergence, both directions over mTLS:
             #   1. founder commits AddNode → voters=[1, 2] (joiner→founder RPCs);
             #   2. joiner installs the ConfState and catches up to the leader
@@ -109,27 +117,25 @@ jobs:
             #      broken when the leader dialed the joiner in plaintext).
             # Asserting only (1) would pass even while the joiner churns
             # "leader unreachable" forever, so (2) is the real judge.
-            if docker logs nexus-mtls-founder 2>&1 \
-                 | grep -q 'conf_change.applied.*change_type=AddNode.*voters=\[1, 2\]' \
-               && docker logs nexus-mtls-joiner 2>&1 \
-                 | grep -q 'caught up to leader'; then
+            if echo "$flog" | grep -q 'conf_change.applied.*change_type=AddNode.*voters=\[1, 2\]' \
+               && echo "$jlog" | grep -q 'caught up to leader'; then
               echo "OK: federation converged over mTLS — voters=[1, 2], joiner caught up"
               # The founder actually served mTLS, the joiner actually reached it
               # over https, and the founder dialed the joiner back over https
               # (not a plaintext fallback in either direction).
-              docker logs nexus-mtls-founder 2>&1 | grep -q 'TLS mode: mTLS' \
+              echo "$flog" | grep -q 'TLS mode: mTLS' \
                 || { echo '::error::founder did not enable mTLS'; exit 1; }
-              docker logs nexus-mtls-joiner 2>&1 | grep -q 'DiscoverZones: peer reported federation zones' \
+              echo "$jlog" | grep -q 'DiscoverZones: peer reported federation zones' \
                 || { echo '::error::joiner did not discover over mTLS'; exit 1; }
-              docker logs nexus-mtls-founder 2>&1 | grep -q 'raft client connected.*endpoint="https://joiner' \
+              echo "$flog" | grep -q 'raft client connected.*endpoint="https://joiner' \
                 || { echo '::error::founder did not dial the joiner over https'; exit 1; }
               exit 0
             fi
             sleep 3
           done
-          echo "::error::federation did not converge over mTLS within 120s"
-          echo "===== founder ====="; docker logs nexus-mtls-founder 2>&1 | tail -80
-          echo "===== joiner ====="; docker logs nexus-mtls-joiner 2>&1 | tail -80
+          echo "::error::federation did not converge over mTLS within 150s"
+          echo "===== founder ====="; echo "$flog" | tail -80
+          echo "===== joiner ====="; echo "$jlog" | tail -80
           exit 1
 
       - name: Tear down

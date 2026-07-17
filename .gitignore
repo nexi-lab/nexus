@@ -273,3 +273,6 @@ nexus_witness_data/
 # redb database files (runtime artifacts from nexusd-cluster / tests)
 *.redb
 :memory:.redb
+
+# Generated test certs for the mTLS federation e2e (minted per-run by the workflow)
+dockerfiles/mtls-certs/

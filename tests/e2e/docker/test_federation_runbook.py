@@ -923,6 +923,9 @@ class TestRunbookOperatorErgonomics:
                 "--data-dir",
                 scratch,
                 "--no-tls",
+                # Reachable 0.0.0.0 bind for raft dial-back across containers;
+                # trusted CI cluster, so take the loopback-invariant escape.
+                "--insecure-no-auth",
                 "--peers",
                 # NEXUS_HOSTNAME=joiner is set in compose env, so
                 # joiner:2126 is "self" for the parse-time check.

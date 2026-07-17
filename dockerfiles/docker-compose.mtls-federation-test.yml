@@ -1,0 +1,91 @@
+# Federation over **mutual TLS** — the regression harness for nexus-vfs §B
+# (the mTLS drive-out). Every other federation compose runs `--no-tls`; this
+# one turns real mTLS on and proves a two-node cluster still discovers, joins,
+# and converges membership over it.
+#
+# Shape (env-driven S3 unified bring-up — no offline `share`/`join` sidecar):
+#   * founder — creates `sharedzone` from NEXUS_FEDERATION_ZONES, serves mTLS.
+#   * joiner  — NEXUS_PEERS=founder:2126, no zones of its own. At boot it
+#     DiscoverZones(founder) over mTLS, finds `sharedzone`, and auto-joins via
+#     JoinZone over mTLS. Both RPCs are exactly the one-shot helpers the §B
+#     fix made TLS-aware.
+#
+# Shared CA: the `mtls-federation-e2e` workflow runs
+# `raft --example gen_federation_certs` to mint ONE cluster CA + per-node
+# certs (with every container name in the SANs, since apply_tls sets no
+# domain_name), writes them under `./mtls-certs/<node>/`, and mounts each
+# node's bundle read-only at `/certs`. The entrypoint copies it into
+# `<data_dir>/tls` before boot so `bootstrap_tls` reuses the shared bundle
+# instead of self-signing a per-node CA (which would never cross-verify).
+#
+# Success signal: founder's raft log commits `AddNode peer_node_id=<joiner>`
+# for `sharedzone`, i.e. `voters=[<founder>, <joiner>]` — membership converged
+# over mTLS. The test asserts on that.
+
+x-mtls-node: &mtls-node
+  image: nexusd-cluster:latest
+  # Copy the mounted shared-CA bundle into the data dir, then run the daemon
+  # with TLS ON (no --no-tls). `set -e` so a missing bundle fails loud rather
+  # than silently self-signing a per-node CA.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      cp -r /certs/. /app/data/
+      exec nexusd-cluster --bind-addr 0.0.0.0:2126 --data-dir /app/data
+  command: []
+  networks:
+    - mtls-net
+
+services:
+  founder:
+    <<: *mtls-node
+    container_name: nexus-mtls-founder
+    hostname: founder
+    environment:
+      NEXUS_HOSTNAME: founder
+      NEXUS_ADVERTISE_ADDR: founder:2126
+      # Static topology: create `sharedzone` and mount it at /shared. The
+      # joiner discovers this over mTLS and auto-joins.
+      NEXUS_FEDERATION_ZONES: sharedzone
+      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      RUST_LOG: info,nexus_raft=info
+      # Plain logs so the CI assertion's `field=value` greps aren't split by
+      # tracing's ANSI colour codes (the assert also strips ANSI defensively).
+      NO_COLOR: "1"
+    volumes:
+      - ./mtls-certs/founder:/certs:ro
+    # Ready only once `sharedzone` exists on disk. The daemon's DiscoverZones
+    # is one-shot at boot, so the joiner must not start until the zone it
+    # discovers is actually created — otherwise it races, finds nothing, and
+    # comes up root-only.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /app/data/sharedzone/raft/raft.redb"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+
+  joiner:
+    <<: *mtls-node
+    container_name: nexus-mtls-joiner
+    hostname: joiner
+    depends_on:
+      founder:
+        condition: service_healthy
+    environment:
+      NEXUS_HOSTNAME: joiner
+      NEXUS_ADVERTISE_ADDR: joiner:2126
+      # No zones of its own — discover + auto-join the founder's over mTLS.
+      NEXUS_PEERS: founder:2126
+      RUST_LOG: info,nexus_raft=info
+      # Plain logs so the CI assertion's `field=value` greps aren't split by
+      # tracing's ANSI colour codes (the assert also strips ANSI defensively).
+      NO_COLOR: "1"
+    volumes:
+      - ./mtls-certs/joiner:/certs:ro
+
+networks:
+  mtls-net:
+    name: nexus-mtls-net

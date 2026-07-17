@@ -1,0 +1,144 @@
+name: mTLS Federation E2E
+
+# Turns real mutual TLS ON over a 2-node federation and proves it still
+# discovers, joins, and converges membership — the regression guard for the
+# nexus-vfs §B mTLS drive-out (the one-shot join/discover RPCs becoming
+# TLS-aware, and the rustls crypto-provider pin). Every other federation
+# harness runs `--no-tls`; this is the only one that exercises the mTLS path
+# end to end in a real multi-container deployment.
+#
+# Runs `dockerfiles/docker-compose.mtls-federation-test.yml`:
+#   founder creates `sharedzone` (env-driven), joiner DiscoverZones + JoinZone
+#   over mTLS by container service name, and the founder commits
+#   `AddNode ... voters=[1, 2]`.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'dockerfiles/docker-compose.mtls-federation-test.yml'
+      - 'dockerfiles/Dockerfile.nexusd-cluster'
+      - '.github/workflows/mtls-federation-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'dockerfiles/docker-compose.mtls-federation-test.yml'
+      - 'dockerfiles/Dockerfile.nexusd-cluster'
+      - '.github/workflows/mtls-federation-e2e.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # nexus-vfs SHA under test. Pinned to merged main carrying the §B mTLS
+  # drive-out (PR #150) + the learned-peer-scheme fix (PR #152) rather than
+  # read from Cargo.toml, because the repo pin has not yet been bumped to
+  # include them — this test exists to guard exactly those commits. Switch to
+  # the Cargo.toml pin once it advances past them.
+  NEXUS_VFS_REV: 13960f1ca52b94521c14fa89b7a029a88dc8ae61
+
+jobs:
+  mtls-federation-e2e:
+    name: mTLS Federation E2E (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout nexus
+        uses: actions/checkout@v4
+
+      - name: Checkout nexus-vfs source (§B mTLS fixes)
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ env.NEXUS_VFS_REV }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build nexusd-cluster image (with §B mTLS fixes)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          load: true
+          tags: nexusd-cluster:latest
+          cache-from: type=gha,scope=mtls-federation-e2e
+          cache-to: type=gha,scope=mtls-federation-e2e,mode=max
+
+      - name: Rust toolchain (for the cert-gen helper)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ''
+
+      - name: Mint the shared cluster CA + per-node certs
+        # One CA signs both node certs, each carrying every container name in
+        # its SANs (apply_tls sets no domain_name) and a pinned .node_id so
+        # the daemon adopts the id the cert's URI SAN was minted for. Written
+        # under dockerfiles/mtls-certs/<node>/, which the compose bind-mounts.
+        run: |
+          cargo run --manifest-path nexus-vfs-src/rust/raft/Cargo.toml \
+            --example gen_federation_certs -- \
+            "${GITHUB_WORKSPACE}/dockerfiles/mtls-certs" founder:1 joiner:2
+          echo "--- founder cert SANs ---"
+          openssl x509 -in "${GITHUB_WORKSPACE}/dockerfiles/mtls-certs/founder/tls/node.pem" \
+            -noout -ext subjectAltName
+
+      - name: Start the mTLS federation
+        run: |
+          docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml up -d
+          docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml ps
+
+      - name: Assert membership converged over mTLS
+        run: |
+          # The joiner must DiscoverZones + JoinZone the founder over mTLS and
+          # the founder must commit the AddNode for it. Poll the founder log
+          # for the converged voter set [1, 2].
+          # The daemon colours its logs (tracing ANSI), which puts escape
+          # sequences between a field name and its `=value`; strip them so
+          # `field=value` greps match. `docker logs` on some hosts strips ANSI
+          # for us, GitHub's runner does not.
+          strip_ansi() { sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g'; }
+          deadline=$((SECONDS + 150))
+          flog=""; jlog=""
+          while [ $SECONDS -lt $deadline ]; do
+            flog=$(docker logs nexus-mtls-founder 2>&1 | strip_ansi)
+            jlog=$(docker logs nexus-mtls-joiner 2>&1 | strip_ansi)
+            # STABLE convergence, both directions over mTLS:
+            #   1. founder commits AddNode → voters=[1, 2] (joiner→founder RPCs);
+            #   2. joiner installs the ConfState and catches up to the leader
+            #      (founder→joiner replication — the direction that was silently
+            #      broken when the leader dialed the joiner in plaintext).
+            # Asserting only (1) would pass even while the joiner churns
+            # "leader unreachable" forever, so (2) is the real judge.
+            if echo "$flog" | grep -q 'conf_change.applied.*change_type=AddNode.*voters=\[1, 2\]' \
+               && echo "$jlog" | grep -q 'caught up to leader'; then
+              echo "OK: federation converged over mTLS — voters=[1, 2], joiner caught up"
+              # The founder actually served mTLS, the joiner actually reached it
+              # over https, and the founder dialed the joiner back over https
+              # (not a plaintext fallback in either direction).
+              echo "$flog" | grep -q 'TLS mode: mTLS' \
+                || { echo '::error::founder did not enable mTLS'; exit 1; }
+              echo "$jlog" | grep -q 'DiscoverZones: peer reported federation zones' \
+                || { echo '::error::joiner did not discover over mTLS'; exit 1; }
+              echo "$flog" | grep -q 'raft client connected.*endpoint="https://joiner' \
+                || { echo '::error::founder did not dial the joiner over https'; exit 1; }
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::federation did not converge over mTLS within 150s"
+          echo "===== founder ====="; echo "$flog" | tail -80
+          echo "===== joiner ====="; echo "$jlog" | tail -80
+          exit 1
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml down -v --remove-orphans || true

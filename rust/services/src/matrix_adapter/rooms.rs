@@ -438,9 +438,15 @@ mod tests {
                 let k = Arc::new(Kernel::new());
                 k.vfs_router_arc().add_mount("/agents", "root", None, false);
                 k.vfs_router_arc().add_mount("/proc", "root", None, false);
-                k.register_native_hook(Box::new(
-                    crate::managed_agent::mailbox_stamping_hook::MailboxStampingHook::new(),
-                ));
+                let handle = k
+                    .enlist_hook_only_service("mailbox-stamping")
+                    .expect("enlist mailbox-stamping hook-only service");
+                k.register_service_hook(
+                    &handle,
+                    Box::new(
+                        crate::managed_agent::mailbox_stamping_hook::MailboxStampingHook::new(),
+                    ),
+                );
                 k
             })
             .clone()

@@ -721,6 +721,7 @@ jobs:
           # rootless; that is exactly what this smoke exercises
           # (gRPC + tracing + tokio runtime start-and-shutdown).
           RUST_LOG=info nexusd-cluster \
+            --bind-addr 127.0.0.1:2126 \
             --no-tls --data-dir "$DATA_DIR" &
           PID=$!
           echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot..."

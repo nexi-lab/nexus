@@ -173,7 +173,7 @@ jobs:
           NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
           NEXUS_FUSE_MOUNT_POINT: "/tmp/nexus-nfs-e2e"
           NEXUS_FUSE_VFS_ROOT: "/"
-          NEXUS_BIND_ADDR: "0.0.0.0:2126"
+          NEXUS_BIND_ADDR: "127.0.0.1:2126"
           NEXUS_NO_TLS: "true"
         run: |
           set -euo pipefail
@@ -187,7 +187,7 @@ jobs:
           # via the plugin.
           nexusd-cluster \
             --plugin-dir "$PLUGINDIR" \
-            --bind-addr "0.0.0.0:2126" \
+            --bind-addr "127.0.0.1:2126" \
             --data-dir "$DATADIR" \
             --no-tls \
             > nexusd.log 2> >(tee nexusd.err.log) &

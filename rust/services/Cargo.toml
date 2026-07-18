@@ -132,3 +132,7 @@ tempfile = "3"
 # Test the adapter's HTTP surface end-to-end against an in-memory
 # axum router via `tower::Service::call`.
 tower = { version = "0.5", features = ["util"] }
+# a2a::MailboxStampingHook — reused by the matrix_adapter and
+# managed_agent test fixtures. Dev-only: production arms the substrate at
+# cluster boot (nexus-vfs), so the crate carries no runtime a2a dep.
+a2a = { workspace = true }

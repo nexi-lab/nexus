@@ -285,12 +285,7 @@ mod tests {
                 let handle = k
                     .enlist_hook_only_service("mailbox-stamping")
                     .expect("enlist mailbox-stamping hook-only service");
-                k.register_service_hook(
-                    &handle,
-                    Box::new(
-                        crate::managed_agent::mailbox_stamping_hook::MailboxStampingHook::new(),
-                    ),
-                );
+                k.register_service_hook(&handle, Box::new(a2a::MailboxStampingHook::new()));
                 k
             })
             .clone()

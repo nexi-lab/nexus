@@ -100,6 +100,7 @@ pub async fn upload<K: kernel::kernel::syscall::KernelSyscall>(
             request_id,
             context_zone_id: None,
             zone_perms: vec![],
+            propagates_cross_node: false,
         };
         // Plant a DT_STREAM at the media path big enough to hold the
         // upload, then push the bytes as a single entry. DT_STREAM is
@@ -124,6 +125,10 @@ pub async fn upload<K: kernel::kernel::syscall::KernelSyscall>(
                 /* write_fd */ None,
                 /* mime_type */ None,
                 /* modified_at_ms */ None,
+                /* content_id */ None,
+                /* size */ None,
+                /* version */ None,
+                /* created_at_ms */ None,
                 /* link_target */ None,
                 /* source */ None,
                 /* remote_metastore */ None,
@@ -156,6 +161,10 @@ pub async fn upload<K: kernel::kernel::syscall::KernelSyscall>(
                 /* write_fd */ None,
                 /* mime_type */ Some(&mime_for_write),
                 /* modified_at_ms */ None,
+                /* content_id */ None,
+                /* size */ None,
+                /* version */ None,
+                /* created_at_ms */ None,
                 /* link_target */ None,
                 /* source */ None,
                 /* remote_metastore */ None,
@@ -210,6 +219,7 @@ pub async fn download<K: kernel::kernel::syscall::KernelSyscall>(
                 request_id: "download".into(),
                 context_zone_id: None,
                 zone_perms: vec![],
+                propagates_cross_node: false,
             };
             let read_result =
                 kernel_for_read.sys_read(&media_path_for_read, &ctx, /* timeout_ms */ 0, 0);
@@ -268,7 +278,7 @@ mod tests {
     use crate::matrix_adapter::auth::stub::StubAuthBackend;
     use crate::matrix_adapter::router::{build_router, AdapterState};
     use axum::body::{to_bytes, Body};
-    use axum::http::{Method, Request, StatusCode};
+    use axum::http::{Request, StatusCode};
     use kernel::kernel::Kernel;
     use std::sync::OnceLock;
     use tower::ServiceExt;
@@ -383,7 +393,7 @@ mod tests {
         let token = login_and_get_token(&app).await;
         let req = Request::builder()
             .method("GET")
-            .uri(&format!("/_matrix/media/v3/download/{SERVER}/no-such-id"))
+            .uri(format!("/_matrix/media/v3/download/{SERVER}/no-such-id"))
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
@@ -426,7 +436,7 @@ mod tests {
 
         let req = Request::builder()
             .method("GET")
-            .uri(&format!(
+            .uri(format!(
                 "/_matrix/media/v3/thumbnail/{SERVER}/{media_id}?width=32&height=32&method=scale"
             ))
             .header(header::AUTHORIZATION, format!("Bearer {token}"))

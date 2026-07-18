@@ -13,10 +13,11 @@
 //! Today's responsibilities, all generic to `AgentKind::MANAGED` (not
 //! sudo-code-specific):
 //!
-//!   * On `install`, register `MailboxStampingHook` and
-//!     `WorkspaceBoundaryHook` into the kernel's `KernelDispatch` so
-//!     every `*/chat-with-me` write is stamped and every cross-owner
-//!     `/proc/{pid}/workspace/` write is rejected.
+//!   * On `install`, register `WorkspaceBoundaryHook` into the kernel's
+//!     `KernelDispatch` so every cross-owner `/proc/{pid}/workspace/`
+//!     write is rejected. The mailbox `from`-stamp hook now lives in the
+//!     `a2a` messaging substrate (nexus-vfs), armed once at cluster boot
+//!     — every `*/chat-with-me` write is stamped there, for all writers.
 //!   * On `enlist_rust`, take the place in the registry that
 //!     `nx.service("managed_agent")` resolves to (Python lookup
 //!     returns None — this service is reachable from Rust callers via
@@ -52,8 +53,6 @@ use kernel::core::agents::registry::{
 use kernel::kernel::syscall::KernelSyscall;
 use kernel::service_registry::{RustCallError, RustService};
 
-pub(crate) mod mailbox_stamping_hook;
-pub(crate) mod mailbox_stamping_policy;
 pub(crate) mod proc_entry;
 pub(crate) mod session;
 pub(crate) mod workspace_boundary_hook;
@@ -637,25 +636,26 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
         let svc_for_return = Arc::clone(&svc);
         kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
 
-        // Register the two hooks the service owns via the enforced
-        // ownership surface — the handle binds each hook to this
-        // service's `ServiceRegistry` entry so
+        // Register the hook the service owns via the enforced ownership
+        // surface — the handle binds it to this service's
+        // `ServiceRegistry` entry so
         // `Kernel::unregister_service("managed_agent")` / `swap_managed_service`
-        // batch-remove them alongside the service instance.  Hooks are
+        // batch-remove it alongside the service instance.  Hooks are
         // stateless so ordering (enlist-then-hook) has no correctness
         // dependency; the two-step flow matches the pattern
         // `services::audit::install_root` established: enlist the
         // owning entity first, then plug hooks in through the handle.
+        //
+        // The mailbox `from`-stamp hook is NOT registered here anymore:
+        // it belongs to the `a2a` messaging substrate (nexus-vfs) and is
+        // armed once at cluster boot, so the guarantee holds for every
+        // writer — not only agents spawned through this service.
         let handle = kernel
             .service_handle(Self::NAME)
             .expect("just enlisted managed_agent above; handle must exist");
         kernel.register_service_hook(
             &handle,
             Box::new(workspace_boundary_hook::WorkspaceBoundaryHook::new()),
-        );
-        kernel.register_service_hook(
-            &handle,
-            Box::new(mailbox_stamping_hook::MailboxStampingHook::new()),
         );
 
         Ok(svc_for_return)
@@ -1294,6 +1294,14 @@ mod tests {
             let kernel = Arc::new(Kernel::new());
             mount_proc(&kernel);
             let svc = install_managed_agent(&kernel);
+            // The stamp hook now lives in the a2a substrate (armed at
+            // cluster boot in production). Arm it here so this test still
+            // exercises managed_agent's DT_LINK shortcut routing THROUGH
+            // the stamp hook end-to-end.
+            let a2a_handle = kernel
+                .enlist_hook_only_service("a2a")
+                .expect("enlist a2a hook-only service");
+            kernel.register_service_hook(&a2a_handle, Box::new(a2a::MailboxStampingHook::new()));
             let resp = svc.start_session(req("scode-standard")).unwrap();
 
             let shortcut = format!("{}chat-with-me", &resp.workspace_path);

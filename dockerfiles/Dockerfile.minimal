@@ -42,7 +42,7 @@ RUN pip install --no-cache-dir --no-deps --prefix=/install .
 # enforces agreement) — an unpinned install tracks nexus-vfs HEAD and
 # ships an untested kernel (#4343). --locked honors the source tree's
 # Cargo.lock.
-ARG NEXUS_VFS_REV=a5bfa4fb7c367eb2b6c516485bddde76ed047532
+ARG NEXUS_VFS_REV=cce0f0e38ad178a59c06b04403346cce24496ac8
 RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-cluster nexus-cluster
 
 # -- Runtime stage --

@@ -92,41 +92,41 @@ pub fn build_router<K: kernel::kernel::syscall::KernelSyscall>(state: AdapterSta
         .route("/_matrix/client/v3/logout", post(logout::<K>))
         .route("/_matrix/client/v3/createRoom", post(create_room::<K>))
         .route(
-            "/_matrix/client/v3/rooms/:room_id/state",
+            "/_matrix/client/v3/rooms/{room_id}/state",
             get(room_state::<K>),
         )
         .route(
-            "/_matrix/client/v3/rooms/:room_id/state/:event_type/:state_key",
+            "/_matrix/client/v3/rooms/{room_id}/state/{event_type}/{state_key}",
             get(room_state_event::<K>),
         )
         .route(
-            "/_matrix/client/v3/rooms/:room_id/messages",
+            "/_matrix/client/v3/rooms/{room_id}/messages",
             get(room_messages::<K>),
         )
         .route(
-            "/_matrix/client/v3/rooms/:room_id/joined_members",
+            "/_matrix/client/v3/rooms/{room_id}/joined_members",
             get(joined_members::<K>),
         )
         .route(
-            "/_matrix/client/v3/rooms/:room_id/send/:event_type/:txn_id",
+            "/_matrix/client/v3/rooms/{room_id}/send/{event_type}/{txn_id}",
             axum::routing::put(room_send::<K>),
         )
         .route(
-            "/_matrix/client/v3/rooms/:room_id/join",
+            "/_matrix/client/v3/rooms/{room_id}/join",
             post(room_join::<K>),
         )
         .route(
-            "/_matrix/client/v3/rooms/:room_id/leave",
+            "/_matrix/client/v3/rooms/{room_id}/leave",
             post(room_leave::<K>),
         )
         .route("/_matrix/client/v3/sync", get(sync::<K>))
         .route("/_matrix/media/v3/upload", post(media::upload::<K>))
         .route(
-            "/_matrix/media/v3/download/:server/:media_id",
+            "/_matrix/media/v3/download/{server}/{media_id}",
             get(media::download::<K>),
         )
         .route(
-            "/_matrix/media/v3/thumbnail/:server/:media_id",
+            "/_matrix/media/v3/thumbnail/{server}/{media_id}",
             get(media::thumbnail::<K>),
         )
         .route("/_matrix/client/v3/pushrules", get(push::pushrules))

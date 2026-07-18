@@ -536,9 +536,9 @@ mod tests {
         }
     }
 
-    /// Build a `Kernel` with `TestFederationCoordinator` installed
-    /// so `is_federation_initialized()` returns true and the WAL
-    /// stream backend can route through the per-zone metastore.
+    /// Build a `Kernel` with `TestFederationCoordinator` installed so
+    /// `metastore_for_zone` succeeds and the WAL stream backend can
+    /// route through the per-zone metastore.
     fn fresh_federated_kernel() -> Arc<Kernel> {
         let kernel = Arc::new(Kernel::new());
         kernel.set_distributed_coordinator(Arc::new(

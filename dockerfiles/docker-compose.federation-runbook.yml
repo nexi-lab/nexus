@@ -51,10 +51,13 @@ x-runbook-entrypoint: &runbook-entrypoint
     - |
       set -e
       DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      # Reachable 0.0.0.0 bind + --no-tls trips the loopback auth invariant;
+      # this is a trusted CI/compose cluster, so take the sanctioned escape.
       exec nexusd-cluster \
         --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
         --data-dir "$$DATA_DIR" \
-        --no-tls
+        --no-tls \
+        --insecure-no-auth
   command: []
 
 services:

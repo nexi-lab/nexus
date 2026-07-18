@@ -240,7 +240,7 @@ jobs:
           $env:NEXUS_PLUGIN_DIR = $plugindir
           $env:NEXUS_FUSE_MOUNT_POINT = "M:"
           $env:NEXUS_FUSE_VFS_ROOT = "/"
-          $env:NEXUS_BIND_ADDR = "0.0.0.0:2126"
+          $env:NEXUS_BIND_ADDR = "127.0.0.1:2126"
           $env:NEXUS_NO_TLS = "true"
           $env:NEXUS_DATA_DIR = $datadir
 
@@ -252,7 +252,7 @@ jobs:
           $proc = Start-Process -FilePath nexusd-cluster `
             -ArgumentList @(
               "--plugin-dir", $plugindir,
-              "--bind-addr", "0.0.0.0:2126",
+              "--bind-addr", "127.0.0.1:2126",
               "--data-dir", $datadir,
               "--no-tls"
             ) `

@@ -53,6 +53,7 @@ pub(super) fn ctx_from_session(session: &AuthSession) -> kernel::kernel::Operati
         request_id: format!("matrix-{}", session.access_token),
         context_zone_id: None,
         zone_perms: vec![],
+        propagates_cross_node: false,
     }
 }
 
@@ -406,7 +407,9 @@ fn create_chat_stream<K: kernel::kernel::syscall::KernelSyscall>(
             /* io_profile */ "memory", /* zone_id */ "root",
             /* is_external */ false, CAPACITY, /* read_fd */ None,
             /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
-            /* link_target */ None, /* source */ None, /* remote_metastore */ None,
+            /* content_id */ None, /* size */ None, /* version */ None,
+            /* created_at_ms */ None, /* link_target */ None, /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| AdapterError::Internal(format!("createRoom sys_setattr({path}): {e:?}")))
@@ -441,12 +444,7 @@ mod tests {
                 let handle = k
                     .enlist_hook_only_service("mailbox-stamping")
                     .expect("enlist mailbox-stamping hook-only service");
-                k.register_service_hook(
-                    &handle,
-                    Box::new(
-                        crate::managed_agent::mailbox_stamping_hook::MailboxStampingHook::new(),
-                    ),
-                );
+                k.register_service_hook(&handle, Box::new(a2a::MailboxStampingHook::new()));
                 k
             })
             .clone()

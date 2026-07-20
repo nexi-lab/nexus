@@ -898,15 +898,25 @@ class TestRunbookOperatorErgonomics:
     # matter (both-founder split-brain, ambiguous fresh-founder) are
     # covered by the Rust integration test test_unified_bringup.rs.
 
-    def test_self_in_peers_rejected_at_parse(
+    def test_self_in_peers_filtered_not_fatal(
         self,
         topology: RunbookTopology,
     ) -> None:
-        """`--peers <self>` must exit non-zero at parse time.
+        """`--peers <self>` must be FILTERED with a warning, never fatal.
 
-        Pins PR #4014's self-exclusion contract: self enters the
-        cluster through create_zone (founder) or AddNode (joiner),
-        never through the address book.
+        Self enters the cluster through create_zone (founder) or AddNode
+        (joiner), never the transport address book (PR #3996 opaque-ID
+        contract). An earlier version hard-failed on a self-entry, but that
+        BRICKED a restart: a stale learned self-entry round-trips through
+        persist_peers into identity.json, so on the next boot the daemon could
+        never start again without hand-editing the file. The boot path now
+        drops self and warns (`peers_excluding_self`) instead of crashing, and
+        `PeerMap` prevents self from being learned in the first place.
+
+        Deterministic coverage of the corner case: pass self explicitly and
+        assert (1) the exclusion warning fired and (2) the OLD fatal error is
+        gone. Runs under `timeout` — a booting daemon is killed by the timeout,
+        not by a self-peer crash.
         """
         from tests.e2e.docker.runbook_helpers import docker_exec, uid
 
@@ -928,18 +938,25 @@ class TestRunbookOperatorErgonomics:
                 "--insecure-no-auth",
                 "--peers",
                 # NEXUS_HOSTNAME=joiner is set in compose env, so
-                # joiner:2126 is "self" for the parse-time check.
+                # joiner:2126 is "self" for the self-exclusion path.
                 "joiner:2126",
             ],
             timeout=20,
         )
-        combined = result.stdout + result.stderr
-        assert result.rc != 0, (
-            "`--peers <self>` was accepted at parse — PR #4014 self-"
-            "exclusion contract regressed.\nstdout/stderr: {combined[-2000:]}"
+        combined = (result.stdout + result.stderr).lower()
+        # (1) The exclusion filter fired — the boot log names the dropped self
+        #     entry. Deterministic: we passed self explicitly.
+        assert "excluding it" in combined, (
+            "self-in-peers was not filtered — `peers_excluding_self` did not run "
+            f"(or its warning changed).\nstdout/stderr: {combined[-2000:]}"
         )
-        assert "self" in combined.lower() or "peer" in combined.lower(), (
-            "validator error does not mention self/peer; wrong error fired."
+        # (2) The OLD hard-fail is gone. The former guard exited with
+        #     'peer list contains self'; the new warning uses a distinct phrase
+        #     ('peer address book contains self — excluding it'), so this string
+        #     appears ONLY if the fatal path regressed.
+        assert "peer list contains self" not in combined, (
+            "self-in-peers hard-failed at boot — the non-fatal filter regressed, "
+            "which would brick a restart on a stale persisted self-entry."
             f"\nstdout/stderr: {combined[-2000:]}"
         )
 
@@ -1012,3 +1029,163 @@ class TestFederationWriteConsistencyContract:
                 f" valid --as value — nexus-vfs#61 ValueEnum regressed."
                 f"\nhelp text: {combined[-2000:]}"
             )
+
+
+# ===========================================================================
+# TestEcMailboxConvergence — A2A EC (AP) data plane
+# ===========================================================================
+class TestEcMailboxConvergence:
+    """Lock down the ``wal_ec`` mailbox contract: a DT_STREAM opened on the
+    eventually-consistent plane accepts a write even when the writer has lost
+    its raft quorum, and every member converges once quorum returns.
+
+    This is the A2A mailbox promise on N equal peers with no guaranteed-up
+    leader — a strong-consistency (raft-commit) write could not do it, which
+    the ``sc-probe`` step below demonstrates directly.
+
+    Runs LAST in the file: it churns the peers (stop → write → start) and
+    restores them, so it must not precede tests that assume a static cluster.
+    """
+
+    def test_ec_write_survives_quorum_loss_and_converges(
+        self, topology: RunbookTopology, api_key: str
+    ) -> None:
+        import time
+
+        from tests.e2e.docker.runbook_helpers import (
+            DT_STREAM,
+            docker_logs,
+            docker_start,
+            docker_stop,
+            stream_collect_all,
+            stream_write_nowait,
+            uid,
+            vfs_setattr,
+            vfs_write,
+            wait_healthy,
+        )
+
+        suffix = uid()
+        mbox = f"/shared/ec-mailbox-{suffix}"
+
+        def collect(target: str) -> bytes:
+            return (
+                stream_collect_all(target, mbox, api_key=api_key).get("result", {}).get("data", b"")
+            )
+
+        def wait_for(target: str, needle: bytes, budget: float) -> bytes:
+            deadline = time.time() + budget
+            last = b""
+            while time.time() < deadline:
+                last = collect(target)
+                if needle in last:
+                    return last
+                time.sleep(0.5)
+            return last
+
+        # 1. Create the EC mailbox on the founder. The inode replicates into
+        #    sharedzone; the joiner reconstructs its WalStreamCore on first
+        #    access (the setattr_stream peer-reopen path).
+        def open_mailbox(target: str) -> dict:
+            # A reader must open the stream before reading it — this
+            # reconstructs the node's local WalStreamCore over the (replicated)
+            # inode, exactly as a mailbox owner opens its inbox at startup. It
+            # is also required again after a restart, which clears in-memory
+            # backends. Idempotent: created=False when the inode already exists.
+            return vfs_setattr(
+                target,
+                mbox,
+                entry_type=DT_STREAM,
+                io_profile="wal_ec",
+                capacity=65536,
+                api_key=api_key,
+            )
+
+        cr = open_mailbox(topology.founder_grpc)
+        assert "error" not in cr, f"create wal_ec mailbox failed: {cr}"
+        # The joiner (mailbox reader) opens the replicated stream so its own
+        # WalStreamCore backend exists to serve reads.
+        jr = open_mailbox(topology.joiner_grpc)
+        assert "error" not in jr, f"joiner open mailbox failed: {jr}"
+
+        # 2. Write msg1 under full quorum — it must reach the joiner.
+        m1 = f'{{"from":"win-ai","body":"ec-msg-1-{suffix}"}}'.encode()
+        w1 = stream_write_nowait(topology.founder_grpc, mbox, m1, api_key=api_key)
+        assert "error" not in w1, f"msg1 write failed: {w1}"
+        got1 = wait_for(topology.joiner_grpc, m1, budget=20)
+        assert m1 in got1, f"msg1 must replicate to the joiner under quorum: {got1!r}"
+
+        # 3. Lose quorum by CHURN — stop both peers so the founder is 1-of-3
+        #    (no majority). This is the real A2A scenario: a peer machine goes
+        #    offline and later reboots, not a transient network blip. The
+        #    reboot in step 5 is the point — it exercises the restart path
+        #    (peer-map self-exclusion + WalStreamCore reopen + anti-entropy
+        #    catch-up from a cleared in-memory backend). An earlier revision
+        #    used a network partition to dodge a boot-config crash on reboot
+        #    ('peer list contains self'); that crash is fixed (nexus-vfs
+        #    peers_excluding_self + PeerMap), so churn is both faithful and safe.
+        docker_stop(topology.joiner_container)
+        docker_stop(topology.witness_container)
+        joiner_down = True
+        try:
+            # 4a. Sc contrast — a raft-commit write can NOT proceed with no
+            #     quorum. Short timeout; either a server error or a client
+            #     deadline is the expected "could not commit" outcome.
+            sc_failed = False
+            try:
+                sc = vfs_write(
+                    topology.founder_grpc,
+                    f"/shared/sc-probe-{suffix}.txt",
+                    b"needs-quorum",
+                    api_key=api_key,
+                    timeout=8,
+                )
+                sc_failed = "error" in sc
+            except Exception:
+                sc_failed = True
+            assert sc_failed, "a strong-consistency write must not commit without quorum"
+
+            # 4b. EC write msg2 with NO quorum — must succeed (AP plane).
+            m2 = f'{{"from":"win-ai","body":"ec-msg-2-noquorum-{suffix}"}}'.encode()
+            w2 = stream_write_nowait(topology.founder_grpc, mbox, m2, api_key=api_key)
+            assert "error" not in w2, f"EC write under quorum loss must succeed (AP plane): {w2}"
+            # Founder serves its own EC write locally, immediately.
+            local = collect(topology.founder_grpc)
+            assert m2 in local, f"founder must serve its own EC write locally: {local!r}"
+
+            # 5. Reboot both peers. wait_healthy passing is the primary proof the
+            #    joiner did NOT crash on restart — its persisted peer list can
+            #    contain a stale self-entry, which used to be fatal.
+            docker_start(topology.witness_container)
+            docker_start(topology.joiner_container)
+            joiner_down = False
+            wait_healthy(topology.all_voters_grpc)
+        finally:
+            if joiner_down:
+                # Restore the cluster for any later test even if an assert above
+                # tripped while the peers were down.
+                docker_start(topology.witness_container)
+                docker_start(topology.joiner_container)
+                wait_healthy(topology.all_voters_grpc)
+
+        # 5b. Corner-case guard: the joiner rebooted clean. The old fatal boot
+        #     guard exited with 'peer list contains self'; assert it did not.
+        jlog = docker_logs(topology.joiner_container, tail=4000).lower()
+        assert "peer list contains self" not in jlog, (
+            "joiner hard-failed on restart with the pre-fix self-peer boot guard; "
+            "peers_excluding_self / PeerMap regressed."
+        )
+
+        # 6. Reopen the mailbox on the rebooted joiner — a restart clears the
+        #    in-memory WalStreamCore, so the reader must reconstruct it over the
+        #    replicated inode (exactly as a mailbox owner reopens its inbox at
+        #    startup) before it can serve reads.
+        jr2 = open_mailbox(topology.joiner_grpc)
+        assert "error" not in jr2, f"joiner reopen after restart failed: {jr2}"
+
+        # 7. Converge: once the EC drain / anti-entropy catches the rebooted
+        #    joiner up, it must hold BOTH messages — the one written under quorum
+        #    and the one written while the founder had none.
+        got2 = wait_for(topology.joiner_grpc, m2, budget=60)
+        assert m2 in got2, f"joiner must converge to the no-quorum EC write after reboot: {got2!r}"
+        assert m1 in got2, f"joiner must still hold msg1 after convergence: {got2!r}"

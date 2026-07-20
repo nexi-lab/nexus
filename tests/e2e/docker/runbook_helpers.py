@@ -39,6 +39,9 @@ import pytest
 HEALTH_TIMEOUT = 120
 ADMIN_API_KEY = os.environ.get("NEXUS_API_KEY", "sk-test-runbook-key")
 
+# DirEntryType codes (mirror kernel `entry_type`): DT_STREAM is the mailbox.
+DT_STREAM = 4
+
 _LEADER_HINT_RE = re.compile(r"leader hint: Some\((\d+)\)")
 
 
@@ -258,6 +261,89 @@ def vfs_mkdir(
         if resp.is_error:
             return {"error": _maybe_error_from_payload(resp.error_payload)}
         return {"result": {"hit": resp.hit}}
+    finally:
+        channel.close()
+
+
+def vfs_setattr(
+    target: str,
+    path: str,
+    *,
+    entry_type: int,
+    io_profile: str = "",
+    capacity: int = 0,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Typed SetAttr RPC — create / idempotent-open a DT_* entry.
+
+    For an EC (AP) mailbox stream pass ``entry_type=DT_STREAM,
+    io_profile="wal_ec", capacity=<n>``: the kernel's stream waterfall builds a
+    `WalStreamCore` whose appends propose via `propose_ec_local`, so a send
+    succeeds even when no raft quorum is reachable.
+
+    Returns ``{"result": {"created": bool, "entryType": int}}`` on success.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.SetattrRequest(
+            path=path,
+            auth_token=api_key,
+            entry_type=entry_type,
+            io_profile=io_profile,
+            capacity=capacity,
+        )
+        resp = stub.Setattr(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"created": resp.created, "entryType": resp.entry_type}}
+    finally:
+        channel.close()
+
+
+def stream_write_nowait(
+    target: str,
+    path: str,
+    data: bytes,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Append one message to a DT_STREAM mailbox (non-blocking). Returns
+    ``{"result": {"offset": int}}`` — the offset the entry landed at."""
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.StreamWriteRequest(path=path, data=data, auth_token=api_key)
+        resp = stub.StreamWriteNowait(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"offset": resp.offset}}
+    finally:
+        channel.close()
+
+
+def stream_collect_all(
+    target: str,
+    path: str,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Collect every message currently in a DT_STREAM mailbox. Returns
+    ``{"result": {"data": bytes}}`` — the concatenated entry payloads."""
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.IpcPathRequest(path=path, auth_token=api_key)
+        resp = stub.StreamCollectAll(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"data": resp.data}}
     finally:
         channel.close()
 

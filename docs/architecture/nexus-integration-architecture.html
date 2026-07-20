@@ -356,7 +356,9 @@ sequenceDiagram
 
 <h3>3.3 Sender identity</h3>
 
-<p>Mailbox envelope stamping rewrites the message envelope's <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend.</p>
+<p>Every write to a <code>chat-with-me</code> mailbox carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an Agent key resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A mailbox write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
+
+<p>The rewrite happens at the origin write, before Raft replication (&sect;4). Every replica and every reader then sees the same stamped <code>from</code> without re-verifying, so a message's origin travels intact to another machine: agent A on one node writes <code>from:A</code> locally, the bytes replicate, and a reader on another node reads <code>from:A</code> as authored.</p>
 
 <pre class="mermaid">
 sequenceDiagram
@@ -375,7 +377,7 @@ sequenceDiagram
     Kernel->>Stream: append (stamped envelope)
 </pre>
 
-<p>The rewrite is implemented as a registered <code>NativeInterceptHook</code> (<code>MailboxStampingHook</code>) that delegates the actual envelope policy to <code>mailbox_stamping_policy::maybe_stamp_chat_envelope</code>. Both live under <code>rust/services/src/managed_agent/</code> &mdash; owned by <code>ManagedAgentService</code> (the chat-with-me mailbox is a managed-agent concern, not a generic agent-table concern). The hook struct owns "how to be a hook" (dispatch wiring + content-clone bypass); the policy module owns "what to rewrite" (envelope schema, identity guarantee). The hook trait was widened to support content rewriting &mdash; <code>on_pre</code> returns <code>Result&lt;HookOutcome, String&gt;</code> where <code>HookOutcome::Replace(bytes)</code> is the new variant that substitutes write content. Accept/reject hooks (audit, permission, workspace boundary) all return <code>HookOutcome::Pass</code>.</p>
+<p>The rewrite is a registered <code>NativeInterceptHook</code> (<code>MailboxStampingHook</code>) that delegates the envelope policy to <code>mailbox_stamping_policy::maybe_stamp_chat_envelope</code>. Both live in the kernel-tier <code>a2a</code> crate (<code>nexus-vfs/rust/a2a/</code>) and are armed once at daemon boot via <code>install_a2a_stamp_hook</code>. Placing the <code>from</code> guarantee at the substrate makes it universal: every writer to a <code>*/chat-with-me</code> mailbox is stamped through the same point &mdash; managed agents, external clients, and Matrix humans alike &mdash; because identity must be enforced where every write converges, not per frontend. The hook struct owns "how to be a hook" (dispatch wiring + content-clone bypass); the policy module owns "what to rewrite" (envelope schema, identity guarantee). The hook trait supports content rewriting &mdash; <code>on_pre</code> returns <code>Result&lt;HookOutcome, String&gt;</code>, where <code>HookOutcome::Replace(bytes)</code> substitutes write content; accept/reject hooks (audit, permission, workspace boundary) return <code>HookOutcome::Pass</code>.</p>
 
 <p>To keep the hot path allocation-free for the writes that don't need rewriting, hooks declare a <code>mutating_path_suffix</code> and the dispatcher uses it as a double bypass:</p>
 
@@ -407,6 +409,18 @@ sequenceDiagram
   <li><code>/proc/{pid}/chat-with-me</code> &mdash; direct DT_STREAM at the per-pid path.</li>
   <li><code>/proc/{pid}/workspace/chat-with-me</code> &mdash; DT_LINK to the same stream.</li>
 </ul>
+
+<h3>3.7 Message contract</h3>
+
+<p>A mailbox envelope is a JSON object: the substrate manages the reserved <code>from</code> field (&sect;3.3) and the participants agree on the payload. A2A payloads follow a shared contract so a receiver can act on a message from its content alone. A task assignment (copilot &rarr; worker) carries at least three parts:</p>
+
+<ul>
+  <li><strong>context</strong> &mdash; what the task is and the state it starts from.</li>
+  <li><strong>constraints</strong> &mdash; the bounds the worker operates under (for example, complete within a 200K-token budget).</li>
+  <li><strong>acceptance</strong> &mdash; the criteria the result is judged against, carried in the envelope so the worker and the accepting copilot share one definition of done.</li>
+</ul>
+
+<p>The copilot both issues the task and accepts the result; putting acceptance criteria in the message aligns the worker to that bar rather than leaving it implicit.</p>
 
 <hr>
 

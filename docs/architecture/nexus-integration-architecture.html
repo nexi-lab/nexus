@@ -433,6 +433,8 @@ sequenceDiagram
 
 <p>Every chat-with-me DT_STREAM lives inside its zone's raft cluster. The write path is <code>sys_write</code> &rarr; <code>WalStreamCore</code> &rarr; <code>Command::AppendStreamEntry</code> &rarr; raft commit &rarr; state-machine apply on every voter.</p>
 
+<p>The stream is a <strong>linearizable log: the state machine assigns each entry's offset at the raft apply</strong>, in committed order &mdash; the caller passes only the stream, never a sequence number. Because raft serializes every writer through one log, two agents writing the same mailbox (a follower's write forwards to the leader) land at distinct, gap-free offsets and every replica converges to one byte-identical ordered log &mdash; no writer can overwrite another. A write returns the offset it was assigned; a reader reads from an offset; the application never tracks sequence numbers. Being an ordered log, the mailbox is strong-consistency: a write needs a raft quorum (a total order needs a single sequencer), so a fully-isolated writer with no reachable quorum fails loud rather than silently accepting an unorderable write. Order-agnostic mutable state (presence, liveness) uses an eventually-consistent metadata register instead &mdash; never the stream.</p>
+
 <h3>4.2 Federation-external &mdash; Matrix C-S adapter</h3>
 
 <pre class="mermaid">
@@ -561,7 +563,7 @@ graph TB
   <thead><tr><th>Entry type</th><th>Used for</th><th>Metadata channel</th><th>Content channel</th></tr></thead>
   <tbody>
     <tr><td><strong>DT_FILE</strong></td><td>sessions, profile configs, task lists</td><td>Raft (intra-zone, strongly consistent)</td><td>Local CAS + on-miss lazy fetch from peer via <code>PeerBlobClient</code></td></tr>
-    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters</td></tr>
+    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters; offset assigned at apply (linearizable, multi-writer-safe)</td></tr>
   </tbody>
 </table>
 

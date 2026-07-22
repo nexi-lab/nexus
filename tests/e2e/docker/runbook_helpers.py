@@ -277,10 +277,10 @@ def vfs_setattr(
 ) -> dict:
     """Typed SetAttr RPC — create / idempotent-open a DT_* entry.
 
-    For an EC (AP) mailbox stream pass ``entry_type=DT_STREAM,
-    io_profile="wal_ec", capacity=<n>``: the kernel's stream waterfall builds a
-    `WalStreamCore` whose appends propose via `propose_ec_local`, so a send
-    succeeds even when no raft quorum is reachable.
+    For a replicated mailbox stream pass ``entry_type=DT_STREAM,
+    io_profile="wal", capacity=<n>``: the kernel's stream waterfall builds a
+    `WalStreamCore` (strong-consistency), and the state machine assigns each
+    append's offset at the raft apply — so concurrent writers never collide.
 
     Returns ``{"result": {"created": bool, "entryType": int}}`` on success.
     """

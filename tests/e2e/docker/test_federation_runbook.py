@@ -1032,160 +1032,138 @@ class TestFederationWriteConsistencyContract:
 
 
 # ===========================================================================
-# TestEcMailboxConvergence — A2A EC (AP) data plane
+# TestScMailboxLinearizable — A2A SC (ordered log) data plane
 # ===========================================================================
-class TestEcMailboxConvergence:
-    """Lock down the ``wal_ec`` mailbox contract: a DT_STREAM opened on the
-    eventually-consistent plane accepts a write even when the writer has lost
-    its raft quorum, and every member converges once quorum returns.
+class TestScMailboxLinearizable:
+    """Lock down the SC DT_STREAM mailbox contract: the state machine assigns
+    each entry's offset at the raft apply, so two writers on two different
+    nodes land at DISTINCT offsets and every replica converges to ONE ordered,
+    collision-free log. This is the multi-writer safety the old client-side seq
+    could NOT give — both nodes picked offset 0 and silently overwrote.
 
-    This is the A2A mailbox promise on N equal peers with no guaranteed-up
-    leader — a strong-consistency (raft-commit) write could not do it, which
-    the ``sc-probe`` step below demonstrates directly.
+    A DT_STREAM is an ordered log, so it is strong-consistency: a write needs a
+    raft quorum (a total order needs a single sequencer). The no-quorum step
+    pins the honest fail-loud boundary — the deliberate CAP tradeoff.
 
-    Runs LAST in the file: it churns the peers (stop → write → start) and
-    restores them, so it must not precede tests that assume a static cluster.
+    Runs LAST: the no-quorum step churns the peers, so it must not precede
+    tests that assume a static cluster.
     """
 
-    def test_ec_write_survives_quorum_loss_and_converges(
+    def test_two_node_writers_converge_to_one_ordered_log(
         self, topology: RunbookTopology, api_key: str
     ) -> None:
         import time
 
         from tests.e2e.docker.runbook_helpers import (
             DT_STREAM,
-            docker_logs,
             docker_start,
             docker_stop,
             stream_collect_all,
             stream_write_nowait,
             uid,
             vfs_setattr,
-            vfs_write,
             wait_healthy,
         )
 
         suffix = uid()
-        mbox = f"/shared/ec-mailbox-{suffix}"
+        mbox = f"/shared/sc-mailbox-{suffix}"
 
         def collect(target: str) -> bytes:
             return (
                 stream_collect_all(target, mbox, api_key=api_key).get("result", {}).get("data", b"")
             )
 
-        def wait_for(target: str, needle: bytes, budget: float) -> bytes:
+        def wait_for_both(target: str, a: bytes, b: bytes, budget: float) -> bytes:
             deadline = time.time() + budget
             last = b""
             while time.time() < deadline:
                 last = collect(target)
-                if needle in last:
+                if a in last and b in last:
                     return last
                 time.sleep(0.5)
             return last
 
-        # 1. Create the EC mailbox on the founder. The inode replicates into
-        #    sharedzone; the joiner reconstructs its WalStreamCore on first
-        #    access (the setattr_stream peer-reopen path).
+        # 1. Both nodes open the SC mailbox (io_profile "wal" → raft-replicated;
+        #    the state machine assigns offsets at apply). Opening reconstructs
+        #    each node's local WalStreamCore over the replicated inode. Idempotent.
         def open_mailbox(target: str) -> dict:
-            # A reader must open the stream before reading it — this
-            # reconstructs the node's local WalStreamCore over the (replicated)
-            # inode, exactly as a mailbox owner opens its inbox at startup. It
-            # is also required again after a restart, which clears in-memory
-            # backends. Idempotent: created=False when the inode already exists.
             return vfs_setattr(
                 target,
                 mbox,
                 entry_type=DT_STREAM,
-                io_profile="wal_ec",
+                io_profile="wal",
                 capacity=65536,
                 api_key=api_key,
             )
 
-        cr = open_mailbox(topology.founder_grpc)
-        assert "error" not in cr, f"create wal_ec mailbox failed: {cr}"
-        # The joiner (mailbox reader) opens the replicated stream so its own
-        # WalStreamCore backend exists to serve reads.
-        jr = open_mailbox(topology.joiner_grpc)
-        assert "error" not in jr, f"joiner open mailbox failed: {jr}"
+        for name, tgt in (
+            ("founder", topology.founder_grpc),
+            ("joiner", topology.joiner_grpc),
+        ):
+            cr = open_mailbox(tgt)
+            assert "error" not in cr, f"{name} open SC mailbox failed: {cr}"
 
-        # 2. Write msg1 under full quorum — it must reach the joiner.
-        m1 = f'{{"from":"win-ai","body":"ec-msg-1-{suffix}"}}'.encode()
-        w1 = stream_write_nowait(topology.founder_grpc, mbox, m1, api_key=api_key)
-        assert "error" not in w1, f"msg1 write failed: {w1}"
-        got1 = wait_for(topology.joiner_grpc, m1, budget=20)
-        assert m1 in got1, f"msg1 must replicate to the joiner under quorum: {got1!r}"
+        # 2. BOTH nodes write the SAME mailbox under quorum. The founder is the
+        #    leader (its write commits directly); the joiner is a follower (its
+        #    write forwards to the leader). The state machine hands each a
+        #    DISTINCT offset in raft-committed order — the old per-node seq would
+        #    have given both offset 0 and lost one.
+        m_founder = f'{{"from":"founder-ai","body":"from-founder-{suffix}"}}'.encode()
+        m_joiner = f'{{"from":"joiner-ai","body":"from-joiner-{suffix}"}}'.encode()
 
-        # 3. Lose quorum by CHURN — stop both peers so the founder is 1-of-3
-        #    (no majority). This is the real A2A scenario: a peer machine goes
-        #    offline and later reboots, not a transient network blip. The
-        #    reboot in step 5 is the point — it exercises the restart path
-        #    (peer-map self-exclusion + WalStreamCore reopen + anti-entropy
-        #    catch-up from a cleared in-memory backend). An earlier revision
-        #    used a network partition to dodge a boot-config crash on reboot
-        #    ('peer list contains self'); that crash is fixed (nexus-vfs
-        #    peers_excluding_self + PeerMap), so churn is both faithful and safe.
-        docker_stop(topology.joiner_container)
-        docker_stop(topology.witness_container)
-        joiner_down = True
-        try:
-            # 4a. Sc contrast — a raft-commit write can NOT proceed with no
-            #     quorum. Short timeout; either a server error or a client
-            #     deadline is the expected "could not commit" outcome.
-            sc_failed = False
-            try:
-                sc = vfs_write(
-                    topology.founder_grpc,
-                    f"/shared/sc-probe-{suffix}.txt",
-                    b"needs-quorum",
-                    api_key=api_key,
-                    timeout=8,
-                )
-                sc_failed = "error" in sc
-            except Exception:
-                sc_failed = True
-            assert sc_failed, "a strong-consistency write must not commit without quorum"
-
-            # 4b. EC write msg2 with NO quorum — must succeed (AP plane).
-            m2 = f'{{"from":"win-ai","body":"ec-msg-2-noquorum-{suffix}"}}'.encode()
-            w2 = stream_write_nowait(topology.founder_grpc, mbox, m2, api_key=api_key)
-            assert "error" not in w2, f"EC write under quorum loss must succeed (AP plane): {w2}"
-            # Founder serves its own EC write locally, immediately.
-            local = collect(topology.founder_grpc)
-            assert m2 in local, f"founder must serve its own EC write locally: {local!r}"
-
-            # 5. Reboot both peers. wait_healthy passing is the primary proof the
-            #    joiner did NOT crash on restart — its persisted peer list can
-            #    contain a stale self-entry, which used to be fatal.
-            docker_start(topology.witness_container)
-            docker_start(topology.joiner_container)
-            joiner_down = False
-            wait_healthy(topology.all_voters_grpc)
-        finally:
-            if joiner_down:
-                # Restore the cluster for any later test even if an assert above
-                # tripped while the peers were down.
-                docker_start(topology.witness_container)
-                docker_start(topology.joiner_container)
-                wait_healthy(topology.all_voters_grpc)
-
-        # 5b. Corner-case guard: the joiner rebooted clean. The old fatal boot
-        #     guard exited with 'peer list contains self'; assert it did not.
-        jlog = docker_logs(topology.joiner_container, tail=4000).lower()
-        assert "peer list contains self" not in jlog, (
-            "joiner hard-failed on restart with the pre-fix self-peer boot guard; "
-            "peers_excluding_self / PeerMap regressed."
+        wf = stream_write_nowait(topology.founder_grpc, mbox, m_founder, api_key=api_key)
+        assert "error" not in wf, f"founder (leader) write failed: {wf}"
+        wj = stream_write_nowait(topology.joiner_grpc, mbox, m_joiner, api_key=api_key)
+        assert "error" not in wj, (
+            f"joiner (follower) write must forward to the leader and commit: {wj}"
+        )
+        off_f = wf["result"]["offset"]
+        off_j = wj["result"]["offset"]
+        assert off_f != off_j, (
+            f"two writers must get DISTINCT offsets (the multi-writer fix): "
+            f"founder={off_f} joiner={off_j}"
+        )
+        assert {off_f, off_j} == {0, 1}, (
+            f"the two appends must occupy the first two gap-free offsets: "
+            f"founder={off_f} joiner={off_j}"
         )
 
-        # 6. Reopen the mailbox on the rebooted joiner — a restart clears the
-        #    in-memory WalStreamCore, so the reader must reconstruct it over the
-        #    replicated inode (exactly as a mailbox owner reopens its inbox at
-        #    startup) before it can serve reads.
-        jr2 = open_mailbox(topology.joiner_grpc)
-        assert "error" not in jr2, f"joiner reopen after restart failed: {jr2}"
+        # 3. Both nodes converge to a log holding BOTH messages...
+        got_f = wait_for_both(topology.founder_grpc, m_founder, m_joiner, budget=30)
+        got_j = wait_for_both(topology.joiner_grpc, m_founder, m_joiner, budget=30)
+        assert m_founder in got_f and m_joiner in got_f, f"founder must hold both: {got_f!r}"
+        assert m_founder in got_j and m_joiner in got_j, f"joiner must hold both: {got_j!r}"
 
-        # 7. Converge: once the EC drain / anti-entropy catches the rebooted
-        #    joiner up, it must hold BOTH messages — the one written under quorum
-        #    and the one written while the founder had none.
-        got2 = wait_for(topology.joiner_grpc, m2, budget=60)
-        assert m2 in got2, f"joiner must converge to the no-quorum EC write after reboot: {got2!r}"
-        assert m1 in got2, f"joiner must still hold msg1 after convergence: {got2!r}"
+        # 4. ...in the SAME total order. collect_all concatenates entries by
+        #    ascending offset, so a linearizable log means every replica returns
+        #    the identical byte sequence. (A colliding seq produced divergent /
+        #    lossy logs — the exact defect this fix removes.)
+        assert got_f == got_j, (
+            "replicas must converge to one ordered log, byte-identical:\n"
+            f"  founder={got_f!r}\n  joiner={got_j!r}"
+        )
+
+        # 5. SC boundary (honest): an ordered log needs a sequencer, so a write
+        #    needs a quorum. Drop quorum — stop the joiner + witness so the
+        #    founder is 1-of-3 — and assert the mailbox write FAILS loud instead
+        #    of silently accepting a write it can neither order nor replicate.
+        docker_stop(topology.joiner_container)
+        docker_stop(topology.witness_container)
+        try:
+            noq = f'{{"from":"founder-ai","body":"no-quorum-{suffix}"}}'.encode()
+            failed = False
+            try:
+                r = stream_write_nowait(
+                    topology.founder_grpc, mbox, noq, api_key=api_key, timeout=8
+                )
+                failed = "error" in r
+            except Exception:
+                failed = True
+            assert failed, (
+                "an SC DT_STREAM write must fail loud with no quorum — a total "
+                "order needs a single sequencer, which needs a majority"
+            )
+        finally:
+            docker_start(topology.witness_container)
+            docker_start(topology.joiner_container)
+            wait_healthy(topology.all_voters_grpc)

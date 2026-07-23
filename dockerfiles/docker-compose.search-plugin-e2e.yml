@@ -90,6 +90,13 @@ services:
     user: "0:0"
     volumes:
       - ..:/workspace:ro
+      # `runbook_helpers.docker_logs` + `assert_log_contains` shell out
+      # to `docker logs <container>` from inside the runner to gate on
+      # the daemon's boot messages (e.g. "plugins loaded from
+      # --plugin-dir").  The runner needs the host docker socket to
+      # reach the sibling daemon container — same convention as
+      # docker-compose.federation-runbook.yml and cc-tasks-share.yml.
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       NEXUS_SEARCH_PLUGIN_E2E: "1"
       NEXUS_SEARCH_NODE_GRPC: node:2126

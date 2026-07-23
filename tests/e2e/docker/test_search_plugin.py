@@ -137,8 +137,7 @@ class TestSearchGlob:
         r = search_glob(NODE_GRPC, base, "*.txt", max_results=3, api_key=api_key)
         assert "error" not in r, f"glob returned error: {r}"
         assert r["result"]["truncated"] is True, (
-            "expected truncated=true when 5 matches exceed max_results=3, "
-            f"got {r['result']}"
+            f"expected truncated=true when 5 matches exceed max_results=3, got {r['result']}"
         )
         assert len(r["result"]["paths"]) == 3
 
@@ -158,11 +157,7 @@ class TestSearchGrep:
         u = uid()
         base = f"/search-grep-{u}"
         vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
-        payload = (
-            b"line1: preamble\n"
-            b"line2: error: fatal boom\n"
-            b"line3: stack frame\n"
-        )
+        payload = b"line1: preamble\nline2: error: fatal boom\nline3: stack frame\n"
         r = vfs_write(NODE_GRPC, f"{base}/log.txt", payload, api_key=api_key)
         assert "error" not in r, f"seed write failed: {r}"
 

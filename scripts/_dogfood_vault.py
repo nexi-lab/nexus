@@ -192,12 +192,16 @@ def boot_cluster(
     env["NEXUS_DATA_DIR"] = str(data_dir)
     env["RUST_LOG"] = env.get("RUST_LOG", "warn")
 
-    # `--bind-addr` (not `--bind`) and an explicit `--bootstrap-mode`
-    # are both required for daemon mode; without them the cluster either
-    # rejects the CLI or silently picks a non-ephemeral path. `static`
-    # = single-node, no federation — the right shape for a tempdir-only
-    # ephemeral vault. `--data-dir` keeps every redb file inside the
-    # tempdir so the cluster has no path to anything persistent.
+    # `--bind-addr` (not `--bind`) is required for daemon mode; without
+    # it the cluster never opens a gRPC port and the port-wait loop
+    # times out.  `--data-dir` keeps every redb file inside the tempdir
+    # so the cluster has no path to anything persistent.
+    #
+    # `--bootstrap-mode` was retired by Phase G (nexus-vfs #118) — the
+    # daemon now auto-detects boot semantics via `plan_boot_action`.
+    # An empty data-dir with no federation env vars resolves to row 2
+    # (RootlessDynamic), which is the correct shape for an ephemeral
+    # vault: single-node, no federation, gRPC serve.
     proc = subprocess.Popen(
         [
             str(nexusd_cluster),
@@ -208,8 +212,6 @@ def boot_cluster(
             "--no-tls",
             "--bind-addr",
             f"127.0.0.1:{port}",
-            "--bootstrap-mode",
-            "static",
         ],
         env=env,
         stdout=subprocess.PIPE,

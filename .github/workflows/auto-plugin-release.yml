@@ -91,8 +91,9 @@ jobs:
           VAULT_TAG=$(next_patch "vault-v")
           FUSE_TAG=$(next_patch "fuse-v")
           LC_TAG=$(next_patch "local-connector-v")
+          SEARCH_TAG=$(next_patch "search-v")
 
-          echo "Cutting tags: $VAULT_TAG, $FUSE_TAG, $LC_TAG"
+          echo "Cutting tags: $VAULT_TAG, $FUSE_TAG, $LC_TAG, $SEARCH_TAG"
           echo "nexus-vfs rev: ${NEW_REV:0:12}"
 
           MSG="rebuild against nexus-vfs ${NEW_REV:0:12} (auto-release on rev bump)"
@@ -102,15 +103,16 @@ jobs:
           git push origin "$VAULT_TAG"
           echo "vault_tag=$VAULT_TAG" >> "$GITHUB_ENV"
 
-          # Fuse + local-connector can go together (both use dogfood signing
-          # which fetches the latest vault-v* release — vault must be
-          # released first, but the tag push triggers are async so there's
-          # a race. The release-plugin-reusable workflow retries vault
+          # Fuse + local-connector + search can go together (all use dogfood
+          # signing which fetches the latest vault-v* release — vault must
+          # be released first, but the tag push triggers are async so there
+          # is a race.  The release-plugin-reusable workflow retries vault
           # fetch, so in practice this works. If it doesn't, workflow_dispatch
           # retry is available.)
           git tag -a "$FUSE_TAG" HEAD -m "fuse-plugin ${FUSE_TAG#fuse-v} — $MSG"
           git tag -a "$LC_TAG" HEAD -m "local-connector ${LC_TAG#local-connector-v} — $MSG"
-          git push origin "$FUSE_TAG" "$LC_TAG"
+          git tag -a "$SEARCH_TAG" HEAD -m "search-plugin ${SEARCH_TAG#search-v} — $MSG"
+          git push origin "$FUSE_TAG" "$LC_TAG" "$SEARCH_TAG"
 
           echo "### Auto Plugin Release" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -121,3 +123,4 @@ jobs:
           echo "| vault | $VAULT_TAG |" >> "$GITHUB_STEP_SUMMARY"
           echo "| fuse | $FUSE_TAG |" >> "$GITHUB_STEP_SUMMARY"
           echo "| local-connector | $LC_TAG |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| search-plugin | $SEARCH_TAG |" >> "$GITHUB_STEP_SUMMARY"

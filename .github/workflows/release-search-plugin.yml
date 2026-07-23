@@ -1,0 +1,67 @@
+name: Release Search Plugin
+
+# Release pipeline for the nexus-search-plugin cdylib — wrapper around
+# the reusable plugin-release workflow.  Triggered by tags of the form
+# `search-v<semver>`.  The plugin walks the kernel VFS via
+# `sys_readdir` + `sys_read`, so it ships for every platform the kernel
+# runs on (Linux, macOS, Windows) — no platform-specific bindings.
+#
+# Uses the dogfood signing path (`signing_key_source: vault`) — vault
+# is the trust root for every non-vault plugin's signing key.  The path
+# resolves against the sealed in-repo keystore at data/vault-signing/
+# via scripts/dogfood_keystore_fetch.py — see
+# docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md.
+#
+# COS path convention: nexus-search-plugin/release/v<version>/<filename>
+
+on:
+  push:
+    tags:
+      - "search-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. search-v0.1.0). Used for retry without delete+repush."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-plugin-reusable.yml
+    with:
+      plugin_name: nexus-search-plugin
+      dylib_basename: libnexus_search_plugin
+      archive_prefix: nexus-search-plugin
+      cos_subdir: nexus-search-plugin/release
+      version_tag_prefix: search-v
+      signing_key_source: vault
+      signing_key_name: kernel-dogfood-v1
+      platforms: '["linux-x86_64", "macos-arm64", "macos-x86_64", "windows-x86_64"]'
+      override_ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+      release_description: |
+        Nexus search service plugin for nexusd-cluster.
+
+        Hosts `nexus.search.v1.SearchService` (recursive glob + regex
+        grep over the kernel VFS) via the Phase P
+        plugin-as-gRPC-service routing path.  Rust replacement for the
+        Python `nexus.bricks.search.search_service.SearchService`.
+
+        v1: sequential recursive walk over `sys_readdir` + `sys_read`;
+        unary responses capped by `max_results` (default 10_000 glob /
+        1_000 grep).  Trigram / streaming / adaptive-strategy variants
+        land in v2.
+
+        Cross-node search works transparently: `sys_readdir` surfaces
+        federation-mount contents, `sys_read` falls back to
+        `try_remote_fetch` — the plugin holds no federation awareness
+        of its own.
+    secrets:
+      VAULT_SIGNING_MASTER_KEY: ${{ secrets.VAULT_SIGNING_MASTER_KEY }}
+      COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+      COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+      COS_BUCKET: ${{ secrets.COS_BUCKET }}
+      COS_REGION: ${{ secrets.COS_REGION }}
+      COS_BASE_URL: ${{ secrets.COS_BASE_URL }}

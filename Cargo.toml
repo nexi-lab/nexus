@@ -19,6 +19,14 @@ members = [
     # syscalls via the plugin-abi KernelHandle.  Loaded by
     # nexusd-cluster via --plugin-dir alongside nexus-vault.
     "rust/services/fuse-plugin",
+    # nexus-search-plugin — cdylib service plugin that hosts
+    # `nexus.search.v1.SearchService` (recursive glob + regex grep
+    # over the kernel VFS) via the Phase P plugin-as-gRPC-service
+    # path.  Rust replacement for the Python
+    # `nexus.bricks.search.search_service.SearchService`; sequential
+    # walk over `sys_readdir` + `sys_read` in v1, trigram / streaming
+    # / adaptive-strategy variants land in v2.
+    "rust/services/search-plugin",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 # from the workspace.  Distinct from nexus-fuse-plugin (the new

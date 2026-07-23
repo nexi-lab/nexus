@@ -1,0 +1,67 @@
+[package]
+name = "nexus-search-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Nexus search plugin — cdylib loaded by `nexusd-cluster` via `--plugin-dir`. Hosts SearchService (recursive glob + regex grep over the kernel VFS) as a Phase P plugin-as-gRPC-service. Rust replacement for the Python `nexus.bricks.search.search_service.SearchService`."
+authors = ["Nexus Team"]
+publish = false
+
+[lib]
+name = "nexus_search_plugin"
+# cdylib for the loader to dlopen at startup.  rlib for the in-crate
+# unit tests to reach the internal glob/grep walker without going
+# through the C ABI.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Plugin ABI — stable C ABI contract for dylib plugins.  The
+# `declare_service_plugin!` macro + KernelHandle live here.
+nexus-plugin-abi = { workspace = true }
+
+# Proto message + tonic server stubs for SearchService.  Generated
+# in build.rs from `../proto/nexus/search/v1/search.proto`.
+prost = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+
+# Glob pattern matching — same crate the kernel uses for its own
+# glob paths, so pattern semantics stay identical across the
+# Python / Rust boundary while the migration is in flight.
+globset = { workspace = true }
+
+# Regex engine for grep.  `regex-syntax` is pulled transitively.
+regex = { workspace = true }
+
+# JSON parse for the `sys_readdir` return payload (the plugin ABI
+# returns `[{"name":<str>,"entry_type":<u8>}, ...]`).
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Diagnostic logging — silent by default; the cluster binary's
+# RUST_LOG opts specific targets in.
+tracing = "0.1"
+
+# tokio runtime for the async gRPC service impl; the plugin's
+# dispatch layer bridges to it via block_on.  `rt-multi-thread` is
+# opt-in for the spawn_blocking pool used by the recursive walker so
+# concurrent Glob / Grep requests do not serialize on a single-thread
+# runtime.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
+
+# Bytes for tonic Request/Response body types.
+bytes = "1"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+# Vendored protoc so the plugin builds on any host without a
+# system-wide protobuf-compiler.  Same policy the sibling `vault` +
+# `fuse-plugin` crates use for their per-plugin proto codegen.
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tempfile = "3"
+# dlopen self-test for the cdylib — mirrors the sibling
+# `nexus-vault/tests/dlopen_self.rs`.  Validates plugin-ABI symbol
+# resolution + `nexus_plugin_grpc_services` JSON contract on all
+# three `libloading`-supported platforms.
+libloading = "0.8"

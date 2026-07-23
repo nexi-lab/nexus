@@ -54,14 +54,37 @@ RUN python3 -m venv /opt/testvenv \
 # empty `__init__.py` files break that chain at the package boundary,
 # exposing only what's actually used: vfs_pb2*, rpc_codec.
 # ---------------------------------------------------------------------------
-RUN mkdir -p /opt/proto/nexus/grpc/vfs /opt/proto/nexus/lib \
+RUN mkdir -p /opt/proto/nexus/grpc/vfs /opt/proto/nexus/grpc/search/v1 /opt/proto/nexus/lib \
     && : > /opt/proto/nexus/__init__.py \
     && : > /opt/proto/nexus/grpc/__init__.py \
     && : > /opt/proto/nexus/grpc/vfs/__init__.py \
+    && : > /opt/proto/nexus/grpc/search/__init__.py \
+    && : > /opt/proto/nexus/grpc/search/v1/__init__.py \
     && : > /opt/proto/nexus/lib/__init__.py
 COPY src/nexus/grpc/vfs/vfs_pb2.py      /opt/proto/nexus/grpc/vfs/vfs_pb2.py
 COPY src/nexus/grpc/vfs/vfs_pb2_grpc.py /opt/proto/nexus/grpc/vfs/vfs_pb2_grpc.py
 COPY src/nexus/lib/rpc_codec.py         /opt/proto/nexus/lib/rpc_codec.py
+
+# search-plugin proto stubs — generated from the Rust workspace's
+# proto SSOT rather than committed under src/, since there is no
+# Python runtime consumer today (the search-plugin is a cdylib and
+# the Python service being replaced does not consume the Rust proto).
+# The E2E runner is the ONLY Python surface that needs to talk to
+# nexus.search.v1.SearchService, so we codegen at image-build time
+# and drop the modules directly into the /opt/proto stub tree.
+COPY rust/services/proto/nexus/search/v1/search.proto /tmp/search.proto
+RUN /opt/testvenv/bin/python -m grpc_tools.protoc \
+        --proto_path=/tmp \
+        --python_out=/opt/proto/nexus/grpc/search/v1 \
+        --grpc_python_out=/opt/proto/nexus/grpc/search/v1 \
+        /tmp/search.proto \
+    && rm /tmp/search.proto
+# grpc_tools emits `import search_pb2` (top-level) inside the _grpc
+# stub, but our tree parks the module under nexus.grpc.search.v1.
+# Rewrite the import so the two modules find each other in-package.
+RUN sed -i \
+        's/^import search_pb2 as search__pb2$/from . import search_pb2 as search__pb2/' \
+        /opt/proto/nexus/grpc/search/v1/search_pb2_grpc.py
 
 # Runtime config SSOT — see header.  Compose env vars override these
 # per-service only when topology demands it (e.g. NEXUS_FOUNDER_GRPC).

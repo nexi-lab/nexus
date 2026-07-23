@@ -1,0 +1,125 @@
+# search-plugin E2E — single-node cluster with the search-plugin cdylib
+# =========================================================================
+# Compose for `tests/e2e/docker/test_search_plugin.py`.
+#
+# Topology: one node (`node`) hosting local root — no federation.  The
+# plan explicitly defers cross-node search to v2 (trigram), so a
+# single-node substrate is the correct regression cover for v1's
+# sequential glob + regex grep contract.
+#
+# The `node` service uses `nexus-search-plugin-test:latest` — an
+# extension of `nexusd-cluster:latest` that bakes the signed
+# `nexus-search-plugin` cdylib into `/plugins/` at image-build time
+# (see `dockerfiles/Dockerfile.search-plugin-test`).  The cluster's
+# `--plugin-dir` scan picks it up at boot and the Phase P proxy routes
+# `/nexus.search.v1.SearchService/<M>` gRPC traffic into the plugin.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml up -d node
+#   docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml down -v
+
+x-bootstrap-entrypoint: &bootstrap-entrypoint
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      # Reachable 0.0.0.0 bind + --no-tls trips the loopback auth invariant;
+      # this is a trusted CI/compose cluster, so take the sanctioned escape.
+      exec nexusd-cluster \
+        --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+        --data-dir "$$DATA_DIR" \
+        --no-tls \
+        --insecure-no-auth \
+        --plugin-dir /plugins
+  command: []
+
+services:
+  node:
+    <<: *bootstrap-entrypoint
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.search-plugin-test
+      # Plugin-signing key for the in-build Ed25519 sign step (kernel
+      # refuses unsigned plugins). Sourced from the PLUGIN_SIGNING_PRIVKEY
+      # env var on the invoking shell; CI exports it from the repo
+      # secret of the same name.
+      secrets:
+        - plugin_signing_key
+    image: nexus-search-plugin-test:latest
+    container_name: nexus-search-plugin-node
+    hostname: node
+    environment:
+      NEXUS_HOSTNAME: node
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: node:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      # info,plugins=debug surfaces the "plugin loaded" + "plugin gRPC
+      # service armed" log lines the plan calls out as the E2E's
+      # readiness signals.
+      RUST_LOG: info,nexus_raft=info,kernel::plugins=debug,plugins=debug
+    volumes:
+      - search_plugin_node_data:/app/data
+    networks:
+      - nexus-search-plugin-net
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-search-plugin-test
+    profiles:
+      - run
+    depends_on:
+      node:
+        condition: service_healthy
+    # working_dir, PYTHONPATH, PYTEST_ADDOPTS inherited from
+    # Dockerfile.federation-test — same runner image used by the
+    # federation-runbook and cc-tasks-share suites.  The image now also
+    # carries the nexus.search.v1 stubs (see the Dockerfile).
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      # `runbook_helpers.docker_logs` + `assert_log_contains` shell out
+      # to `docker logs <container>` from inside the runner to gate on
+      # the daemon's boot messages (e.g. "plugins loaded from
+      # --plugin-dir").  The runner needs the host docker socket to
+      # reach the sibling daemon container — same convention as
+      # docker-compose.federation-runbook.yml and cc-tasks-share.yml.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NEXUS_SEARCH_PLUGIN_E2E: "1"
+      NEXUS_SEARCH_NODE_GRPC: node:2126
+      NEXUS_SEARCH_NODE_CONTAINER: nexus-search-plugin-node
+    networks:
+      - nexus-search-plugin-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_search_plugin.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-search-plugin-net:
+    name: nexus-search-plugin-net
+    driver: bridge
+
+secrets:
+  plugin_signing_key:
+    environment: PLUGIN_SIGNING_PRIVKEY
+
+volumes:
+  search_plugin_node_data:
+    name: nexus-search-plugin-node-data

@@ -1,0 +1,175 @@
+name: search-plugin E2E
+
+# Runs `tests/e2e/docker/test_search_plugin.py` against the single-node
+# cluster in `dockerfiles/docker-compose.search-plugin-e2e.yml`.  Locks
+# the v1 nexus.search.v1.SearchService contract (recursive glob + regex
+# grep + truncation + binary-skip) so v2 refactors (trigram, streaming)
+# cannot regress the wire surface silently.
+#
+# Independent of federation-e2e.yml + cc-tasks-share-e2e.yml — those
+# cover federation / dylib+FUSE surfaces.  This one covers the
+# plugin-as-gRPC-service Phase P routing plus the SearchService impl.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'dockerfiles/Dockerfile.search-plugin-test'
+      - 'dockerfiles/docker-compose.search-plugin-e2e.yml'
+      - 'dockerfiles/Dockerfile.nexusd-cluster'
+      - 'dockerfiles/Dockerfile.federation-test'
+      - 'rust/services/search-plugin/**'
+      - 'rust/services/proto/nexus/search/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tests/e2e/docker/test_search_plugin.py'
+      - 'tests/e2e/docker/search_helpers.py'
+      - 'tests/e2e/docker/runbook_helpers.py'
+      - '.github/workflows/search-plugin-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  search-plugin-e2e:
+    name: search-plugin E2E (Docker)
+    runs-on: ubuntu-latest
+    # Cold cache: cluster image build + plugin build + compose up + 4
+    # tests is ~8-10 min.  Warm gha cache shaves the rust compile.
+    # 20 min upper bound leaves margin for slow-building rust deps.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect search-plugin-relevant changes
+        id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          # Workflow file itself is intentionally NOT in the regex — see
+          # federation-e2e.yml's identical rationale.
+          if grep -Eq '^(dockerfiles/(Dockerfile\.(search-plugin-test|nexusd-cluster|federation-test)|docker-compose\.search-plugin-e2e\.yml)|rust/services/(search-plugin|proto/nexus/search)/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_search_plugin|search_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip search-plugin E2E
+        if: steps.changes.outputs.run != 'true'
+        run: |
+          echo "No search-plugin-relevant files changed; reporting required check without running suite."
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Pin SSOT: the nexus-vfs SHA the cluster binary + plugin dylib
+      # compile against lives in `Cargo.toml`'s workspace dep rev.
+      # Parse it once and reuse for the checkout step below.
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        if: steps.changes.outputs.run == 'true'
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved nexus-vfs SHA: $sha"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      - name: Build nexusd-cluster image
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          load: true
+          tags: nexusd-cluster:latest
+          cache-from: type=gha,scope=search-plugin-cluster
+          cache-to: type=gha,scope=search-plugin-cluster,mode=max
+
+      - name: Build search-plugin-test + federation-test images
+        if: steps.changes.outputs.run == 'true'
+        # BUILDX_BUILDER=default forces compose build to use the
+        # docker-daemon builder rather than the docker-container builder
+        # from setup-buildx-action.  Downstream images start FROM
+        # nexusd-cluster:latest which only the daemon builder can
+        # resolve against the previous step's `load: true` artifact.
+        env:
+          BUILDX_BUILDER: default
+          # Feeds the compose-level `plugin_signing_key` build secret —
+          # the plugin image Ed25519-signs the search cdylib in the
+          # builder stage (kernel refuses unsigned plugins).
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available — cannot sign the search plugin (kernel refuses unsigned plugins)."
+            exit 1
+          fi
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml build \
+            node test
+
+      - name: Start search-plugin cluster
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml up -d node
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml ps
+
+      - name: Wait for node healthy
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            if docker exec nexus-search-plugin-node bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "Node healthy (gRPC 2126 reachable) after ${SECONDS}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for cluster ready (180s)"
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml logs --tail=300
+          exit 1
+
+      - name: Run search-plugin E2E tests
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml \
+            run --rm test
+
+      - name: Dump container logs on failure
+        if: failure() && steps.changes.outputs.run == 'true'
+        run: |
+          echo "::group::nexus-search-plugin-node"
+          docker logs nexus-search-plugin-node --tail=400 2>&1 || echo "(no logs)"
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always() && steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml down -v --remove-orphans || true

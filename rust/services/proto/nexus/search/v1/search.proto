@@ -19,11 +19,14 @@ syntax = "proto3";
 package nexus.search.v1;
 
 service SearchService {
-  // Recursively walk `root_path`; return the paths matching `pattern`.
+  // Recursively walk `root_path`; return the absolute VFS paths of
+  // entries matching `pattern`.
   //
   // Pattern is a globset-style glob (`**/*.py`, `docs/*.md`, ...) —
-  // matched against paths relative to `root_path`. A caller who wants
-  // absolute matches concatenates `root_path` back in.
+  // MATCHED against each entry's path relative to `root_path`.  The
+  // RESPONSE paths are the full absolute VFS path (starts with `/`),
+  // matching `GrepMatch.path` convention across the service so callers
+  // decode both rpcs' path fields with one rule.
   rpc Glob(GlobRequest) returns (GlobResponse);
 
   // Recursively walk `root_path` and return every regex match in
@@ -48,6 +51,9 @@ message GlobRequest {
 }
 
 message GlobResponse {
+  // Absolute VFS paths of matching entries (each starts with `/`).
+  // Same convention as `GrepMatch.path` — the callers decode both
+  // rpcs' path outputs with one rule.
   repeated string paths = 1;
   // `paths.len() == max_results` AND more entries were skipped.
   bool truncated = 2;

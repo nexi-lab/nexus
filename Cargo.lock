@@ -1583,6 +1583,27 @@ version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=196437ca8ab5cbfea12dc660a797dbcccabaa506#196437ca8ab5cbfea12dc660a797dbcccabaa506"
 
 [[package]]
+name = "nexus-search-plugin"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "globset",
+ "libloading",
+ "nexus-plugin-abi",
+ "prost",
+ "protoc-bin-vendored",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tracing",
+]
+
+[[package]]
 name = "nexus-vault"
 version = "0.1.4"
 dependencies = [

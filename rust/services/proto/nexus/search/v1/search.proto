@@ -1,0 +1,103 @@
+// SearchService — the Rust replacement for the Python
+// `nexus.bricks.search.search_service.SearchService`.
+//
+// Exposed by the `nexus-search-plugin` cdylib and routed by
+// `nexusd-cluster` via the Phase P plugin-as-gRPC-service path
+// (`nexus_plugin_grpc_services` symbol → `PluginProxyService`
+// bytes-level dispatch).
+//
+// v1 scope: recursive glob + regex grep, sequential walk over the
+// kernel VFS via `sys_readdir` + `sys_read`. Cross-node paths
+// resolve transparently through the same federation `try_remote_fetch`
+// fallback local reads use — search on node A sees files hosted on
+// node B without any plugin-side federation awareness. Result sets
+// are capped by `max_results` on the wire (unary response); streaming
+// / trigram / adaptive-strategy variants land in v2.
+
+syntax = "proto3";
+
+package nexus.search.v1;
+
+service SearchService {
+  // Recursively walk `root_path`; return the paths matching `pattern`.
+  //
+  // Pattern is a globset-style glob (`**/*.py`, `docs/*.md`, ...) —
+  // matched against paths relative to `root_path`. A caller who wants
+  // absolute matches concatenates `root_path` back in.
+  rpc Glob(GlobRequest) returns (GlobResponse);
+
+  // Recursively walk `root_path` and return every regex match in
+  // every file whose path (relative to `root_path`) matches
+  // `file_pattern` (leave empty for all files).
+  rpc Grep(GrepRequest) returns (GrepResponse);
+}
+
+// ── Glob ──────────────────────────────────────────────────────────
+
+message GlobRequest {
+  string root_path = 1;
+  // globset-style glob. Empty = match every entry.
+  string pattern = 2;
+  // Safety cap on the returned list. `truncated=true` in the response
+  // signals we stopped scanning at this many hits. 0 ⇒ server-side
+  // default (10_000).
+  uint32 max_results = 3;
+  // Auth token per the same convention as vfs.proto; server-side
+  // permission gate reads this via OperationContext.
+  string auth_token = 4;
+}
+
+message GlobResponse {
+  repeated string paths = 1;
+  // `paths.len() == max_results` AND more entries were skipped.
+  bool truncated = 2;
+  // Non-empty when the walk aborted mid-flight (e.g. root_path
+  // not found, permission denied). Callers should treat a
+  // non-empty error the same as an empty `paths` list.
+  optional string error = 3;
+}
+
+// ── Grep ──────────────────────────────────────────────────────────
+
+message GrepRequest {
+  string root_path = 1;
+  // Regex compiled with the `regex` crate on the server. Anchors,
+  // groups, and inline flags (`(?i)`) all work.
+  string pattern = 2;
+  // Optional file-name filter (globset syntax). Empty ⇒ scan every
+  // regular file.
+  string file_pattern = 3;
+  // Case-insensitive match — layered on top of `pattern` via a
+  // regex builder flag (equivalent to a leading `(?i)`, kept as a
+  // separate field so the wire distinguishes "explicit case
+  // insensitive" from "pattern contains (?i)").
+  bool ignore_case = 4;
+  // Safety cap; 0 ⇒ server-side default (1_000).
+  uint32 max_results = 5;
+  // Lines of context to include before / after each match. 0 ⇒ none.
+  uint32 before_context = 6;
+  uint32 after_context = 7;
+  // Invert: return lines that DO NOT match the pattern.
+  bool invert_match = 8;
+  string auth_token = 9;
+}
+
+message GrepMatch {
+  // Path is expressed as VFS absolute (starts with `/`).
+  string path = 1;
+  // 1-indexed line number of the matched line.
+  uint32 line_number = 2;
+  // The matched line itself (trailing newline stripped).
+  string line = 3;
+  // Optional context lines, in order. `before` are the lines
+  // immediately preceding `line`; `after` are the lines immediately
+  // following. Empty when `before_context` / `after_context` is 0.
+  repeated string before = 4;
+  repeated string after = 5;
+}
+
+message GrepResponse {
+  repeated GrepMatch matches = 1;
+  bool truncated = 2;
+  optional string error = 3;
+}

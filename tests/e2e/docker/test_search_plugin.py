@@ -117,12 +117,10 @@ class TestSearchGlob:
         r = search_glob(NODE_GRPC, base, "**/*.py", api_key=api_key)
         assert "error" not in r, f"glob returned error: {r}"
         paths = set(r["result"]["paths"])
-        # The plugin currently returns ABSOLUTE VFS paths (service.rs:85
-        # pushes `vfs_path.to_string()`), even though the proto docstring
-        # for GlobResponse.paths says "relative to root_path".  We lock
-        # in the actual wire behavior and file the doc/impl drift as a
-        # separate follow-up (search.proto:24 vs service.rs:85) — the
-        # E2E's job is to snapshot reality, not adjudicate the contract.
+        # GlobResponse.paths are absolute VFS paths — same convention as
+        # GrepMatch.path.  See the service-level comment on
+        # `rpc Glob` in search.proto for the "match relative, return
+        # absolute" split.
         assert f"{base}/foo.py" in paths, f"missing foo.py in {paths}"
         assert f"{base}/sub/bar.py" in paths, f"missing sub/bar.py in {paths}"
         assert f"{base}/sub/deeper/baz.py" in paths, f"missing sub/deeper/baz.py in {paths}"

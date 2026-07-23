@@ -192,26 +192,29 @@ def boot_cluster(
     env["NEXUS_DATA_DIR"] = str(data_dir)
     env["RUST_LOG"] = env.get("RUST_LOG", "warn")
 
-    # `--bind-addr` (not `--bind`) is required for daemon mode; without
-    # it the cluster never opens a gRPC port and the port-wait loop
-    # times out.  `--data-dir` keeps every redb file inside the tempdir
-    # so the cluster has no path to anything persistent.
+    # Use the `serve-local` subcommand rather than hand-composing
+    # `--bind-addr 127.0.0.1:<port> --no-tls` on the top-level daemon
+    # path.  `serve-local` is the SSOT for the trusted-local-backend
+    # invariant (its handler in nexus-vfs profiles/cluster/src/lib.rs
+    # forces both), and its docstring explicitly calls out that it
+    # exists so this invariant lives in the binary instead of being
+    # hand-written — and drifting — at each spawn site (the
+    # `--bootstrap-mode` breakage that hit sudowork / moss / sudocode
+    # at once is the failure mode this closes).  This script was one
+    # of those drift sites; the fix routes it back through the SSOT.
     #
-    # `--bootstrap-mode` was retired by Phase G (nexus-vfs #118) — the
-    # daemon now auto-detects boot semantics via `plan_boot_action`.
-    # An empty data-dir with no federation env vars resolves to row 2
-    # (RootlessDynamic), which is the correct shape for an ephemeral
-    # vault: single-node, no federation, gRPC serve.
+    # `--plugin-dir` and `--data-dir` are `global = true` clap args on
+    # the daemon's CommonArgs, so they compose with the subcommand.
     proc = subprocess.Popen(
         [
             str(nexusd_cluster),
+            "serve-local",
+            "--port",
+            str(port),
             "--plugin-dir",
             str(plugin_dir),
             "--data-dir",
             str(data_dir),
-            "--no-tls",
-            "--bind-addr",
-            f"127.0.0.1:{port}",
         ],
         env=env,
         stdout=subprocess.PIPE,

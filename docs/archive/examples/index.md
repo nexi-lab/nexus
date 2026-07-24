@@ -129,13 +129,13 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
     conversation = {
         "user": "What are your pricing tiers?",
         "assistant": "We offer Basic ($10/mo), Pro ($50/mo), Enterprise (custom)",
-        "timestamp": "2024-01-15T10:30:00Z"
+        "timestamp": "2024-01-15T10:30:00Z",
     }
 
     nx.write(
         "/agent/memory/conversation.json",
         json.dumps(conversation).encode(),
-        metadata={"agent_id": "gpt-4", "session": "abc123"}
+        metadata={"agent_id": "gpt-4", "session": "abc123"},
     )
 
     # Query semantic memory
@@ -154,9 +154,7 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
     nx = nexus.connect(remote_url="https://nexus.example.com", api_key="admin-key")
 
     nx.workspace.create(
-        "/tenant/acme-corp",
-        zone_id="acme-123",
-        metadata={"company": "Acme Corp", "plan": "enterprise"}
+        "/tenant/acme-corp", zone_id="acme-123", metadata={"company": "Acme Corp", "plan": "enterprise"}
     )
 
     # Grant tenant admin permissions
@@ -206,7 +204,7 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
     docs = [
         "Machine learning improves model accuracy",
         "Deep neural networks for image classification",
-        "Natural language processing with transformers"
+        "Natural language processing with transformers",
     ]
 
     for i, doc in enumerate(docs):

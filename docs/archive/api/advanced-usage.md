@@ -53,14 +53,14 @@ nx.close()
 
 ```python
 # Valid paths
-nx.write("/file.txt", b"content")              # ✅
+nx.write("/file.txt", b"content")  # ✅
 nx.write("/path/to/nested/file.txt", b"data")  # ✅
-nx.write("/documents/2025/report.pdf", b"pdf") # ✅
+nx.write("/documents/2025/report.pdf", b"pdf")  # ✅
 
 # Invalid paths
-nx.write("no-slash.txt", b"content")           # ❌ No leading slash
-nx.write("/path/../file.txt", b"content")      # ❌ Contains '..'
-nx.write("/path\nfile.txt", b"content")        # ❌ Contains newline
+nx.write("no-slash.txt", b"content")  # ❌ No leading slash
+nx.write("/path/../file.txt", b"content")  # ❌ Contains '..'
+nx.write("/path\nfile.txt", b"content")  # ❌ Contains newline
 ```
 
 ### File Size Limits
@@ -134,6 +134,7 @@ nx.close()
 import nexus
 from nexus.contracts.types import OperationContext
 
+
 def setup_user_workspace(user_id: str):
     """Set up isolated workspace for a user"""
     nx = nexus.connect()
@@ -145,16 +146,14 @@ def setup_user_workspace(user_id: str):
     mount_id = nx.add_mount(
         mount_point=f"/personal/{user_id}",
         backend_type="gcs",
-        backend_config={
-            "bucket": f"{user_id}-personal-bucket",
-            "project_id": "my-project"
-        },
+        backend_config={"bucket": f"{user_id}-personal-bucket", "project_id": "my-project"},
     )
 
     # User can now access their personal space
     nx.write(f"/personal/{user_id}/notes.txt", b"My notes", context=ctx)
 
     return mount_id
+
 
 # Setup mounts for multiple users
 alice_mount = setup_user_workspace("alice")
@@ -166,6 +165,7 @@ bob_mount = setup_user_workspace("bob")
 ```python
 import nexus
 from datetime import datetime, timedelta
+
 
 def archive_old_files(nx, days_old: int = 90):
     """Move old files from hot to cold storage"""
@@ -180,7 +180,7 @@ def archive_old_files(nx, days_old: int = 90):
         info = nx.stat(file_path)
 
         # Check if file is old enough
-        if info['modified_at'] < cutoff_date:
+        if info["modified_at"] < cutoff_date:
             # Read from hot storage
             content = nx.read(file_path)
 
@@ -193,6 +193,7 @@ def archive_old_files(nx, days_old: int = 90):
             archived_count += 1
 
     return archived_count
+
 
 # Connect with multi-backend config
 nx = nexus.connect(config="./nexus-multi.yaml")
@@ -209,6 +210,7 @@ nx.close()
 ```python
 import nexus
 
+
 # Setup: Admin creates read-only mount for shared resources
 def setup_shared_resources():
     nx = nexus.connect()
@@ -217,13 +219,12 @@ def setup_shared_resources():
     nx.add_mount(
         mount_point="/shared/datasets",
         backend_type="gcs",
-        backend_config={
-            "bucket": "public-datasets-bucket"
-        },
-        readonly=True  # Prevents accidental modifications
+        backend_config={"bucket": "public-datasets-bucket"},
+        readonly=True,  # Prevents accidental modifications
     )
 
     return nx
+
 
 # Usage: Users can read but not modify
 nx = setup_shared_resources()
@@ -280,7 +281,13 @@ import nexus
 import os
 
 # Connect to remote server with authentication
-nx = nexus.connect(config={"mode": "remote", "url": os.environ['SERVER_URL'], "api_key": os.environ['NEXUS_API_KEY']})
+nx = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": os.environ["SERVER_URL"],
+        "api_key": os.environ["NEXUS_API_KEY"],
+    }
+)
 
 # Create workspace
 nx.mkdir("/workspace/my-project", parents=True)
@@ -329,40 +336,33 @@ import json
 from datetime import datetime
 from nexus.contracts.types import OperationContext
 
+
 def main():
     # Initialize with configuration (embedded mode - no server)
-    nx = nexus.connect(config={
-        "backend": "local",
-        "data_dir": "./app-data",
-        "auto_parse": True
-    })
+    nx = nexus.connect(config={"backend": "local", "data_dir": "./app-data", "auto_parse": True})
 
     try:
         # Create operation context for a user
-        ctx = OperationContext(
-            user="alice",
-            groups=["team-engineering"],
-            is_admin=False
-        )
+        ctx = OperationContext(user="alice", groups=["team-engineering"], is_admin=False)
 
         # Store application config with versioning
-        config = {
-            "app_name": "MyApp",
-            "version": "1.0.0",
-            "created_at": datetime.now().isoformat()
-        }
+        config = {"app_name": "MyApp", "version": "1.0.0", "created_at": datetime.now().isoformat()}
         metadata = nx.write(
-            "/workspace/config/app.json",
-            json.dumps(config, indent=2).encode(),
-            context=ctx
+            "/workspace/config/app.json", json.dumps(config, indent=2).encode(), context=ctx
         )
         print(f"Config written (etag: {metadata['etag'][:8]}...)")
 
         # Batch write user data (4x faster!)
         users = [
-            ("/workspace/users/alice.json", json.dumps({"name": "Alice", "role": "admin"}).encode()),
+            (
+                "/workspace/users/alice.json",
+                json.dumps({"name": "Alice", "role": "admin"}).encode(),
+            ),
             ("/workspace/users/bob.json", json.dumps({"name": "Bob", "role": "user"}).encode()),
-            ("/workspace/users/charlie.json", json.dumps({"name": "Charlie", "role": "user"}).encode()),
+            (
+                "/workspace/users/charlie.json",
+                json.dumps({"name": "Charlie", "role": "user"}).encode(),
+            ),
         ]
         results = nx.write_batch(users, context=ctx)
         print(f"Batch wrote {len(results)} user files")
@@ -377,15 +377,13 @@ def main():
 
         # Read config with metadata
         result = nx.read("/workspace/config/app.json", context=ctx, return_metadata=True)
-        config_data = json.loads(result['content'])
+        config_data = json.loads(result["content"])
         print(f"App: {config_data['app_name']} v{config_data['version']}")
         print(f"Version: {result['version']}, Size: {result['size']} bytes")
 
         # Create a workspace snapshot
         snapshot = nx.workspace_snapshot(
-            agent_id="alice",
-            description="Initial setup",
-            tags=["v1.0.0", "baseline"]
+            agent_id="alice", description="Initial setup", tags=["v1.0.0", "baseline"]
         )
         print(f"Created snapshot {snapshot['snapshot_number']}")
 
@@ -399,6 +397,7 @@ def main():
 
     finally:
         nx.close()
+
 
 if __name__ == "__main__":
     main()

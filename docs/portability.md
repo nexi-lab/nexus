@@ -46,15 +46,17 @@ from nexus.bricks.portability import (
 )
 
 importer = ZoneImportService(nexus_fs, mount_manager=mount_manager)
-importer.import_zone(ZoneImportOptions(
-    bundle_path="zone.nexus",
-    mount_overrides={
-        "m-1": {
-            "access_key_id": "AKIA...",
-            "secret_access_key": "wJalr...",
+importer.import_zone(
+    ZoneImportOptions(
+        bundle_path="zone.nexus",
+        mount_overrides={
+            "m-1": {
+                "access_key_id": "AKIA...",
+                "secret_access_key": "wJalr...",
+            },
         },
-    },
-))
+    )
+)
 ```
 
 Without `mount_overrides` for a redacted field, the import raises
@@ -66,10 +68,12 @@ Without `mount_overrides` for a redacted field, the import raises
 For dry-run inspections or destination instances that don't need the mounts:
 
 ```python
-importer.import_zone(ZoneImportOptions(
-    bundle_path="zone.nexus",
-    restore_mounts=False,
-))
+importer.import_zone(
+    ZoneImportOptions(
+        bundle_path="zone.nexus",
+        restore_mounts=False,
+    )
+)
 ```
 
 ### Bundle format compatibility

@@ -117,10 +117,12 @@ fs.write("/s3/my-s3-bucket/input.csv", data)
 import asyncio
 import nexus.fs
 
+
 async def main():
     fs = await nexus.fs.mount("gcs://my-project/my-bucket")
     content = await fs.read("/gcs/my-bucket/data.parquet")
     print(f"Read {len(content)} bytes")
+
 
 asyncio.run(main())
 ```

@@ -36,6 +36,7 @@ Both are module-level symbols in `nexus_runtime` not currently in `_rust_compat.
 from nexus._rust_compat import any_path_starts_with as _rust_any
 from nexus._rust_compat import batch_prefix_check as _rust_batch
 
+
 def any_path_under_prefix(paths: list[str] | set[str], prefix: str) -> bool:
     paths_list = list(paths) if isinstance(paths, set) else paths
     if _rust_any is not None:
@@ -43,9 +44,8 @@ def any_path_under_prefix(paths: list[str] | set[str], prefix: str) -> bool:
     norm = prefix.rstrip("/") + "/"
     return any(p == prefix or p.startswith(norm) for p in paths_list)
 
-def batch_paths_under_prefixes(
-    paths: list[str] | set[str], prefixes: list[str]
-) -> list[bool]:
+
+def batch_paths_under_prefixes(paths: list[str] | set[str], prefixes: list[str]) -> list[bool]:
     paths_list = list(paths) if isinstance(paths, set) else paths
     if _rust_batch is not None:
         return list(_rust_batch(paths_list, prefixes))
@@ -64,8 +64,11 @@ def batch_paths_under_prefixes(
 
 ```python
 accessible_paths = self._tiger_cache.get_accessible_paths(
-    subject_type=subject_type, subject_id=subject_id,
-    permission=permission, resource_type="file", zone_id=zone_id,
+    subject_type=subject_type,
+    subject_id=subject_id,
+    permission=permission,
+    resource_type="file",
+    zone_id=zone_id,
 )
 if accessible_paths is None:
     return None  # cache miss — unchanged behaviour
@@ -102,15 +105,17 @@ Replace the Tiger fallback block (lines 305–335) — `get_accessible_resources
 if tiger_cache is not None:
     try:
         accessible_paths = tiger_cache.get_accessible_paths(
-            subject_type=subject_tuple[0], subject_id=subject_tuple[1],
-            permission=rebac_permission, resource_type="file", zone_id=zone_id,
+            subject_type=subject_tuple[0],
+            subject_id=subject_tuple[1],
+            permission=rebac_permission,
+            resource_type="file",
+            zone_id=zone_id,
         )
         if accessible_paths:
             if any_path_under_prefix(accessible_paths, path):
                 if self._dir_visibility_cache is not None:
                     self._dir_visibility_cache.set_visible(
-                        zone_id, context.subject_type, subject_id,
-                        path, True, "tiger_fallback"
+                        zone_id, context.subject_type, subject_id, path, True, "tiger_fallback"
                     )
                 return True
     except Exception:
@@ -129,6 +134,7 @@ Out-of-scope notes (follow-up issues):
 # before: ~14 lines of try/except + duplicated Python fallback
 # after:
 from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+
 results_list = batch_paths_under_prefixes(list(accessible_paths), list(prefixes))
 results = dict(zip(prefixes, results_list, strict=True))
 ```

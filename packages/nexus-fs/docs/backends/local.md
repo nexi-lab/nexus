@@ -55,7 +55,7 @@ fs.write("/local/my-data/notes.txt", b"Meeting notes for Monday")
 # Read
 content = fs.read("/local/my-data/notes.txt")
 print(content)
-#> b'Meeting notes for Monday'
+# > b'Meeting notes for Monday'
 ```
 
 ### List directory contents
@@ -86,9 +86,9 @@ fs = nexus.fs.mount_sync("local://./my-data")
 fs.write("/local/my-data/check.txt", b"exists")
 
 print(fs.exists("/local/my-data/check.txt"))
-#> True
+# > True
 print(fs.exists("/local/my-data/nope.txt"))
-#> False
+# > False
 ```
 
 ### Create directories

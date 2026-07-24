@@ -201,7 +201,7 @@ path = await manager.create_skill(
     template="code-generation",
     tier="agent",
     author="Alice",
-    version="1.0.0"
+    version="1.0.0",
 )
 print(f"Created skill at: {path}")
 
@@ -223,10 +223,7 @@ path = await manager.create_skill_from_content(
     tier="agent",
     author="Auto-generated",
     source_url="https://docs.stripe.com/api",
-    metadata={
-        "category": "api-docs",
-        "provider": "stripe"
-    }
+    metadata={"category": "api-docs", "provider": "stripe"},
 )
 ```
 
@@ -237,10 +234,7 @@ Fork existing skills with lineage tracking:
 ```python
 # Fork a skill
 path = await manager.fork_skill(
-    source_name="analyze-code",
-    target_name="my-code-analyzer",
-    tier="agent",
-    author="Bob"
+    source_name="analyze-code", target_name="my-code-analyzer", tier="agent", author="Bob"
 )
 print(f"Forked skill at: {path}")
 
@@ -257,18 +251,12 @@ Publish skills from one tier to another:
 
 ```python
 # Publish agent skill to tenant library
-path = await manager.publish_skill(
-    name="my-analyzer",
-    source_tier="agent",
-    target_tier="tenant"
-)
+path = await manager.publish_skill(name="my-analyzer", source_tier="agent", target_tier="tenant")
 print(f"Published to: {path}")
 
 # Publish tenant skill to system library
 path = await manager.publish_skill(
-    name="shared-analyzer",
-    source_tier="tenant",
-    target_tier="system"
+    name="shared-analyzer", source_tier="tenant", target_tier="system"
 )
 ```
 
@@ -283,11 +271,7 @@ for skill_name, score in results:
     print(f"{skill_name}: {score:.2f}")
 
 # Search in specific tier
-results = await manager.search_skills(
-    query="data processing",
-    tier="tenant",
-    limit=5
-)
+results = await manager.search_skills(query="data processing", tier="tenant", limit=5)
 
 # For semantic search, use Nexus semantic_search API
 # (requires semantic search to be initialized)
@@ -308,23 +292,15 @@ exporter = SkillExporter(registry)
 await exporter.export_skill(
     skill_name="analyze-code",
     output_path="/tmp/analyze-code.zip",
-    format="generic",           # or "claude", "openai"
-    include_dependencies=True   # Include required skills
+    format="generic",  # or "claude", "openai"
+    include_dependencies=True,  # Include required skills
 )
 
 # Export for Claude API (8MB limit enforced)
-await exporter.export_skill(
-    skill_name="my-skill",
-    output_path="/tmp/my-skill.zip",
-    format="claude"
-)
+await exporter.export_skill(skill_name="my-skill", output_path="/tmp/my-skill.zip", format="claude")
 
 # Export to directory (not zip)
-await exporter.export_skill(
-    skill_name="my-skill",
-    output_path="/tmp/my-skill/",
-    format="generic"
-)
+await exporter.export_skill(skill_name="my-skill", output_path="/tmp/my-skill/", format="generic")
 ```
 
 ### Export Formats
@@ -356,16 +332,10 @@ Import skills from exported packages:
 
 ```python
 # Import from zip file
-await importer.import_skill(
-    source_path="/tmp/analyze-code.zip",
-    tier="agent"
-)
+await importer.import_skill(source_path="/tmp/analyze-code.zip", tier="agent")
 
 # Import from directory
-await importer.import_skill(
-    source_path="/tmp/my-skill/",
-    tier="tenant"
-)
+await importer.import_skill(source_path="/tmp/my-skill/", tier="tenant")
 ```
 
 ## Data Models
@@ -377,16 +347,16 @@ Lightweight metadata loaded during discovery:
 ```python
 @dataclass
 class SkillMetadata:
-    name: str                        # Skill name (required)
-    description: str                 # Description (required)
-    version: str | None             # Semantic version
-    author: str | None              # Author name
-    created_at: datetime | None     # Creation timestamp
-    modified_at: datetime | None    # Last modified timestamp
-    requires: list[str]             # Skill dependencies
-    metadata: dict[str, Any]        # Additional metadata
-    file_path: str | None           # Path to SKILL.md
-    tier: str | None                # agent, tenant, or system
+    name: str  # Skill name (required)
+    description: str  # Description (required)
+    version: str | None  # Semantic version
+    author: str | None  # Author name
+    created_at: datetime | None  # Creation timestamp
+    modified_at: datetime | None  # Last modified timestamp
+    requires: list[str]  # Skill dependencies
+    metadata: dict[str, Any]  # Additional metadata
+    file_path: str | None  # Path to SKILL.md
+    tier: str | None  # agent, tenant, or system
 ```
 
 ### Skill
@@ -396,8 +366,8 @@ Complete skill with metadata and content:
 ```python
 @dataclass
 class Skill:
-    metadata: SkillMetadata    # Lightweight metadata
-    content: str               # Full markdown content
+    metadata: SkillMetadata  # Lightweight metadata
+    content: str  # Full markdown content
 
     def validate(self) -> None:
         """Validate skill structure."""
@@ -448,16 +418,13 @@ new_skill_path = await manager.create_skill(
     description="Custom code analyzer",
     template="code-generation",
     tier="agent",
-    author="Alice"
+    author="Alice",
 )
 print(f"\nCreated new skill: {new_skill_path}")
 
 # === Fork Existing Skill ===
 forked_path = await manager.fork_skill(
-    source_name="analyze-code",
-    target_name="alice-analyzer",
-    tier="agent",
-    author="Alice"
+    source_name="analyze-code", target_name="alice-analyzer", tier="agent", author="Alice"
 )
 print(f"Forked skill: {forked_path}")
 
@@ -471,18 +438,13 @@ for skill_name, score in results:
 exporter = SkillExporter(registry)
 export_path = "/tmp/my-analyzer.zip"
 await exporter.export_skill(
-    skill_name="my-analyzer",
-    output_path=export_path,
-    format="generic",
-    include_dependencies=True
+    skill_name="my-analyzer", output_path=export_path, format="generic", include_dependencies=True
 )
 print(f"\nExported to: {export_path}")
 
 # === Publish to Team ===
 published_path = await manager.publish_skill(
-    name="my-analyzer",
-    source_tier="agent",
-    target_tier="tenant"
+    name="my-analyzer", source_tier="agent", target_tier="tenant"
 )
 print(f"Published to team: {published_path}")
 ```
@@ -588,11 +550,7 @@ Validate skills and metadata:
 from nexus.skills import Skill, SkillMetadata
 from nexus.contracts.exceptions import ValidationError
 
-metadata = SkillMetadata(
-    name="test-skill",
-    description="Test skill",
-    tier="agent"
-)
+metadata = SkillMetadata(name="test-skill", description="Test skill", tier="agent")
 
 try:
     metadata.validate()
@@ -612,11 +570,7 @@ from nexus.skills import SkillGovernance, SkillAnalytics
 
 # Track skill usage
 governance = SkillGovernance(registry)
-await governance.track_usage(
-    skill_name="analyze-code",
-    user="alice",
-    action="load"
-)
+await governance.track_usage(skill_name="analyze-code", user="alice", action="load")
 
 # Get usage analytics
 analytics = SkillAnalytics(registry)
@@ -645,7 +599,7 @@ approval_id = await governance.submit_for_approval(
     skill_name="my-analyzer",
     submitted_by="alice",
     reviewers=["bob", "charlie"],
-    comments="Ready for team-wide use"
+    comments="Ready for team-wide use",
 )
 print(f"Submitted for approval: {approval_id}")
 
@@ -659,7 +613,7 @@ await governance.approve_skill(
     approval_id=approval_id,
     reviewed_by="bob",
     reviewer_type="user",
-    comments="Code quality looks excellent!"
+    comments="Code quality looks excellent!",
 )
 
 # Or reject skill
@@ -667,7 +621,7 @@ await governance.reject_skill(
     approval_id=approval_id,
     reviewed_by="bob",
     reviewer_type="user",
-    comments="Needs more input validation"
+    comments="Needs more input validation",
 )
 
 # Check if skill is approved
@@ -732,7 +686,7 @@ from nexus.skills import (
     SkillNotFoundError,
     SkillDependencyError,
     SkillManagerError,
-    SkillParseError
+    SkillParseError,
 )
 
 registry = SkillRegistry(nx)
@@ -760,6 +714,7 @@ except SkillManagerError as e:
 try:
     # Try to parse invalid skill
     from nexus.skills import SkillParser
+
     parser = SkillParser()
     skill = parser.parse_file("invalid.md", "agent")
 except SkillParseError as e:
@@ -841,7 +796,7 @@ await exporter.export_skill(
     skill_name="my-skill",
     output_path="/tmp/my-skill.zip",
     format="generic",
-    include_dependencies=True  # Include all required skills
+    include_dependencies=True,  # Include all required skills
 )
 ```
 
@@ -894,11 +849,7 @@ except SkillDependencyError as e:
 ```python
 # Claude format has 8MB limit
 try:
-    await exporter.export_skill(
-        "large-skill",
-        "/tmp/skill.zip",
-        format="claude"
-    )
+    await exporter.export_skill("large-skill", "/tmp/skill.zip", format="claude")
 except ValidationError as e:
     print(f"Export too large: {e}")
     # Fix: Export without dependencies or use generic format

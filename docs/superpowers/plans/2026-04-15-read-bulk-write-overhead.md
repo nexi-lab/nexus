@@ -606,72 +606,69 @@ New flow:
 Replace lines 1388-1470 with:
 
 ```python
-        path = self._validate_path(path)
-        context = self._parse_context(context)
-        _handled, _resolve_hint = self.resolve_read(path, context=context)
-        if _handled:
-            content = _resolve_hint or b""
-            if offset or count is not None:
-                content = (
-                    content[offset : offset + count] if count is not None else content[offset:]
-                )
-            return content
+path = self._validate_path(path)
+context = self._parse_context(context)
+_handled, _resolve_hint = self.resolve_read(path, context=context)
+if _handled:
+    content = _resolve_hint or b""
+    if offset or count is not None:
+        content = content[offset : offset + count] if count is not None else content[offset:]
+    return content
 
-        _is_admin = (
-            getattr(context, "is_admin", False)
-            if context is not None and not isinstance(context, dict)
-            else (context.get("is_admin", False) if isinstance(context, dict) else False)
+_is_admin = (
+    getattr(context, "is_admin", False)
+    if context is not None and not isinstance(context, dict)
+    else (context.get("is_admin", False) if isinstance(context, dict) else False)
+)
+
+# PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
+
+# ── KERNEL (Rust — pre-hooks + route + backend read) ──
+_rust_ctx = self._build_rust_ctx(context, _is_admin)
+result = self._kernel.sys_read(path, _rust_ctx)
+
+# External mount — Rust detected is_external, delegate to Python connector
+if result.is_external:
+    from nexus.core.router import ExternalRouteResult
+
+    _route = self.router.route(path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id)
+    if isinstance(_route, ExternalRouteResult) and _route.backend is not None:
+        _route_backend_path = getattr(_route, "backend_path", "") or ""
+        _route_mount_point = getattr(_route, "mount_point", "") or ""
+        _ctx = (
+            _dc_replace(
+                context,
+                backend_path=_route_backend_path,
+                virtual_path=path,
+                mount_path=_route_mount_point,
+            )
+            if context
+            else OperationContext(
+                user_id="anonymous",
+                groups=[],
+                backend_path=_route_backend_path,
+                virtual_path=path,
+                mount_path=_route_mount_point,
+            )
+        )
+        # Virtual .readme/ overlay check (Issue #3728)
+        from nexus.backends.connectors.schema_generator import (
+            dispatch_virtual_readme_read,
         )
 
-        # PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
-
-        # ── KERNEL (Rust — pre-hooks + route + backend read) ──
-        _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        result = self._kernel.sys_read(path, _rust_ctx)
-
-        # External mount — Rust detected is_external, delegate to Python connector
-        if result.is_external:
-            from nexus.core.router import ExternalRouteResult
-
-            _route = self.router.route(
-                path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
-            )
-            if isinstance(_route, ExternalRouteResult) and _route.backend is not None:
-                _route_backend_path = getattr(_route, "backend_path", "") or ""
-                _route_mount_point = getattr(_route, "mount_point", "") or ""
-                _ctx = (
-                    _dc_replace(
-                        context,
-                        backend_path=_route_backend_path,
-                        virtual_path=path,
-                        mount_path=_route_mount_point,
-                    )
-                    if context
-                    else OperationContext(
-                        user_id="anonymous",
-                        groups=[],
-                        backend_path=_route_backend_path,
-                        virtual_path=path,
-                        mount_path=_route_mount_point,
-                    )
-                )
-                # Virtual .readme/ overlay check (Issue #3728)
-                from nexus.backends.connectors.schema_generator import (
-                    dispatch_virtual_readme_read,
-                )
-                _virtual_data = dispatch_virtual_readme_read(
-                    _route.backend,
-                    _route_mount_point,
-                    _route_backend_path,
-                    context=_ctx,
-                )
-                if _virtual_data is not None:
-                    data = _virtual_data
-                else:
-                    data = _route.backend.read_content(_route_backend_path, context=_ctx)
-                if offset or count is not None:
-                    data = data[offset : offset + count] if count is not None else data[offset:]
-                return data
+        _virtual_data = dispatch_virtual_readme_read(
+            _route.backend,
+            _route_mount_point,
+            _route_backend_path,
+            context=_ctx,
+        )
+        if _virtual_data is not None:
+            data = _virtual_data
+        else:
+            data = _route.backend.read_content(_route_backend_path, context=_ctx)
+        if offset or count is not None:
+            data = data[offset : offset + count] if count is not None else data[offset:]
+        return data
 ```
 
 Keep the existing post-`sys_read` handling for pipes, streams, virtual readme fallback, etc. — just move it after the external check. The DT_PIPE/DT_STREAM handling (checking `result.entry_type`) stays as-is after the external block.
@@ -708,31 +705,29 @@ In `src/nexus/core/nexus_fs.py`, replace the permission check loop in `read_bulk
 
 Current code:
 ```python
-        perm_start = time.time()
-        allowed_set: set[str]
-        try:
-            from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.types import OperationContext
-            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+perm_start = time.time()
+allowed_set: set[str]
+try:
+    from nexus.contracts.exceptions import PermissionDeniedError
+    from nexus.contracts.types import OperationContext
+    from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-            ctx = self._resolve_cred(context)
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed: list[str] = []
-            for p in validated_paths:
-                try:
-                    self._kernel.dispatch_pre_hooks(
-                        "stat", _SHC(path=p, context=ctx, permission="READ")
-                    )
-                    allowed.append(p)
-                except PermissionDeniedError:
-                    pass
-            allowed_set = set(allowed)
-        except Exception as e:
-            logger.error("[READ-BULK] Permission check failed: %s", e)
-            if not skip_errors:
-                raise
-                # If skip_errors, assume no files are allowed
-                allowed_set = set()
+    ctx = self._resolve_cred(context)
+    assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+    allowed: list[str] = []
+    for p in validated_paths:
+        try:
+            self._kernel.dispatch_pre_hooks("stat", _SHC(path=p, context=ctx, permission="READ"))
+            allowed.append(p)
+        except PermissionDeniedError:
+            pass
+    allowed_set = set(allowed)
+except Exception as e:
+    logger.error("[READ-BULK] Permission check failed: %s", e)
+    if not skip_errors:
+        raise
+        # If skip_errors, assume no files are allowed
+        allowed_set = set()
 ```
 
 New code:

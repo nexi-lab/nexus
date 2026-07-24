@@ -161,6 +161,7 @@ Reuses the existing fallback config block (lines 472-480) but takes it intention
 
 ```python
 import threading, gc, ctypes
+
 threading.stack_size(1 << 20)
 gc.set_threshold(50_000, 10, 10)
 ```

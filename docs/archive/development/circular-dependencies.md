@@ -21,12 +21,15 @@ Circular dependencies occur when Module A imports Module B, and Module B imports
 # module_a.py
 from module_b import ClassB  # ❌ Circular!
 
+
 class ClassA:
     def use_b(self) -> ClassB:
         pass
 
+
 # module_b.py
 from module_a import ClassA  # ❌ Circular!
+
 
 class ClassB:
     def use_a(self) -> ClassA:
@@ -84,16 +87,19 @@ Analyzed with: `grep -r "TYPE_CHECKING" src/nexus --include="*.py" -l`
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
 
+
 class NexusFS:
-    def __init__(self, metadata: 'MetadataStore'):
+    def __init__(self, metadata: "MetadataStore"):
         self.metadata = metadata
+
 
 # File: metadata_store.py
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
+
 class MetadataStore:
-    def attach_fs(self, fs: 'NexusFS'):
+    def attach_fs(self, fs: "NexusFS"):
         self.fs = fs
 ```
 
@@ -103,23 +109,29 @@ class MetadataStore:
 # File: protocols.py
 from typing import Protocol
 
+
 class MetadataStoreProtocol(Protocol):
     def get(self, path: str) -> FileMetadata: ...
     def set(self, path: str, metadata: FileMetadata): ...
+
 
 class NexusFilesystem(Protocol):
     def read(self, path: str) -> bytes: ...
     def write(self, path: str, content: bytes): ...
 
+
 # File: nexus_fs.py
 from protocols import MetadataStoreProtocol
+
 
 class NexusFS:
     def __init__(self, metadata: MetadataStoreProtocol):
         self.metadata = metadata
 
+
 # File: metadata_store.py
 from protocols import NexusFilesystem
+
 
 class MetadataStore:
     def attach_fs(self, fs: NexusFilesystem):
@@ -137,16 +149,19 @@ class MetadataStore:
 if TYPE_CHECKING:
     from permission_service import PermissionService
 
+
 class SearchService:
-    def __init__(self, permissions: 'PermissionService'):
+    def __init__(self, permissions: "PermissionService"):
         self.permissions = permissions
+
 
 # permission_service.py
 if TYPE_CHECKING:
     from search_service import SearchService
 
+
 class PermissionService:
-    def __init__(self, search: 'SearchService'):
+    def __init__(self, search: "SearchService"):
         self.search = search
 ```
 
@@ -161,10 +176,12 @@ class SearchService:
     def set_permissions(self, permissions):
         self._permissions = permissions
 
+
 # permission_service.py
 class PermissionService:
     def __init__(self):
         pass  # No dependency on search
+
 
 # main.py
 search = SearchService()
@@ -183,13 +200,17 @@ search.set_permissions(permissions)
 if TYPE_CHECKING:
     from child import ChildClass
 
+
 class BaseClass:
-    def create_child(self) -> 'ChildClass':
+    def create_child(self) -> "ChildClass":
         from child import ChildClass  # Runtime import
+
         return ChildClass()
+
 
 # child.py
 from base import BaseClass
+
 
 class ChildClass(BaseClass):
     pass
@@ -209,11 +230,14 @@ class BaseClass:
     def create_child(self):
         return self._child_factory()
 
+
 # child.py
 from base import BaseClass
 
+
 class ChildClass(BaseClass):
     pass
+
 
 # After child is defined
 BaseClass.register_child_factory(lambda: ChildClass())
@@ -289,10 +313,12 @@ Example:
 class PermissionServiceProtocol(Protocol):
     def check_permission(self, context, resource, action) -> bool: ...
 
+
 # permission_service.py (new)
 class PermissionService:
     def __init__(self, rebac_manager):
         self.rebac = rebac_manager  # No nexus_fs dependency!
+
 
 # nexus_fs.py (updated)
 class NexusFS:
@@ -370,15 +396,18 @@ Currently blocks new type: ignore comments. Future: Add TYPE_CHECKING limit.
 if TYPE_CHECKING:
     from service_b import ServiceB
 
+
 class ServiceA:
-    def use_b(self, b: 'ServiceB'): ...
+    def use_b(self, b: "ServiceB"): ...
+
 
 # service_b.py
 if TYPE_CHECKING:
     from service_a import ServiceA
 
+
 class ServiceB:
-    def use_a(self, a: 'ServiceA'): ...
+    def use_a(self, a: "ServiceA"): ...
 ```
 
 ### ✅ Good: Protocol-Based
@@ -387,17 +416,22 @@ class ServiceB:
 class ServiceAProtocol(Protocol):
     def do_something(self): ...
 
+
 class ServiceBProtocol(Protocol):
     def do_other_thing(self): ...
+
 
 # service_a.py
 from protocols import ServiceBProtocol
 
+
 class ServiceA:
     def use_b(self, b: ServiceBProtocol): ...
 
+
 # service_b.py
 from protocols import ServiceAProtocol
+
 
 class ServiceB:
     def use_a(self, a: ServiceAProtocol): ...

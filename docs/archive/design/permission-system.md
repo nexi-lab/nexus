@@ -33,26 +33,24 @@ Nexus uses a **Relationship-Based Access Control (ReBAC)** system inspired by Go
 - **Embedded Mode**: Direct ReBAC operations via SDK
   ```python
   from nexus.sdk import connect
+
   nx = connect()
 
   # Create permissions
   nx.rebac_create(
-      subject=("user", "alice"),
-      relation="direct_owner",
-      object=("file", "/workspace/file.txt")
+      subject=("user", "alice"), relation="direct_owner", object=("file", "/workspace/file.txt")
   )
 
   # Check permissions
   can_write = nx.rebac_check(
-      subject=("user", "alice"),
-      permission="write",
-      object=("file", "/workspace/file.txt")
+      subject=("user", "alice"), permission="write", object=("file", "/workspace/file.txt")
   )
   ```
 
 - **Server Mode**: ReBAC via HTTP RPC
   ```python
   import nexus
+
   nx = nexus.connect(config={"mode": "remote", "url": "...", "api_key": "..."})
 
   # Same API, works over HTTP
@@ -151,7 +149,7 @@ A relationship tuple represents: **Subject has Relation with Object**
     "relations": {
         "owner": {"can": ["read", "write", "execute"]},
         "editor": {"can": ["read", "write"]},
-        "viewer": {"can": ["read"]}
+        "viewer": {"can": ["read"]},
     }
 }
 ```
@@ -165,30 +163,20 @@ Namespaces define how permissions are computed for different object types:
 {
     "relations": {
         # Owner = direct owner OR inherited from parent
-        "owner": {
-            "union": ["direct_owner", "parent_owner"]
-        },
-
+        "owner": {"union": ["direct_owner", "parent_owner"]},
         # Direct owner (explicit grant)
         "direct_owner": {},
-
         # Parent owner (inherited from folder)
         "parent_owner": {
             "tupleToUserset": {
-                "tupleset": "parent",        # Find parent folder
-                "computedUserset": "owner"   # Get owner of parent
+                "tupleset": "parent",  # Find parent folder
+                "computedUserset": "owner",  # Get owner of parent
             }
         },
-
         # Viewer = owner OR direct viewer
-        "viewer": {
-            "union": ["owner", "direct_viewer"]
-        },
-
+        "viewer": {"union": ["owner", "direct_viewer"]},
         # Editor = owner OR direct editor
-        "editor": {
-            "union": ["owner", "direct_editor"]
-        }
+        "editor": {"union": ["owner", "direct_editor"]},
     }
 }
 ```
@@ -280,7 +268,7 @@ def check_relation(subject, relation, object, depth=0):
     # 5. Union (OR) expansion
     if "union" in relation_config:
         for sub_relation in relation_config["union"]:
-            if check_relation(subject, sub_relation, object, depth+1):
+            if check_relation(subject, sub_relation, object, depth + 1):
                 return True
 
     # 6. TupleToUserset (parent) expansion
@@ -291,7 +279,7 @@ def check_relation(subject, relation, object, depth=0):
         for parent_tuple in parents:
             parent_object = parent_tuple.subject
             # Check permission on parent
-            if check_relation(subject, tts["computedUserset"], parent_object, depth+1):
+            if check_relation(subject, tts["computedUserset"], parent_object, depth + 1):
                 return True
 
     return False
@@ -355,16 +343,12 @@ nx = connect({"data_dir": "./nexus-data"})
 
 # All ReBAC operations are direct database calls
 tuple_id = nx.rebac_create(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("file", "/workspace/doc.txt")
+    subject=("user", "alice"), relation="direct_owner", object=("file", "/workspace/doc.txt")
 )
 
 # Permission check = SQL query + graph traversal
 can_write = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("file", "/workspace/doc.txt")
+    subject=("user", "alice"), permission="write", object=("file", "/workspace/doc.txt")
 )
 
 # Fastest performance (no network overhead)
@@ -390,20 +374,18 @@ Database (SQLite/PostgreSQL)
 ```python
 import nexus
 
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"}
+)
 
 # Same API, but over HTTP
 tuple_id = nx.rebac_create(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("file", "/workspace/doc.txt")
+    subject=("user", "alice"), relation="direct_owner", object=("file", "/workspace/doc.txt")
 )
 
 # RPC call to server
 can_write = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("file", "/workspace/doc.txt")
+    subject=("user", "alice"), permission="write", object=("file", "/workspace/doc.txt")
 )
 ```
 
@@ -458,38 +440,28 @@ nx = connect()
 
 # Grant Alice ownership
 tuple_id = nx.rebac_create(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("file", "/workspace/document.txt")
+    subject=("user", "alice"), relation="direct_owner", object=("file", "/workspace/document.txt")
 )
 
 # Grant Bob viewer access
 nx.rebac_create(
-    subject=("user", "bob"),
-    relation="direct_viewer",
-    object=("file", "/workspace/document.txt")
+    subject=("user", "bob"), relation="direct_viewer", object=("file", "/workspace/document.txt")
 )
 
 # Alice can write (owner has write permission)
 alice_can_write = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("file", "/workspace/document.txt")
+    subject=("user", "alice"), permission="write", object=("file", "/workspace/document.txt")
 )
 # → True
 
 # Bob can only read (viewer has read permission)
 bob_can_write = nx.rebac_check(
-    subject=("user", "bob"),
-    permission="write",
-    object=("file", "/workspace/document.txt")
+    subject=("user", "bob"), permission="write", object=("file", "/workspace/document.txt")
 )
 # → False
 
 bob_can_read = nx.rebac_check(
-    subject=("user", "bob"),
-    permission="read",
-    object=("file", "/workspace/document.txt")
+    subject=("user", "bob"), permission="read", object=("file", "/workspace/document.txt")
 )
 # → True
 
@@ -500,7 +472,7 @@ result = nx._rebac_manager.rebac_check(
     subject=("user", "alice"),
     permission="write",
     object=("file", "/workspace/document.txt"),
-    consistency=ConsistencyLevel.STRONG  # Bypass cache
+    consistency=ConsistencyLevel.STRONG,  # Bypass cache
 )
 # → CheckResult(allowed=True, consistency_token="v123", ...)
 ```
@@ -509,37 +481,25 @@ result = nx._rebac_manager.rebac_check(
 
 ```python
 # Create engineering group
-nx.rebac_create(
-    subject=("user", "alice"),
-    relation="member",
-    object=("group", "engineering")
-)
+nx.rebac_create(subject=("user", "alice"), relation="member", object=("group", "engineering"))
 
-nx.rebac_create(
-    subject=("user", "bob"),
-    relation="member",
-    object=("group", "engineering")
-)
+nx.rebac_create(subject=("user", "bob"), relation="member", object=("group", "engineering"))
 
 # Grant group access to folder
 nx.rebac_create(
     subject=("group", "engineering"),
     relation="direct_owner",
-    object=("directory", "/workspace/eng/")
+    object=("directory", "/workspace/eng/"),
 )
 
 # Both Alice and Bob inherit permissions
 alice_can_access = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("directory", "/workspace/eng/")
+    subject=("user", "alice"), permission="write", object=("directory", "/workspace/eng/")
 )
 # → True (via engineering group membership)
 
 bob_can_access = nx.rebac_check(
-    subject=("user", "bob"),
-    permission="write",
-    object=("directory", "/workspace/eng/")
+    subject=("user", "bob"), permission="write", object=("directory", "/workspace/eng/")
 )
 # → True (via engineering group membership)
 ```
@@ -553,9 +513,7 @@ nx.mkdir("/workspace/projects/ai-app/")
 
 # Grant Alice ownership of parent folder
 nx.rebac_create(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("directory", "/workspace/projects/")
+    subject=("user", "alice"), relation="direct_owner", object=("directory", "/workspace/projects/")
 )
 
 # Create file in subfolder
@@ -565,20 +523,20 @@ nx.write("/workspace/projects/ai-app/code.py", b"print('hello')")
 nx.rebac_create(
     subject=("directory", "/workspace/projects/"),
     relation="parent",
-    object=("directory", "/workspace/projects/ai-app/")
+    object=("directory", "/workspace/projects/ai-app/"),
 )
 
 nx.rebac_create(
     subject=("directory", "/workspace/projects/ai-app/"),
     relation="parent",
-    object=("file", "/workspace/projects/ai-app/code.py")
+    object=("file", "/workspace/projects/ai-app/code.py"),
 )
 
 # Alice inherits permissions through parent chain
 alice_can_edit = nx.rebac_check(
     subject=("user", "alice"),
     permission="write",
-    object=("file", "/workspace/projects/ai-app/code.py")
+    object=("file", "/workspace/projects/ai-app/code.py"),
 )
 # → True (via parent_owner relationship)
 ```
@@ -593,14 +551,14 @@ tuple_id = nx.rebac_create(
     subject=("user", "contractor_john"),
     relation="direct_viewer",
     object=("file", "/workspace/sensitive.txt"),
-    expires_at=datetime.now(UTC) + timedelta(hours=24)
+    expires_at=datetime.now(UTC) + timedelta(hours=24),
 )
 
 # Access works immediately
 can_read = nx.rebac_check(
     subject=("user", "contractor_john"),
     permission="read",
-    object=("file", "/workspace/sensitive.txt")
+    object=("file", "/workspace/sensitive.txt"),
 )
 # → True
 
@@ -617,17 +575,11 @@ nx.rebac_create(("user", "bob"), "direct_editor", ("file", "/workspace/doc.txt")
 nx.rebac_create(("user", "charlie"), "direct_viewer", ("file", "/workspace/doc.txt"))
 
 # Find all users who can write
-writers = nx.rebac_expand(
-    permission="write",
-    object=("file", "/workspace/doc.txt")
-)
+writers = nx.rebac_expand(permission="write", object=("file", "/workspace/doc.txt"))
 # → [("user", "alice"), ("user", "bob")]
 
 # Find all users who can read
-readers = nx.rebac_expand(
-    permission="read",
-    object=("file", "/workspace/doc.txt")
-)
+readers = nx.rebac_expand(permission="read", object=("file", "/workspace/doc.txt"))
 # → [("user", "alice"), ("user", "bob"), ("user", "charlie")]
 ```
 
@@ -640,17 +592,11 @@ nx.rebac_create(("team", "backend"), "part_of", ("department", "engineering"))
 nx.rebac_create(("department", "engineering"), "part_of", ("organization", "acme"))
 
 # Grant access at org level
-nx.rebac_create(
-    ("organization", "acme"),
-    "direct_owner",
-    ("resource", "company_wiki")
-)
+nx.rebac_create(("organization", "acme"), "direct_owner", ("resource", "company_wiki"))
 
 # Alice inherits through 3-level chain
 alice_can_access = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("resource", "company_wiki")
+    subject=("user", "alice"), permission="write", object=("resource", "company_wiki")
 )
 # → True (via backend → engineering → acme)
 ```
@@ -663,29 +609,17 @@ nx = connect({"enforce_permissions": True})
 
 # Write requires permission
 try:
-    nx.write(
-        "/workspace/protected.txt",
-        b"content",
-        subject=("user", "alice"),
-        zone_id="acme"
-    )
+    nx.write("/workspace/protected.txt", b"content", subject=("user", "alice"), zone_id="acme")
 except PermissionError:
     print("Access denied - no write permission")
 
 # Grant permission
 nx.rebac_create(
-    subject=("user", "alice"),
-    relation="direct_editor",
-    object=("file", "/workspace/protected.txt")
+    subject=("user", "alice"), relation="direct_editor", object=("file", "/workspace/protected.txt")
 )
 
 # Now write succeeds
-nx.write(
-    "/workspace/protected.txt",
-    b"content",
-    subject=("user", "alice"),
-    zone_id="acme"
-)
+nx.write("/workspace/protected.txt", b"content", subject=("user", "alice"), zone_id="acme")
 # → Success!
 ```
 
@@ -698,13 +632,15 @@ nx.write(
 ```python
 from nexus.sdk import connect
 
-nx = connect({
-    "data_dir": "./nexus-data",
-    "enforce_permissions": True,      # Enable permission checks (default: False in v0.5.0)
-    "inherit_permissions": True,      # Auto-create parent relationships
-    "is_admin": False,                # Admin bypass flag
-    "cache_ttl_seconds": 300,         # Cache TTL (5 minutes)
-})
+nx = connect(
+    {
+        "data_dir": "./nexus-data",
+        "enforce_permissions": True,  # Enable permission checks (default: False in v0.5.0)
+        "inherit_permissions": True,  # Auto-create parent relationships
+        "is_admin": False,  # Admin bypass flag
+        "cache_ttl_seconds": 300,  # Cache TTL (5 minutes)
+    }
+)
 ```
 
 ### YAML Configuration
@@ -742,10 +678,10 @@ from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 rebac = EnhancedReBACManager(
     engine=db_engine,
-    cache_ttl_seconds=300,              # 5 minute cache
-    max_depth=10,                       # Graph traversal depth limit
-    enforce_tenant_isolation=True,      # Multi-zone support (P0-2)
-    enable_graph_limits=True,           # DoS protection (P0-5)
+    cache_ttl_seconds=300,  # 5 minute cache
+    max_depth=10,  # Graph traversal depth limit
+    enforce_tenant_isolation=True,  # Multi-zone support (P0-2)
+    enable_graph_limits=True,  # DoS protection (P0-5)
 )
 ```
 
@@ -782,9 +718,9 @@ audit_store = AuditStore(engine=db_engine)
 enforcer = EnhancedPermissionEnforcer(
     metadata_store=metadata,
     rebac_manager=rebac,
-    allow_admin_bypass=True,      # Kill-switch for admin bypass
-    allow_system_bypass=True,     # Kill-switch for system bypass
-    audit_store=audit_store        # Immutable audit logging
+    allow_admin_bypass=True,  # Kill-switch for admin bypass
+    allow_system_bypass=True,  # Kill-switch for system bypass
+    audit_store=audit_store,  # Immutable audit logging
 )
 ```
 
@@ -815,25 +751,14 @@ Database + Cache
 FILE_NAMESPACE = {
     "name": "file",
     "relations": {
-        "owner": {
-            "union": ["direct_owner", "parent_owner"]
-        },
+        "owner": {"union": ["direct_owner", "parent_owner"]},
         "direct_owner": {},
-        "parent_owner": {
-            "tupleToUserset": {
-                "tupleset": "parent",
-                "computedUserset": "owner"
-            }
-        },
-        "viewer": {
-            "union": ["owner", "direct_viewer"]
-        },
+        "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
+        "viewer": {"union": ["owner", "direct_viewer"]},
         "direct_viewer": {},
-        "editor": {
-            "union": ["owner", "direct_editor"]
-        },
-        "direct_editor": {}
-    }
+        "editor": {"union": ["owner", "direct_editor"]},
+        "direct_editor": {},
+    },
 }
 ```
 
@@ -844,13 +769,9 @@ BILLING_NAMESPACE = {
     "name": "billing",
     "relations": {
         "admin": {},
-        "accountant": {
-            "union": ["admin", "direct_accountant"]
-        },
-        "viewer": {
-            "union": ["accountant", "direct_viewer"]
-        }
-    }
+        "accountant": {"union": ["admin", "direct_accountant"]},
+        "viewer": {"union": ["accountant", "direct_viewer"]},
+    },
 }
 
 # Register namespace
@@ -871,7 +792,7 @@ nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/doc.txt"),
-    zone_id="acme"
+    zone_id="acme",
 )
 
 # Tenant B - TechCorp
@@ -879,7 +800,7 @@ nx.rebac_create(
     subject=("user", "alice"),  # Same user, different tenant!
     relation="direct_owner",
     object=("file", "/workspace/doc.txt"),  # Same path!
-    zone_id="techcorp"
+    zone_id="techcorp",
 )
 
 # Queries are tenant-scoped
@@ -887,7 +808,7 @@ acme_access = nx.rebac_check(
     subject=("user", "alice"),
     permission="write",
     object=("file", "/workspace/doc.txt"),
-    zone_id="acme"
+    zone_id="acme",
 )
 # → True
 
@@ -895,7 +816,7 @@ techcorp_access = nx.rebac_check(
     subject=("user", "alice"),
     permission="write",
     object=("file", "/workspace/doc.txt"),
-    zone_id="techcorp"
+    zone_id="techcorp",
 )
 # → True (but different file!)
 ```
@@ -911,7 +832,7 @@ try:
         subject=("user", "alice"),  # From tenant "acme"
         relation="viewer",
         object=("file", "/workspace/doc.txt"),  # From tenant "techcorp"
-        zone_id="acme"
+        zone_id="acme",
     )
 except ValidationError:
     print("Cross-tenant relationship not allowed")
@@ -924,10 +845,12 @@ except ValidationError:
 ```python
 # Cache key includes zone_id
 cache_key = (
-    subject_type, subject_id,
+    subject_type,
+    subject_id,
     permission,
-    object_type, object_id,
-    zone_id  # ← Tenant isolation
+    object_type,
+    object_id,
+    zone_id,  # ← Tenant isolation
 )
 
 # Cache hits only for same tenant
@@ -1039,7 +962,7 @@ nx.rebac_create(
     subject=("user", "contractor"),
     relation="direct_viewer",
     object=("file", "/project-docs/"),
-    expires_at=datetime.now(UTC) + timedelta(days=30)
+    expires_at=datetime.now(UTC) + timedelta(days=30),
 )
 
 # Cleanup expired tuples periodically
@@ -1053,13 +976,17 @@ nx._rebac_manager.cleanup_expired_tuples()
 from nexus.storage.models import ReBACChangelogModel
 
 with session_factory() as session:
-    changes = session.query(ReBACChangelogModel).filter(
-        ReBACChangelogModel.object_id == "/sensitive/file.txt"
-    ).order_by(ReBACChangelogModel.created_at.desc()).all()
+    changes = (
+        session.query(ReBACChangelogModel)
+        .filter(ReBACChangelogModel.object_id == "/sensitive/file.txt")
+        .order_by(ReBACChangelogModel.created_at.desc())
+        .all()
+    )
 
     for change in changes:
-        print(f"{change.created_at}: {change.change_type} - "
-              f"{change.subject_id} → {change.object_id}")
+        print(
+            f"{change.created_at}: {change.change_type} - {change.subject_id} → {change.object_id}"
+        )
 ```
 
 ### 5. Tenant Isolation
@@ -1070,7 +997,7 @@ nx.rebac_create(
     subject=("user", "alice"),
     relation="owner",
     object=("file", "/doc.txt"),
-    zone_id="acme"  # Required!
+    zone_id="acme",  # Required!
 )
 
 # ❌ Never mix tenants
@@ -1079,7 +1006,7 @@ nx.rebac_create(
     subject=("user", "alice"),  # zone_id="acme"
     relation="viewer",
     object=("file", "/doc.txt"),  # zone_id="techcorp"
-    zone_id="acme"
+    zone_id="acme",
 )
 ```
 
@@ -1092,12 +1019,7 @@ subject = (auth_result.subject_type, auth_result.subject_id)
 zone_id = auth_result.zone_id
 
 # Use validated subject
-nx.rebac_check(
-    subject=subject,
-    permission="write",
-    object=("file", "/doc.txt"),
-    zone_id=zone_id
-)
+nx.rebac_check(subject=subject, permission="write", object=("file", "/doc.txt"), zone_id=zone_id)
 
 # ❌ Never trust client-provided subjects without authentication
 ```
@@ -1113,14 +1035,14 @@ nx.write(
     "/workspace/system/config.yaml",
     config_content,
     subject=bootstrap_subject,
-    is_admin=True  # Bypass permissions
+    is_admin=True,  # Bypass permissions
 )
 
 # Then grant specific access
 nx.rebac_create(
     subject=("user", "admin"),
     relation="direct_owner",
-    object=("file", "/workspace/system/config.yaml")
+    object=("file", "/workspace/system/config.yaml"),
 )
 ```
 
@@ -1179,25 +1101,19 @@ print(f"Mode: {oct(mode)}")  # e.g., 0o644
 
 # Owner gets full access
 nx.rebac_create(
-    subject=("user", owner),
-    relation="direct_owner",
-    object=("file", "/workspace/doc.txt")
+    subject=("user", owner), relation="direct_owner", object=("file", "/workspace/doc.txt")
 )
 
 # If group had read permission (mode & 0o040)
 if mode & 0o040:
     nx.rebac_create(
-        subject=("group", group),
-        relation="direct_viewer",
-        object=("file", "/workspace/doc.txt")
+        subject=("group", group), relation="direct_viewer", object=("file", "/workspace/doc.txt")
     )
 
 # If group had write permission (mode & 0o020)
 if mode & 0o020:
     nx.rebac_create(
-        subject=("group", group),
-        relation="direct_editor",
-        object=("file", "/workspace/doc.txt")
+        subject=("group", group), relation="direct_editor", object=("file", "/workspace/doc.txt")
     )
 ```
 
@@ -1210,12 +1126,7 @@ nx.write("/workspace/doc.txt", b"content")
 
 # v0.6.0: Explicit subject per operation
 nx = connect()
-nx.write(
-    "/workspace/doc.txt",
-    b"content",
-    subject=("user", "alice"),
-    zone_id="acme"
-)
+nx.write("/workspace/doc.txt", b"content", subject=("user", "alice"), zone_id="acme")
 ```
 
 #### 4. Update Permission Checks
@@ -1227,9 +1138,7 @@ if metadata["mode"] & 0o400:  # Owner can read
 
 # v0.6.0: ReBAC checks
 if nx.rebac_check(
-    subject=("user", owner),
-    permission="read",
-    object=("file", "/workspace/doc.txt")
+    subject=("user", owner), permission="read", object=("file", "/workspace/doc.txt")
 ):
     print("Owner has read access")
 ```
@@ -1255,9 +1164,7 @@ def migrate_unix_to_rebac(nx):
 
         # 3. Create owner relationship
         nx.rebac_create(
-            subject=("user", owner),
-            relation="direct_owner",
-            object=("file", file_path)
+            subject=("user", owner), relation="direct_owner", object=("file", file_path)
         )
 
         # 4. Create group relationships
@@ -1265,16 +1172,12 @@ def migrate_unix_to_rebac(nx):
             # Group read
             if mode & 0o040:
                 nx.rebac_create(
-                    subject=("group", group),
-                    relation="direct_viewer",
-                    object=("file", file_path)
+                    subject=("group", group), relation="direct_viewer", object=("file", file_path)
                 )
             # Group write
             if mode & 0o020:
                 nx.rebac_create(
-                    subject=("group", group),
-                    relation="direct_editor",
-                    object=("file", file_path)
+                    subject=("group", group), relation="direct_editor", object=("file", file_path)
                 )
 
     print("Migration complete!")
@@ -1321,9 +1224,11 @@ Speed-up: 8.5x faster!
 #### 1. Increase Cache TTL for Stable Permissions
 
 ```python
-nx = connect({
-    "cache_ttl_seconds": 3600  # 1 hour for rarely-changing permissions
-})
+nx = connect(
+    {
+        "cache_ttl_seconds": 3600  # 1 hour for rarely-changing permissions
+    }
+)
 ```
 
 #### 2. Use Direct Relations
@@ -1414,7 +1319,7 @@ result = nx._rebac_manager.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/doc.txt"),
-    consistency=ConsistencyLevel.EVENTUAL  # Up to 5min staleness
+    consistency=ConsistencyLevel.EVENTUAL,  # Up to 5min staleness
 )
 
 # BOUNDED: Max 1 second staleness
@@ -1422,7 +1327,7 @@ result = nx._rebac_manager.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/doc.txt"),
-    consistency=ConsistencyLevel.BOUNDED  # Fresh within 1s
+    consistency=ConsistencyLevel.BOUNDED,  # Fresh within 1s
 )
 
 # STRONG: Always fresh (bypass cache)
@@ -1430,7 +1335,7 @@ result = nx._rebac_manager.rebac_check(
     subject=("user", "alice"),
     permission="write",
     object=("file", "/sensitive.txt"),
-    consistency=ConsistencyLevel.STRONG  # No cache, slowest
+    consistency=ConsistencyLevel.STRONG,  # No cache, slowest
 )
 
 # Result includes metadata
@@ -1460,7 +1365,7 @@ if result.cached:
 from nexus.core.permissions_enhanced import (
     EnhancedPermissionEnforcer,
     EnhancedOperationContext,
-    AdminCapability
+    AdminCapability,
 )
 
 # Create context with specific capabilities
@@ -1469,9 +1374,9 @@ context = EnhancedOperationContext(
     groups=["administrators"],
     is_admin=True,
     admin_capabilities={
-        AdminCapability.READ_SYSTEM,   # Can read /system/* only
+        AdminCapability.READ_SYSTEM,  # Can read /system/* only
         AdminCapability.WRITE_SYSTEM,  # Can write /system/* only
-    }
+    },
 )
 
 # Admin can access /system paths
@@ -1479,23 +1384,15 @@ enforcer = EnhancedPermissionEnforcer(
     metadata_store=metadata,
     rebac_manager=rebac,
     allow_admin_bypass=True,  # Kill-switch enabled
-    audit_store=audit_store
+    audit_store=audit_store,
 )
 
 # Allowed: /system path with matching capability
-can_read_system = enforcer.check(
-    "/system/config.yaml",
-    Permission.READ,
-    context
-)
+can_read_system = enforcer.check("/system/config.yaml", Permission.READ, context)
 # → True (has READ_SYSTEM capability)
 
 # Denied: non-system path without wildcard
-can_read_user_file = enforcer.check(
-    "/workspace/user-data.txt",
-    Permission.READ,
-    context
-)
+can_read_user_file = enforcer.check("/workspace/user-data.txt", Permission.READ, context)
 # → False (no READ_ALL capability)
 ```
 
@@ -1523,15 +1420,15 @@ Every admin/system bypass is logged to an immutable audit table:
 from datetime import UTC, datetime, timedelta
 
 audit_entries = audit_store.query_bypasses(
-    user="admin",
-    start_time=datetime.now(UTC) - timedelta(days=7),
-    limit=100
+    user="admin", start_time=datetime.now(UTC) - timedelta(days=7), limit=100
 )
 
 for entry in audit_entries:
-    print(f"{entry['timestamp']}: {entry['user']} "
-          f"{entry['bypass_type']} {entry['permission']} "
-          f"{entry['path']} → {entry['allowed']}")
+    print(
+        f"{entry['timestamp']}: {entry['user']} "
+        f"{entry['bypass_type']} {entry['permission']} "
+        f"{entry['path']} → {entry['allowed']}"
+    )
 ```
 
 **Audit Log Entry:**
@@ -1546,7 +1443,7 @@ for entry in audit_entries:
     "bypass_type": "admin",
     "allowed": True,
     "capabilities": ["admin:read:/system/*"],
-    "denial_reason": None
+    "denial_reason": None,
 }
 ```
 
@@ -1556,21 +1453,15 @@ for entry in audit_entries:
 # Disable admin bypass globally (emergency)
 enforcer = EnhancedPermissionEnforcer(
     allow_admin_bypass=False,  # ← No admin bypass allowed
-    allow_system_bypass=False  # ← No system bypass allowed
+    allow_system_bypass=False,  # ← No system bypass allowed
 )
 
 # Even admins must have explicit permissions
 context = EnhancedOperationContext(
-    user="admin",
-    is_admin=True,
-    admin_capabilities={AdminCapability.WRITE_ALL}
+    user="admin", is_admin=True, admin_capabilities={AdminCapability.WRITE_ALL}
 )
 
-can_write = enforcer.check(
-    "/workspace/file.txt",
-    Permission.WRITE,
-    context
-)
+can_write = enforcer.check("/workspace/file.txt", Permission.WRITE, context)
 # → False (kill-switch disabled bypass)
 ```
 
@@ -1591,19 +1482,19 @@ can_write = enforcer.check(
 ```python
 # Create relationships - enforces same tenant
 nx.rebac_create(
-    subject=("user", "alice"),        # zone_id="acme"
+    subject=("user", "alice"),  # zone_id="acme"
     relation="owner",
-    object=("file", "/doc.txt"),      # zone_id="acme"
-    zone_id="acme"
+    object=("file", "/doc.txt"),  # zone_id="acme"
+    zone_id="acme",
 )
 
 # Cross-tenant relationships rejected
 try:
     nx.rebac_create(
-        subject=("user", "alice"),    # zone_id="acme"
+        subject=("user", "alice"),  # zone_id="acme"
         relation="viewer",
         object=("file", "/doc.txt"),  # zone_id="techcorp"
-        zone_id="acme"
+        zone_id="acme",
     )
 except ValidationError as e:
     print(f"Rejected: {e}")
@@ -1611,17 +1502,11 @@ except ValidationError as e:
 
 # Permission checks are tenant-scoped
 acme_result = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="read",
-    object=("file", "/doc.txt"),
-    zone_id="acme"
+    subject=("user", "alice"), permission="read", object=("file", "/doc.txt"), zone_id="acme"
 )
 
 techcorp_result = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="read",
-    object=("file", "/doc.txt"),
-    zone_id="techcorp"
+    subject=("user", "alice"), permission="read", object=("file", "/doc.txt"), zone_id="techcorp"
 )
 # → Different results for different tenants!
 ```
@@ -1645,9 +1530,7 @@ from nexus.core.rebac_manager_enhanced import GraphLimits, GraphLimitExceeded
 # Limits are automatically enforced
 try:
     result = nx.rebac_check(
-        subject=("user", "attacker"),
-        permission="read",
-        object=("file", "/doc.txt")
+        subject=("user", "attacker"), permission="read", object=("file", "/doc.txt")
     )
 except GraphLimitExceeded as e:
     print(f"Limit exceeded: {e.limit_type}")
@@ -1673,18 +1556,16 @@ except GraphLimitExceeded as e:
 
 ```python
 result = nx._rebac_manager.rebac_check(
-    subject=("user", "alice"),
-    permission="read",
-    object=("file", "/doc.txt")
+    subject=("user", "alice"), permission="read", object=("file", "/doc.txt")
 )
 
 # Inspect traversal metrics
 stats = result.traversal_stats
-print(f"Queries: {stats.queries}")              # DB queries made
+print(f"Queries: {stats.queries}")  # DB queries made
 print(f"Nodes visited: {stats.nodes_visited}")  # Graph nodes traversed
 print(f"Max depth: {stats.max_depth_reached}")  # Deepest path
-print(f"Cache hits: {stats.cache_hits}")        # Cache utilization
-print(f"Duration: {stats.duration_ms}ms")       # Total time
+print(f"Cache hits: {stats.cache_hits}")  # Cache utilization
+print(f"Duration: {stats.duration_ms}ms")  # Total time
 ```
 
 **Monitoring Alerts:**
@@ -1692,15 +1573,11 @@ print(f"Duration: {stats.duration_ms}ms")       # Total time
 ```python
 # Monitor for graph complexity
 if result.traversal_stats.queries > 50:
-    logging.warning(
-        f"Complex permission check: {result.traversal_stats.queries} queries"
-    )
+    logging.warning(f"Complex permission check: {result.traversal_stats.queries} queries")
 
 # Alert on timeout approaches
 if result.decision_time_ms > 80:  # Close to 100ms limit
-    logging.warning(
-        f"Slow permission check: {result.decision_time_ms}ms"
-    )
+    logging.warning(f"Slow permission check: {result.decision_time_ms}ms")
 ```
 
 ### Version Tokens

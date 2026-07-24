@@ -37,6 +37,7 @@ Create `tests/unit/rebac/test_prefix_helpers.py`:
 
 ```python
 """Unit tests for rebac cache prefix helpers (Issue #3951)."""
+
 from __future__ import annotations
 
 import pytest
@@ -48,44 +49,53 @@ pytest.importorskip("pyroaring")  # matches rebac test convention
 # any_path_under_prefix
 # ---------------------------------------------------------------------------
 
+
 def test_any_path_under_prefix_descendant():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     assert any_path_under_prefix(["/a/b/c", "/x/y"], "/a/b") is True
 
 
 def test_any_path_under_prefix_exact_match():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     assert any_path_under_prefix(["/a/b", "/x/y"], "/a/b") is True
 
 
 def test_any_path_under_prefix_no_match():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     assert any_path_under_prefix(["/x/y", "/z"], "/a/b") is False
 
 
 def test_any_path_under_prefix_root():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     assert any_path_under_prefix(["/a/b"], "/") is True
 
 
 def test_any_path_under_prefix_trailing_slash_prefix():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     # Callers may pass prefix with or without trailing slash
     assert any_path_under_prefix(["/a/b/c"], "/a/b/") is True
 
 
 def test_any_path_under_prefix_set_input():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     assert any_path_under_prefix({"/a/b/c"}, "/a/b") is True
 
 
 def test_any_path_under_prefix_empty_paths():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     assert any_path_under_prefix([], "/a/b") is False
 
 
 def test_any_path_under_prefix_no_partial_match():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+
     # "/a/bc" must NOT match prefix "/a/b"
     assert any_path_under_prefix(["/a/bc"], "/a/b") is False
 
@@ -94,30 +104,36 @@ def test_any_path_under_prefix_no_partial_match():
 # batch_paths_under_prefixes
 # ---------------------------------------------------------------------------
 
+
 def test_batch_paths_under_prefixes_basic():
     from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+
     result = batch_paths_under_prefixes(["/a/b/c", "/x/y"], ["/a/b", "/z"])
     assert result == [True, False]
 
 
 def test_batch_paths_under_prefixes_order_preserved():
     from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+
     result = batch_paths_under_prefixes(["/a/b/c"], ["/z", "/a", "/b"])
     assert result == [False, True, False]
 
 
 def test_batch_paths_under_prefixes_empty_paths():
     from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+
     assert batch_paths_under_prefixes([], ["/a", "/b"]) == [False, False]
 
 
 def test_batch_paths_under_prefixes_empty_prefixes():
     from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+
     assert batch_paths_under_prefixes(["/a/b"], []) == []
 
 
 def test_batch_paths_under_prefixes_result_length_matches_prefixes():
     from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+
     prefixes = ["/a", "/b", "/c", "/d"]
     result = batch_paths_under_prefixes(["/a/x"], prefixes)
     assert len(result) == len(prefixes)
@@ -127,8 +143,10 @@ def test_batch_paths_under_prefixes_result_length_matches_prefixes():
 # Python fallback paths (mock Rust to None)
 # ---------------------------------------------------------------------------
 
+
 def test_any_path_under_prefix_python_fallback(monkeypatch):
     import nexus.bricks.rebac.cache._prefix_helpers as ph
+
     monkeypatch.setattr(ph, "_rust_any", None)
     assert ph.any_path_under_prefix(["/a/b/c"], "/a/b") is True
     assert ph.any_path_under_prefix(["/a/bc"], "/a/b") is False
@@ -136,6 +154,7 @@ def test_any_path_under_prefix_python_fallback(monkeypatch):
 
 def test_batch_paths_under_prefixes_python_fallback(monkeypatch):
     import nexus.bricks.rebac.cache._prefix_helpers as ph
+
     monkeypatch.setattr(ph, "_rust_batch", None)
     result = ph.batch_paths_under_prefixes(["/a/b/c"], ["/a/b", "/z"])
     assert result == [True, False]
@@ -143,6 +162,7 @@ def test_batch_paths_under_prefixes_python_fallback(monkeypatch):
 
 def test_python_fallback_no_partial_match(monkeypatch):
     import nexus.bricks.rebac.cache._prefix_helpers as ph
+
     monkeypatch.setattr(ph, "_rust_any", None)
     # "/a/bc" must NOT match "/a/b" — guard against off-by-one in norm logic
     assert ph.any_path_under_prefix(["/a/bc"], "/a/b") is False
@@ -161,7 +181,6 @@ Expected: `ModuleNotFoundError: No module named 'nexus.bricks.rebac.cache._prefi
 In `src/nexus/_rust_compat.py`, after the last line (`glob_match_bulk = _get("glob_match_bulk")`), append:
 
 ```python
-
 # Prefix / bitmap helpers (Issue #3951)
 any_path_starts_with = _get("any_path_starts_with")
 batch_prefix_check = _get("batch_prefix_check")
@@ -250,6 +269,7 @@ Append to `tests/unit/rebac/test_prefix_helpers.py`:
 # DirectoryVisibilityCache.compute_from_tiger_bitmap — refactor contract
 # ---------------------------------------------------------------------------
 
+
 def test_compute_from_tiger_bitmap_calls_get_accessible_paths():
     """After refactor, method must use get_accessible_paths (not get_accessible_resources)."""
     from unittest.mock import MagicMock
@@ -324,30 +344,28 @@ Expected: FAIL — current implementation calls `get_accessible_resources`, not 
 Replace lines 199–252 (everything after `self._bitmap_computes += 1`) with:
 
 ```python
-        accessible_paths = self._tiger_cache.get_accessible_paths(
-            subject_type=subject_type,
-            subject_id=subject_id,
-            permission=permission,
-            resource_type="file",
-            zone_id=zone_id,
-        )
+accessible_paths = self._tiger_cache.get_accessible_paths(
+    subject_type=subject_type,
+    subject_id=subject_id,
+    permission=permission,
+    resource_type="file",
+    zone_id=zone_id,
+)
 
-        if accessible_paths is None:
-            return None  # cache miss — caller falls through to slow path
+if accessible_paths is None:
+    return None  # cache miss — caller falls through to slow path
 
-        if not accessible_paths:
-            self.set_visible(
-                zone_id, subject_type, subject_id, dir_path, False, "no_accessible_resources"
-            )
-            return False
+if not accessible_paths:
+    self.set_visible(zone_id, subject_type, subject_id, dir_path, False, "no_accessible_resources")
+    return False
 
-        from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
 
-        result = any_path_under_prefix(accessible_paths, dir_path)
-        reason = f"bitmap_prefix:{dir_path}" if result else "no_descendants_in_bitmap"
-        self.set_visible(zone_id, subject_type, subject_id, dir_path, result, reason)
-        logger.debug("[DirVisCache] BITMAP_COMPUTE: %s visible=%s", dir_path, result)
-        return result
+result = any_path_under_prefix(accessible_paths, dir_path)
+reason = f"bitmap_prefix:{dir_path}" if result else "no_descendants_in_bitmap"
+self.set_visible(zone_id, subject_type, subject_id, dir_path, result, reason)
+logger.debug("[DirVisCache] BITMAP_COMPUTE: %s visible=%s", dir_path, result)
+return result
 ```
 
 The full method after editing (`visibility.py:170`):
@@ -432,6 +450,7 @@ Append to `tests/unit/rebac/test_prefix_helpers.py`:
 # ---------------------------------------------------------------------------
 # DirectoryVisibilityCache.compute_batch_visibility — refactor contract
 # ---------------------------------------------------------------------------
+
 
 def test_compute_batch_visibility_correct_results():
     from unittest.mock import MagicMock
@@ -554,6 +573,7 @@ Append to `tests/unit/rebac/test_prefix_helpers.py`:
 # DescendantAccessChecker.has_access — Tiger fallback uses get_accessible_paths
 # ---------------------------------------------------------------------------
 
+
 def test_has_access_tiger_fallback_uses_get_accessible_paths():
     """Tiger fallback must call get_accessible_paths, not loop _resource_map."""
     from unittest.mock import MagicMock
@@ -592,6 +612,7 @@ def test_has_access_tiger_fallback_uses_get_accessible_paths():
     )
 
     from nexus.contracts.types import Permission
+
     result = checker.has_access("/workspace/joe", Permission.READ, ctx)
 
     assert result is True
@@ -611,35 +632,33 @@ Expected: FAIL — current implementation calls `get_accessible_resources` + loo
 Replace lines 305–335 (the `# Issue #3192` block through the end of its `except` clause):
 
 ```python
-        # Issue #3192 / #3951: Tiger Cache bitmap before individual fallback
-        tiger_cache = (
-            getattr(self._rebac_manager, "_tiger_cache", None) if self._rebac_manager else None
+# Issue #3192 / #3951: Tiger Cache bitmap before individual fallback
+tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None) if self._rebac_manager else None
+if tiger_cache is not None:
+    try:
+        accessible_paths = tiger_cache.get_accessible_paths(
+            subject_type=subject_tuple[0],
+            subject_id=subject_tuple[1],
+            permission=rebac_permission,
+            resource_type="file",
+            zone_id=zone_id,
         )
-        if tiger_cache is not None:
-            try:
-                accessible_paths = tiger_cache.get_accessible_paths(
-                    subject_type=subject_tuple[0],
-                    subject_id=subject_tuple[1],
-                    permission=rebac_permission,
-                    resource_type="file",
-                    zone_id=zone_id,
-                )
-                if accessible_paths:
-                    from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+        if accessible_paths:
+            from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
 
-                    if any_path_under_prefix(accessible_paths, path):
-                        if self._dir_visibility_cache is not None:
-                            self._dir_visibility_cache.set_visible(
-                                zone_id,
-                                context.subject_type,
-                                subject_id,
-                                path,
-                                True,
-                                "tiger_fallback",
-                            )
-                        return True
-            except Exception:
-                logger.debug("has_access: Tiger Cache fallback failed, using individual checks")
+            if any_path_under_prefix(accessible_paths, path):
+                if self._dir_visibility_cache is not None:
+                    self._dir_visibility_cache.set_visible(
+                        zone_id,
+                        context.subject_type,
+                        subject_id,
+                        path,
+                        True,
+                        "tiger_fallback",
+                    )
+                return True
+    except Exception:
+        logger.debug("has_access: Tiger Cache fallback failed, using individual checks")
 ```
 
 - [ ] **Step 4: Run tests — expect PASS**
@@ -670,25 +689,22 @@ git commit -m "refactor(descendant-access): Tiger fallback via get_accessible_pa
 In `src/nexus/bricks/rebac/enforcer.py` find this block (around line 347):
 
 ```python
-            # RUST_FALLBACK: rebac enforcer — nexus_runtime for batch permission checks
-            # Try Rust-accelerated prefix matching (Issue #1565)
-            try:
-                import nexus_runtime
+# RUST_FALLBACK: rebac enforcer — nexus_runtime for batch permission checks
+# Try Rust-accelerated prefix matching (Issue #1565)
+try:
+    import nexus_runtime
 
-                results_list = nexus_runtime.batch_prefix_check(
-                    list(accessible_paths), list(prefixes)
-                )
-                results = dict(zip(prefixes, results_list, strict=True))
-            except (ImportError, AttributeError):
-                # Python fallback (same logic, O(N×M))
-                results = {}
-                for prefix in prefixes:
-                    prefix_normalized = prefix.rstrip("/") + "/"
-                    prefix_exact = prefix.rstrip("/")
-                    results[prefix] = any(
-                        p.startswith(prefix_normalized) or p == prefix_exact
-                        for p in accessible_paths
-                    )
+    results_list = nexus_runtime.batch_prefix_check(list(accessible_paths), list(prefixes))
+    results = dict(zip(prefixes, results_list, strict=True))
+except (ImportError, AttributeError):
+    # Python fallback (same logic, O(N×M))
+    results = {}
+    for prefix in prefixes:
+        prefix_normalized = prefix.rstrip("/") + "/"
+        prefix_exact = prefix.rstrip("/")
+        results[prefix] = any(
+            p.startswith(prefix_normalized) or p == prefix_exact for p in accessible_paths
+        )
 ```
 
 - [ ] **Step 2: Replace with helper call**
@@ -734,6 +750,7 @@ Create `tests/unit/rebac/bench_prefix_helpers.py`:
 Not a microbenchmark — asserts that large-scale calls complete within
 generous wall-clock bounds. Run in CI with: pytest tests/unit/rebac/bench_prefix_helpers.py -v
 """
+
 from __future__ import annotations
 
 import time
@@ -757,6 +774,7 @@ def _make_prefixes(n: int) -> list[str]:
 # any_path_under_prefix
 # ---------------------------------------------------------------------------
 
+
 def test_any_path_under_prefix_50k_paths_under_500ms():
     from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
 
@@ -768,11 +786,14 @@ def test_any_path_under_prefix_50k_paths_under_500ms():
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert result is True
-    assert elapsed_ms < 500, f"any_path_under_prefix over 50K paths took {elapsed_ms:.1f}ms (limit 500ms)"
+    assert elapsed_ms < 500, (
+        f"any_path_under_prefix over 50K paths took {elapsed_ms:.1f}ms (limit 500ms)"
+    )
 
 
 def test_any_path_under_prefix_python_fallback_50k_paths_under_500ms(monkeypatch):
     import nexus.bricks.rebac.cache._prefix_helpers as ph
+
     monkeypatch.setattr(ph, "_rust_any", None)
 
     paths = _make_paths(50_000)
@@ -790,6 +811,7 @@ def test_any_path_under_prefix_python_fallback_50k_paths_under_500ms(monkeypatch
 # batch_paths_under_prefixes
 # ---------------------------------------------------------------------------
 
+
 def test_batch_paths_under_prefixes_100k_paths_50_prefixes_under_500ms():
     from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
 
@@ -801,11 +823,16 @@ def test_batch_paths_under_prefixes_100k_paths_50_prefixes_under_500ms():
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert len(results) == 50
-    assert elapsed_ms < 500, f"batch_paths_under_prefixes 100K×50 took {elapsed_ms:.1f}ms (limit 500ms)"
+    assert elapsed_ms < 500, (
+        f"batch_paths_under_prefixes 100K×50 took {elapsed_ms:.1f}ms (limit 500ms)"
+    )
 
 
-def test_batch_paths_under_prefixes_python_fallback_100k_paths_50_prefixes_under_2000ms(monkeypatch):
+def test_batch_paths_under_prefixes_python_fallback_100k_paths_50_prefixes_under_2000ms(
+    monkeypatch,
+):
     import nexus.bricks.rebac.cache._prefix_helpers as ph
+
     monkeypatch.setattr(ph, "_rust_batch", None)
 
     paths = _make_paths(100_000)

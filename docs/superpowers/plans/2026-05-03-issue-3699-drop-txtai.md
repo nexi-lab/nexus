@@ -258,10 +258,12 @@ async def test_embed_query_returns_vector():
 
 @pytest.mark.asyncio
 async def test_embed_batch_chunks_at_max_batch():
-    fake = AsyncMock(side_effect=[
-        {"data": [{"embedding": [float(i)] * 4} for i in range(2)]},
-        {"data": [{"embedding": [float(i + 2)] * 4} for i in range(1)]},
-    ])
+    fake = AsyncMock(
+        side_effect=[
+            {"data": [{"embedding": [float(i)] * 4} for i in range(2)]},
+            {"data": [{"embedding": [float(i + 2)] * 4} for i in range(1)]},
+        ]
+    )
     with patch("litellm.aembedding", fake):
         client = EmbeddingClient(model="m", max_batch=2, dim=4)
         vecs = await client.embed_batch(["a", "b", "c"])
@@ -356,8 +358,9 @@ class EmbeddingClient:
                     logger.error("embedding failed after %d retries: %s", attempt, exc)
                     raise
                 wait = self.backoff_base * (2 ** (attempt - 1))
-                logger.warning("embedding retry %d/%d after %.1fs: %s",
-                               attempt, self.max_retries, wait, exc)
+                logger.warning(
+                    "embedding retry %d/%d after %.1fs: %s", attempt, self.max_retries, wait, exc
+                )
                 await asyncio.sleep(wait)
 ```
 
@@ -423,15 +426,22 @@ async def test_postgres_branch_is_noop(postgres_engine):
 def test_sqlite_branch_creates_fts_vtable(sqlite_engine_after_upgrade):
     """SQLite needs a brand new FTS5 vtable + triggers to mirror chunk_text."""
     with sqlite_engine_after_upgrade.connect() as conn:
-        tables = {row[0] for row in conn.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
-        )}
-        triggers = {row[0] for row in conn.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type='trigger'"
-        )}
+        tables = {
+            row[0]
+            for row in conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            )
+        }
+        triggers = {
+            row[0]
+            for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='trigger'")
+        }
     assert "document_chunks_fts" in tables
-    assert {"document_chunks_fts_ai", "document_chunks_fts_ad",
-            "document_chunks_fts_au"} <= triggers
+    assert {
+        "document_chunks_fts_ai",
+        "document_chunks_fts_ad",
+        "document_chunks_fts_au",
+    } <= triggers
 
 
 def test_sqlite_trigger_syncs_on_insert(sqlite_engine_after_upgrade):
@@ -498,29 +508,36 @@ def upgrade() -> None:
     if bind.dialect.name != "sqlite":
         return  # Postgres has everything already — see add_pg_textsearch_bm25_index.py
 
-    op.execute(text("""
+    op.execute(
+        text("""
         CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(
           chunk_text,
           content='document_chunks',
           content_rowid='rowid',
           tokenize='porter unicode61'
         )
-    """))
-    op.execute(text("""
+    """)
+    )
+    op.execute(
+        text("""
         CREATE TRIGGER IF NOT EXISTS document_chunks_fts_ai
         AFTER INSERT ON document_chunks BEGIN
           INSERT INTO document_chunks_fts(rowid, chunk_text)
           VALUES (NEW.rowid, NEW.chunk_text);
         END
-    """))
-    op.execute(text("""
+    """)
+    )
+    op.execute(
+        text("""
         CREATE TRIGGER IF NOT EXISTS document_chunks_fts_ad
         AFTER DELETE ON document_chunks BEGIN
           INSERT INTO document_chunks_fts(document_chunks_fts, rowid, chunk_text)
           VALUES ('delete', OLD.rowid, OLD.chunk_text);
         END
-    """))
-    op.execute(text("""
+    """)
+    )
+    op.execute(
+        text("""
         CREATE TRIGGER IF NOT EXISTS document_chunks_fts_au
         AFTER UPDATE OF chunk_text ON document_chunks BEGIN
           INSERT INTO document_chunks_fts(document_chunks_fts, rowid, chunk_text)
@@ -528,7 +545,8 @@ def upgrade() -> None:
           INSERT INTO document_chunks_fts(rowid, chunk_text)
           VALUES (NEW.rowid, NEW.chunk_text);
         END
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
@@ -611,16 +629,27 @@ async def _seed(engine, rows: list[dict]) -> None:
     """Helper: insert file_paths + document_chunks rows."""
     async with engine.begin() as conn:
         for r in rows:
-            await conn.execute(text(
-                "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
-                "VALUES (:pid, :zid, :path, NULL) ON CONFLICT DO NOTHING"
-            ), {"pid": r["path_id"], "zid": r["zone_id"], "path": r["path"]})
-            await conn.execute(text(
-                "INSERT INTO document_chunks "
-                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
-                "VALUES (:cid, :pid, :idx, :txt, :tok, now())"
-            ), {"cid": r["chunk_id"], "pid": r["path_id"], "idx": r["chunk_index"],
-                "txt": r["text"], "tok": len(r["text"].split())})
+            await conn.execute(
+                text(
+                    "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
+                    "VALUES (:pid, :zid, :path, NULL) ON CONFLICT DO NOTHING"
+                ),
+                {"pid": r["path_id"], "zid": r["zone_id"], "path": r["path"]},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO document_chunks "
+                    "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
+                    "VALUES (:cid, :pid, :idx, :txt, :tok, now())"
+                ),
+                {
+                    "cid": r["chunk_id"],
+                    "pid": r["path_id"],
+                    "idx": r["chunk_index"],
+                    "txt": r["text"],
+                    "tok": len(r["text"].split()),
+                },
+            )
 
 
 def test_satisfies_protocol(backend):
@@ -629,51 +658,109 @@ def test_satisfies_protocol(backend):
 
 @pytest.mark.asyncio
 async def test_keyword_search_chunk_level(backend, postgres_engine_clean):
-    await _seed(postgres_engine_clean, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z", "path": "/z/a.txt",
-         "chunk_index": 0, "text": "the quick brown fox"},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z", "path": "/z/b.txt",
-         "chunk_index": 0, "text": "lazy dogs sleep"},
-    ])
+    await _seed(
+        postgres_engine_clean,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/a.txt",
+                "chunk_index": 0,
+                "text": "the quick brown fox",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z",
+                "path": "/z/b.txt",
+                "chunk_index": 0,
+                "text": "lazy dogs sleep",
+            },
+        ],
+    )
     hits = await backend.keyword_search("quick", "/z/", k=10, zone_id="z")
     assert [h.path for h in hits] == ["/z/a.txt"]
 
 
 @pytest.mark.asyncio
 async def test_path_prefix_filter(backend, postgres_engine_clean):
-    await _seed(postgres_engine_clean, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z", "path": "/z/sub/a.txt",
-         "chunk_index": 0, "text": "alpha"},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z", "path": "/z/other/b.txt",
-         "chunk_index": 0, "text": "alpha"},
-    ])
+    await _seed(
+        postgres_engine_clean,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/sub/a.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z",
+                "path": "/z/other/b.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+        ],
+    )
     hits = await backend.keyword_search("alpha", "/z/sub/", k=10, zone_id="z")
     assert {h.path for h in hits} == {"/z/sub/a.txt"}
 
 
 @pytest.mark.asyncio
 async def test_zone_isolation(backend, postgres_engine_clean):
-    await _seed(postgres_engine_clean, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z1", "path": "/z1/a.txt",
-         "chunk_index": 0, "text": "alpha"},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z2", "path": "/z2/a.txt",
-         "chunk_index": 0, "text": "alpha"},
-    ])
+    await _seed(
+        postgres_engine_clean,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z1",
+                "path": "/z1/a.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z2",
+                "path": "/z2/a.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+        ],
+    )
     hits = await backend.keyword_search("alpha", "/", k=10, zone_id="z1")
     assert {h.path for h in hits} == {"/z1/a.txt"}
 
 
 @pytest.mark.asyncio
-async def test_keyword_search_pages_aggregates_chunks(
-    backend, postgres_engine_clean
-):
+async def test_keyword_search_pages_aggregates_chunks(backend, postgres_engine_clean):
     """#3980 page-BM25 leg — assemble chunks per path, BM25 over the page text."""
-    await _seed(postgres_engine_clean, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z", "path": "/z/a.txt",
-         "chunk_index": 0, "text": "common preamble"},
-        {"chunk_id": "c2", "path_id": "p1", "zone_id": "z", "path": "/z/a.txt",
-         "chunk_index": 1, "text": "rare phrase XYZQQ deep in body"},
-    ])
+    await _seed(
+        postgres_engine_clean,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/a.txt",
+                "chunk_index": 0,
+                "text": "common preamble",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/a.txt",
+                "chunk_index": 1,
+                "text": "rare phrase XYZQQ deep in body",
+            },
+        ],
+    )
     hits = await backend.keyword_search_pages("XYZQQ", "/z/", k=10, zone_id="z")
     assert [h.path for h in hits] == ["/z/a.txt"]
     # The page-BM25 leg returns a single result PER PATH, not per chunk.
@@ -756,7 +843,11 @@ class PgFtsBackend:
     # ---- Keyword search (chunk-level) ------------------------------------
 
     async def keyword_search(
-        self, query: str, path: str, k: int, zone_id: str,
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         sql = text(f"""
             SELECT c.chunk_id, fp.virtual_path AS path, c.chunk_text,
@@ -772,9 +863,21 @@ class PgFtsBackend:
             LIMIT :k
         """)
         async with self._engine.connect() as conn:
-            rows = (await conn.execute(sql, {
-                "q": query, "prefix": path, "zone_id": zone_id, "k": k,
-            })).mappings().all()
+            rows = (
+                (
+                    await conn.execute(
+                        sql,
+                        {
+                            "q": query,
+                            "prefix": path,
+                            "zone_id": zone_id,
+                            "k": k,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
         return [
             BaseSearchResult(
                 path=r["path"],
@@ -790,7 +893,11 @@ class PgFtsBackend:
     # ---- Keyword search (page-level, #3980 parity) ------------------------
 
     async def keyword_search_pages(
-        self, query: str, path: str, k: int, zone_id: str,
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         """Aggregate chunks → pages, BM25 on the page text. One row per path."""
         sql = text(f"""
@@ -812,9 +919,21 @@ class PgFtsBackend:
             LIMIT :k
         """)
         async with self._engine.connect() as conn:
-            rows = (await conn.execute(sql, {
-                "q": query, "prefix": path, "zone_id": zone_id, "k": k,
-            })).mappings().all()
+            rows = (
+                (
+                    await conn.execute(
+                        sql,
+                        {
+                            "q": query,
+                            "prefix": path,
+                            "zone_id": zone_id,
+                            "k": k,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
         return [
             BaseSearchResult(
                 path=r["path"],
@@ -830,7 +949,11 @@ class PgFtsBackend:
     # ---- Semantic (lives in PgVectorBackend; no-op here) -----------------
 
     async def semantic_search(
-        self, query_vector: Sequence[float], path: str, k: int, zone_id: str,
+        self,
+        query_vector: Sequence[float],
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         return []
 ```
@@ -893,19 +1016,30 @@ async def backend(postgres_engine_clean: AsyncEngine):
 async def _seed_with_embeddings(engine, rows: list[dict]) -> None:
     async with engine.begin() as conn:
         for r in rows:
-            await conn.execute(text(
-                "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
-                "VALUES (:pid, :zid, :path, NULL) ON CONFLICT DO NOTHING"
-            ), {"pid": r["path_id"], "zid": r["zone_id"], "path": r["path"]})
-            await conn.execute(text(
-                "INSERT INTO document_chunks "
-                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, "
-                " embedding, created_at) "
-                "VALUES (:cid, :pid, :idx, :txt, :tok, "
-                "        CAST(:emb AS halfvec), now())"
-            ), {"cid": r["chunk_id"], "pid": r["path_id"], "idx": r["chunk_index"],
-                "txt": r["text"], "tok": len(r["text"].split()),
-                "emb": str(list(r["emb"]))})
+            await conn.execute(
+                text(
+                    "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
+                    "VALUES (:pid, :zid, :path, NULL) ON CONFLICT DO NOTHING"
+                ),
+                {"pid": r["path_id"], "zid": r["zone_id"], "path": r["path"]},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO document_chunks "
+                    "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, "
+                    " embedding, created_at) "
+                    "VALUES (:cid, :pid, :idx, :txt, :tok, "
+                    "        CAST(:emb AS halfvec), now())"
+                ),
+                {
+                    "cid": r["chunk_id"],
+                    "pid": r["path_id"],
+                    "idx": r["chunk_index"],
+                    "txt": r["text"],
+                    "tok": len(r["text"].split()),
+                    "emb": str(list(r["emb"])),
+                },
+            )
 
 
 def test_satisfies_protocol(backend):
@@ -917,12 +1051,29 @@ async def test_semantic_search_orders_by_cosine(backend, postgres_engine_clean):
     qvec = [1.0] + [0.0] * 1535
     near = [0.99] + [0.01] * 1535
     far = [0.0, 1.0] + [0.0] * 1534
-    await _seed_with_embeddings(postgres_engine_clean, [
-        {"chunk_id": "near", "path_id": "p1", "zone_id": "z", "path": "/z/a.txt",
-         "chunk_index": 0, "text": "near", "emb": near},
-        {"chunk_id": "far", "path_id": "p2", "zone_id": "z", "path": "/z/b.txt",
-         "chunk_index": 0, "text": "far", "emb": far},
-    ])
+    await _seed_with_embeddings(
+        postgres_engine_clean,
+        [
+            {
+                "chunk_id": "near",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/a.txt",
+                "chunk_index": 0,
+                "text": "near",
+                "emb": near,
+            },
+            {
+                "chunk_id": "far",
+                "path_id": "p2",
+                "zone_id": "z",
+                "path": "/z/b.txt",
+                "chunk_index": 0,
+                "text": "far",
+                "emb": far,
+            },
+        ],
+    )
     hits = await backend.semantic_search(qvec, "/z/", k=10, zone_id="z")
     assert [h.path for h in hits] == ["/z/a.txt", "/z/b.txt"]
 
@@ -930,27 +1081,48 @@ async def test_semantic_search_orders_by_cosine(backend, postgres_engine_clean):
 @pytest.mark.asyncio
 async def test_null_embedding_skipped(backend, postgres_engine_clean):
     async with postgres_engine_clean.begin() as conn:
-        await conn.execute(text(
-            "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
-            "VALUES ('p1', 'z', '/z/a.txt', NULL)"
-        ))
-        await conn.execute(text(
-            "INSERT INTO document_chunks "
-            "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
-            "VALUES ('c1', 'p1', 0, 'x', 1, now())"  # embedding NULL
-        ))
+        await conn.execute(
+            text(
+                "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
+                "VALUES ('p1', 'z', '/z/a.txt', NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO document_chunks "
+                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
+                "VALUES ('c1', 'p1', 0, 'x', 1, now())"  # embedding NULL
+            )
+        )
     hits = await backend.semantic_search([0.0] * 1536, "/z/", k=10, zone_id="z")
     assert hits == []
 
 
 @pytest.mark.asyncio
 async def test_zone_isolation(backend, postgres_engine_clean):
-    await _seed_with_embeddings(postgres_engine_clean, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z1", "path": "/z1/a.txt",
-         "chunk_index": 0, "text": "x", "emb": [1.0] + [0.0] * 1535},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z2", "path": "/z2/a.txt",
-         "chunk_index": 0, "text": "x", "emb": [1.0] + [0.0] * 1535},
-    ])
+    await _seed_with_embeddings(
+        postgres_engine_clean,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z1",
+                "path": "/z1/a.txt",
+                "chunk_index": 0,
+                "text": "x",
+                "emb": [1.0] + [0.0] * 1535,
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z2",
+                "path": "/z2/a.txt",
+                "chunk_index": 0,
+                "text": "x",
+                "emb": [1.0] + [0.0] * 1535,
+            },
+        ],
+    )
     hits = await backend.semantic_search([1.0] + [0.0] * 1535, "/", k=10, zone_id="z1")
     assert {h.path for h in hits} == {"/z1/a.txt"}
 ```
@@ -1015,12 +1187,20 @@ class PgVectorBackend:
         return await self._chunk_store.delete_chunks(list(ids), zone_id=zone_id)
 
     async def keyword_search(
-        self, query: str, path: str, k: int, zone_id: str,
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         return []  # Lives in PgFtsBackend.
 
     async def semantic_search(
-        self, query_vector: Sequence[float], path: str, k: int, zone_id: str,
+        self,
+        query_vector: Sequence[float],
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         sql = text("""
             SELECT c.chunk_id, fp.virtual_path AS path, c.chunk_text,
@@ -1036,12 +1216,21 @@ class PgVectorBackend:
             LIMIT :k
         """)
         async with self._engine.connect() as conn:
-            rows = (await conn.execute(sql, {
-                "qvec": str(list(query_vector)),
-                "prefix": path,
-                "zone_id": zone_id,
-                "k": k,
-            })).mappings().all()
+            rows = (
+                (
+                    await conn.execute(
+                        sql,
+                        {
+                            "qvec": str(list(query_vector)),
+                            "prefix": path,
+                            "zone_id": zone_id,
+                            "k": k,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
         return [
             BaseSearchResult(
                 path=r["path"],
@@ -1136,16 +1325,14 @@ def _seed(db_path: str, rows: list[dict]) -> None:
     conn = sqlite3.connect(db_path)
     for r in rows:
         conn.execute(
-            "INSERT OR IGNORE INTO file_paths (path_id, zone_id, virtual_path) "
-            "VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO file_paths (path_id, zone_id, virtual_path) VALUES (?, ?, ?)",
             (r["path_id"], r["zone_id"], r["path"]),
         )
         conn.execute(
             "INSERT INTO document_chunks "
             "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens) "
             "VALUES (?, ?, ?, ?, ?)",
-            (r["chunk_id"], r["path_id"], r["chunk_index"], r["text"],
-             len(r["text"].split())),
+            (r["chunk_id"], r["path_id"], r["chunk_index"], r["text"], len(r["text"].split())),
         )
     conn.commit()
     conn.close()
@@ -1162,36 +1349,81 @@ def test_satisfies_protocol(backend):
 
 @pytest.mark.asyncio
 async def test_keyword_search_chunk_level(backend, db_path):
-    _seed(db_path, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z", "path": "/z/a.txt",
-         "chunk_index": 0, "text": "the quick brown fox"},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z", "path": "/z/b.txt",
-         "chunk_index": 0, "text": "lazy dogs sleep"},
-    ])
+    _seed(
+        db_path,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/a.txt",
+                "chunk_index": 0,
+                "text": "the quick brown fox",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z",
+                "path": "/z/b.txt",
+                "chunk_index": 0,
+                "text": "lazy dogs sleep",
+            },
+        ],
+    )
     hits = await backend.keyword_search("quick", "/z/", k=10, zone_id="z")
     assert [h.path for h in hits] == ["/z/a.txt"]
 
 
 @pytest.mark.asyncio
 async def test_path_prefix_filter(backend, db_path):
-    _seed(db_path, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z", "path": "/z/sub/a.txt",
-         "chunk_index": 0, "text": "alpha"},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z", "path": "/z/other/b.txt",
-         "chunk_index": 0, "text": "alpha"},
-    ])
+    _seed(
+        db_path,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z",
+                "path": "/z/sub/a.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z",
+                "path": "/z/other/b.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+        ],
+    )
     hits = await backend.keyword_search("alpha", "/z/sub/", k=10, zone_id="z")
     assert [h.path for h in hits] == ["/z/sub/a.txt"]
 
 
 @pytest.mark.asyncio
 async def test_zone_isolation(backend, db_path):
-    _seed(db_path, [
-        {"chunk_id": "c1", "path_id": "p1", "zone_id": "z1", "path": "/z1/a.txt",
-         "chunk_index": 0, "text": "alpha"},
-        {"chunk_id": "c2", "path_id": "p2", "zone_id": "z2", "path": "/z2/a.txt",
-         "chunk_index": 0, "text": "alpha"},
-    ])
+    _seed(
+        db_path,
+        [
+            {
+                "chunk_id": "c1",
+                "path_id": "p1",
+                "zone_id": "z1",
+                "path": "/z1/a.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+            {
+                "chunk_id": "c2",
+                "path_id": "p2",
+                "zone_id": "z2",
+                "path": "/z2/a.txt",
+                "chunk_index": 0,
+                "text": "alpha",
+            },
+        ],
+    )
     hits = await backend.keyword_search("alpha", "/", k=10, zone_id="z1")
     assert {h.path for h in hits} == {"/z1/a.txt"}
 ```
@@ -1262,7 +1494,11 @@ class SqliteFtsBackend:
         return await self._chunk_store.delete_chunks(list(ids), zone_id=zone_id)
 
     async def keyword_search(
-        self, query: str, path: str, k: int, zone_id: str,
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         def _search() -> list[BaseSearchResult]:
             with self._connect() as conn:
@@ -1296,7 +1532,11 @@ class SqliteFtsBackend:
         return await asyncio.to_thread(_search)
 
     async def semantic_search(
-        self, query_vector: Sequence[float], path: str, k: int, zone_id: str,
+        self,
+        query_vector: Sequence[float],
+        path: str,
+        k: int,
+        zone_id: str,
     ) -> list[BaseSearchResult]:
         return []  # Semantic lives in sqlite_vec_backend.
 ```
@@ -1357,7 +1597,11 @@ The failure message names the missing method. Add minimal stubs:
 
   ```python
   async def keyword_search(
-      self, query: str, path: str, k: int, zone_id: str,
+      self,
+      query: str,
+      path: str,
+      k: int,
+      zone_id: str,
   ) -> list[BaseSearchResult]:
       return []  # Semantic-only backend; SqliteFtsBackend handles keyword.
   ```
@@ -1418,38 +1662,49 @@ async def test_daemon_picks_pg_backends_for_postgres_url(daemon: SearchDaemon):
 @pytest.mark.asyncio
 async def test_daemon_keyword_mode(daemon: SearchDaemon, postgres_engine_clean):
     from sqlalchemy import text
+
     async with postgres_engine_clean.begin() as conn:
-        await conn.execute(text(
-            "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
-            "VALUES ('p1', 'z', '/z/a.txt', NULL)"
-        ))
-        await conn.execute(text(
-            "INSERT INTO document_chunks "
-            "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
-            "VALUES ('c1', 'p1', 0, 'the quick fox', 3, now())"
-        ))
+        await conn.execute(
+            text(
+                "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
+                "VALUES ('p1', 'z', '/z/a.txt', NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO document_chunks "
+                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
+                "VALUES ('c1', 'p1', 0, 'the quick fox', 3, now())"
+            )
+        )
     hits = await daemon.search("quick", path="/z/", limit=10, search_mode="keyword")
     assert [h.path for h in hits] == ["/z/a.txt"]
 
 
 @pytest.mark.asyncio
 async def test_daemon_hybrid_mode_calls_3way_fusion(
-    daemon: SearchDaemon, monkeypatch, postgres_engine_clean,
+    daemon: SearchDaemon,
+    monkeypatch,
+    postgres_engine_clean,
 ):
     """Hybrid mode = chunk-BM25 + page-BM25 + dense, fused via fusion module."""
     from nexus.bricks.search import fusion
     from sqlalchemy import text
 
     async with postgres_engine_clean.begin() as conn:
-        await conn.execute(text(
-            "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
-            "VALUES ('p1', 'z', '/z/a.txt', NULL)"
-        ))
-        await conn.execute(text(
-            "INSERT INTO document_chunks "
-            "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
-            "VALUES ('c1', 'p1', 0, 'alpha', 1, now())"
-        ))
+        await conn.execute(
+            text(
+                "INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at) "
+                "VALUES ('p1', 'z', '/z/a.txt', NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO document_chunks "
+                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
+                "VALUES ('c1', 'p1', 0, 'alpha', 1, now())"
+            )
+        )
 
     seen = {"calls": 0}
     real_rrf = fusion.rrf_fusion
@@ -1513,12 +1768,14 @@ def _build_backends(self, database_url: str):
     if "postgresql" in database_url:
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
         from nexus.bricks.search.pg_vector_backend import PgVectorBackend
+
         return (
             PgFtsBackend(engine=self._async_engine, chunk_store=self._chunk_store),
             PgVectorBackend(engine=self._async_engine, chunk_store=self._chunk_store),
         )
     from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
     from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
+
     return (
         SqliteFtsBackend(db_path=self._sqlite_path, chunk_store=self._chunk_store),
         SqliteVecBackend(db_path=self._sqlite_path),
@@ -1570,6 +1827,7 @@ async def search(
         page_kw = []
 
     from nexus.bricks.search.fusion import rrf_fusion
+
     # 3-way: fuse chunk+page first, then with dense.
     kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
     fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
@@ -1580,6 +1838,7 @@ Instantiate `EmbeddingClient` somewhere in `startup()` (use `self.config.embeddi
 
 ```python
 from nexus.bricks.search.embedding_client import EmbeddingClient
+
 self._embedding_client = EmbeddingClient(
     model=self.config.embedding_model,
     dim=getattr(self.config, "embedding_dimensions", 1536) or 1536,
@@ -1621,7 +1880,7 @@ from nexus.bricks.search.txtai_backend import (
 and from `__all__`:
 
 ```python
-"TxtaiBackend",
+("TxtaiBackend",)
 ```
 
 Add:
@@ -1635,9 +1894,9 @@ from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
 and to `__all__`:
 
 ```python
-"PgFtsBackend",
-"PgVectorBackend",
-"SqliteFtsBackend",
+("PgFtsBackend",)
+("PgVectorBackend",)
+("SqliteFtsBackend",)
 ```
 
 Also remove any `bm25s_search` exports.
@@ -1825,7 +2084,10 @@ async def main() -> int:
         for line in (eval_dir / "queries.jsonl").read_text().splitlines():
             q = json.loads(line)
             hits = await daemon.search(
-                q["query"], path="/", limit=10, search_mode="hybrid",
+                q["query"],
+                path="/",
+                limit=10,
+                search_mode="hybrid",
             )
             top5 = [h.path for h in hits[:5]]
             relevant = set(q["relevant"])
@@ -1848,9 +2110,8 @@ async def main() -> int:
 
 def _ndcg(predicted: list[str], relevant: set[str]) -> float:
     import math
-    dcg = sum(
-        1.0 / math.log2(i + 2) for i, p in enumerate(predicted) if p in relevant
-    )
+
+    dcg = sum(1.0 / math.log2(i + 2) for i, p in enumerate(predicted) if p in relevant)
     ideal = sum(1.0 / math.log2(i + 2) for i in range(min(len(predicted), len(relevant))))
     return dcg / ideal if ideal > 0 else 0.0
 

@@ -33,7 +33,7 @@ manager.save_mount(
     mount_point="/personal/alice",
     backend_type="google_drive",
     backend_config={"access_token": "...", "user_email": "..."},
-owner_user_id="google:alice123"
+    owner_user_id="google:alice123",
 )
 
 # List mounts
@@ -66,16 +66,15 @@ mount_id = manager.save_mount(
     mount_point="/personal/alice",
     backend_type="google_drive",
     backend_config={"access_token": "...", "user_email": "..."},
-readonly=False,
+    readonly=False,
     owner_user_id="google:alice123",
     zone_id="acme",
-    description="Alice's Google Drive"
+    description="Alice's Google Drive",
 )
 
 # Update mount (e.g., refresh token)
 manager.update_mount(
-    mount_point="/personal/alice",
-    backend_config={"access_token": "new_token", "user_email": "..."}
+    mount_point="/personal/alice", backend_config={"access_token": "new_token", "user_email": "..."}
 )
 
 # Get mount from database
@@ -136,13 +135,14 @@ def on_user_login(user_id, user_email, google_token, refresh_token):
             backend_config={
                 "access_token": google_token,
                 "refresh_token": refresh_token,
-                "user_email": user_email
+                "user_email": user_email,
             },
-            owner_user_id=user_id
+            owner_user_id=user_id,
         )
 
         # Mount immediately
         from your_backends import GoogleDriveBackend
+
         nx.router.add_mount(
             mount_point,
             GoogleDriveBackend(access_token=google_token, user_email=user_email),
@@ -161,8 +161,8 @@ def on_user_login(user_id, user_email, google_token, refresh_token):
             backend_config={
                 "access_token": google_token,
                 "refresh_token": refresh_token,
-                "user_email": user_email
-            }
+                "user_email": user_email,
+            },
         )
 
         # Update router mount (recreate backend)
@@ -170,6 +170,7 @@ def on_user_login(user_id, user_email, google_token, refresh_token):
             nx.router.remove_mount(mount_point)
 
         from your_backends import GoogleDriveBackend
+
         nx.router.add_mount(
             mount_point,
             GoogleDriveBackend(access_token=google_token, user_email=user_email),
@@ -184,12 +185,15 @@ def restore_all_mounts():
     def backend_factory(backend_type, config):
         if backend_type == "google_drive":
             from your_backends import GoogleDriveBackend
+
             return GoogleDriveBackend(**config)
         elif backend_type == "gcs":
             from nexus import GCSBackend
+
             return GCSBackend(**config)
         elif backend_type == "local":
             from nexus import LocalBackend
+
             return LocalBackend(**config)
         else:
             raise ValueError(f"Unknown backend: {backend_type}")
@@ -288,10 +292,10 @@ print(f"Config: {mount['backend_config']}")
 manager.save_mount(
     ...,
     backend_config={
-        "access_token": "...",      # Expires in 1 hour
-        "refresh_token": "...",     # ✅ Use this to get new access tokens
-        "user_email": "..."
-    }
+        "access_token": "...",  # Expires in 1 hour
+        "refresh_token": "...",  # ✅ Use this to get new access tokens
+        "user_email": "...",
+    },
 )
 ```
 
@@ -312,11 +316,7 @@ for mc in mount_configs:
 ### 3. Backend Config is JSON
 ```python
 # Good: Serializable types
-backend_config = {
-    "access_token": "string",
-    "user_email": "string",
-    "bucket_name": "string"
-}
+backend_config = {"access_token": "string", "user_email": "string", "bucket_name": "string"}
 
 # Bad: Non-serializable types
 backend_config = {
@@ -332,20 +332,14 @@ backend_config = {
 ```python
 # Mount each user's personal Google Drive when they join
 manager.save_mount(
-    f"/personal/{user_id}",
-    "google_drive",
-    {"access_token": "...", "user_email": "..."}
+    f"/personal/{user_id}", "google_drive", {"access_token": "...", "user_email": "..."}
 )
 ```
 
 ### ✅ Team Shared Buckets
 ```python
 # Mount team-specific GCS buckets
-manager.save_mount(
-    f"/teams/{team_id}/bucket",
-    "gcs",
-    {"bucket_name": f"team-{team_id}-data"}
-)
+manager.save_mount(f"/teams/{team_id}/bucket", "gcs", {"bucket_name": f"team-{team_id}-data"})
 ```
 
 ### ✅ Multi-Region Storage
@@ -358,12 +352,7 @@ manager.save_mount("/eu-central", "s3", {"bucket": "data-eu", "region": "eu-cent
 ### ✅ Legacy Data Migration
 ```python
 # Mount old storage as read-only
-manager.save_mount(
-    "/legacy/data",
-    "local",
-    {"root_path": "/mnt/old-storage"},
-    readonly=True
-)
+manager.save_mount("/legacy/data", "local", {"root_path": "/mnt/old-storage"}, readonly=True)
 ```
 
 ---

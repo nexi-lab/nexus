@@ -77,11 +77,11 @@ engine = create_engine("sqlite:///nexus.db")
 # Default configuration (recommended)
 manager = ReBACManager(
     engine=engine,
-    enable_l1_cache=True,       # L1 cache enabled
-    l1_cache_size=10000,        # 10k entries (~1-2MB memory)
-    l1_cache_ttl=60,            # 60 second TTL
-    cache_ttl_seconds=300,      # L2 cache: 5 minutes
-    enable_metrics=True,        # Track hit rates
+    enable_l1_cache=True,  # L1 cache enabled
+    l1_cache_size=10000,  # 10k entries (~1-2MB memory)
+    l1_cache_ttl=60,  # 60 second TTL
+    cache_ttl_seconds=300,  # L2 cache: 5 minutes
+    enable_metrics=True,  # Track hit rates
     enable_adaptive_ttl=False,  # Optional: adjust TTL by write frequency
 )
 ```
@@ -152,9 +152,7 @@ The cache uses **precise invalidation** to minimize cache churn. When permission
 ```python
 # Grant alice read permission on /workspace/doc.txt
 manager.rebac_write(
-    subject=("agent", "alice"),
-    relation="viewer-of",
-    object=("file", "/workspace/doc.txt")
+    subject=("agent", "alice"), relation="viewer-of", object=("file", "/workspace/doc.txt")
 )
 
 # Cache invalidation happens automatically:
@@ -178,7 +176,7 @@ When enabled, the cache automatically adjusts TTL based on write frequency:
 # Enable adaptive TTL
 manager = ReBACManager(
     engine=engine,
-    enable_adaptive_ttl=True  # Adjust TTL dynamically
+    enable_adaptive_ttl=True,  # Adjust TTL dynamically
 )
 ```
 
@@ -271,7 +269,7 @@ from nexus.core.rebac_manager import ReBACManager
 
 manager = ReBACManager(
     engine=engine,
-    cache_ttl_seconds=300  # L2 cache only
+    cache_ttl_seconds=300,  # L2 cache only
 )
 ```
 
@@ -283,11 +281,11 @@ from nexus.core.rebac_manager import ReBACManager
 # L1 cache is enabled by default!
 manager = ReBACManager(
     engine=engine,
-    enable_l1_cache=True,       # NEW: L1 cache
-    l1_cache_size=10000,        # NEW: 10k entries
-    l1_cache_ttl=60,            # NEW: 60s TTL
-    cache_ttl_seconds=300,      # Existing L2 cache
-    enable_metrics=True,        # NEW: Track stats
+    enable_l1_cache=True,  # NEW: L1 cache
+    l1_cache_size=10000,  # NEW: 10k entries
+    l1_cache_ttl=60,  # NEW: 60s TTL
+    cache_ttl_seconds=300,  # Existing L2 cache
+    enable_metrics=True,  # NEW: Track stats
 )
 
 # Monitor performance

@@ -286,7 +286,9 @@ class TestErrorReprDiscipline:
         tenant = uuid.uuid4()
         pid = "google/alice"
         for cls in (EnvelopeConfigurationError, DecryptionFailed, AADMismatch, WrappedDEKInvalid):
-            err = cls.from_row(tenant_id=tenant, profile_id=pid, kek_version=7, cause="RuntimeError")
+            err = cls.from_row(
+                tenant_id=tenant, profile_id=pid, kek_version=7, cause="RuntimeError"
+            )
             text = f"{err} || {err!r}"
             assert str(tenant) in text
             assert pid in text
@@ -739,9 +741,7 @@ class InMemoryEncryptionProvider(EncryptionProvider):
     def _context_aad(self, tenant_id: uuid.UUID, aad: bytes) -> bytes:
         return f"v=inmem|tenant={tenant_id}|".encode() + aad
 
-    def wrap_dek(
-        self, dek: bytes, *, tenant_id: uuid.UUID, aad: bytes
-    ) -> tuple[bytes, int]:
+    def wrap_dek(self, dek: bytes, *, tenant_id: uuid.UUID, aad: bytes) -> tuple[bytes, int]:
         self.wrap_count += 1
         version = self._current_version
         kek = self._versions[version]
@@ -1027,9 +1027,7 @@ class CredentialCarryingProfileStore(AuthProfileStore, Protocol):
     returns ``(profile, None)`` in that case.
     """
 
-    def upsert_with_credential(
-        self, profile: AuthProfile, credential: ResolvedCredential
-    ) -> None:
+    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
         """Insert or update ``profile`` and store ``credential`` encrypted."""
         ...
 
@@ -1197,42 +1195,44 @@ Expected: FAIL — columns `ciphertext`/`wrapped_dek`/`nonce`/`aad` don't exist 
 In `src/nexus/bricks/auth/postgres_profile_store.py`, extend the `auth_profiles` CREATE TABLE inside `_TABLE_STATEMENTS`:
 
 ```python
+(
     """
-    CREATE TABLE IF NOT EXISTS auth_profiles (
-        tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        principal_id       UUID NOT NULL,
-        id                 TEXT NOT NULL,
-        provider           TEXT NOT NULL,
-        account_identifier TEXT NOT NULL,
-        backend            TEXT NOT NULL,
-        backend_key        TEXT NOT NULL,
-        last_synced_at     TIMESTAMPTZ,
-        sync_ttl_seconds   INTEGER NOT NULL DEFAULT 300,
-        last_used_at       TIMESTAMPTZ,
-        success_count      INTEGER NOT NULL DEFAULT 0,
-        failure_count      INTEGER NOT NULL DEFAULT 0,
-        cooldown_until     TIMESTAMPTZ,
-        cooldown_reason    TEXT,
-        disabled_until     TIMESTAMPTZ,
-        raw_error          TEXT,
-        ciphertext         BYTEA,
-        wrapped_dek        BYTEA,
-        nonce              BYTEA,
-        aad                BYTEA,
-        kek_version        INTEGER,
-        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (tenant_id, principal_id, id),
-        FOREIGN KEY (principal_id, tenant_id)
-            REFERENCES principals(id, tenant_id) ON DELETE CASCADE,
-        CONSTRAINT auth_profiles_envelope_all_or_none CHECK (
-            (ciphertext IS NULL) = (wrapped_dek IS NULL)
-            AND (ciphertext IS NULL) = (nonce IS NULL)
-            AND (ciphertext IS NULL) = (aad IS NULL)
-            AND (ciphertext IS NULL) = (kek_version IS NULL)
-        )
+CREATE TABLE IF NOT EXISTS auth_profiles (
+    tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    principal_id       UUID NOT NULL,
+    id                 TEXT NOT NULL,
+    provider           TEXT NOT NULL,
+    account_identifier TEXT NOT NULL,
+    backend            TEXT NOT NULL,
+    backend_key        TEXT NOT NULL,
+    last_synced_at     TIMESTAMPTZ,
+    sync_ttl_seconds   INTEGER NOT NULL DEFAULT 300,
+    last_used_at       TIMESTAMPTZ,
+    success_count      INTEGER NOT NULL DEFAULT 0,
+    failure_count      INTEGER NOT NULL DEFAULT 0,
+    cooldown_until     TIMESTAMPTZ,
+    cooldown_reason    TEXT,
+    disabled_until     TIMESTAMPTZ,
+    raw_error          TEXT,
+    ciphertext         BYTEA,
+    wrapped_dek        BYTEA,
+    nonce              BYTEA,
+    aad                BYTEA,
+    kek_version        INTEGER,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, principal_id, id),
+    FOREIGN KEY (principal_id, tenant_id)
+        REFERENCES principals(id, tenant_id) ON DELETE CASCADE,
+    CONSTRAINT auth_profiles_envelope_all_or_none CHECK (
+        (ciphertext IS NULL) = (wrapped_dek IS NULL)
+        AND (ciphertext IS NULL) = (nonce IS NULL)
+        AND (ciphertext IS NULL) = (aad IS NULL)
+        AND (ciphertext IS NULL) = (kek_version IS NULL)
     )
-    """,
+)
+""",
+)
 ```
 
 - [ ] **Step 4: Add upgrade path in `_upgrade_shape_in_place`**
@@ -1240,37 +1240,30 @@ In `src/nexus/bricks/auth/postgres_profile_store.py`, extend the `auth_profiles`
 Append inside `_upgrade_shape_in_place`, after the existing `auth_profiles` upgrade block:
 
 ```python
-    # --- auth_profiles: envelope encryption columns (issue #3803) ---
-    for col, decl in (
-        ("ciphertext", "BYTEA"),
-        ("wrapped_dek", "BYTEA"),
-        ("nonce", "BYTEA"),
-        ("aad", "BYTEA"),
-        ("kek_version", "INTEGER"),
-    ):
-        conn.execute(
-            text(
-                f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"
-            )
-        )
-    # CHECK constraint. Use DROP ... IF EXISTS + ADD for idempotency.
-    conn.execute(
-        text(
-            "ALTER TABLE auth_profiles "
-            "DROP CONSTRAINT IF EXISTS auth_profiles_envelope_all_or_none"
-        )
+# --- auth_profiles: envelope encryption columns (issue #3803) ---
+for col, decl in (
+    ("ciphertext", "BYTEA"),
+    ("wrapped_dek", "BYTEA"),
+    ("nonce", "BYTEA"),
+    ("aad", "BYTEA"),
+    ("kek_version", "INTEGER"),
+):
+    conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
+# CHECK constraint. Use DROP ... IF EXISTS + ADD for idempotency.
+conn.execute(
+    text("ALTER TABLE auth_profiles DROP CONSTRAINT IF EXISTS auth_profiles_envelope_all_or_none")
+)
+conn.execute(
+    text(
+        "ALTER TABLE auth_profiles "
+        "ADD CONSTRAINT auth_profiles_envelope_all_or_none CHECK ("
+        "    (ciphertext IS NULL) = (wrapped_dek IS NULL)"
+        "    AND (ciphertext IS NULL) = (nonce IS NULL)"
+        "    AND (ciphertext IS NULL) = (aad IS NULL)"
+        "    AND (ciphertext IS NULL) = (kek_version IS NULL)"
+        ")"
     )
-    conn.execute(
-        text(
-            "ALTER TABLE auth_profiles "
-            "ADD CONSTRAINT auth_profiles_envelope_all_or_none CHECK ("
-            "    (ciphertext IS NULL) = (wrapped_dek IS NULL)"
-            "    AND (ciphertext IS NULL) = (nonce IS NULL)"
-            "    AND (ciphertext IS NULL) = (aad IS NULL)"
-            "    AND (ciphertext IS NULL) = (kek_version IS NULL)"
-            ")"
-        )
-    )
+)
 ```
 
 - [ ] **Step 5: Run the new test + the existing postgres test suite**
@@ -1344,9 +1337,7 @@ class TestEncryptedUpsertAndGet:
         assert c.access_token == "ya29.fake"
         assert c.scopes == ("https://www.googleapis.com/auth/userinfo.email",)
 
-    def test_get_returns_none_for_missing(
-        self, pg_store_crypto: PostgresAuthProfileStore
-    ) -> None:
+    def test_get_returns_none_for_missing(self, pg_store_crypto: PostgresAuthProfileStore) -> None:
         assert pg_store_crypto.get_with_credential("does-not-exist") is None
 
     def test_pr1_row_returns_none_credential(
@@ -1466,138 +1457,132 @@ Extend the ctor signature:
 Add helpers + new methods. Place them right before `# Tenant-wide helpers`:
 
 ```python
-    # ------------------------------------------------------------------
-    # Envelope encryption (issue #3803)
-    # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Envelope encryption (issue #3803)
+# ------------------------------------------------------------------
 
-    def _require_provider(self) -> EncryptionProvider:
-        if self._encryption_provider is None:
-            raise RuntimeError(
-                "encryption_provider is required for upsert_with_credential / "
-                "get_with_credential — construct PostgresAuthProfileStore(..., "
-                "encryption_provider=...)"
-            )
-        return self._encryption_provider
 
-    def _aad_for(self, profile_id: str) -> bytes:
-        return f"{self._tenant_id}|{self._principal_id}|{profile_id}".encode("utf-8")
-
-    @staticmethod
-    def _serialize_credential(cred: ResolvedCredential) -> bytes:
-        # Canonical JSON: sorted keys, compact separators. Deterministic for
-        # rotation rewrap; any change here breaks existing ciphertext readability.
-        payload = asdict(cred)
-        # datetime → ISO 8601 string
-        if payload.get("expires_at") is not None:
-            payload["expires_at"] = cred.expires_at.isoformat()  # type: ignore[union-attr]
-        # tuple → list (JSON has no tuple)
-        payload["scopes"] = list(cred.scopes)
-        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-    @staticmethod
-    def _deserialize_credential(data: bytes) -> ResolvedCredential:
-        raw = json.loads(data.decode("utf-8"))
-        expires_at = raw.get("expires_at")
-        if isinstance(expires_at, str):
-            expires_at = datetime.fromisoformat(expires_at)
-        return ResolvedCredential(
-            kind=raw["kind"],
-            api_key=raw.get("api_key"),
-            access_token=raw.get("access_token"),
-            expires_at=expires_at,
-            scopes=tuple(raw.get("scopes", ())),
-            metadata=raw.get("metadata", {}) or {},
+def _require_provider(self) -> EncryptionProvider:
+    if self._encryption_provider is None:
+        raise RuntimeError(
+            "encryption_provider is required for upsert_with_credential / "
+            "get_with_credential — construct PostgresAuthProfileStore(..., "
+            "encryption_provider=...)"
         )
+    return self._encryption_provider
 
-    def upsert_with_credential(
-        self, profile: AuthProfile, credential: ResolvedCredential
-    ) -> None:
-        provider = self._require_provider()
-        aad = self._aad_for(profile.id)
-        dek = secrets.token_bytes(32)
-        nonce, ciphertext = self._aesgcm.encrypt(
-            dek, self._serialize_credential(credential), aad=aad
-        )
-        wrapped_dek, kek_version = provider.wrap_dek(
-            dek, tenant_id=self._tenant_id, aad=aad
-        )
-        params = _profile_params(
-            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
-        )
-        params.update(
-            ciphertext=ciphertext,
-            wrapped_dek=wrapped_dek,
-            nonce=nonce,
-            aad=aad,
-            kek_version=kek_version,
-        )
-        lock_key = f"{self._tenant_id}/{profile.id}"
-        with self._scoped() as conn:
-            conn.execute(
-                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
-                {"k": lock_key},
-            )
-            conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
 
-    def get_with_credential(
-        self, profile_id: str
-    ) -> tuple[AuthProfile, ResolvedCredential | None] | None:
-        provider = self._require_provider()
-        with self._scoped() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT *, ciphertext, wrapped_dek, nonce, aad, kek_version "
-                    "FROM auth_profiles "
-                    "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
-                ),
-                {
-                    "tid": self._tenant_id,
-                    "pid": self._principal_id,
-                    "id": profile_id,
-                },
-            ).fetchone()
-        if row is None:
-            return None
-        profile = _row_to_profile(row)
-        if row.ciphertext is None:
-            return profile, None
-        expected_aad = self._aad_for(profile_id)
-        if bytes(row.aad) != expected_aad:
-            raise AADMismatch.from_row(
-                tenant_id=self._tenant_id,
-                profile_id=profile_id,
-                kek_version=row.kek_version,
-                cause="stored AAD does not match tenant|principal|profile_id",
-            )
-        cache_key = self._dek_cache.make_key(
+def _aad_for(self, profile_id: str) -> bytes:
+    return f"{self._tenant_id}|{self._principal_id}|{profile_id}".encode("utf-8")
+
+
+@staticmethod
+def _serialize_credential(cred: ResolvedCredential) -> bytes:
+    # Canonical JSON: sorted keys, compact separators. Deterministic for
+    # rotation rewrap; any change here breaks existing ciphertext readability.
+    payload = asdict(cred)
+    # datetime → ISO 8601 string
+    if payload.get("expires_at") is not None:
+        payload["expires_at"] = cred.expires_at.isoformat()  # type: ignore[union-attr]
+    # tuple → list (JSON has no tuple)
+    payload["scopes"] = list(cred.scopes)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+@staticmethod
+def _deserialize_credential(data: bytes) -> ResolvedCredential:
+    raw = json.loads(data.decode("utf-8"))
+    expires_at = raw.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    return ResolvedCredential(
+        kind=raw["kind"],
+        api_key=raw.get("api_key"),
+        access_token=raw.get("access_token"),
+        expires_at=expires_at,
+        scopes=tuple(raw.get("scopes", ())),
+        metadata=raw.get("metadata", {}) or {},
+    )
+
+
+def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
+    provider = self._require_provider()
+    aad = self._aad_for(profile.id)
+    dek = secrets.token_bytes(32)
+    nonce, ciphertext = self._aesgcm.encrypt(dek, self._serialize_credential(credential), aad=aad)
+    wrapped_dek, kek_version = provider.wrap_dek(dek, tenant_id=self._tenant_id, aad=aad)
+    params = _profile_params(profile, tenant_id=self._tenant_id, principal_id=self._principal_id)
+    params.update(
+        ciphertext=ciphertext,
+        wrapped_dek=wrapped_dek,
+        nonce=nonce,
+        aad=aad,
+        kek_version=kek_version,
+    )
+    lock_key = f"{self._tenant_id}/{profile.id}"
+    with self._scoped() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+            {"k": lock_key},
+        )
+        conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+
+
+def get_with_credential(
+    self, profile_id: str
+) -> tuple[AuthProfile, ResolvedCredential | None] | None:
+    provider = self._require_provider()
+    with self._scoped() as conn:
+        row = conn.execute(
+            text(
+                "SELECT *, ciphertext, wrapped_dek, nonce, aad, kek_version "
+                "FROM auth_profiles "
+                "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
+            ),
+            {
+                "tid": self._tenant_id,
+                "pid": self._principal_id,
+                "id": profile_id,
+            },
+        ).fetchone()
+    if row is None:
+        return None
+    profile = _row_to_profile(row)
+    if row.ciphertext is None:
+        return profile, None
+    expected_aad = self._aad_for(profile_id)
+    if bytes(row.aad) != expected_aad:
+        raise AADMismatch.from_row(
             tenant_id=self._tenant_id,
+            profile_id=profile_id,
             kek_version=row.kek_version,
-            wrapped_dek=bytes(row.wrapped_dek),
+            cause="stored AAD does not match tenant|principal|profile_id",
         )
-        tenant_label = str(self._tenant_id)
-        dek = self._dek_cache.get(cache_key)
-        if dek is None:
-            DEK_CACHE_MISSES.labels(tenant_id=tenant_label).inc()
-            try:
-                with DEK_UNWRAP_LATENCY.labels(tenant_id=tenant_label).time():
-                    dek = provider.unwrap_dek(
-                        bytes(row.wrapped_dek),
-                        tenant_id=self._tenant_id,
-                        aad=expected_aad,
-                        kek_version=row.kek_version,
-                    )
-            except Exception as exc:  # real error class recorded below
-                DEK_UNWRAP_ERRORS.labels(
-                    tenant_id=tenant_label, error_class=type(exc).__name__
-                ).inc()
-                raise
-            self._dek_cache.put(cache_key, dek)
-        else:
-            DEK_CACHE_HITS.labels(tenant_id=tenant_label).inc()
-        plaintext = self._aesgcm.decrypt(
-            dek, bytes(row.nonce), bytes(row.ciphertext), aad=expected_aad
-        )
-        return profile, self._deserialize_credential(plaintext)
+    cache_key = self._dek_cache.make_key(
+        tenant_id=self._tenant_id,
+        kek_version=row.kek_version,
+        wrapped_dek=bytes(row.wrapped_dek),
+    )
+    tenant_label = str(self._tenant_id)
+    dek = self._dek_cache.get(cache_key)
+    if dek is None:
+        DEK_CACHE_MISSES.labels(tenant_id=tenant_label).inc()
+        try:
+            with DEK_UNWRAP_LATENCY.labels(tenant_id=tenant_label).time():
+                dek = provider.unwrap_dek(
+                    bytes(row.wrapped_dek),
+                    tenant_id=self._tenant_id,
+                    aad=expected_aad,
+                    kek_version=row.kek_version,
+                )
+        except Exception as exc:  # real error class recorded below
+            DEK_UNWRAP_ERRORS.labels(tenant_id=tenant_label, error_class=type(exc).__name__).inc()
+            raise
+        self._dek_cache.put(cache_key, dek)
+    else:
+        DEK_CACHE_HITS.labels(tenant_id=tenant_label).inc()
+    plaintext = self._aesgcm.decrypt(dek, bytes(row.nonce), bytes(row.ciphertext), aad=expected_aad)
+    return profile, self._deserialize_credential(plaintext)
 ```
 
 Add the new upsert SQL constant near `_UPSERT_SQL`:
@@ -1723,9 +1708,7 @@ class TestSwapAttackRejected:
             # Write B as routing-only (so row exists), then copy A's ciphertext.
             store_b.upsert(make_profile("shared-id"))
             with pg_engine.begin() as conn:
-                conn.execute(
-                    text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t_a)}
-                )
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t_a)})
                 row_a = conn.execute(
                     text(
                         "SELECT ciphertext, wrapped_dek, nonce, aad, kek_version "
@@ -1735,9 +1718,7 @@ class TestSwapAttackRejected:
                 ).fetchone()
             assert row_a is not None
             with pg_engine.begin() as conn:
-                conn.execute(
-                    text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t_b)}
-                )
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t_b)})
                 conn.execute(
                     text(
                         "UPDATE auth_profiles SET "
@@ -1813,9 +1794,7 @@ class TestAADMismatch:
             ResolvedCredential(kind="api_key", api_key="k"),
         )
         with pg_engine.begin() as conn:
-            conn.execute(
-                text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)}
-            )
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
             conn.execute(
                 text(
                     "UPDATE auth_profiles SET aad = :bad "
@@ -2137,13 +2116,10 @@ class TestRotateKEKFailures:
         # Wrap the provider: fail on the middle row's wrapped_dek only.
         middle_wrapped = None
         with pg_engine.begin() as conn:
-            conn.execute(
-                text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)}
-            )
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
             row = conn.execute(
                 text(
-                    "SELECT wrapped_dek FROM auth_profiles "
-                    "WHERE tenant_id = :tid AND id = 'fail-1'"
+                    "SELECT wrapped_dek FROM auth_profiles WHERE tenant_id = :tid AND id = 'fail-1'"
                 ),
                 {"tid": tenant_id},
             ).fetchone()
@@ -2279,9 +2255,7 @@ def pg_engine() -> Generator[Engine, None, None]:
 def seeded_tenant(pg_engine: Engine) -> tuple[uuid.UUID, InMemoryEncryptionProvider]:
     """Return (tenant_id, encryption_provider) with 2 rows at v1, provider at v2."""
     t = ensure_tenant(pg_engine, f"rot-{uuid.uuid4()}")
-    p = ensure_principal(
-        pg_engine, tenant_id=t, external_sub=f"s-{uuid.uuid4()}", auth_method="t"
-    )
+    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"s-{uuid.uuid4()}", auth_method="t")
     prov = InMemoryEncryptionProvider()
     store = PostgresAuthProfileStore(
         PG_URL, tenant_id=t, principal_id=p, engine=pg_engine, encryption_provider=prov
@@ -2416,9 +2390,7 @@ _TEST_PROVIDER_REGISTRY: dict[str, "object"] = {}
 @click.option(
     "--apply", is_flag=True, default=False, help="Actually rewrap rows (default: dry-run)."
 )
-@click.option(
-    "--batch-size", default=100, show_default=True, help="Rows per batch."
-)
+@click.option("--batch-size", default=100, show_default=True, help="Rows per batch.")
 @click.option(
     "--max-rows",
     default=None,
@@ -2451,9 +2423,7 @@ def auth_rotate_kek(
     if test_provider_id:
         factory = _TEST_PROVIDER_REGISTRY.get(test_provider_id)
         if factory is None:
-            raise click.ClickException(
-                f"Test provider id {test_provider_id!r} not registered"
-            )
+            raise click.ClickException(f"Test provider id {test_provider_id!r} not registered")
         provider = factory()
     else:
         raise click.ClickException(
@@ -2480,9 +2450,7 @@ def auth_rotate_kek(
             # Dry-run: count stale rows at each version without rewrapping
             target = provider.current_version(tenant_id=tenant_id)
             with engine.begin() as conn:
-                conn.execute(
-                    text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)}
-                )
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
                 stale = conn.execute(
                     text(
                         "SELECT kek_version, COUNT(*) FROM auth_profiles "
@@ -2514,8 +2482,7 @@ def auth_rotate_kek(
         )
         if report.rows_failed:
             click.echo(
-                f"WARNING: {report.rows_failed} rows failed to rewrap — "
-                "see logs for details",
+                f"WARNING: {report.rows_failed} rows failed to rewrap — see logs for details",
                 err=True,
             )
     finally:
@@ -2687,9 +2654,7 @@ class VaultTransitProvider(EncryptionProvider):
             )
 
     def current_version(self, *, tenant_id: uuid.UUID) -> int:
-        resp = self._client.secrets.transit.read_key(
-            name=self._key_name, mount_point=self._mount
-        )
+        resp = self._client.secrets.transit.read_key(name=self._key_name, mount_point=self._mount)
         data = resp.get("data", {})
         return int(data.get("latest_version", 1))
 
@@ -2910,9 +2875,7 @@ class AwsKmsProvider(EncryptionProvider):
     def current_version(self, *, tenant_id: uuid.UUID) -> int:
         return self._config_version
 
-    def wrap_dek(
-        self, dek: bytes, *, tenant_id: uuid.UUID, aad: bytes
-    ) -> tuple[bytes, int]:
+    def wrap_dek(self, dek: bytes, *, tenant_id: uuid.UUID, aad: bytes) -> tuple[bytes, int]:
         resp = self._kms.encrypt(
             KeyId=self._key_id,
             Plaintext=dek,

@@ -1262,28 +1262,30 @@ fn flush_due_write_buffer(&self) -> Result<crate::kernel::FlushWriteBufferResult
 Add to `ContentMixin` in `src/nexus/core/nexus_fs_content.py`:
 
 ```python
-    def flush_write_buffer(
-        self,
-        path: str | None = None,
-        zone_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Force buffered kernel writes to backend/metastore."""
-        effective_zone = zone_id or self._zone_id
-        result = self._kernel.flush_write_buffer(path, effective_zone)
-        return {
-            "flushed": int(getattr(result, "flushed", 0)),
-            "failed": int(getattr(result, "failed", 0)),
-            "errors": list(getattr(result, "errors", [])),
-        }
+def flush_write_buffer(
+    self,
+    path: str | None = None,
+    zone_id: str | None = None,
+) -> dict[str, Any]:
+    """Force buffered kernel writes to backend/metastore."""
+    effective_zone = zone_id or self._zone_id
+    result = self._kernel.flush_write_buffer(path, effective_zone)
+    return {
+        "flushed": int(getattr(result, "flushed", 0)),
+        "failed": int(getattr(result, "failed", 0)),
+        "errors": list(getattr(result, "errors", [])),
+    }
 
-    def fsync(self, path: str) -> dict[str, Any]:
-        """Flush buffered writes for one path."""
-        path = self._validate_path(path)
-        return self.flush_write_buffer(path, self._zone_id)
 
-    def sync(self, zone_id: str | None = None) -> dict[str, Any]:
-        """Flush buffered writes for this filesystem zone."""
-        return self.flush_write_buffer(None, zone_id or self._zone_id)
+def fsync(self, path: str) -> dict[str, Any]:
+    """Flush buffered writes for one path."""
+    path = self._validate_path(path)
+    return self.flush_write_buffer(path, self._zone_id)
+
+
+def sync(self, zone_id: str | None = None) -> dict[str, Any]:
+    """Flush buffered writes for this filesystem zone."""
+    return self.flush_write_buffer(None, zone_id or self._zone_id)
 ```
 
 - [ ] **Step 5: Regenerate ABI files**
@@ -1308,9 +1310,9 @@ _EXTRA_KERNEL_SYSCALL_NAMES = {"flush_write_buffer", "fsync", "sync"}
 The generated dispatch file must include:
 
 ```python
-"flush_write_buffer",
-"fsync",
-"sync",
+("flush_write_buffer",)
+("fsync",)
+("sync",)
 ```
 
 and aliases:
@@ -1439,7 +1441,9 @@ class _Backend:
         return SimpleNamespace(content_id="manifest")
 
 
-def test_create_snapshot_flushes_workspace_prefix_before_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_snapshot_flushes_workspace_prefix_before_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     class Kernel:

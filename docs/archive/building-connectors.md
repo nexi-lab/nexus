@@ -70,14 +70,14 @@ class MyServiceConnectorBackend(
     # Operation traits define validation requirements
     OPERATION_TRAITS = {
         "create_item": OpTraits(
-            reversibility=Reversibility.FULL,      # Can be undone
-            confirm=ConfirmLevel.INTENT,           # Needs agent_intent
-            checkpoint=True,                        # Enable rollback
-            intent_min_length=10,                   # Min chars for intent
+            reversibility=Reversibility.FULL,  # Can be undone
+            confirm=ConfirmLevel.INTENT,  # Needs agent_intent
+            checkpoint=True,  # Enable rollback
+            intent_min_length=10,  # Min chars for intent
         ),
         "delete_item": OpTraits(
-            reversibility=Reversibility.NONE,      # Cannot undo
-            confirm=ConfirmLevel.EXPLICIT,         # Needs confirm: true
+            reversibility=Reversibility.NONE,  # Cannot undo
+            confirm=ConfirmLevel.EXPLICIT,  # Needs confirm: true
             checkpoint=True,
             intent_min_length=10,
         ),
@@ -355,6 +355,7 @@ class TestTraitValidation:
 ```python
 # scripts/test_myservice_e2e.py
 
+
 def test_skill_md_generation(backend):
     doc = backend.generate_skill_doc("/mnt/myservice/")
     assert "# MyService Connector" in doc
@@ -381,6 +382,7 @@ def __init__(self, token_manager_db: str, user_email: str | None = None):
     self.token_manager = TokenManager(db_url=token_manager_db)
     self.user_email = user_email
     self._register_oauth_provider()
+
 
 def _register_oauth_provider(self):
     from nexus.server.auth.oauth_factory import OAuthProviderFactory

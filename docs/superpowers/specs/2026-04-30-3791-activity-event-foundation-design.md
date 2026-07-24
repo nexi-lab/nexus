@@ -107,7 +107,7 @@ from nexus.services.activity import emit, EventKind, Result
 
 emit(
     kind=EventKind.SEARCH,
-    actor_token_hash=token_hash,        # 16-char sha256 prefix; never raw token
+    actor_token_hash=token_hash,  # 16-char sha256 prefix; never raw token
     actor_agent="claude-myapp",
     actor_user="alice",
     subject_zone="eng",
@@ -227,7 +227,7 @@ Multi-sink config (`[activity]` config-file block) lands with the OTEL/JSONL/web
 Add an entry to `src/nexus/server/lifespan/observability.py`:
 
 ```python
-("activity", "nexus.services.activity.lifespan", "setup_activity", "shutdown_activity"),
+(("activity", "nexus.services.activity.lifespan", "setup_activity", "shutdown_activity"),)
 ```
 
 `setup_activity()`:

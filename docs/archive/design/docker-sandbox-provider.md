@@ -464,10 +464,7 @@ CLEANUP (Background)
 from nexus import NexusFS, LocalBackend
 
 # Option 1: Use default Python image
-nx = NexusFS(
-    backend=LocalBackend(),
-    sandbox_provider="docker"
-)
+nx = NexusFS(backend=LocalBackend(), sandbox_provider="docker")
 
 # Option 2: Custom configuration
 nx = NexusFS(
@@ -477,17 +474,16 @@ nx = NexusFS(
         "docker_image": "python:3.11-slim",
         "memory_limit": "1g",
         "cpu_limit": 2.0,
-        "cleanup_interval": 120
-    }
+        "cleanup_interval": 120,
+    },
 )
 
 # Option 3: Custom Docker client
 import docker
+
 client = docker.from_env()
 nx = NexusFS(
-    backend=LocalBackend(),
-    sandbox_provider="docker",
-    sandbox_config={"docker_client": client}
+    backend=LocalBackend(), sandbox_provider="docker", sandbox_config={"docker_client": client}
 )
 ```
 
@@ -498,16 +494,13 @@ nx = NexusFS(
 sandbox = nx.sandbox_create(
     name="dev-env",
     ttl_minutes=30,
-    template_id="python:3.11-slim"  # Docker image
+    template_id="python:3.11-slim",  # Docker image
 )
 # Returns: {"sandbox_id": "a1b2c3d4e5f6", "status": "active", ...}
 
 # Run code
 result = nx.sandbox_run(
-    sandbox["sandbox_id"],
-    language="python",
-    code='print("Hello from Docker!")',
-    timeout=10
+    sandbox["sandbox_id"], language="python", code='print("Hello from Docker!")', timeout=10
 )
 # Returns: CodeExecutionResult(stdout="Hello from Docker!\n", ...)
 
@@ -516,7 +509,7 @@ mount_result = nx.sandbox_connect(
     sandbox["sandbox_id"],
     nexus_url="http://localhost:2026",
     nexus_api_key="sk-your-key",
-    mount_path="/mnt/nexus"
+    mount_path="/mnt/nexus",
 )
 # Returns: {"success": True, "files_visible": 10, ...}
 
@@ -633,10 +626,10 @@ WORKDIR /home/nexus
 # Only add SYS_ADMIN for FUSE, not privileged mode
 container = docker_client.containers.run(
     image=image,
-    cap_add=['SYS_ADMIN'],  # FUSE only
-    privileged=False,       # Never use privileged
-    security_opt=['no-new-privileges'],
-    read_only=False  # FUSE needs write access
+    cap_add=["SYS_ADMIN"],  # FUSE only
+    privileged=False,  # Never use privileged
+    security_opt=["no-new-privileges"],
+    read_only=False,  # FUSE needs write access
 )
 ```
 
@@ -645,24 +638,24 @@ container = docker_client.containers.run(
 **Memory Protection:**
 ```python
 # Prevent OOM attacks
-mem_limit="512m",
-memswap_limit="512m",  # No swap
-oom_kill_disable=False  # Allow OOM killer
+mem_limit = ("512m",)
+memswap_limit = ("512m",)  # No swap
+oom_kill_disable = False  # Allow OOM killer
 ```
 
 **CPU Protection:**
 ```python
 # Prevent CPU exhaustion
-cpu_quota=100000,  # 1 CPU core
-cpu_period=100000,
-cpu_shares=1024
+cpu_quota = (100000,)  # 1 CPU core
+cpu_period = (100000,)
+cpu_shares = 1024
 ```
 
 **Storage Protection:**
 ```python
 # Limit disk usage
-storage_opt={
-    'size': '10G'  # Max container size
+storage_opt = {
+    "size": "10G"  # Max container size
 }
 ```
 
@@ -671,20 +664,20 @@ storage_opt={
 **Isolated Network:**
 ```python
 # Use bridge network, not host
-network_mode='bridge',
+network_mode = ("bridge",)
 
 # No direct internet access (optional)
-network_disabled=True,  # If internet not needed
+network_disabled = (True,)  # If internet not needed
 
 # DNS restrictions
-dns=['8.8.8.8'],
-dns_search=[]
+dns = (["8.8.8.8"],)
+dns_search = []
 ```
 
 **Port Exposure:**
 ```python
 # Never expose ports unless explicitly needed
-ports={}  # No port mappings by default
+ports = {}  # No port mappings by default
 ```
 
 ### Secret Management
@@ -695,9 +688,7 @@ ports={}  # No port mappings by default
 logger.info(f"Mounting with api_key=***{api_key[-4:]}")
 
 # Pass via environment, not command args
-environment={
-    'NEXUS_API_KEY': api_key
-}
+environment = {"NEXUS_API_KEY": api_key}
 
 # Clean up environment after use
 container.exec_run("unset NEXUS_API_KEY")
@@ -708,9 +699,9 @@ container.exec_run("unset NEXUS_API_KEY")
 **Never Mount Docker Socket:**
 ```python
 # NEVER DO THIS - security vulnerability
-volumes={
-    '/var/run/docker.sock': {  # ❌ DANGEROUS
-        'bind': '/var/run/docker.sock'
+volumes = {
+    "/var/run/docker.sock": {  # ❌ DANGEROUS
+        "bind": "/var/run/docker.sock"
     }
 }
 ```
@@ -721,6 +712,7 @@ volumes={
 
 ```python
 # tests/core/test_sandbox_docker_provider.py
+
 
 class TestDockerSandboxProvider:
     async def test_create_sandbox(self):
@@ -735,12 +727,7 @@ class TestDockerSandboxProvider:
         provider = DockerSandboxProvider()
         sandbox_id = await provider.create()
 
-        result = await provider.run_code(
-            sandbox_id,
-            "python",
-            "print('test')",
-            timeout=5
-        )
+        result = await provider.run_code(sandbox_id, "python", "print('test')", timeout=5)
 
         assert result.stdout == "test\n"
         assert result.exit_code == 0
@@ -761,6 +748,7 @@ class TestDockerSandboxProvider:
 ```python
 # tests/integration/test_sandbox_docker_e2e.py
 
+
 class TestDockerSandboxE2E:
     async def test_full_workflow(self):
         """Test complete sandbox workflow."""
@@ -771,11 +759,7 @@ class TestDockerSandboxE2E:
         assert sandbox["status"] == "active"
 
         # Execute code
-        result = nx.sandbox_run(
-            sandbox["sandbox_id"],
-            "python",
-            "import sys; print(sys.version)"
-        )
+        result = nx.sandbox_run(sandbox["sandbox_id"], "python", "import sys; print(sys.version)")
         assert "3.11" in result.stdout
 
         # Mount Nexus
@@ -783,16 +767,12 @@ class TestDockerSandboxE2E:
         mount = nx.sandbox_connect(
             sandbox["sandbox_id"],
             nexus_url="http://localhost:2026",
-            nexus_api_key=os.getenv("NEXUS_API_KEY")
+            nexus_api_key=os.getenv("NEXUS_API_KEY"),
         )
         assert mount["success"]
 
         # Read from mount
-        result = nx.sandbox_run(
-            sandbox["sandbox_id"],
-            "bash",
-            "cat /mnt/nexus/test.txt"
-        )
+        result = nx.sandbox_run(sandbox["sandbox_id"], "bash", "cat /mnt/nexus/test.txt")
         assert result.stdout == "Hello"
 
         # Cleanup
@@ -803,6 +783,7 @@ class TestDockerSandboxE2E:
 
 ```python
 # tests/performance/test_sandbox_docker_perf.py
+
 
 class TestDockerPerformance:
     async def test_container_startup_time(self):
@@ -820,10 +801,7 @@ class TestDockerPerformance:
         provider = DockerSandboxProvider()
         sandbox_id = await provider.create()
 
-        tasks = [
-            provider.run_code(sandbox_id, "python", f"print({i})")
-            for i in range(10)
-        ]
+        tasks = [provider.run_code(sandbox_id, "python", f"print({i})") for i in range(10)]
 
         results = await asyncio.gather(*tasks)
         assert len(results) == 10
@@ -853,8 +831,7 @@ self._host_port, self._host_port_lock = self._find_available_port_with_lock()
 ```python
 # OpenHands uses tenacity for exponential backoff
 @tenacity.retry(
-    stop=tenacity.stop_after_delay(120),
-    wait=tenacity.wait_exponential(multiplier=1, min=4, max=15)
+    stop=tenacity.stop_after_delay(120), wait=tenacity.wait_exponential(multiplier=1, min=4, max=15)
 )
 def wait_until_alive(self):
     response = requests.get(f"{self.api_url}/health")
@@ -866,14 +843,11 @@ def wait_until_alive(self):
 ```python
 # OpenHands uses overlay for isolation
 Mount(
-    type='volume',
+    type="volume",
     driver_config=DriverConfig(
-        name='local',
-        options={
-            'type': 'overlay',
-            'o': f'lowerdir={host},upperdir={upper},workdir={work}'
-        }
-    )
+        name="local",
+        options={"type": "overlay", "o": f"lowerdir={host},upperdir={upper},workdir={work}"},
+    ),
 )
 ```
 
@@ -885,11 +859,13 @@ Mount(
 ```python
 # OpenHands builds from Dockerfiles with caching
 buildx_cmd = [
-    'docker', 'buildx', 'build',
-    '--cache-from=type=local,src=/tmp/.buildx-cache',
-    '--cache-to=type=local,dest=/tmp/.buildx-cache',
-    f'--tag={image_name}',
-    build_context_path
+    "docker",
+    "buildx",
+    "build",
+    "--cache-from=type=local,src=/tmp/.buildx-cache",
+    "--cache-to=type=local,dest=/tmp/.buildx-cache",
+    f"--tag={image_name}",
+    build_context_path,
 ]
 ```
 
@@ -914,11 +890,7 @@ def close(self):
 **Classification of Retryable Errors:**
 ```python
 def _is_retryable_error(exception):
-    return isinstance(exception, (
-        httpx.ConnectTimeout,
-        httpx.NetworkError,
-        ConnectionError
-    ))
+    return isinstance(exception, (httpx.ConnectTimeout, httpx.NetworkError, ConnectionError))
 ```
 
 ### 7. Security Best Practices
@@ -934,9 +906,9 @@ USER openhands
 **Network Isolation:**
 ```python
 # OpenHands supports both host and bridge
-network_mode='bridge'  # Isolated
+network_mode = "bridge"  # Isolated
 # OR
-network_mode='host'    # Direct localhost access
+network_mode = "host"  # Direct localhost access
 ```
 
 ### 8. Key Differences for Nexus
@@ -1181,19 +1153,11 @@ docker push nexus-runtime:0.1.0
 ```python
 from nexus import NexusFS, LocalBackend
 
-nx = NexusFS(
-    backend=LocalBackend(),
-    sandbox_provider="e2b",
-    e2b_api_key="e2b_xxx"
-)
+nx = NexusFS(backend=LocalBackend(), sandbox_provider="e2b", e2b_api_key="e2b_xxx")
 
 # Requires ngrok for local Nexus
 sandbox = nx.sandbox_create("test")
-nx.sandbox_connect(
-    sandbox["sandbox_id"],
-    nexus_url="https://xxx.ngrok.io",
-    nexus_api_key="sk-xxx"
-)
+nx.sandbox_connect(sandbox["sandbox_id"], nexus_url="https://xxx.ngrok.io", nexus_api_key="sk-xxx")
 ```
 
 **After (Docker):**
@@ -1202,7 +1166,7 @@ from nexus import NexusFS, LocalBackend
 
 nx = NexusFS(
     backend=LocalBackend(),
-    sandbox_provider="docker"  # That's it!
+    sandbox_provider="docker",  # That's it!
 )
 
 # Direct localhost access
@@ -1210,7 +1174,7 @@ sandbox = nx.sandbox_create("test")
 nx.sandbox_connect(
     sandbox["sandbox_id"],
     nexus_url="http://localhost:2026",  # No ngrok needed
-    nexus_api_key="sk-xxx"
+    nexus_api_key="sk-xxx",
 )
 ```
 

@@ -103,16 +103,12 @@ Binary data (file content, images, etc.) **must** be base64-encoded using the fo
 ```python
 # Python: Encode "Hello, World!" as bytes
 import base64
-content = base64.b64encode(b"Hello, World!").decode('utf-8')
+
+content = base64.b64encode(b"Hello, World!").decode("utf-8")
 # Result: "SGVsbG8sIFdvcmxkIQ=="
 
 # JSON-RPC parameter:
-{
-  "content": {
-    "__type__": "bytes",
-    "data": "SGVsbG8sIFdvcmxkIQ=="
-  }
-}
+{"content": {"__type__": "bytes", "data": "SGVsbG8sIFdvcmxkIQ=="}}
 ```
 
 **⚠️ Common Error:**
@@ -1651,24 +1647,18 @@ Complete workflow for user-specific mounts:
 mount_id = client.add_mount(
     mount_point="/personal/alice",
     backend_type="gcs",
-    backend_config={
-        "bucket": "alice-personal-bucket",
-        "project_id": "my-project"
-    },
-    priority=10
+    backend_config={"bucket": "alice-personal-bucket", "project_id": "my-project"},
+    priority=10,
 )
 
 # 2. Save the mount configuration for persistence
 saved_id = client.save_mount(
     mount_point="/personal/alice",
     backend_type="gcs",
-    backend_config={
-        "bucket": "alice-personal-bucket",
-        "project_id": "my-project"
-    },
+    backend_config={"bucket": "alice-personal-bucket", "project_id": "my-project"},
     owner_user_id="google:alice123",
     description="Alice's personal storage",
-    priority=10
+    priority=10,
 )
 
 # 3. Use the mount (files are automatically routed)
@@ -3949,10 +3939,7 @@ Test if an OAuth credential is valid and can be refreshed.
 from nexus.remote.client import RemoteNexusClient
 
 # Connect to server
-client = RemoteNexusClient(
-    url="http://localhost:8765",
-    api_key="your-api-key"
-)
+client = RemoteNexusClient(url="http://localhost:8765", api_key="your-api-key")
 
 # File operations
 client.write("/file.txt", b"Hello, World!")
@@ -3969,16 +3956,10 @@ client.log_trajectory_step(traj["trajectory_id"], "write", "Created module")
 client.complete_trajectory(traj["trajectory_id"], "success")
 
 # ReBAC permissions
-client.rebac_create(
-    subject=("user", "alice"),
-    relation="owner",
-    object=("file", "/file.txt")
-)
+client.rebac_create(subject=("user", "alice"), relation="owner", object=("file", "/file.txt"))
 
 allowed = client.rebac_check(
-    subject=("user", "alice"),
-    permission="read",
-    object=("file", "/file.txt")
+    subject=("user", "alice"), permission="read", object=("file", "/file.txt")
 )
 
 # Close connection

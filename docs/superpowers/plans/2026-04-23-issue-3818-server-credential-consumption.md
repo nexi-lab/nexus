@@ -127,39 +127,45 @@ Expected: FAIL with column list mismatch (table doesn't exist or missing columns
 In `src/nexus/bricks/auth/postgres_profile_store.py`, append to `_DDL_STATEMENTS` tuple (immediately after the `auth_profile_writes` index entry near line 260; insertion ordered before the closing `)`):
 
 ```python
+(
     """
-    CREATE TABLE IF NOT EXISTS auth_profile_reads (
-        id                BIGSERIAL,
-        read_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        principal_id      UUID NOT NULL,
-        auth_profile_id   TEXT NOT NULL,
-        caller_machine_id UUID NOT NULL,
-        caller_kind       TEXT NOT NULL,
-        provider          TEXT NOT NULL,
-        purpose           TEXT NOT NULL,
-        cache_hit         BOOLEAN NOT NULL,
-        kek_version       INTEGER NOT NULL,
-        PRIMARY KEY (read_at, id)
-    ) PARTITION BY RANGE (read_at)
-    """,
+CREATE TABLE IF NOT EXISTS auth_profile_reads (
+    id                BIGSERIAL,
+    read_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    principal_id      UUID NOT NULL,
+    auth_profile_id   TEXT NOT NULL,
+    caller_machine_id UUID NOT NULL,
+    caller_kind       TEXT NOT NULL,
+    provider          TEXT NOT NULL,
+    purpose           TEXT NOT NULL,
+    cache_hit         BOOLEAN NOT NULL,
+    kek_version       INTEGER NOT NULL,
+    PRIMARY KEY (read_at, id)
+) PARTITION BY RANGE (read_at)
+""",
+)
+(
     """
-    CREATE TABLE IF NOT EXISTS auth_profile_reads_default
-        PARTITION OF auth_profile_reads DEFAULT
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_auth_profile_reads_tenant_principal_provider "
-    "ON auth_profile_reads(tenant_id, principal_id, provider, read_at DESC)",
+CREATE TABLE IF NOT EXISTS auth_profile_reads_default
+    PARTITION OF auth_profile_reads DEFAULT
+""",
+)
+"CREATE INDEX IF NOT EXISTS idx_auth_profile_reads_tenant_principal_provider "
+("ON auth_profile_reads(tenant_id, principal_id, provider, read_at DESC)",)
 ```
 
 In the `_RLS_STATEMENTS` tuple (around line 280, after the `auth_profile_writes` FORCE entry):
 
 ```python
-    "ALTER TABLE auth_profile_reads ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE auth_profile_reads FORCE ROW LEVEL SECURITY",
+("ALTER TABLE auth_profile_reads ENABLE ROW LEVEL SECURITY",)
+("ALTER TABLE auth_profile_reads FORCE ROW LEVEL SECURITY",)
+(
     """
-    CREATE POLICY auth_profile_reads_tenant_isolation ON auth_profile_reads
-        USING (tenant_id = current_setting('app.current_tenant')::UUID)
-    """,
+CREATE POLICY auth_profile_reads_tenant_isolation ON auth_profile_reads
+    USING (tenant_id = current_setting('app.current_tenant')::UUID)
+""",
+)
 ```
 
 Note: the `CREATE POLICY` may already exist on a re-run — wrap it in a `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$` block matching whatever pattern PR 3 used for the other `CREATE POLICY` statements (search for `CREATE POLICY auth_profile_writes` to copy the same idempotency wrapper).
@@ -209,9 +215,7 @@ def _seed_envelope_row(
     encryption,
 ):
     """Helper: seed a fully-formed envelope row for decrypt tests."""
-    aad = (
-        str(tenant_id).encode() + b"|" + str(principal_id).encode() + b"|" + profile_id.encode()
-    )
+    aad = str(tenant_id).encode() + b"|" + str(principal_id).encode() + b"|" + profile_id.encode()
     dek = b"\x00" * 32  # AES-256 zero key — fine for an in-memory test fake
     nonce, ciphertext = AESGCMEnvelope().encrypt(dek, plaintext, aad=aad)
     wrapped, kek_version = encryption.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
@@ -221,9 +225,7 @@ def _seed_envelope_row(
             {"t": str(tenant_id)},
         )
         conn.execute(
-            text(
-                "INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"
-            ),
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
             {"id": str(tenant_id), "n": "test"},
         )
         conn.execute(
@@ -329,8 +331,7 @@ class ProfileNotFound(Exception):
         self.principal_id = principal_id
         self.provider = provider
         super().__init__(
-            f"no auth_profile row tenant={tenant_id} principal={principal_id} "
-            f"provider={provider}"
+            f"no auth_profile row tenant={tenant_id} principal={principal_id} provider={provider}"
         )
 
 
@@ -355,70 +356,68 @@ class DecryptedProfile:
 Add a method on `PostgresAuthProfileStore` (locate the class body — append after the existing `upsert_with_credential` method):
 
 ```python
-    def decrypt_profile(
-        self,
-        *,
-        principal_id: uuid.UUID,
-        provider: str,
-        encryption: EncryptionProvider,
-        dek_cache: DEKCache,
-    ) -> DecryptedProfile:
-        """Decrypt the envelope row matching (tenant, principal, provider).
+def decrypt_profile(
+    self,
+    *,
+    principal_id: uuid.UUID,
+    provider: str,
+    encryption: EncryptionProvider,
+    dek_cache: DEKCache,
+) -> DecryptedProfile:
+    """Decrypt the envelope row matching (tenant, principal, provider).
 
-        Selects the most-recently-updated row for that triple (the daemon may
-        have pushed multiple over time; we always read newest). Raises
-        ``ProfileNotFound`` if no row exists.
+    Selects the most-recently-updated row for that triple (the daemon may
+    have pushed multiple over time; we always read newest). Raises
+    ``ProfileNotFound`` if no row exists.
 
-        DEK is unwrapped via ``encryption.unwrap_dek`` with cache-through on
-        ``dek_cache``. AES-GCM decrypt failures bubble as ``EnvelopeError``
-        subclasses (no plaintext in repr).
-        """
-        with self._tenant_scoped_connection() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
-                    "       last_synced_at, sync_ttl_seconds "
-                    "FROM auth_profiles "
-                    "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
-                    "  AND ciphertext IS NOT NULL "
-                    "ORDER BY updated_at DESC LIMIT 1"
-                ),
-                {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
-            ).fetchone()
+    DEK is unwrapped via ``encryption.unwrap_dek`` with cache-through on
+    ``dek_cache``. AES-GCM decrypt failures bubble as ``EnvelopeError``
+    subclasses (no plaintext in repr).
+    """
+    with self._tenant_scoped_connection() as conn:
+        row = conn.execute(
+            text(
+                "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
+                "       last_synced_at, sync_ttl_seconds "
+                "FROM auth_profiles "
+                "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                "  AND ciphertext IS NOT NULL "
+                "ORDER BY updated_at DESC LIMIT 1"
+            ),
+            {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+        ).fetchone()
 
-        if row is None:
-            raise ProfileNotFound(
-                tenant_id=self._tenant_id,
-                principal_id=principal_id,
-                provider=provider,
-            )
-
-        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = row
-        cache_key = DEKCache.make_key(
+    if row is None:
+        raise ProfileNotFound(
             tenant_id=self._tenant_id,
-            kek_version=kek_version,
-            wrapped_dek=bytes(wrapped_dek),
+            principal_id=principal_id,
+            provider=provider,
         )
-        dek = dek_cache.get(cache_key)
-        if dek is None:
-            dek = encryption.unwrap_dek(
-                bytes(wrapped_dek),
-                tenant_id=self._tenant_id,
-                aad=bytes(aad),
-                kek_version=kek_version,
-            )
-            dek_cache.put(cache_key, dek)
 
-        plaintext = AESGCMEnvelope().decrypt(
-            dek, bytes(nonce), bytes(ciphertext), aad=bytes(aad)
-        )
-        return DecryptedProfile(
-            plaintext=plaintext,
-            profile_id=profile_id,
+    profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = row
+    cache_key = DEKCache.make_key(
+        tenant_id=self._tenant_id,
+        kek_version=kek_version,
+        wrapped_dek=bytes(wrapped_dek),
+    )
+    dek = dek_cache.get(cache_key)
+    if dek is None:
+        dek = encryption.unwrap_dek(
+            bytes(wrapped_dek),
+            tenant_id=self._tenant_id,
+            aad=bytes(aad),
             kek_version=kek_version,
-            last_synced_at=lsa,
-            sync_ttl_seconds=sttl,
         )
+        dek_cache.put(cache_key, dek)
+
+    plaintext = AESGCMEnvelope().decrypt(dek, bytes(nonce), bytes(ciphertext), aad=bytes(aad))
+    return DecryptedProfile(
+        plaintext=plaintext,
+        profile_id=profile_id,
+        kek_version=kek_version,
+        last_synced_at=lsa,
+        sync_ttl_seconds=sttl,
+    )
 ```
 
 If `_tenant_scoped_connection()` doesn't exist by that name, search the file for the existing pattern (look for `SET LOCAL app.current_tenant`) and reuse the same context-manager helper. If it's inlined elsewhere, factor it out as a private method on the class (`@contextmanager def _tenant_scoped_connection(self)`) so this new method and existing methods share one path.
@@ -840,9 +839,7 @@ from nexus.bricks.auth.consumer_providers.github import GithubProviderAdapter
 
 
 def test_materialize_classic_pat_no_expiry():
-    payload = json.dumps(
-        {"token": "ghp_classic", "scopes": ["repo", "read:user"]}
-    ).encode()
+    payload = json.dumps({"token": "ghp_classic", "scopes": ["repo", "read:user"]}).encode()
     out = GithubProviderAdapter().materialize(payload)
     assert out.provider == "github"
     assert out.access_token == "ghp_classic"
@@ -1450,14 +1447,12 @@ def engine():
     eng.dispose()
 
 
-def _seed_github_envelope(*, engine, tenant_id, principal_id, encryption, sync_ttl=300, lsa_offset_seconds=0):
+def _seed_github_envelope(
+    *, engine, tenant_id, principal_id, encryption, sync_ttl=300, lsa_offset_seconds=0
+):
     """Seed a github profile with a pushed envelope."""
     payload = json.dumps({"token": "ghp_test", "scopes": ["repo"]}).encode()
-    aad = (
-        str(tenant_id).encode()
-        + b"|" + str(principal_id).encode()
-        + b"|" + b"github-default"
-    )
+    aad = str(tenant_id).encode() + b"|" + str(principal_id).encode() + b"|" + b"github-default"
     dek = b"\x01" * 32
     nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
     wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
@@ -1546,17 +1541,13 @@ def test_resolve_warm_cache_skips_decrypt(engine):
     )
     consumer = _make_consumer(engine, tenant, encryption=encryption)
 
-    first = consumer.resolve(
-        claims=_claims(tenant, principal), provider="github", purpose="x"
-    )
+    first = consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
     # Drop the row so a second decrypt would fail
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
         conn.execute(text("DELETE FROM auth_profiles WHERE tenant_id = :t"), {"t": str(tenant)})
 
-    second = consumer.resolve(
-        claims=_claims(tenant, principal), provider="github", purpose="x"
-    )
+    second = consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
     assert second is first  # cached, same object
 
 
@@ -1569,9 +1560,7 @@ def test_resolve_force_refresh_bypasses_cache(engine):
     )
     consumer = _make_consumer(engine, tenant, encryption=encryption)
 
-    first = consumer.resolve(
-        claims=_claims(tenant, principal), provider="github", purpose="x"
-    )
+    first = consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
         conn.execute(text("DELETE FROM auth_profiles WHERE tenant_id = :t"), {"t": str(tenant)})
@@ -1597,9 +1586,7 @@ def test_resolve_raises_profile_not_found(engine):
     consumer = _make_consumer(engine, tenant)
 
     with pytest.raises(ProfileNotFoundForCaller):
-        consumer.resolve(
-            claims=_claims(tenant, principal), provider="github", purpose="x"
-        )
+        consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
 
 
 def test_resolve_raises_provider_not_configured(engine):
@@ -1628,9 +1615,7 @@ def test_resolve_raises_stale_source_when_last_synced_past_ttl(engine):
     )
     consumer = _make_consumer(engine, tenant, encryption=encryption)
     with pytest.raises(StaleSource):
-        consumer.resolve(
-            claims=_claims(tenant, principal), provider="github", purpose="x"
-        )
+        consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
 ```
 
 - [ ] **Step 8.2: Run to verify failure**
@@ -1992,7 +1977,10 @@ def _build_app(engine, tenant_id):
     app = FastAPI()
     app.include_router(
         make_token_exchange_router(
-            enabled=True, signer=signer, consumer=consumer, encryption=encryption,
+            enabled=True,
+            signer=signer,
+            consumer=consumer,
+            encryption=encryption,
         )
     )
     return app, signer, encryption
@@ -2000,9 +1988,7 @@ def _build_app(engine, tenant_id):
 
 def _seed_github(engine, tenant, principal, encryption):
     payload = json.dumps({"token": "ghp_real", "scopes": ["repo"]}).encode()
-    aad = (
-        str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-default"
-    )
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-default"
     dek = b"\x02" * 32
     nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
     wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
@@ -2029,8 +2015,13 @@ def _seed_github(engine, tenant, principal, encryption):
                 " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
             ),
             {
-                "t": str(tenant), "p": str(principal),
-                "ct": ct, "wd": wrapped, "no": nonce, "aad": aad, "kv": kv,
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
             },
         )
 
@@ -2152,7 +2143,10 @@ def test_token_exchange_disabled_returns_501(engine):
     app = FastAPI()
     app.include_router(
         make_token_exchange_router(
-            enabled=False, signer=signer, consumer=consumer, encryption=encryption,
+            enabled=False,
+            signer=signer,
+            consumer=consumer,
+            encryption=encryption,
         )
     )
     client = TestClient(app)
@@ -2160,8 +2154,10 @@ def test_token_exchange_disabled_returns_501(engine):
         "/v1/auth/token-exchange",
         data={
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "subject_token": "x", "subject_token_type": "x",
-            "resource": "urn:nexus:provider:github", "scope": "x",
+            "subject_token": "x",
+            "subject_token_type": "x",
+            "resource": "urn:nexus:provider:github",
+            "scope": "x",
         },
     )
     assert r.status_code == 501
@@ -2264,8 +2260,7 @@ def make_token_exchange_router(
             return _err(400, "invalid_request", f"unknown grant_type: {grant_type!r}")
         if subject_token_type != _SUBJECT_TYPE_JWT:
             return _err(
-                400, "invalid_request",
-                f"unsupported subject_token_type: {subject_token_type!r}"
+                400, "invalid_request", f"unsupported subject_token_type: {subject_token_type!r}"
             )
         provider = _RESOURCE_TO_PROVIDER.get(resource)
         if provider is None:
@@ -2338,73 +2333,70 @@ Locate the existing `make_token_exchange_router(enabled=_token_exchange_enabled)
 Add this block immediately after `app.include_router(make_jwks_router(signer=_v1_signer))` (line ~1072):
 
 ```python
-                    # Token-exchange: read path requires the same engine + signer
-                    # as the daemon router, plus an EncryptionProvider for envelope
-                    # decrypt. Default off (NEXUS_TOKEN_EXCHANGE_ENABLED) until ops
-                    # verifies KMS/Vault wiring.
-                    try:
-                        from nexus.bricks.auth.consumer import CredentialConsumer
-                        from nexus.bricks.auth.consumer_cache import ResolvedCredCache
-                        from nexus.bricks.auth.consumer_providers import (
-                            default_adapters,
-                        )
-                        from nexus.bricks.auth.envelope import DEKCache
-                        from nexus.bricks.auth.envelope_providers.in_memory import (
-                            InMemoryEncryptionProvider,
-                        )
-                        from nexus.bricks.auth.postgres_profile_store import (
-                            PostgresAuthProfileStore,
-                        )
-                        from nexus.bricks.auth.read_audit import ReadAuditWriter
-                        from nexus.server.api.v1.routers.token_exchange import (
-                            make_token_exchange_router,
-                        )
-                    except ImportError as e:
-                        logger.warning(
-                            "v1 token-exchange disabled: import failed (%s)", e
-                        )
-                    else:
-                        _token_exchange_enabled = (
-                            os.environ.get("NEXUS_TOKEN_EXCHANGE_ENABLED", "")
-                            .lower() in ("1", "true", "yes")
-                        )
-                        # MVP: InMemoryEncryptionProvider unless an operator has
-                        # already wired Vault/KMS via app.state. Production
-                        # deployments override this in their startup hook.
-                        _enc = getattr(app.state, "encryption_provider", None) or (
-                            InMemoryEncryptionProvider()
-                        )
-                        # Tenant-id stamping happens per-request inside
-                        # PostgresAuthProfileStore via SET LOCAL; the singleton
-                        # used here gets re-tenanted by the consumer per call.
-                        # If the existing store API does not support per-call
-                        # tenant rebinding, instantiate the store inside the
-                        # consumer's resolve() instead — adjust to whichever
-                        # pattern auth_profiles.py / daemon.py already uses.
-                        _store = PostgresAuthProfileStore(
-                            engine=_v1_engine,
-                            tenant_id=None,  # set per request in consumer
-                        )
-                        _consumer = CredentialConsumer(
-                            store=_store,
-                            encryption=_enc,
-                            dek_cache=DEKCache(),
-                            cred_cache=ResolvedCredCache(),
-                            adapters=default_adapters(),
-                            audit=ReadAuditWriter(engine=_v1_engine),
-                        )
-                        app.include_router(
-                            make_token_exchange_router(
-                                enabled=_token_exchange_enabled,
-                                signer=_v1_signer,
-                                consumer=_consumer,
-                                encryption=_enc,
-                            )
-                        )
-                        logger.info(
-                            "v1 token-exchange route registered (enabled=%s)",
-                            _token_exchange_enabled,
-                        )
+# Token-exchange: read path requires the same engine + signer
+# as the daemon router, plus an EncryptionProvider for envelope
+# decrypt. Default off (NEXUS_TOKEN_EXCHANGE_ENABLED) until ops
+# verifies KMS/Vault wiring.
+try:
+    from nexus.bricks.auth.consumer import CredentialConsumer
+    from nexus.bricks.auth.consumer_cache import ResolvedCredCache
+    from nexus.bricks.auth.consumer_providers import (
+        default_adapters,
+    )
+    from nexus.bricks.auth.envelope import DEKCache
+    from nexus.bricks.auth.envelope_providers.in_memory import (
+        InMemoryEncryptionProvider,
+    )
+    from nexus.bricks.auth.postgres_profile_store import (
+        PostgresAuthProfileStore,
+    )
+    from nexus.bricks.auth.read_audit import ReadAuditWriter
+    from nexus.server.api.v1.routers.token_exchange import (
+        make_token_exchange_router,
+    )
+except ImportError as e:
+    logger.warning("v1 token-exchange disabled: import failed (%s)", e)
+else:
+    _token_exchange_enabled = os.environ.get("NEXUS_TOKEN_EXCHANGE_ENABLED", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    # MVP: InMemoryEncryptionProvider unless an operator has
+    # already wired Vault/KMS via app.state. Production
+    # deployments override this in their startup hook.
+    _enc = getattr(app.state, "encryption_provider", None) or (InMemoryEncryptionProvider())
+    # Tenant-id stamping happens per-request inside
+    # PostgresAuthProfileStore via SET LOCAL; the singleton
+    # used here gets re-tenanted by the consumer per call.
+    # If the existing store API does not support per-call
+    # tenant rebinding, instantiate the store inside the
+    # consumer's resolve() instead — adjust to whichever
+    # pattern auth_profiles.py / daemon.py already uses.
+    _store = PostgresAuthProfileStore(
+        engine=_v1_engine,
+        tenant_id=None,  # set per request in consumer
+    )
+    _consumer = CredentialConsumer(
+        store=_store,
+        encryption=_enc,
+        dek_cache=DEKCache(),
+        cred_cache=ResolvedCredCache(),
+        adapters=default_adapters(),
+        audit=ReadAuditWriter(engine=_v1_engine),
+    )
+    app.include_router(
+        make_token_exchange_router(
+            enabled=_token_exchange_enabled,
+            signer=_v1_signer,
+            consumer=_consumer,
+            encryption=_enc,
+        )
+    )
+    logger.info(
+        "v1 token-exchange route registered (enabled=%s)",
+        _token_exchange_enabled,
+    )
 ```
 
 **Note on `tenant_id=None` and per-request rebinding:** PR 3 (`make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer)`) shows the existing pattern reads tenant from the verified JWT and sets RLS per request. Read `src/nexus/server/api/v1/routers/auth_profiles.py` to copy how it instantiates `PostgresAuthProfileStore` per request, then mirror that pattern in `token_exchange.py` and `consumer.py` if needed. If the existing `PostgresAuthProfileStore.__init__` requires a non-None `tenant_id`, the cleanest fix is to construct the store inside `CredentialConsumer.resolve` using `claims.tenant_id` — defer this construction by passing the engine to the consumer instead of the store.
@@ -2493,6 +2485,7 @@ def _maybe_skip():
 def _make_signer():
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
+
     pk = ec.generate_private_key(ec.SECP256R1())
     return JwtSigner.from_pem(
         pk.private_bytes(
@@ -2539,9 +2532,7 @@ def test_s3_list_buckets_as_user_via_token_exchange():
 
     encryption = InMemoryEncryptionProvider()
     payload = json.dumps(aws_creds).encode()
-    aad = (
-        str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"aws-default"
-    )
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"aws-default"
     dek = b"\x09" * 32
     nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
     wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
@@ -2569,8 +2560,13 @@ def test_s3_list_buckets_as_user_via_token_exchange():
                 " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
             ),
             {
-                "t": str(tenant), "p": str(principal),
-                "ct": ct, "wd": wrapped, "no": nonce, "aad": aad, "kv": kv,
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
             },
         )
 
@@ -2586,7 +2582,10 @@ def test_s3_list_buckets_as_user_via_token_exchange():
     app = FastAPI()
     app.include_router(
         make_token_exchange_router(
-            enabled=True, signer=signer, consumer=consumer, encryption=encryption,
+            enabled=True,
+            signer=signer,
+            consumer=consumer,
+            encryption=encryption,
         )
     )
 
@@ -2702,6 +2701,7 @@ def _maybe_skip():
 def _make_signer():
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
+
     pk = ec.generate_private_key(ec.SECP256R1())
     return JwtSigner.from_pem(
         pk.private_bytes(
@@ -2724,12 +2724,8 @@ def test_github_user_endpoint_as_user_via_token_exchange():
     machine = uuid.uuid4()
 
     encryption = InMemoryEncryptionProvider()
-    payload = json.dumps(
-        {"token": pat, "scopes": ["read:user"], "token_type": "classic"}
-    ).encode()
-    aad = (
-        str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-default"
-    )
+    payload = json.dumps({"token": pat, "scopes": ["read:user"], "token_type": "classic"}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-default"
     dek = b"\x0a" * 32
     nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
     wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
@@ -2757,8 +2753,13 @@ def test_github_user_endpoint_as_user_via_token_exchange():
                 " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
             ),
             {
-                "t": str(tenant), "p": str(principal),
-                "ct": ct, "wd": wrapped, "no": nonce, "aad": aad, "kv": kv,
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
             },
         )
 
@@ -2774,7 +2775,10 @@ def test_github_user_endpoint_as_user_via_token_exchange():
     app = FastAPI()
     app.include_router(
         make_token_exchange_router(
-            enabled=True, signer=signer, consumer=consumer, encryption=encryption,
+            enabled=True,
+            signer=signer,
+            consumer=consumer,
+            encryption=encryption,
         )
     )
 

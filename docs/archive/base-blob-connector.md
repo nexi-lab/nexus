@@ -61,35 +61,42 @@ def _upload_blob(self, blob_path: str, content: bytes, content_type: str) -> str
     """Upload blob to cloud storage. Returns version ID or hash."""
     pass
 
+
 @abstractmethod
 def _download_blob(self, blob_path: str, version_id: str | None = None) -> bytes:
     """Download blob from cloud storage."""
     pass
+
 
 @abstractmethod
 def _delete_blob(self, blob_path: str) -> None:
     """Delete blob from cloud storage."""
     pass
 
+
 @abstractmethod
 def _blob_exists(self, blob_path: str) -> bool:
     """Check if blob exists."""
     pass
+
 
 @abstractmethod
 def _get_blob_size(self, blob_path: str) -> int:
     """Get blob size in bytes."""
     pass
 
+
 @abstractmethod
 def _list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
     """List blobs with prefix. Returns (blob_keys, common_prefixes)."""
     pass
 
+
 @abstractmethod
 def _create_directory_marker(self, blob_path: str) -> None:
     """Create directory marker object."""
     pass
+
 
 @abstractmethod
 def _copy_blob(self, source_path: str, dest_path: str) -> None:
@@ -105,6 +112,7 @@ Here's how to add support for a new blob storage provider:
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
+
 class AzureBlobConnectorBackend(BaseBlobStorageConnector):
     """Azure Blob Storage connector with direct path mapping."""
 
@@ -118,7 +126,9 @@ class AzureBlobConnectorBackend(BaseBlobStorageConnector):
         # Initialize Azure client
         from azure.storage.blob import BlobServiceClient
 
-        connection_string = f"DefaultEndpointsProtocol=https;AccountName={account_name};AccountKey={account_key}"
+        connection_string = (
+            f"DefaultEndpointsProtocol=https;AccountName={account_name};AccountKey={account_key}"
+        )
         self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         self.container_client = self.blob_service_client.get_container_client(container_name)
 
@@ -141,9 +151,7 @@ class AzureBlobConnectorBackend(BaseBlobStorageConnector):
         """Upload to Azure Blob Storage."""
         blob_client = self.container_client.get_blob_client(blob_path)
         blob_client.upload_blob(
-            content,
-            overwrite=True,
-            content_settings=ContentSettings(content_type=content_type)
+            content, overwrite=True, content_settings=ContentSettings(content_type=content_type)
         )
 
         # Return version ID if versioning enabled
@@ -294,6 +302,7 @@ The base class enables consistent testing patterns:
 def mock_connector(mock_cloud_client):
     """Create connector with mocked cloud client."""
     return MyConnectorBackend(...)
+
 
 def test_write_content(mock_connector):
     """Test writing content (base class logic)."""

@@ -118,10 +118,7 @@ hooks = registry.get_hooks()
 from nexus.plugins.hooks import HookType
 
 # Execute a hook
-context = {
-    "path": "/file.txt",
-    "content": b"data"
-}
+context = {"path": "/file.txt", "content": b"data"}
 
 result = await registry.execute_hook(HookType.BEFORE_WRITE, context)
 
@@ -164,6 +161,7 @@ Configuration is loaded automatically during discovery:
 # Configuration is loaded and passed to plugin.initialize()
 registry.discover()
 
+
 # Access config in your plugin:
 class MyPlugin(NexusPlugin):
     async def initialize(self, config: dict[str, Any]) -> None:
@@ -175,10 +173,7 @@ class MyPlugin(NexusPlugin):
 
 ```python
 # Save plugin configuration
-config = {
-    "api_key": "sk-...",
-    "enabled": True
-}
+config = {"api_key": "sk-...", "enabled": True}
 registry.save_plugin_config("my-plugin", config)
 ```
 
@@ -263,11 +258,13 @@ for hook_type in HookType:
 ```python
 # Check entry points
 import importlib.metadata
-entry_points = importlib.metadata.entry_points(group='nexus.plugins')
+
+entry_points = importlib.metadata.entry_points(group="nexus.plugins")
 print(list(entry_points))
 
 # Enable debug logging
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 registry.discover()
 ```
@@ -277,6 +274,7 @@ registry.discover()
 ```python
 # Check for errors during discovery
 import logging
+
 logging.basicConfig(level=logging.INFO)
 
 registry = PluginRegistry(nx)

@@ -44,6 +44,7 @@ nx.mkdir("/documents", exist_ok=True)
 
 # Create with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.mkdir("/workspace/alice/projects", parents=True, context=ctx)
 ```
@@ -93,6 +94,7 @@ nx.rmdir("/temp/cache", recursive=True)
 
 # Remove with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.rmdir("/workspace/alice/temp", recursive=True, context=ctx)
 ```
@@ -127,6 +129,7 @@ else:
 
 # Check with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="bob", groups=["project-alpha"])
 if nx.is_directory("/workspace/alice", context=ctx):
     print("Bob can see this directory")

@@ -29,6 +29,7 @@ Create `src/nexus_my_plugin/plugin.py`:
 from nexus.plugins import NexusPlugin, PluginMetadata
 from typing import Callable, Any
 
+
 class MyPlugin(NexusPlugin):
     """My custom Nexus plugin."""
 
@@ -40,7 +41,7 @@ class MyPlugin(NexusPlugin):
             description="My custom plugin for Nexus",
             author="Your Name",
             homepage="https://github.com/yourname/nexus-plugin-my",
-            requires=[]  # Optional plugin dependencies
+            requires=[],  # Optional plugin dependencies
         )
 
     def commands(self) -> dict[str, Callable]:
@@ -228,6 +229,7 @@ async def process_file(self, path: str):
 from rich.console import Console
 from rich.table import Table
 
+
 async def show_stats(self):
     """Show statistics with rich formatting."""
     console = Console()
@@ -271,7 +273,7 @@ async def transform(self):
             result = {
                 "transformed": True,
                 "original": data,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
 
             # Write JSON to stdout
@@ -344,6 +346,7 @@ async def my_command(self, path: str):
     except Exception as e:
         print(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
 ```
 
@@ -376,6 +379,7 @@ async def initialize(self, config: dict[str, Any]) -> None:
     self._cache = {}
     print("Initialized my-plugin")
 
+
 async def shutdown(self) -> None:
     """Cleanup resources."""
     if hasattr(self, "_client"):
@@ -392,12 +396,8 @@ async def shutdown(self) -> None:
 ```python
 from typing import Callable, Any, Optional
 
-async def my_command(
-    self,
-    path: str,
-    limit: int = 10,
-    verbose: bool = False
-) -> None:
+
+async def my_command(self, path: str, limit: int = 10, verbose: bool = False) -> None:
     """Command with type hints."""
     ...
 ```
@@ -440,6 +440,7 @@ import pytest
 from nexus_my_plugin import MyPlugin
 from nexus.plugins import PluginMetadata
 
+
 @pytest.mark.asyncio
 async def test_plugin_metadata():
     """Test plugin metadata."""
@@ -450,6 +451,7 @@ async def test_plugin_metadata():
     assert metadata.name == "my-plugin"
     assert metadata.version == "1.0.0"
 
+
 @pytest.mark.asyncio
 async def test_hello_command():
     """Test hello command."""
@@ -457,6 +459,7 @@ async def test_hello_command():
     # Test command (capture output)
     await plugin.hello_command("Alice")
     # Assert expected behavior
+
 
 @pytest.mark.asyncio
 async def test_with_nexus_fs(tmp_path):
@@ -594,9 +597,11 @@ find . -type d -name __pycache__ -exec rm -rf {} +
 ```python
 # Enable debug logging
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 from nexus.plugins import PluginRegistry
+
 registry = PluginRegistry()
 discovered = registry.discover()  # Check logs for errors
 ```

@@ -187,9 +187,7 @@ class MissingCredentialsError(ValueError):
     def __init__(self, missing: dict[str, list[str]]) -> None:
         self.missing = {k: list(v) for k, v in missing.items()}
         lines = [f"  {mid}: {fields}" for mid, fields in sorted(self.missing.items())]
-        super().__init__(
-            "Mount imports require credential overrides for:\n" + "\n".join(lines)
-        )
+        super().__init__("Mount imports require credential overrides for:\n" + "\n".join(lines))
 ```
 
 Update `BUNDLE_PATHS` (find at `models.py:1190`):
@@ -345,7 +343,7 @@ Also update the `"$schema"` literal at the top of `to_dict`:
 In `from_dict` (around line 720), find the statistics-extraction block and add a default-tolerant lookup:
 
 ```python
-            mount_count=stats.get("mount_count", 0),
+mount_count = (stats.get("mount_count", 0),)
 ```
 
 (Locate the existing `stats = data.get("statistics", {})` line; if absent, replace direct lookups with `.get(...)` defaults.)
@@ -396,9 +394,7 @@ import pytest
 
 jsonschema = pytest.importorskip("jsonschema")
 
-SCHEMA_PATH = (
-    Path(__file__).parent.parent / "schemas" / "manifest-v3.json"
-)
+SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "manifest-v3.json"
 
 
 def test_v3_schema_file_exists_and_is_valid_json():
@@ -704,9 +700,7 @@ def redact_config(
         if value == placeholder_string:
             continue
         out[field_name] = placeholder_string
-        placeholders.append(
-            PlaceholderRef(name=ph_name, field=f"mounts.{mount_id}.{field_name}")
-        )
+        placeholders.append(PlaceholderRef(name=ph_name, field=f"mounts.{mount_id}.{field_name}"))
 
     return out, placeholders
 
@@ -985,10 +979,24 @@ def test_redact_and_write_redacts_secrets_and_returns_placeholders(tmp_path, s3_
 
 def test_redact_and_write_sorts_lines_by_mount_id(tmp_path):
     mounts = [
-        {"mount_id": "m-z", "mount_point": "/z", "backend_type": "path_local",
-         "backend_config": {}, "owner_user_id": None, "zone_id": None, "description": None},
-        {"mount_id": "m-a", "mount_point": "/a", "backend_type": "path_local",
-         "backend_config": {}, "owner_user_id": None, "zone_id": None, "description": None},
+        {
+            "mount_id": "m-z",
+            "mount_point": "/z",
+            "backend_type": "path_local",
+            "backend_config": {},
+            "owner_user_id": None,
+            "zone_id": None,
+            "description": None,
+        },
+        {
+            "mount_id": "m-a",
+            "mount_point": "/a",
+            "backend_type": "path_local",
+            "backend_config": {},
+            "owner_user_id": None,
+            "zone_id": None,
+            "description": None,
+        },
     ]
     out_path = tmp_path / "mounts.jsonl"
     redact_and_write(mounts, out_path=out_path)
@@ -1010,9 +1018,13 @@ def test_redact_and_write_audit_failure_raises(tmp_path):
     from unittest.mock import patch
 
     bad_mount = {
-        "mount_id": "m-1", "mount_point": "/x", "backend_type": "path_s3",
+        "mount_id": "m-1",
+        "mount_point": "/x",
+        "backend_type": "path_s3",
         "backend_config": {"my_token": "x"},
-        "owner_user_id": None, "zone_id": None, "description": None,
+        "owner_user_id": None,
+        "zone_id": None,
+        "description": None,
     }
     with patch(
         "nexus.bricks.portability.redaction.audit_backend",
@@ -1215,7 +1227,9 @@ def test_read_mounts_skips_blank_lines(tmp_path, redacted_record):
 
 def test_validate_overrides_no_redacted_fields_passes():
     rec = MountRecord(
-        mount_id="m-1", mount_point="/x", backend_type="path_local",
+        mount_id="m-1",
+        mount_point="/x",
+        backend_type="path_local",
         backend_config={"root": "/data"},
     )
     validate_overrides([rec], overrides=None)  # no raise
@@ -1223,7 +1237,9 @@ def test_validate_overrides_no_redacted_fields_passes():
 
 def test_validate_overrides_missing_raises_with_all_gaps(redacted_record):
     rec2 = MountRecord(
-        mount_id="m-2", mount_point="/y", backend_type="path_s3",
+        mount_id="m-2",
+        mount_point="/y",
+        backend_type="path_s3",
         backend_config={"access_key_id": "${MOUNT_m-2_ACCESS_KEY_ID}"},
     )
     with pytest.raises(MissingCredentialsError) as exc:
@@ -1321,11 +1337,15 @@ def test_import_mounts_orders_by_path_depth(redacted_record):
     mgr = MagicMock()
     mgr.get_mount.return_value = None
     deep = MountRecord(
-        mount_id="m-deep", mount_point="/personal/alice/sub", backend_type="path_local",
+        mount_id="m-deep",
+        mount_point="/personal/alice/sub",
+        backend_type="path_local",
         backend_config={"root": "/x"},
     )
     shallow = MountRecord(
-        mount_id="m-shallow", mount_point="/personal", backend_type="path_local",
+        mount_id="m-shallow",
+        mount_point="/personal",
+        backend_type="path_local",
         backend_config={"root": "/y"},
     )
     import_mounts(
@@ -1581,6 +1601,7 @@ def test_include_mounts_true_without_mount_manager_raises(tmp_path):
         # For this test, we expect the constructor or first arg validation
         # to trip — adjust as needed based on existing code shape.
         import asyncio
+
         asyncio.run(service.export_zone("z1", options))
 ```
 
@@ -1624,8 +1645,7 @@ Find the start of the export flow inside `export_zone` (the method body around l
 ```python
 if options.include_mounts and self._mount_manager is None:
     raise ValueError(
-        "ZoneExportOptions.include_mounts=True requires "
-        "ZoneExportService(mount_manager=...)"
+        "ZoneExportOptions.include_mounts=True requires ZoneExportService(mount_manager=...)"
     )
 ```
 
@@ -1640,14 +1660,13 @@ if options.include_mounts:
         collect_mounts,
         redact_and_write,
     )
+
     mounts_path = bundle_dir / "mounts.jsonl"
     raw_mounts = collect_mounts(self._mount_manager, zone_id=zone_id)
     mount_phs = redact_and_write(raw_mounts, out_path=mounts_path)
     manifest.placeholders = list(manifest.placeholders) + list(mount_phs)
     manifest.mount_count = len(raw_mounts)
-    logger.info(
-        "Mount export: %d mounts, %d placeholders", len(raw_mounts), len(mount_phs)
-    )
+    logger.info("Mount export: %d mounts, %d placeholders", len(raw_mounts), len(mount_phs))
 ```
 
 - [ ] **Step 7: Run wiring test to verify it passes**
@@ -1725,22 +1744,35 @@ def _build_bundle_with_mount(tmp_path: Path) -> Path:
         "source_zone_id": "z1",
         "export_timestamp": "2026-01-01T00:00:00+00:00",
         "statistics": {
-            "file_count": 0, "total_size_bytes": 0, "content_blob_count": 0,
-            "permission_count": 0, "embedding_count": 0, "mount_count": 1,
+            "file_count": 0,
+            "total_size_bytes": 0,
+            "content_blob_count": 0,
+            "permission_count": 0,
+            "embedding_count": 0,
+            "mount_count": 1,
         },
         "options": {"include_content": True, "include_permissions": True},
         "checksums": {"algorithm": "sha256", "files": {}},
     }
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest))
-    (bundle_dir / "mounts.jsonl").write_text(json.dumps({
-        "mount_id": "m-1", "mount_point": "/x", "backend_type": "path_s3",
-        "backend_config": {
-            "bucket_name": "acme",
-            "access_key_id": "${MOUNT_m-1_ACCESS_KEY_ID}",
-            "secret_access_key": "${MOUNT_m-1_SECRET_ACCESS_KEY}",
-        },
-        "owner_user_id": "alice", "zone_id": "z1", "description": None,
-    }) + "\n")
+    (bundle_dir / "mounts.jsonl").write_text(
+        json.dumps(
+            {
+                "mount_id": "m-1",
+                "mount_point": "/x",
+                "backend_type": "path_s3",
+                "backend_config": {
+                    "bucket_name": "acme",
+                    "access_key_id": "${MOUNT_m-1_ACCESS_KEY_ID}",
+                    "secret_access_key": "${MOUNT_m-1_SECRET_ACCESS_KEY}",
+                },
+                "owner_user_id": "alice",
+                "zone_id": "z1",
+                "description": None,
+            }
+        )
+        + "\n"
+    )
 
     out = tmp_path / "bundle.nexus"
     with tarfile.open(out, "w:gz") as tar:
@@ -1805,9 +1837,13 @@ async def test_import_v2_bundle_no_mounts_jsonl_does_nothing(tmp_path):
         "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
         "source_zone_id": "z1",
         "export_timestamp": "2026-01-01T00:00:00+00:00",
-        "statistics": {"file_count": 0, "total_size_bytes": 0,
-                       "content_blob_count": 0, "permission_count": 0,
-                       "embedding_count": 0},
+        "statistics": {
+            "file_count": 0,
+            "total_size_bytes": 0,
+            "content_blob_count": 0,
+            "permission_count": 0,
+            "embedding_count": 0,
+        },
         "options": {"include_content": True, "include_permissions": True},
         "checksums": {"algorithm": "sha256", "files": {}},
     }
@@ -1868,6 +1904,7 @@ if options.restore_mounts:
         read_mounts,
         validate_overrides,
     )
+
     _mount_records = read_mounts(bundle_dir)
     if _mount_records:
         validate_overrides(_mount_records, options.mount_overrides)
@@ -1886,6 +1923,7 @@ Then, after the existing files/permissions/embeddings restore (find the end of `
 # --- Mount restore (Issue #4083) ---
 if _mount_records and options.restore_mounts:
     from nexus.bricks.portability.mount_import import import_mounts
+
     mount_errors = import_mounts(
         mounts=_mount_records,
         overrides=options.mount_overrides or {},
@@ -1936,9 +1974,9 @@ Issue: https://github.com/nexi-lab/nexus/issues/4083"
 Edit `src/nexus/bricks/portability/__init__.py`. Add to the existing `from nexus.bricks.portability.models import (...)` block (line 51):
 
 ```python
-    MissingCredentialsError,
-    MountRecord,
-    SensitiveFieldNotDeclaredError,
+(MissingCredentialsError,)
+(MountRecord,)
+(SensitiveFieldNotDeclaredError,)
 ```
 
 After the existing service imports, add:
@@ -1964,19 +2002,19 @@ from nexus.bricks.portability.redaction import (
 Append to `__all__` (line 75):
 
 ```python
-    # Mount portability (Issue #4083)
-    "MountRecord",
-    "MissingCredentialsError",
-    "SensitiveFieldNotDeclaredError",
-    "audit_backend",
-    "declared_secret_fields",
-    "redact_config",
-    "collect_mounts",
-    "redact_and_write",
-    "read_mounts",
-    "validate_overrides",
-    "materialize",
-    "import_mounts",
+# Mount portability (Issue #4083)
+("MountRecord",)
+("MissingCredentialsError",)
+("SensitiveFieldNotDeclaredError",)
+("audit_backend",)
+("declared_secret_fields",)
+("redact_config",)
+("collect_mounts",)
+("redact_and_write",)
+("read_mounts",)
+("validate_overrides",)
+("materialize",)
+("import_mounts",)
 ```
 
 - [ ] **Step 2: Verify the import surface**
@@ -2046,18 +2084,23 @@ def _make_mount_manager_with(mounts: list[dict]) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_roundtrip_export_then_import_with_overrides(tmp_path):
-    src_mgr = _make_mount_manager_with([
-        {
-            "mount_id": "m-1", "mount_point": "/personal/alice",
-            "backend_type": "path_s3",
-            "backend_config": {
-                "bucket_name": "acme",
-                "access_key_id": "AKIA-LIVE-KEY",
-                "secret_access_key": "wJalr-LIVE-SECRET",
+    src_mgr = _make_mount_manager_with(
+        [
+            {
+                "mount_id": "m-1",
+                "mount_point": "/personal/alice",
+                "backend_type": "path_s3",
+                "backend_config": {
+                    "bucket_name": "acme",
+                    "access_key_id": "AKIA-LIVE-KEY",
+                    "secret_access_key": "wJalr-LIVE-SECRET",
+                },
+                "owner_user_id": "alice",
+                "zone_id": "z1",
+                "description": None,
             },
-            "owner_user_id": "alice", "zone_id": "z1", "description": None,
-        },
-    ])
+        ]
+    )
 
     fs = MagicMock()
     out = tmp_path / "bundle.nexus"
@@ -2071,13 +2114,14 @@ async def test_roundtrip_export_then_import_with_overrides(tmp_path):
     # Verify export stripped secrets — read raw mounts.jsonl back out of the tar.
     import json
     import tarfile
+
     with tarfile.open(out, "r:gz") as tar:
         member = tar.getmember("mounts.jsonl")
         f = tar.extractfile(member)
         assert f is not None
         record = json.loads(f.read().decode())
     assert record["backend_config"]["access_key_id"] == "${MOUNT_m-1_ACCESS_KEY_ID}"
-    assert "AKIA-LIVE-KEY" not in f.read() if hasattr(f, 'read') else True
+    assert "AKIA-LIVE-KEY" not in f.read() if hasattr(f, "read") else True
 
     # Import without overrides → MissingCredentialsError
     dst_mgr = MagicMock()
@@ -2088,13 +2132,17 @@ async def test_roundtrip_export_then_import_with_overrides(tmp_path):
     assert dst_mgr.save_mount.call_count == 0
 
     # Import with full overrides → save_mount called with concrete values
-    await importer.import_zone(ZoneImportOptions(
-        bundle_path=out,
-        mount_overrides={"m-1": {
-            "access_key_id": "AKIA-NEW-KEY",
-            "secret_access_key": "wJalr-NEW-SECRET",
-        }},
-    ))
+    await importer.import_zone(
+        ZoneImportOptions(
+            bundle_path=out,
+            mount_overrides={
+                "m-1": {
+                    "access_key_id": "AKIA-NEW-KEY",
+                    "secret_access_key": "wJalr-NEW-SECRET",
+                }
+            },
+        )
+    )
     assert dst_mgr.save_mount.call_count == 1
     saved_cfg = dst_mgr.save_mount.call_args.kwargs["backend_config"]
     assert saved_cfg["access_key_id"] == "AKIA-NEW-KEY"

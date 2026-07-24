@@ -47,18 +47,22 @@ from nexus.contracts.exceptions import (
     NexusError,
 )
 
+
 def test_zone_read_only_is_nexus_error() -> None:
     exc = ZoneReadOnlyError("Zone 'company' is read-only")
     assert isinstance(exc, NexusError)
     assert "company" in str(exc)
 
+
 def test_zone_unavailable_is_nexus_error() -> None:
     exc = ZoneUnavailableError("Zone 'company' is unavailable")
     assert isinstance(exc, NexusError)
 
+
 def test_handshake_auth_error_is_nexus_error() -> None:
     exc = HandshakeAuthError("Token rejected by hub")
     assert isinstance(exc, NexusError)
+
 
 def test_handshake_connection_error_is_nexus_error() -> None:
     exc = HandshakeConnectionError("Hub unreachable")
@@ -192,6 +196,7 @@ class TestRemoteZoneBackendReadOnly:
     ) -> None:
         mock_transport.read_file.return_value = b"content"
         from nexus.contracts.types import OperationContext
+
         ctx = OperationContext(user_id="u", groups=[], backend_path="/file.txt")
         result = readonly_backend.read_content("id", context=ctx)
         assert result == b"content"
@@ -203,6 +208,7 @@ class TestRemoteZoneBackendReadWrite:
         self, readwrite_backend: RemoteZoneBackend, mock_transport: MagicMock
     ) -> None:
         from nexus.contracts.types import OperationContext
+
         ctx = OperationContext(user_id="u", groups=[], backend_path="/note.md")
         readwrite_backend.write_content(b"hello", context=ctx)
         mock_transport.write_file.assert_called_once()
@@ -211,6 +217,7 @@ class TestRemoteZoneBackendReadWrite:
         self, readwrite_backend: RemoteZoneBackend, mock_transport: MagicMock
     ) -> None:
         from nexus.contracts.types import OperationContext
+
         ctx = OperationContext(user_id="u", groups=[], backend_path="/note.md")
         readwrite_backend.delete_content("id", context=ctx)
         mock_transport.delete_file.assert_called_once()
@@ -290,9 +297,7 @@ class RemoteZoneBackend(RemoteBackend):
         self._check_write_permission()
         return super().write_content(content, content_id, offset=offset, context=context)
 
-    def delete_content(
-        self, content_id: str, context: OperationContext | None = None
-    ) -> None:
+    def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
         self._check_write_permission()
         super().delete_content(content_id, context=context)
 
@@ -399,34 +404,31 @@ Expected: FAIL with `AttributeError: federation_client_whoami`
 Open `src/nexus/server/rpc/services/federation_rpc.py`. Find the last `@rpc_expose` method (around line 358: `federation_cluster_info`). Append after it:
 
 ```python
-    @rpc_expose(admin_only=False)
-    def federation_client_whoami(self) -> dict[str, Any]:
-        """Return the caller's zone grants for federation handshake.
+@rpc_expose(admin_only=False)
+def federation_client_whoami(self) -> dict[str, Any]:
+    """Return the caller's zone grants for federation handshake.
 
-        Called by thin clients during SandboxBootstrapper startup to discover
-        which zones their bearer token can access and with what permissions.
-        Returns a list of {zone_id, permission} dicts from the caller's context.
+    Called by thin clients during SandboxBootstrapper startup to discover
+    which zones their bearer token can access and with what permissions.
+    Returns a list of {zone_id, permission} dicts from the caller's context.
 
-        Issue #3786: federation handshake for thin client.
-        """
-        if self._context is None:
-            raise NexusPermissionError("federation_client_whoami requires authentication")
+    Issue #3786: federation handshake for thin client.
+    """
+    if self._context is None:
+        raise NexusPermissionError("federation_client_whoami requires authentication")
 
-        # P3-2 multi-zone tokens carry zone_set: {zone_id: permission}
-        zone_set = getattr(self._context, "zone_set", None)
-        if zone_set:
-            zones = [
-                {"zone_id": zid, "permission": perm}
-                for zid, perm in zone_set.items()
-            ]
-            return {"zones": zones}
+    # P3-2 multi-zone tokens carry zone_set: {zone_id: permission}
+    zone_set = getattr(self._context, "zone_set", None)
+    if zone_set:
+        zones = [{"zone_id": zid, "permission": perm} for zid, perm in zone_set.items()]
+        return {"zones": zones}
 
-        # P3-1 single-zone tokens carry zone_id with implicit read permission
-        zone_id = getattr(self._context, "zone_id", None)
-        if zone_id:
-            return {"zones": [{"zone_id": zone_id, "permission": "r"}]}
+    # P3-1 single-zone tokens carry zone_id with implicit read permission
+    zone_id = getattr(self._context, "zone_id", None)
+    if zone_id:
+        return {"zones": [{"zone_id": zone_id, "permission": "r"}]}
 
-        return {"zones": []}
+    return {"zones": []}
 ```
 
 Also ensure `NexusPermissionError` is imported at the top of `federation_rpc.py`. Check the imports; if missing, add:
@@ -485,9 +487,7 @@ class TestFederationHandshakeSuccess:
             ]
         }
 
-        with patch(
-            "nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport
-        ):
+        with patch("nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport):
             hs = FederationHandshake("hub.example.com:2028", "mytoken")
             session = hs.connect()
 
@@ -503,9 +503,7 @@ class TestFederationHandshakeSuccess:
             ]
         }
 
-        with patch(
-            "nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport
-        ):
+        with patch("nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport):
             hs = FederationHandshake("hub.example.com:2028", "tok")
             session = hs.connect()
 
@@ -518,9 +516,7 @@ class TestFederationHandshakeSuccess:
         mock_transport = MagicMock()
         mock_transport.call_rpc.return_value = {"zones": []}
 
-        with patch(
-            "nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport
-        ):
+        with patch("nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport):
             FederationHandshake("hub:2028", "tok").connect()
 
         mock_transport.call_rpc.assert_called_once_with("federation_client_whoami", {})
@@ -531,9 +527,7 @@ class TestFederationHandshakeFailure:
         mock_transport = MagicMock()
         mock_transport.call_rpc.side_effect = RemoteConnectionError("unreachable")
 
-        with patch(
-            "nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport
-        ):
+        with patch("nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport):
             hs = FederationHandshake("hub:2028", "tok")
             with pytest.raises(HandshakeConnectionError, match="hub:2028"):
                 hs.connect()
@@ -542,9 +536,7 @@ class TestFederationHandshakeFailure:
         mock_transport = MagicMock()
         mock_transport.call_rpc.side_effect = AuthenticationError("401 unauthorized")
 
-        with patch(
-            "nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport
-        ):
+        with patch("nexus.remote.federation_handshake.RPCTransport", return_value=mock_transport):
             hs = FederationHandshake("hub:2028", "badtoken")
             with pytest.raises(HandshakeAuthError):
                 hs.connect()
@@ -841,9 +833,7 @@ class BootIndexer:
             try:
                 await self._indexer.index_path(str(entry), recursive=True)
             except Exception:
-                logger.warning(
-                    "[BOOT-INDEXER] Failed to index %s, skipping", entry, exc_info=True
-                )
+                logger.warning("[BOOT-INDEXER] Failed to index %s, skipping", entry, exc_info=True)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1092,14 +1082,10 @@ class SandboxBootstrapper:
             )
             return session
         except (HandshakeConnectionError, HandshakeAuthError) as exc:
-            logger.warning(
-                "[SANDBOX-BOOT] Hub federation unavailable, running local-only: %s", exc
-            )
+            logger.warning("[SANDBOX-BOOT] Hub federation unavailable, running local-only: %s", exc)
             return None
 
-    def _mount_remote_zones(
-        self, hub_session: HubSession | None
-    ) -> dict[str, RemoteZoneBackend]:
+    def _mount_remote_zones(self, hub_session: HubSession | None) -> dict[str, RemoteZoneBackend]:
         if hub_session is None:
             return {}
 
@@ -1290,6 +1276,7 @@ Find the location where `nx = nexus.connect(...)` is called (around line 340). A
 # Sandbox federation: mount remote zones and start boot indexer
 if deployment_profile == "sandbox" and hub_url and SandboxBootstrapper is not None:
     from pathlib import Path as _Path
+
     _workspace_path = _Path(workspace) if workspace else _Path.cwd()
     _bootstrapper = SandboxBootstrapper(
         nx=nx,
@@ -1298,9 +1285,7 @@ if deployment_profile == "sandbox" and hub_url and SandboxBootstrapper is not No
         hub_token=hub_token or "",
     )
     _boot_result = _bootstrapper.run()
-    click.echo(
-        f"  Federation: {'active' if _boot_result.hub_session else 'local-only'}"
-    )
+    click.echo(f"  Federation: {'active' if _boot_result.hub_session else 'local-only'}")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1361,10 +1346,14 @@ class TestStackSandboxFlags:
             result = runner.invoke(
                 up,
                 [
-                    "--profile", "sandbox",
-                    "--workspace", str(tmp_path),
-                    "--hub-url", "hub:2028",
-                    "--hub-token", "mytoken",
+                    "--profile",
+                    "sandbox",
+                    "--workspace",
+                    str(tmp_path),
+                    "--hub-url",
+                    "hub:2028",
+                    "--hub-token",
+                    "mytoken",
                 ],
                 catch_exceptions=True,
             )
@@ -1428,10 +1417,14 @@ if profile == "sandbox":
         # workspace-only mode: no federation
         pass
     elif (workspace or hub_url) and hub_url and not hub_token:
-        console.print("[nexus.error]Error:[/nexus.error] --hub-url requires --hub-token or NEXUS_HUB_TOKEN.")
+        console.print(
+            "[nexus.error]Error:[/nexus.error] --hub-url requires --hub-token or NEXUS_HUB_TOKEN."
+        )
         raise SystemExit(1)
     if workspace is None:
-        console.print("[nexus.error]Error:[/nexus.error] --profile sandbox requires --workspace PATH.")
+        console.print(
+            "[nexus.error]Error:[/nexus.error] --profile sandbox requires --workspace PATH."
+        )
         raise SystemExit(1)
     _invoke_nexusd_sandbox(workspace, hub_url, hub_token)
     return
@@ -1455,8 +1448,10 @@ def _invoke_nexusd_sandbox(
     """Invoke nexusd with sandbox profile flags (replaces Docker Compose for sandbox mode)."""
     cmd = [
         shutil.which("nexusd") or "nexusd",
-        "--profile", "sandbox",
-        "--workspace", workspace,
+        "--profile",
+        "sandbox",
+        "--workspace",
+        workspace,
     ]
     if hub_url:
         cmd.extend(["--hub-url", hub_url])

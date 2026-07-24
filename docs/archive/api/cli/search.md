@@ -108,10 +108,10 @@ results = nx.grep("error", case_sensitive=False)
 results = nx.grep("def main", context_before=3, context_after=3)
 for match in results:
     print(f"\n{match['path']}:{match['line_number']}")
-    for line in match['context_before']:
+    for line in match["context_before"]:
         print(f"  {line}")
     print(f"> {match['line']}")
-    for line in match['context_after']:
+    for line in match["context_after"]:
         print(f"  {line}")
 
 # Search PDFs
@@ -176,7 +176,7 @@ all_files = nx.glob("**/*", file_type="file")
 file_sizes = []
 for file_path in all_files:
     metadata = nx.get_metadata(file_path)
-    file_sizes.append((file_path, metadata['size']))
+    file_sizes.append((file_path, metadata["size"]))
 
 # Sort by size
 file_sizes.sort(key=lambda x: x[1], reverse=True)
@@ -218,9 +218,7 @@ md_files = nx.glob("**/*.md")
 # Get recently modified files
 all_files = nx.list("/docs", recursive=True)
 recent_files = sorted(
-    [f for f in all_files if f['type'] == 'file'],
-    key=lambda x: x['modified_at'],
-    reverse=True
+    [f for f in all_files if f["type"] == "file"], key=lambda x: x["modified_at"], reverse=True
 )[:10]
 
 for file in recent_files:
@@ -229,16 +227,16 @@ for file in recent_files:
 # Search for function definitions in Python
 python_files = nx.glob("**/*.py")
 for file_path in python_files:
-    content = nx.read(file_path).decode('utf-8')
-    for i, line in enumerate(content.split('\n'), 1):
-        if line.strip().startswith('def '):
+    content = nx.read(file_path).decode("utf-8")
+    for i, line in enumerate(content.split("\n"), 1):
+        if line.strip().startswith("def "):
             print(f"{file_path}:{i}: {line}")
 
 # Search for imports
 for file_path in python_files:
-    content = nx.read(file_path).decode('utf-8')
-    for i, line in enumerate(content.split('\n'), 1):
-        if re.match(r'^import |^from .* import ', line):
+    content = nx.read(file_path).decode("utf-8")
+    for i, line in enumerate(content.split("\n"), 1):
+        if re.match(r"^import |^from .* import ", line):
             print(f"{file_path}:{i}: {line}")
 ```
 

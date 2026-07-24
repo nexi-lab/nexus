@@ -116,7 +116,7 @@ nx = nexus.connect()
 
 agent = create_deep_agent(
     model="anthropic:claude-sonnet-4-20250514",
-    backend=NexusBackend(nx)  # Just pass backend!
+    backend=NexusBackend(nx),  # Just pass backend!
 )
 ```
 

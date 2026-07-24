@@ -258,8 +258,7 @@ The existing `CacheStore` PubSub transport is the delivery mechanism for those m
 `src/nexus/backends/base/backend.py` should grow an explicit cheap fingerprint API, for example:
 
 ```python
-def fingerprint(self, path: str, context: OperationContext | None = None) -> str | None:
-    ...
+def fingerprint(self, path: str, context: OperationContext | None = None) -> str | None: ...
 ```
 
 Returning `None` means "no cheap fingerprint available; use file TTL fallback".

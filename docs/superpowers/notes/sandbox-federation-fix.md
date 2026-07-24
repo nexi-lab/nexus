@@ -46,8 +46,7 @@ byte-identical to before.
 
 ```python
 if deployment_profile == "sandbox" and not any(
-    os.environ.get(v)
-    for v in ("NEXUS_PEERS", "NEXUS_HOSTNAME", "NEXUS_BOOTSTRAP_NEW")
+    os.environ.get(v) for v in ("NEXUS_PEERS", "NEXUS_HOSTNAME", "NEXUS_BOOTSTRAP_NEW")
 ):
     os.environ.setdefault("NEXUS_FEDERATION_DISABLED", "1")
 ```

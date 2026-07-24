@@ -41,10 +41,12 @@ Nexus provides **persistent memory and context**:
 # ✅ With Nexus: Full memory and file access
 nx = nexus.connect()
 
+
 @tool("recall_memory", "Recall past conversations", {"query": str})
 async def recall_memory(args):
     results = nx.memory.query(args["query"], scope="agent")
     return {"content": [{"type": "text", "text": "\n".join([m.content for m in results])}]}
+
 
 # Claude can now remember!
 async for msg in query(prompt="What did we discuss yesterday?", options=options):
@@ -76,36 +78,33 @@ import nexus
 # Connect to Nexus
 nx = nexus.connect()
 
+
 # Define tools with @tool decorator
 @tool("read_file", "Read file from Nexus", {"path": str})
 async def read_file(args):
     content = nx.read(args["path"])
     if isinstance(content, bytes):
-        content = content.decode('utf-8')
+        content = content.decode("utf-8")
     return {"content": [{"type": "text", "text": content}]}
+
 
 @tool("write_file", "Write file to Nexus", {"path": str, "content": str})
 async def write_file(args):
-    nx.write(args["path"], args["content"].encode('utf-8'))
+    nx.write(args["path"], args["content"].encode("utf-8"))
     return {"content": [{"type": "text", "text": f"Wrote to {args['path']}"}]}
 
+
 # Bundle into MCP server
-server = create_sdk_mcp_server(
-    name="nexus-tools",
-    version="1.0.0",
-    tools=[read_file, write_file]
-)
+server = create_sdk_mcp_server(name="nexus-tools", version="1.0.0", tools=[read_file, write_file])
 
 # Configure options
 options = ClaudeAgentOptions(
-    mcp_servers={"nexus": server},
-    allowed_tools=["mcp__nexus__read_file", "mcp__nexus__write_file"]
+    mcp_servers={"nexus": server}, allowed_tools=["mcp__nexus__read_file", "mcp__nexus__write_file"]
 )
 
 # Run agent (ReAct loop is automatic!)
 async for message in query(
-    prompt="Read /workspace/data.json and create a summary in /reports/summary.md",
-    options=options
+    prompt="Read /workspace/data.json and create a summary in /reports/summary.md", options=options
 ):
     print(message)
 ```
@@ -146,12 +145,12 @@ Claude Agent SDK tools follow this pattern:
 
 ```python
 @tool(
-    "tool_name",           # Tool identifier
-    "Tool description",    # What it does (shown to Claude)
-    {                      # Input schema
+    "tool_name",  # Tool identifier
+    "Tool description",  # What it does (shown to Claude)
+    {  # Input schema
         "param1": str,
         "param2": int,
-    }
+    },
 )
 async def tool_name(args):
     """Tool implementation."""
@@ -163,11 +162,7 @@ async def tool_name(args):
     result = nx.some_operation(param1, param2)
 
     # MUST return this format
-    return {
-        "content": [
-            {"type": "text", "text": str(result)}
-        ]
-    }
+    return {"content": [{"type": "text", "text": str(result)}]}
 ```
 
 ## 📝 Integration Patterns
@@ -180,11 +175,9 @@ Enable Claude to read, write, and search files:
 @tool("grep_files", "Search file content", {"pattern": str, "path": str})
 async def grep_files(args):
     results = nx.grep(args["pattern"], args["path"])
-    formatted = "\n".join([
-        f"{r['file']}:{r['line']}: {r['content']}"
-        for r in results[:50]
-    ])
+    formatted = "\n".join([f"{r['file']}:{r['line']}: {r['content']}" for r in results[:50]])
     return {"content": [{"type": "text", "text": formatted}]}
+
 
 @tool("glob_files", "Find files by pattern", {"pattern": str})
 async def glob_files(args):
@@ -203,9 +196,10 @@ async def store_memory(args):
         content=args["content"],
         scope="agent",
         memory_type=args.get("memory_type", "fact"),
-        importance=0.8
+        importance=0.8,
     )
     return {"content": [{"type": "text", "text": "Memory stored"}]}
+
 
 @tool("recall_memory", "Recall information", {"query": str})
 async def recall_memory(args):
@@ -234,10 +228,7 @@ Enable RAG with semantic similarity search:
 @tool("semantic_search", "Search by meaning", {"query": str})
 async def semantic_search(args):
     results = nx.semantic_search(args["query"], limit=10)
-    formatted = "\n".join([
-        f"{r.path}: {r.snippet}"
-        for r in results
-    ])
+    formatted = "\n".join([f"{r.path}: {r.snippet}" for r in results])
     return {"content": [{"type": "text", "text": formatted}]}
 ```
 
@@ -336,16 +327,14 @@ Track file history and time-travel:
 @tool("get_versions", "Get file version history", {"path": str})
 async def get_versions(args):
     versions = nx.list_versions(args["path"])
-    history = "\n".join([
-        f"v{v.version} ({v.timestamp}): {v.hash}"
-        for v in versions
-    ])
+    history = "\n".join([f"v{v.version} ({v.timestamp}): {v.hash}" for v in versions])
     return {"content": [{"type": "text", "text": history}]}
+
 
 @tool("read_version", "Read specific version", {"path": str, "version": int})
 async def read_version(args):
     content = nx.read(args["path"], version=args["version"])
-    return {"content": [{"type": "text", "text": content.decode('utf-8')}]}
+    return {"content": [{"type": "text", "text": content.decode("utf-8")}]}
 ```
 
 ### Workflow Automation

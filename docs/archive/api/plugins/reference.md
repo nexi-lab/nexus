@@ -28,6 +28,7 @@ All plugins inherit from the `NexusPlugin` base class and implement required met
 from nexus.plugins import NexusPlugin, PluginMetadata
 from typing import Callable
 
+
 class MyPlugin(NexusPlugin):
     """Example plugin implementation."""
 
@@ -39,7 +40,7 @@ class MyPlugin(NexusPlugin):
             description="My custom plugin",
             author="Your Name",
             homepage="https://github.com/yourname/nexus-plugin-my",
-            requires=["other-plugin>=1.0.0"]  # Optional dependencies
+            requires=["other-plugin>=1.0.0"],  # Optional dependencies
         )
 
     def commands(self) -> dict[str, Callable]:
@@ -106,12 +107,12 @@ The `PluginMetadata` class defines plugin information:
 ```python
 @dataclass
 class PluginMetadata:
-    name: str                      # Plugin name (used in CLI)
-    version: str                   # Semantic version (e.g., "1.0.0")
-    description: str               # Short description
-    author: str                    # Author name
-    homepage: str | None          # Homepage URL (optional)
-    requires: list[str] | None    # Plugin dependencies (optional)
+    name: str  # Plugin name (used in CLI)
+    version: str  # Semantic version (e.g., "1.0.0")
+    description: str  # Short description
+    author: str  # Author name
+    homepage: str | None  # Homepage URL (optional)
+    requires: list[str] | None  # Plugin dependencies (optional)
 ```
 
 ## Creating Commands
@@ -153,6 +154,7 @@ async def list_files(self, path: str = "/"):
 ```python
 from rich.console import Console
 from rich.table import Table
+
 
 async def show_stats(self):
     """Show statistics with rich formatting."""
@@ -203,16 +205,16 @@ Hooks allow plugins to react to filesystem events. Available hook types:
 from nexus.plugins.hooks import HookType
 
 # Available hooks:
-HookType.BEFORE_WRITE    # Before writing a file
-HookType.AFTER_WRITE     # After writing a file
-HookType.BEFORE_READ     # Before reading a file
-HookType.AFTER_READ      # After reading a file
-HookType.BEFORE_DELETE   # Before deleting a file
-HookType.AFTER_DELETE    # After deleting a file
-HookType.BEFORE_MKDIR    # Before creating directory
-HookType.AFTER_MKDIR     # After creating directory
-HookType.BEFORE_COPY     # Before copying file
-HookType.AFTER_COPY      # After copying file
+HookType.BEFORE_WRITE  # Before writing a file
+HookType.AFTER_WRITE  # After writing a file
+HookType.BEFORE_READ  # Before reading a file
+HookType.AFTER_READ  # After reading a file
+HookType.BEFORE_DELETE  # Before deleting a file
+HookType.AFTER_DELETE  # After deleting a file
+HookType.BEFORE_MKDIR  # Before creating directory
+HookType.AFTER_MKDIR  # After creating directory
+HookType.BEFORE_COPY  # Before copying file
+HookType.AFTER_COPY  # After copying file
 ```
 
 ### Hook Implementation
@@ -231,6 +233,7 @@ def hooks(self) -> dict[str, Callable]:
         "after_write": self.index_content,
         "before_delete": self.check_dependencies,
     }
+
 
 async def validate_write(self, context: dict) -> dict | None:
     """Validate before writing.
@@ -255,6 +258,7 @@ async def validate_write(self, context: dict) -> dict | None:
     # Validate content
     if path.endswith(".json"):
         import json
+
         try:
             json.loads(content)
         except json.JSONDecodeError:
@@ -263,12 +267,14 @@ async def validate_write(self, context: dict) -> dict | None:
 
     return context  # Continue with operation
 
+
 async def index_content(self, context: dict) -> dict:
     """Index content after writing."""
     path = context["path"]
     # Index for search...
     print(f"Indexed: {path}")
     return context
+
 
 async def check_dependencies(self, context: dict) -> dict | None:
     """Check dependencies before deleting."""
@@ -324,13 +330,10 @@ async def initialize(self, config: dict[str, Any]) -> None:
     # Use configuration
     self.setup_api(api_key)
 
+
 def get_api_key(self) -> str:
     """Get API key from config or environment."""
-    return (
-        self.get_config("api_key") or
-        os.getenv("MY_PLUGIN_API_KEY") or
-        ""
-    )
+    return self.get_config("api_key") or os.getenv("MY_PLUGIN_API_KEY") or ""
 ```
 
 ## Plugin Registry
@@ -373,6 +376,7 @@ registry.disable_plugin("my-plugin")
 
 # Execute a hook
 from nexus.plugins.hooks import HookType
+
 context = {"path": "/file.txt", "content": b"data"}
 result = await registry.execute_hook(HookType.BEFORE_WRITE, context)
 ```
@@ -415,6 +419,7 @@ async def process_files(self):
 ```python
 from nexus.plugins import NexusPlugin, PluginMetadata
 
+
 class ValidatorPlugin(NexusPlugin):
     """Validates files before writing."""
 
@@ -423,13 +428,11 @@ class ValidatorPlugin(NexusPlugin):
             name="validator",
             version="1.0.0",
             description="Validates file content before writing",
-            author="Nexus Team"
+            author="Nexus Team",
         )
 
     def hooks(self) -> dict[str, Callable]:
-        return {
-            "before_write": self.validate_content
-        }
+        return {"before_write": self.validate_content}
 
     async def validate_content(self, context: dict) -> dict | None:
         """Validate file content."""
@@ -439,6 +442,7 @@ class ValidatorPlugin(NexusPlugin):
         # Validate JSON files
         if path.endswith(".json"):
             import json
+
             try:
                 json.loads(content)
             except json.JSONDecodeError as e:
@@ -448,6 +452,7 @@ class ValidatorPlugin(NexusPlugin):
         # Validate Python files
         if path.endswith(".py"):
             import ast
+
             try:
                 ast.parse(content.decode("utf-8"))
             except SyntaxError as e:
@@ -465,6 +470,7 @@ The official Anthropic plugin demonstrates advanced plugin features:
 from nexus.plugins import NexusPlugin, PluginMetadata
 import anthropic
 
+
 class AnthropicPlugin(NexusPlugin):
     """Anthropic Claude Skills API integration."""
 
@@ -474,7 +480,7 @@ class AnthropicPlugin(NexusPlugin):
             version="0.2.0",
             description="Anthropic Claude Skills API integration",
             author="Nexus Team",
-            homepage="https://github.com/nexi-lab/nexus-plugin-anthropic"
+            homepage="https://github.com/nexi-lab/nexus-plugin-anthropic",
         )
 
     def commands(self) -> dict[str, Callable]:
@@ -503,8 +509,7 @@ class AnthropicPlugin(NexusPlugin):
         # Upload to Claude API
         with open(export_path, "rb") as f:
             response = client.beta.skills.create(
-                display_title=skill_name,
-                files=[("skill.zip", f.read())]
+                display_title=skill_name, files=[("skill.zip", f.read())]
             )
 
         print(f"Uploaded: {response.id}")
@@ -555,22 +560,19 @@ touch src/nexus_my_plugin/plugin.py
 # src/nexus_my_plugin/plugin.py
 from nexus.plugins import NexusPlugin, PluginMetadata
 
+
 class MyPlugin(NexusPlugin):
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
-            name="my-plugin",
-            version="1.0.0",
-            description="My plugin",
-            author="Me"
+            name="my-plugin", version="1.0.0", description="My plugin", author="Me"
         )
 
     def commands(self) -> dict[str, Callable]:
-        return {
-            "hello": self.hello
-        }
+        return {"hello": self.hello}
 
     async def hello(self):
         print("Hello from my plugin!")
+
 
 # Export plugin class
 __all__ = ["MyPlugin"]
@@ -646,6 +648,7 @@ async def initialize(self, config: dict[str, Any]) -> None:
     self._client = SomeClient(api_key=config["api_key"])
     self._cache = {}
 
+
 async def shutdown(self) -> None:
     """Cleanup resources."""
     if hasattr(self, "_client"):
@@ -687,9 +690,11 @@ pip install -e .
 ```python
 # Enable debug logging
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 from nexus.plugins import PluginRegistry
+
 registry = PluginRegistry()
 discovered = registry.discover()  # Check logs for errors
 ```
@@ -702,6 +707,7 @@ registry = PluginRegistry()
 registry.discover()
 
 from nexus.plugins.hooks import HookType
+
 handlers = registry.get_hooks().get_handlers(HookType.BEFORE_WRITE)
 print(f"Registered handlers: {handlers}")
 ```

@@ -99,12 +99,7 @@ tuples = [
     }
 ]
 
-namespace_configs = {
-    "file": {
-        "relations": {"read": "direct"},
-        "permissions": {}
-    }
-}
+namespace_configs = {"file": {"relations": {"read": "direct"}, "permissions": {}}}
 
 # Call Rust directly
 results = check_permissions_bulk_rust(checks, tuples, namespace_configs)
@@ -122,9 +117,7 @@ def list_readable_files(user_id: str, all_files: list[str]) -> list[str]:
     readable = []
     for file_id in all_files:
         if manager.rebac_check(
-            subject=("user", user_id),
-            permission="read",
-            object=("file", file_id)
+            subject=("user", user_id), permission="read", object=("file", file_id)
         ):
             readable.append(file_id)
     return readable
@@ -134,10 +127,7 @@ After (fast):
 ```python
 def list_readable_files(user_id: str, all_files: list[str]) -> list[str]:
     """List files user can read (FAST - batch check with Rust)"""
-    checks = [
-        (("user", user_id), "read", ("file", f))
-        for f in all_files
-    ]
+    checks = [(("user", user_id), "read", ("file", f)) for f in all_files]
     results = manager.rebac_check_batch_fast(checks)
     return [all_files[i] for i, allowed in enumerate(results) if allowed]
 ```
@@ -152,26 +142,21 @@ from nexus.core.auth import get_current_user
 
 router = APIRouter()
 
+
 @router.get("/files")
-async def list_files(user = Depends(get_current_user)):
+async def list_files(user=Depends(get_current_user)):
     """List all files the user can read."""
     # Get all files from database
     all_files = await File.get_all()
 
     # Build batch permission checks
-    checks = [
-        (("user", user.id), "read", ("file", file.id))
-        for file in all_files
-    ]
+    checks = [(("user", user.id), "read", ("file", file.id)) for file in all_files]
 
     # Fast batch check with Rust acceleration
     results = rebac_manager.rebac_check_batch_fast(checks)
 
     # Filter by permission
-    readable_files = [
-        file for i, file in enumerate(all_files)
-        if results[i]
-    ]
+    readable_files = [file for i, file in enumerate(all_files) if results[i]]
 
     return {"files": readable_files}
 ```
@@ -180,16 +165,12 @@ async def list_files(user = Depends(get_current_user)):
 
 ```python
 def get_permission_matrix(
-    users: list[str],
-    resources: list[str],
-    permission: str
+    users: list[str], resources: list[str], permission: str
 ) -> dict[str, list[str]]:
     """Get permission matrix for multiple users and resources."""
     # Build all checks
     checks = [
-        (("user", user), permission, ("file", resource))
-        for user in users
-        for resource in resources
+        (("user", user), permission, ("file", resource)) for user in users for resource in resources
     ]
 
     # Fast batch check
@@ -323,6 +304,7 @@ Check logs:
 
 ```python
 import logging
+
 logging.getLogger("nexus.core.rebac_manager").setLevel(logging.INFO)
 
 # You should see:

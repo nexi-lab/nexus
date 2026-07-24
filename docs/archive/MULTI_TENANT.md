@@ -151,8 +151,9 @@ from nexus import RemoteNexusClient
 client = RemoteNexusClient(
     host="localhost",
     port=2026,
-    api_key="admin-api-key"  # Admin credentials
+    api_key="admin-api-key",  # Admin credentials
 )
+
 
 # Add new user to organization
 def add_user_to_org(user_email, org_id, role="member", workspaces=None):
@@ -162,12 +163,14 @@ def add_user_to_org(user_email, org_id, role="member", workspaces=None):
     org_config = client.read(f"/orgs/{org_id}/org.json")
     org_data = json.loads(org_config)
 
-    org_data["members"].append({
-        "user_id": user_email,
-        "role": role,
-        "joined_at": datetime.utcnow().isoformat() + "Z",
-        "status": "active"
-    })
+    org_data["members"].append(
+        {
+            "user_id": user_email,
+            "role": role,
+            "joined_at": datetime.utcnow().isoformat() + "Z",
+            "status": "active",
+        }
+    )
 
     client.write(f"/orgs/{org_id}/org.json", json.dumps(org_data, indent=2))
 
@@ -177,21 +180,14 @@ def add_user_to_org(user_email, org_id, role="member", workspaces=None):
         client.setfacl(f"/orgs/{org_id}", f"user:{user_email}:rwx")
     else:
         # Members get workspace-specific access
-        for workspace in (workspaces or []):
-            client.setfacl(
-                f"/orgs/{org_id}/{workspace}",
-                f"user:{user_email}:rw-"
-            )
+        for workspace in workspaces or []:
+            client.setfacl(f"/orgs/{org_id}/{workspace}", f"user:{user_email}:rw-")
 
     return {"success": True, "user": user_email, "org": org_id}
 
+
 # Usage
-add_user_to_org(
-    user_email="charlie@acme.com",
-    org_id="acme",
-    role="member",
-    workspaces=["sales"]
-)
+add_user_to_org(user_email="charlie@acme.com", org_id="acme", role="member", workspaces=["sales"])
 ```
 
 #### Option 2: Via REST API
@@ -231,10 +227,7 @@ def remove_user_from_org(user_email, org_id):
     org_config = client.read(f"/orgs/{org_id}/org.json")
     org_data = json.loads(org_config)
 
-    org_data["members"] = [
-        m for m in org_data["members"]
-        if m["user_id"] != user_email
-    ]
+    org_data["members"] = [m for m in org_data["members"] if m["user_id"] != user_email]
 
     client.write(f"/orgs/{org_id}/org.json", json.dumps(org_data, indent=2))
 
@@ -369,10 +362,7 @@ orgs = client.ls("/orgs/")  # Returns only orgs user has access to
 context = client.read("/orgs/acme/sales/context.json")
 
 # User writes document (permission check automatic)
-client.write(
-    "/orgs/acme/sales/documents/proposal.md",
-    "# Q1 Sales Proposal..."
-)
+client.write("/orgs/acme/sales/documents/proposal.md", "# Q1 Sales Proposal...")
 ```
 
 ### Agent Access
@@ -392,8 +382,8 @@ client.write(
         "session_id": "session_123",
         "agent_id": "sales_bot_001",
         "messages": [...],
-        "created_at": "2025-01-20T15:00:00Z"
-    }
+        "created_at": "2025-01-20T15:00:00Z",
+    },
 )
 ```
 
@@ -408,6 +398,7 @@ from nexus import NexusClient
 app = FastAPI()
 nexus = NexusClient()
 
+
 def verify_admin(token: str):
     """Verify user is admin"""
     user = verify_jwt(token)
@@ -416,13 +407,14 @@ def verify_admin(token: str):
         raise HTTPException(403, "Admin access required")
     return user
 
+
 @app.post("/api/orgs/{org_id}/members")
 async def add_member(
     org_id: str,
     user_id: str,
     role: str = "member",
     workspaces: list[str] = [],
-    admin: dict = Depends(verify_admin)
+    admin: dict = Depends(verify_admin),
 ):
     """Add a new member to an organization"""
 
@@ -435,13 +427,15 @@ async def add_member(
         raise HTTPException(400, "User already exists in org")
 
     # Add member
-    org_data["members"].append({
-        "user_id": user_id,
-        "role": role,
-        "joined_at": datetime.utcnow().isoformat() + "Z",
-        "status": "active",
-        "added_by": admin["user_id"]
-    })
+    org_data["members"].append(
+        {
+            "user_id": user_id,
+            "role": role,
+            "joined_at": datetime.utcnow().isoformat() + "Z",
+            "status": "active",
+            "added_by": admin["user_id"],
+        }
+    )
 
     nexus.write(f"/orgs/{org_id}/org.json", json.dumps(org_data, indent=2))
 
@@ -457,24 +451,19 @@ async def add_member(
         "org_id": org_id,
         "user_id": user_id,
         "role": role,
-        "workspaces": workspaces
+        "workspaces": workspaces,
     }
 
+
 @app.delete("/api/orgs/{org_id}/members/{user_id}")
-async def remove_member(
-    org_id: str,
-    user_id: str,
-    admin: dict = Depends(verify_admin)
-):
+async def remove_member(org_id: str, user_id: str, admin: dict = Depends(verify_admin)):
     """Remove a member from organization"""
 
     # Update org.json
     org_config = nexus.read(f"/orgs/{org_id}/org.json")
     org_data = json.loads(org_config)
 
-    org_data["members"] = [
-        m for m in org_data["members"] if m["user_id"] != user_id
-    ]
+    org_data["members"] = [m for m in org_data["members"] if m["user_id"] != user_id]
 
     nexus.write(f"/orgs/{org_id}/org.json", json.dumps(org_data, indent=2))
 
@@ -488,6 +477,7 @@ async def remove_member(
 
     return {"success": True, "removed": user_id}
 
+
 @app.get("/api/orgs/{org_id}/members")
 async def list_members(org_id: str, user: dict = Depends(verify_user)):
     """List organization members"""
@@ -499,10 +489,7 @@ async def list_members(org_id: str, user: dict = Depends(verify_user)):
     org_config = nexus.read(f"/orgs/{org_id}/org.json")
     org_data = json.loads(org_config)
 
-    return {
-        "org_id": org_id,
-        "members": org_data["members"]
-    }
+    return {"org_id": org_id, "members": org_data["members"]}
 ```
 
 ## Initialization Script
@@ -513,6 +500,7 @@ Create initial structure from config:
 # init_from_config.py
 import yaml
 from nexus import NexusClient
+
 
 def init_multi_tenant(config_path="nexus.yaml"):
     """Initialize multi-zone structure from config"""
@@ -534,13 +522,16 @@ def init_multi_tenant(config_path="nexus.yaml"):
         # Create org.json
         nexus.write(
             f"/orgs/{org_id}/org.json",
-            json.dumps({
-                "org_id": org_id,
-                "name": org["name"],
-                "created_at": datetime.utcnow().isoformat() + "Z",
-                "settings": org.get("settings", {}),
-                "members": []
-            }, indent=2)
+            json.dumps(
+                {
+                    "org_id": org_id,
+                    "name": org["name"],
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "settings": org.get("settings", {}),
+                    "members": [],
+                },
+                indent=2,
+            ),
         )
 
         # Create workspaces
@@ -553,14 +544,17 @@ def init_multi_tenant(config_path="nexus.yaml"):
             # Initialize workspace context
             nexus.write(
                 f"/orgs/{org_id}/{ws_id}/context.json",
-                json.dumps({
-                    "workspace_id": ws_id,
-                    "org_id": org_id,
-                    "name": workspace["name"],
-                    "created_at": datetime.utcnow().isoformat() + "Z",
-                    "active_topics": [],
-                    "current_context": {}
-                }, indent=2)
+                json.dumps(
+                    {
+                        "workspace_id": ws_id,
+                        "org_id": org_id,
+                        "name": workspace["name"],
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                        "active_topics": [],
+                        "current_context": {},
+                    },
+                    indent=2,
+                ),
             )
 
         # Create shared directory
@@ -575,13 +569,15 @@ def init_multi_tenant(config_path="nexus.yaml"):
             user_id = member["user_id"]
 
             # Add to org.json
-            org_config["members"].append({
-                "user_id": user_id,
-                "role": member["role"],
-                "type": member.get("type", "human"),
-                "joined_at": datetime.utcnow().isoformat() + "Z",
-                "status": "active"
-            })
+            org_config["members"].append(
+                {
+                    "user_id": user_id,
+                    "role": member["role"],
+                    "type": member.get("type", "human"),
+                    "joined_at": datetime.utcnow().isoformat() + "Z",
+                    "status": "active",
+                }
+            )
 
             # Set permissions
             for perm in member.get("permissions", []):
@@ -589,12 +585,10 @@ def init_multi_tenant(config_path="nexus.yaml"):
                 nexus.setfacl(f"/{path}", f"user:{user_id}:{mode}")
 
         # Write updated org.json
-        nexus.write(
-            f"/orgs/{org_id}/org.json",
-            json.dumps(org_config, indent=2)
-        )
+        nexus.write(f"/orgs/{org_id}/org.json", json.dumps(org_config, indent=2))
 
     print(f"✓ Initialized {len(config['organizations'])} organizations")
+
 
 if __name__ == "__main__":
     init_multi_tenant()
@@ -706,10 +700,7 @@ Nexus provides multi-layer tenant isolation:
 ```python
 # ✅ Same tenant - allowed
 nx.rebac_create(
-    subject=("user", "alice"),
-    relation="editor",
-    object=("file", "/doc.txt"),
-    zone_id="org_acme"
+    subject=("user", "alice"), relation="editor", object=("file", "/doc.txt"), zone_id="org_acme"
 )
 
 # ❌ Cross-tenant - REJECTED

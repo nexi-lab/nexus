@@ -92,9 +92,7 @@ class TestRrfTop1Bonus:
             {"path": "z.txt", "chunk_index": 0, "score": 0.8},
             {"path": "mediocre.txt", "chunk_index": 0, "score": 0.5},
         ]
-        results = rrf_fusion(
-            kw, vec, k=60, limit=10, id_key=None, top_rank_bonus=False
-        )
+        results = rrf_fusion(kw, vec, k=60, limit=10, id_key=None, top_rank_bonus=False)
         ranked_paths = [r["path"] for r in results]
         # Without bonus, mediocre (in both) outranks perfect (single list).
         assert ranked_paths.index("mediocre.txt") < ranked_paths.index("perfect.txt")
@@ -122,9 +120,7 @@ class TestRrfTop1Bonus:
         assert abs(c_result["score"] - expected) < 1e-9
 
     def test_rank4_receives_no_bonus(self) -> None:
-        kw = [
-            {"path": f"r{i}.txt", "chunk_index": 0, "score": 1.0} for i in range(5)
-        ]
+        kw = [{"path": f"r{i}.txt", "chunk_index": 0, "score": 1.0} for i in range(5)]
         results = rrf_fusion(kw, [], k=60, limit=10, id_key=None)
         r4 = next(r for r in results if r["path"] == "r3.txt")  # zero-indexed -> rank 4
         expected = 1.0 / 64
@@ -440,9 +436,7 @@ class TestRrfMultiBonus:
             ("keyword", [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]),
             ("vector", [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]),
         ]
-        results = rrf_multi_fusion(
-            lists, k=60, limit=10, id_key=None, top_rank_bonus=False
-        )
+        results = rrf_multi_fusion(lists, k=60, limit=10, id_key=None, top_rank_bonus=False)
         expected = 2 * (1.0 / 61)
         assert abs(results[0]["score"] - expected) < 1e-9
 ```
@@ -925,9 +919,7 @@ class PathContextStore:
         self._async_session_factory = async_session_factory
         self._db_type = db_type
 
-    async def upsert(
-        self, zone_id: str, path_prefix: str, description: str
-    ) -> None:
+    async def upsert(self, zone_id: str, path_prefix: str, description: str) -> None:
         """Insert or replace a context row. updated_at refreshed on replace."""
         now = datetime.utcnow()
         async with self._async_session_factory() as session:
@@ -992,8 +984,7 @@ class PathContextStore:
     async def list(self, zone_id: str | None = None) -> list[PathContextRecord]:
         """List contexts. When zone_id is None, returns rows for all zones."""
         query = (
-            "SELECT zone_id, path_prefix, description, created_at, updated_at "
-            "FROM path_contexts"
+            "SELECT zone_id, path_prefix, description, created_at, updated_at FROM path_contexts"
         )
         params: dict[str, Any] = {}
         if zone_id is not None:
@@ -1018,10 +1009,7 @@ class PathContextStore:
         async with self._async_session_factory() as session:
             row = (
                 await session.execute(
-                    text(
-                        "SELECT MAX(updated_at) FROM path_contexts "
-                        "WHERE zone_id = :zone_id"
-                    ),
+                    text("SELECT MAX(updated_at) FROM path_contexts WHERE zone_id = :zone_id"),
                     {"zone_id": zone_id},
                 )
             ).scalar()
@@ -1426,9 +1414,7 @@ def _normalize_prefix(raw: str) -> str:
     parts = value.split("/") if value else []
     for segment in parts:
         if segment == ".." or segment == ".":
-            raise ValueError(
-                f"path_prefix must not contain '.' or '..' segments (got {raw!r})"
-            )
+            raise ValueError(f"path_prefix must not contain '.' or '..' segments (got {raw!r})")
     return value
 
 
@@ -1459,9 +1445,7 @@ class PathContextOut(BaseModel):
 def _get_store(request: Request) -> PathContextStore:
     store = getattr(request.app.state, "path_context_store", None)
     if store is None:
-        raise HTTPException(
-            status_code=503, detail="path context store not configured"
-        )
+        raise HTTPException(status_code=503, detail="path context store not configured")
     return store
 
 
@@ -1553,28 +1537,30 @@ git commit -m "feat(#3773): /api/v2/path-contexts router (admin-gated CRUD)"
 Edit `src/nexus/server/lifespan/search.py`. Locate the block that creates `SearchDaemon` (around line 115) and insert the following immediately **before** `app.state.search_daemon = SearchDaemon(...)`:
 
 ```python
-        # Issue #3773: path context store + cache
-        path_context_store = None
-        path_context_cache = None
-        if _async_sf is not None:
-            try:
-                from nexus.bricks.search.path_context import (
-                    PathContextCache,
-                    PathContextStore,
-                )
+# Issue #3773: path context store + cache
+path_context_store = None
+path_context_cache = None
+if _async_sf is not None:
+    try:
+        from nexus.bricks.search.path_context import (
+            PathContextCache,
+            PathContextStore,
+        )
 
-                _db_type = "postgresql" if (svc.database_url or "").startswith(
-                    ("postgres", "postgresql")
-                ) else "sqlite"
-                path_context_store = PathContextStore(
-                    async_session_factory=_async_sf,
-                    db_type=_db_type,
-                )
-                path_context_cache = PathContextCache(store=path_context_store)
-            except Exception:  # pragma: no cover — non-fatal wiring failure
-                logger.exception("Failed to initialize path context store/cache")
-        app.state.path_context_store = path_context_store
-        app.state.path_context_cache = path_context_cache
+        _db_type = (
+            "postgresql"
+            if (svc.database_url or "").startswith(("postgres", "postgresql"))
+            else "sqlite"
+        )
+        path_context_store = PathContextStore(
+            async_session_factory=_async_sf,
+            db_type=_db_type,
+        )
+        path_context_cache = PathContextCache(store=path_context_store)
+    except Exception:  # pragma: no cover — non-fatal wiring failure
+        logger.exception("Failed to initialize path context store/cache")
+app.state.path_context_store = path_context_store
+app.state.path_context_cache = path_context_cache
 ```
 
 Then modify the `SearchDaemon(...)` construction call (currently at `app.state.search_daemon = SearchDaemon(config, async_session_factory=_async_sf, zoekt_client=_zoekt_client, cache_brick=_cache_brick, settings_store=_settings_store,)`) to add a new kwarg:
@@ -1597,17 +1583,15 @@ Then modify the `SearchDaemon(...)` construction call (currently at `app.state.s
 Edit `src/nexus/server/api/v2/versioning.py`. After the `# ---- Access Manifests router` block (around lines 335-345), add:
 
 ```python
-    # ---- Path Contexts router (Issue #3773) ----
-    try:
-        from nexus.server.api.v2.routers.path_contexts import (
-            router as path_contexts_router,
-        )
+# ---- Path Contexts router (Issue #3773) ----
+try:
+    from nexus.server.api.v2.routers.path_contexts import (
+        router as path_contexts_router,
+    )
 
-        registry.add(
-            RouterEntry(router=path_contexts_router, name="path_contexts", endpoint_count=3)
-        )
-    except ImportError as e:
-        logger.warning("Failed to import Path Contexts routes: %s", e)
+    registry.add(RouterEntry(router=path_contexts_router, name="path_contexts", endpoint_count=3))
+except ImportError as e:
+    logger.warning("Failed to import Path Contexts routes: %s", e)
 ```
 
 - [ ] **Step 3: Smoke-check the app starts**
@@ -1775,11 +1759,9 @@ def __init__(
 **4b.** Locate the end of the SearchResult construction block (currently `daemon.py:1169-1186`, ending just before `latency_ms = (time.perf_counter() - start) * 1000`). Insert a new helper call **after** the list comprehension that builds `results` and **before** the `latency_ms` line:
 
 ```python
-                    if self._path_context_cache is not None and results:
-                        for r in results:
-                            r.context = await self._path_context_cache.lookup(
-                                r.zone_id, r.path
-                            )
+if self._path_context_cache is not None and results:
+    for r in results:
+        r.context = await self._path_context_cache.lookup(r.zone_id, r.path)
 ```
 
 **4c.** Apply the same attach pattern to any other path that returns `SearchResult` instances in `daemon.py` (legacy fallback branch around lines 1193+). Grep for `return results` within the `search(` method body:

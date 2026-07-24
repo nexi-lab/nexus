@@ -222,9 +222,7 @@ class CacheConfig:
 
     def __post_init__(self) -> None:
         if self.max_drain_bytes > (self.content_cache_bytes + self.parsed_cache_bytes):
-            raise ValueError(
-                "max_drain_bytes must not exceed total file cache size"
-            )
+            raise ValueError("max_drain_bytes must not exceed total file cache size")
 ```
 
 Threaded from `nexus.yaml` → `CacheConfig` → `FUSECacheManager` constructor.
@@ -261,11 +259,11 @@ The cache exposes `max_drain_bytes` as a read-only property. The fill-site calle
 ```python
 buf: bytearray | None = bytearray()
 async for chunk in backend.stream(path):
-    yield chunk                                          # forward to consumer
+    yield chunk  # forward to consumer
     if buf is not None:
         buf.extend(chunk)
         if len(buf) > file_cache.max_drain_bytes:
-            buf = None                                   # stop accumulating
+            buf = None  # stop accumulating
 
 if buf is not None:
     await file_cache.put(key, bytes(buf), fp, ttl)

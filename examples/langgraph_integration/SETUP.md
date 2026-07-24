@@ -176,21 +176,17 @@ The demo sets up these permissions:
 admin_nx.rebac_create(
     subject=("agent", "researcher"),
     relation="direct_editor",
-    object=("file", "/workspace/research")
+    object=("file", "/workspace/research"),
 )
 
 # Coder can read /workspace/research/ (needs requirements)
 admin_nx.rebac_create(
-    subject=("agent", "coder"),
-    relation="direct_viewer",
-    object=("file", "/workspace/research")
+    subject=("agent", "coder"), relation="direct_viewer", object=("file", "/workspace/research")
 )
 
 # Coder can write to /workspace/code/
 admin_nx.rebac_create(
-    subject=("agent", "coder"),
-    relation="direct_editor",
-    object=("file", "/workspace/code")
+    subject=("agent", "coder"), relation="direct_editor", object=("file", "/workspace/code")
 )
 
 # ... etc for reviewer
@@ -198,7 +194,9 @@ admin_nx.rebac_create(
 
 **Each agent connects with its identity:**
 ```python
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL"), "api_key": os.getenv("NEXUS_API_KEY")})
+nx = nexus.connect(
+    config={"mode": "remote", "url": os.getenv("NEXUS_URL"), "api_key": os.getenv("NEXUS_API_KEY")}
+)
 nx.agent_id = "researcher"  # Identity for permission checks
 ```
 

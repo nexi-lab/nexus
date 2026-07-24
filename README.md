@@ -177,11 +177,13 @@ Once running, interact via SDK, CLI, or TUI:
 # SDK
 import asyncio, nexus
 
+
 async def main():
-    nx = await nexus.connect()                    # connects to running nexusd
+    nx = await nexus.connect()  # connects to running nexusd
     await nx.write("/hello.txt", b"hello world")
     print((await nx.read("/hello.txt")).decode())
     nx.close()
+
 
 asyncio.run(main())
 ```
@@ -208,11 +210,13 @@ For scripts and notebooks — in-process, zero infrastructure:
 ```python
 import asyncio, nexus
 
+
 async def main():
     nx = await nexus.connect(config={"data_dir": "./my-data"})
     await nx.write("/notes/meeting.md", b"# Q3 Planning\n- Ship Nexus 1.0")
     print((await nx.read("/notes/meeting.md")).decode())
     nx.close()
+
 
 asyncio.run(main())
 ```

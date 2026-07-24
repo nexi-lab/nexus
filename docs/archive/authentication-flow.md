@@ -66,7 +66,7 @@ user_id = "alice@example.com"  # From API key lookup
 oauth_token = token_manager.get_valid_token(
     provider="google",
     user_email=user_id,  # Same user_id!
-    zone_id=context.zone_id
+    zone_id=context.zone_id,
 )
 
 # 3. Auto-refresh happens transparently
@@ -129,7 +129,9 @@ import nexus
 from nexus.contracts.types import OperationContext
 
 # Alice connects with her API key
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_xyz123..."})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_xyz123..."}
+)
 
 # Server authenticates the request:
 # 1. Validates API key → identifies user_id = "alice@example.com"
@@ -175,7 +177,9 @@ After this:
 
 ```python
 # Alice uses her API key for every request
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_xyz123..."})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_xyz123..."}
+)
 
 # Server knows: "This is Alice (alice@example.com)"
 # Backend looks up: "Get OAuth token for alice@example.com"
@@ -246,13 +250,17 @@ bob@example.com   | google   | encrypted_token_b      | encrypted_refresh_b
 
 ```python
 # Alice's session
-alice_nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_..."})
+alice_nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_alice_..."}
+)
 
 # Writes to ALICE'S Google Drive
 alice_nx.write("/gdrive/my-file.txt", b"Alice's file")
 
 # Bob's session
-bob_nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_bob_..."})
+bob_nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_bob_..."}
+)
 
 # Writes to BOB'S Google Drive
 bob_nx.write("/gdrive/my-file.txt", b"Bob's file")

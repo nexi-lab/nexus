@@ -95,9 +95,7 @@ def test_create_token_writes_multi_zone_permissions(tmp_path):
     assert result["name"] == "alice"
     assert result["zones"] == ["eng", "ops"]
     with provider.session_factory() as session:
-        rows = session.execute(
-            select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions)
-        ).all()
+        rows = session.execute(select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions)).all()
     assert rows == [("eng", "rw"), ("ops", "r")]
 
 
@@ -105,7 +103,14 @@ def test_list_tokens_returns_local_json_shape(tmp_path):
     provider = _provider(tmp_path)
     hub_admin.handle_admin_hub_token_create(
         provider,
-        Params(name="alice", zones=[{"zone_id": "eng", "permissions": "rw"}], zones_glob=None, is_admin=True, expires=None, user_id=None),
+        Params(
+            name="alice",
+            zones=[{"zone_id": "eng", "permissions": "rw"}],
+            zones_glob=None,
+            is_admin=True,
+            expires=None,
+            user_id=None,
+        ),
         SimpleNamespace(is_admin=True),
     )
     result = hub_admin.handle_admin_hub_token_list(
@@ -115,14 +120,31 @@ def test_list_tokens_returns_local_json_shape(tmp_path):
     )
     assert result["tokens"][0]["name"] == "alice"
     assert result["tokens"][0]["zones"] == ["eng"]
-    assert set(result["tokens"][0]) >= {"key_id", "name", "zone", "zones", "admin", "created", "last_used", "revoked", "revoked_at"}
+    assert set(result["tokens"][0]) >= {
+        "key_id",
+        "name",
+        "zone",
+        "zones",
+        "admin",
+        "created",
+        "last_used",
+        "revoked",
+        "revoked_at",
+    }
 
 
 def test_revoke_token_accepts_name_and_sets_revoked_at(tmp_path):
     provider = _provider(tmp_path)
     hub_admin.handle_admin_hub_token_create(
         provider,
-        Params(name="alice", zones=[{"zone_id": "eng", "permissions": "rw"}], zones_glob=None, is_admin=False, expires=None, user_id=None),
+        Params(
+            name="alice",
+            zones=[{"zone_id": "eng", "permissions": "rw"}],
+            zones_glob=None,
+            is_admin=False,
+            expires=None,
+            user_id=None,
+        ),
         SimpleNamespace(is_admin=True),
     )
     result = hub_admin.handle_admin_hub_token_revoke(
@@ -187,7 +209,9 @@ def _parse_duration(text: str) -> timedelta:
     if not match:
         raise ValueError(f"invalid duration {text!r}: expected Nd / Nh / Nm (e.g. 90d)")
     value, unit = int(match.group(1)), match.group(2)
-    return {"d": timedelta(days=value), "h": timedelta(hours=value), "m": timedelta(minutes=value)}[unit]
+    return {"d": timedelta(days=value), "h": timedelta(hours=value), "m": timedelta(minutes=value)}[
+        unit
+    ]
 
 
 def _iso(dt: datetime | None) -> str:
@@ -215,11 +239,15 @@ def _resolve_zones(session: Any, params: Any) -> list[tuple[str, str]]:
     if zones_glob and raw_zones:
         raise ValueError("zones and zones_glob are mutually exclusive")
     if zones_glob:
-        active = session.execute(
-            select(ZoneModel)
-            .where(ZoneModel.phase == "Active")
-            .where(ZoneModel.deleted_at.is_(None))
-        ).scalars().all()
+        active = (
+            session.execute(
+                select(ZoneModel)
+                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.deleted_at.is_(None))
+            )
+            .scalars()
+            .all()
+        )
         matched = sorted(z.zone_id for z in active if fnmatch.fnmatch(z.zone_id, zones_glob))
         if not matched:
             known = sorted(z.zone_id for z in active)
@@ -293,11 +321,15 @@ def handle_admin_hub_token_create(auth_provider: Any, params: Any, context: Any)
     if getattr(params, "expires", None):
         expires_at = datetime.now(UTC) + _parse_duration(params.expires)
     with auth_provider.session_factory() as session, session.begin():
-        existing = session.execute(
-            select(APIKeyModel)
-            .where(APIKeyModel.name == params.name)
-            .where(APIKeyModel.revoked == 0)
-        ).scalars().first()
+        existing = (
+            session.execute(
+                select(APIKeyModel)
+                .where(APIKeyModel.name == params.name)
+                .where(APIKeyModel.revoked == 0)
+            )
+            .scalars()
+            .first()
+        )
         if existing is not None:
             raise ValueError(
                 f"token named {params.name!r} already exists (key_id={existing.key_id})"
@@ -347,7 +379,9 @@ def handle_admin_hub_token_revoke(auth_provider: Any, params: Any, context: Any)
                     | (APIKeyModel.key_id.startswith(identifier))
                     | (APIKeyModel.name == identifier)
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         if not matches:
             raise FileNotFoundError(f"no active token matches {identifier!r}")
@@ -375,7 +409,11 @@ def _read_redis_stats() -> dict[str, Any]:
         client = redis.from_url(url, socket_timeout=2)
         client.ping()
         now_min = int(time.time()) // 60
-        total = sum(int(v) for v in client.mget([f"nexus:hub:qps:{now_min - i}" for i in range(5)]) if v is not None)
+        total = sum(
+            int(v)
+            for v in client.mget([f"nexus:hub:qps:{now_min - i}" for i in range(5)])
+            if v is not None
+        )
         active = client.scard(f"nexus:hub:active:{now_min}")
         return {"qps_5m": round(total / 300.0, 2), "connections": int(active), "redis": "ok"}
     except Exception:
@@ -388,8 +426,18 @@ def handle_admin_hub_status(auth_provider: Any, params: Any, context: Any) -> di
     endpoint = getattr(params, "endpoint", None) or "remote"
     profile = os.environ.get("NEXUS_PROFILE", "full")
     with auth_provider.session_factory() as session:
-        active = session.execute(select(func.count()).select_from(APIKeyModel).where(APIKeyModel.revoked == 0)).scalar() or 0
-        revoked = session.execute(select(func.count()).select_from(APIKeyModel).where(APIKeyModel.revoked == 1)).scalar() or 0
+        active = (
+            session.execute(
+                select(func.count()).select_from(APIKeyModel).where(APIKeyModel.revoked == 0)
+            ).scalar()
+            or 0
+        )
+        revoked = (
+            session.execute(
+                select(func.count()).select_from(APIKeyModel).where(APIKeyModel.revoked == 1)
+            ).scalar()
+            or 0
+        )
         payload = {
             "endpoint": endpoint,
             "profile": profile,
@@ -405,13 +453,22 @@ def handle_admin_hub_status(auth_provider: Any, params: Any, context: Any) -> di
                     .where(ZoneModel.phase == "Active")
                     .where(ZoneModel.deleted_at.is_(None))
                     .order_by(ZoneModel.zone_id.asc())
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             ]
-            rows = list(session.execute(select(APIKeyModel).order_by(APIKeyModel.created_at.desc())).scalars().all())
+            rows = list(
+                session.execute(select(APIKeyModel).order_by(APIKeyModel.created_at.desc()))
+                .scalars()
+                .all()
+            )
             payload.update(
                 {
                     "detail": True,
-                    "zones": [{"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids],
+                    "zones": [
+                        {"zone_id": zone_id, "clients": None, "qps_5m": None}
+                        for zone_id in zone_ids
+                    ],
                     "tokens_detail": [
                         {
                             "key_id": token["key_id"],
@@ -421,12 +478,29 @@ def handle_admin_hub_status(auth_provider: Any, params: Any, context: Any) -> di
                             "created": token["created"] if token["created"] != "-" else None,
                             "last_seen": token["last_used"] if token["last_used"] != "-" else None,
                             "revoked": token["revoked"],
-                            "revoked_at": token["revoked_at"] if token["revoked_at"] != "-" else None,
+                            "revoked_at": token["revoked_at"]
+                            if token["revoked_at"] != "-"
+                            else None,
                         }
                         for token in _tokens_payload(session, rows)
                     ],
-                    "rate_limits": {"window_seconds": 300, "hits_by_tier": {"anonymous": None, "authenticated": None, "premium": None}},
-                    "search": {"zones": [{"zone_id": zone_id, "zoekt_index_size_bytes": None, "zoekt_index_size_display": None, "zoekt_last_indexed": None, "txtai_queue_depth": None, "last_indexed": None} for zone_id in zone_ids]},
+                    "rate_limits": {
+                        "window_seconds": 300,
+                        "hits_by_tier": {"anonymous": None, "authenticated": None, "premium": None},
+                    },
+                    "search": {
+                        "zones": [
+                            {
+                                "zone_id": zone_id,
+                                "zoekt_index_size_bytes": None,
+                                "zoekt_index_size_display": None,
+                                "zoekt_last_indexed": None,
+                                "txtai_queue_depth": None,
+                                "last_indexed": None,
+                            }
+                            for zone_id in zone_ids
+                        ]
+                    },
                 }
             )
         return payload
@@ -669,9 +743,18 @@ from nexus.cli.commands import _hub_remote
 
 
 def test_normalize_remote_url_appends_mcp_path():
-    assert _hub_remote.normalize_mcp_url("https://nexus.example.com") == "https://nexus.example.com/mcp"
-    assert _hub_remote.normalize_mcp_url("https://nexus.example.com/") == "https://nexus.example.com/mcp"
-    assert _hub_remote.normalize_mcp_url("https://nexus.example.com/mcp") == "https://nexus.example.com/mcp"
+    assert (
+        _hub_remote.normalize_mcp_url("https://nexus.example.com")
+        == "https://nexus.example.com/mcp"
+    )
+    assert (
+        _hub_remote.normalize_mcp_url("https://nexus.example.com/")
+        == "https://nexus.example.com/mcp"
+    )
+    assert (
+        _hub_remote.normalize_mcp_url("https://nexus.example.com/mcp")
+        == "https://nexus.example.com/mcp"
+    )
 
 
 def test_extract_tool_payload_parses_text_json():
@@ -689,7 +772,12 @@ def test_extract_tool_payload_raises_for_403_error():
         "id": 2,
         "result": {
             "content": [
-                {"type": "text", "text": json.dumps({"error": {"status": 403, "message": "Admin privileges required"}})}
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        {"error": {"status": 403, "message": "Admin privileges required"}}
+                    ),
+                }
             ]
         },
     }
@@ -784,9 +872,13 @@ def call_hub_admin(
         with httpx.Client(timeout=timeout) as client:
             with client.stream("POST", url, headers=headers, json=init_body) as resp:
                 if resp.status_code in (401, 403):
-                    raise click.ClickException(f"remote hub admin rejected credentials ({resp.status_code})")
+                    raise click.ClickException(
+                        f"remote hub admin rejected credentials ({resp.status_code})"
+                    )
                 resp.raise_for_status()
-                session_id = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+                session_id = resp.headers.get("mcp-session-id") or resp.headers.get(
+                    "Mcp-Session-Id"
+                )
                 for _line in resp.iter_lines():
                     pass
             if not session_id:
@@ -808,7 +900,9 @@ def call_hub_admin(
             }
             with client.stream("POST", url, headers=session_headers, json=body) as resp:
                 if resp.status_code in (401, 403):
-                    raise click.ClickException(f"remote hub admin rejected credentials ({resp.status_code})")
+                    raise click.ClickException(
+                        f"remote hub admin rejected credentials ({resp.status_code})"
+                    )
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     if line.startswith("data: "):
@@ -847,11 +941,40 @@ from nexus.cli.commands.hub import hub
 
 def test_remote_token_list_uses_mcp_client(monkeypatch):
     seen = {}
+
     def fake_call(remote, admin_token, action, arguments=None):
-        seen.update({"remote": remote, "admin_token": admin_token, "action": action, "arguments": arguments})
-        return {"tokens": [{"key_id": "kid_1234567890", "name": "alice", "zone": "eng", "zones": ["eng"], "admin": False, "created": "-", "last_used": "-", "revoked": False, "revoked_at": "-"}]}
+        seen.update(
+            {"remote": remote, "admin_token": admin_token, "action": action, "arguments": arguments}
+        )
+        return {
+            "tokens": [
+                {
+                    "key_id": "kid_1234567890",
+                    "name": "alice",
+                    "zone": "eng",
+                    "zones": ["eng"],
+                    "admin": False,
+                    "created": "-",
+                    "last_used": "-",
+                    "revoked": False,
+                    "revoked_at": "-",
+                }
+            ]
+        }
+
     monkeypatch.setattr("nexus.cli.commands.hub.call_hub_admin", fake_call)
-    result = CliRunner().invoke(hub, ["token", "list", "--remote", "https://nexus.example.com", "--admin-token", "sk-admin", "--json"])
+    result = CliRunner().invoke(
+        hub,
+        [
+            "token",
+            "list",
+            "--remote",
+            "https://nexus.example.com",
+            "--admin-token",
+            "sk-admin",
+            "--json",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert seen["action"] == "list_tokens"
     assert seen["arguments"] == {"show_revoked": False}
@@ -860,11 +983,35 @@ def test_remote_token_list_uses_mcp_client(monkeypatch):
 
 def test_remote_token_create_sends_zones_and_prints_token(monkeypatch):
     seen = {}
+
     def fake_call(remote, admin_token, action, arguments=None):
         seen.update({"action": action, "arguments": arguments})
-        return {"key_id": "kid", "token": "sk-created", "name": "alice", "zones": ["eng"], "admin": True, "expires_at": None}
+        return {
+            "key_id": "kid",
+            "token": "sk-created",
+            "name": "alice",
+            "zones": ["eng"],
+            "admin": True,
+            "expires_at": None,
+        }
+
     monkeypatch.setattr("nexus.cli.commands.hub.call_hub_admin", fake_call)
-    result = CliRunner().invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng:rwx", "--admin", "--remote", "https://nexus.example.com", "--admin-token", "sk-admin"])
+    result = CliRunner().invoke(
+        hub,
+        [
+            "token",
+            "create",
+            "--name",
+            "alice",
+            "--zones",
+            "eng:rwx",
+            "--admin",
+            "--remote",
+            "https://nexus.example.com",
+            "--admin-token",
+            "sk-admin",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert seen["action"] == "create_token"
     assert seen["arguments"]["zones"] == [{"zone_id": "eng", "permissions": "rwx"}]
@@ -899,8 +1046,12 @@ Add helpers near `_parse_zones_csv`:
 
 ```python
 def _remote_options(func: Any) -> Any:
-    func = click.option("--admin-token", envvar="NEXUS_HUB_ADMIN_TOKEN", help="Admin bearer token for --remote.")(func)
-    func = click.option("--remote", help="Remote MCP hub URL. Host URLs are normalized to /mcp.")(func)
+    func = click.option(
+        "--admin-token", envvar="NEXUS_HUB_ADMIN_TOKEN", help="Admin bearer token for --remote."
+    )(func)
+    func = click.option("--remote", help="Remote MCP hub URL. Host URLs are normalized to /mcp.")(
+        func
+    )
     return func
 
 
@@ -931,7 +1082,9 @@ if remote:
     elif zones_csv is not None:
         remote_zones = _zones_for_remote(_parse_zones_csv(zones_csv))
     else:
-        remote_zones = _zones_for_remote([z.strip() for z in zone_alias.split(",") if z.strip()] if zone_alias else [])
+        remote_zones = _zones_for_remote(
+            [z.strip() for z in zone_alias.split(",") if z.strip()] if zone_alias else []
+        )
     result = call_hub_admin(
         remote,
         admin_token or "",
@@ -957,7 +1110,9 @@ At the start of `token_list`:
 ```python
 if remote:
     _require_remote_token(remote, admin_token)
-    payload = call_hub_admin(remote, admin_token or "", "list_tokens", {"show_revoked": show_revoked})
+    payload = call_hub_admin(
+        remote, admin_token or "", "list_tokens", {"show_revoked": show_revoked}
+    )
     _emit_token_list_payload(payload, as_json=as_json)
     return
 ```
@@ -970,7 +1125,9 @@ At the start of `token_revoke`:
 if remote:
     _require_remote_token(remote, admin_token)
     result = call_hub_admin(remote, admin_token or "", "revoke_token", {"identifier": identifier})
-    click.echo(f"revoked {result['name']} ({result['key_id']}). Effective within 60s (auth cache TTL).")
+    click.echo(
+        f"revoked {result['name']} ({result['key_id']}). Effective within 60s (auth cache TTL)."
+    )
     return
 ```
 

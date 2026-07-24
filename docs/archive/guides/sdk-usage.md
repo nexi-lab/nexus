@@ -74,13 +74,15 @@ nx = connect()
 from nexus.sdk import connect
 
 # Pass configuration dictionary
-nx = connect(config={
-    "backend": "local",
-    "data_dir": "./my-nexus-data",
-    "enable_permissions": True,
-    "zone_id": "my-team",
-    "agent_id": "my-agent",
-})
+nx = connect(
+    config={
+        "backend": "local",
+        "data_dir": "./my-nexus-data",
+        "enable_permissions": True,
+        "zone_id": "my-team",
+        "agent_id": "my-agent",
+    }
+)
 ```
 
 **From config file:**
@@ -201,23 +203,16 @@ nx = connect(config={"enforce_permissions": True})
 
 # Grant permissions using ReBAC
 nx.rebac_create(
-    subject=("user", "alice"),
-    relation="direct_editor",
-    object=("file", "/workspace/file.txt")
+    subject=("user", "alice"), relation="direct_editor", object=("file", "/workspace/file.txt")
 )
 
 # Check permissions
 has_access = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("file", "/workspace/file.txt")
+    subject=("user", "alice"), permission="write", object=("file", "/workspace/file.txt")
 )
 
 # Who can access this file?
-subjects = nx.rebac_expand(
-    permission="read",
-    object=("file", "/workspace/file.txt")
-)
+subjects = nx.rebac_expand(permission="read", object=("file", "/workspace/file.txt"))
 ```
 
 **Production setup:** For real permission enforcement, use server mode:
@@ -258,26 +253,14 @@ manager = SkillManager(nx, registry)
 
 # Create new skill
 await manager.create_skill(
-    "my-skill",
-    description="My custom skill",
-    template="basic",
-    author="Alice"
+    "my-skill", description="My custom skill", template="basic", author="Alice"
 )
 
 # Fork existing skill
-await manager.fork_skill(
-    "analyze-code",
-    "my-analyzer",
-    tier="agent",
-    author="Bob"
-)
+await manager.fork_skill("analyze-code", "my-analyzer", tier="agent", author="Bob")
 
 # Publish skill to team
-await manager.publish_skill(
-    "my-skill",
-    source_tier="agent",
-    target_tier="tenant"
-)
+await manager.publish_skill("my-skill", source_tier="agent", target_tier="tenant")
 ```
 
 ### Version Tracking
@@ -315,7 +298,9 @@ nx.rollback("/workspace/doc.txt", version=2)
 import nexus
 
 # Connect to remote Nexus server
-nx = nexus.connect(config={"mode": "remote", "url": "http://your-server:2026", "api_key": "your-api-key"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://your-server:2026", "api_key": "your-api-key"}
+)
 
 # Same API as local filesystem!
 nx.write("/workspace/file.txt", b"remote data")
@@ -331,6 +316,7 @@ files = nx.list("/workspace", recursive=True)
 from nexus.sdk import connect, FileNotFoundError
 import tkinter as tk
 from tkinter import ttk
+
 
 class NexusFileManager:
     def __init__(self):
@@ -349,13 +335,13 @@ class NexusFileManager:
         try:
             files = self.nx.list(path, recursive=False)
             for file in files:
-                self.tree.insert("", "end", text=file.path,
-                               values=(file.size, file.modified_at))
+                self.tree.insert("", "end", text=file.path, values=(file.size, file.modified_at))
         except FileNotFoundError:
             print(f"Path not found: {path}")
 
     def run(self):
         self.root.mainloop()
+
 
 if __name__ == "__main__":
     app = NexusFileManager()
@@ -371,6 +357,7 @@ from rich.table import Table
 
 console = Console()
 
+
 def display_files(path="/"):
     nx = connect()
     files = nx.list(path, recursive=True)
@@ -385,6 +372,7 @@ def display_files(path="/"):
 
     console.print(table)
 
+
 display_files("/workspace")
 ```
 
@@ -398,8 +386,10 @@ from pydantic import BaseModel
 app = FastAPI()
 nx = connect()
 
+
 class FileWrite(BaseModel):
     content: bytes
+
 
 @app.get("/files/{path:path}")
 def read_file(path: str):
@@ -409,10 +399,12 @@ def read_file(path: str):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found")
 
+
 @app.post("/files/{path:path}")
 def write_file(path: str, data: FileWrite):
     nx.write(f"/{path}", data.content)
     return {"path": path, "status": "written"}
+
 
 @app.get("/list/{path:path}")
 def list_files(path: str, recursive: bool = False):
@@ -438,11 +430,7 @@ import subprocess
 import json
 
 # List files using CLI
-result = subprocess.run(
-    ["nexus", "ls", "/workspace", "--json"],
-    capture_output=True,
-    text=True
-)
+result = subprocess.run(["nexus", "ls", "/workspace", "--json"], capture_output=True, text=True)
 files = json.loads(result.stdout)
 ```
 

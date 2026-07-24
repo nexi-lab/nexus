@@ -43,11 +43,7 @@ def register_memory(
 
 ```python
 # Register a memory for knowledge base
-config = nx.register_memory(
-    "/knowledge-base",
-    name="kb",
-    description="Shared knowledge base"
-)
+config = nx.register_memory("/knowledge-base", name="kb", description="Shared knowledge base")
 print(f"Registered memory: {config['path']}")
 
 # Register with metadata
@@ -56,7 +52,7 @@ config = nx.register_memory(
     name="docs",
     description="Project documentation",
     created_by="alice",
-    metadata={"project_id": "12345", "team": "engineering"}
+    metadata={"project_id": "12345", "team": "engineering"},
 )
 ```
 

@@ -74,10 +74,24 @@ Tenants **cannot** read, write, or even discover each other's data.
 import nexus
 
 # Tenant A's agent
-nx_tenant_a = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com", "api_key": "tenant_a_key", "workspace_prefix": "/workspace/tenant-a"})
+nx_tenant_a = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": "https://nexus.example.com",
+        "api_key": "tenant_a_key",
+        "workspace_prefix": "/workspace/tenant-a",
+    }
+)
 
 # Tenant B's agent
-nx_tenant_b = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com", "api_key": "tenant_b_key", "workspace_prefix": "/workspace/tenant-b"})
+nx_tenant_b = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": "https://nexus.example.com",
+        "api_key": "tenant_b_key",
+        "workspace_prefix": "/workspace/tenant-b",
+    }
+)
 
 # Tenant A can only access /workspace/tenant-a/*
 nx_tenant_a.write("/data/report.txt", b"Tenant A data")
@@ -116,32 +130,23 @@ nx.rebac.create_namespace("tenant:acme-corp")
 nx.rebac.create_namespace("tenant:startup-xyz")
 
 # Grant tenant admin permissions
-nx.rebac.grant(
-    "user:alice@acme.com",
-    "admin",
-    "namespace",
-    "tenant:acme-corp"
-)
+nx.rebac.grant("user:alice@acme.com", "admin", "namespace", "tenant:acme-corp")
 
-nx.rebac.grant(
-    "user:bob@startup.xyz",
-    "admin",
-    "namespace",
-    "tenant:startup-xyz"
-)
+nx.rebac.grant("user:bob@startup.xyz", "admin", "namespace", "tenant:startup-xyz")
 
 # Alice (tenant acme-corp) creates a file
-nx.write("/workspace/acme-corp/data.txt", b"ACME data", context={
-    "subject": "user:alice@acme.com",
-    "namespace": "tenant:acme-corp"
-})
+nx.write(
+    "/workspace/acme-corp/data.txt",
+    b"ACME data",
+    context={"subject": "user:alice@acme.com", "namespace": "tenant:acme-corp"},
+)
 
 # Bob (tenant startup-xyz) tries to read ACME's file
 # ❌ Fails: No permission in tenant:acme-corp namespace
-nx.read("/workspace/acme-corp/data.txt", context={
-    "subject": "user:bob@startup.xyz",
-    "namespace": "tenant:startup-xyz"
-})
+nx.read(
+    "/workspace/acme-corp/data.txt",
+    context={"subject": "user:bob@startup.xyz", "namespace": "tenant:startup-xyz"},
+)
 ```
 
 **How it works**:
@@ -213,7 +218,7 @@ nx.memory.store(
     identity="user:alice@acme.com",
     key="preferences",
     value={"theme": "dark"},
-    namespace="tenant:acme-corp"
+    namespace="tenant:acme-corp",
 )
 
 # Tenant B's agent stores memory (same key, different namespace)
@@ -221,20 +226,16 @@ nx.memory.store(
     identity="user:bob@startup.xyz",
     key="preferences",
     value={"theme": "light"},
-    namespace="tenant:startup-xyz"
+    namespace="tenant:startup-xyz",
 )
 
 # Recall is scoped to tenant namespace
 acme_prefs = nx.memory.retrieve(
-    identity="user:alice@acme.com",
-    key="preferences",
-    namespace="tenant:acme-corp"
+    identity="user:alice@acme.com", key="preferences", namespace="tenant:acme-corp"
 )  # {"theme": "dark"}
 
 xyz_prefs = nx.memory.retrieve(
-    identity="user:bob@startup.xyz",
-    key="preferences",
-    namespace="tenant:startup-xyz"
+    identity="user:bob@startup.xyz", key="preferences", namespace="tenant:startup-xyz"
 )  # {"theme": "light"}
 ```
 
@@ -258,7 +259,7 @@ nx.write("/workspace/startup-xyz/docs/api.md", b"Startup XYZ API docs")
 results_a = nx.semantic_search(
     path="/workspace/acme-corp/docs",
     query="API documentation",
-    context={"namespace": "tenant:acme-corp"}
+    context={"namespace": "tenant:acme-corp"},
 )
 # Results: ["/workspace/acme-corp/docs/api.md"]
 
@@ -266,7 +267,7 @@ results_a = nx.semantic_search(
 results_b = nx.semantic_search(
     path="/workspace/startup-xyz/docs",
     query="API documentation",
-    context={"namespace": "tenant:startup-xyz"}
+    context={"namespace": "tenant:startup-xyz"},
 )
 # Results: ["/workspace/startup-xyz/docs/api.md"]
 ```
@@ -283,7 +284,7 @@ nx.workflows.create(
     name="acme-csv-processor",
     trigger="write:/workspace/acme-corp/uploads/*.csv",
     action="process_csv",
-    namespace="tenant:acme-corp"
+    namespace="tenant:acme-corp",
 )
 
 # Tenant B: Workflow triggers on Startup XYZ files
@@ -291,7 +292,7 @@ nx.workflows.create(
     name="xyz-csv-processor",
     trigger="write:/workspace/startup-xyz/uploads/*.csv",
     action="process_csv",
-    namespace="tenant:startup-xyz"
+    namespace="tenant:startup-xyz",
 )
 
 # Upload to Tenant A triggers ONLY acme-csv-processor
@@ -439,16 +440,14 @@ graph TB
 ```python
 # ✅ DO: Generate unique API keys per tenant
 tenant_a_key = nx.admin.create_api_key(
-    user_id="tenant-a-admin",
-    scopes=["read", "write"],
-    workspace_prefix="/workspace/tenant-a"
+    user_id="tenant-a-admin", scopes=["read", "write"], workspace_prefix="/workspace/tenant-a"
 )
 
 # ❌ DON'T: Share API keys across tenants
 shared_key = nx.admin.create_api_key(
     user_id="shared-admin",
     scopes=["read", "write"],
-    workspace_prefix="/workspace"  # Too broad!
+    workspace_prefix="/workspace",  # Too broad!
 )
 ```
 
@@ -463,6 +462,7 @@ def validate_tenant_path(zone_id: str, path: str):
     if not path.startswith(expected_prefix):
         raise PermissionError(f"Path {path} not in tenant {zone_id} workspace")
     return path
+
 
 # Use in API handlers
 @app.post("/api/files/write")
@@ -480,10 +480,11 @@ Use ReBAC namespaces for additional isolation:
 nx.rebac.create_namespace(f"tenant:{zone_id}")
 
 # All operations include namespace context
-nx.write("/workspace/tenant-123/data.txt", b"...", context={
-    "subject": "user:alice@example.com",
-    "namespace": "tenant:tenant-123"
-})
+nx.write(
+    "/workspace/tenant-123/data.txt",
+    b"...",
+    context={"subject": "user:alice@example.com", "namespace": "tenant:tenant-123"},
+)
 ```
 
 ### 4. Audit Logging
@@ -494,6 +495,7 @@ Log all cross-tenant access attempts:
 # Log tenant operations
 def log_tenant_operation(zone_id: str, operation: str, path: str, result: str):
     logger.info(f"Tenant {zone_id}: {operation} {path} -> {result}")
+
 
 # In API handlers
 @app.post("/api/files/read")
@@ -518,6 +520,7 @@ def read_file(path: str, zone_id: str):
 # Set tenant storage quota
 nx.admin.set_quota("tenant-a", max_bytes=10 * 1024**3)  # 10 GB
 
+
 # Check quota before writes
 def write_with_quota_check(zone_id: str, path: str, content: bytes):
     quota = nx.admin.get_quota(zone_id)
@@ -537,8 +540,9 @@ from nexus.middleware import RateLimiter
 # Apply rate limits per tenant
 rate_limiter = RateLimiter(
     max_requests_per_minute=1000,
-    scope="tenant"  # Scope by zone_id
+    scope="tenant",  # Scope by zone_id
 )
+
 
 @app.post("/api/files/write")
 @rate_limiter.limit()
@@ -557,23 +561,22 @@ def write_file(path: str, content: bytes, zone_id: str):
 class TenantMeter:
     def __init__(self, zone_id: str):
         self.zone_id = zone_id
-        self.metrics = {
-            "reads": 0,
-            "writes": 0,
-            "storage_bytes": 0,
-            "search_queries": 0
-        }
+        self.metrics = {"reads": 0, "writes": 0, "storage_bytes": 0, "search_queries": 0}
 
     def record_write(self, path: str, size: int):
         self.metrics["writes"] += 1
         self.metrics["storage_bytes"] += size
         # Store in database for billing
-        db.insert("tenant_usage", {
-            "zone_id": self.zone_id,
-            "operation": "write",
-            "bytes": size,
-            "timestamp": datetime.now()
-        })
+        db.insert(
+            "tenant_usage",
+            {
+                "zone_id": self.zone_id,
+                "operation": "write",
+                "bytes": size,
+                "timestamp": datetime.now(),
+            },
+        )
+
 
 # Use in API handlers
 meter = TenantMeter("tenant-a")
@@ -585,14 +588,17 @@ meter.record_write("/workspace/tenant-a/data.txt", len(content))
 ```python
 # Generate monthly bill
 def generate_tenant_bill(zone_id: str, month: str):
-    usage = db.query("""
+    usage = db.query(
+        """
         SELECT
             COUNT(*) FILTER (WHERE operation='read') as reads,
             COUNT(*) FILTER (WHERE operation='write') as writes,
             SUM(bytes) as total_bytes
         FROM tenant_usage
         WHERE zone_id = %s AND month = %s
-    """, (zone_id, month))
+    """,
+        (zone_id, month),
+    )
 
     bill = {
         "zone_id": zone_id,
@@ -600,7 +606,7 @@ def generate_tenant_bill(zone_id: str, month: str):
         "reads": usage.reads,
         "writes": usage.writes,
         "storage_gb": usage.total_bytes / 1024**3,
-        "total_cost": calculate_cost(usage)
+        "total_cost": calculate_cost(usage),
     }
     return bill
 ```
@@ -614,10 +620,23 @@ def generate_tenant_bill(zone_id: str, month: str):
 ```python
 import pytest
 
+
 def test_tenant_isolation():
     # Create two tenant clients
-    nx_a = nexus.connect(config={"mode": "remote", "api_key": "tenant_a_key", "workspace_prefix": "/workspace/tenant-a"})
-    nx_b = nexus.connect(config={"mode": "remote", "api_key": "tenant_b_key", "workspace_prefix": "/workspace/tenant-b"})
+    nx_a = nexus.connect(
+        config={
+            "mode": "remote",
+            "api_key": "tenant_a_key",
+            "workspace_prefix": "/workspace/tenant-a",
+        }
+    )
+    nx_b = nexus.connect(
+        config={
+            "mode": "remote",
+            "api_key": "tenant_b_key",
+            "workspace_prefix": "/workspace/tenant-b",
+        }
+    )
 
     # Tenant A writes data
     nx_a.write("/data/secret.txt", b"Tenant A secret")
@@ -642,8 +661,12 @@ def test_tenant_isolation():
 ```python
 # BAD: All tenants use same API key
 api_key = "shared-admin-key"
-nx_a = nexus.connect(config={"mode": "remote", "api_key": api_key, "workspace_prefix": "/workspace/tenant-a"})
-nx_b = nexus.connect(config={"mode": "remote", "api_key": api_key, "workspace_prefix": "/workspace/tenant-b"})
+nx_a = nexus.connect(
+    config={"mode": "remote", "api_key": api_key, "workspace_prefix": "/workspace/tenant-a"}
+)
+nx_b = nexus.connect(
+    config={"mode": "remote", "api_key": api_key, "workspace_prefix": "/workspace/tenant-b"}
+)
 # ⚠️ Problem: Malicious tenant can change workspace_prefix
 ```
 
@@ -714,7 +737,14 @@ backend = LocalBackend(root_path="/tmp/nexus-data")
 nx = NexusFS(backend=backend, is_admin=True)
 
 # After
-nx = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com", "api_key": get_tenant_api_key(zone_id), "workspace_prefix": f"/workspace/{zone_id}"})
+nx = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": "https://nexus.example.com",
+        "api_key": get_tenant_api_key(zone_id),
+        "workspace_prefix": f"/workspace/{zone_id}",
+    }
+)
 ```
 
 ---
@@ -731,12 +761,7 @@ nx = nexus.connect(config={"mode": "remote", "url": "https://nexus.example.com",
 **A**: Yes, via explicit ReBAC permissions:
 ```python
 # Tenant A grants Tenant B read access
-nx.rebac.grant(
-    "user:bob@tenant-b.com",
-    "reader",
-    "file",
-    "/workspace/tenant-a/shared/report.pdf"
-)
+nx.rebac.grant("user:bob@tenant-b.com", "reader", "file", "/workspace/tenant-a/shared/report.pdf")
 ```
 
 ### Q: How do I handle tenant offboarding?

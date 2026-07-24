@@ -182,21 +182,17 @@ Manage users programmatically:
 import nexus
 import asyncio
 
+
 async def main():
     # Connect as admin
-    nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "your-admin-api-key"
-    })
+    nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-admin-api-key"})
 
     # Create user (requires admin permissions)
     from nexus.core.nexus_fs import NexusFS
+
     if isinstance(nx, NexusFS):
         user_id, api_key = await nx.auth_manager.create_user(
-            username="charlie",
-            display_name="Charlie Brown",
-            subject_type="user",
-            zone_id="default"
+            username="charlie", display_name="Charlie Brown", subject_type="user", zone_id="default"
         )
         print(f"✓ Created user: charlie")
         print(f"  User ID: {user_id}")
@@ -207,6 +203,7 @@ async def main():
         print("\nAll users:")
         for user in users:
             print(f"  • {user['username']} ({user['subject_type']})")
+
 
 asyncio.run(main())
 ```
@@ -242,17 +239,16 @@ nexus admin list-agents
 """
 API key rotation for security best practices
 """
+
 import asyncio
 import nexus
+
 
 async def rotate_user_key(admin_nx, username):
     """Rotate API key for a user"""
     # Create new key
     user_id, new_key = await admin_nx.auth_manager.create_user(
-        username=f"{username}-new",
-        display_name=username,
-        subject_type="user",
-        zone_id="default"
+        username=f"{username}-new", display_name=username, subject_type="user", zone_id="default"
     )
 
     print(f"✓ New key created for {username}")
@@ -262,14 +258,13 @@ async def rotate_user_key(admin_nx, username):
 
     return new_key
 
+
 async def main():
-    admin_nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "admin-key"
-    })
+    admin_nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "admin-key"})
 
     # Rotate key
     new_key = await rotate_user_key(admin_nx, "alice")
+
 
 asyncio.run(main())
 ```
@@ -373,9 +368,11 @@ curl http://localhost:2026/health
 """
 Monitor Nexus server health
 """
+
 import asyncio
 import nexus
 import time
+
 
 async def check_health(nx):
     """Perform health checks"""
@@ -402,16 +399,15 @@ async def check_health(nx):
         print(f"✗ Health check failed: {e}")
         return False
 
+
 async def main():
-    nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "your-api-key"
-    })
+    nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
     # Run health check every 60 seconds
     while True:
         await check_health(nx)
         await asyncio.sleep(60)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -761,12 +757,14 @@ pg_dump -h localhost -U postgres -Fc nexus | \
 import requests
 import time
 
+
 def health_check():
     try:
         response = requests.get("http://localhost:2026/health", timeout=5)
         return response.status_code == 200
     except:
         return False
+
 
 # Run every 60 seconds
 while True:

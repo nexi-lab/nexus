@@ -195,19 +195,19 @@ Nexus supports isolated workspaces for different teams:
 # Development team agent
 dev_nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"zone_id": "team-dev", "agent_id": "code-analyzer"}
+    config={"zone_id": "team-dev", "agent_id": "code-analyzer"},
 )
 
 # QA team agent
 qa_nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"zone_id": "team-qa", "agent_id": "test-validator"}
+    config={"zone_id": "team-qa", "agent_id": "test-validator"},
 )
 
 # Shared documentation
 docs_nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"zone_id": "shared-docs", "agent_id": "doc-generator"}
+    config={"zone_id": "shared-docs", "agent_id": "doc-generator"},
 )
 ```
 
@@ -230,12 +230,16 @@ import nexus
 nx = nexus.connect(remote_url="http://nexus-server:2026")
 agent = create_react_agent(nx)
 
-result = agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Find all async/await usage, analyze patterns, and create a summary report"
-    }]
-})
+result = agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Find all async/await usage, analyze patterns, and create a summary report",
+            }
+        ]
+    }
+)
 ```
 
 **Agent automatically:**
@@ -248,12 +252,16 @@ result = agent.invoke({
 Generate API documentation from code:
 
 ```python
-result = agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Find all API endpoint definitions and create API documentation"
-    }]
-})
+result = agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Find all API endpoint definitions and create API documentation",
+            }
+        ]
+    }
+)
 ```
 
 **Agent performs:**
@@ -267,12 +275,16 @@ result = agent.invoke({
 Scan for TODO comments and create task list:
 
 ```python
-result = agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Find all TODO and FIXME comments and create a prioritized task list"
-    }]
-})
+result = agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Find all TODO and FIXME comments and create a prioritized task list",
+            }
+        ]
+    }
+)
 ```
 
 ### 4. Security Audit
@@ -280,12 +292,16 @@ result = agent.invoke({
 Find potential security issues:
 
 ```python
-result = agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Search for hardcoded credentials, SQL injection risks, and XSS vulnerabilities"
-    }]
-})
+result = agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Search for hardcoded credentials, SQL injection risks, and XSS vulnerabilities",
+            }
+        ]
+    }
+)
 ```
 
 ## 💡 Real-World Applications
@@ -296,12 +312,16 @@ Agent reviews pull requests and provides feedback:
 
 ```python
 # Agent analyzes changed files
-agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Review the changes in /pr/123 and check for code quality issues"
-    }]
-})
+agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Review the changes in /pr/123 and check for code quality issues",
+            }
+        ]
+    }
+)
 
 # Results saved to /reviews/pr-123.md
 ```
@@ -312,12 +332,16 @@ Build documentation from codebase:
 
 ```python
 # Agent creates comprehensive docs
-agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Generate developer onboarding guide covering architecture, setup, and key components"
-    }]
-})
+agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Generate developer onboarding guide covering architecture, setup, and key components",
+            }
+        ]
+    }
+)
 
 # Results in /docs/onboarding.md
 ```
@@ -327,12 +351,16 @@ agent.invoke({
 Track and analyze dependencies:
 
 ```python
-agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Find all import statements, identify external dependencies, and check for updates"
-    }]
-})
+agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Find all import statements, identify external dependencies, and check for updates",
+            }
+        ]
+    }
+)
 ```
 
 ### Migration Assistant
@@ -340,12 +368,16 @@ agent.invoke({
 Help migrate code patterns:
 
 ```python
-agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Find all class-based views and suggest FastAPI equivalents"
-    }]
-})
+agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Find all class-based views and suggest FastAPI equivalents",
+            }
+        ]
+    }
+)
 ```
 
 ## 🎓 Customization
@@ -357,11 +389,13 @@ Extend the agent with new capabilities:
 ```python
 from langchain_core.tools import tool
 
+
 @tool
 def semantic_search(query: str, path: str = "/") -> str:
     """Search files by semantic meaning."""
     results = nx.search(path, query=query)
     return format_search_results(results)
+
 
 # Add to tool list
 def get_nexus_tools(nx):
@@ -414,10 +448,7 @@ export NEXUS_API_KEY="your-api-key"  # Optional
 Or configure in code:
 
 ```python
-nx = nexus.connect(
-    remote_url="http://your-server:2026",
-    api_key="your-api-key"
-)
+nx = nexus.connect(remote_url="http://your-server:2026", api_key="your-api-key")
 ```
 
 ### Multi-Tenancy
@@ -433,11 +464,7 @@ Or in code:
 
 ```python
 nx = nexus.connect(
-    remote_url="http://server:2026",
-    config={
-        "zone_id": "my-team",
-        "agent_id": "code-analyzer"
-    }
+    remote_url="http://server:2026", config={"zone_id": "my-team", "agent_id": "code-analyzer"}
 )
 ```
 

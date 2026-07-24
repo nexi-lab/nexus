@@ -83,6 +83,7 @@ async def on_artifact_create(context: HookContext) -> HookResult:
     await index(artifact)
     return HookResult(proceed=True)
 
+
 # 2. Register via ceremony
 hook_engine.register_hook(
     HookType.ARTIFACT_CREATE,

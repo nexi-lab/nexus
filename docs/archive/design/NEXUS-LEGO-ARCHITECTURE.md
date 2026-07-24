@@ -335,7 +335,10 @@ class RAGBrick:
     async def query(self, question: str, *, zone_id: str) -> str:
         docs = await self._search.search(question, zone_id=zone_id, limit=10)
         context = "\n".join(doc.content for doc in docs[:5])
-        return await self._llm.generate(prompt=f"Context:\n{context}\n\nQ: {question}", zone_id=zone_id)
+        return await self._llm.generate(
+            prompt=f"Context:\n{context}\n\nQ: {question}", zone_id=zone_id
+        )
+
 
 # factory.py
 rag = RAGBrick(search=search_brick, llm=llm_brick)
@@ -350,6 +353,7 @@ A brick wraps another brick implementing the **same Protocol**. Recursive — no
 ```python
 class CachingStorage:
     """Wraps any StorageProtocol. IS a StorageProtocol."""
+
     def __init__(self, inner: StorageProtocol, cache: CacheProtocol):
         self._inner = inner
         self._cache = cache
@@ -361,6 +365,7 @@ class CachingStorage:
         data = await self._inner.read(path, zone_id=zone_id)
         await self._cache.set(f"storage:{zone_id}:{path}", data, ttl=300)
         return data
+
 
 # factory.py — recursive chain
 storage = CachingStorage(
@@ -504,13 +509,13 @@ class ConnectorProtocol(Protocol):
 ### 7.2 io_uring → Batch API
 
 ```python
-POST /api/batch
+POST / api / batch
 {
-  "operations": [
-    {"op": "read", "path": "/data/model.bin"},
-    {"op": "write", "path": "/data/output.json", "content": "..."},
-    {"op": "search", "query": "embedding similarity", "top_k": 5}
-  ]
+    "operations": [
+        {"op": "read", "path": "/data/model.bin"},
+        {"op": "write", "path": "/data/output.json", "content": "..."},
+        {"op": "search", "query": "embedding similarity", "top_k": 5},
+    ]
 }
 # One HTTP roundtrip → all results
 ```
@@ -630,6 +635,7 @@ class MountConfig:
     priority: int = 0
     readonly: bool = False
     io_profile: IOProfile = IOProfile.BALANCED  # ← NEW
+
 
 class IOProfile(StrEnum):
     FAST_READ = "fast_read"

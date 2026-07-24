@@ -233,9 +233,7 @@ class AuthIdentityCache:
     """
 
     def __init__(self, maxsize: int = 1024, ttl: int = 60) -> None:
-        self._cache: TTLCache[str, ResolvedIdentity] = TTLCache(
-            maxsize=maxsize, ttl=ttl
-        )
+        self._cache: TTLCache[str, ResolvedIdentity] = TTLCache(maxsize=maxsize, ttl=ttl)
         self._lock = threading.RLock()
 
     def get(self, key_hash: str) -> ResolvedIdentity | None:
@@ -365,9 +363,7 @@ def test_failed_auth_not_cached():
 
 def test_different_keys_cached_independently():
     provider = MagicMock()
-    provider.authenticate = MagicMock(
-        side_effect=lambda k: _mk_auth_result(subject_id=k[-3:])
-    )
+    provider.authenticate = MagicMock(side_effect=lambda k: _mk_auth_result(subject_id=k[-3:]))
 
     auth_bridge.authenticate_api_key(provider, "sk-zone_user_id_aaa")
     auth_bridge.authenticate_api_key(provider, "sk-zone_user_id_bbb")
@@ -421,9 +417,7 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
 
             from nexus.lib.sync_bridge import run_sync
 
-            return run_sync(
-                cast(CoroutineABC[Any, Any, Any], coro), timeout=10.0
-            )
+            return run_sync(cast(CoroutineABC[Any, Any, Any], coro), timeout=10.0)
         except Exception:
             logger.warning(
                 "Failed to authenticate per-request API key via auth_provider; "
@@ -449,9 +443,7 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
     if auth_result is None:
         return None
 
-    subject_id = getattr(auth_result, "subject_id", None) or getattr(
-        auth_result, "user_id", None
-    )
+    subject_id = getattr(auth_result, "subject_id", None) or getattr(auth_result, "user_id", None)
     zone_id = getattr(auth_result, "zone_id", None)
     is_admin = bool(getattr(auth_result, "is_admin", False))
     if subject_id and zone_id:
@@ -668,9 +660,7 @@ def _dynamic_limit(request: Request) -> str:
     return _limit_for_tier(_tier_for_request(request))
 
 
-def _rate_limit_exceeded_handler(
-    _request: Request, exc: Exception
-) -> JSONResponse:
+def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     retry_after = getattr(exc, "retry_after", 60)
     return JSONResponse(
         status_code=429,
@@ -692,9 +682,7 @@ def build_rate_limit_middleware() -> tuple[type[Any], dict[str, Any]]:
     """
     enabled = os.environ.get("MCP_RATE_LIMIT_ENABLED", "false").lower() == "true"
     storage_uri = (
-        os.environ.get("NEXUS_REDIS_URL")
-        or os.environ.get("DRAGONFLY_URL")
-        or "memory://"
+        os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL") or "memory://"
     )
 
     try:
@@ -800,9 +788,7 @@ async def _echo(request: Request) -> JSONResponse:
 @pytest.fixture
 def captured_records(monkeypatch) -> list[dict]:
     records: list[dict] = []
-    monkeypatch.setattr(
-        middleware_audit, "_emit_stdout_record", lambda r: records.append(r)
-    )
+    monkeypatch.setattr(middleware_audit, "_emit_stdout_record", lambda r: records.append(r))
     monkeypatch.setattr(
         middleware_audit,
         "_publish_record",
@@ -818,9 +804,7 @@ def app() -> Starlette:
     return application
 
 
-def test_records_emitted_for_json_rpc_request(
-    app: Starlette, captured_records: list[dict]
-) -> None:
+def test_records_emitted_for_json_rpc_request(app: Starlette, captured_records: list[dict]) -> None:
     client = TestClient(app)
     resp = client.post(
         "/mcp",
@@ -844,9 +828,7 @@ def test_records_emitted_for_json_rpc_request(
     assert "ts" in rec
 
 
-def test_body_preserved_for_downstream(
-    app: Starlette, captured_records: list[dict]
-) -> None:
+def test_body_preserved_for_downstream(app: Starlette, captured_records: list[dict]) -> None:
     client = TestClient(app)
     resp = client.post(
         "/mcp",
@@ -855,9 +837,7 @@ def test_body_preserved_for_downstream(
     assert resp.json()["echoed"]["method"] == "initialize"
 
 
-def test_non_json_body_still_logged(
-    app: Starlette, captured_records: list[dict]
-) -> None:
+def test_non_json_body_still_logged(app: Starlette, captured_records: list[dict]) -> None:
     client = TestClient(app)
     client.post("/mcp", content=b"not-json", headers={"Content-Type": "text/plain"})
     assert len(captured_records) == 1
@@ -866,21 +846,15 @@ def test_non_json_body_still_logged(
     assert rec["tool_name"] is None
 
 
-def test_publish_failure_does_not_break_request(
-    app: Starlette, monkeypatch
-) -> None:
+def test_publish_failure_does_not_break_request(app: Starlette, monkeypatch) -> None:
     async def _boom(_record: dict) -> None:
         raise RuntimeError("redis down")
 
     monkeypatch.setattr(middleware_audit, "_publish_record", _boom)
     captured: list[dict] = []
-    monkeypatch.setattr(
-        middleware_audit, "_emit_stdout_record", lambda r: captured.append(r)
-    )
+    monkeypatch.setattr(middleware_audit, "_emit_stdout_record", lambda r: captured.append(r))
     client = TestClient(app)
-    resp = client.post(
-        "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize"}
-    )
+    resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
     assert resp.status_code == 200
     assert len(captured) == 1
 ```
@@ -1243,9 +1217,7 @@ async def _grep(client: httpx.AsyncClient, base: str, token: str, query: str) ->
 
 
 @pytest.mark.asyncio
-async def test_ten_clients_get_zone_scoped_results(
-    mcp_http_base_url: str, tmp_path
-) -> None:
+async def test_ten_clients_get_zone_scoped_results(mcp_http_base_url: str, tmp_path) -> None:
     # Provision 10 zones; each seeds a unique marker file the others
     # should NOT see through nexus_grep.
     zones = [
@@ -1267,10 +1239,7 @@ async def test_ten_clients_get_zone_scoped_results(
 
     async with httpx.AsyncClient() as client:
         t0 = time.monotonic()
-        tasks = [
-            _grep(client, mcp_http_base_url, token, marker)
-            for _, token, marker in zones
-        ]
+        tasks = [_grep(client, mcp_http_base_url, token, marker) for _, token, marker in zones]
         results = await asyncio.gather(*tasks)
         elapsed = time.monotonic() - t0
 
@@ -1372,6 +1341,7 @@ async def test_burst_triggers_429(mcp_http_base_url: str) -> None:
         "params": {"name": "nexus_grep", "arguments": {"query": "x"}},
     }
     async with httpx.AsyncClient() as client:
+
         async def _one() -> int:
             resp = await client.post(
                 f"{mcp_http_base_url}/mcp",
@@ -1384,9 +1354,7 @@ async def test_burst_triggers_429(mcp_http_base_url: str) -> None:
         statuses = await asyncio.gather(*[_one() for _ in range(50)])
 
     assert statuses.count(200) <= 25, "expected some 429s within the minute window"
-    assert statuses.count(429) >= 20, (
-        f"expected ≥20 429 responses, got {statuses.count(429)}"
-    )
+    assert statuses.count(429) >= 20, f"expected ≥20 429 responses, got {statuses.count(429)}"
 
 
 @pytest.mark.asyncio

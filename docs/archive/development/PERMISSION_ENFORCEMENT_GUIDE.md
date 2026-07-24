@@ -22,7 +22,7 @@ nx = connect(
 
 # Now all operations automatically check permissions
 nx.write("/workspace/file.txt", b"content")  # Checks if alice can write
-content = nx.read("/workspace/file.txt")     # Checks if alice can read
+content = nx.read("/workspace/file.txt")  # Checks if alice can read
 
 # Option 2: Override context per-operation
 admin_context = OperationContext(user="admin", groups=["admins"], is_admin=True)
@@ -82,27 +82,14 @@ from nexus.contracts.types import OperationContext
 
 # Regular user
 ctx = OperationContext(
-    user="alice",
-    groups=["developers", "team-alpha"],
-    is_admin=False,
-    is_system=False
+    user="alice", groups=["developers", "team-alpha"], is_admin=False, is_system=False
 )
 
 # Admin user (bypasses all checks)
-admin_ctx = OperationContext(
-    user="admin",
-    groups=["admins"],
-    is_admin=True,
-    is_system=False
-)
+admin_ctx = OperationContext(user="admin", groups=["admins"], is_admin=True, is_system=False)
 
 # System context (bypasses all checks)
-system_ctx = OperationContext(
-    user="system",
-    groups=[],
-    is_admin=False,
-    is_system=True
-)
+system_ctx = OperationContext(user="system", groups=[], is_admin=False, is_system=True)
 ```
 
 #### PermissionEnforcer
@@ -115,7 +102,7 @@ from nexus.rebac.enforcer import PermissionEnforcer
 
 enforcer = PermissionEnforcer(
     metadata_store=metadata,
-    acl_store=None,      # TODO: Phase 2
+    acl_store=None,  # TODO: Phase 2
     rebac_manager=None,  # TODO: Phase 2
 )
 
@@ -238,7 +225,7 @@ nx = connect(backend_type="local", enforce_permissions=True)
 nx.write("/workspace/file.txt", b"data")
 
 # Change permissions
-chmod(nx, "644", "/workspace/file.txt")    # rw-r--r--
+chmod(nx, "644", "/workspace/file.txt")  # rw-r--r--
 chown(nx, "alice", "/workspace/file.txt")
 chgrp(nx, "developers", "/workspace/file.txt")
 
@@ -278,6 +265,7 @@ assert meta.mode == 0o644  # rwx becomes rw-
 import pytest
 from nexus import connect
 from nexus.contracts.types import OperationContext
+
 
 def test_permission_enforcement():
     nx = connect(backend_type="local", enforce_permissions=True)
@@ -356,10 +344,10 @@ for path in nx.list("/", recursive=True):
 ```python
 nx = connect(
     backend_type="local",
-    agent_id="alice",                    # Used for default context
-    zone_id="acme-corp",               # Used for isolation
-    is_admin=False,                      # Admin bypass
-    enforce_permissions=True,             # Enable enforcement
+    agent_id="alice",  # Used for default context
+    zone_id="acme-corp",  # Used for isolation
+    is_admin=False,  # Admin bypass
+    enforce_permissions=True,  # Enable enforcement
 )
 ```
 
@@ -408,6 +396,7 @@ default_dir_mode = "0o755"
 ```python
 # Enable debug logging
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 # Check file permissions

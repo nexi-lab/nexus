@@ -55,7 +55,7 @@ server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
     port=2026,
-    auth_provider=auth_provider  # Full auth provider support
+    auth_provider=auth_provider,  # Full auth provider support
 )
 server.serve_forever()
 ```
@@ -105,14 +105,14 @@ auth_config = {
             "user_id": "alice",
             "zone_id": None,
             "is_admin": True,
-            "metadata": {"email": "alice@example.com"}
+            "metadata": {"email": "alice@example.com"},
         },
         "sk-bob-secret-key": {
             "user_id": "bob",
             "zone_id": None,
             "is_admin": False,
-            "metadata": {"email": "bob@example.com"}
-        }
+            "metadata": {"email": "bob@example.com"},
+        },
     }
 }
 
@@ -157,10 +157,7 @@ from nexus.server.auth import create_auth_provider
 
 # Create auth provider
 session_factory = sessionmaker(bind=engine)
-auth_provider = create_auth_provider(
-    "database",
-    session_factory=session_factory
-)
+auth_provider = create_auth_provider("database", session_factory=session_factory)
 ```
 
 **Creating API keys**:
@@ -183,7 +180,7 @@ with SessionFactory() as session:
         user_id="alice",
         name="Alice's Production Key",
         is_admin=True,
-        expires_at=datetime.now(UTC) + timedelta(days=90)  # 90-day expiry
+        expires_at=datetime.now(UTC) + timedelta(days=90),  # 90-day expiry
     )
     session.commit()
 
@@ -208,7 +205,9 @@ with SessionFactory() as session:
 import nexus
 
 # Connect with API key
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-secret-key"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-secret-key"}
+)
 
 # Use as normal
 nx.write("/workspace/file.txt", b"Hello, World!")
@@ -250,9 +249,9 @@ auth_config = {
             "subject_type": "user",
             "subject_id": "alice",
             "zone_id": "org_acme",
-            "is_admin": False
+            "is_admin": False,
         }
-    }
+    },
 }
 
 auth_provider = create_auth_provider("local", auth_config)
@@ -280,7 +279,7 @@ from nexus.server.auth import create_auth_provider
 auth_config = {
     "issuer": "https://accounts.google.com",
     "audience": "your-client-id",
-    "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs"
+    "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
 }
 
 auth_provider = create_auth_provider("oidc", auth_config)
@@ -291,14 +290,11 @@ auth_provider = create_auth_provider("oidc", auth_config)
 ```python
 auth_config = {
     "providers": {
-        "google": {
-            "issuer": "https://accounts.google.com",
-            "audience": "your-google-client-id"
-        },
+        "google": {"issuer": "https://accounts.google.com", "audience": "your-google-client-id"},
         "github": {
             "issuer": "https://token.actions.githubusercontent.com",
-            "audience": "your-github-client-id"
-        }
+            "audience": "your-github-client-id",
+        },
     }
 }
 
@@ -326,7 +322,7 @@ key_id, raw_key = DatabaseAPIKeyAuth.create_key(
     session,
     user_id="alice",
     zone_id=None,  # No multi-tenancy
-    is_admin=True
+    is_admin=True,
 )
 
 # SaaS (future)
@@ -334,7 +330,7 @@ key_id, raw_key = DatabaseAPIKeyAuth.create_key(
     session,
     user_id="alice@acme.com",
     zone_id="acme",  # Multi-zone isolation
-    is_admin=False  # Tenant-scoped admin
+    is_admin=False,  # Tenant-scoped admin
 )
 ```
 
@@ -400,9 +396,7 @@ class AuthResult:
 
 ```python
 def create_auth_provider(
-    auth_type: str | None,
-    auth_config: dict[str, Any] | None = None,
-    **kwargs: Any
+    auth_type: str | None, auth_config: dict[str, Any] | None = None, **kwargs: Any
 ) -> AuthProvider | None:
     """Create authentication provider from configuration."""
     pass
@@ -542,18 +536,13 @@ nx = NexusFilesystem(data_dir="./nexus-data")
 auth_config = {
     "api_keys": {
         "sk-alice-xxx": {"user_id": "alice", "is_admin": True},
-        "sk-bob-xxx": {"user_id": "bob", "is_admin": False}
+        "sk-bob-xxx": {"user_id": "bob", "is_admin": False},
     }
 }
 auth_provider = create_auth_provider("static", auth_config)
 
 # Start server
-server = NexusRPCServer(
-    nexus_fs=nx,
-    host="0.0.0.0",
-    port=2026,
-    auth_provider=auth_provider
-)
+server = NexusRPCServer(nexus_fs=nx, host="0.0.0.0", port=2026, auth_provider=auth_provider)
 server.serve_forever()
 ```
 
@@ -580,7 +569,7 @@ with SessionFactory() as session:
         user_id="alice",
         name="Alice's Production Key",
         is_admin=True,
-        expires_at=datetime.now(UTC) + timedelta(days=90)
+        expires_at=datetime.now(UTC) + timedelta(days=90),
     )
     session.commit()
     print(f"API Key: {raw_key}")  # Save securely!
@@ -592,12 +581,7 @@ nx = NexusFilesystem(data_dir="./nexus-data")
 auth_provider = create_auth_provider("database", session_factory=SessionFactory)
 
 # Start server
-server = NexusRPCServer(
-    nexus_fs=nx,
-    host="0.0.0.0",
-    port=2026,
-    auth_provider=auth_provider
-)
+server = NexusRPCServer(nexus_fs=nx, host="0.0.0.0", port=2026, auth_provider=auth_provider)
 server.serve_forever()
 ```
 
@@ -615,16 +599,11 @@ nx = NexusFilesystem(data_dir="./nexus-data")
 auth_config = {
     "issuer": "https://accounts.google.com",
     "audience": "your-client-id.apps.googleusercontent.com",
-    "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs"
+    "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
 }
 auth_provider = create_auth_provider("oidc", auth_config)
 
 # Start server
-server = NexusRPCServer(
-    nexus_fs=nx,
-    host="0.0.0.0",
-    port=2026,
-    auth_provider=auth_provider
-)
+server = NexusRPCServer(nexus_fs=nx, host="0.0.0.0", port=2026, auth_provider=auth_provider)
 server.serve_forever()
 ```

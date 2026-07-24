@@ -92,9 +92,7 @@ Returns a Python list whose items are either:
 `src/nexus/core/nexus_fs_content.py:1708` switches its kernel call to:
 
 ```python
-rust_results = self._kernel._read_batch(
-    [(p, 0, None) for p in allowed_paths], _rust_ctx
-)
+rust_results = self._kernel._read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
 ```
 
 Per-item mapping changes from "`data is None` → fallback to single read" to

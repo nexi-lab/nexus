@@ -83,7 +83,7 @@ provider = GoogleOAuthProvider(
     client_id="123456.apps.googleusercontent.com",
     client_secret="GOCSPX-...",
     redirect_uri="http://localhost:2026/oauth/callback",
-    scopes=["https://www.googleapis.com/auth/drive"]
+    scopes=["https://www.googleapis.com/auth/drive"],
 )
 
 # Register provider
@@ -98,10 +98,7 @@ credential = await provider.exchange_code(authorization_code)
 
 # Store credential
 await manager.store_credential(
-    provider="google",
-    user_email="alice@example.com",
-    credential=credential,
-    zone_id="org_acme"
+    provider="google", user_email="alice@example.com", credential=credential, zone_id="org_acme"
 )
 ```
 
@@ -110,9 +107,7 @@ await manager.store_credential(
 ```python
 # Get valid access token (auto-refreshes if expired)
 access_token = await manager.get_valid_token(
-    provider="google",
-    user_email="alice@example.com",
-    zone_id="org_acme"
+    provider="google", user_email="alice@example.com", zone_id="org_acme"
 )
 
 # Use token for API calls

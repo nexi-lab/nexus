@@ -1022,10 +1022,7 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 server_params = StdioServerParameters(
     command="nexus",
     args=["mcp", "serve", "--transport", "stdio"],
-    env={
-        "NEXUS_URL": "http://localhost:2026",
-        "NEXUS_API_KEY": "sk-your-api-key"
-    }
+    env={"NEXUS_URL": "http://localhost:2026", "NEXUS_API_KEY": "sk-your-api-key"},
 )
 
 async with stdio_client(server_params) as (read, write):
@@ -1038,43 +1035,38 @@ async with stdio_client(server_params) as (read, write):
         print(f"Available tools: {[t.name for t in tools.tools]}")
 
         # Read a file
-        result = await session.call_tool("nexus_read_file", {
-            "path": "/workspace/data.txt"
-        })
+        result = await session.call_tool("nexus_read_file", {"path": "/workspace/data.txt"})
         print(result.content[0].text)
 
         # Write a file
-        await session.call_tool("nexus_write_file", {
-            "path": "/workspace/hello.txt",
-            "content": "Hello from MCP!"
-        })
+        await session.call_tool(
+            "nexus_write_file", {"path": "/workspace/hello.txt", "content": "Hello from MCP!"}
+        )
 
         # Search for files
-        result = await session.call_tool("nexus_glob", {
-            "pattern": "**/*.py",
-            "path": "/workspace"
-        })
+        result = await session.call_tool("nexus_glob", {"pattern": "**/*.py", "path": "/workspace"})
         print(result.content[0].text)
 
         # Semantic search
-        result = await session.call_tool("nexus_semantic_search", {
-            "query": "authentication setup",
-            "limit": 5
-        })
+        result = await session.call_tool(
+            "nexus_semantic_search", {"query": "authentication setup", "limit": 5}
+        )
         print(result.content[0].text)
 
         # Store memory
-        await session.call_tool("nexus_store_memory", {
-            "content": "User prefers Python over JavaScript",
-            "memory_type": "preference",
-            "importance": 0.8
-        })
+        await session.call_tool(
+            "nexus_store_memory",
+            {
+                "content": "User prefers Python over JavaScript",
+                "memory_type": "preference",
+                "importance": 0.8,
+            },
+        )
 
         # Query memory
-        result = await session.call_tool("nexus_query_memory", {
-            "query": "user preferences",
-            "limit": 10
-        })
+        result = await session.call_tool(
+            "nexus_query_memory", {"query": "user preferences", "limit": 10}
+        )
         print(result.content[0].text)
 ```
 

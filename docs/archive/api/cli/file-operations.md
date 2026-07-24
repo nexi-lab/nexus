@@ -46,6 +46,7 @@ nx.write("/new.txt", b"Initial", if_none_match=True)
 
 # Write JSON
 import json
+
 data = {"key": "value"}
 nx.write("/data/config.json", json.dumps(data).encode())
 
@@ -98,11 +99,13 @@ version = result["version"]
 
 # Read JSON
 import json
+
 content = nx.read("/data/config.json")
 data = json.loads(content.decode())
 
 # Time-travel read
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(at_operation="op_abc123")
 content = nx.read("/workspace/file.txt", context=ctx)
 ```
@@ -139,6 +142,7 @@ nx.delete("/workspace/file.txt")
 
 # Delete with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["eng-team"])
 nx.delete("/workspace/file.txt", context=ctx)
 ```
@@ -200,6 +204,7 @@ nx.move("/old/path.txt", "/new/path.txt")
 
 # Move with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["eng-team"])
 nx.move("/old/path.txt", "/new/path.txt", context=ctx)
 ```

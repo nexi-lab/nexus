@@ -154,7 +154,10 @@ def test_activity_event_is_frozen() -> None:
     import dataclasses
 
     ev = ActivityEvent(
-        id="x", ts="t", kind=EventKind.SEARCH, result=Result.OK,
+        id="x",
+        ts="t",
+        kind=EventKind.SEARCH,
+        result=Result.OK,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         ev.kind = EventKind.FETCH  # type: ignore[misc]
@@ -885,9 +888,12 @@ async def test_schema_bootstrapped_on_open(tmp_path: Path) -> None:
         )
         assert cursor.fetchone() is not None
         # Indexes
-        idx = {row[0] for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='activity_events'"
-        )}
+        idx = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='activity_events'"
+            )
+        }
         assert "idx_ae_ts" in idx
         assert "idx_ae_kind_ts" in idx
         assert "idx_ae_token_ts" in idx
@@ -917,14 +923,20 @@ async def test_batch_insert_roundtrip(tmp_path: Path) -> None:
     try:
         events = [
             ActivityEvent(
-                id="1", ts="2026-04-30T00:00:00Z", kind=EventKind.SEARCH,
-                result=Result.OK, latency_ms=10, trace_id="t1",
+                id="1",
+                ts="2026-04-30T00:00:00Z",
+                kind=EventKind.SEARCH,
+                result=Result.OK,
+                latency_ms=10,
+                trace_id="t1",
                 actor=Actor(token_hash="aaa", agent="claude", user="alice"),
                 subject=Subject(zone="eng", extra={"q": "foo"}),
                 meta={"x": 1},
             ),
             ActivityEvent(
-                id="2", ts="2026-04-30T00:00:01Z", kind=EventKind.MCP_TOOL_CALL,
+                id="2",
+                ts="2026-04-30T00:00:01Z",
+                kind=EventKind.MCP_TOOL_CALL,
                 result=Result.OK,
             ),
         ]
@@ -933,8 +945,12 @@ async def test_batch_insert_roundtrip(tmp_path: Path) -> None:
         await sink.close()
 
     conn = sqlite3.connect(db)
-    rows = list(conn.execute("SELECT id, kind, result, subject_zone, subject_extra, meta "
-                              "FROM activity_events ORDER BY id"))
+    rows = list(
+        conn.execute(
+            "SELECT id, kind, result, subject_zone, subject_extra, meta "
+            "FROM activity_events ORDER BY id"
+        )
+    )
     assert rows[0][0] == "1"
     assert rows[0][1] == "search"
     assert rows[0][3] == "eng"
@@ -1203,7 +1219,9 @@ async def test_sink_error_isolated() -> None:
 
     flaky = _Flaky()
     sink_ok = RecordingSink()
-    worker = ActivityWorker(queue=queue, sinks=[flaky, sink_ok], batch_size=10, batch_timeout_s=0.01)
+    worker = ActivityWorker(
+        queue=queue, sinks=[flaky, sink_ok], batch_size=10, batch_timeout_s=0.01
+    )
     await worker.start()
     for i in range(3):
         queue.put_nowait(_ev(i))
@@ -1335,7 +1353,9 @@ class ActivityWorker:
             try:
                 await sink.write_batch(batch)
             except Exception:
-                logger.warning("activity sink %s failed batch write", type(sink).__name__, exc_info=True)
+                logger.warning(
+                    "activity sink %s failed batch write", type(sink).__name__, exc_info=True
+                )
 ```
 
 Update `src/nexus/services/activity/__init__.py` re-exports to include `ActivityWorker`:
@@ -1398,13 +1418,53 @@ def _seed(db: Path) -> None:
     )
     now = datetime.now(tz=UTC)
     rows = [
-        ("old1", (now - timedelta(days=40)).isoformat(), "search", "ok", None, None, None, None, None, None, None, None),
-        ("old2", (now - timedelta(days=31)).isoformat(), "search", "ok", None, None, None, None, None, None, None, None),
-        ("new1", (now - timedelta(days=10)).isoformat(), "search", "ok", None, None, None, None, None, None, None, None),
+        (
+            "old1",
+            (now - timedelta(days=40)).isoformat(),
+            "search",
+            "ok",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "old2",
+            (now - timedelta(days=31)).isoformat(),
+            "search",
+            "ok",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "new1",
+            (now - timedelta(days=10)).isoformat(),
+            "search",
+            "ok",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         ("new2", now.isoformat(), "search", "ok", None, None, None, None, None, None, None, None),
     ]
     conn.executemany(
-        "INSERT INTO activity_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows,
+        "INSERT INTO activity_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
     )
     conn.commit()
     conn.close()
@@ -1477,7 +1537,8 @@ def prune_older_than(*, db_path: Path | str, retention_days: int) -> int:
         conn = sqlite3.connect(db)
         try:
             cursor = conn.execute(
-                "DELETE FROM activity_events WHERE ts < ?", (threshold,),
+                "DELETE FROM activity_events WHERE ts < ?",
+                (threshold,),
             )
             deleted = cursor.rowcount or 0
             conn.commit()
@@ -1598,7 +1659,9 @@ def _sample(metric, **labels) -> float:
     """Return the current value of a Prom metric for the given label set."""
     for fam in REGISTRY.collect():
         for s in fam.samples:
-            if s.name.startswith(metric._name) and all(s.labels.get(k) == v for k, v in labels.items()):
+            if s.name.startswith(metric._name) and all(
+                s.labels.get(k) == v for k, v in labels.items()
+            ):
                 return s.value
     return 0.0
 
@@ -2037,7 +2100,8 @@ def setup_activity() -> None:
     except Exception:
         logger.error(
             "activity SQLiteSink failed to open at %s — falling back to NoopSink",
-            cfg.db_path, exc_info=True,
+            cfg.db_path,
+            exc_info=True,
         )
         sinks.append(NoopSink())
 
@@ -2450,6 +2514,7 @@ async def test_disabled_installs_noop(tmp_path: Path, monkeypatch: pytest.Monkey
     setup_activity()
     try:
         from nexus.services.activity import get_emitter
+
         assert isinstance(get_emitter(), NoopEmitter)
     finally:
         shutdown_activity()
@@ -2568,10 +2633,18 @@ async def test_zone_access_block_emits(recording: RecordingSink) -> None:
 async def test_approval_pending_then_decided(recording: RecordingSink) -> None:
     from nexus.services.activity import emit
 
-    emit(kind=EventKind.APPROVAL, result=Result.PENDING_APPROVAL, subject_zone="eng",
-         subject_extra={"request_id": "r1"})
-    emit(kind=EventKind.APPROVAL, result=Result.OK, subject_zone="eng",
-         subject_extra={"request_id": "r1", "decision": "approved"})
+    emit(
+        kind=EventKind.APPROVAL,
+        result=Result.PENDING_APPROVAL,
+        subject_zone="eng",
+        subject_extra={"request_id": "r1"},
+    )
+    emit(
+        kind=EventKind.APPROVAL,
+        result=Result.OK,
+        subject_zone="eng",
+        subject_extra={"request_id": "r1", "decision": "approved"},
+    )
     await asyncio.sleep(0.1)
     matches = recording.events_of(EventKind.APPROVAL)
     assert len(matches) == 2
@@ -2684,7 +2757,13 @@ async def test_metrics_exposed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     setup_activity()
     try:
-        emit(kind=EventKind.SEARCH, result=Result.OK, actor_token_hash="t", subject_zone="eng", latency_ms=5)
+        emit(
+            kind=EventKind.SEARCH,
+            result=Result.OK,
+            actor_token_hash="t",
+            subject_zone="eng",
+            latency_ms=5,
+        )
         emit(kind=EventKind.MCP_TOOL_CALL, result=Result.OK, subject_extra={"tool": "search"})
         emit(kind=EventKind.ZONE_ACCESS, result=Result.BLOCKED, subject_zone="legal")
         emit(kind=EventKind.APPROVAL, result=Result.PENDING_APPROVAL)
@@ -2761,7 +2840,7 @@ def test_emit_hot_path(benchmark) -> None:
     benchmark(_do_emit)
     stats = benchmark.stats.stats
     # Loose CI-friendly thresholds (allow noise on shared runners)
-    assert stats.median * 1e6 < 25.0, f"emit p50 {stats.median*1e6:.1f} µs > 25 µs"
+    assert stats.median * 1e6 < 25.0, f"emit p50 {stats.median * 1e6:.1f} µs > 25 µs"
 ```
 
 - [ ] **Step 2: Run the bench**
@@ -2812,7 +2891,9 @@ async def _wrapped_search(emit_fn) -> int:
     start = time.monotonic()
     # simulated body: do nothing
     result = 1
-    emit_fn(kind=EventKind.SEARCH, result=Result.OK, latency_ms=int((time.monotonic() - start) * 1000))
+    emit_fn(
+        kind=EventKind.SEARCH, result=Result.OK, latency_ms=int((time.monotonic() - start) * 1000)
+    )
     return result
 
 

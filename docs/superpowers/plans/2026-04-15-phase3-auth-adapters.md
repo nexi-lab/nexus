@@ -328,16 +328,14 @@ Expected: FAIL — `resolve_credential_sync` not in ABC, `resolve_sync` not on E
 In `src/nexus/bricks/auth/external_sync/base.py`, add after the existing `resolve_credential` method (line 74):
 
 ```python
-    def resolve_credential_sync(self, backend_key: str) -> ResolvedCredential:
-        """Synchronous variant of resolve_credential().
+def resolve_credential_sync(self, backend_key: str) -> ResolvedCredential:
+    """Synchronous variant of resolve_credential().
 
-        Default: raises NotImplementedError. Adapters that support sync
-        resolution (FileAdapter subclasses, SubprocessAdapter with
-        subprocess.run) override this.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement resolve_credential_sync"
-        )
+    Default: raises NotImplementedError. Adapters that support sync
+    resolution (FileAdapter subclasses, SubprocessAdapter with
+    subprocess.run) override this.
+    """
+    raise NotImplementedError(f"{type(self).__name__} does not implement resolve_credential_sync")
 ```
 
 Also add `ResolvedCredential` to the imports (move from TYPE_CHECKING to runtime):
@@ -464,9 +462,7 @@ def adapter() -> GcloudSyncAdapter:
 class TestGcloudParseAdc:
     """Test parse_file against gcloud ADC fixtures."""
 
-    def test_parse_authorized_user_returns_one_profile(
-        self, adapter: GcloudSyncAdapter
-    ) -> None:
+    def test_parse_authorized_user_returns_one_profile(self, adapter: GcloudSyncAdapter) -> None:
         content = _ADC_V456.read_text(encoding="utf-8")
         profiles = adapter.parse_file(_ADC_V456, content)
         # authorized_user ADC has no account email — profile comes from properties file
@@ -475,9 +471,7 @@ class TestGcloudParseAdc:
         assert profiles[0].provider == "gcs"
         assert profiles[0].source == "gcloud"
 
-    def test_parse_service_account_extracts_email(
-        self, adapter: GcloudSyncAdapter
-    ) -> None:
+    def test_parse_service_account_extracts_email(self, adapter: GcloudSyncAdapter) -> None:
         content = _ADC_SA.read_text(encoding="utf-8")
         profiles = adapter.parse_file(_ADC_SA, content)
 
@@ -498,9 +492,7 @@ class TestGcloudParseAdc:
 class TestGcloudParseProperties:
     """Test parse_file against gcloud properties fixture."""
 
-    def test_parse_properties_extracts_account(
-        self, adapter: GcloudSyncAdapter
-    ) -> None:
+    def test_parse_properties_extracts_account(self, adapter: GcloudSyncAdapter) -> None:
         content = _PROPS_V456.read_text(encoding="utf-8")
         profiles = adapter.parse_file(_PROPS_V456, content)
 
@@ -509,9 +501,7 @@ class TestGcloudParseProperties:
         assert profiles[0].backend_key == "gcloud/user@example.com"
         assert profiles[0].provider == "gcs"
 
-    def test_parse_properties_no_account_returns_empty(
-        self, adapter: GcloudSyncAdapter
-    ) -> None:
+    def test_parse_properties_no_account_returns_empty(self, adapter: GcloudSyncAdapter) -> None:
         profiles = adapter.parse_file(Path("p.ini"), "[compute]\nregion = us-central1\n")
         assert profiles == []
 
@@ -683,9 +673,7 @@ class GcloudSyncAdapter(FileAdapter):
     adapter_name = "gcloud"
 
     def _config_dir(self) -> Path:
-        return Path(
-            os.environ.get("CLOUDSDK_CONFIG", "~/.config/gcloud")
-        ).expanduser()
+        return Path(os.environ.get("CLOUDSDK_CONFIG", "~/.config/gcloud")).expanduser()
 
     def paths(self) -> list[Path]:
         base = self._config_dir()
@@ -1067,9 +1055,7 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
     sync_ttl_seconds: float = 300.0  # subprocess = expensive
 
     def _config_dir(self) -> Path:
-        return Path(
-            os.environ.get("GH_CONFIG_DIR", "~/.config/gh")
-        ).expanduser()
+        return Path(os.environ.get("GH_CONFIG_DIR", "~/.config/gh")).expanduser()
 
     def _hosts_path(self) -> Path:
         return self._config_dir() / "hosts.yml"
@@ -1095,12 +1081,16 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         """Run gh auth status --show-token and parse output."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "gh", "auth", "status", "--show-token",
+                "gh",
+                "auth",
+                "status",
+                "--show-token",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=5.0,
+                proc.communicate(),
+                timeout=5.0,
             )
         except TimeoutError:
             return SyncResult(adapter_name=self.adapter_name, error="gh: timeout after 5s")
@@ -1232,7 +1222,8 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         parts = backend_key.split("/", 2)
         if len(parts) < 3:
             raise CredentialResolutionError(
-                "external-cli", backend_key,
+                "external-cli",
+                backend_key,
                 f"expected 'gh-cli/host/user', got {backend_key!r}",
             )
         _, host, username = parts
@@ -1275,7 +1266,8 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
             )
 
         raise CredentialResolutionError(
-            "external-cli", backend_key,
+            "external-cli",
+            backend_key,
             f"User '{username}' not found for host '{host}' in hosts.yml",
         )
 ```
@@ -1474,8 +1466,14 @@ class GwsCliSyncAdapter(SubprocessAdapter):
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                binary_path, "gmail", "users", "getProfile",
-                "--params", '{"userId":"me"}', "--format", "json",
+                binary_path,
+                "gmail",
+                "users",
+                "getProfile",
+                "--params",
+                '{"userId":"me"}',
+                "--format",
+                "json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1555,7 +1553,8 @@ class GwsCliSyncAdapter(SubprocessAdapter):
         binary_path = shutil.which(self.binary_name)
         if binary_path is None:
             raise CredentialResolutionError(
-                "external-cli", backend_key,
+                "external-cli",
+                backend_key,
                 f"{self.binary_name}: binary not found on PATH",
             )
 
@@ -1680,9 +1679,7 @@ class TestCodexPaths:
         assert "credentials.json" in str(paths[0])
         assert "config.json" in str(paths[1])
 
-    def test_env_override(
-        self, adapter: CodexSyncAdapter, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_override(self, adapter: CodexSyncAdapter, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CODEX_CONFIG_DIR", "/custom/codex")
         paths = adapter.paths()
         assert paths[0] == Path("/custom/codex/credentials.json")
@@ -1775,9 +1772,7 @@ class TestCodexResolveCredential:
         with pytest.raises(CredentialResolutionError, match="nonexistent"):
             await adapter.resolve_credential("codex/nonexistent")
 
-    def test_resolve_sync(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_resolve_sync(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cred_file = tmp_path / "credentials.json"
         shutil.copy(_CREDS_V1, cred_file)
         monkeypatch.setenv("CODEX_CONFIG_DIR", str(tmp_path))
@@ -1823,9 +1818,7 @@ class CodexSyncAdapter(FileAdapter):
     adapter_name = "codex"
 
     def _config_dir(self) -> Path:
-        return Path(
-            os.environ.get("CODEX_CONFIG_DIR", "~/.codex")
-        ).expanduser()
+        return Path(os.environ.get("CODEX_CONFIG_DIR", "~/.codex")).expanduser()
 
     def paths(self) -> list[Path]:
         base = self._config_dir()
@@ -2125,9 +2118,7 @@ class TestConcurrentSelect:
                 assert profile.provider == provider
 
         await asyncio.wait_for(
-            asyncio.gather(
-                *[hammer(p) for p in providers for _ in range(2)]
-            ),
+            asyncio.gather(*[hammer(p) for p in providers for _ in range(2)]),
             timeout=5.0,
         )
 
@@ -2176,8 +2167,8 @@ In `src/nexus/backends/connectors/cli/base.py`, add the class attribute after `C
 Modify `__init__` to accept new parameters. After the existing `token_manager_db: str | None = None` parameter, add:
 
 ```python
-    credential_pool_registry: "CredentialPoolRegistry | None" = None,
-    external_cli_backend: "ExternalCliBackend | None" = None,
+credential_pool_registry: "CredentialPoolRegistry | None" = (None,)
+external_cli_backend: "ExternalCliBackend | None" = (None,)
 ```
 
 In the `__init__` body, store them:
@@ -2200,61 +2191,62 @@ if TYPE_CHECKING:
 In `src/nexus/backends/connectors/cli/base.py`, replace the `_get_user_token` method (lines 237-271) with:
 
 ```python
-    def _get_user_token(self, context: "OperationContext | None" = None) -> str | None:
-        """Resolve auth token — external CLI first, then TokenManager fallback.
+def _get_user_token(self, context: "OperationContext | None" = None) -> str | None:
+    """Resolve auth token — external CLI first, then TokenManager fallback.
 
-        Phase 1 (new): If AUTH_SOURCE is set and a CredentialPoolRegistry is
-        available, try to select a profile and resolve via ExternalCliBackend.
-        Phase 2 (existing): Fall back to TokenManager.get_credentials().
-        """
-        # Phase 1: External CLI credential
-        if self.AUTH_SOURCE and self._credential_pool_registry and self._external_cli_backend:
-            token = self._resolve_from_external_cli()
-            if token:
-                return token
+    Phase 1 (new): If AUTH_SOURCE is set and a CredentialPoolRegistry is
+    available, try to select a profile and resolve via ExternalCliBackend.
+    Phase 2 (existing): Fall back to TokenManager.get_credentials().
+    """
+    # Phase 1: External CLI credential
+    if self.AUTH_SOURCE and self._credential_pool_registry and self._external_cli_backend:
+        token = self._resolve_from_external_cli()
+        if token:
+            return token
 
-        # Phase 2: TokenManager (existing behavior)
-        if self._token_manager is None:
-            return None
-        if context is None:
-            return None
-
-        try:
-            user_email = getattr(context, "user_id", None)
-            zone_id = getattr(context, "zone_id", None)
-            if not user_email:
-                return None
-
-            provider = "google"  # Default; subclasses override
-            if self._config and self._config.auth:
-                provider = self._config.auth.provider
-
-            credentials = self._token_manager.get_credentials(
-                user_email=user_email,
-                provider=provider,
-                zone_id=zone_id,
-            )
-            if credentials:
-                return str(credentials.get("access_token", ""))
-        except Exception:
-            logger.debug("Token resolution failed for %s", context.user_id, exc_info=True)
-
+    # Phase 2: TokenManager (existing behavior)
+    if self._token_manager is None:
+        return None
+    if context is None:
         return None
 
-    def _resolve_from_external_cli(self) -> str | None:
-        """Try to resolve a token from the external CLI credential pool."""
-        provider = "google"  # default
+    try:
+        user_email = getattr(context, "user_id", None)
+        zone_id = getattr(context, "zone_id", None)
+        if not user_email:
+            return None
+
+        provider = "google"  # Default; subclasses override
         if self._config and self._config.auth:
             provider = self._config.auth.provider
 
-        try:
-            pool = self._credential_pool_registry.get(provider)
-            profile = pool.select_sync()
-            cred = self._external_cli_backend.resolve_sync(profile.backend_key)
-            return cred.access_token or cred.api_key
-        except Exception:
-            logger.debug("External CLI credential resolution failed", exc_info=True)
-            return None
+        credentials = self._token_manager.get_credentials(
+            user_email=user_email,
+            provider=provider,
+            zone_id=zone_id,
+        )
+        if credentials:
+            return str(credentials.get("access_token", ""))
+    except Exception:
+        logger.debug("Token resolution failed for %s", context.user_id, exc_info=True)
+
+    return None
+
+
+def _resolve_from_external_cli(self) -> str | None:
+    """Try to resolve a token from the external CLI credential pool."""
+    provider = "google"  # default
+    if self._config and self._config.auth:
+        provider = self._config.auth.provider
+
+    try:
+        pool = self._credential_pool_registry.get(provider)
+        profile = pool.select_sync()
+        cred = self._external_cli_backend.resolve_sync(profile.backend_key)
+        return cred.access_token or cred.api_key
+    except Exception:
+        logger.debug("External CLI credential resolution failed", exc_info=True)
+        return None
 ```
 
 - [ ] **Step 5: Run tests**
@@ -2352,26 +2344,22 @@ With:
 And where `native` was used from `cached_native`, replace with profile-store lookup:
 
 ```python
-                if service in _GOOGLE_OAUTH_SERVICES:
-                    if _gws_profiles is None and self._profile_store is not None:
-                        _gws_profiles = [
-                            p
-                            for p in self._profile_store.list(provider="google")
-                            if p.backend == "external-cli"
-                            and p.backend_key.startswith("gws-cli/")
-                        ]
-                    if _gws_profiles:
-                        _gws_native = {
-                            "source": "gws-cli",
-                            "email": _gws_profiles[0].account_identifier,
-                            "message": (
-                                f"gws CLI profile available for "
-                                f"{_gws_profiles[0].account_identifier}."
-                            ),
-                        }
-                    native = _gws_native
-                else:
-                    native = None
+if service in _GOOGLE_OAUTH_SERVICES:
+    if _gws_profiles is None and self._profile_store is not None:
+        _gws_profiles = [
+            p
+            for p in self._profile_store.list(provider="google")
+            if p.backend == "external-cli" and p.backend_key.startswith("gws-cli/")
+        ]
+    if _gws_profiles:
+        _gws_native = {
+            "source": "gws-cli",
+            "email": _gws_profiles[0].account_identifier,
+            "message": (f"gws CLI profile available for {_gws_profiles[0].account_identifier}."),
+        }
+    native = _gws_native
+else:
+    native = None
 ```
 
 - [ ] **Step 4: Update the test_auth call at line 610**
@@ -2383,22 +2371,21 @@ Replace the line:
 
 With:
 ```python
-        native = None
-        if service in _GOOGLE_OAUTH_SERVICES and self._profile_store is not None:
-            gws_profiles = [
-                p
-                for p in self._profile_store.list(provider="google")
-                if p.backend == "external-cli"
-                and p.backend_key.startswith("gws-cli/")
-            ]
-            if gws_profiles:
-                email = gws_profiles[0].account_identifier
-                if user_email is None or user_email == email:
-                    native = {
-                        "source": "gws-cli",
-                        "email": email,
-                        "message": f"gws CLI profile available for {email}.",
-                    }
+native = None
+if service in _GOOGLE_OAUTH_SERVICES and self._profile_store is not None:
+    gws_profiles = [
+        p
+        for p in self._profile_store.list(provider="google")
+        if p.backend == "external-cli" and p.backend_key.startswith("gws-cli/")
+    ]
+    if gws_profiles:
+        email = gws_profiles[0].account_identifier
+        if user_email is None or user_email == email:
+            native = {
+                "source": "gws-cli",
+                "email": email,
+                "message": f"gws CLI profile available for {email}.",
+            }
 ```
 
 - [ ] **Step 5: Remove unused shutil import if no longer needed**

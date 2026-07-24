@@ -139,18 +139,18 @@ def test_append_and_read_one_line():
 
 def test_per_agent_isolation():
     store = MemoryBackend(cap_bytes=1024)
-    store.append_line("alice", "2026-05-09", b'a\n')
-    store.append_line("bob",   "2026-05-09", b'b\n')
-    assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b'a\n'
-    assert store.read_path("/.activity/2026-05-09/bob.jsonl") == b'b\n'
+    store.append_line("alice", "2026-05-09", b"a\n")
+    store.append_line("bob", "2026-05-09", b"b\n")
+    assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b"a\n"
+    assert store.read_path("/.activity/2026-05-09/bob.jsonl") == b"b\n"
 
 
 def test_per_date_isolation():
     store = MemoryBackend(cap_bytes=1024)
-    store.append_line("alice", "2026-05-09", b'd9\n')
-    store.append_line("alice", "2026-05-10", b'd10\n')
-    assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b'd9\n'
-    assert store.read_path("/.activity/2026-05-10/alice.jsonl") == b'd10\n'
+    store.append_line("alice", "2026-05-09", b"d9\n")
+    store.append_line("alice", "2026-05-10", b"d10\n")
+    assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b"d9\n"
+    assert store.read_path("/.activity/2026-05-10/alice.jsonl") == b"d10\n"
 
 
 def test_ring_buffer_evicts_oldest():
@@ -187,7 +187,7 @@ def test_list_dir_root_returns_dates():
 def test_list_dir_date_returns_agent_files():
     store = MemoryBackend(cap_bytes=1024)
     store.append_line("alice", "2026-05-09", b"a\n")
-    store.append_line("bob",   "2026-05-09", b"b\n")
+    store.append_line("bob", "2026-05-09", b"b\n")
     assert sorted(store.list_dir("/.activity/2026-05-09/")) == ["alice.jsonl", "bob.jsonl"]
 
 
@@ -306,7 +306,7 @@ class MemoryBackend:
 def _parse_file_path(path: str) -> tuple[str, str] | None:
     if not path.startswith(_MOUNT_PREFIX):
         return None
-    rest = path[len(_MOUNT_PREFIX):]
+    rest = path[len(_MOUNT_PREFIX) :]
     if "/" not in rest:
         return None
     date, _, fname = rest.partition("/")
@@ -321,7 +321,7 @@ def _parse_file_path(path: str) -> tuple[str, str] | None:
 def _parse_date_dir(path: str) -> str | None:
     if not path.startswith(_MOUNT_PREFIX):
         return None
-    rest = path[len(_MOUNT_PREFIX):].rstrip("/")
+    rest = path[len(_MOUNT_PREFIX) :].rstrip("/")
     if "/" in rest or not rest:
         return None
     return rest
@@ -366,8 +366,15 @@ from nexus.services.activity.events import ActivityEvent, Actor
 from nexus.services.activity.sinks.jsonl import JsonlActivitySink
 
 
-def _evt(*, kind, agent="alice", ts="2026-05-09T12:00:00.000Z", meta=None,
-         result=Result.OK, latency_ms=10):
+def _evt(
+    *,
+    kind,
+    agent="alice",
+    ts="2026-05-09T12:00:00.000Z",
+    meta=None,
+    result=Result.OK,
+    latency_ms=10,
+):
     return ActivityEvent(
         id="e1",
         ts=ts,
@@ -419,7 +426,10 @@ async def test_exec_event_writes_line():
 async def test_recursion_guard_drops_op_under_activity_prefix():
     store = MemoryBackend(cap_bytes=1024)
     sink = JsonlActivitySink(store=store)
-    evt = _evt(kind=EventKind.OP, meta={"op": "read", "path": "/.activity/2026-05-09/alice.jsonl", "bytes": 0})
+    evt = _evt(
+        kind=EventKind.OP,
+        meta={"op": "read", "path": "/.activity/2026-05-09/alice.jsonl", "bytes": 0},
+    )
     await sink.write_batch([evt])
     assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b""
 
@@ -673,44 +683,45 @@ Add fields to `ActivityConfig` (after existing fields):
 Add validation in `__post_init__` (append at end):
 
 ```python
-        if self.agent_log_cap_bytes <= 0:
-            raise ValueError(
-                f"NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES must be > 0, "
-                f"got {self.agent_log_cap_bytes}"
-            )
-        if self.agent_log_retention_days < 0:
-            raise ValueError(
-                f"NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS must be >= 0, "
-                f"got {self.agent_log_retention_days}"
-            )
-        if self.agent_log_cmd_max_bytes <= 0:
-            raise ValueError(
-                f"NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES must be > 0, "
-                f"got {self.agent_log_cmd_max_bytes}"
-            )
+if self.agent_log_cap_bytes <= 0:
+    raise ValueError(
+        f"NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES must be > 0, got {self.agent_log_cap_bytes}"
+    )
+if self.agent_log_retention_days < 0:
+    raise ValueError(
+        f"NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS must be >= 0, got {self.agent_log_retention_days}"
+    )
+if self.agent_log_cmd_max_bytes <= 0:
+    raise ValueError(
+        f"NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES must be > 0, got {self.agent_log_cmd_max_bytes}"
+    )
 ```
 
 In `from_env`, append the four new keyword args:
 
 ```python
-            agent_log_enabled=_parse_bool(
-                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_ENABLED"), True
-            ),
-            agent_log_cap_bytes=_parse_int(
-                "NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES",
-                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES"),
-                10 * 1024 * 1024,
-            ),
-            agent_log_retention_days=_parse_int(
-                "NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS",
-                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS"),
-                7,
-            ),
-            agent_log_cmd_max_bytes=_parse_int(
-                "NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES",
-                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES"),
-                4 * 1024,
-            ),
+agent_log_enabled = (_parse_bool(os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_ENABLED"), True),)
+agent_log_cap_bytes = (
+    _parse_int(
+        "NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES",
+        os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES"),
+        10 * 1024 * 1024,
+    ),
+)
+agent_log_retention_days = (
+    _parse_int(
+        "NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS",
+        os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS"),
+        7,
+    ),
+)
+agent_log_cmd_max_bytes = (
+    _parse_int(
+        "NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES",
+        os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES"),
+        4 * 1024,
+    ),
+)
 ```
 
 - [ ] **Step 4: Run, verify pass**
@@ -804,15 +815,13 @@ from nexus.services.activity.sinks.jsonl import JsonlActivitySink
 After the existing `sinks.append(SQLiteSink(...))` block in `setup_activity`, before `worker = ActivityWorker(...)`, add:
 
 ```python
-    if cfg.agent_log_enabled:
-        store = MemoryBackend(cap_bytes=cfg.agent_log_cap_bytes)
-        sinks.append(JsonlActivitySink(store=store, cmd_max_bytes=cfg.agent_log_cmd_max_bytes))
-        _STATE["agent_log_store"] = store
-        logger.info(
-            "activity agent_log enabled (cap=%d bytes/agent/day)", cfg.agent_log_cap_bytes
-        )
-    else:
-        _STATE["agent_log_store"] = None
+if cfg.agent_log_enabled:
+    store = MemoryBackend(cap_bytes=cfg.agent_log_cap_bytes)
+    sinks.append(JsonlActivitySink(store=store, cmd_max_bytes=cfg.agent_log_cmd_max_bytes))
+    _STATE["agent_log_store"] = store
+    logger.info("activity agent_log enabled (cap=%d bytes/agent/day)", cfg.agent_log_cap_bytes)
+else:
+    _STATE["agent_log_store"] = None
 ```
 
 Add accessor at module level:
@@ -971,6 +980,7 @@ Create `tests/unit/core/test_dispatch_emits_op_event.py`:
 
 ```python
 """Verify dispatch emits a kind=OP ActivityEvent with path/op/bytes meta."""
+
 from unittest.mock import patch
 
 import pytest
@@ -1110,6 +1120,7 @@ Create `tests/integration/agent_log/test_exec_record.py`:
 
 ```python
 """End-to-end: a sandbox exec call produces an EXEC ActivityEvent."""
+
 import json
 import pytest
 
@@ -1137,6 +1148,7 @@ async def test_sandbox_exec_emits_exec_record(monkeypatch, tmp_path):
         store = lifespan.get_agent_log_store()
         # Date is UTC — pick today.
         from datetime import datetime, timezone
+
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         raw = store.read_path(f"/.activity/{date}/alice.jsonl")
         assert raw, "no exec record written"
@@ -1248,7 +1260,8 @@ async def test_brick_grants_each_agent_read_on_their_own_log():
         grants.append((subject, relation, object))
 
     brick = AgentLogBrick(
-        add_mount=_noop_mount, add_rebac_grant=fake_grant,
+        add_mount=_noop_mount,
+        add_rebac_grant=fake_grant,
     )
     await brick.startup(agent_ids=["alice", "bob"])
 
@@ -1524,6 +1537,7 @@ Create `tests/integration/agent_log/test_rebac_isolation.py`:
 
 ```python
 """End-to-end: agent A reads its own /.activity/ file; cannot read B's."""
+
 import json
 import pytest
 from datetime import datetime, timezone
@@ -1601,6 +1615,7 @@ git commit -m "test(agent_log): integration test for ReBAC isolation"
 ```python
 """Drive 1k mixed ops including writes attempted at /.activity/. Assert no
 infinite loop, byte total stays under cap."""
+
 import pytest
 from datetime import datetime, timezone
 

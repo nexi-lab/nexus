@@ -185,10 +185,9 @@ def _emit_base_status_text(payload: dict[str, Any]) -> None:
     click.echo(f"postgres:    {payload['postgres']}")
     click.echo(f"redis:       {payload['redis']}")
     click.echo(
-        f"tokens:      {payload['tokens']['active']} active, "
-        f"{payload['tokens']['revoked']} revoked"
+        f"tokens:      {payload['tokens']['active']} active, {payload['tokens']['revoked']} revoked"
     )
-    click.echo("connections: " f"{_display_status_value(payload['connections'])}")
+    click.echo(f"connections: {_display_status_value(payload['connections'])}")
     click.echo(f"qps (5m):    {_display_status_value(payload['qps_5m'])}")
 
 
@@ -274,7 +273,13 @@ def _emit_detail_status_text(payload: dict[str, Any]) -> None:
     click.echo("search:")
     click.echo(
         format_table(
-            headers=["zone", "zoekt_size", "zoekt_last_indexed", "txtai_queue_depth", "last_indexed"],
+            headers=[
+                "zone",
+                "zoekt_size",
+                "zoekt_last_indexed",
+                "txtai_queue_depth",
+                "last_indexed",
+            ],
             rows=[
                 [
                     row["zone_id"],
@@ -291,7 +296,9 @@ def _emit_detail_status_text(payload: dict[str, Any]) -> None:
 
 @hub.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.option("--detail", is_flag=True, help="Include per-zone, per-token, rate-limit, and search detail.")
+@click.option(
+    "--detail", is_flag=True, help="Include per-zone, per-token, rate-limit, and search detail."
+)
 def hub_status(as_json: bool, detail: bool) -> None:
     """Show hub health: postgres, redis, tokens, connections, qps."""
     import json as _json
@@ -381,13 +388,17 @@ def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
     monkeypatch.setattr(
         "nexus.cli.commands.hub._read_redis_detail_stats",
         lambda zone_ids: {
-            "zones": [{"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids],
+            "zones": [
+                {"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids
+            ],
             "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
         },
     )
     monkeypatch.setattr(
         "nexus.cli.commands.hub._collect_search_detail",
-        lambda zone_ids: {"zones": [{"zone_id": zone_id, "txtai_queue_depth": None} for zone_id in zone_ids]},
+        lambda zone_ids: {
+            "zones": [{"zone_id": zone_id, "txtai_queue_depth": None} for zone_id in zone_ids]
+        },
         raising=False,
     )
 
@@ -446,14 +457,11 @@ def _collect_zone_ids(session: Any) -> list[str]:
 def _token_zones_by_key(session: Any, key_ids: list[str]) -> dict[str, list[str]]:
     if not key_ids:
         return {}
-    rows = (
-        session.execute(
-            select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id)
-            .where(APIKeyZoneModel.key_id.in_(key_ids))
-            .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
-        )
-        .all()
-    )
+    rows = session.execute(
+        select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id)
+        .where(APIKeyZoneModel.key_id.in_(key_ids))
+        .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
+    ).all()
     zones_by_key: dict[str, list[str]] = {key_id: [] for key_id in key_ids}
     for key_id, zone_id in rows:
         zones_by_key.setdefault(key_id, []).append(zone_id)
@@ -462,9 +470,7 @@ def _token_zones_by_key(session: Any, key_ids: list[str]) -> dict[str, list[str]
 
 def _collect_token_detail(session: Any) -> list[dict[str, Any]]:
     rows = (
-        session.execute(select(APIKeyModel).order_by(APIKeyModel.created_at.desc()))
-        .scalars()
-        .all()
+        session.execute(select(APIKeyModel).order_by(APIKeyModel.created_at.desc())).scalars().all()
     )
     key_ids = [row.key_id for row in rows]
     zones_by_key = _token_zones_by_key(session, key_ids)
@@ -559,15 +565,13 @@ def _collect_status_detail(
 Update `hub_status` so DB detail is collected before Redis/search detail:
 
 ```python
-    postgres_status = _collect_postgres_status(detail=detail)
-    payload = _base_status_payload(postgres_status)
-    if detail:
-        zone_ids = postgres_status["zone_ids"]
-        redis_detail = _read_redis_detail_stats(zone_ids)
-        payload["detail"] = True
-        payload.update(
-            _collect_status_detail(zone_ids, postgres_status["tokens_detail"], redis_detail)
-        )
+postgres_status = _collect_postgres_status(detail=detail)
+payload = _base_status_payload(postgres_status)
+if detail:
+    zone_ids = postgres_status["zone_ids"]
+    redis_detail = _read_redis_detail_stats(zone_ids)
+    payload["detail"] = True
+    payload.update(_collect_status_detail(zone_ids, postgres_status["tokens_detail"], redis_detail))
 ```
 
 - [ ] **Step 4: Verify the temporary search detail stub still exists**
@@ -653,7 +657,9 @@ def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypat
 
         def scard(self, key):
             self.scard_calls.append(key)
-            return {"nexus:hub:active:zone:eng:100": 3, "nexus:hub:active:zone:ops:100": 1}.get(key, 0)
+            return {"nexus:hub:active:zone:eng:100": 3, "nexus:hub:active:zone:ops:100": 1}.get(
+                key, 0
+            )
 
     fake = FakeRedis()
     monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379")
@@ -732,9 +738,7 @@ def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
         now_min = int(time.time()) // 60
         zones: list[dict[str, Any]] = []
         for zone_id in zone_ids:
-            minute_keys = [
-                f"nexus:hub:qps:zone:{zone_id}:{now_min - i}" for i in range(5)
-            ]
+            minute_keys = [f"nexus:hub:qps:zone:{zone_id}:{now_min - i}" for i in range(5)]
             total = sum(_decode_int(v) for v in client.mget(minute_keys))
             active = client.scard(f"nexus:hub:active:zone:{zone_id}:{now_min}")
             zones.append(
@@ -747,9 +751,7 @@ def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
 
         hits_by_tier: dict[str, int] = {}
         for tier in _RATE_LIMIT_TIERS:
-            minute_keys = [
-                f"nexus:hub:rate_limit:{tier}:{now_min - i}" for i in range(5)
-            ]
+            minute_keys = [f"nexus:hub:rate_limit:{tier}:{now_min - i}" for i in range(5)]
             hits_by_tier[tier] = sum(_decode_int(v) for v in client.mget(minute_keys))
 
         return {
@@ -810,9 +812,7 @@ async def test_record_metrics_increments_per_zone_counters(monkeypatch):
 
     monkeypatch.setattr(_redis_async, "from_url", lambda _url: fake_client)
 
-    await mw._record_metrics(
-        {"subject_id": "kid_abc", "token_hash": "deadbeef", "zone_id": "eng"}
-    )
+    await mw._record_metrics({"subject_id": "kid_abc", "token_hash": "deadbeef", "zone_id": "eng"})
 
     incr_keys = [call.args[0] for call in fake_client.incr.await_args_list]
     sadd_keys = [call.args[0] for call in fake_client.sadd.await_args_list]
@@ -998,9 +998,10 @@ def test_collect_search_detail_reports_zoekt_size_and_latest_mtime(monkeypatch, 
     assert detail["zones"][0]["zone_id"] == "eng"
     assert detail["zones"][0]["zoekt_index_size_bytes"] == 30
     assert detail["zones"][0]["zoekt_index_size_display"] == "30 B"
-    assert detail["zones"][0]["zoekt_last_indexed"] == datetime.fromtimestamp(
-        latest_ts, tz=UTC
-    ).isoformat()
+    assert (
+        detail["zones"][0]["zoekt_last_indexed"]
+        == datetime.fromtimestamp(latest_ts, tz=UTC).isoformat()
+    )
     assert detail["zones"][0]["last_indexed"] == detail["zones"][0]["zoekt_last_indexed"]
     assert detail["zones"][0]["txtai_queue_depth"] is None
     assert detail["zones"][1]["zone_id"] == "ops"

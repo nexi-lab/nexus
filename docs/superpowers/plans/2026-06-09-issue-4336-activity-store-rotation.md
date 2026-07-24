@@ -83,9 +83,7 @@ def test_min_free_mb_zero_allowed_negative_rejected(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize("bad_value", ["-0.1", "1.5", "nan", "inf"])
-def test_sample_rate_out_of_range_rejected(
-    monkeypatch: pytest.MonkeyPatch, bad_value: str
-) -> None:
+def test_sample_rate_out_of_range_rejected(monkeypatch: pytest.MonkeyPatch, bad_value: str) -> None:
     monkeypatch.setenv("NEXUS_ACTIVITY_SAMPLE_RATE", bad_value)
     with pytest.raises(ValueError, match="NEXUS_ACTIVITY_SAMPLE_RATE"):
         ActivityConfig.from_env()
@@ -154,9 +152,7 @@ def _parse_sample_rates(raw: str | None) -> dict[str, float]:
         key, sep, value = part.partition("=")
         key = key.strip()
         if not sep or not key:
-            raise ValueError(
-                f"NEXUS_ACTIVITY_SAMPLE_RATES entries must be kind=rate, got {part!r}"
-            )
+            raise ValueError(f"NEXUS_ACTIVITY_SAMPLE_RATES entries must be kind=rate, got {part!r}")
         rates[key] = _parse_float("NEXUS_ACTIVITY_SAMPLE_RATES", value.strip(), 1.0)
     return rates
 ```
@@ -173,19 +169,17 @@ Add fields to `ActivityConfig` (after `batch_timeout_s`):
 Append to `__post_init__` (after the retention_days check):
 
 ```python
-        if self.min_free_mb < 0:
-            raise ValueError(
-                f"NEXUS_ACTIVITY_MIN_FREE_MB must be >= 0, got {self.min_free_mb}"
-            )
-        _validate_rate("NEXUS_ACTIVITY_SAMPLE_RATE", self.sample_rate)
-        valid_kinds = {k.value for k in EventKind}
-        for key, rate in self.sample_rates.items():
-            if key not in valid_kinds:
-                raise ValueError(
-                    f"NEXUS_ACTIVITY_SAMPLE_RATES has unknown event kind {key!r}; "
-                    f"valid kinds: {sorted(valid_kinds)}"
-                )
-            _validate_rate(f"NEXUS_ACTIVITY_SAMPLE_RATES[{key!r}]", rate)
+if self.min_free_mb < 0:
+    raise ValueError(f"NEXUS_ACTIVITY_MIN_FREE_MB must be >= 0, got {self.min_free_mb}")
+_validate_rate("NEXUS_ACTIVITY_SAMPLE_RATE", self.sample_rate)
+valid_kinds = {k.value for k in EventKind}
+for key, rate in self.sample_rates.items():
+    if key not in valid_kinds:
+        raise ValueError(
+            f"NEXUS_ACTIVITY_SAMPLE_RATES has unknown event kind {key!r}; "
+            f"valid kinds: {sorted(valid_kinds)}"
+        )
+    _validate_rate(f"NEXUS_ACTIVITY_SAMPLE_RATES[{key!r}]", rate)
 ```
 
 Rework `from_env` so `db_path` is computed first and anchors the segment-dir default:
@@ -928,9 +922,7 @@ async def test_shedding_recovers_when_space_returns(
 async def test_shedding_disabled_with_zero_min_free(tmp_path: Path) -> None:
     clock = _clock("2026-06-09T12:00:00")
     disk = FakeDiskUsage(free=0)
-    sink = SQLiteSink(
-        segment_dir=tmp_path, now_fn=clock, min_free_bytes=0, disk_usage_fn=disk
-    )
+    sink = SQLiteSink(segment_dir=tmp_path, now_fn=clock, min_free_bytes=0, disk_usage_fn=disk)
     try:
         await sink.write_batch([_event("1")])
     finally:
@@ -1047,9 +1039,7 @@ def _make_db(path: Path, ts_values: list[str] | None = None) -> None:
         ) STRICT"""
     )
     for i, ts in enumerate(ts_values or []):
-        conn.execute(
-            "INSERT INTO activity_events (id, ts) VALUES (?, ?)", (f"r{i}", ts)
-        )
+        conn.execute("INSERT INTO activity_events (id, ts) VALUES (?, ?)", (f"r{i}", ts))
     conn.commit()
     conn.close()
 
@@ -1376,9 +1366,7 @@ def sweep_expired(
                 _unlink_db_files(path)
                 deleted += 1
             except OSError:
-                logger.warning(
-                    "activity segment unlink failed for %s", path, exc_info=True
-                )
+                logger.warning("activity segment unlink failed for %s", path, exc_info=True)
 
     legacy = Path(legacy_db_path) if legacy_db_path is not None else None
     if legacy is not None and legacy.is_file() and _legacy_expired(legacy, cutoff.isoformat()):
@@ -1425,9 +1413,7 @@ class RetentionTask:
 
     async def start(self) -> None:
         if self._retention_days <= 0:
-            logger.info(
-                "activity retention disabled (retention_days=%d)", self._retention_days
-            )
+            logger.info("activity retention disabled (retention_days=%d)", self._retention_days)
             return
         if self._task is not None and not self._task.done():
             return
@@ -1548,10 +1534,7 @@ def test_sampled_out_still_records_prometheus() -> None:
     before_out = _value("nexus_activity_sampled_out_total")
     emitter.emit(kind=EventKind.SEARCH, result=Result.OK, subject_zone="sampled-zone")
     assert queue.qsize() == 0
-    assert (
-        _value("nexus_search_requests_total", zone="sampled-zone", status="ok")
-        == before_req + 1
-    )
+    assert _value("nexus_search_requests_total", zone="sampled-zone", status="ok") == before_req + 1
     assert _value("nexus_activity_sampled_out_total") == before_out + 1
 ```
 
@@ -1773,9 +1756,7 @@ async def test_stale_legacy_db_unlinked_at_startup(
             subject_extra TEXT, meta TEXT
         ) STRICT"""
     )
-    conn.execute(
-        "INSERT INTO activity_events (id, ts) VALUES ('old', '2020-01-01T00:00:00+00:00')"
-    )
+    conn.execute("INSERT INTO activity_events (id, ts) VALUES ('old', '2020-01-01T00:00:00+00:00')")
     conn.commit()
     conn.close()
 

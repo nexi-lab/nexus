@@ -344,7 +344,9 @@ class MemoryFileCache:
         if size > self._max_bytes:
             logger.warning(
                 "MemoryFileCache rejecting oversize entry: key=%s size=%d max=%d",
-                key, size, self._max_bytes,
+                key,
+                size,
+                self._max_bytes,
             )
             return
         expires_at = None if ttl_seconds is None else self._now_fn() + max(ttl_seconds, 0)
@@ -677,39 +679,42 @@ from nexus.cache.policy import index_ttl_for_backend
 Add `max_drain_bytes` property and `index_ttl_for_backend` method on the class (place near the constructor):
 
 ```python
-    @property
-    def max_drain_bytes(self) -> int:
-        return self._max_drain_bytes
+@property
+def max_drain_bytes(self) -> int:
+    return self._max_drain_bytes
 
-    def index_ttl_for_backend(self, backend_id: str) -> int:
-        return index_ttl_for_backend(backend_id, self._ttl_overrides)
+
+def index_ttl_for_backend(self, backend_id: str) -> int:
+    return index_ttl_for_backend(backend_id, self._ttl_overrides)
 ```
 
 Modify `cache_content` (lines 268–287) to check size:
 
 ```python
-    def cache_content(
-        self,
-        path: str,
-        content: bytes,
-        *,
-        fingerprint: str | None = None,
-        ttl_seconds: int | None = None,
-    ) -> None:
-        if len(content) > self._max_drain_bytes:
-            logger.warning(
-                "FUSECacheManager skipping oversize content: path=%s size=%d max_drain=%d",
-                path, len(content), self._max_drain_bytes,
-            )
-            if self._enable_metrics:
-                with self._metrics_lock:
-                    self._metrics["content_skipped_oversize"] += 1
-            return
-        key = _file_key(path)
-        if fingerprint is None and ttl_seconds is None:
-            ttl_seconds = self._attr_ttl
-        with self._file_lock:
-            self._file_cache.put_sync(key, content, fingerprint, ttl_seconds)
+def cache_content(
+    self,
+    path: str,
+    content: bytes,
+    *,
+    fingerprint: str | None = None,
+    ttl_seconds: int | None = None,
+) -> None:
+    if len(content) > self._max_drain_bytes:
+        logger.warning(
+            "FUSECacheManager skipping oversize content: path=%s size=%d max_drain=%d",
+            path,
+            len(content),
+            self._max_drain_bytes,
+        )
+        if self._enable_metrics:
+            with self._metrics_lock:
+                self._metrics["content_skipped_oversize"] += 1
+        return
+    key = _file_key(path)
+    if fingerprint is None and ttl_seconds is None:
+        ttl_seconds = self._attr_ttl
+    with self._file_lock:
+        self._file_cache.put_sync(key, content, fingerprint, ttl_seconds)
 ```
 
 (Note the dropped `_remember_file_key(key)` call — entry-count LRU is removed.)
@@ -770,22 +775,16 @@ In `src/nexus/fuse/operations.py:140-160`, replace:
 With:
 
 ```python
-        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
-        bare_cache = FUSECacheManager(
-            content_cache_bytes=cache_config.get(
-                "content_cache_bytes", 512 * 1024 * 1024
-            ),
-            parsed_cache_bytes=cache_config.get(
-                "parsed_cache_bytes", 64 * 1024 * 1024
-            ),
-            max_drain_bytes=cache_config.get(
-                "max_drain_bytes", 16 * 1024 * 1024
-            ),
-            attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
-            listing_cache_ttl=dir_cache_ttl,
-            index_ttl_overrides=cache_config.get("index_ttl_overrides"),
-            enable_metrics=cache_config.get("enable_metrics", False),
-        )
+dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
+bare_cache = FUSECacheManager(
+    content_cache_bytes=cache_config.get("content_cache_bytes", 512 * 1024 * 1024),
+    parsed_cache_bytes=cache_config.get("parsed_cache_bytes", 64 * 1024 * 1024),
+    max_drain_bytes=cache_config.get("max_drain_bytes", 16 * 1024 * 1024),
+    attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
+    listing_cache_ttl=dir_cache_ttl,
+    index_ttl_overrides=cache_config.get("index_ttl_overrides"),
+    enable_metrics=cache_config.get("enable_metrics", False),
+)
 ```
 
 - [ ] **Step 2: Update `fuse/mount.py` docstring**
@@ -1359,10 +1358,7 @@ class _Backend:
 
 
 def _make_files(rng: random.Random) -> dict[str, bytes]:
-    return {
-        f"/f/{i}": b"x" * rng.choice(FILE_SIZES)
-        for i in range(NUM_FILES)
-    }
+    return {f"/f/{i}": b"x" * rng.choice(FILE_SIZES) for i in range(NUM_FILES)}
 
 
 def _zipf_index(rng: random.Random, n: int, alpha: float = 1.0) -> int:
@@ -1409,8 +1405,10 @@ async def test_hit_rate_at_least_90_percent():
 
     measured = hits + misses
     hit_rate = hits / measured if measured else 0.0
-    print(f"hit_rate={hit_rate:.3f}  hits={hits}  misses={misses}  "
-          f"backend_calls={backend.calls}  cache_bytes={cache.total_bytes}")
+    print(
+        f"hit_rate={hit_rate:.3f}  hits={hits}  misses={misses}  "
+        f"backend_calls={backend.calls}  cache_bytes={cache.total_bytes}"
+    )
     assert hit_rate >= 0.90, f"hit rate {hit_rate:.3f} below 0.90"
 
 
@@ -1517,8 +1515,10 @@ def test_fingerprint_cost_under_10_percent_when_cheap():
     backend = _FakeBackend(fp_cost_s=5e-6)
     fp_total, get_total = _run_hot_cache(backend)
     ratio = fp_total / get_total
-    print(f"cheap fingerprint: fp={fp_total*1e3:.1f}ms get={get_total*1e3:.1f}ms "
-          f"ratio={ratio:.3f}")
+    print(
+        f"cheap fingerprint: fp={fp_total * 1e3:.1f}ms get={get_total * 1e3:.1f}ms "
+        f"ratio={ratio:.3f}"
+    )
     assert ratio < 0.10, f"fingerprint cost ratio {ratio:.3f} >= 0.10"
 
 
@@ -1527,8 +1527,10 @@ def test_fingerprint_cost_breaches_threshold_when_expensive():
     backend = _FakeBackend(fp_cost_s=2e-4)
     fp_total, get_total = _run_hot_cache(backend)
     ratio = fp_total / get_total
-    print(f"expensive fingerprint: fp={fp_total*1e3:.1f}ms get={get_total*1e3:.1f}ms "
-          f"ratio={ratio:.3f}")
+    print(
+        f"expensive fingerprint: fp={fp_total * 1e3:.1f}ms get={get_total * 1e3:.1f}ms "
+        f"ratio={ratio:.3f}"
+    )
     assert ratio >= 0.10, "expected expensive fingerprint to breach 10%"
 ```
 

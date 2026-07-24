@@ -48,11 +48,7 @@ print(skill.content)
 
 # Create new skill
 manager = SkillManager(nx, registry)
-await manager.create_skill(
-    name="my-skill",
-    description="Custom skill",
-    template="basic"
-)
+await manager.create_skill(name="my-skill", description="Custom skill", template="basic")
 ```
 
 ## Skill Structure

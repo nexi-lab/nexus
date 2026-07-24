@@ -1169,6 +1169,7 @@ If found, append to it. If not, create `tests/unit/fuse/test_rust_client.py` wit
 
 ```python
 """Tests for nexus.fuse.rust_client.RustFUSEClient.cache_warm."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -1178,6 +1179,7 @@ import pytest
 class TestCacheWarmMethod:
     def test_cache_warm_default_params(self) -> None:
         from nexus.fuse.rust_client import RustFUSEClient
+
         client = RustFUSEClient.__new__(RustFUSEClient)  # bypass __init__
         with patch.object(client, "_send_request", return_value={"admitted_count": 3}) as send:
             result = client.cache_warm("/workspace")
@@ -1186,6 +1188,7 @@ class TestCacheWarmMethod:
 
     def test_cache_warm_with_overrides(self) -> None:
         from nexus.fuse.rust_client import RustFUSEClient
+
         client = RustFUSEClient.__new__(RustFUSEClient)
         with patch.object(client, "_send_request", return_value={}) as send:
             client.cache_warm(
@@ -1206,6 +1209,7 @@ class TestCacheWarmMethod:
 
     def test_cache_warm_omits_none_overrides(self) -> None:
         from nexus.fuse.rust_client import RustFUSEClient
+
         client = RustFUSEClient.__new__(RustFUSEClient)
         with patch.object(client, "_send_request", return_value={}) as send:
             client.cache_warm("/ws", threshold_bytes=None, budget_bytes=512)
@@ -1308,7 +1312,7 @@ class TestBootIndexerHydration:
         indexer.start_async()
 
         deadline = time.monotonic() + 5.0
-        while ("hydration" not in health_state and time.monotonic() < deadline):
+        while "hydration" not in health_state and time.monotonic() < deadline:
             time.sleep(0.01)
 
         rust_client.cache_warm.assert_called_once()
@@ -1333,7 +1337,7 @@ class TestBootIndexerHydration:
         indexer.start_async()
 
         deadline = time.monotonic() + 5.0
-        while ("hydration" not in health_state and time.monotonic() < deadline):
+        while "hydration" not in health_state and time.monotonic() < deadline:
             time.sleep(0.01)
 
         assert health_state["status"] == "ready"
@@ -1377,7 +1381,7 @@ class TestBootIndexerHydration:
         indexer.start_async()
 
         deadline = time.monotonic() + 5.0
-        while ("hydration" not in health_state and time.monotonic() < deadline):
+        while "hydration" not in health_state and time.monotonic() < deadline:
             time.sleep(0.01)
 
         rust_client.cache_warm.assert_called_once_with(
@@ -1580,6 +1584,7 @@ Create `nexus-fuse/test_cache_warm.py`:
 ```python
 #!/usr/bin/env python3
 """End-to-end test for the cache_warm JSON-RPC method (Issue #4055)."""
+
 import sys
 from pathlib import Path
 

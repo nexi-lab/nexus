@@ -41,11 +41,13 @@ def test_token_create_zones_glob_expands_to_active_zones(monkeypatch):
     session = MagicMock()
     # Sequence: no existing token, any_zone exists, all-active-zones list (for glob match)
     session.execute.return_value.scalars.return_value.first.side_effect = [
-        None,   # no existing token by name
+        None,  # no existing token by name
         team_eng,  # any_zone exists
     ]
     session.execute.return_value.scalars.return_value.all.return_value = [
-        team_eng, team_ops, other,
+        team_eng,
+        team_ops,
+        other,
     ]
 
     monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
@@ -55,9 +57,7 @@ def test_token_create_zones_glob_expands_to_active_zones(monkeypatch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"]
-    )
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"])
     assert result.exit_code == 0, result.output
     assert sorted(captured["zones"]) == ["team-eng", "team-ops"]
 
@@ -76,9 +76,7 @@ def test_token_create_zones_glob_no_match_rejects(monkeypatch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"]
-    )
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"])
     assert result.exit_code != 0
     assert "no active zones match" in result.output.lower()
 ```
@@ -123,9 +121,11 @@ def test_read_file_zone_param_in_set_overrides_context(monkeypatch):
     # Mock fs.read returns a sentinel; assert _gate_zone passes and OperationContext.zone_id="ops".
     ...
 
+
 def test_read_file_zone_param_outside_set_returns_403():
     """?zone=legal with token zone_set=[eng] → 403 from _gate_zone."""
     ...
+
 
 def test_read_file_no_zone_param_uses_context_default():
     """No ?zone= → unchanged single-zone behavior (zone_id from context)."""
@@ -137,7 +137,7 @@ def test_read_file_no_zone_param_uses_context_default():
 In `read_file` handler signature, add:
 
 ```python
-zone: str | None = Query(None, description="Override zone (must be in token's zone_set)."),
+zone: str | None = (Query(None, description="Override zone (must be in token's zone_set)."),)
 ```
 
 In handler body, before the existing logic uses `context`:
@@ -149,7 +149,11 @@ if zone is not None:
     if auth_result is not None:
         _gate_zone(auth_result, zone)
     # Override context.zone_id for this request.
-    context = dataclasses.replace(context, zone_id=zone) if hasattr(context, '__dataclass_fields__') else context
+    context = (
+        dataclasses.replace(context, zone_id=zone)
+        if hasattr(context, "__dataclass_fields__")
+        else context
+    )
 ```
 
 (Or — if `context` is constructed via `get_context` from auth_result already, just call `_gate_zone(auth_result, zone)` and pass the new zone through.)
@@ -204,6 +208,7 @@ def upgrade() -> None:
         "api_key_zones",
         sa.Column("permissions", sa.String(length=8), nullable=False, server_default="rw"),
     )
+
 
 def downgrade() -> None:
     op.drop_column("api_key_zones", "permissions")

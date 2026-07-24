@@ -85,9 +85,9 @@ nx.mount("/workspace/shared", gcs_backend, priority=10)
 nx.mount("/cloud", gcs_backend, priority=0)
 
 # Routing examples
-nx.write("/workspace/file.txt", ...)        # → local_backend
+nx.write("/workspace/file.txt", ...)  # → local_backend
 nx.write("/workspace/shared/doc.txt", ...)  # → gcs_backend (longer prefix)
-nx.write("/cloud/data.json", ...)           # → gcs_backend
+nx.write("/cloud/data.json", ...)  # → gcs_backend
 ```
 
 **Routing algorithm:**
@@ -125,7 +125,7 @@ from nexus.backends import LocalBackend
 
 backend = LocalBackend(
     root_dir="/var/nexus/data",
-    content_cache_size_mb=256  # Optional LRU cache
+    content_cache_size_mb=256,  # Optional LRU cache
 )
 
 nx.mount("/workspace", backend)
@@ -160,8 +160,8 @@ from nexus.backends import GCSBackend
 
 backend = GCSBackend(
     bucket="my-bucket",
-    project="my-project",          # Optional
-    credentials_path="/path/to/service-account.json"  # Optional
+    project="my-project",  # Optional
+    credentials_path="/path/to/service-account.json",  # Optional
 )
 
 nx.mount("/cloud", backend)
@@ -195,6 +195,7 @@ Implement the `Backend` interface:
 ```python
 from nexus.backends import Backend
 from nexus.contracts.types import OperationContext
+
 
 class S3Backend(Backend):
     @property
@@ -234,9 +235,9 @@ class S3Backend(Backend):
 nx.mount(
     path="/workspace",
     backend=local_backend,
-    priority=0,          # Optional, default=0
-    enabled=True,        # Optional, default=True
-    metadata={}          # Optional metadata
+    priority=0,  # Optional, default=0
+    enabled=True,  # Optional, default=True
+    metadata={},  # Optional metadata
 )
 ```
 
@@ -273,7 +274,7 @@ nx.unmount("/workspace/shared")
 
 # Unmount all
 for mount in nx.list_mounts():
-    nx.unmount(mount['path'])
+    nx.unmount(mount["path"])
 ```
 
 ---
@@ -504,11 +505,11 @@ gs://my-bucket/cas/ef/gh/efgh5678...
 
 ```python
 {
-  "virtual_path": "/workspace/alice/document.pdf",
-  "content_hash": "abcd1234...",  # Physical CAS location
-  "backend_id": "local",
-  "size": 102400,
-  "version": 1
+    "virtual_path": "/workspace/alice/document.pdf",
+    "content_hash": "abcd1234...",  # Physical CAS location
+    "backend_id": "local",
+    "size": 102400,
+    "version": 1,
 }
 ```
 
@@ -573,7 +574,7 @@ nx.mount("/workspace", local_backend, priority=0)
 nx.mount("/workspace/shared", gcs_backend, priority=10)
 
 # Routing
-nx.write("/workspace/file.txt", ...)         # → local (priority=0)
+nx.write("/workspace/file.txt", ...)  # → local (priority=0)
 nx.write("/workspace/shared/doc.txt", ...)  # → gcs (priority=10, longer prefix)
 ```
 
@@ -685,10 +686,7 @@ nx.mount("/workspace-shared", gcs)  # Inconsistent naming
 
 ```python
 # ✅ Good: Environment-based config
-backend = (
-    LocalBackend("/tmp/nexus-dev") if env == "dev"
-    else GCSBackend("prod-bucket")
-)
+backend = LocalBackend("/tmp/nexus-dev") if env == "dev" else GCSBackend("prod-bucket")
 nx.mount("/workspace", backend)
 
 # ❌ Bad: Hardcode production
@@ -804,6 +802,7 @@ python -c "from google.cloud import storage; storage.Client().list_buckets()"
 3. Check backend latency:
    ```python
    import time
+
    start = time.time()
    backend.read_content(hash)
    print(f"Latency: {time.time() - start:.3f}s")

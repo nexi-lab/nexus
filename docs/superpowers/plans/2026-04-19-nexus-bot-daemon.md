@@ -165,9 +165,7 @@ class TestDaemonSchema:
                 },
             )
         with pg_engine.begin() as conn:
-            conn.execute(
-                text("SET LOCAL app.current_tenant = :t"), {"t": str(other_tenant)}
-            )
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(other_tenant)})
             rows = conn.execute(text("SELECT COUNT(*) FROM daemon_machines")).scalar()
         assert rows == 0, "RLS did not isolate daemon_machines across tenants"
 ```
@@ -182,61 +180,69 @@ Expected: 3 FAIL (missing columns / missing table).
 In `_TABLE_STATEMENTS` (after the existing `auth_profiles` CREATE TABLE, still inside the tuple), append:
 
 ```python
+(
     """
-    CREATE TABLE IF NOT EXISTS daemon_machines (
-        id                         UUID PRIMARY KEY,
-        tenant_id                  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        principal_id               UUID NOT NULL,
-        pubkey                     BYTEA NOT NULL,
-        daemon_version_last_seen   TEXT,
-        enrolled_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_seen_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        revoked_at                 TIMESTAMPTZ,
-        hostname                   TEXT,
-        FOREIGN KEY (principal_id, tenant_id)
-            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_daemon_machines_tenant_principal "
-    "ON daemon_machines(tenant_id, principal_id)",
+CREATE TABLE IF NOT EXISTS daemon_machines (
+    id                         UUID PRIMARY KEY,
+    tenant_id                  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    principal_id               UUID NOT NULL,
+    pubkey                     BYTEA NOT NULL,
+    daemon_version_last_seen   TEXT,
+    enrolled_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at                 TIMESTAMPTZ,
+    hostname                   TEXT,
+    FOREIGN KEY (principal_id, tenant_id)
+        REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+)
+""",
+)
+"CREATE INDEX IF NOT EXISTS idx_daemon_machines_tenant_principal "
+("ON daemon_machines(tenant_id, principal_id)",)
+(
     """
-    CREATE TABLE IF NOT EXISTS daemon_enroll_tokens (
-        jti              UUID PRIMARY KEY,
-        tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        principal_id     UUID NOT NULL,
-        issued_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        expires_at       TIMESTAMPTZ NOT NULL,
-        used_at          TIMESTAMPTZ,
-        FOREIGN KEY (principal_id, tenant_id)
-            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
-    "ON daemon_enroll_tokens(expires_at)",
+CREATE TABLE IF NOT EXISTS daemon_enroll_tokens (
+    jti              UUID PRIMARY KEY,
+    tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    principal_id     UUID NOT NULL,
+    issued_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at       TIMESTAMPTZ NOT NULL,
+    used_at          TIMESTAMPTZ,
+    FOREIGN KEY (principal_id, tenant_id)
+        REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+)
+""",
+)
+"CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
+("ON daemon_enroll_tokens(expires_at)",)
 ```
 
 In `_RLS_STATEMENTS` tuple, append:
 
 ```python
-    "ALTER TABLE daemon_machines ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE daemon_machines FORCE ROW LEVEL SECURITY",
-    "ALTER TABLE daemon_enroll_tokens ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE daemon_enroll_tokens FORCE ROW LEVEL SECURITY",
+("ALTER TABLE daemon_machines ENABLE ROW LEVEL SECURITY",)
+("ALTER TABLE daemon_machines FORCE ROW LEVEL SECURITY",)
+("ALTER TABLE daemon_enroll_tokens ENABLE ROW LEVEL SECURITY",)
+("ALTER TABLE daemon_enroll_tokens FORCE ROW LEVEL SECURITY",)
 ```
 
 In `_POLICY_STATEMENTS` tuple, append:
 
 ```python
-    "DROP POLICY IF EXISTS tenant_isolation_daemon_machines ON daemon_machines",
+("DROP POLICY IF EXISTS tenant_isolation_daemon_machines ON daemon_machines",)
+(
     """
-    CREATE POLICY tenant_isolation_daemon_machines ON daemon_machines
-        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
-    """,
-    "DROP POLICY IF EXISTS tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens",
+CREATE POLICY tenant_isolation_daemon_machines ON daemon_machines
+    USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+""",
+)
+("DROP POLICY IF EXISTS tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens",)
+(
     """
-    CREATE POLICY tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens
-        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
-    """,
+CREATE POLICY tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens
+    USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+""",
+)
 ```
 
 - [ ] **Step 4: Extend `_upgrade_shape_in_place` for audit columns**
@@ -257,17 +263,17 @@ In `_upgrade_shape_in_place` (`postgres_profile_store.py`), find the existing en
 Replace with:
 
 ```python
-    for col, decl in (
-        ("ciphertext", "BYTEA"),
-        ("wrapped_dek", "BYTEA"),
-        ("nonce", "BYTEA"),
-        ("aad", "BYTEA"),
-        ("kek_version", "INTEGER"),
-        ("source_file_hash", "TEXT"),      # #3804 audit stamp
-        ("daemon_version", "TEXT"),        # #3804 audit stamp
-        ("machine_id", "UUID"),            # #3804 audit stamp (fk to daemon_machines.id)
-    ):
-        conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
+for col, decl in (
+    ("ciphertext", "BYTEA"),
+    ("wrapped_dek", "BYTEA"),
+    ("nonce", "BYTEA"),
+    ("aad", "BYTEA"),
+    ("kek_version", "INTEGER"),
+    ("source_file_hash", "TEXT"),  # #3804 audit stamp
+    ("daemon_version", "TEXT"),  # #3804 audit stamp
+    ("machine_id", "UUID"),  # #3804 audit stamp (fk to daemon_machines.id)
+):
+    conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
 ```
 
 - [ ] **Step 5: Extend the CREATE TABLE for `auth_profiles`**
@@ -465,6 +471,7 @@ Create `src/nexus/server/api/v1/tests/test_jwt_signer.py`:
 
 ```python
 """Tests for src/nexus/server/api/v1/jwt_signer.py."""
+
 from __future__ import annotations
 
 import uuid
@@ -561,6 +568,7 @@ Daemon tokens carry (tenant_id, principal_id, machine_id) and are issued
 by the server after successful enrollment or refresh. Verification happens
 on every /v1 request authenticated as a daemon.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -692,6 +700,7 @@ Create `src/nexus/server/api/v1/tests/test_enroll_tokens.py`:
 
 ```python
 """Tests for src/nexus/server/api/v1/enroll_tokens.py."""
+
 from __future__ import annotations
 
 import uuid
@@ -719,15 +728,20 @@ SECRET = b"test-enroll-secret-32bytes-abcdef0"
 
 def _setup(pg_engine) -> tuple[uuid.UUID, uuid.UUID]:
     t = ensure_tenant(pg_engine, f"enroll-{uuid.uuid4()}")
-    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p = ensure_principal(
+        pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     return t, p
 
 
 def test_issue_and_consume_roundtrip(pg_engine) -> None:
     t, p = _setup(pg_engine)
     token = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     claims = consume_enroll_token(engine=pg_engine, secret=SECRET, token=token)
     assert claims.tenant_id == t
@@ -737,8 +751,11 @@ def test_issue_and_consume_roundtrip(pg_engine) -> None:
 def test_reused_token_rejected(pg_engine) -> None:
     t, p = _setup(pg_engine)
     token = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     consume_enroll_token(engine=pg_engine, secret=SECRET, token=token)
     with pytest.raises(EnrollTokenError, match="reused"):
@@ -748,8 +765,11 @@ def test_reused_token_rejected(pg_engine) -> None:
 def test_tampered_token_rejected(pg_engine) -> None:
     t, p = _setup(pg_engine)
     token = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     bad = token[:-3] + "AAA"
     with pytest.raises(EnrollTokenError, match="invalid"):
@@ -759,8 +779,11 @@ def test_tampered_token_rejected(pg_engine) -> None:
 def test_expired_token_rejected(pg_engine) -> None:
     t, p = _setup(pg_engine)
     token = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(seconds=-5),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(seconds=-5),
     )
     with pytest.raises(EnrollTokenError, match="expired"):
         consume_enroll_token(engine=pg_engine, secret=SECRET, token=token)
@@ -769,8 +792,11 @@ def test_expired_token_rejected(pg_engine) -> None:
 def test_wrong_secret_rejected(pg_engine) -> None:
     t, p = _setup(pg_engine)
     token = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     other = b"other-enroll-secret-32bytes-abcdef"
     with pytest.raises(EnrollTokenError, match="invalid"):
@@ -793,6 +819,7 @@ Admin CLI mints an enroll token scoped to (tenant_id, principal_id, jti, exp).
 The jti is persisted in daemon_enroll_tokens; consuming marks used_at = NOW().
 Replay, tamper, and expiry are all rejected.
 """
+
 from __future__ import annotations
 
 import base64
@@ -854,8 +881,13 @@ def issue_enroll_token(
                 "(jti, tenant_id, principal_id, issued_at, expires_at) "
                 "VALUES (:jti, :tid, :pid, :iat, :exp)"
             ),
-            {"jti": str(jti), "tid": str(tenant_id), "pid": str(principal_id),
-             "iat": now, "exp": exp},
+            {
+                "jti": str(jti),
+                "tid": str(tenant_id),
+                "pid": str(principal_id),
+                "iat": now,
+                "exp": exp,
+            },
         )
     body = json.dumps(
         {
@@ -906,10 +938,7 @@ def consume_enroll_token(
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tid)})
         row = conn.execute(
-            text(
-                "SELECT used_at FROM daemon_enroll_tokens "
-                "WHERE jti = :jti AND tenant_id = :tid"
-            ),
+            text("SELECT used_at FROM daemon_enroll_tokens WHERE jti = :jti AND tenant_id = :tid"),
             {"jti": str(jti), "tid": str(tid)},
         ).fetchone()
         if row is None:
@@ -961,6 +990,7 @@ Create `src/nexus/server/api/v1/tests/test_daemon_router.py`:
 
 ```python
 """Tests for src/nexus/server/api/v1/routers/daemon.py."""
+
 from __future__ import annotations
 
 import base64
@@ -1002,9 +1032,7 @@ def signing_pem() -> bytes:
 @pytest.fixture
 def app(pg_engine, signing_pem: bytes) -> FastAPI:
     signer = JwtSigner.from_pem(signing_pem, issuer="https://test.nexus")
-    router = make_daemon_router(
-        engine=pg_engine, signer=signer, enroll_secret=SECRET
-    )
+    router = make_daemon_router(engine=pg_engine, signer=signer, enroll_secret=SECRET)
     a = FastAPI()
     a.include_router(router)
     return a
@@ -1018,7 +1046,9 @@ def client(app: FastAPI) -> TestClient:
 @pytest.fixture
 def tenant_principal(pg_engine):
     t = ensure_tenant(pg_engine, f"daemon-rt-{uuid.uuid4()}")
-    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p = ensure_principal(
+        pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     return t, p
 
 
@@ -1035,8 +1065,11 @@ def _machine_keypair():
 def test_enroll_happy_path(client: TestClient, pg_engine, tenant_principal) -> None:
     t, p = tenant_principal
     tok = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     _, pub_pem = _machine_keypair()
     r = client.post(
@@ -1058,20 +1091,31 @@ def test_enroll_happy_path(client: TestClient, pg_engine, tenant_principal) -> N
 def test_enroll_replay_rejected(client: TestClient, pg_engine, tenant_principal) -> None:
     t, p = tenant_principal
     tok = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     _, pub_pem = _machine_keypair()
     r1 = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": tok, "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     assert r1.status_code == 200
     r2 = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": tok, "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     assert r2.status_code == 409
     assert "reused" in r2.text
@@ -1081,8 +1125,12 @@ def test_enroll_bad_token(client: TestClient) -> None:
     _, pub_pem = _machine_keypair()
     r = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": "garbage.xxx", "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": "garbage.xxx",
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     assert r.status_code == 401
 
@@ -1090,14 +1138,21 @@ def test_enroll_bad_token(client: TestClient) -> None:
 def test_refresh_happy_path(client: TestClient, pg_engine, tenant_principal) -> None:
     t, p = tenant_principal
     tok = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     priv, pub_pem = _machine_keypair()
     r = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": tok, "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     machine_id = r.json()["machine_id"]
     body = {
@@ -1114,19 +1169,24 @@ def test_refresh_happy_path(client: TestClient, pg_engine, tenant_principal) -> 
     assert "jwt" in r2.json()
 
 
-def test_refresh_signature_mismatch(
-    client: TestClient, pg_engine, tenant_principal
-) -> None:
+def test_refresh_signature_mismatch(client: TestClient, pg_engine, tenant_principal) -> None:
     t, p = tenant_principal
     tok = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     _priv, pub_pem = _machine_keypair()
     r = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": tok, "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     machine_id = r.json()["machine_id"]
     body = {
@@ -1144,19 +1204,24 @@ def test_refresh_signature_mismatch(
     assert r2.status_code == 401
 
 
-def test_refresh_skew_rejected(
-    client: TestClient, pg_engine, tenant_principal
-) -> None:
+def test_refresh_skew_rejected(client: TestClient, pg_engine, tenant_principal) -> None:
     t, p = tenant_principal
     tok = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     priv, pub_pem = _machine_keypair()
     r = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": tok, "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     machine_id = r.json()["machine_id"]
     # Timestamp 10 minutes in the past — outside ±60s window
@@ -1172,19 +1237,24 @@ def test_refresh_skew_rejected(
     assert "skew" in r2.text.lower()
 
 
-def test_refresh_revoked_machine(
-    client: TestClient, pg_engine, tenant_principal
-) -> None:
+def test_refresh_revoked_machine(client: TestClient, pg_engine, tenant_principal) -> None:
     t, p = tenant_principal
     tok = issue_enroll_token(
-        engine=pg_engine, secret=SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
     priv, pub_pem = _machine_keypair()
     r = client.post(
         "/v1/daemon/enroll",
-        json={"enroll_token": tok, "pubkey_pem": pub_pem.decode(),
-              "daemon_version": "0.9.20", "hostname": "x"},
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
     )
     machine_id = r.json()["machine_id"]
     with pg_engine.begin() as conn:
@@ -1218,6 +1288,7 @@ Create `src/nexus/server/api/v1/routers/daemon.py`:
 
 ```python
 """FastAPI router: POST /v1/daemon/enroll, POST /v1/daemon/refresh (#3804)."""
+
 from __future__ import annotations
 
 import base64
@@ -1291,9 +1362,7 @@ def make_daemon_router(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=code) from exc
 
         machine_id = uuid.uuid4()
-        pub_der = serialization.load_pem_public_key(
-            req.pubkey_pem.encode()
-        ).public_bytes(
+        pub_der = serialization.load_pem_public_key(req.pubkey_pem.encode()).public_bytes(
             encoding=serialization.Encoding.DER,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
@@ -1432,6 +1501,7 @@ Create `src/nexus/server/api/v1/tests/test_auth_profiles_router.py`:
 
 ```python
 """Tests for src/nexus/server/api/v1/routers/auth_profiles.py."""
+
 from __future__ import annotations
 
 import base64
@@ -1486,7 +1556,9 @@ def client(app: FastAPI) -> TestClient:
 @pytest.fixture
 def setup_tenant(pg_engine):
     t = ensure_tenant(pg_engine, f"push-{uuid.uuid4()}")
-    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p = ensure_principal(
+        pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     m = uuid.uuid4()
     with pg_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
@@ -1592,6 +1664,7 @@ Create `src/nexus/server/api/v1/routers/auth_profiles.py`:
 
 ```python
 """FastAPI router: POST /v1/auth-profiles (daemon push, #3804)."""
+
 from __future__ import annotations
 
 import base64
@@ -1641,7 +1714,7 @@ def _verify_auth(
 ) -> DaemonClaims:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="missing_bearer")
-    token = authorization[len("Bearer "):].strip()
+    token = authorization[len("Bearer ") :].strip()
     try:
         return signer.verify(token)
     except JwtVerifyError as exc:
@@ -1704,8 +1777,11 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                 log.warning(
                     "push_conflict_stale_write tenant=%s principal=%s id=%s "
                     "server_hash=%s incoming_hash=%s",
-                    claims.tenant_id, claims.principal_id, req.id,
-                    cur.source_file_hash, req.source_file_hash,
+                    claims.tenant_id,
+                    claims.principal_id,
+                    req.id,
+                    cur.source_file_hash,
+                    req.source_file_hash,
                 )
 
         store.upsert_with_credential(
@@ -1820,6 +1896,7 @@ Server plane workloads will call this to obtain scoped impersonation tokens
 instead of ever reading raw user credentials. Implementation is deferred;
 route lives now so daemon client code can be written against the contract.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
@@ -1892,36 +1969,36 @@ Observe the pattern (e.g. `app.include_router(zone_router)` at L646).
 Find the end of the v2 `include_router` block (around L856). Insert below it:
 
 ```python
-    # ------------------------------------------------------------------
-    # /v1 — daemon push API (epic #3788 PR 3/3, #3804)
-    # ------------------------------------------------------------------
-    v1_signer = _maybe_build_v1_signer()
-    if v1_signer is not None:
-        from nexus.server.api.v1.routers.daemon import make_daemon_router
-        from nexus.server.api.v1.routers.auth_profiles import make_auth_profiles_router
-        from nexus.server.api.v1.routers.token_exchange import make_token_exchange_router
-
-        enroll_secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET", "").encode()
-        if not enroll_secret:
-            logger.warning("v1 daemon routes disabled: NEXUS_ENROLL_TOKEN_SECRET unset")
-        else:
-            app.include_router(
-                make_daemon_router(
-                    engine=engine,
-                    signer=v1_signer,
-                    enroll_secret=enroll_secret,
-                )
-            )
-            app.include_router(
-                make_auth_profiles_router(engine=engine, signer=v1_signer)
-            )
-
-    token_exchange_enabled = (
-        os.environ.get("NEXUS_TOKEN_EXCHANGE_ENABLED", "").lower()
-        in ("1", "true", "yes")
-    )
+# ------------------------------------------------------------------
+# /v1 — daemon push API (epic #3788 PR 3/3, #3804)
+# ------------------------------------------------------------------
+v1_signer = _maybe_build_v1_signer()
+if v1_signer is not None:
+    from nexus.server.api.v1.routers.daemon import make_daemon_router
+    from nexus.server.api.v1.routers.auth_profiles import make_auth_profiles_router
     from nexus.server.api.v1.routers.token_exchange import make_token_exchange_router
-    app.include_router(make_token_exchange_router(enabled=token_exchange_enabled))
+
+    enroll_secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET", "").encode()
+    if not enroll_secret:
+        logger.warning("v1 daemon routes disabled: NEXUS_ENROLL_TOKEN_SECRET unset")
+    else:
+        app.include_router(
+            make_daemon_router(
+                engine=engine,
+                signer=v1_signer,
+                enroll_secret=enroll_secret,
+            )
+        )
+        app.include_router(make_auth_profiles_router(engine=engine, signer=v1_signer))
+
+token_exchange_enabled = os.environ.get("NEXUS_TOKEN_EXCHANGE_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+from nexus.server.api.v1.routers.token_exchange import make_token_exchange_router
+
+app.include_router(make_token_exchange_router(enabled=token_exchange_enabled))
 ```
 
 Add near the top of `fastapi_server.py` (after other module-level helpers):
@@ -1934,6 +2011,7 @@ def _maybe_build_v1_signer():
         return None
     issuer = os.environ.get("NEXUS_JWT_ISSUER", "https://nexus.local")
     from nexus.server.api.v1.jwt_signer import JwtSigner
+
     return JwtSigner.from_path(key_path, issuer=issuer)
 ```
 
@@ -1985,7 +2063,9 @@ from nexus.bricks.auth.tests.test_postgres_profile_store import (
 
 def test_enroll_token_command_prints_token(pg_engine, monkeypatch) -> None:
     t = ensure_tenant(pg_engine, f"cli-{uuid.uuid4()}")
-    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p = ensure_principal(
+        pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     monkeypatch.setenv("NEXUS_ENROLL_TOKEN_SECRET", "cli-secret-32bytes-abcdef01234567")
     monkeypatch.setenv("NEXUS_AUTH_DB_URL", PG_URL)
     runner = CliRunner()
@@ -1993,9 +2073,12 @@ def test_enroll_token_command_prints_token(pg_engine, monkeypatch) -> None:
         auth,
         [
             "enroll-token",
-            "--tenant-id", str(t),
-            "--principal-id", str(p),
-            "--ttl-minutes", "15",
+            "--tenant-id",
+            str(t),
+            "--principal-id",
+            str(p),
+            "--ttl-minutes",
+            "15",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -2012,7 +2095,9 @@ def test_enroll_token_command_prints_token(pg_engine, monkeypatch) -> None:
 
 def test_enroll_token_refuses_without_secret(pg_engine, monkeypatch) -> None:
     t = ensure_tenant(pg_engine, f"cli-{uuid.uuid4()}")
-    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p = ensure_principal(
+        pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     monkeypatch.delenv("NEXUS_ENROLL_TOKEN_SECRET", raising=False)
     monkeypatch.setenv("NEXUS_AUTH_DB_URL", PG_URL)
     runner = CliRunner()
@@ -2038,7 +2123,10 @@ In `src/nexus/bricks/auth/cli_commands.py`, after the `migrate-to-postgres` comm
 @click.option("--tenant-id", required=True, help="Target tenant UUID.")
 @click.option("--principal-id", required=True, help="Target principal UUID.")
 @click.option(
-    "--ttl-minutes", type=int, default=15, show_default=True,
+    "--ttl-minutes",
+    type=int,
+    default=15,
+    show_default=True,
     help="How long the token is valid for (minutes).",
 )
 def enroll_token_cmd(tenant_id: str, principal_id: str, ttl_minutes: int) -> None:
@@ -2058,9 +2146,7 @@ def enroll_token_cmd(tenant_id: str, principal_id: str, ttl_minutes: int) -> Non
 
     secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET", "").encode()
     if not secret:
-        raise click.ClickException(
-            "NEXUS_ENROLL_TOKEN_SECRET must be set (≥32 bytes recommended)"
-        )
+        raise click.ClickException("NEXUS_ENROLL_TOKEN_SECRET must be set (≥32 bytes recommended)")
     db_url = os.environ.get("NEXUS_AUTH_DB_URL")
     if not db_url:
         raise click.ClickException("NEXUS_AUTH_DB_URL must be set")
@@ -2190,9 +2276,7 @@ def test_generate_creates_0600_file(tmp_path: Path) -> None:
     key_path = tmp_path / "machine.key"
     pub_pem = generate_keypair(key_path)
     assert key_path.exists()
-    assert isinstance(
-        serialization.load_pem_public_key(pub_pem), Ed25519PublicKey
-    )
+    assert isinstance(serialization.load_pem_public_key(pub_pem), Ed25519PublicKey)
     # perms must be 0600 (owner read/write only)
     mode = stat.S_IMODE(os.stat(key_path).st_mode)
     assert mode == 0o600, f"expected 0600, got {oct(mode)}"
@@ -2234,6 +2318,7 @@ Create `src/nexus/bricks/auth/daemon/config.py`:
 
 ```python
 """Daemon TOML config at ~/.nexus/daemon.toml (#3804)."""
+
 from __future__ import annotations
 
 import tomllib  # Python 3.11+
@@ -2247,8 +2332,13 @@ class DaemonConfigError(Exception):
 
 
 _REQUIRED = (
-    "server_url", "tenant_id", "principal_id", "machine_id",
-    "key_path", "jwt_cache_path", "server_pubkey_path",
+    "server_url",
+    "tenant_id",
+    "principal_id",
+    "machine_id",
+    "key_path",
+    "jwt_cache_path",
+    "server_pubkey_path",
 )
 
 
@@ -2303,6 +2393,7 @@ Create `src/nexus/bricks/auth/daemon/keystore.py`:
 
 ```python
 """Ed25519 keystore for daemon ↔ server identity signatures (#3804)."""
+
 from __future__ import annotations
 
 import os
@@ -2348,9 +2439,7 @@ def load_private_key(path: Path) -> Ed25519PrivateKey:
         raise KeystoreError(f"keystore not found: {path}")
     mode = stat.S_IMODE(os.stat(path).st_mode)
     if mode & 0o077:
-        raise KeystoreError(
-            f"unsafe permissions on {path}: {oct(mode)} (expected 0600)"
-        )
+        raise KeystoreError(f"unsafe permissions on {path}: {oct(mode)} (expected 0600)")
     pem = path.read_bytes()
     priv = serialization.load_pem_private_key(pem, password=None)
     if not isinstance(priv, Ed25519PrivateKey):
@@ -2443,11 +2532,13 @@ def client_setup(tmp_path: Path, server_signer: JwtSigner):
         )
     )
     import os
+
     os.chmod(key_path, 0o600)
     jwt_cache = tmp_path / "jwt.cache"
     pub_path = tmp_path / "server.pub.pem"
     pub_path.write_bytes(server_signer.public_key_pem)
     import uuid
+
     machine_id = uuid.uuid4()
     tenant_id = uuid.uuid4()
     principal_id = uuid.uuid4()
@@ -2470,6 +2561,7 @@ def client_setup(tmp_path: Path, server_signer: JwtSigner):
 def test_refresh_invokes_server(client_setup) -> None:
     client, signer, t, p, m = client_setup
     from datetime import timedelta
+
     fresh = signer.sign(
         DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
         ttl=timedelta(hours=1),
@@ -2495,6 +2587,7 @@ def test_refresh_401_raises(client_setup) -> None:
 def test_cache_persisted(tmp_path: Path, client_setup) -> None:
     client, signer, t, p, m = client_setup
     from datetime import timedelta
+
     fresh = signer.sign(
         DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
         ttl=timedelta(hours=1),
@@ -2529,6 +2622,7 @@ Create `src/nexus/bricks/auth/daemon/jwt_client.py`:
 
 ```python
 """Daemon-side JWT fetch + renewal loop (#3804)."""
+
 from __future__ import annotations
 
 import base64
@@ -2580,6 +2674,7 @@ class JwtClient:
             self._current = token
             self.jwt_cache_path.parent.mkdir(parents=True, exist_ok=True)
             import os
+
             fd = os.open(
                 str(self.jwt_cache_path),
                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
@@ -2606,9 +2701,7 @@ class JwtClient:
         except httpx.HTTPError as exc:
             raise JwtClientError(f"refresh network error: {exc}") from exc
         if resp.status_code != 200:
-            raise JwtClientError(
-                f"refresh failed status={resp.status_code} body={resp.text}"
-            )
+            raise JwtClientError(f"refresh failed status={resp.status_code} body={resp.text}")
         new_jwt = resp.json()["jwt"]
         self.store_token(new_jwt)
         return new_jwt
@@ -2799,6 +2892,7 @@ Create `src/nexus/bricks/auth/daemon/queue.py`:
 
 ```python
 """Local SQLite push queue for offline resilience (#3804)."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -2881,8 +2975,7 @@ class PushQueue:
 
     def record_attempt(self, profile_id: str, *, error: str) -> None:
         self._conn.execute(
-            "UPDATE push_queue SET attempts = attempts + 1, last_error = ? "
-            "WHERE profile_id = ?",
+            "UPDATE push_queue SET attempts = attempts + 1, last_error = ? WHERE profile_id = ?",
             (error, profile_id),
         )
         self._conn.commit()
@@ -2905,6 +2998,7 @@ Create `src/nexus/bricks/auth/daemon/push.py`:
 
 ```python
 """Daemon push logic: dedupe, envelope, POST, queue bookkeeping (#3804)."""
+
 from __future__ import annotations
 
 import base64
@@ -2928,6 +3022,7 @@ class PushError(Exception):
 @dataclass
 class _LastPushed:
     """In-memory map of last-pushed hash per source. Survives while daemon runs."""
+
     hashes: dict[str, str]
 
     def __init__(self) -> None:
@@ -3026,9 +3121,7 @@ class Pusher:
             self._queue.record_attempt(profile_id, error=f"http_{resp.status_code}")
             raise PushError(f"transient http {resp.status_code}")
         if resp.status_code >= 400:
-            self._queue.record_attempt(
-                profile_id, error=f"permanent_{resp.status_code}"
-            )
+            self._queue.record_attempt(profile_id, error=f"permanent_{resp.status_code}")
             raise PushError(f"permanent http {resp.status_code}: {resp.text}")
 
         self._queue.mark_success(profile_id, payload_hash=new_hash)
@@ -3117,6 +3210,7 @@ Create `src/nexus/bricks/auth/daemon/watcher.py`:
 
 ```python
 """Debounced fsnotify watcher for a single source file (#3804)."""
+
 from __future__ import annotations
 
 import logging
@@ -3251,6 +3345,7 @@ from nexus.bricks.auth.daemon.runner import DaemonRunner, DaemonStatus
 
 def test_startup_drain_replays_pending(tmp_path: Path) -> None:
     from nexus.bricks.auth.daemon.queue import PushQueue
+
     queue = PushQueue(tmp_path / "queue.db")
     queue.enqueue("codex/u@x", payload_hash="hashA")
 
@@ -3261,7 +3356,7 @@ def test_startup_drain_replays_pending(tmp_path: Path) -> None:
         source_watch_target=tmp_path / "auth.json",
         queue=queue,
         pusher=pusher,
-        jwt_refresh_every=9999,   # disable in test
+        jwt_refresh_every=9999,  # disable in test
         status_path=tmp_path / "status.json",
     )
     runner.drain_startup()
@@ -3274,6 +3369,7 @@ def test_startup_drain_replays_pending(tmp_path: Path) -> None:
 
 def test_sigterm_stops_cleanly(tmp_path: Path) -> None:
     from nexus.bricks.auth.daemon.queue import PushQueue
+
     queue = PushQueue(tmp_path / "queue.db")
     pusher = MagicMock()
     runner = DaemonRunner(
@@ -3298,6 +3394,7 @@ Create `src/nexus/bricks/auth/daemon/runner.py`:
 
 ```python
 """Daemon runner: orchestrates watcher + JWT renewal + retry loop (#3804)."""
+
 from __future__ import annotations
 
 import json
@@ -3359,9 +3456,7 @@ class DaemonRunner:
     def status(self) -> DaemonStatus:
         return DaemonStatus(
             state=self._state,
-            last_success_at=(
-                self._last_success_at.isoformat() if self._last_success_at else None
-            ),
+            last_success_at=(self._last_success_at.isoformat() if self._last_success_at else None),
             dirty_rows=len(self._queue.list_pending()),
         )
 
@@ -3385,15 +3480,11 @@ class DaemonRunner:
                 log.exception("push_source failed")
                 self._maybe_degrade()
 
-        self._watcher = SourceWatcher(
-            self._watch_target, on_change=on_change, debounce_ms=500
-        )
+        self._watcher = SourceWatcher(self._watch_target, on_change=on_change, debounce_ms=500)
         self._watcher.start()
 
         if self._jwt_refresh_callable is not None:
-            self._renewal_thread = threading.Thread(
-                target=self._renewal_loop, daemon=True
-            )
+            self._renewal_thread = threading.Thread(target=self._renewal_loop, daemon=True)
             self._renewal_thread.start()
 
         # Idle loop: periodically write status, check stop flag.
@@ -3530,6 +3621,7 @@ def test_render_plist_substitutes_values() -> None:
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only")
 def test_install_paths() -> None:
     from nexus.bricks.auth.daemon.installer import install_plist_path
+
     p = install_plist_path()
     assert p.name == "com.nexus.daemon.plist"
     assert "LaunchAgents" in str(p)
@@ -3541,6 +3633,7 @@ Create `src/nexus/bricks/auth/daemon/installer.py`:
 
 ```python
 """macOS launchd installer (#3804)."""
+
 from __future__ import annotations
 
 import os
@@ -3572,9 +3665,11 @@ def render_plist(
     stdout_path: Path,
     stderr_path: Path,
 ) -> str:
-    template = resources.files("nexus.bricks.auth.daemon.templates").joinpath(
-        "com.nexus.daemon.plist.j2"
-    ).read_text()
+    template = (
+        resources.files("nexus.bricks.auth.daemon.templates")
+        .joinpath("com.nexus.daemon.plist.j2")
+        .read_text()
+    )
     return template.format(
         executable=executable,
         config_path=str(config_path),
@@ -3659,6 +3754,7 @@ Create `src/nexus/bricks/auth/daemon/cli.py`:
 
 ```python
 """`nexus daemon …` CLI subcommands (#3804)."""
+
 from __future__ import annotations
 
 import base64
@@ -3684,7 +3780,10 @@ def daemon() -> None:
 @click.option("--server", required=True, help="Server base URL.")
 @click.option("--enroll-token", required=True, help="One-shot enroll token from admin.")
 @click.option(
-    "--config", "config_path", default=str(_DEFAULT_CFG), show_default=True,
+    "--config",
+    "config_path",
+    default=str(_DEFAULT_CFG),
+    show_default=True,
     help="Path to write daemon config.",
 )
 def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
@@ -3698,6 +3797,7 @@ def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
     pub_pem = load_or_create_keypair(key_path)
 
     import platform
+
     resp = httpx.post(
         f"{server.rstrip('/')}/v1/daemon/enroll",
         json={
@@ -3709,17 +3809,15 @@ def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
         timeout=30.0,
     )
     if resp.status_code != 200:
-        raise click.ClickException(
-            f"enroll failed: {resp.status_code} {resp.text}"
-        )
+        raise click.ClickException(f"enroll failed: {resp.status_code} {resp.text}")
     body = resp.json()
     server_pubkey_path.parent.mkdir(parents=True, exist_ok=True)
     server_pubkey_path.write_text(body["server_pubkey_pem"])
 
     cfg = DaemonConfig(
         server_url=server.rstrip("/"),
-        tenant_id=uuid.uuid4(),          # placeholder; updated below
-        principal_id=uuid.uuid4(),       # placeholder; updated below
+        tenant_id=uuid.uuid4(),  # placeholder; updated below
+        principal_id=uuid.uuid4(),  # placeholder; updated below
         machine_id=uuid.UUID(body["machine_id"]),
         key_path=key_path,
         jwt_cache_path=jwt_cache,
@@ -3728,9 +3826,8 @@ def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
     # Decode the returned JWT to populate tenant_id + principal_id in the
     # config; this avoids shipping them in the enroll response.
     import jwt as pyjwt
-    decoded = pyjwt.decode(
-        body["jwt"], options={"verify_signature": False}, algorithms=["ES256"]
-    )
+
+    decoded = pyjwt.decode(body["jwt"], options={"verify_signature": False}, algorithms=["ES256"])
     cfg = DaemonConfig(
         server_url=cfg.server_url,
         tenant_id=uuid.UUID(decoded["tenant_id"]),
@@ -3809,6 +3906,7 @@ def status_cmd(config_path: str) -> None:
 @click.option("--config", "config_path", default=str(_DEFAULT_CFG), show_default=True)
 def install_cmd(config_path: str) -> None:
     from nexus.bricks.auth.daemon.installer import install
+
     plist_path = install(
         executable=sys.executable,
         config_path=Path(config_path),
@@ -3819,12 +3917,14 @@ def install_cmd(config_path: str) -> None:
 @daemon.command("uninstall")
 def uninstall_cmd() -> None:
     from nexus.bricks.auth.daemon.installer import uninstall
+
     uninstall()
     click.echo("uninstalled")
 
 
 def _daemon_version() -> str:
     from nexus import __version__
+
     return __version__
 
 
@@ -3839,6 +3939,7 @@ def _build_encryption_provider():
         from nexus.bricks.auth.envelope_providers.in_memory import (
             InMemoryEncryptionProvider,
         )
+
         return InMemoryEncryptionProvider()
     # Other providers (vault, aws_kms) selected at deploy time — defer.
     raise click.ClickException(
@@ -3852,6 +3953,7 @@ In the top-level CLI module (the file that already registers `auth`), add:
 
 ```python
 from nexus.bricks.auth.daemon.cli import daemon as _daemon_cmd
+
 cli.add_command(_daemon_cmd)
 ```
 
@@ -3882,6 +3984,7 @@ Create `tests/integration/auth/conftest.py`:
 
 ```python
 """Shared fixtures for auth integration tests."""
+
 from __future__ import annotations
 
 import os
@@ -3918,6 +4021,7 @@ Create `tests/integration/auth/test_daemon_e2e.py`:
 
 ```python
 """End-to-end daemon integration tests (#3804)."""
+
 from __future__ import annotations
 
 import base64
@@ -3973,7 +4077,11 @@ def live_server(pg_engine, signing_pem: bytes):
 
     # Bind on 127.0.0.1 with OS-assigned port
     import socket
-    sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -4008,8 +4116,11 @@ def test_happy_path_join_watch_push(
     monkeypatch.setenv("NEXUS_AUTH_DB_URL", str(pg_engine.url))
 
     token = issue_enroll_token(
-        engine=pg_engine, secret=ENROLL_SECRET,
-        tenant_id=t, principal_id=p, ttl=timedelta(minutes=15),
+        engine=pg_engine,
+        secret=ENROLL_SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
     )
 
     cfg_path = tmp_path / "daemon.toml"
@@ -4018,24 +4129,26 @@ def test_happy_path_join_watch_push(
         daemon_cli,
         [
             "join",
-            "--server", live_server,
-            "--enroll-token", token,
-            "--config", str(cfg_path),
+            "--server",
+            live_server,
+            "--enroll-token",
+            token,
+            "--config",
+            str(cfg_path),
         ],
     )
     assert res.exit_code == 0, res.output
     assert cfg_path.exists()
 
     # Fake HOME so watcher sees ~/.codex/auth.json = tmp_path/.codex/auth.json
-    monkeypatch.setattr(
-        "nexus.bricks.auth.daemon.cli.Path.home", lambda: tmp_path
-    )
+    monkeypatch.setattr("nexus.bricks.auth.daemon.cli.Path.home", lambda: tmp_path)
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir(exist_ok=True)
     (codex_dir / "auth.json").write_text('{"token":"abc"}')
 
     # Run the daemon in a thread for a few seconds
     from nexus.bricks.auth.daemon.cli import run_cmd
+
     thread = threading.Thread(
         target=lambda: runner.invoke(run_cmd, ["--config", str(cfg_path)]),
         daemon=True,
@@ -4094,6 +4207,7 @@ git commit -m "test(daemon): integration suite (e2e, offline, renewal, revocatio
 
 ```python
 """Daemon security regression (#3804)."""
+
 from __future__ import annotations
 
 import os
@@ -4143,7 +4257,9 @@ def test_keyfile_permissions_0600(tmp_path: Path) -> None:
 def test_push_without_audit_stamps_is_rejected(pg_engine, signer) -> None:
     """The server MUST require source_file_hash. Missing → 422 (Pydantic validation)."""
     t = ensure_tenant(pg_engine, f"sec-{uuid.uuid4()}")
-    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p = ensure_principal(
+        pg_engine, tenant_id=t, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     m = uuid.uuid4()
     with pg_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
@@ -4154,8 +4270,7 @@ def test_push_without_audit_stamps_is_rejected(pg_engine, signer) -> None:
                 " enrolled_at, last_seen_at) "
                 "VALUES (:id, :tid, :pid, :pk, :ver, NOW(), NOW())"
             ),
-            {"id": str(m), "tid": str(t), "pid": str(p),
-             "pk": b"\x00" * 32, "ver": "0.9.20"},
+            {"id": str(m), "tid": str(t), "pid": str(p), "pk": b"\x00" * 32, "ver": "0.9.20"},
         )
     app = FastAPI()
     app.include_router(make_auth_profiles_router(engine=pg_engine, signer=signer))
@@ -4190,7 +4305,9 @@ def test_rls_blocks_cross_tenant_write(pg_engine, signer) -> None:
     """A JWT scoped to tenant A must not affect tenant B rows."""
     t1 = ensure_tenant(pg_engine, f"rls-a-{uuid.uuid4()}")
     t2 = ensure_tenant(pg_engine, f"rls-b-{uuid.uuid4()}")
-    p1 = ensure_principal(pg_engine, tenant_id=t1, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc")
+    p1 = ensure_principal(
+        pg_engine, tenant_id=t1, external_sub=f"u-{uuid.uuid4()}", auth_method="oidc"
+    )
     m1 = uuid.uuid4()
     with pg_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t1)})
@@ -4201,8 +4318,7 @@ def test_rls_blocks_cross_tenant_write(pg_engine, signer) -> None:
                 " enrolled_at, last_seen_at) "
                 "VALUES (:id, :tid, :pid, :pk, :ver, NOW(), NOW())"
             ),
-            {"id": str(m1), "tid": str(t1), "pid": str(p1),
-             "pk": b"\x00" * 32, "ver": "0.9.20"},
+            {"id": str(m1), "tid": str(t1), "pid": str(p1), "pk": b"\x00" * 32, "ver": "0.9.20"},
         )
     # Push with tenant-A JWT
     app = FastAPI()
@@ -4215,11 +4331,17 @@ def test_rls_blocks_cross_tenant_write(pg_engine, signer) -> None:
     r = client.post(
         "/v1/auth-profiles",
         json={
-            "id": "codex/u@x", "provider": "codex", "account_identifier": "u@x",
-            "backend": "nexus-daemon", "backend_key": "codex",
+            "id": "codex/u@x",
+            "provider": "codex",
+            "account_identifier": "u@x",
+            "backend": "nexus-daemon",
+            "backend_key": "codex",
             "envelope": {
-                "ciphertext_b64": "AA==", "wrapped_dek_b64": "AA==",
-                "nonce_b64": "AA==", "aad_b64": "AA==", "kek_version": 1,
+                "ciphertext_b64": "AA==",
+                "wrapped_dek_b64": "AA==",
+                "nonce_b64": "AA==",
+                "aad_b64": "AA==",
+                "kek_version": 1,
             },
             "source_file_hash": "z" * 64,
         },

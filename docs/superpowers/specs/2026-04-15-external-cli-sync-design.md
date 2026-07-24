@@ -34,23 +34,27 @@ src/nexus/bricks/auth/external_sync/
 @dataclass(frozen=True, slots=True)
 class SyncedProfile:
     """One discovered account from an external CLI."""
-    provider: str              # e.g. "s3"
-    account_identifier: str    # e.g. "default", "work-prod"
-    backend_key: str           # opaque key for ExternalCliBackend.resolve()
-    source: str                # e.g. "aws-cli"
+
+    provider: str  # e.g. "s3"
+    account_identifier: str  # e.g. "default", "work-prod"
+    backend_key: str  # opaque key for ExternalCliBackend.resolve()
+    source: str  # e.g. "aws-cli"
+
 
 @dataclass
 class SyncResult:
     """Output of a single adapter sync."""
+
     adapter_name: str
     profiles: list[SyncedProfile]
-    error: str | None = None   # non-None means degraded
+    error: str | None = None  # non-None means degraded
+
 
 class ExternalCliSyncAdapter(ABC):
     # Class-level configurables (override in subclass)
-    adapter_name: str                    # e.g. "aws-cli"
-    sync_ttl_seconds: float = 60.0       # default for FileAdapter
-    failure_threshold: int = 3           # circuit breaker trips after N consecutive failures
+    adapter_name: str  # e.g. "aws-cli"
+    sync_ttl_seconds: float = 60.0  # default for FileAdapter
+    failure_threshold: int = 3  # circuit breaker trips after N consecutive failures
     reset_timeout_seconds: float = 60.0  # half-open probe after this duration
 
     @abstractmethod
@@ -75,8 +79,8 @@ Concrete base for CLIs that need `asyncio.create_subprocess_exec`. Subclasses de
 
 ```python
 class SubprocessAdapter(ExternalCliSyncAdapter):
-    binary_name: str               # e.g. "gcloud"
-    status_args: tuple[str, ...]   # e.g. ("auth", "list", "--format=json")
+    binary_name: str  # e.g. "gcloud"
+    status_args: tuple[str, ...]  # e.g. ("auth", "list", "--format=json")
     sync_ttl_seconds: float = 300.0  # subprocess = expensive, longer TTL
 ```
 
@@ -164,15 +168,15 @@ Note: both `sync()` (on the adapter) and `resolve()` (on the backend) read the s
 @dataclass
 class CircuitBreaker:
     failure_count: int = 0
-    tripped_at: float | None = None        # time.monotonic() timestamp
+    tripped_at: float | None = None  # time.monotonic() timestamp
     failure_threshold: int = 3
     reset_timeout_seconds: float = 60.0
 
     @property
-    def is_tripped(self) -> bool: ...      # tripped and not past reset_timeout
+    def is_tripped(self) -> bool: ...  # tripped and not past reset_timeout
 
     @property
-    def is_half_open(self) -> bool: ...    # tripped but past reset_timeout (allow probe)
+    def is_half_open(self) -> bool: ...  # tripped but past reset_timeout (allow probe)
 
     def record_success(self) -> None: ...  # reset to clean state
     def record_failure(self) -> None: ...  # increment, trip if threshold reached

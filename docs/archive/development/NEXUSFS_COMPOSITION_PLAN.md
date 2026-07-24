@@ -11,15 +11,15 @@
 
 ```python
 class NexusFS(
-    NexusFSSearchMixin,        # Search operations → SearchService (partial)
-    NexusFSReBACMixin,         # Permission operations → ReBACService
-    NexusFSVersionsMixin,      # Version operations → VersionService
-    NexusFSMountsMixin,        # Mount operations → MountService
-    NexusFSOAuthMixin,         # OAuth operations → OAuthService
-    NexusFSSkillsMixin,        # Skill operations → SkillService
-    NexusFSMCPMixin,           # MCP operations → MCPService
-    NexusFSLLMMixin,           # LLM operations → LLMService
-    NexusFilesystem,           # Base filesystem
+    NexusFSSearchMixin,  # Search operations → SearchService (partial)
+    NexusFSReBACMixin,  # Permission operations → ReBACService
+    NexusFSVersionsMixin,  # Version operations → VersionService
+    NexusFSMountsMixin,  # Mount operations → MountService
+    NexusFSOAuthMixin,  # OAuth operations → OAuthService
+    NexusFSSkillsMixin,  # Skill operations → SkillService
+    NexusFSMCPMixin,  # MCP operations → MCPService
+    NexusFSLLMMixin,  # LLM operations → LLMService
+    NexusFilesystem,  # Base filesystem
 ):
     """God Object with 9+ mixins (anti-pattern)"""
 ```
@@ -188,6 +188,7 @@ async def list_versions(
     """List file versions - delegates to VersionService."""
     return await self.version_service.list_versions(path, limit, offset, context)
 
+
 async def get_version(
     self,
     path: str,
@@ -196,6 +197,7 @@ async def get_version(
 ) -> dict[str, Any] | None:
     """Get version details - delegates to VersionService."""
     return await self.version_service.get_version(path, version_id, context)
+
 
 # Repeat for 60+ methods...
 ```
@@ -212,13 +214,13 @@ _SERVICE_METHOD_MAP = {
     "get_version": "version_service",
     "rollback_to_version": "version_service",
     "delete_version": "version_service",
-
     # ReBACService methods
     "rebac_create": "rebac_service",
     "rebac_check": "rebac_service",
     "rebac_expand": "rebac_service",
     # ... (60+ mappings)
 }
+
 
 def __getattr__(self, name: str) -> Any:
     """Delegate method calls to appropriate service."""

@@ -112,12 +112,15 @@ Manifest gains `mount_count: int` and `BUNDLE_PATHS["mounts"] = "mounts.jsonl"`.
 ```python
 SECRET_SHAPED = re.compile(r"(?i)(key|secret|token|password|cred)")
 
+
 def declared_secret_fields(backend_type: str) -> frozenset[str]:
     """CONNECTION_ARGS keys with secret=True for a backend."""
+
 
 def audit_backend(backend_type: str) -> list[str]:
     """Arg names that look secret-shaped but aren't marked secret=True.
     Empty list = backend passes audit."""
+
 
 def redact_config(
     backend_type: str,
@@ -136,6 +139,7 @@ Reuses `PlaceholderRef` from existing `models.py` so the manifest's placeholder 
 def collect_mounts(mount_manager: MountManager, *, zone_id: str | None) -> list[MountConfigRow]:
     """Pull raw mount configs from MountManager (zone-filtered if zone_id given)."""
 
+
 def redact_and_write(
     mounts: list[MountConfigRow],
     *,
@@ -151,6 +155,7 @@ def redact_and_write(
 def read_mounts(bundle_dir: Path) -> list[MountRecord]:
     """Parse mounts.jsonl. Returns [] if absent (v2 bundle)."""
 
+
 def validate_overrides(
     mounts: list[MountRecord],
     overrides: dict[str, dict[str, str]] | None,
@@ -158,11 +163,13 @@ def validate_overrides(
     """Walk every redacted field; raise MissingCredentialsError listing all gaps.
     Pure: no side effects. Runs before any backend init."""
 
+
 def materialize(
     mount_record: MountRecord,
     overrides_for_mount: dict[str, str],
 ) -> dict[str, Any]:
     """Substitute ${MOUNT_<id>_<FIELD>} placeholders; return final backend_config."""
+
 
 def import_mounts(
     mounts: list[MountRecord],
@@ -181,11 +188,14 @@ def import_mounts(
 ```python
 class SensitiveFieldNotDeclaredError(ValueError):
     """Export-time. Backend has secret-shaped CONNECTION_ARGS keys not marked secret=True."""
+
     backend_type: str
     fields: list[str]
 
+
 class MissingCredentialsError(ValueError):
     """Import-time. Bundle has redacted mount fields with no override supplied."""
+
     missing: dict[str, list[str]]  # mount_id -> [field, ...]
 ```
 

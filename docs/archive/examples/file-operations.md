@@ -113,11 +113,7 @@ This example demonstrates all file manipulation operations in Nexus: write, read
     nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
     # Write JSON configuration
-    config = {
-        "app": "nexus-demo",
-        "version": "1.0",
-        "settings": {"debug": True, "max_retries": 3}
-    }
+    config = {"app": "nexus-demo", "version": "1.0", "settings": {"debug": True, "max_retries": 3}}
 
     nx.write("/workspace/config.json", json.dumps(config).encode())
     ```
@@ -147,7 +143,7 @@ This example demonstrates all file manipulation operations in Nexus: write, read
 
     # Read file content
     content = nx.read("/workspace/hello.txt")
-    print(content.decode('utf-8'))
+    print(content.decode("utf-8"))
     ```
 
 === "Read with Metadata"
@@ -243,10 +239,7 @@ This example demonstrates all file manipulation operations in Nexus: write, read
     nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
     # Move and rename in one operation
-    nx.move(
-        "/workspace/draft.txt",
-        "/workspace/published/final.txt"
-    )
+    nx.move("/workspace/draft.txt", "/workspace/published/final.txt")
     ```
 
 ## 🗑️ Delete Operations
@@ -270,11 +263,7 @@ This example demonstrates all file manipulation operations in Nexus: write, read
     nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
     # Delete multiple files
-    files_to_delete = [
-        "/workspace/temp1.txt",
-        "/workspace/temp2.txt",
-        "/workspace/temp3.txt"
-    ]
+    files_to_delete = ["/workspace/temp1.txt", "/workspace/temp2.txt", "/workspace/temp3.txt"]
 
     for file in files_to_delete:
         nx.delete(file)
@@ -306,18 +295,14 @@ This example demonstrates all file manipulation operations in Nexus: write, read
 
     # Read current version
     result = nx.read("/workspace/data.json", return_metadata=True)
-    current_etag = result['etag']
+    current_etag = result["etag"]
 
     # Modify content
-    new_content = modify_data(result['content'])
+    new_content = modify_data(result["content"])
 
     try:
         # Write only if ETag matches (no concurrent modifications)
-        nx.write(
-            "/workspace/data.json",
-            new_content,
-            if_match=current_etag
-        )
+        nx.write("/workspace/data.json", new_content, if_match=current_etag)
         print("Update successful")
     except nexus.ConflictError:
         print("File was modified by another process!")
@@ -353,10 +338,7 @@ This example demonstrates all file manipulation operations in Nexus: write, read
 
     # 4. Archive old backup
     nx.mkdir("/workspace/archive/docs", parents=True)
-    nx.move(
-        "/workspace/docs/README.backup.md",
-        "/workspace/archive/docs/README.backup.md"
-    )
+    nx.move("/workspace/docs/README.backup.md", "/workspace/archive/docs/README.backup.md")
 
     # 5. Clean up after verification
     nx.delete("/workspace/archive/docs/README.backup.md")

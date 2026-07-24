@@ -65,20 +65,23 @@ import nexus
 
 nx = nexus.connect()
 
+
 # Define tools as async functions
 async def read_file(path: str) -> str:
     """Read file from Nexus"""
-    return nx.read(path).decode('utf-8')
+    return nx.read(path).decode("utf-8")
+
 
 async def write_file(path: str, content: str) -> str:
     """Write file to Nexus"""
-    nx.write(path, content.encode('utf-8'))
+    nx.write(path, content.encode("utf-8"))
     return f"Wrote to {path}"
+
 
 # Claude automatically uses tools as needed
 async for message in query(
     "Read /workspace/data.json and create a summary in /reports/summary.md",
-    tools=[read_file, write_file]
+    tools=[read_file, write_file],
 ):
     print(message)
 ```
@@ -93,25 +96,22 @@ from claude_agent_sdk import query
 
 nx = nexus.connect()
 
+
 async def store_memory(content: str, memory_type: str = "fact") -> str:
     """Store information in agent memory"""
-    nx.memory.store(
-        content=content,
-        scope="agent",
-        memory_type=memory_type,
-        importance=0.8
-    )
+    nx.memory.store(content=content, scope="agent", memory_type=memory_type, importance=0.8)
     return "Memory stored"
+
 
 async def recall_memory(query_text: str) -> str:
     """Recall relevant information from memory"""
     results = nx.memory.query(query_text, scope="agent", limit=5)
     return "\n".join([m.content for m in results])
 
+
 # Agent can now remember across conversations
 async for msg in query(
-    "What did we discuss about the API design last week?",
-    tools=[store_memory, recall_memory]
+    "What did we discuss about the API design last week?", tools=[store_memory, recall_memory]
 ):
     print(msg)
 ```
@@ -126,16 +126,17 @@ from claude_agent_sdk import query
 
 nx = nexus.connect()
 
+
 async def analyze_document(path: str, question: str) -> str:
     """Ask questions about documents using Nexus LLM read"""
     # Nexus handles parsing (PDF, DOCX, etc.) and citation
     answer = nx.llm_read(path, question)
     return answer
 
+
 # Claude can analyze complex documents
 async for msg in query(
-    "Analyze all PDFs in /contracts and summarize key terms",
-    tools=[analyze_document, glob_files]
+    "Analyze all PDFs in /contracts and summarize key terms", tools=[analyze_document, glob_files]
 ):
     print(msg)
 ```
@@ -258,10 +259,10 @@ async def search_documents(query: str, path: str = "/workspace") -> str:
     results = nx.semantic_search(query, path=path, limit=10)
     return "\n".join([f"{r.path}: {r.snippet}" for r in results])
 
+
 # Claude can find relevant docs even if keywords don't match
 async for msg in query(
-    "Find documents about machine learning algorithms",
-    tools=[search_documents, read_file]
+    "Find documents about machine learning algorithms", tools=[search_documents, read_file]
 ):
     print(msg)
 ```
@@ -274,10 +275,12 @@ async def get_file_versions(path: str) -> str:
     versions = nx.list_versions(path)
     return "\n".join([f"v{v.version} ({v.timestamp}): {v.hash}" for v in versions])
 
+
 async def read_version(path: str, version: int) -> str:
     """Read specific version of a file"""
     content = nx.read(path, version=version)
-    return content.decode('utf-8')
+    return content.decode("utf-8")
+
 
 # Claude can time-travel through file history
 ```

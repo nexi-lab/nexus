@@ -388,16 +388,23 @@ In `src/nexus/config.py`, locate the `validate_profile` field validator (around 
 Change to:
 
 ```python
-    @field_validator("profile")
-    @classmethod
-    def validate_profile(cls, v: str) -> str:
-        allowed = [
-            "slim", "cluster", "embedded", "lite", "sandbox",
-            "full", "cloud", "remote", "auto",
-        ]
-        if v not in allowed:
-            raise ValueError(f"profile must be one of {allowed}, got '{v}'")
-        return v
+@field_validator("profile")
+@classmethod
+def validate_profile(cls, v: str) -> str:
+    allowed = [
+        "slim",
+        "cluster",
+        "embedded",
+        "lite",
+        "sandbox",
+        "full",
+        "cloud",
+        "remote",
+        "auto",
+    ]
+    if v not in allowed:
+        raise ValueError(f"profile must be one of {allowed}, got '{v}'")
+    return v
 ```
 
 - [ ] **Step 3: Run, verify pass**
@@ -1001,7 +1008,8 @@ class TestSearchServiceSandboxFallback:
 
         async def _fake_federated(*args, **kwargs):
             return FederatedSearchResponse(
-                results=[], zones_searched=["a"],
+                results=[],
+                zones_searched=["a"],
                 zones_failed=[ZoneFailure(zone_id="a", error="x")],
             )
 
@@ -1019,9 +1027,11 @@ class TestSearchServiceSandboxFallback:
             await svc.semantic_search(query="x", zone_id="z")
             await svc.semantic_search(query="x", zone_id="z")
 
-        warn_records = [r for r in caplog.records
-                        if r.levelno == _logging.WARNING
-                        and "semantic_degraded" in r.getMessage().lower()]
+        warn_records = [
+            r
+            for r in caplog.records
+            if r.levelno == _logging.WARNING and "semantic_degraded" in r.getMessage().lower()
+        ]
         assert len(warn_records) == 1
 ```
 
@@ -1454,6 +1464,7 @@ async def test_sandbox_http_surface_is_restricted(tmp_path: Path) -> None:
     from nexus.server.fastapi_server import build_app
 
     import os
+
     os.environ["NEXUS_PROFILE"] = "sandbox"
     os.environ["NEXUS_DATA_DIR"] = str(tmp_path / "nexus")
     try:
@@ -1482,6 +1493,7 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(tmp_path: Path) 
     from nexus.server.fastapi_server import build_app
 
     import os
+
     os.environ["NEXUS_PROFILE"] = "sandbox"
     os.environ["NEXUS_DATA_DIR"] = str(tmp_path / "nexus")
     try:
@@ -1491,8 +1503,15 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(tmp_path: Path) 
             body = r.json()
             assert body["profile"] == "sandbox"
             enabled = set(body["enabled_bricks"])
-            assert {"search", "mcp", "federation", "parsers",
-                    "eventlog", "namespace", "permissions"}.issubset(enabled)
+            assert {
+                "search",
+                "mcp",
+                "federation",
+                "parsers",
+                "eventlog",
+                "namespace",
+                "permissions",
+            }.issubset(enabled)
             assert "llm" not in enabled
             assert "pay" not in enabled
             assert "observability" not in enabled
@@ -1561,9 +1580,7 @@ import nexus
 @pytest.mark.sandbox_memory
 @pytest.mark.asyncio
 async def test_sandbox_idle_rss_under_300mb(tmp_path: Path) -> None:
-    nx = await nexus.connect(
-        config={"profile": "sandbox", "data_dir": str(tmp_path / "nexus")}
-    )
+    nx = await nexus.connect(config={"profile": "sandbox", "data_dir": str(tmp_path / "nexus")})
     try:
         # Write 100 small files so indexing runs at least once
         for i in range(100):
@@ -1571,6 +1588,7 @@ async def test_sandbox_idle_rss_under_300mb(tmp_path: Path) -> None:
 
         # Let background tasks settle
         import asyncio
+
         await asyncio.sleep(1.0)
 
         rss_bytes = psutil.Process().memory_info().rss

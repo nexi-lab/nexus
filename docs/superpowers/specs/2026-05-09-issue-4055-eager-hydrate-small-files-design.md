@@ -161,8 +161,7 @@ class BootIndexer:
         rust_client: RustFUSEClient | None = None,
         hydrate_threshold: int | None = None,
         hydrate_budget: int | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def _run(self) -> None:
         try:

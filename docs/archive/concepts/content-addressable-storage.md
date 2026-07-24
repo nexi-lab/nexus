@@ -63,9 +63,11 @@ graph TB
 ```python
 import hashlib
 
+
 def compute_hash(content: bytes) -> str:
     """Compute SHA-256 hash of content."""
     return hashlib.sha256(content).hexdigest()
+
 
 # Example
 content = b"Hello World"
@@ -293,13 +295,13 @@ Nexus tracks all versions of a file in `version_history` table:
 
 ```python
 class VersionHistoryModel:
-    version_id: str           # Unique version ID
-    resource_id: str          # Path ID
-    version_number: int       # 1, 2, 3, ...
-    content_hash: str         # SHA-256 hash (CAS key)
-    size_bytes: int           # File size at this version
-    created_at: datetime      # When version created
-    created_by: str           # User/agent who created it
+    version_id: str  # Unique version ID
+    resource_id: str  # Path ID
+    version_number: int  # 1, 2, 3, ...
+    content_hash: str  # SHA-256 hash (CAS key)
+    size_bytes: int  # File size at this version
+    created_at: datetime  # When version created
+    created_by: str  # User/agent who created it
 ```
 
 **Example History:**
@@ -481,8 +483,9 @@ def stream_content(content_hash: str, chunk_size: int = 8192):
                 break
             yield chunk
 
+
 # Example: Process 10GB file with 1MB memory usage
-for chunk in stream_content(hash, chunk_size=1024*1024):
+for chunk in stream_content(hash, chunk_size=1024 * 1024):
     process_chunk(chunk)  # Memory = 1MB, not 10GB
 ```
 
@@ -614,10 +617,7 @@ for agent_id in range(100):
     hashes.append(hash)
 
     # Store metadata pointing to hash
-    nx.metadata.put({
-        "path": f"/logs/agent_{agent_id}/error.log",
-        "content_hash": hash
-    })
+    nx.metadata.put({"path": f"/logs/agent_{agent_id}/error.log", "content_hash": hash})
 
 # All hashes identical
 assert len(set(hashes)) == 1
@@ -705,7 +705,7 @@ for meta in file_metas:
 
 ```python
 # ✅ Good: Stream large file
-for chunk in backend.stream_content(hash, chunk_size=1024*1024):
+for chunk in backend.stream_content(hash, chunk_size=1024 * 1024):
     process_chunk(chunk)  # Memory = 1MB
 
 # ❌ Bad: Load entire file
@@ -721,7 +721,7 @@ process(content)
 # ✅ Good: Enable cache for read-heavy workloads
 backend = LocalBackend(
     root_dir="/tmp/nexus",
-    content_cache=ContentCache(max_size_mb=512)  # 512MB cache
+    content_cache=ContentCache(max_size_mb=512),  # 512MB cache
 )
 
 # ❌ Bad: No cache (repeated disk reads)

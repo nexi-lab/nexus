@@ -244,17 +244,10 @@ registry.discover()
 plugin = registry.get_plugin("skill-seekers")
 
 # Generate from URL
-await plugin.generate_skill(
-    url="https://docs.example.com/api",
-    name="example-api",
-    tier="agent"
-)
+await plugin.generate_skill(url="https://docs.example.com/api", name="example-api", tier="agent")
 
 # Import skill file
-await plugin.import_skill(
-    file_path="./my-skill.md",
-    tier="tenant"
-)
+await plugin.import_skill(file_path="./my-skill.md", tier="tenant")
 
 # List skills
 await plugin.list_skills()

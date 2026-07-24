@@ -45,23 +45,13 @@ nexus sandbox create test-sandbox --json
 **Python API:**
 ```python
 # Create sandbox
-sandbox = nx.sandbox_create(
-    name="my-sandbox",
-    ttl_minutes=10
-)
+sandbox = nx.sandbox_create(name="my-sandbox", ttl_minutes=10)
 
 # Create with custom TTL
-sandbox = nx.sandbox_create(
-    name="data-analysis",
-    ttl_minutes=30
-)
+sandbox = nx.sandbox_create(name="data-analysis", ttl_minutes=30)
 
 # Create with template
-sandbox = nx.sandbox_create(
-    name="ml-training",
-    ttl_minutes=60,
-    template_id="custom-gpu-template"
-)
+sandbox = nx.sandbox_create(name="ml-training", ttl_minutes=60, template_id="custom-gpu-template")
 
 # Access sandbox_id
 sandbox_id = sandbox["sandbox_id"]
@@ -127,32 +117,17 @@ nexus sandbox run sb_123 -c "print(42)" --json
 **Python API:**
 ```python
 # Run Python code
-result = nx.sandbox_run(
-    sandbox_id="sb_123",
-    language="python",
-    code="print('Hello World')"
-)
+result = nx.sandbox_run(sandbox_id="sb_123", language="python", code="print('Hello World')")
 
 # Run JavaScript
-result = nx.sandbox_run(
-    sandbox_id="sb_123",
-    language="javascript",
-    code="console.log('Hello')"
-)
+result = nx.sandbox_run(sandbox_id="sb_123", language="javascript", code="console.log('Hello')")
 
 # Run Bash
-result = nx.sandbox_run(
-    sandbox_id="sb_123",
-    language="bash",
-    code="ls -la && df -h"
-)
+result = nx.sandbox_run(sandbox_id="sb_123", language="bash", code="ls -la && df -h")
 
 # Custom timeout
 result = nx.sandbox_run(
-    sandbox_id="sb_123",
-    language="python",
-    code="import time; time.sleep(5)",
-    timeout=60
+    sandbox_id="sb_123", language="python", code="import time; time.sleep(5)", timeout=60
 )
 
 # Check results
@@ -231,24 +206,23 @@ nexus sandbox list --json
 result = nx.sandbox_list()
 
 # List sandboxes with filtering
-result = nx.sandbox_list(context={
-    "user": "alice",           # Filter by user
-    "agent_id": "agent_123",   # Filter by agent
-    "zone_id": "tenant_456"  # Filter by zone
-})
+result = nx.sandbox_list(
+    context={
+        "user": "alice",  # Filter by user
+        "agent_id": "agent_123",  # Filter by agent
+        "zone_id": "tenant_456",  # Filter by zone
+    }
+)
 
 # List with status verification
 result = nx.sandbox_list(verify_status=True)
 
 # Combine filtering and verification
-result = nx.sandbox_list(
-    context={"user": "alice"},
-    verify_status=True
-)
+result = nx.sandbox_list(context={"user": "alice"}, verify_status=True)
 
 for sandbox in result["sandboxes"]:
-    status = sandbox['status']
-    verified = sandbox.get('verified', False)
+    status = sandbox["status"]
+    verified = sandbox.get("verified", False)
     print(f"{sandbox['name']}: {status} {'(verified)' if verified else ''}")
 ```
 

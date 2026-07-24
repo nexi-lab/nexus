@@ -83,16 +83,16 @@ Add new memory types to support ACE:
 ```python
 class MemoryType:
     # Existing
-    FACT = "fact"               # Factual knowledge
-    PREFERENCE = "preference"   # User/agent preferences
-    EXPERIENCE = "experience"   # Past experiences
+    FACT = "fact"  # Factual knowledge
+    PREFERENCE = "preference"  # User/agent preferences
+    EXPERIENCE = "experience"  # Past experiences
 
     # NEW: ACE-specific types
-    STRATEGY = "strategy"       # Successful approaches (✓ helpful)
+    STRATEGY = "strategy"  # Successful approaches (✓ helpful)
     ANTI_PATTERN = "anti_pattern"  # Failed patterns (✗ harmful)
-    OBSERVATION = "observation"    # Neutral observations (○)
-    TRAJECTORY = "trajectory"      # Execution trace
-    REFLECTION = "reflection"      # Analysis of outcomes
+    OBSERVATION = "observation"  # Neutral observations (○)
+    TRAJECTORY = "trajectory"  # Execution trace
+    REFLECTION = "reflection"  # Analysis of outcomes
     CONSOLIDATED = "consolidated"  # Merged memories
 ```
 
@@ -200,9 +200,11 @@ Playbooks are stored as structured JSON in content-addressable storage:
 from dataclasses import dataclass
 from typing import Literal
 
+
 @dataclass
 class StrategyEntry:
     """Single strategy in playbook."""
+
     category: Literal["helpful", "harmful", "neutral"]  # ✓, ✗, ○
     pattern: str  # Description of the pattern
     context: str  # When to use/avoid this
@@ -212,9 +214,11 @@ class StrategyEntry:
     updated_at: str
     examples: list[str]  # Example trajectories
 
+
 @dataclass
 class PlaybookContent:
     """Structured playbook content."""
+
     version: int
     strategies: list[StrategyEntry]
 
@@ -228,6 +232,7 @@ class PlaybookContent:
     consolidation_count: int
     total_trajectories_analyzed: int
 
+
 # Example playbook
 playbook = PlaybookContent(
     version=5,
@@ -240,7 +245,7 @@ playbook = PlaybookContent(
             evidence_count=12,
             created_at="2025-10-15T10:00:00Z",
             updated_at="2025-10-28T14:30:00Z",
-            examples=["traj_abc123", "traj_def456"]
+            examples=["traj_abc123", "traj_def456"],
         ),
         StrategyEntry(
             category="harmful",
@@ -250,15 +255,15 @@ playbook = PlaybookContent(
             evidence_count=7,
             created_at="2025-10-20T11:00:00Z",
             updated_at="2025-10-28T14:30:00Z",
-            examples=["traj_xyz789"]
-        )
+            examples=["traj_xyz789"],
+        ),
     ],
     helpful=[...],
     harmful=[...],
     neutral=[...],
     last_consolidated="2025-10-28T14:30:00Z",
     consolidation_count=3,
-    total_trajectories_analyzed=45
+    total_trajectories_analyzed=45,
 )
 ```
 
@@ -283,7 +288,7 @@ class Memory:
         self,
         task_description: str,
         task_type: str | None = None,
-        parent_trajectory_id: str | None = None
+        parent_trajectory_id: str | None = None,
     ) -> str:
         """Start tracking an execution trajectory.
 
@@ -303,11 +308,7 @@ class Memory:
         """
 
     def log_step(
-        self,
-        trajectory_id: str,
-        step_type: str,
-        description: str,
-        metadata: dict | None = None
+        self, trajectory_id: str, step_type: str, description: str, metadata: dict | None = None
     ) -> None:
         """Log a step in the trajectory.
 
@@ -332,7 +333,7 @@ class Memory:
         status: Literal["success", "failure", "partial"],
         success_score: float | None = None,
         error_message: str | None = None,
-        metrics: dict | None = None
+        metrics: dict | None = None,
     ) -> None:
         """Mark trajectory as complete with outcome.
 
@@ -354,11 +355,7 @@ class Memory:
 
     # ========== NEW: Reflection & Analysis ==========
 
-    def reflect(
-        self,
-        trajectory_id: str,
-        llm_client: Any | None = None
-    ) -> dict[str, Any]:
+    def reflect(self, trajectory_id: str, llm_client: Any | None = None) -> dict[str, Any]:
         """Analyze a trajectory to extract insights.
 
         Uses LLM to analyze what worked, what failed, and what patterns emerged.
@@ -394,7 +391,7 @@ class Memory:
         agent_id: str | None = None,
         since: str | None = None,
         task_type: str | None = None,
-        min_trajectories: int = 5
+        min_trajectories: int = 5,
     ) -> list[dict[str, Any]]:
         """Reflect on multiple trajectories to find patterns.
 
@@ -418,9 +415,7 @@ class Memory:
     # ========== NEW: Playbook Management ==========
 
     def get_playbook(
-        self,
-        name: str = "default",
-        agent_id: str | None = None
+        self, name: str = "default", agent_id: str | None = None
     ) -> dict[str, Any] | None:
         """Get playbook for agent.
 
@@ -438,10 +433,7 @@ class Memory:
         """
 
     def update_playbook(
-        self,
-        strategies: list[dict],
-        name: str = "default",
-        merge: bool = True
+        self, strategies: list[dict], name: str = "default", merge: bool = True
     ) -> str:
         """Update playbook with new strategies.
 
@@ -469,7 +461,7 @@ class Memory:
         self,
         reflections: list[str],  # reflection memory_ids
         playbook_name: str = "default",
-        llm_client: Any | None = None
+        llm_client: Any | None = None,
     ) -> dict[str, Any]:
         """Automatically curate playbook from reflections.
 
@@ -502,7 +494,7 @@ class Memory:
         min_importance: float = 0.5,
         preserve_high_importance: bool = True,
         importance_threshold: float = 0.8,
-        llm_client: Any | None = None
+        llm_client: Any | None = None,
     ) -> dict[str, Any]:
         """Consolidate memories to prevent context collapse.
 
@@ -541,7 +533,7 @@ class Memory:
         task_type: str | None = None,
         auto_reflect: bool = True,
         auto_curate: bool = True,
-        playbook_name: str = "default"
+        playbook_name: str = "default",
     ) -> tuple[Any, str]:
         """Execute a task with automatic learning loop.
 
@@ -624,11 +616,13 @@ class TrajectoryManager:
     def get_trajectory(self, trajectory_id) -> dict: ...
     def query_trajectories(self, filters) -> list[dict]: ...
 
+
 # reflection.py
 class Reflector:
     def reflect(self, trajectory_id, llm_client=None) -> dict: ...
     def batch_reflect(self, trajectories, llm_client=None) -> list[dict]: ...
     def extract_patterns(self, reflections) -> dict: ...
+
 
 # curation.py
 class Curator:
@@ -636,6 +630,7 @@ class Curator:
     def merge_strategies(self, existing, new) -> list: ...
     def remove_duplicates(self, strategies) -> list: ...
     def calculate_confidence(self, strategy, evidence) -> float: ...
+
 
 # playbook.py
 class PlaybookManager:
@@ -645,14 +640,10 @@ class PlaybookManager:
     def delete(self, playbook_id) -> bool: ...
     def list_versions(self, name, agent_id=None) -> list: ...
 
+
 # consolidation.py
 class ConsolidationEngine:
-    def consolidate(
-        self,
-        memory_type=None,
-        scope=None,
-        strategy="importance_based"
-    ) -> dict: ...
+    def consolidate(self, memory_type=None, scope=None, strategy="importance_based") -> dict: ...
     def identify_similar_memories(self, memories) -> list[list]: ...
     def merge_memories(self, memory_ids, llm_client=None) -> str: ...
     def preserve_high_importance(self, memories, threshold=0.8) -> list: ...
@@ -768,11 +759,12 @@ import nexus
 
 nx = nexus.connect()
 
+
 # Define your agent's task
 def api_task():
     # 1. Load playbook to get learned strategies
     playbook = nx.memory.get_playbook("api_client")
-    strategies = playbook['strategies']['helpful']
+    strategies = playbook["strategies"]["helpful"]
 
     # 2. Apply strategies
     for strategy in strategies:
@@ -784,13 +776,14 @@ def api_task():
     # 4. Return result and status
     return response, "success"
 
+
 # Execute with automatic learning
 result, traj_id = nx.memory.execute_with_learning(
     api_task,
     task_description="Call external API for user data",
     task_type="api_call",
     auto_reflect=True,
-    auto_curate=True
+    auto_curate=True,
 )
 
 # Playbook automatically updated with insights!
@@ -801,8 +794,7 @@ result, traj_id = nx.memory.execute_with_learning(
 ```python
 # 1. Start trajectory
 traj_id = nx.memory.start_trajectory(
-    task_description="Process invoice PDFs",
-    task_type="document_processing"
+    task_description="Process invoice PDFs", task_type="document_processing"
 )
 
 # 2. Execute task with logging
@@ -820,24 +812,21 @@ try:
         traj_id,
         status="success",
         success_score=0.95,
-        metrics={"fields_extracted": len(data), "duration_ms": 1500}
+        metrics={"fields_extracted": len(data), "duration_ms": 1500},
     )
 
 except Exception as e:
     nx.memory.log_step(traj_id, "observation", f"Error: {str(e)}")
     nx.memory.complete_trajectory(
-        traj_id,
-        status="failure",
-        success_score=0.0,
-        error_message=str(e)
+        traj_id, status="failure", success_score=0.0, error_message=str(e)
     )
 
 # 3. Reflect on what happened
 reflection = nx.memory.reflect(traj_id)
-print(reflection['insights'])
+print(reflection["insights"])
 
 # 4. Update playbook
-nx.memory.curate_playbook([reflection['memory_id']])
+nx.memory.curate_playbook([reflection["memory_id"]])
 ```
 
 ### 5.3 Batch Reflection & Curation
@@ -845,20 +834,14 @@ nx.memory.curate_playbook([reflection['memory_id']])
 ```python
 # After running 50 API calls, reflect on patterns
 patterns = nx.memory.batch_reflect(
-    agent_id="api_agent",
-    since="2025-10-01T00:00:00Z",
-    task_type="api_call",
-    min_trajectories=10
+    agent_id="api_agent", since="2025-10-01T00:00:00Z", task_type="api_call", min_trajectories=10
 )
 
 # Get all reflection memory IDs
-reflection_ids = [p['memory_id'] for p in patterns]
+reflection_ids = [p["memory_id"] for p in patterns]
 
 # Curate playbook from patterns
-result = nx.memory.curate_playbook(
-    reflections=reflection_ids,
-    playbook_name="api_client"
-)
+result = nx.memory.curate_playbook(reflections=reflection_ids, playbook_name="api_client")
 
 print(f"✓ Added {len(result['added'])} new strategies")
 print(f"↻ Updated {len(result['updated'])} existing strategies")
@@ -874,7 +857,7 @@ report = nx.memory.consolidate(
     scope="agent",
     min_importance=0.5,
     preserve_high_importance=True,
-    importance_threshold=0.8
+    importance_threshold=0.8,
 )
 
 print(f"Consolidated {report['merged_count']} memories")
@@ -888,8 +871,7 @@ print(f"Saved {report['space_saved_bytes']} bytes")
 # Agent A learns from task execution
 agent_a = nexus.connect(config={"agent_id": "agent_a"})
 result, traj_id = agent_a.memory.execute_with_learning(
-    task_fn=process_documents,
-    task_description="Process PDF invoices"
+    task_fn=process_documents, task_description="Process PDF invoices"
 )
 
 # Agent B can access Agent A's playbook (with ReBAC permissions)
@@ -897,19 +879,17 @@ agent_b = nexus.connect(config={"agent_id": "agent_b"})
 
 # Grant permission for Agent B to read Agent A's playbook
 agent_a.rebac.create(
-    subject=("agent", "agent_b"),
-    relation="viewer",
-    object=("playbook", f"agent_a/default")
+    subject=("agent", "agent_b"), relation="viewer", object=("playbook", f"agent_a/default")
 )
 
 # Agent B uses Agent A's learned strategies
 playbook = agent_b.memory.get_playbook(
     name="default",
-    agent_id="agent_a"  # Read from Agent A
+    agent_id="agent_a",  # Read from Agent A
 )
 
 # Apply learned strategies
-for strategy in playbook['strategies']['helpful']:
+for strategy in playbook["strategies"]["helpful"]:
     print(f"Learned from Agent A: {strategy['pattern']}")
 ```
 
@@ -975,10 +955,7 @@ def remove_duplicates(strategies, similarity_threshold=0.85):
     embeddings = compute_embeddings([s.pattern for s in strategies])
 
     # Find similar pairs
-    similar_pairs = find_similar_above_threshold(
-        embeddings,
-        threshold=similarity_threshold
-    )
+    similar_pairs = find_similar_above_threshold(embeddings, threshold=similarity_threshold)
 
     # Merge strategies
     for s1, s2 in similar_pairs:
@@ -994,24 +971,14 @@ def remove_duplicates(strategies, similarity_threshold=0.85):
 
 ```python
 # Create private playbook (default)
-playbook_id = nx.memory.create_playbook(
-    name="api_strategies",
-    scope="agent",
-    visibility="private"
-)
+playbook_id = nx.memory.create_playbook(name="api_strategies", scope="agent", visibility="private")
 
 # Share playbook with team
-nx.rebac.create(
-    subject=("user", "alice"),
-    relation="viewer",
-    object=("playbook", playbook_id)
-)
+nx.rebac.create(subject=("user", "alice"), relation="viewer", object=("playbook", playbook_id))
 
 # Create tenant-wide playbook
 team_playbook = nx.memory.create_playbook(
-    name="team_best_practices",
-    scope="tenant",
-    visibility="shared"
+    name="team_best_practices", scope="tenant", visibility="shared"
 )
 ```
 
@@ -1062,11 +1029,7 @@ RUN_CONSOLIDATION_ASYNC = True
 # - Latest 5 versions
 # - All major versions
 # - Versions from last 90 days
-PLAYBOOK_VERSION_RETENTION = {
-    "keep_latest": 5,
-    "keep_all_major": True,
-    "keep_days": 90
-}
+PLAYBOOK_VERSION_RETENTION = {"keep_latest": 5, "keep_all_major": True, "keep_days": 90}
 ```
 
 ---

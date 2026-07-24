@@ -191,10 +191,12 @@ import os, nexus
 
 os.environ["NEXUS_GRPC_PORT"] = "3051"
 
-nx = nexus.connect(config={
-    "profile": "remote",
-    "url": "http://localhost:3050",
-})
+nx = nexus.connect(
+    config={
+        "profile": "remote",
+        "url": "http://localhost:3050",
+    }
+)
 
 # All operations proxy through gRPC to the server
 nx.sys_write("/hello.txt", b"Written via gRPC!")

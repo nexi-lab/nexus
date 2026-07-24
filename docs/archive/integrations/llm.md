@@ -167,35 +167,31 @@ print(f"Estimated tokens: {token_count}")
 config = LLMConfig(
     # Model configuration
     model="claude-sonnet-4-20250514",  # Model name
-    api_key=SecretStr("your-key"),     # API key
-    base_url=None,                      # Custom API endpoint
-    api_version=None,                   # API version (Azure)
-    custom_llm_provider=None,           # Custom provider name
-
+    api_key=SecretStr("your-key"),  # API key
+    base_url=None,  # Custom API endpoint
+    api_version=None,  # API version (Azure)
+    custom_llm_provider=None,  # Custom provider name
     # Generation parameters
-    temperature=0.7,                    # 0.0-2.0
-    max_output_tokens=4096,             # Max tokens to generate
-    max_input_tokens=None,              # Max input tokens (auto-detected)
-    top_p=1.0,                          # Nucleus sampling
-    seed=None,                          # Random seed
-
+    temperature=0.7,  # 0.0-2.0
+    max_output_tokens=4096,  # Max tokens to generate
+    max_input_tokens=None,  # Max input tokens (auto-detected)
+    top_p=1.0,  # Nucleus sampling
+    seed=None,  # Random seed
     # Timeout and retry
-    timeout=120.0,                      # Timeout in seconds
-    num_retries=3,                      # Number of retries
-    retry_min_wait=4.0,                 # Min wait between retries
-    retry_max_wait=10.0,                # Max wait between retries
-    retry_multiplier=2.0,               # Exponential backoff multiplier
-
+    timeout=120.0,  # Timeout in seconds
+    num_retries=3,  # Number of retries
+    retry_min_wait=4.0,  # Min wait between retries
+    retry_max_wait=10.0,  # Max wait between retries
+    retry_multiplier=2.0,  # Exponential backoff multiplier
     # Features
-    native_tool_calling=None,           # Enable function calling (auto-detect)
-    caching_prompt=False,               # Enable prompt caching (Claude)
-    disable_vision=False,               # Disable vision capabilities
-
+    native_tool_calling=None,  # Enable function calling (auto-detect)
+    caching_prompt=False,  # Enable prompt caching (Claude)
+    disable_vision=False,  # Disable vision capabilities
     # Advanced
-    custom_tokenizer=None,              # Custom tokenizer name
-    reasoning_effort=None,              # "low"/"medium"/"high" (o1/o3 models)
-    input_cost_per_token=None,          # Custom input cost
-    output_cost_per_token=None,         # Custom output cost
+    custom_tokenizer=None,  # Custom tokenizer name
+    reasoning_effort=None,  # "low"/"medium"/"high" (o1/o3 models)
+    input_cost_per_token=None,  # Custom input cost
+    output_cost_per_token=None,  # Custom output cost
 )
 ```
 
@@ -331,7 +327,7 @@ from nexus.llm import CachedLLMProvider
 provider = CachedLLMProvider.from_config(
     config,
     cache_backend=nexus_cas,  # Nexus CAS instance
-    cache_ttl=3600,           # Cache TTL in seconds
+    cache_ttl=3600,  # Cache TTL in seconds
 )
 
 # Responses are automatically cached by message hash
@@ -400,8 +396,8 @@ if tokens > provider.config.max_input_tokens:
 config = LLMConfig(
     model="claude-sonnet-4",
     api_key=SecretStr(api_key),
-    timeout=60.0,      # Shorter timeout for simple requests
-    num_retries=5,     # More retries for important requests
+    timeout=60.0,  # Shorter timeout for simple requests
+    num_retries=5,  # More retries for important requests
 )
 ```
 

@@ -20,10 +20,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create workspace
-    nx.workspace.create(
-        "/workspace/acme-corp",
-        metadata={"zone_id": "acme-123", "plan": "enterprise"}
-    )
+    nx.workspace.create("/workspace/acme-corp", metadata={"zone_id": "acme-123", "plan": "enterprise"})
 
     # Write to workspace
     nx.write("/workspace/acme-corp/data.json", b'{"records": 1000}')
@@ -67,8 +64,8 @@ Build multi-zone applications with workspace isolation and session tracking in N
             "project": "Alpha Initiative",
             "team": "backend",
             "created_by": "admin",
-            "budget": 50000
-        }
+            "budget": 50000,
+        },
     )
     ```
 
@@ -84,9 +81,9 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
     for ws in workspaces:
         print(f"""
-        Path: {ws['path']}
-        Created: {ws['created_at']}
-        Metadata: {ws.get('metadata', {})}
+        Path: {ws["path"]}
+        Created: {ws["created_at"]}
+        Metadata: {ws.get("metadata", {})}
         """)
     ```
 
@@ -114,7 +111,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
     tenants = [
         {"id": "acme-123", "name": "Acme Corp", "plan": "enterprise"},
         {"id": "beta-456", "name": "Beta Inc", "plan": "professional"},
-        {"id": "gamma-789", "name": "Gamma Ltd", "plan": "starter"}
+        {"id": "gamma-789", "name": "Gamma Ltd", "plan": "starter"},
     ]
 
     for tenant in tenants:
@@ -123,11 +120,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
         nx.workspace.create(workspace_path, metadata=tenant)
 
         # Grant tenant admin full access
-        nx.rebac_create(
-            "user", f"admin@tenant-{tenant['id']}.com",
-            "owner",
-            "file", workspace_path
-        )
+        nx.rebac_create("user", f"admin@tenant-{tenant['id']}.com", "owner", "file", workspace_path)
 
         # Create standard subdirectories
         nx.mkdir(f"{workspace_path}/data", parents=True)
@@ -143,16 +136,10 @@ Build multi-zone applications with workspace isolation and session tracking in N
     import nexus
 
     # Tenant user connects with their API key
-    tenant_nx = nexus.connect(
-        remote_url="http://localhost:2026",
-        api_key="tenant-specific-key"
-    )
+    tenant_nx = nexus.connect(remote_url="http://localhost:2026", api_key="tenant-specific-key")
 
     # Write to tenant workspace
-    tenant_nx.write(
-        "/tenants/acme-123/data/records.json",
-        b'{"records": [...]}'
-    )
+    tenant_nx.write("/tenants/acme-123/data/records.json", b'{"records": [...]}')
 
     # Tenant CANNOT access other tenants' data
     try:
@@ -187,9 +174,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
     # Create snapshot of entire workspace
     snapshot_id = nx.workspace.snapshot(
-        "/workspace/project",
-        name="before-refactor",
-        metadata={"reason": "Major refactoring planned"}
+        "/workspace/project", name="before-refactor", metadata={"reason": "Major refactoring planned"}
     )
 
     print(f"Created snapshot: {snapshot_id}")
@@ -207,10 +192,10 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
     for snapshot in snapshots:
         print(f"""
-        ID: {snapshot['snapshot_id']}
-        Name: {snapshot['name']}
-        Created: {snapshot['created_at']}
-        Files: {snapshot['file_count']}
+        ID: {snapshot["snapshot_id"]}
+        Name: {snapshot["name"]}
+        Created: {snapshot["created_at"]}
+        Files: {snapshot["file_count"]}
         """)
     ```
 
@@ -222,10 +207,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
     nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
     # Restore workspace to previous state
-    nx.workspace.restore(
-        "/workspace/project",
-        snapshot_id="snap_abc123"
-    )
+    nx.workspace.restore("/workspace/project", snapshot_id="snap_abc123")
 
     print("Workspace restored to snapshot state")
     ```
@@ -246,11 +228,11 @@ Build multi-zone applications with workspace isolation and session tracking in N
         metadata={
             "user_id": "user_123",
             "conversation_id": "conv_456",
-            "started_at": datetime.now().isoformat()
-        }
+            "started_at": datetime.now().isoformat(),
+        },
     )
 
-    session_id = session['session_id']
+    session_id = session["session_id"]
     print(f"Session ID: {session_id}")
     ```
 
@@ -267,14 +249,11 @@ Build multi-zone applications with workspace isolation and session tracking in N
         nx.write(
             "/agent/memory/conversation.json",
             b'{"messages": [...]}',
-            context={"session_id": session.id}
+            context={"session_id": session.id},
         )
 
         # Session metadata automatically tracked
-        files_in_session = nx.list(
-            "/agent/memory",
-            filter={"session_id": session.id}
-        )
+        files_in_session = nx.list("/agent/memory", filter={"session_id": session.id})
     ```
 
 === "List Sessions"
@@ -289,10 +268,10 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
     for session in sessions:
         print(f"""
-        Session: {session['session_id']}
-        Agent: {session['agent_id']}
-        Started: {session['created_at']}
-        Files: {session.get('file_count', 0)}
+        Session: {session["session_id"]}
+        Agent: {session["agent_id"]}
+        Started: {session["created_at"]}
+        Files: {session.get("file_count", 0)}
         """)
     ```
 
@@ -305,6 +284,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
     from datetime import datetime
 
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
+
 
     class TenantManager:
         def __init__(self, nx):
@@ -321,8 +301,8 @@ Build multi-zone applications with workspace isolation and session tracking in N
                     "zone_id": zone_id,
                     "company": company_name,
                     "plan": plan,
-                    "onboarded_at": datetime.now().isoformat()
-                }
+                    "onboarded_at": datetime.now().isoformat(),
+                },
             )
 
             # 2. Create directory structure
@@ -336,9 +316,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
             # 4. Create initial snapshot
             self.nx.workspace.snapshot(
-                workspace_path,
-                name="initial-setup",
-                metadata={"milestone": "onboarding complete"}
+                workspace_path, name="initial-setup", metadata={"milestone": "onboarding complete"}
             )
 
             print(f"✅ Tenant {company_name} onboarded successfully")
@@ -349,10 +327,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
             workspace_path = f"/tenants/{zone_id}"
 
             snapshot_name = f"daily-{datetime.now().strftime('%Y%m%d')}"
-            snapshot_id = self.nx.workspace.snapshot(
-                workspace_path,
-                name=snapshot_name
-            )
+            snapshot_id = self.nx.workspace.snapshot(workspace_path, name=snapshot_name)
 
             print(f"Created backup: {snapshot_name}")
             return snapshot_id
@@ -362,6 +337,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
             workspace_path = f"/tenants/{zone_id}"
             self.nx.workspace.restore(workspace_path, snapshot_id)
             print(f"✅ Restored tenant {zone_id}")
+
 
     # Usage
     manager = TenantManager(nx)
@@ -385,6 +361,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
     nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
+
     class AgentMemoryManager:
         def __init__(self, nx, agent_id):
             self.nx = nx
@@ -398,10 +375,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
             """Start new conversation session"""
             session = self.nx.session.create(
                 agent_id=self.agent_id,
-                metadata={
-                    "user_id": user_id,
-                    "started_at": datetime.now().isoformat()
-                }
+                metadata={"user_id": user_id, "started_at": datetime.now().isoformat()},
             )
 
             # Create session memory directory
@@ -417,10 +391,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
             conversation_file = f"{session_path}/conversation.json"
             self.nx.write(
                 conversation_file,
-                json.dumps({
-                    "messages": messages,
-                    "timestamp": datetime.now().isoformat()
-                }).encode()
+                json.dumps({"messages": messages, "timestamp": datetime.now().isoformat()}).encode(),
             )
 
         def snapshot_session(self, session_id):
@@ -428,8 +399,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
             session_path = f"{self.workspace_path}/sessions/{session_id}"
 
             snapshot_id = self.nx.workspace.snapshot(
-                session_path,
-                name=f"session-{session_id}-checkpoint"
+                session_path, name=f"session-{session_id}-checkpoint"
             )
 
             return snapshot_id
@@ -442,6 +412,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
             content = self.nx.read(conversation_file)
             return json.loads(content.decode())
 
+
     # Usage
     agent = AgentMemoryManager(nx, agent_id="gpt-4-assistant")
 
@@ -451,15 +422,15 @@ Build multi-zone applications with workspace isolation and session tracking in N
     # Save conversation
     messages = [
         {"role": "user", "content": "What is Nexus?"},
-        {"role": "assistant", "content": "Nexus is an AI-native filesystem..."}
+        {"role": "assistant", "content": "Nexus is an AI-native filesystem..."},
     ]
-    agent.save_conversation(session['session_id'], messages)
+    agent.save_conversation(session["session_id"], messages)
 
     # Create checkpoint
-    snapshot_id = agent.snapshot_session(session['session_id'])
+    snapshot_id = agent.snapshot_session(session["session_id"])
 
     # Later: recall conversation
-    history = agent.recall_session(session['session_id'])
+    history = agent.recall_session(session["session_id"])
     print(f"Loaded {len(history['messages'])} messages")
     ```
 
@@ -470,6 +441,7 @@ Build multi-zone applications with workspace isolation and session tracking in N
     ```python
     # ✅ Good: Use hierarchical, descriptive names
     "/tenants/acme-corp/production"
+
     "/projects/alpha/backend"
     "/agents/gpt-4/user-123"
 
@@ -487,12 +459,14 @@ Build multi-zone applications with workspace isolation and session tracking in N
 
     nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
+
     # ✅ Good: Regular automated snapshots
     def daily_snapshot_job():
         workspaces = nx.workspace.list()
         for ws in workspaces:
             snapshot_name = f"daily-{datetime.now().strftime('%Y%m%d')}"
-            nx.workspace.snapshot(ws['path'], name=snapshot_name)
+            nx.workspace.snapshot(ws["path"], name=snapshot_name)
+
 
     # Schedule daily_snapshot_job() to run every day
     ```

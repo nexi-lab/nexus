@@ -184,9 +184,11 @@ class ResolvedCredential:
     expires_at: datetime | None
     metadata: dict[str, str]
 
+
 class CredentialConsumer:
     def __init__(
-        self, *,
+        self,
+        *,
         store: PostgresAuthProfileStore,
         encryption: EncryptionProvider,
         dek_cache: DEKCache,
@@ -196,7 +198,8 @@ class CredentialConsumer:
     ) -> None: ...
 
     def resolve(
-        self, *,
+        self,
+        *,
         claims: DaemonClaims,
         provider: str,
         purpose: str,

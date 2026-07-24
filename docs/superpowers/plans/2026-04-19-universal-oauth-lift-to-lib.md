@@ -637,9 +637,7 @@ class BaseOAuthProvider(ABC):
         ``code_verifier`` and pass it back to :meth:`exchange_code_pkce`.
         """
         if not self.AUTHORIZATION_ENDPOINT:
-            raise OAuthError(
-                f"{type(self).__name__} has no AUTHORIZATION_ENDPOINT set"
-            )
+            raise OAuthError(f"{type(self).__name__} has no AUTHORIZATION_ENDPOINT set")
         import secrets as _secrets
 
         verifier, challenge = generate_pkce_pair()
@@ -678,9 +676,7 @@ class BaseOAuthProvider(ABC):
             )
         params = self._build_exchange_params(code, **kwargs)
         headers = self._build_exchange_headers()
-        token_data = await self._post_token_request(
-            params, headers=headers, action="exchange code"
-        )
+        token_data = await self._post_token_request(params, headers=headers, action="exchange code")
         return self._parse_token_response(token_data)
 
     @abstractmethod
@@ -697,9 +693,7 @@ class BaseOAuthProvider(ABC):
 
         params = self._build_refresh_params(credential)
         headers = self._build_refresh_headers()
-        token_data = await self._post_token_request(
-            params, headers=headers, action="refresh token"
-        )
+        token_data = await self._post_token_request(params, headers=headers, action="refresh token")
         new_cred = self._parse_token_response(token_data)
         refresh = new_cred.refresh_token or credential.refresh_token
         return dataclasses.replace(
@@ -747,9 +741,7 @@ class BaseOAuthProvider(ABC):
     ) -> dict[str, Any]:
         async with self._get_client() as client:
             try:
-                response = await client.post(
-                    self.TOKEN_ENDPOINT, data=data, headers=headers
-                )
+                response = await client.post(self.TOKEN_ENDPOINT, data=data, headers=headers)
                 response.raise_for_status()
                 result: dict[str, Any] = response.json()
                 return result
@@ -761,9 +753,7 @@ class BaseOAuthProvider(ABC):
     def _parse_token_response(self, token_data: dict[str, Any]) -> OAuthCredential:
         expires_at = None
         if "expires_in" in token_data:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(token_data["expires_in"])
-            )
+            expires_at = datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
 
         scopes = None
         if "scope" in token_data:
@@ -920,9 +910,7 @@ async def test_fetch_times_out_cleanly() -> None:
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(DiscoveryError):
-            await DiscoveryClient(client=client, timeout=0.1).fetch(
-                "https://issuer.example"
-            )
+            await DiscoveryClient(client=client, timeout=0.1).fetch("https://issuer.example")
 
 
 def test_metadata_rejects_missing_required_fields() -> None:
@@ -1059,13 +1047,11 @@ class DiscoveryClient:
             expected = issuer_url
             if meta.issuer.rstrip("/") != expected:
                 raise DiscoveryError(
-                    f"Issuer mismatch: expected {expected}, discovery returned "
-                    f"{meta.issuer}"
+                    f"Issuer mismatch: expected {expected}, discovery returned {meta.issuer}"
                 )
             return meta
         raise DiscoveryError(
-            f"No discovery document at {issuer_url} "
-            f"(tried {list(_WELL_KNOWN_PATHS)})"
+            f"No discovery document at {issuer_url} (tried {list(_WELL_KNOWN_PATHS)})"
         ) from last_error
 
     async def _fetch_one(self, url: str) -> dict[str, Any]:
@@ -1367,9 +1353,7 @@ class UniversalOAuthProvider(BaseOAuthProvider):
             self.AUTHORIZATION_ENDPOINT = discovery_metadata.authorization_endpoint
             self.TOKEN_ENDPOINT = discovery_metadata.token_endpoint
             self.REVOKE_ENDPOINT = discovery_metadata.revocation_endpoint or ""
-            self.INTROSPECTION_ENDPOINT = (
-                discovery_metadata.introspection_endpoint or ""
-            )
+            self.INTROSPECTION_ENDPOINT = discovery_metadata.introspection_endpoint or ""
         if authorization_endpoint:
             self.AUTHORIZATION_ENDPOINT = authorization_endpoint
         if token_endpoint:
@@ -1461,9 +1445,7 @@ class UniversalOAuthProvider(BaseOAuthProvider):
             return False
         async with self._get_client() as client:
             try:
-                response = await client.post(
-                    self.REVOKE_ENDPOINT, data={"token": token}
-                )
+                response = await client.post(self.REVOKE_ENDPOINT, data={"token": token})
                 response.raise_for_status()
                 return True
             except Exception:
@@ -1738,12 +1720,8 @@ class MicrosoftOAuthProvider(UniversalOAuthProvider):
             http_client=http_client,
         )
 
-    def get_authorization_url(
-        self, state: str | None = None, **_kwargs: Any
-    ) -> str:
-        return super().get_authorization_url(
-            state=state, extra_params={"response_mode": "query"}
-        )
+    def get_authorization_url(self, state: str | None = None, **_kwargs: Any) -> str:
+        return super().get_authorization_url(state=state, extra_params={"response_mode": "query"})
 
     async def revoke_token(self, _credential: OAuthCredential) -> bool:
         # Microsoft has no standard revocation API; treat as success.
@@ -2160,18 +2138,14 @@ class SlackOAuthProvider(UniversalOAuthProvider):
 
     def _parse_token_response(self, token_data: dict[str, Any]) -> OAuthCredential:
         if not token_data.get("ok", False):
-            raise OAuthError(
-                f"Slack OAuth error: {token_data.get('error', 'unknown')}"
-            )
+            raise OAuthError(f"Slack OAuth error: {token_data.get('error', 'unknown')}")
 
         scope_str: str = token_data.get("scope", "")
         scopes = tuple(s for s in scope_str.split(",") if s) or None
 
         expires_at = None
         if "expires_in" in token_data:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(token_data["expires_in"])
-            )
+            expires_at = datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
 
         metadata: dict[str, Any] = {}
         team = token_data.get("team") or {}

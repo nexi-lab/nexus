@@ -184,7 +184,9 @@ performs concrete zone work:
 Use a helper such as:
 
 ```python
-async def run_zone_scoped(request: Request, zone_id: str | None, work: Callable[[], Awaitable[T]]) -> T:
+async def run_zone_scoped(
+    request: Request, zone_id: str | None, work: Callable[[], Awaitable[T]]
+) -> T:
     registry = getattr(request.app.state, "zone_registry", None)
     if registry is None or zone_id is None:
         return await work()

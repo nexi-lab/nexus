@@ -66,9 +66,9 @@ class ConnectorManifestEntry:
     import (typically because its primary Python dep is missing).
     """
 
-    name: str                                  # registry key, e.g. "path_gcs"
-    module_path: str                           # dotted import path
-    class_name: str                            # for the legacy __getattr__ cache
+    name: str  # registry key, e.g. "path_gcs"
+    module_path: str  # dotted import path
+    class_name: str  # for the legacy __getattr__ cache
     description: str
     category: str
     runtime_deps: tuple[RuntimeDep, ...] = ()
@@ -154,7 +154,8 @@ def _register_optional_backends() -> None:
             except ImportError as e:
                 _logger.debug(
                     "Connector module %s not available: %s (placeholder registered)",
-                    entry.module_path, e,
+                    entry.module_path,
+                    e,
                 )
 
         # Phase 3 (existing): entry points + YAML configs
@@ -230,13 +231,12 @@ Every built-in connector's `@register_connector` call now passes **only the name
     runtime_deps=(PythonDep("google.cloud.storage", extras=("gcs",)),),
     service_name="gcs",
 )
-class PathGCSBackend(PathAddressingEngine):
-    ...
+class PathGCSBackend(PathAddressingEngine): ...
+
 
 # After (A.3):
 @register_connector("path_gcs")
-class PathGCSBackend(PathAddressingEngine):
-    ...
+class PathGCSBackend(PathAddressingEngine): ...
 ```
 
 If a built-in connector passes metadata kwargs to `@register_connector`, those kwargs are silently ignored (the placeholder-binding path preserves manifest metadata). A `UserWarning` fires when any metadata kwarg is non-default, pointing the author at the manifest. This prevents drift.

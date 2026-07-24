@@ -101,6 +101,7 @@ The demo provides eight tools that wrap Nexus operations:
 ```python
 from crewai.tools import tool
 
+
 @tool("Read File")
 def read_file(path: str) -> str:
     """Read a file from Nexus filesystem.
@@ -194,10 +195,9 @@ def store_memory(content: str, memory_type: str = None, importance: float = 0.5)
         - store_memory("Always validate input", "security_insight", 0.9)
         - store_memory("Prefer async for I/O operations", "pattern", 0.7)
     """
-    return call_nexus_mcp("nexus_store_memory",
-                         content=content,
-                         memory_type=memory_type,
-                         importance=importance)
+    return call_nexus_mcp(
+        "nexus_store_memory", content=content, memory_type=memory_type, importance=importance
+    )
 ```
 
 **query_memory** - Retrieve relevant memories:
@@ -288,11 +288,7 @@ synthesis_task = Task(
 )
 
 # Execute both tasks
-crew = Crew(
-    agents=[researcher],
-    tasks=[research_task, synthesis_task],
-    verbose=True
-)
+crew = Crew(agents=[researcher], tasks=[research_task, synthesis_task], verbose=True)
 result = crew.kickoff()
 ```
 
@@ -368,14 +364,11 @@ nx.memory.store(
     "Always use parameterized queries to prevent SQL injection",
     scope="user",
     memory_type="security_pattern",
-    importance=0.95
+    importance=0.95,
 )
 
 # Later... retrieve relevant memories
-memories = nx.memory.search(
-    query="database security best practices",
-    limit=5
-)
+memories = nx.memory.search(query="database security best practices", limit=5)
 ```
 
 **Benefits**:

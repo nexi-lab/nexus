@@ -34,19 +34,11 @@ nx = connect(config={"data_dir": "./nexus-data"})
 
 # Create context for user "alice" in tenant "org_acme"
 alice_ctx = OperationContext(
-    subject_type="user",
-    subject_id="alice",
-    groups=["developers"],
-    zone_id="org_acme"
+    subject_type="user", subject_id="alice", groups=["developers"], zone_id="org_acme"
 )
 
 # Mount with Alice's context - all operations will be as Alice
-fuse = mount_nexus(
-    nx,
-    "/mnt/nexus-alice",
-    default_context=alice_ctx,
-    foreground=False
-)
+fuse = mount_nexus(nx, "/mnt/nexus-alice", default_context=alice_ctx, foreground=False)
 
 # Now:
 # cat /mnt/nexus-alice/workspace/file.txt  → checks Alice's READ permission
@@ -73,26 +65,15 @@ nx = connect(config={"data_dir": "./nexus-data"})
 # Create mapping: OS UID → Nexus OperationContext
 uid_mapping = {
     1000: OperationContext(  # Map UID 1000 (alice on the system)
-        subject_type="user",
-        subject_id="alice",
-        groups=["developers"],
-        zone_id="org_acme"
+        subject_type="user", subject_id="alice", groups=["developers"], zone_id="org_acme"
     ),
     1001: OperationContext(  # Map UID 1001 (bob on the system)
-        subject_type="user",
-        subject_id="bob",
-        groups=["qa"],
-        zone_id="org_acme"
+        subject_type="user", subject_id="bob", groups=["qa"], zone_id="org_acme"
     ),
 }
 
 # Mount with UID mapping
-fuse = mount_nexus(
-    nx,
-    "/mnt/nexus-shared",
-    uid_mapping=uid_mapping,
-    foreground=False
-)
+fuse = mount_nexus(nx, "/mnt/nexus-shared", uid_mapping=uid_mapping, foreground=False)
 
 # Now:
 # When Alice (UID 1000) runs: cat /mnt/nexus-shared/file.txt
@@ -184,8 +165,8 @@ fuse = mount_nexus(
     default_context=OperationContext(
         subject_type="user",
         subject_id="admin",
-        is_admin=True  # Admin bypass if needed
-    )
+        is_admin=True,  # Admin bypass if needed
+    ),
 )
 ```
 
@@ -193,17 +174,9 @@ fuse = mount_nexus(
 
 ```python
 # Tenant-isolated mount for organization "acme"
-acme_ctx = OperationContext(
-    subject_type="user",
-    subject_id="acme_admin",
-    zone_id="org_acme"
-)
+acme_ctx = OperationContext(subject_type="user", subject_id="acme_admin", zone_id="org_acme")
 
-fuse = mount_nexus(
-    nx,
-    "/mnt/nexus-acme",
-    default_context=acme_ctx
-)
+fuse = mount_nexus(nx, "/mnt/nexus-acme", default_context=acme_ctx)
 
 # Users will only see files in tenant "org_acme"
 # Cross-tenant access is blocked
@@ -227,12 +200,8 @@ By default, admin bypass is **disabled** for security. If needed:
 ```python
 nx = connect(
     config={"data_dir": "./data"},
-    context=OperationContext(
-        subject_type="user",
-        subject_id="admin",
-        is_admin=True
-    ),
-    allow_admin_bypass=True  # Enable admin bypass
+    context=OperationContext(subject_type="user", subject_id="admin", is_admin=True),
+    allow_admin_bypass=True,  # Enable admin bypass
 )
 ```
 
@@ -244,7 +213,7 @@ Operations with `is_system=True` bypass all permission checks:
 system_ctx = OperationContext(
     subject_type="service",
     subject_id="backup_service",
-    is_system=True  # Bypasses ALL permission checks
+    is_system=True,  # Bypasses ALL permission checks
 )
 ```
 
@@ -259,13 +228,10 @@ dev_mapping = {
         subject_type="user",
         subject_id="senior_dev",
         groups=["developers", "reviewers"],
-        zone_id="org_dev"
+        zone_id="org_dev",
     ),
     1001: OperationContext(
-        subject_type="user",
-        subject_id="junior_dev",
-        groups=["developers"],
-        zone_id="org_dev"
+        subject_type="user", subject_id="junior_dev", groups=["developers"], zone_id="org_dev"
     ),
 }
 
@@ -273,7 +239,7 @@ fuse = mount_nexus(
     nx,
     "/mnt/team-workspace",
     uid_mapping=dev_mapping,
-    allow_other=True  # Allow all users to access (if permitted)
+    allow_other=True,  # Allow all users to access (if permitted)
 )
 
 # Then set up permissions:
@@ -283,7 +249,7 @@ nx.rebac.create_tuple(
     object_id="/workspace/*",
     relation="reader",
     subject_type="group",
-    subject_id="developers"
+    subject_id="developers",
 )
 
 # Give reviewers WRITE on /reviews/*
@@ -292,7 +258,7 @@ nx.rebac.create_tuple(
     object_id="/reviews/*",
     relation="writer",
     subject_type="group",
-    subject_id="reviewers"
+    subject_id="reviewers",
 )
 ```
 
@@ -301,17 +267,10 @@ nx.rebac.create_tuple(
 ```python
 # Mount for an AI agent with limited permissions
 agent_ctx = OperationContext(
-    subject_type="agent",
-    subject_id="claude_001",
-    groups=["ai_agents"],
-    zone_id="user_alice"
+    subject_type="agent", subject_id="claude_001", groups=["ai_agents"], zone_id="user_alice"
 )
 
-fuse = mount_nexus(
-    nx,
-    "/mnt/agent-workspace",
-    default_context=agent_ctx
-)
+fuse = mount_nexus(nx, "/mnt/agent-workspace", default_context=agent_ctx)
 
 # Restrict agent to workspace namespace only
 nx.rebac.create_tuple(
@@ -319,7 +278,7 @@ nx.rebac.create_tuple(
     object_id="/workspace/*",
     relation="writer",
     subject_type="agent",
-    subject_id="claude_001"
+    subject_id="claude_001",
 )
 ```
 
@@ -329,6 +288,7 @@ nx.rebac.create_tuple(
 
 ```python
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 # FUSE operations will log permission checks
@@ -348,10 +308,7 @@ fuse = mount_nexus(nx, "/mnt/nexus", debug=True)
 
 ```python
 # Check what permissions a user has
-tuples = nx.rebac.list_tuples(
-    subject_type="user",
-    subject_id="alice"
-)
+tuples = nx.rebac.list_tuples(subject_type="user", subject_id="alice")
 for t in tuples:
     print(f"{t['object_id']} - {t['relation']}")
 ```

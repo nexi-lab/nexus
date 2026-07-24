@@ -48,19 +48,11 @@ nexus mounts add /shared local '{"path":"/shared-data"}' --priority 5
 ```python
 # Add GCS mount
 nx.add_mount(
-    path="/personal/alice",
-    backend_type="gcs",
-    config={"bucket": "alice-bucket"},
-    priority=10
+    path="/personal/alice", backend_type="gcs", config={"bucket": "alice-bucket"}, priority=10
 )
 
 # Add local mount
-nx.add_mount(
-    path="/shared",
-    backend_type="local",
-    config={"path": "/shared-data"},
-    priority=5
-)
+nx.add_mount(path="/shared", backend_type="local", config={"path": "/shared-data"}, priority=5)
 ```
 
 **Options:**
@@ -141,19 +133,11 @@ nexus mounts list
 users = ["alice", "bob"]
 for user in users:
     nx.add_mount(
-        path=f"/personal/{user}",
-        backend_type="gcs",
-        config={"bucket": f"{user}-data"},
-        priority=10
+        path=f"/personal/{user}", backend_type="gcs", config={"bucket": f"{user}-data"}, priority=10
     )
 
 # Add shared local storage
-nx.add_mount(
-    path="/shared",
-    backend_type="local",
-    config={"path": "/mnt/shared"},
-    priority=5
-)
+nx.add_mount(path="/shared", backend_type="local", config={"path": "/mnt/shared"}, priority=5)
 
 # List all mounts
 mounts = nx.list_mounts()

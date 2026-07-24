@@ -117,6 +117,7 @@ To fix this:
 # src/nexus/core/nexus_fs.py (or any mixin)
 from nexus.core.rpc_decorator import rpc_expose
 
+
 @rpc_expose(description="Your method description")
 def your_new_method(self, path: str, param1: str, param2: int = 0) -> dict[str, Any]:
     """Your method docstring."""
@@ -133,7 +134,7 @@ def your_new_method(
     path: str,
     param1: str,
     param2: int = 0,
-    context: Any = None  # Optional, handled server-side
+    context: Any = None,  # Optional, handled server-side
 ) -> dict[str, Any]:  # noqa: ARG002
     """Your method docstring (can copy from core).
 
@@ -146,11 +147,14 @@ def your_new_method(
     Returns:
         Description
     """
-    result = self._call_rpc("your_new_method", {
-        "path": path,
-        "param1": param1,
-        "param2": param2,
-    })
+    result = self._call_rpc(
+        "your_new_method",
+        {
+            "path": path,
+            "param1": param1,
+            "param2": param2,
+        },
+    )
     return result  # type: ignore[no-any-return]
 ```
 
@@ -224,6 +228,7 @@ If your method should be accessible via CLI:
 import click
 from nexus.cli.utils import get_filesystem, handle_error
 
+
 @click.command(name="your-command")
 @click.argument("path", type=str)
 @click.option("--flag", is_flag=True, help="Your flag")
@@ -292,6 +297,7 @@ jobs:
 ```python
 from nexus.core.rpc_decorator import rpc_expose
 
+
 @rpc_expose(description="Your method description")
 def your_new_method(self, path: str, param: str) -> dict:
     """Docstring."""
@@ -309,7 +315,6 @@ If the method should **NOT** be exposed remotely, add it to `INTERNAL_ONLY_METHO
 # In tests/unit/test_rpc_parity.py
 INTERNAL_ONLY_METHODS = {
     # ... existing methods ...
-
     # Your new internal method
     "your_internal_method",  # Reason: Connection management / Async only / etc.
 }

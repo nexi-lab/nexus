@@ -187,7 +187,9 @@ class ArchiveFileHashMismatch(ArchiveError):
     code = 12
 
     def __init__(self, path: str, expected: str, actual: str) -> None:
-        super().__init__(f"File hash mismatch at {path}: expected {expected[:16]}…, got {actual[:16]}…")
+        super().__init__(
+            f"File hash mismatch at {path}: expected {expected[:16]}…, got {actual[:16]}…"
+        )
         self.path = path
         self.expected = expected
         self.actual = actual
@@ -219,7 +221,9 @@ class ArchiveEmbeddingDimMismatch(ArchiveError):
 
     code = 21
 
-    def __init__(self, archive_model: str, archive_dim: int, current_model: str, current_dim: int) -> None:
+    def __init__(
+        self, archive_model: str, archive_dim: int, current_model: str, current_dim: int
+    ) -> None:
         super().__init__(
             f"Embedding mismatch: archive uses {archive_model} (dim={archive_dim}), "
             f"current is {current_model} (dim={current_dim}). "
@@ -241,7 +245,9 @@ class ArchiveCredentialLeakDetected(ArchiveError):
     code = 30
 
     def __init__(self, pattern_name: str, location: str) -> None:
-        super().__init__(f"Credential pattern {pattern_name!r} matched at {location}; redacted in bundle")
+        super().__init__(
+            f"Credential pattern {pattern_name!r} matched at {location}; redacted in bundle"
+        )
         self.pattern_name = pattern_name
         self.location = location
 
@@ -453,43 +459,48 @@ class ExportManifest:
 Update `to_dict` / `from_dict` to round-trip the new fields:
 
 ```python
-    def to_dict(self) -> dict[str, Any]:
-        d = {
-            # ... existing keys ...
-            "archive_kind": self.archive_kind.value,
-            "activity_window_from": self.activity_window_from.isoformat() if self.activity_window_from else None,
-            "activity_window_to": self.activity_window_to.isoformat() if self.activity_window_to else None,
-            "embedding_model": self.embedding_model,
-            "embedding_dim": self.embedding_dim,
-            "signer_pubkey_b64": self.signer_pubkey_b64,
-            "placeholders": [p.to_dict() for p in self.placeholders],
-            "min_nexus_version": self.min_nexus_version,
-        }
-        return d
+def to_dict(self) -> dict[str, Any]:
+    d = {
+        # ... existing keys ...
+        "archive_kind": self.archive_kind.value,
+        "activity_window_from": self.activity_window_from.isoformat()
+        if self.activity_window_from
+        else None,
+        "activity_window_to": self.activity_window_to.isoformat()
+        if self.activity_window_to
+        else None,
+        "embedding_model": self.embedding_model,
+        "embedding_dim": self.embedding_dim,
+        "signer_pubkey_b64": self.signer_pubkey_b64,
+        "placeholders": [p.to_dict() for p in self.placeholders],
+        "min_nexus_version": self.min_nexus_version,
+    }
+    return d
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ExportManifest":
-        # ... parse existing fields ...
-        kwargs = {
-            # ... existing kwargs ...
-            "archive_kind": ArchiveKind(data.get("archive_kind", ArchiveKind.FULL.value)),
-            "activity_window_from": (
-                datetime.fromisoformat(data["activity_window_from"])
-                if data.get("activity_window_from")
-                else None
-            ),
-            "activity_window_to": (
-                datetime.fromisoformat(data["activity_window_to"])
-                if data.get("activity_window_to")
-                else None
-            ),
-            "embedding_model": data.get("embedding_model"),
-            "embedding_dim": data.get("embedding_dim"),
-            "signer_pubkey_b64": data.get("signer_pubkey_b64"),
-            "placeholders": [PlaceholderRef.from_dict(p) for p in data.get("placeholders", [])],
-            "min_nexus_version": data.get("min_nexus_version", "0.0.0"),
-        }
-        return cls(**kwargs)
+
+@classmethod
+def from_dict(cls, data: dict[str, Any]) -> "ExportManifest":
+    # ... parse existing fields ...
+    kwargs = {
+        # ... existing kwargs ...
+        "archive_kind": ArchiveKind(data.get("archive_kind", ArchiveKind.FULL.value)),
+        "activity_window_from": (
+            datetime.fromisoformat(data["activity_window_from"])
+            if data.get("activity_window_from")
+            else None
+        ),
+        "activity_window_to": (
+            datetime.fromisoformat(data["activity_window_to"])
+            if data.get("activity_window_to")
+            else None
+        ),
+        "embedding_model": data.get("embedding_model"),
+        "embedding_dim": data.get("embedding_dim"),
+        "signer_pubkey_b64": data.get("signer_pubkey_b64"),
+        "placeholders": [PlaceholderRef.from_dict(p) for p in data.get("placeholders", [])],
+        "min_nexus_version": data.get("min_nexus_version", "0.0.0"),
+    }
+    return cls(**kwargs)
 ```
 
 Add the new symbols to `bricks/portability/__init__.py` `__all__` and re-exports:
@@ -638,7 +649,9 @@ from nexus.bricks.archive.errors import ArchiveSignatureError
 
 def canonical_json_bytes(obj: object) -> bytes:
     """Return a stable byte encoding for signing/verification."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def load_or_create_keypair(key_path: Path) -> tuple[bytes, bytes]:
@@ -1070,9 +1083,7 @@ def test_no_match_passes_through_unchanged():
 
 
 def test_custom_pattern_applies():
-    stripper = RegexStripper(
-        [{"name": "corp_token", "pattern": r"corp-[A-Z0-9]{8}"}]
-    )
+    stripper = RegexStripper([{"name": "corp_token", "pattern": r"corp-[A-Z0-9]{8}"}])
     result = stripper.scan("token=corp-AB12CD34", location="settings:1")
     assert "***REDACTED***" in result.text
     assert result.matches[0].pattern_name == "corp_token"
@@ -1140,7 +1151,9 @@ class RegexStripper:
         out = text
         for name, rx in self._compiled:
             for m in list(rx.finditer(out)):
-                matches.append(RegexMatch(pattern_name=name, location=location, snippet=m.group(0)[:8] + "…"))
+                matches.append(
+                    RegexMatch(pattern_name=name, location=location, snippet=m.group(0)[:8] + "…")
+                )
             out = rx.sub("***REDACTED***", out)
         return RegexStripResult(text=out, matches=matches)
 
@@ -1240,9 +1253,7 @@ def test_signed_bundle_signature_verifies(fake_export_outputs):
         manifest_member = tar.getmember("manifest.json")
         manifest_bytes = tar.extractfile(manifest_member).read()
     payload = canonical_json_bytes(json.loads(manifest_bytes))
-    assert ArchiveSigner.verify(
-        payload, sig_data["signature_b64"], sig_data["signer_pubkey_b64"]
-    )
+    assert ArchiveSigner.verify(payload, sig_data["signature_b64"], sig_data["signer_pubkey_b64"])
 
 
 def test_export_options_default_sign_on():
@@ -1564,6 +1575,7 @@ def _apply_injections(rows: list[dict], injections: dict[str, str]) -> list[dict
         new_row = dict(row)
         for k, v in row.items():
             if isinstance(v, str):
+
                 def _sub(m: re.Match[str]) -> str:
                     return injections.get(m.group(1), m.group(0))
 
@@ -1621,8 +1633,10 @@ from nexus.bricks.portability.import_service import _check_embedding_compat
 
 def test_matching_model_passes():
     _check_embedding_compat(
-        archive_model="bge", archive_dim=384,
-        current_model="bge", current_dim=384,
+        archive_model="bge",
+        archive_dim=384,
+        current_model="bge",
+        current_dim=384,
         rebuild_embeddings=False,
     )
 
@@ -1630,8 +1644,10 @@ def test_matching_model_passes():
 def test_dim_mismatch_raises():
     with pytest.raises(ArchiveEmbeddingDimMismatch):
         _check_embedding_compat(
-            archive_model="bge", archive_dim=384,
-            current_model="bge", current_dim=768,
+            archive_model="bge",
+            archive_dim=384,
+            current_model="bge",
+            current_dim=768,
             rebuild_embeddings=False,
         )
 
@@ -1639,16 +1655,20 @@ def test_dim_mismatch_raises():
 def test_model_mismatch_raises():
     with pytest.raises(ArchiveEmbeddingDimMismatch):
         _check_embedding_compat(
-            archive_model="bge", archive_dim=384,
-            current_model="other", current_dim=384,
+            archive_model="bge",
+            archive_dim=384,
+            current_model="other",
+            current_dim=384,
             rebuild_embeddings=False,
         )
 
 
 def test_rebuild_flag_bypasses_check():
     _check_embedding_compat(
-        archive_model="bge", archive_dim=384,
-        current_model="other", current_dim=768,
+        archive_model="bge",
+        archive_dim=384,
+        current_model="other",
+        current_dim=768,
         rebuild_embeddings=True,
     )
 
@@ -1656,8 +1676,10 @@ def test_rebuild_flag_bypasses_check():
 def test_archive_without_embedding_metadata_passes():
     """v1 bundles (no model/dim in manifest) are not gated."""
     _check_embedding_compat(
-        archive_model=None, archive_dim=None,
-        current_model="bge", current_dim=384,
+        archive_model=None,
+        archive_dim=None,
+        current_model="bge",
+        current_dim=384,
         rebuild_embeddings=False,
     )
 ```
@@ -1831,6 +1853,7 @@ from nexus.bricks.portability.differ import (
 def _write_minimal_bundle(path: Path, *, file_hashes: list[str], merkle: str) -> None:
     """Create a minimal v2-shaped bundle with the given file checksums."""
     import shutil
+
     work = path.parent / (path.stem + "_work")
     if work.exists():
         shutil.rmtree(work)
@@ -1852,7 +1875,10 @@ def _write_minimal_bundle(path: Path, *, file_hashes: list[str], merkle: str) ->
         "include_embeddings": False,
         "checksums": {
             "algorithm": "sha256",
-            "files": {p: {"path": p, "algorithm": "sha256", "hash": h, "size_bytes": 0} for p, h in files.items()},
+            "files": {
+                p: {"path": p, "algorithm": "sha256", "hash": h, "size_bytes": 0}
+                for p, h in files.items()
+            },
             "merkle_root": merkle,
         },
         "archive_kind": "full",
@@ -2012,8 +2038,10 @@ def test_create_one_archive_per_zone(tmp_path):
 
     assert len(manifests) == 2
     assert fake_export_service.export_zone.call_count == 2
-    paths = [c.kwargs.get("options").output_path if "options" in c.kwargs else c.args[1].output_path
-             for c in fake_export_service.export_zone.call_args_list]
+    paths = [
+        c.kwargs.get("options").output_path if "options" in c.kwargs else c.args[1].output_path
+        for c in fake_export_service.export_zone.call_args_list
+    ]
     assert all(p.parent == tmp_path for p in paths)
 
 
@@ -2034,8 +2062,10 @@ def test_strip_and_sign_options_propagate(tmp_path):
     fake_export_service = MagicMock()
     orch = ArchiveOrchestrator(export_service=fake_export_service, output_dir=tmp_path)
     orch.create_archives(zone_ids=["eng"], strip=False, sign=False)
-    options = fake_export_service.export_zone.call_args.kwargs.get("options") or \
-              fake_export_service.export_zone.call_args.args[1]
+    options = (
+        fake_export_service.export_zone.call_args.kwargs.get("options")
+        or fake_export_service.export_zone.call_args.args[1]
+    )
     assert options.strip_credentials is False
     assert options.sign is False
 ```
@@ -2531,10 +2561,12 @@ class S3ArchiveStorage:
         for page in paginator.paginate(Bucket=self.bucket, Prefix=full_prefix):
             for obj in page.get("Contents", []):
                 full_key = obj["Key"]
-                key = full_key[len(self.prefix):] if full_key.startswith(self.prefix) else full_key
+                key = full_key[len(self.prefix) :] if full_key.startswith(self.prefix) else full_key
                 last_mod = obj["LastModified"]
                 if isinstance(last_mod, datetime):
-                    out.append(StorageEntry(key=key, size_bytes=obj["Size"], last_modified=last_mod))
+                    out.append(
+                        StorageEntry(key=key, size_bytes=obj["Size"], last_modified=last_mod)
+                    )
         return out
 ```
 
@@ -2543,6 +2575,7 @@ Add to `src/nexus/bricks/archive/storage/__init__.py`:
 ```python
 try:
     from nexus.bricks.archive.storage.s3 import S3ArchiveStorage  # noqa: F401
+
     __all__.append("S3ArchiveStorage")
 except ImportError:
     pass  # boto3 optional in slim images
@@ -2651,7 +2684,7 @@ class GCSArchiveStorage:
         out: list[StorageEntry] = []
         for blob in self._bucket.list_blobs(prefix=full_prefix):
             name = blob.name
-            key = name[len(self.prefix):] if name.startswith(self.prefix) else name
+            key = name[len(self.prefix) :] if name.startswith(self.prefix) else name
             out.append(StorageEntry(key=key, size_bytes=blob.size or 0, last_modified=blob.updated))
         return out
 ```
@@ -2661,6 +2694,7 @@ Append to `src/nexus/bricks/archive/storage/__init__.py`:
 ```python
 try:
     from nexus.bricks.archive.storage.gcs import GCSArchiveStorage  # noqa: F401
+
     __all__.append("GCSArchiveStorage")
 except ImportError:
     pass
@@ -2714,7 +2748,8 @@ def _entry(days_ago: int) -> FakeEntry:
 def test_keeps_n_daily_recent():
     entries = [_entry(d) for d in range(0, 30)]
     keep, prune = apply_retention(
-        entries, RetentionPolicy(daily=7, weekly=0, monthly=0),
+        entries,
+        RetentionPolicy(daily=7, weekly=0, monthly=0),
         now=datetime(2026, 5, 1, tzinfo=UTC),
     )
     assert len(keep) == 7
@@ -2724,7 +2759,8 @@ def test_keeps_n_daily_recent():
 def test_keeps_one_per_iso_week_for_weekly():
     entries = [_entry(d) for d in range(0, 60)]
     keep, _prune = apply_retention(
-        entries, RetentionPolicy(daily=0, weekly=4, monthly=0),
+        entries,
+        RetentionPolicy(daily=0, weekly=4, monthly=0),
         now=datetime(2026, 5, 1, tzinfo=UTC),
     )
     iso_weeks = {e.last_modified.isocalendar()[:2] for e in keep}
@@ -2735,7 +2771,8 @@ def test_keeps_one_per_iso_week_for_weekly():
 def test_keeps_one_per_calendar_month_for_monthly():
     entries = [_entry(d) for d in range(0, 365)]
     keep, _prune = apply_retention(
-        entries, RetentionPolicy(daily=0, weekly=0, monthly=6),
+        entries,
+        RetentionPolicy(daily=0, weekly=0, monthly=6),
         now=datetime(2026, 5, 1, tzinfo=UTC),
     )
     months = {(e.last_modified.year, e.last_modified.month) for e in keep}
@@ -2746,7 +2783,8 @@ def test_keeps_one_per_calendar_month_for_monthly():
 def test_combined_policy_dedupes_overlapping():
     entries = [_entry(d) for d in range(0, 365)]
     keep, _prune = apply_retention(
-        entries, RetentionPolicy(daily=7, weekly=4, monthly=6),
+        entries,
+        RetentionPolicy(daily=7, weekly=4, monthly=6),
         now=datetime(2026, 5, 1, tzinfo=UTC),
     )
     assert len(set(e.key for e in keep)) == len(keep)
@@ -2756,7 +2794,8 @@ def test_combined_policy_dedupes_overlapping():
 def test_pruned_is_complement_of_keep():
     entries = [_entry(d) for d in range(0, 30)]
     keep, prune = apply_retention(
-        entries, RetentionPolicy(daily=7, weekly=0, monthly=0),
+        entries,
+        RetentionPolicy(daily=7, weekly=0, monthly=0),
         now=datetime(2026, 5, 1, tzinfo=UTC),
     )
     assert set(e.key for e in keep) | set(e.key for e in prune) == set(e.key for e in entries)
@@ -3357,7 +3396,9 @@ from nexus.bricks.archive.verify import verify_archive
 from nexus.bricks.portability.signer import ArchiveSigner, canonical_json_bytes
 
 
-def _build_signed_bundle(tmp_path: Path, *, signer: ArchiveSigner, manifest_overrides: dict | None = None) -> Path:
+def _build_signed_bundle(
+    tmp_path: Path, *, signer: ArchiveSigner, manifest_overrides: dict | None = None
+) -> Path:
     bundle_dir = tmp_path / "b"
     bundle_dir.mkdir()
     manifest = {
@@ -3530,9 +3571,10 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
 
         if format_version.startswith("2.") and "signatures.json" in names:
             sig_doc = json.loads(tar.extractfile("signatures.json").read())
-            payload = canonical_json_bytes(manifest) + (
-                (manifest.get("checksums") or {}).get("merkle_root") or ""
-            ).encode()
+            payload = (
+                canonical_json_bytes(manifest)
+                + ((manifest.get("checksums") or {}).get("merkle_root") or "").encode()
+            )
             ArchiveSigner.verify(payload, sig_doc["signature_b64"], sig_doc["signer_pubkey_b64"])
         elif strict:
             raise ArchiveSignatureError("v2 bundle missing signatures.json")
@@ -3788,9 +3830,13 @@ def test_round_trip_sqlite(fresh_nexus_sqlite, tmp_path):
 
     archive_path = tmp_path / "eng.nexus"
     run_create(
-        zone_ids=["eng"], output=archive_path,
-        audit=False, audit_from=None, audit_to=None,
-        sign=True, strip=True,
+        zone_ids=["eng"],
+        output=archive_path,
+        audit=False,
+        audit_from=None,
+        audit_to=None,
+        sign=True,
+        strip=True,
     )
     assert archive_path.exists()
 
@@ -3824,9 +3870,13 @@ def test_round_trip_postgres(tmp_path, postgres_test_db):
 
     archive_path = tmp_path / "eng.nexus"
     run_create(
-        zone_ids=["eng"], output=archive_path,
-        audit=False, audit_from=None, audit_to=None,
-        sign=True, strip=True,
+        zone_ids=["eng"],
+        output=archive_path,
+        audit=False,
+        audit_from=None,
+        audit_to=None,
+        sign=True,
+        strip=True,
     )
     nexus_fs.delete_zone("eng")
     run_restore(
@@ -3894,9 +3944,13 @@ def test_anthropic_key_in_doc_body_redacted(tmp_path, fresh_nexus_with_planted_s
     """A doc with an `sk-ant-…` token in body must be redacted in the archive."""
     archive_path = tmp_path / "eng.nexus"
     run_create(
-        zone_ids=["eng"], output=archive_path,
-        audit=False, audit_from=None, audit_to=None,
-        sign=True, strip=True,
+        zone_ids=["eng"],
+        output=archive_path,
+        audit=False,
+        audit_from=None,
+        audit_to=None,
+        sign=True,
+        strip=True,
     )
     with tarfile.open(archive_path, "r:gz") as tar:
         for member in tar.getmembers():
@@ -3908,13 +3962,19 @@ def test_anthropic_key_in_doc_body_redacted(tmp_path, fresh_nexus_with_planted_s
 def test_provider_api_key_replaced_with_placeholder(tmp_path, fresh_nexus_with_provider_key):
     archive_path = tmp_path / "eng.nexus"
     run_create(
-        zone_ids=["eng"], output=archive_path,
-        audit=False, audit_from=None, audit_to=None,
-        sign=True, strip=True,
+        zone_ids=["eng"],
+        output=archive_path,
+        audit=False,
+        audit_from=None,
+        audit_to=None,
+        sign=True,
+        strip=True,
     )
     with tarfile.open(archive_path, "r:gz") as tar:
         meta = tar.extractfile("metadata/files.jsonl").read().decode()
-        assert "${PROVIDER_KEY_anthropic}" in meta or True  # placeholder lives in providers table jsonl
+        assert (
+            "${PROVIDER_KEY_anthropic}" in meta or True
+        )  # placeholder lives in providers table jsonl
 ```
 
 ```python
@@ -3930,11 +3990,13 @@ from nexus.bricks.archive.cli_glue import run_create
 def test_audit_window_filters_docs_and_events(tmp_path, fresh_nexus_with_timeline_corpus):
     archive_path = tmp_path / "audit.nexus"
     run_create(
-        zone_ids=["eng"], output=archive_path,
+        zone_ids=["eng"],
+        output=archive_path,
         audit=True,
         audit_from=datetime(2026, 4, 1, tzinfo=UTC),
         audit_to=datetime(2026, 5, 1, tzinfo=UTC),
-        sign=True, strip=True,
+        sign=True,
+        strip=True,
     )
     with tarfile.open(archive_path, "r:gz") as tar:
         names = tar.getnames()
@@ -3999,9 +4061,13 @@ def signed_archive(tmp_path):
     fs.ingest_fixture("eng", path="tests/fixtures/archive_corpus_small/")
     out = tmp_path / "signed.nexus"
     run_create(
-        zone_ids=["eng"], output=out,
-        audit=False, audit_from=None, audit_to=None,
-        sign=True, strip=True,
+        zone_ids=["eng"],
+        output=out,
+        audit=False,
+        audit_from=None,
+        audit_to=None,
+        sign=True,
+        strip=True,
     )
     fs.shutdown()
     return out
@@ -4088,7 +4154,9 @@ def test_e2e_round_trip(tmp_path):
     # 4. Capture baseline search
     baseline = subprocess.run(
         ["nexus", "search", "--zone", "eng", "--json", "known fixture phrase"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
 
     # 5. Tear down
@@ -4104,7 +4172,9 @@ def test_e2e_round_trip(tmp_path):
     # 7. Compare search
     restored = subprocess.run(
         ["nexus", "search", "--zone", "eng", "--json", "known fixture phrase"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     assert restored == baseline, "search results not byte-identical after restore"
 

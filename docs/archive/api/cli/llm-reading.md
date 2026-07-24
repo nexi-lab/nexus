@@ -462,15 +462,13 @@ nexus llm read /doc.pdf "Question" --model claude-sonnet-4 --detailed
 import asyncio
 from nexus import connect
 
+
 async def main():
     nx = connect()
-    result = await nx.llm_read_detailed(
-        path="/doc.pdf",
-        prompt="Question",
-        model="claude-sonnet-4"
-    )
+    result = await nx.llm_read_detailed(path="/doc.pdf", prompt="Question", model="claude-sonnet-4")
     print(result.answer)
     print(f"Cost: ${result.cost:.4f}")
+
 
 asyncio.run(main())
 ```

@@ -367,10 +367,11 @@ alembic upgrade head --sql
 3. **Make migrations reversible**
    ```python
    def upgrade():
-       op.add_column('table', sa.Column('new_col', sa.String(50)))
+       op.add_column("table", sa.Column("new_col", sa.String(50)))
+
 
    def downgrade():
-       op.drop_column('table', 'new_col')
+       op.drop_column("table", "new_col")
    ```
 
 4. **Use transactions for SQLite**
@@ -378,9 +379,10 @@ alembic upgrade head --sql
    from alembic import op
    import sqlalchemy as sa
 
+
    def upgrade():
-       with op.batch_alter_table('table_name') as batch_op:
-           batch_op.add_column(sa.Column('new_col', sa.String(50)))
+       with op.batch_alter_table("table_name") as batch_op:
+           batch_op.add_column(sa.Column("new_col", sa.String(50)))
    ```
 
 ---

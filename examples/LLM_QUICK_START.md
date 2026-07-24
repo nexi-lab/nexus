@@ -107,9 +107,7 @@ from nexus import connect
 async with connect() as nx:
     # Simple question - just get the answer
     answer = await nx.llm_read(
-        path="/reports/q4.pdf",
-        prompt="What were the top 3 challenges?",
-        model="claude-sonnet-4"
+        path="/reports/q4.pdf", prompt="What were the top 3 challenges?", model="claude-sonnet-4"
     )
     print(answer)
 ```
@@ -118,9 +116,7 @@ async with connect() as nx:
 ```python
 # Get detailed result with citations and cost
 result = await nx.llm_read_detailed(
-    path="/docs/**/*.md",
-    prompt="How does authentication work?",
-    model="claude-sonnet-4"
+    path="/docs/**/*.md", prompt="How does authentication work?", model="claude-sonnet-4"
 )
 
 print(result.answer)
@@ -134,9 +130,7 @@ print(f"\nCost: ${result.cost:.4f}")
 ```python
 # Stream response for real-time output
 async for chunk in nx.llm_read_stream(
-    path="/report.pdf",
-    prompt="Analyze the trends",
-    model="claude-sonnet-4"
+    path="/report.pdf", prompt="Analyze the trends", model="claude-sonnet-4"
 ):
     print(chunk, end="", flush=True)
 ```
@@ -146,13 +140,10 @@ async for chunk in nx.llm_read_stream(
 # Create custom reader with specific instructions
 reader = nx.create_llm_reader(
     model="claude-sonnet-4",
-    system_prompt="You are a technical documentation expert. Provide detailed, precise answers."
+    system_prompt="You are a technical documentation expert. Provide detailed, precise answers.",
 )
 
-result = await reader.read(
-    path="/docs/**/*.md",
-    prompt="Explain the architecture"
-)
+result = await reader.read(path="/docs/**/*.md", prompt="Explain the architecture")
 print(result.answer)
 ```
 
@@ -165,9 +156,7 @@ os.environ["OPENROUTER_API_KEY"] = "sk-or-..."
 
 async with connect() as nx:
     answer = await nx.llm_read(
-        path="/doc.pdf",
-        prompt="Summarize this",
-        model="openrouter/anthropic/claude-3.5-sonnet"
+        path="/doc.pdf", prompt="Summarize this", model="openrouter/anthropic/claude-3.5-sonnet"
     )
     print(answer)
 ```

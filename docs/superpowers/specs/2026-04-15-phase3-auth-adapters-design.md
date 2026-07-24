@@ -254,6 +254,7 @@ class GmailConnector(PathCLIBackend):
     AUTH_SOURCE = "gws-cli"
     # ... rest unchanged
 
+
 @register_connector("gws_drive", category="cli", service_name="gws")
 class DriveConnector(PathCLIBackend):
     AUTH_SOURCE = "gws-cli"
@@ -285,7 +286,8 @@ With:
 ```python
 # Query profile store for gws-cli-synced profiles
 gws_profiles = [
-    p for p in self._profile_store.list(provider="google")
+    p
+    for p in self._profile_store.list(provider="google")
     if p.backend == "external-cli" and p.backend_key.startswith("gws-cli/")
 ]
 native_available = len(gws_profiles) > 0
@@ -358,8 +360,10 @@ Per adapter:
 def no_network(monkeypatch):
     """Block all network I/O."""
     import socket
+
     def _blocked(*args, **kwargs):
         raise OSError("Network blocked by test fixture")
+
     monkeypatch.setattr(socket, "socket", _blocked)
 ```
 
@@ -368,9 +372,7 @@ Each adapter tested under `no_network`. SubprocessAdapters must return degraded 
 ### 4e. Nightly real-binary e2e
 
 ```python
-@pytest.mark.skipunless(
-    os.environ.get("TEST_WITH_REAL_GCLOUD_CLI"), reason="opt-in real binary"
-)
+@pytest.mark.skipunless(os.environ.get("TEST_WITH_REAL_GCLOUD_CLI"), reason="opt-in real binary")
 async def test_gcloud_real_binary_sync(tmp_path):
     """Run actual gcloud in temp HOME, validate parseable output."""
 ```
@@ -395,13 +397,17 @@ class TestGwsGmailConnectorAuth:
 
 ```python
 class TestBug3713FailureClassification:
-    @pytest.mark.parametrize("scenario,expected_reason,expected_hint_substr", [
-        ("missing_binary", AuthProfileFailureReason.UPSTREAM_CLI_MISSING, "Install gws"),
-        ("revoked_token", AuthProfileFailureReason.AUTH_PERMANENT, "gws auth login"),
-        ("missing_scopes", AuthProfileFailureReason.SCOPE_INSUFFICIENT, "scopes"),
-    ])
-    async def test_failure_classified_correctly(self, scenario, expected_reason, expected_hint_substr):
-        ...
+    @pytest.mark.parametrize(
+        "scenario,expected_reason,expected_hint_substr",
+        [
+            ("missing_binary", AuthProfileFailureReason.UPSTREAM_CLI_MISSING, "Install gws"),
+            ("revoked_token", AuthProfileFailureReason.AUTH_PERMANENT, "gws auth login"),
+            ("missing_scopes", AuthProfileFailureReason.SCOPE_INSUFFICIENT, "scopes"),
+        ],
+    )
+    async def test_failure_classified_correctly(
+        self, scenario, expected_reason, expected_hint_substr
+    ): ...
 ```
 
 ### 4h. Concurrency test
@@ -420,8 +426,9 @@ async def test_concurrent_profile_store_select():
             assert profile.provider == provider
 
     await asyncio.wait_for(
-        asyncio.gather(*[hammer(p) for p in ["google", "github", "s3", "codex", "gcs"]
-                         for _ in range(2)]),
+        asyncio.gather(
+            *[hammer(p) for p in ["google", "github", "s3", "codex", "gcs"] for _ in range(2)]
+        ),
         timeout=5.0,  # deadlock detector
     )
 ```

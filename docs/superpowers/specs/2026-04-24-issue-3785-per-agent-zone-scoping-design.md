@@ -100,8 +100,8 @@ New alembic revision (descend from latest). Two operations:
 class ResolvedIdentity:
     subject_type: str
     subject_id: str
-    zone_id: str                  # primary (existing)
-    zone_set: tuple[str, ...]     # NEW — full allow-list
+    zone_id: str  # primary (existing)
+    zone_set: tuple[str, ...]  # NEW — full allow-list
     is_admin: bool
 ```
 
@@ -128,7 +128,7 @@ def op_context_to_auth_dict(ctx: OperationContext) -> dict[str, Any]:
     return {
         "subject_id": ctx.subject_id,
         "zone_id": ctx.zone_id,
-        "zone_set": list(ctx.zone_set),   # NEW
+        "zone_set": list(ctx.zone_set),  # NEW
         "is_admin": ctx.is_admin,
     }
 ```
@@ -147,9 +147,7 @@ Adds `zone_set: tuple[str, ...]`. Default factory: `(zone_id,)`. Every existing 
 def assert_zone_allowed(ctx: OperationContext, requested: str) -> None:
     if ctx.is_admin or requested in ctx.zone_set:
         return
-    raise PermissionError(
-        f"zone {requested!r} not in token's allow-list {ctx.zone_set}"
-    )
+    raise PermissionError(f"zone {requested!r} not in token's allow-list {ctx.zone_set}")
 ```
 
 Lives next to `OperationContext`. Called by routers at request entry whenever an explicit `zone` param/header is present. Admin bypass mirrors today's `is_admin` shortcut in ReBAC.

@@ -54,7 +54,7 @@ learning_loop = LearningLoop(
     user_id="user_123",
     agent_id="agent_456",
     zone_id="tenant_789",
-    context=operation_context  # Optional
+    context=operation_context,  # Optional
 )
 ```
 
@@ -82,7 +82,7 @@ result = learning_loop.execute_with_learning(
     playbook_id="playbook_123",
     enable_reflection=True,
     enable_curation=True,
-    **task_kwargs
+    **task_kwargs,
 )
 ```
 
@@ -102,12 +102,12 @@ Dictionary with execution results:
 
 ```python
 {
-    "result": Any,              # Task function result
-    "trajectory_id": str,       # Trajectory ID for tracking
-    "success": bool,            # Whether task succeeded
-    "error": str | None,        # Error message if failed
+    "result": Any,  # Task function result
+    "trajectory_id": str,  # Trajectory ID for tracking
+    "success": bool,  # Whether task succeeded
+    "error": str | None,  # Error message if failed
     "reflection_id": str | None,  # Reflection memory ID
-    "duration_ms": int          # Execution duration
+    "duration_ms": int,  # Execution duration
 }
 ```
 
@@ -120,13 +120,14 @@ def deploy_cache():
     playbook = nx.memory.get_playbook()
 
     # Apply helpful patterns
-    for strategy in playbook['strategies']['helpful']:
-        if 'cache' in strategy['pattern'].lower():
+    for strategy in playbook["strategies"]["helpful"]:
+        if "cache" in strategy["pattern"].lower():
             print(f"Applying: {strategy['pattern']}")
 
     # Execute deployment
     cache.deploy(ttl=300)
     return {"deployed": True, "ttl": 300}
+
 
 # Execute with learning
 result = learning_loop.execute_with_learning(
@@ -135,7 +136,7 @@ result = learning_loop.execute_with_learning(
     task_type="deployment",
     playbook_id="ops_playbook",
     enable_reflection=True,
-    enable_curation=True
+    enable_curation=True,
 )
 
 print(f"Success: {result['success']}")
@@ -151,9 +152,7 @@ Async version of `execute_with_learning()`.
 
 ```python
 result = await learning_loop.execute_with_learning_async(
-    task_description="Process data batch",
-    task_fn=async_process_batch,
-    playbook_id="data_playbook"
+    task_description="Process data batch", task_fn=async_process_batch, playbook_id="data_playbook"
 )
 ```
 
@@ -180,15 +179,7 @@ results = learning_loop.process_relearning_queue(limit=10)
 List of re-learning results:
 
 ```python
-[
-    {
-        "trajectory_id": str,
-        "success": bool,
-        "reflection_id": str | None,
-        "error": str | None
-    },
-    ...
-]
+[{"trajectory_id": str, "success": bool, "reflection_id": str | None, "error": str | None}, ...]
 ```
 
 **Example:**
@@ -198,7 +189,7 @@ List of re-learning results:
 results = learning_loop.process_relearning_queue(limit=5)
 
 for result in results:
-    if result['success']:
+    if result["success"]:
         print(f"✓ Re-learned from {result['trajectory_id']}")
     else:
         print(f"✗ Failed: {result['error']}")
@@ -214,7 +205,7 @@ Get relevant strategies from a playbook for a specific task.
 strategies = learning_loop.get_playbook_strategies(
     playbook_id="api_playbook",
     task_description="Call external API with retry logic",
-    strategy_type="helpful"  # or "harmful" or "neutral"
+    strategy_type="helpful",  # or "harmful" or "neutral"
 )
 ```
 
@@ -235,9 +226,9 @@ List of relevant strategies:
         "context": "API calls with rate limiting",
         "confidence": 0.95,
         "evidence_count": 12,
-        "category": "helpful"
+        "category": "helpful",
     },
-    ...
+    ...,
 ]
 ```
 
@@ -249,9 +240,7 @@ Consolidate low-importance memories to prevent context collapse.
 
 ```python
 results = learning_loop.consolidate_memories(
-    memory_type="experience",
-    importance_max=0.5,
-    batch_size=10
+    memory_type="experience", importance_max=0.5, batch_size=10
 )
 ```
 
@@ -271,9 +260,9 @@ List of consolidation results:
         "consolidated_memory_id": str,
         "source_memory_ids": List[str],
         "memories_merged": int,
-        "content_preview": str
+        "content_preview": str,
     },
-    ...
+    ...,
 ]
 ```
 
@@ -293,6 +282,7 @@ nx = nexus.connect()
 # Access the learning loop
 learning_loop = nx.ace.learning_loop  # type: LearningLoop
 
+
 # Define your agent task
 def process_customer_data(customer_id: str):
     """Process customer data with learned strategies."""
@@ -301,12 +291,12 @@ def process_customer_data(customer_id: str):
     strategies = learning_loop.get_playbook_strategies(
         playbook_id="data_processing_playbook",
         task_description=f"Process customer {customer_id}",
-        strategy_type="helpful"
+        strategy_type="helpful",
     )
 
     # 2. Apply high-confidence strategies
     for strategy in strategies:
-        if strategy['confidence'] > 0.8:
+        if strategy["confidence"] > 0.8:
             print(f"Applying: {strategy['pattern']}")
 
     # 3. Execute the actual task
@@ -316,6 +306,7 @@ def process_customer_data(customer_id: str):
 
     return {"customer_id": customer_id, "records": len(processed)}
 
+
 # Execute with automatic learning
 result = learning_loop.execute_with_learning(
     task_description="Process customer data with validation",
@@ -324,11 +315,11 @@ result = learning_loop.execute_with_learning(
     playbook_id="data_processing_playbook",
     enable_reflection=True,
     enable_curation=True,
-    customer_id="cust_123"  # Passed to task_fn
+    customer_id="cust_123",  # Passed to task_fn
 )
 
 # Check results
-if result['success']:
+if result["success"]:
     print(f"✓ Task completed: {result['result']}")
     print(f"✓ Trajectory tracked: {result['trajectory_id']}")
     print(f"✓ Reflection generated: {result['reflection_id']}")
@@ -350,10 +341,7 @@ The Learning Loop integrates seamlessly with the Nexus Memory API:
 
 ```python
 # Start trajectory manually
-traj_id = nx.memory.start_trajectory(
-    task_description="Deploy API changes",
-    task_type="deployment"
-)
+traj_id = nx.memory.start_trajectory(task_description="Deploy API changes", task_type="deployment")
 
 # Log steps during execution
 nx.memory.log_step(traj_id, "decision", "Chose blue-green deployment")
@@ -365,12 +353,12 @@ nx.memory.complete_trajectory(
     traj_id,
     status="success",
     success_score=0.95,
-    metrics={"duration_ms": 5400, "rollback_count": 0}
+    metrics={"duration_ms": 5400, "rollback_count": 0},
 )
 
 # Reflect and curate
 reflection = nx.memory.reflect(traj_id)
-nx.memory.curate_playbook([reflection['memory_id']], playbook_name="ops_playbook")
+nx.memory.curate_playbook([reflection["memory_id"]], playbook_name="ops_playbook")
 ```
 
 ---
@@ -386,10 +374,7 @@ Good task descriptions improve reflection quality:
 execute_with_learning("do stuff", task_fn)
 
 # ✓ Good: Specific and actionable
-execute_with_learning(
-    "Process invoice PDF with OCR and extract line items",
-    task_fn
-)
+execute_with_learning("Process invoice PDF with OCR and extract line items", task_fn)
 ```
 
 ### 2. Playbook Organization
@@ -410,18 +395,12 @@ Disable learning for trivial tasks:
 ```python
 # Enable learning for complex tasks
 execute_with_learning(
-    "Complex multi-step workflow",
-    complex_task,
-    enable_reflection=True,
-    enable_curation=True
+    "Complex multi-step workflow", complex_task, enable_reflection=True, enable_curation=True
 )
 
 # Disable for simple tasks
 execute_with_learning(
-    "Simple file read",
-    simple_task,
-    enable_reflection=False,
-    enable_curation=False
+    "Simple file read", simple_task, enable_reflection=False, enable_curation=False
 )
 ```
 
@@ -432,10 +411,12 @@ Schedule periodic re-learning:
 ```python
 import schedule
 
+
 def relearn_job():
     """Background job to process re-learning queue."""
     results = learning_loop.process_relearning_queue(limit=10)
     print(f"Re-learned from {len(results)} trajectories")
+
 
 # Run every 5 minutes
 schedule.every(5).minutes.do(relearn_job)

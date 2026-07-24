@@ -51,19 +51,17 @@ owner = direct_owner ∪ parent_owner
 rebac_write(
     subject=("user", "alice"),
     relation="direct_owner",
-    object=("file", "/workspace/alice/project.txt")
+    object=("file", "/workspace/alice/project.txt"),
 )
 
 # Parent ownership (alice owns /workspace/alice, inherits to all files)
 rebac_write(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("workspace", "/workspace/alice")
+    subject=("user", "alice"), relation="direct_owner", object=("workspace", "/workspace/alice")
 )
 rebac_write(
     subject=("workspace", "/workspace/alice"),
     relation="parent",
-    object=("file", "/workspace/alice/file.txt")
+    object=("file", "/workspace/alice/file.txt"),
 )
 # Result: alice is "owner" of /workspace/alice/file.txt via parent_owner
 ```
@@ -98,9 +96,7 @@ editor = owner ∪ direct_editor
 ```python
 # Grant editor permission
 rebac_write(
-    subject=("user", "bob"),
-    relation="direct_editor",
-    object=("file", "/workspace/shared/doc.txt")
+    subject=("user", "bob"), relation="direct_editor", object=("file", "/workspace/shared/doc.txt")
 )
 
 # Bob can now:
@@ -139,7 +135,7 @@ viewer = owner ∪ editor ∪ direct_viewer
 rebac_write(
     subject=("user", "charlie"),
     relation="direct_viewer",
-    object=("file", "/workspace/public/readme.md")
+    object=("file", "/workspace/public/readme.md"),
 )
 
 # Charlie can now:
@@ -168,17 +164,13 @@ rebac_write(
 **Example:**
 ```python
 # Add alice to engineering group
-rebac_write(
-    subject=("user", "alice"),
-    relation="member",
-    object=("group", "engineering")
-)
+rebac_write(subject=("user", "alice"), relation="member", object=("group", "engineering"))
 
 # Grant group access to file
 rebac_write(
     subject=("group", "engineering"),
     relation="direct_editor",
-    object=("file", "/projects/backend.py")
+    object=("file", "/projects/backend.py"),
 )
 
 # Result: alice can edit /projects/backend.py via group membership
@@ -201,11 +193,7 @@ rebac_write(
 **Example:**
 ```python
 # Make bob admin of engineering group
-rebac_write(
-    subject=("user", "bob"),
-    relation="admin",
-    object=("group", "engineering")
-)
+rebac_write(subject=("user", "bob"), relation="admin", object=("group", "engineering"))
 
 # Bob can now manage the engineering group
 ```
@@ -229,14 +217,12 @@ rebac_write(
 rebac_write(
     subject=("workspace", "/workspace/projects"),
     relation="parent",
-    object=("file", "/workspace/projects/file.txt")
+    object=("file", "/workspace/projects/file.txt"),
 )
 
 # Grant owner of folder
 rebac_write(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("workspace", "/workspace/projects")
+    subject=("user", "alice"), relation="direct_owner", object=("workspace", "/workspace/projects")
 )
 
 # Result: alice is "owner" of /workspace/projects/file.txt via parent_owner
@@ -268,11 +254,7 @@ User alice → owner → /workspace/projects/file.txt ✅
 
 ```python
 # When checking: Can alice read /file.txt?
-permission_check(
-    subject=("user", "alice"),
-    permission="read",
-    object=("file", "/file.txt")
-)
+permission_check(subject=("user", "alice"), permission="read", object=("file", "/file.txt"))
 
 # ReBAC checks (in order):
 # 1. Is alice "owner" of /file.txt? (direct_owner OR parent_owner)
@@ -357,9 +339,7 @@ Use **computed relations** when:
 ```python
 # Alice owns her workspace
 rebac_write(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("workspace", "/workspace/alice")
+    subject=("user", "alice"), relation="direct_owner", object=("workspace", "/workspace/alice")
 )
 
 # All files in /workspace/alice/* automatically inherit owner permission
@@ -371,23 +351,17 @@ rebac_write(
 ```python
 # Alice owns the document
 rebac_write(
-    subject=("user", "alice"),
-    relation="direct_owner",
-    object=("file", "/shared/roadmap.md")
+    subject=("user", "alice"), relation="direct_owner", object=("file", "/shared/roadmap.md")
 )
 
 # Bob can edit
 rebac_write(
-    subject=("user", "bob"),
-    relation="direct_editor",
-    object=("file", "/shared/roadmap.md")
+    subject=("user", "bob"), relation="direct_editor", object=("file", "/shared/roadmap.md")
 )
 
 # Charlie can view
 rebac_write(
-    subject=("user", "charlie"),
-    relation="direct_viewer",
-    object=("file", "/shared/roadmap.md")
+    subject=("user", "charlie"), relation="direct_viewer", object=("file", "/shared/roadmap.md")
 )
 ```
 
@@ -395,22 +369,14 @@ rebac_write(
 
 ```python
 # Create engineering team
-rebac_write(
-    subject=("user", "alice"),
-    relation="member",
-    object=("group", "engineering")
-)
-rebac_write(
-    subject=("user", "bob"),
-    relation="member",
-    object=("group", "engineering")
-)
+rebac_write(subject=("user", "alice"), relation="member", object=("group", "engineering"))
+rebac_write(subject=("user", "bob"), relation="member", object=("group", "engineering"))
 
 # Grant team access to project folder
 rebac_write(
     subject=("group", "engineering"),
     relation="direct_editor",
-    object=("workspace", "/projects/backend")
+    object=("workspace", "/projects/backend"),
 )
 
 # Result: Both alice and bob can edit files in /projects/backend
@@ -425,7 +391,7 @@ rebac_write(
     subject=("user", "contractor_123"),
     relation="direct_viewer",
     object=("file", "/docs/spec.pdf"),
-    expires_at=datetime.now(UTC) + timedelta(days=7)
+    expires_at=datetime.now(UTC) + timedelta(days=7),
 )
 
 # After 7 days, permission automatically expires
@@ -510,21 +476,19 @@ nx = NexusFS(backend)
 nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_owner",
-    object=("file", "/workspace/alice/project.txt")
+    object=("file", "/workspace/alice/project.txt"),
 )
 
 # Grant editor
 nx.rebac_create(
-    subject=("user", "bob"),
-    relation="direct_editor",
-    object=("file", "/workspace/shared/doc.md")
+    subject=("user", "bob"), relation="direct_editor", object=("file", "/workspace/shared/doc.md")
 )
 
 # Grant viewer
 nx.rebac_create(
     subject=("user", "charlie"),
     relation="direct_viewer",
-    object=("file", "/workspace/public/readme.md")
+    object=("file", "/workspace/public/readme.md"),
 )
 ```
 
@@ -532,9 +496,7 @@ nx.rebac_create(
 ```python
 # Check if alice can read the file
 can_read = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="read",
-    object=("file", "/workspace/secret.txt")
+    subject=("user", "alice"), permission="read", object=("file", "/workspace/secret.txt")
 )
 
 if can_read:
@@ -544,10 +506,7 @@ if can_read:
 ### Find Who Has Access
 ```python
 # Get all subjects who can write to a file
-writers = nx.rebac_expand(
-    permission="write",
-    object=("file", "/workspace/shared/doc.txt")
-)
+writers = nx.rebac_expand(permission="write", object=("file", "/workspace/shared/doc.txt"))
 
 for subject_type, subject_id in writers:
     print(f"{subject_type}:{subject_id} can write")

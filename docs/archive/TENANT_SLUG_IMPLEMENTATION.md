@@ -14,13 +14,13 @@ Added new `TenantModel` table to store tenant metadata:
 
 ```python
 class TenantModel(Base):
-    zone_id: str          # Primary key: user-provided slug (e.g., "acme", "techcorp")
-    name: str               # Display name: "Acme Corporation"
-    domain: str | None      # Unique domain: "acme.com"
-    description: str | None # Optional description
-    settings: str | None    # JSON settings (extensible)
-    is_active: int          # Soft delete flag
-    deleted_at: datetime    # Soft delete timestamp
+    zone_id: str  # Primary key: user-provided slug (e.g., "acme", "techcorp")
+    name: str  # Display name: "Acme Corporation"
+    domain: str | None  # Unique domain: "acme.com"
+    description: str | None  # Optional description
+    settings: str | None  # JSON settings (extensible)
+    is_active: int  # Soft delete flag
+    deleted_at: datetime  # Soft delete timestamp
     created_at: datetime
     updated_at: datetime
 ```
@@ -46,17 +46,17 @@ Validates zone_id format:
 - Cannot be reserved name (`admin`, `api`, `system`, etc.)
 
 ```python
-validate_zone_id("acme")        # (True, None)
-validate_zone_id("admin")       # (False, "Zone ID 'admin' is reserved")
-validate_zone_id("a")           # (False, "Must be 3-63 characters")
+validate_zone_id("acme")  # (True, None)
+validate_zone_id("admin")  # (False, "Zone ID 'admin' is reserved")
+validate_zone_id("a")  # (False, "Must be 3-63 characters")
 ```
 
 #### `normalize_to_slug(name: str) -> str`
 Converts display name to slug:
 
 ```python
-normalize_to_slug("Acme Corporation")    # "acme-corporation"
-normalize_to_slug("Tech@Startup!!! Inc") # "tech-startup-inc"
+normalize_to_slug("Acme Corporation")  # "acme-corporation"
+normalize_to_slug("Tech@Startup!!! Inc")  # "tech-startup-inc"
 ```
 
 #### `suggest_zone_id(base_name: str, session: Session) -> str`
@@ -73,10 +73,33 @@ Creates tenant with validation.
 #### Reserved zone_id values:
 ```python
 RESERVED_TENANT_IDS = {
-    "admin", "system", "default", "tenant", "user", "agent", "group", "root",
-    "nexus", "api", "auth", "oauth", "login", "signup", "register", "logout",
-    "callback", "health", "status", "docs", "swagger", "settings", "billing",
-    "support", "help", "pricing", "features"
+    "admin",
+    "system",
+    "default",
+    "tenant",
+    "user",
+    "agent",
+    "group",
+    "root",
+    "nexus",
+    "api",
+    "auth",
+    "oauth",
+    "login",
+    "signup",
+    "register",
+    "logout",
+    "callback",
+    "health",
+    "status",
+    "docs",
+    "swagger",
+    "settings",
+    "billing",
+    "support",
+    "help",
+    "pricing",
+    "features",
 }
 ```
 
@@ -104,7 +127,7 @@ create_tenant(
     zone_id=zone_id,
     name=user.display_name or user.email,
     domain=user.email.split("@")[1],  # "example.com"
-    description=f"Personal workspace for {user.display_name}"
+    description=f"Personal workspace for {user.display_name}",
 )
 
 # Add user to tenant via ReBAC
@@ -112,7 +135,7 @@ add_user_to_tenant(
     rebac_manager=rebac_manager,
     user_id=user.user_id,
     zone_id=zone_id,
-    role="admin"  # User is admin of their personal tenant
+    role="admin",  # User is admin of their personal tenant
 )
 ```
 
@@ -179,7 +202,7 @@ logger.info("Tenant management routes registered at /api/tenants")
 **Current design is correct:**
 ```python
 user_id = "550e8400-e29b-41d4-a716-446655440000"  # Internal, secure
-username = "alice"                                  # Public, changeable
+username = "alice"  # Public, changeable
 ```
 
 ### ReBAC Integration
@@ -234,9 +257,7 @@ from nexus.storage.models import TenantModel
 zone_ids = get_user_tenants(rebac_manager, user_id)  # ["acme", "techcorp"]
 
 # Get tenant metadata
-tenants = session.query(TenantModel).filter(
-    TenantModel.zone_id.in_(zone_ids)
-).all()
+tenants = session.query(TenantModel).filter(TenantModel.zone_id.in_(zone_ids)).all()
 
 for tenant in tenants:
     print(f"{tenant.name} ({tenant.domain})")
@@ -274,7 +295,7 @@ for user in session.query(UserModel).filter(UserModel.zone_id.like("%@%")).all()
         session=session,
         zone_id=new_zone_id,
         name=user.display_name or user.email,
-        domain=old_zone_id.split("@")[1] if "@" in old_zone_id else None
+        domain=old_zone_id.split("@")[1] if "@" in old_zone_id else None,
     )
 
     # Update user's zone_id

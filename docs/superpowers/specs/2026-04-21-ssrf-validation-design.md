@@ -204,9 +204,7 @@ class PinnedResolverTransport(httpx.AsyncHTTPTransport):
 
     def __init__(self, validated: ValidatedURL, **kwargs: Any) -> None: ...
 
-    async def handle_async_request(
-        self, request: httpx.Request
-    ) -> httpx.Response: ...
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response: ...
 ```
 
 Implementation approach: httpx exposes a lower-level `httpcore` pool.

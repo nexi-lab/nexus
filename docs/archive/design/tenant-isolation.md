@@ -11,8 +11,8 @@ Looking at the actual code, tenant isolation is **STILL using the OLD v0.4.x ins
 route = self.router.route(
     path,
     zone_id=self.zone_id,  # ← Instance variable (v0.4.x style)
-    agent_id=self.agent_id,    # ← Instance variable (v0.4.x style)
-    is_admin=self.is_admin,    # ← Instance variable (v0.4.x style)
+    agent_id=self.agent_id,  # ← Instance variable (v0.4.x style)
+    is_admin=self.is_admin,  # ← Instance variable (v0.4.x style)
     check_write=False,
 )
 ```
@@ -48,16 +48,17 @@ nx.read("/file.txt", context=OperationContext(user="alice", ...))
 ```python
 # Instance variables are still used!
 nx.zone_id  # → None (never set!)
-nx.agent_id   # → None (never set!)
-nx.is_admin   # → False (from init param)
+nx.agent_id  # → None (never set!)
+nx.is_admin  # → False (from init param)
+
 
 # File operations use these None values:
 def read(self, path, context=None):
     route = self.router.route(
         path,
         zone_id=self.zone_id,  # ← ALWAYS None!
-        agent_id=self.agent_id,    # ← ALWAYS None!
-        is_admin=self.is_admin     # ← From init, not context!
+        agent_id=self.agent_id,  # ← ALWAYS None!
+        is_admin=self.is_admin,  # ← From init, not context!
     )
 ```
 
@@ -119,6 +120,7 @@ class OperationContext:
     is_admin: bool = False
     is_system: bool = False
 
+
 # Use it in routing
 def write(self, path, content, context=None):
     ctx = context or self._default_context
@@ -128,7 +130,7 @@ def write(self, path, content, context=None):
         zone_id=ctx.zone_id,  # ← From context!
         agent_id=None,  # Or extract from user string
         is_admin=ctx.is_admin,
-        check_write=True
+        check_write=True,
     )
 ```
 
@@ -143,6 +145,7 @@ class AuthResult:
     zone_id: str | None  # ← Already exists!
     is_admin: bool = False
 
+
 # RPC server should create context WITH zone_id
 def handle_request(jwt_token):
     auth_result = auth.authenticate(jwt_token)
@@ -151,7 +154,7 @@ def handle_request(jwt_token):
         user=auth_result.subject_id,
         zone_id=auth_result.zone_id,  # ← Pass it through!
         groups=[],
-        is_admin=auth_result.is_admin
+        is_admin=auth_result.is_admin,
     )
 
     nx.write(path, data, context=ctx)
@@ -201,6 +204,7 @@ class OperationContext:
     is_admin: bool = False
     is_system: bool = False
 
+
 # 2. Update all router.route() calls
 def write(self, path, content, context=None):
     ctx = context or self._default_context
@@ -208,10 +212,11 @@ def write(self, path, content, context=None):
     route = self.router.route(
         path,
         zone_id=ctx.zone_id,  # ← Use context
-        agent_id=None,            # ← Or ctx.agent_id if added
-        is_admin=ctx.is_admin,    # ← Use context
-        check_write=True
+        agent_id=None,  # ← Or ctx.agent_id if added
+        is_admin=ctx.is_admin,  # ← Use context
+        check_write=True,
     )
+
 
 # 3. RPC server: create context from JWT
 auth_result = await auth.authenticate(token)
@@ -219,7 +224,7 @@ ctx = OperationContext(
     user=auth_result.subject_id,
     zone_id=auth_result.zone_id,  # ← From JWT!
     groups=[],
-    is_admin=auth_result.is_admin
+    is_admin=auth_result.is_admin,
 )
 ```
 

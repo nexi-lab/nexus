@@ -104,6 +104,7 @@ Create `tests/unit/storage/test_api_key_ops_primary_zone.py`:
 
 ```python
 """Unit tests for get_primary_zone and get_primary_zones_for_keys (#3871)."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -175,12 +176,15 @@ def test_get_primary_zones_for_keys_batch(session):
 
 def test_get_primary_zones_for_keys_single_query(session):
     from sqlalchemy import event
+
     a, _ = create_api_key(session, user_id="u1", name="a", zones=["eng"])
     b, _ = create_api_key(session, user_id="u1", name="b", zones=["ops"])
     seen: list[str] = []
+
     @event.listens_for(session.bind, "before_cursor_execute")
     def _capture(conn, cursor, statement, *_):  # noqa: ARG001
         seen.append(statement)
+
     get_primary_zones_for_keys(session, [a, b])
     assert sum(1 for s in seen if "api_key_zones" in s) == 1
 ```
@@ -215,9 +219,7 @@ def get_primary_zone(session: "Session", key_id: str) -> str | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
-def get_primary_zones_for_keys(
-    session: "Session", key_ids: list[str]
-) -> dict[str, str]:
+def get_primary_zones_for_keys(session: "Session", key_ids: list[str]) -> dict[str, str]:
     """Batch variant of get_primary_zone for renderers walking many rows.
 
     Single round-trip via a window function. Returns {key_id: primary_zone};
@@ -296,6 +298,7 @@ Create `tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filte
 
 ```python
 """DatabaseAPIKeyAuth.revoke_key zone filter must match every junction row (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -361,9 +364,9 @@ Replace with:
 ```python
 if zone_id is not None:
     from nexus.storage.models import APIKeyZoneModel
-    stmt = (
-        stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-            .where(APIKeyZoneModel.zone_id == zone_id)
+
+    stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+        APIKeyZoneModel.zone_id == zone_id
     )
 ```
 
@@ -423,6 +426,7 @@ Create `tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.p
 
 ```python
 """REST revoke_key zone filter routes through junction (#3871)."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -512,9 +516,9 @@ Replace with:
 ```python
 if zone_id:
     from nexus.storage.models import APIKeyZoneModel
-    stmt = (
-        stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-            .where(APIKeyZoneModel.zone_id == zone_id)
+
+    stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+        APIKeyZoneModel.zone_id == zone_id
     )
 ```
 
@@ -576,6 +580,7 @@ Create `tests/unit/server/rpc/handlers/test_admin_junction_filter.py`:
 
 ```python
 """Admin RPC handler zone filters route through junction (#3871)."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -626,8 +631,13 @@ def test_handle_admin_list_keys_zone_filter_uses_junction(auth_provider_and_keys
     """Filter by zone='ops' must return the multi-zone key (its primary is 'eng')."""
     auth_provider, context, _SessionLocal, multi_id, _eng_id = auth_provider_and_keys
     params = SimpleNamespace(
-        zone_id="ops", user_id=None, is_admin=None,
-        include_revoked=False, include_expired=False, limit=100, offset=0,
+        zone_id="ops",
+        user_id=None,
+        is_admin=None,
+        include_revoked=False,
+        include_expired=False,
+        limit=100,
+        offset=0,
     )
     result = admin.handle_admin_list_keys(auth_provider, params, context)
     keys = result.get("keys", result) if isinstance(result, dict) else result
@@ -646,7 +656,11 @@ def test_handle_admin_update_key_zone_filter_uses_junction(auth_provider_and_key
     """Multi-zone key updated with zone='ops' (no field changes) must succeed."""
     auth_provider, context, _SessionLocal, multi_id, _eng_id = auth_provider_and_keys
     params = SimpleNamespace(
-        key_id=multi_id, zone_id="ops", name=None, is_admin=None, expires_days=None,
+        key_id=multi_id,
+        zone_id="ops",
+        name=None,
+        is_admin=None,
+        expires_days=None,
     )
     result = admin.handle_admin_update_key(auth_provider, params, context)
     assert result["key_id"] == multi_id
@@ -667,7 +681,11 @@ def test_handle_admin_update_key_self_demotion_guard_uses_junction(auth_provider
         s.commit()
 
     params = SimpleNamespace(
-        key_id=admin_a, zone_id=None, name=None, is_admin=False, expires_days=None,
+        key_id=admin_a,
+        zone_id=None,
+        name=None,
+        is_admin=False,
+        expires_days=None,
     )
     # Should succeed — admin_b is still admin in `eng`.
     result = admin.handle_admin_update_key(auth_provider, params, context)
@@ -688,9 +706,9 @@ Edit `src/nexus/server/rpc/handlers/admin.py`. For **each** of the three `if par
 ```python
 if params.zone_id:
     from nexus.storage.models import APIKeyZoneModel
-    stmt = (
-        stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-            .where(APIKeyZoneModel.zone_id == params.zone_id)
+
+    stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+        APIKeyZoneModel.zone_id == params.zone_id
     )
 ```
 
@@ -709,13 +727,15 @@ Replace with:
 
 ```python
 from nexus.storage.api_key_ops import get_zones_for_key
+
 caller_zones = get_zones_for_key(session, api_key.key_id)
 if caller_zones:
     from nexus.storage.models import APIKeyZoneModel
+
     count_stmt = (
         count_stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-                  .where(APIKeyZoneModel.zone_id.in_(caller_zones))
-                  .distinct()
+        .where(APIKeyZoneModel.zone_id.in_(caller_zones))
+        .distinct()
     )
 ```
 
@@ -728,13 +748,19 @@ def test_admin_update_key_self_demotion_guard_uses_junction(session_with_keys):
     """The self-demotion guard's per-zone count must source the caller's zones from the junction."""
     session, multi_id, eng_id = session_with_keys
     # Create an admin key whose primary is `eng` but who also grants `ops`.
-    admin_id, _ = create_api_key(session, user_id="u1", name="admin", zones=["eng", "ops"], is_admin=True)
+    admin_id, _ = create_api_key(
+        session, user_id="u1", name="admin", zones=["eng", "ops"], is_admin=True
+    )
     # Make `eng_id` admin so there are 2 admins in `eng`.
-    session.get(__import__("nexus.storage.models", fromlist=["APIKeyModel"]).APIKeyModel, eng_id).is_admin = 1
+    session.get(
+        __import__("nexus.storage.models", fromlist=["APIKeyModel"]).APIKeyModel, eng_id
+    ).is_admin = 1
     session.commit()
 
     # Demoting `admin_id` is allowed (eng still has eng_id as admin); should NOT raise.
-    params = SimpleNamespace(key_id=admin_id, is_admin=False, zone_id=None, name=None, expires_days=None)
+    params = SimpleNamespace(
+        key_id=admin_id, is_admin=False, zone_id=None, name=None, expires_days=None
+    )
     admin.update_key(session, params)  # adjust to real handler signature
 ```
 
@@ -788,6 +814,7 @@ The store is `SQLAlchemyAPIKeyStore` (note capitalization) and takes a `session_
 
 ```python
 """revoke_key zone filter routes through junction (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -857,9 +884,9 @@ Replace with:
 ```python
 if zone_id is not None:
     from nexus.storage.models import APIKeyZoneModel
-    stmt = (
-        stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-            .where(APIKeyZoneModel.zone_id == zone_id)
+
+    stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+        APIKeyZoneModel.zone_id == zone_id
     )
 ```
 
@@ -912,6 +939,7 @@ Create `tests/unit/storage/test_api_key_ops_no_zone_id_write.py`:
 
 ```python
 """create_api_key must not write APIKeyModel.zone_id (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -977,6 +1005,7 @@ Add a test in `tests/unit/storage/auth_stores/test_sqlalchemy_api_key_store_no_z
 
 ```python
 """SQLAlchemyAPIKeyStore.create_key must not write APIKeyModel.zone_id; populates junction (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -1136,12 +1165,14 @@ Create `tests/unit/storage/migrations/test_assert_api_key_junction_populated.py`
 
 ```python
 """Tripwire migration tests (#3871)."""
+
 from __future__ import annotations
 
 import pathlib
 
 import pytest
 from sqlalchemy import create_engine, text
+
 
 # Find the migration module dynamically so the test does not bind to the
 # alembic revision hash.
@@ -1150,6 +1181,7 @@ def _load_migration_module():
     matches = list(versions.glob("*assert_api_key_junction_populated_for_3871*.py"))
     assert len(matches) == 1, f"Expected one migration file, found {matches}"
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("tripwire", matches[0])
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1160,20 +1192,24 @@ def _load_migration_module():
 def engine_with_schema():
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE api_keys (
                 key_id TEXT PRIMARY KEY,
                 revoked INTEGER NOT NULL DEFAULT 0,
                 is_admin INTEGER NOT NULL DEFAULT 0
             )
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             CREATE TABLE api_key_zones (
                 key_id TEXT NOT NULL,
                 zone_id TEXT NOT NULL,
                 PRIMARY KEY (key_id, zone_id)
             )
-        """))
+        """)
+        )
     return engine
 
 
@@ -1183,10 +1219,12 @@ def test_tripwire_no_op_on_healthy_db(engine_with_schema):
         conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('k1')"))
         conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('k1', 'eng')"))
     from alembic.migration import MigrationContext
+
     with engine_with_schema.connect() as conn:
         ctx = MigrationContext.configure(conn)
         # The migration uses op.get_bind(); inject via context.
         from alembic import op
+
         op._proxy = type("P", (), {"get_bind": lambda self: conn})()
         try:
             module.upgrade()  # should not raise
@@ -1200,6 +1238,7 @@ def test_tripwire_raises_on_broken_db(engine_with_schema):
         conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('orphan')"))  # no junction row
     with engine_with_schema.connect() as conn:
         from alembic import op
+
         op._proxy = type("P", (), {"get_bind": lambda self: conn})()
         try:
             with pytest.raises(RuntimeError, match="lack junction rows"):
@@ -1215,6 +1254,7 @@ def test_tripwire_ignores_admin_keys(engine_with_schema):
         conn.execute(text("INSERT INTO api_keys (key_id, is_admin) VALUES ('admin', 1)"))
     with engine_with_schema.connect() as conn:
         from alembic import op
+
         op._proxy = type("P", (), {"get_bind": lambda self: conn})()
         try:
             module.upgrade()  # should not raise
@@ -1228,6 +1268,7 @@ def test_tripwire_ignores_revoked_keys(engine_with_schema):
         conn.execute(text("INSERT INTO api_keys (key_id, revoked) VALUES ('dead', 1)"))
     with engine_with_schema.connect() as conn:
         from alembic import op
+
         op._proxy = type("P", (), {"get_bind": lambda self: conn})()
         try:
             module.upgrade()  # should not raise
@@ -1291,6 +1332,7 @@ Create `tests/unit/bricks/auth/providers/test_database_key_no_fallback.py`:
 
 ```python
 """Legacy zone_perms fallback removed in Phase 2 (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -1315,14 +1357,16 @@ def session():
 
 def _insert_legacy_key(session, *, key_id, raw_token, zone_id, is_admin=0):
     """Insert a key in the pre-junction shape (zone_id set, no junction rows)."""
-    session.add(APIKeyModel(
-        key_id=key_id,
-        key_hash=hash_api_key(raw_token),
-        user_id="u1",
-        name="legacy",
-        zone_id=zone_id,
-        is_admin=is_admin,
-    ))
+    session.add(
+        APIKeyModel(
+            key_id=key_id,
+            key_hash=hash_api_key(raw_token),
+            user_id="u1",
+            name="legacy",
+            zone_id=zone_id,
+            is_admin=is_admin,
+        )
+    )
     session.commit()
 
 
@@ -1347,6 +1391,7 @@ def test_admin_key_with_empty_junction_authenticates_zonelessly(session):
 def test_multi_zone_key_uses_junction_primary_for_zone_id(session):
     """After Task 6, api_key.zone_id is NULL; result.zone_id must come from the junction primary."""
     from nexus.storage.api_key_ops import create_api_key
+
     session.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
     session.commit()
     _key_id, raw = create_api_key(session, user_id="u1", name="multi", zones=["eng", "ops"])
@@ -1464,6 +1509,7 @@ Create `tests/unit/cli/test_hub_token_list_primary_alias.py`:
 
 ```python
 """token_list deprecated `zone` field equals get_primary_zone (#3871)."""
+
 from __future__ import annotations
 
 import json
@@ -1525,6 +1571,7 @@ Create `tests/unit/server/rpc/handlers/test_admin_primary_alias.py`:
 
 ```python
 """admin echo `zone_id` field equals get_primary_zone (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -1552,6 +1599,7 @@ def session_with_key():
 def test_admin_get_key_echoes_primary_zone(session_with_key):
     session, key_id = session_with_key
     from types import SimpleNamespace
+
     response = admin.get_key(session, SimpleNamespace(key_id=key_id))
     assert response["zone_id"] == "eng"  # primary by granted_at
 ```
@@ -1564,6 +1612,7 @@ Create `tests/unit/server/api/v2/routers/test_auth_keys_primary_alias.py`:
 
 ```python
 """REST create-key response `zone` field equals get_primary_zone (#3871)."""
+
 from __future__ import annotations
 
 import pytest
@@ -1704,6 +1753,7 @@ junction is the source of truth. Mirrors the skip pattern from
 test_hub_flow.py: skips cleanly if NEXUS_ADMIN_URL / NEXUS_ADMIN_KEY /
 NEXUS_DATABASE_URL / MCP_HTTP_URL is unset.
 """
+
 from __future__ import annotations
 
 import json
@@ -1750,7 +1800,9 @@ def test_phase2_token_create_persists_null_zone_id_and_populates_junction():
     env = _required_env()
     name = f"e2e-{uuid.uuid4().hex[:8]}"
 
-    proc = _run(["hub", "token", "create", "--zones", "eng:rw,ops:r", "--name", name, "--json"], env)
+    proc = _run(
+        ["hub", "token", "create", "--zones", "eng:rw,ops:r", "--name", name, "--json"], env
+    )
     payload = json.loads(proc.stdout)
     key_id = payload["key_id"]
 

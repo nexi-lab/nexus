@@ -84,11 +84,7 @@ class TestServiceName:
     @pytest.fixture
     def context(self):
         """Create operation context for tests."""
-        return OperationContext(
-            user="test_user",
-            groups=["test_group"],
-            zone_id="test_tenant"
-        )
+        return OperationContext(user="test_user", groups=["test_group"], zone_id="test_tenant")
 
     # ========================================================================
     # Success Path Tests
@@ -156,6 +152,7 @@ All service methods are async, so use `@pytest.mark.asyncio`:
 ```python
 import pytest
 
+
 class TestAsyncService:
     @pytest.mark.asyncio
     async def test_async_method(self, service):
@@ -179,6 +176,7 @@ mock_rebac.rebac_check.return_value = True
 mock_metadata = MagicMock()
 mock_metadata.get_file.return_value = {"path": "/test.txt"}
 
+
 # Patch module-level imports
 @patch("nexus.services.service_name.SomeDependency")
 async def test_with_patch(self, mock_dep):
@@ -193,6 +191,7 @@ Use `isolated_db` fixture from `tests/unit/conftest.py`:
 ```python
 import pytest
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+
 
 class TestServiceWithDB:
     @pytest.mark.asyncio
@@ -315,7 +314,7 @@ class TestServiceNameE2E:
                 "path": "/test.txt",
                 "version": 2,
             },
-            headers={"Authorization": "Bearer test_token"}
+            headers={"Authorization": "Bearer test_token"},
         )
 
         assert response.status_code == 200

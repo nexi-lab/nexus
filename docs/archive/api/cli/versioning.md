@@ -58,8 +58,8 @@ print(content.decode())
 
 # Get version with metadata
 result = nx.get_version("/workspace/file.txt", version=2, return_metadata=True)
-content = result['content']
-metadata = result['metadata']
+content = result["content"]
+metadata = result["metadata"]
 print(f"Version {metadata['version']}: {len(content)} bytes")
 ```
 
@@ -95,21 +95,22 @@ print(f"Modified: {diff['time_diff']}")
 
 # Compare with content diff
 diff = nx.diff_versions("/workspace/file.txt", version1=1, version2=3, mode="content")
-print(diff['content_diff'])
+print(diff["content_diff"])
 
 # Generate unified diff manually
 import difflib
+
 v1_content = nx.get_version("/workspace/file.txt", version=1).decode()
 v2_content = nx.get_version("/workspace/file.txt", version=3).decode()
 
 diff = difflib.unified_diff(
     v1_content.splitlines(),
     v2_content.splitlines(),
-    lineterm='',
-    fromfile='version 1',
-    tofile='version 3'
+    lineterm="",
+    fromfile="version 1",
+    tofile="version 3",
 )
-print('\n'.join(diff))
+print("\n".join(diff))
 ```
 
 **Options:**
@@ -273,19 +274,16 @@ for v in versions:
 
 # Compare specific versions
 import difflib
+
 v5 = nx.get_version("/sensitive/data.json", version=5).decode()
 v6 = nx.get_version("/sensitive/data.json", version=6).decode()
 
 diff = difflib.unified_diff(
-    v5.splitlines(),
-    v6.splitlines(),
-    lineterm='',
-    fromfile='version 5',
-    tofile='version 6'
+    v5.splitlines(), v6.splitlines(), lineterm="", fromfile="version 5", tofile="version 6"
 )
 
 print("\nChanges between v5 and v6:")
-print('\n'.join(diff))
+print("\n".join(diff))
 
 # Restore to known good version
 nx.rollback("/sensitive/data.json", version=5)

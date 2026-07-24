@@ -193,10 +193,7 @@ results = nx.semantic_search("/workspace/docs", query="how to authenticate users
 
 ```python
 # Auto-process CSV uploads
-nx.workflows.create(
-    trigger="write:/workspace/uploads/*.csv",
-    action="process_csv"
-)
+nx.workflows.create(trigger="write:/workspace/uploads/*.csv", action="process_csv")
 ```
 
 ---

@@ -28,11 +28,7 @@ nx.init_semantic_search(provider="openai", model="text-embedding-3-small")
 nx.init_semantic_search(provider="mock")
 
 # With custom API key
-nx.init_semantic_search(
-    provider="openai",
-    model="text-embedding-3-small",
-    api_key="your-api-key"
-)
+nx.init_semantic_search(provider="openai", model="text-embedding-3-small", api_key="your-api-key")
 ```
 
 **Options:**
@@ -72,6 +68,7 @@ await nx.index_documents(path="/docs")
 # Index single file
 await nx.index_documents(path="/docs/README.md")
 
+
 # Index with progress tracking
 async def index_with_progress():
     result = await nx.index_documents(path="/docs")
@@ -108,18 +105,22 @@ nexus search query "API endpoints" --path /docs
 # Basic search (async)
 import asyncio
 
+
 async def search():
     results = await nx.semantic_search("How does authentication work?")
     for result in results:
         print(f"{result['path']}: {result['score']}")
         print(f"  {result['snippet']}")
 
+
 asyncio.run(search())
+
 
 # Limit results
 async def search_top():
     results = await nx.semantic_search("database migration", limit=5)
     return results
+
 
 # Search in specific path
 async def search_docs():
@@ -189,6 +190,7 @@ nx = nexus.Nexus(data_dir="./nexus-data")
 # Set up semantic search
 nx.init_semantic_search(provider="openai", model="text-embedding-3-small")
 
+
 # Index documents
 async def setup_search():
     # Index all documents
@@ -203,7 +205,8 @@ async def setup_search():
     results = await nx.semantic_search("authentication best practices")
     for result in results:
         print(f"\n{result['path']} (score: {result['score']:.3f})")
-        print(result['snippet'])
+        print(result["snippet"])
+
 
 asyncio.run(setup_search())
 ```
@@ -233,6 +236,7 @@ async def incremental_indexing():
     results = await nx.semantic_search("new feature documentation")
     for result in results:
         print(f"{result['path']}: {result['score']:.3f}")
+
 
 asyncio.run(incremental_indexing())
 ```

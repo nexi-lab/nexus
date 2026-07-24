@@ -119,34 +119,38 @@ import nexus
 import asyncio
 
 # Connect to remote server
-nx = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "nxk_1234567890abcdef..."  # Replace with YOUR key
-})
+nx = nexus.connect(
+    config={
+        "url": "http://localhost:2026",
+        "api_key": "nxk_1234567890abcdef...",  # Replace with YOUR key
+    }
+)
+
 
 # Define a workflow function
 async def process_text_file(event):
     """
     This function runs automatically when a .txt file is created
     """
-    file_path = event['path']
+    file_path = event["path"]
     print(f"🔄 Processing new file: {file_path}")
 
     # Read the file content
     content = nx.read(file_path)
-    text = content.decode('utf-8')
+    text = content.decode("utf-8")
 
     # Process: count words
     word_count = len(text.split())
 
     # Create a summary file
-    summary_path = file_path.replace('.txt', '_summary.txt')
+    summary_path = file_path.replace(".txt", "_summary.txt")
     summary = f"File: {file_path}\nWords: {word_count}\nContent:\n{text[:100]}..."
 
-    nx.write(summary_path, summary.encode('utf-8'))
+    nx.write(summary_path, summary.encode("utf-8"))
     print(f"✅ Summary created: {summary_path}")
 
     return {"word_count": word_count, "summary_path": summary_path}
+
 
 # Register the workflow
 workflow_id = nx.register_workflow(
@@ -154,9 +158,9 @@ workflow_id = nx.register_workflow(
     handler=process_text_file,
     trigger={
         "event": "file.created",
-        "pattern": "/workspace/uploads/*.txt"  # Only .txt files
+        "pattern": "/workspace/uploads/*.txt",  # Only .txt files
     },
-    description="Automatically process uploaded text files"
+    description="Automatically process uploaded text files",
 )
 
 print(f"✅ Workflow registered: {workflow_id}")
@@ -182,10 +186,7 @@ Now upload a text file to trigger the workflow:
 # trigger_workflow.py
 import nexus
 
-nx = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "nxk_1234567890abcdef..."
-})
+nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "nxk_1234567890abcdef..."})
 
 # Upload a test file
 content = b"""
@@ -230,19 +231,20 @@ import json
 
 nx = nexus.connect()  # Uses environment variables
 
+
 async def step1_extract_metadata(event):
     """Step 1: Extract file metadata"""
-    file_path = event['path']
+    file_path = event["path"]
     print(f"📊 Step 1: Extracting metadata from {file_path}")
 
-    content = nx.read(file_path).decode('utf-8')
+    content = nx.read(file_path).decode("utf-8")
 
     metadata = {
         "file_path": file_path,
         "size_bytes": len(content),
         "word_count": len(content.split()),
-        "line_count": len(content.split('\n')),
-        "char_count": len(content)
+        "line_count": len(content.split("\n")),
+        "char_count": len(content),
     }
 
     # Store metadata
@@ -252,29 +254,31 @@ async def step1_extract_metadata(event):
     print(f"✅ Metadata saved to {meta_path}")
     return metadata
 
+
 async def step2_categorize(event):
     """Step 2: Categorize based on size"""
-    meta_path = event['path']
+    meta_path = event["path"]
     print(f"🏷️  Step 2: Categorizing {meta_path}")
 
-    metadata = json.loads(nx.read(meta_path).decode('utf-8'))
+    metadata = json.loads(nx.read(meta_path).decode("utf-8"))
 
     # Categorize by size
-    if metadata['word_count'] < 50:
+    if metadata["word_count"] < 50:
         category = "short"
-    elif metadata['word_count'] < 200:
+    elif metadata["word_count"] < 200:
         category = "medium"
     else:
         category = "long"
 
     # Move to category folder
-    original_path = metadata['file_path']
+    original_path = metadata["file_path"]
     category_path = f"/workspace/categorized/{category}/{original_path.split('/')[-1]}"
 
     nx.copy(original_path, category_path)
     print(f"✅ Categorized as '{category}' → {category_path}")
 
     return {"category": category, "path": category_path}
+
 
 async def step3_notify(event):
     """Step 3: Send notification (simulated)"""
@@ -283,16 +287,17 @@ async def step3_notify(event):
     # In real app, send email/webhook/slack notification
     notification = {
         "event": "file_processed",
-        "timestamp": event.get('timestamp'),
-        "file": event['path']
+        "timestamp": event.get("timestamp"),
+        "file": event["path"],
     }
 
     # Log notification
     log_path = "/workspace/notifications.log"
-    nx.append(log_path, (json.dumps(notification) + '\n').encode())
+    nx.append(log_path, (json.dumps(notification) + "\n").encode())
 
     print(f"✅ Logged to {log_path}")
     return notification
+
 
 # Register pipeline: Step 1 → Step 2 → Step 3
 workflow_id = nx.register_workflow_pipeline(
@@ -301,29 +306,26 @@ workflow_id = nx.register_workflow_pipeline(
         {
             "name": "extract_metadata",
             "handler": step1_extract_metadata,
-            "trigger": {
-                "event": "file.created",
-                "pattern": "/workspace/inbox/*.txt"
-            }
+            "trigger": {"event": "file.created", "pattern": "/workspace/inbox/*.txt"},
         },
         {
             "name": "categorize",
             "handler": step2_categorize,
             "trigger": {
                 "event": "file.created",
-                "pattern": "**/*.meta.json"  # Triggered by step 1
-            }
+                "pattern": "**/*.meta.json",  # Triggered by step 1
+            },
         },
         {
             "name": "notify",
             "handler": step3_notify,
             "trigger": {
                 "event": "file.created",
-                "pattern": "/workspace/categorized/**/*.txt"  # Triggered by step 2
-            }
-        }
+                "pattern": "/workspace/categorized/**/*.txt",  # Triggered by step 2
+            },
+        },
     ],
-    description="Multi-step document processing pipeline"
+    description="Multi-step document processing pipeline",
 )
 
 print(f"✅ Pipeline registered: {workflow_id}")
@@ -341,7 +343,9 @@ import nexus
 nx = nexus.connect()
 
 # Upload a document
-nx.write("/workspace/inbox/report.txt", b"""
+nx.write(
+    "/workspace/inbox/report.txt",
+    b"""
 Executive Summary: Q4 2024 Results
 
 Our AI-powered platform achieved 150% growth this quarter.
@@ -352,7 +356,8 @@ Key highlights:
 - Customer satisfaction: 95% positive feedback
 
 Looking ahead to 2025, we're focused on scalability and enterprise features.
-""".strip())
+""".strip(),
+)
 
 print("✅ Document uploaded - pipeline will execute 3 steps automatically!")
 ```
@@ -383,9 +388,10 @@ from datetime import datetime
 
 nx = nexus.connect()
 
+
 async def safe_process_file(event):
     """Workflow with comprehensive error handling"""
-    file_path = event['path']
+    file_path = event["path"]
 
     try:
         print(f"🔄 Processing {file_path}...")
@@ -422,10 +428,12 @@ async def safe_process_file(event):
         log_error(file_path, str(e), retry=True)
         raise  # Re-raise to trigger retry
 
+
 def process_content(content):
     """Process file content (example)"""
-    text = content.decode('utf-8')
+    text = content.decode("utf-8")
     return f"Processed at {datetime.now()}: {len(text)} bytes"
+
 
 def log_error(path, error, retry=False):
     """Log errors to a dedicated error log"""
@@ -433,27 +441,22 @@ def log_error(path, error, retry=False):
         "timestamp": datetime.now().isoformat(),
         "file": path,
         "error": error,
-        "retry": retry
+        "retry": retry,
     }
-    nx.append(
-        "/workspace/errors.log",
-        (json.dumps(error_log) + '\n').encode()
-    )
+    nx.append("/workspace/errors.log", (json.dumps(error_log) + "\n").encode())
+
 
 # Register with retry configuration
 workflow_id = nx.register_workflow(
     name="safe_processor",
     handler=safe_process_file,
-    trigger={
-        "event": "file.created",
-        "pattern": "/workspace/process/*.txt"
-    },
+    trigger={"event": "file.created", "pattern": "/workspace/process/*.txt"},
     retry_policy={
         "max_attempts": 3,
         "backoff_seconds": 5,  # 5s, 10s, 15s delays
-        "backoff_multiplier": 1.5
+        "backoff_multiplier": 1.5,
     },
-    description="Fault-tolerant file processor"
+    description="Fault-tolerant file processor",
 )
 
 print(f"✅ Robust workflow registered: {workflow_id}")
@@ -485,7 +488,7 @@ for wf in workflows:
 history = nx.get_workflow_history("text_processor", limit=10)
 print(f"📊 Recent Executions:")
 for exec in history:
-    status_icon = "✅" if exec['status'] == "success" else "❌"
+    status_icon = "✅" if exec["status"] == "success" else "❌"
     print(f"  {status_icon} {exec['timestamp']}: {exec['file']} - {exec['duration']}ms")
 
 # Get workflow statistics
@@ -532,7 +535,7 @@ print("🗑️  Old workflow deleted")
 # Update workflow configuration
 nx.update_workflow(
     "text_processor",
-    trigger={"event": "file.created", "pattern": "**/*.txt"}  # Expanded pattern
+    trigger={"event": "file.created", "pattern": "**/*.txt"},  # Expanded pattern
 )
 print("🔄 Workflow updated")
 ```
@@ -549,6 +552,7 @@ Here's a production-ready workflow automation system:
 Production Workflow Automation with Nexus
 Demonstrates: file processing, error handling, monitoring
 """
+
 import nexus
 import asyncio
 import json
@@ -558,8 +562,7 @@ from typing import Dict, Any
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -567,37 +570,32 @@ logger = logging.getLogger(__name__)
 NEXUS_URL = "http://localhost:2026"
 NEXUS_API_KEY = "nxk_..."  # Replace with your key
 
+
 class WorkflowAutomation:
     def __init__(self):
-        self.nx = nexus.connect(config={
-            "url": NEXUS_URL,
-            "api_key": NEXUS_API_KEY
-        })
+        self.nx = nexus.connect(config={"url": NEXUS_URL, "api_key": NEXUS_API_KEY})
         self.workflows = []
 
     async def process_document(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Process uploaded documents"""
-        file_path = event['path']
+        file_path = event["path"]
         logger.info(f"Processing document: {file_path}")
 
         try:
             # Read content
-            content = self.nx.read(file_path).decode('utf-8')
+            content = self.nx.read(file_path).decode("utf-8")
 
             # Extract metadata
             metadata = {
                 "words": len(content.split()),
-                "lines": len(content.split('\n')),
+                "lines": len(content.split("\n")),
                 "chars": len(content),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
 
             # Save analysis
             analysis_path = file_path + ".analysis.json"
-            self.nx.write(
-                analysis_path,
-                json.dumps(metadata, indent=2).encode()
-            )
+            self.nx.write(analysis_path, json.dumps(metadata, indent=2).encode())
 
             logger.info(f"✅ Analysis saved: {analysis_path}")
             return {"status": "success", "metadata": metadata}
@@ -609,11 +607,11 @@ class WorkflowAutomation:
 
     async def backup_important_files(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Backup files tagged as important"""
-        file_path = event['path']
+        file_path = event["path"]
         logger.info(f"Backing up: {file_path}")
 
         # Create backup
-        backup_path = file_path.replace('/workspace/', '/workspace/backups/')
+        backup_path = file_path.replace("/workspace/", "/workspace/backups/")
         self.nx.copy(file_path, backup_path)
 
         logger.info(f"✅ Backup created: {backup_path}")
@@ -621,15 +619,8 @@ class WorkflowAutomation:
 
     def _log_error(self, file_path: str, error: str):
         """Log errors to error file"""
-        error_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "file": file_path,
-            "error": error
-        }
-        self.nx.append(
-            "/workspace/system/errors.log",
-            (json.dumps(error_entry) + '\n').encode()
-        )
+        error_entry = {"timestamp": datetime.now().isoformat(), "file": file_path, "error": error}
+        self.nx.append("/workspace/system/errors.log", (json.dumps(error_entry) + "\n").encode())
 
     def register_workflows(self):
         """Register all workflow handlers"""
@@ -638,14 +629,8 @@ class WorkflowAutomation:
         wf1 = self.nx.register_workflow(
             name="document_processor",
             handler=self.process_document,
-            trigger={
-                "event": "file.created",
-                "pattern": "/workspace/documents/*.txt"
-            },
-            retry_policy={
-                "max_attempts": 3,
-                "backoff_seconds": 5
-            }
+            trigger={"event": "file.created", "pattern": "/workspace/documents/*.txt"},
+            retry_policy={"max_attempts": 3, "backoff_seconds": 5},
         )
         self.workflows.append(wf1)
         logger.info(f"✅ Registered: document_processor ({wf1})")
@@ -654,10 +639,7 @@ class WorkflowAutomation:
         wf2 = self.nx.register_workflow(
             name="backup_important",
             handler=self.backup_important_files,
-            trigger={
-                "event": "file.created",
-                "pattern": "/workspace/important/*.txt"
-            }
+            trigger={"event": "file.created", "pattern": "/workspace/important/*.txt"},
         )
         self.workflows.append(wf2)
         logger.info(f"✅ Registered: backup_important ({wf2})")
@@ -680,6 +662,7 @@ class WorkflowAutomation:
         for wf_id in self.workflows:
             self.nx.delete_workflow(wf_id)
         logger.info("✅ All workflows stopped")
+
 
 if __name__ == "__main__":
     automation = WorkflowAutomation()
@@ -749,6 +732,7 @@ for wf in workflows:
 
 # 3. Enable debug logging
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 ```
 
@@ -771,6 +755,7 @@ async def my_workflow(event):
         logger.error(f"❌ Error: {e}", exc_info=True)
         raise
 
+
 # Check error logs
 errors = nx.get_workflow_errors("workflow_id", limit=50)
 for err in errors:
@@ -791,8 +776,9 @@ async def batch_workflow(event):
 
     # Process in batches
     for i in range(0, len(files), 10):
-        batch = files[i:i+10]
+        batch = files[i : i + 10]
         await asyncio.gather(*[process_file(f) for f in batch])
+
 
 # 2. Optimize file operations
 # Bad: Multiple round trips
@@ -858,7 +844,7 @@ Nexus provides:
 ```python
 # ✅ Good: Idempotent (safe to run multiple times)
 async def process_file(event):
-    result_path = event['path'] + ".result"
+    result_path = event["path"] + ".result"
 
     # Check if already processed
     if nx.exists(result_path):
@@ -866,8 +852,9 @@ async def process_file(event):
         return
 
     # Process and save result
-    result = compute_result(event['path'])
+    result = compute_result(event["path"])
     nx.write(result_path, result)
+
 
 # ❌ Bad: Not idempotent
 async def increment_counter(event):
@@ -883,17 +870,13 @@ import structlog
 
 logger = structlog.get_logger()
 
+
 async def workflow_handler(event):
-    logger.info("workflow_started",
-        workflow="my_workflow",
-        file=event['path'],
-        event_id=event.get('id')
+    logger.info(
+        "workflow_started", workflow="my_workflow", file=event["path"], event_id=event.get("id")
     )
     # ... process ...
-    logger.info("workflow_completed",
-        workflow="my_workflow",
-        duration_ms=duration
-    )
+    logger.info("workflow_completed", workflow="my_workflow", duration_ms=duration)
 ```
 
 ### 3. Handle Partial Failures
@@ -918,7 +901,7 @@ async def process_batch(event):
         "total": len(files),
         "succeeded": len(results),
         "failed": len(errors),
-        "errors": errors
+        "errors": errors,
     }
     nx.write("/workspace/summary.json", json.dumps(summary).encode())
 ```

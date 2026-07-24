@@ -32,12 +32,7 @@ nexus serve --database-url postgresql://user:pass@localhost/nexus
 from nexus.server.rpc_server import start_server
 
 # Start server
-start_server(
-    host="0.0.0.0",
-    port=8765,
-    data_dir="./nexus-data",
-    api_key="secret123"
-)
+start_server(host="0.0.0.0", port=8765, data_dir="./nexus-data", api_key="secret123")
 ```
 
 **Options:**
@@ -79,11 +74,7 @@ nexus mount /mnt/nexus --foreground
 from nexus.fuse.mount import mount_nexus
 
 # Mount filesystem
-mount_nexus(
-    mount_point="/mnt/nexus",
-    data_dir="./nexus-data",
-    foreground=False
-)
+mount_nexus(mount_point="/mnt/nexus", data_dir="./nexus-data", foreground=False)
 ```
 
 **Options:**

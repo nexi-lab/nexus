@@ -116,8 +116,7 @@ def test_namespace_survives_kernel_restart(tmp_path: Path) -> None:
         # tempdir-backed metastore this returned None while the payload
         # bytes sat byte-identical under <data_dir>/root/).
         assert second.sys_stat(TEST_PATH) is not None, (
-            "VFS namespace lost across kernel restart — metastore is "
-            "not durable (#4343)"
+            "VFS namespace lost across kernel restart — metastore is not durable (#4343)"
         )
         assert second.sys_read_raw(TEST_PATH) == PAYLOAD
         # Negative control: a never-written path must stay absent

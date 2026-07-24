@@ -43,15 +43,25 @@
 ```python
 # tests/unit/bricks/search/test_macro_chunk_core.py
 from nexus.bricks.search.macro_chunk import (
-    ChunkRow, ExpansionConfig, merge_spans, _is_code_path,
-    _section_bounds, _window_for_anchor, _stitch,
+    ChunkRow,
+    ExpansionConfig,
+    merge_spans,
+    _is_code_path,
+    _section_bounds,
+    _window_for_anchor,
+    _stitch,
 )
 
 
 def _row(idx, tokens=10, heading="H1", text=None, ls=None, le=None, path="/a.md"):
     return ChunkRow(
-        path=path, chunk_index=idx, text=text or f"c{idx}", tokens=tokens,
-        line_start=ls, line_end=le, heading_prefix=heading,
+        path=path,
+        chunk_index=idx,
+        text=text or f"c{idx}",
+        tokens=tokens,
+        line_start=ls,
+        line_end=le,
+        heading_prefix=heading,
     )
 
 
@@ -71,8 +81,7 @@ def test_is_code_path():
 
 
 def test_section_bounds_stops_at_heading_change():
-    rows = [_row(0, heading="A"), _row(1, heading="A"),
-            _row(2, heading="B"), _row(3, heading="B")]
+    rows = [_row(0, heading="A"), _row(1, heading="A"), _row(2, heading="B"), _row(3, heading="B")]
     assert _section_bounds(_map(rows), 1) == (0, 1)
     assert _section_bounds(_map(rows), 2) == (2, 3)
 
@@ -124,15 +133,34 @@ chunk rows for (path, chunk_index range) spans, expand each hit into its surroun
 section (bounded by heading_prefix, file edge, and a token budget) and attach the
 stitched text as ``macro_text``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
 _CODE_EXTENSIONS = (
-    ".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".rs", ".go", ".java",
-    ".ts", ".tsx", ".js", ".jsx", ".v", ".vh", ".sv", ".svh",
-    ".scala", ".rb", ".swift", ".kt",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".py",
+    ".rs",
+    ".go",
+    ".java",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".v",
+    ".vh",
+    ".sv",
+    ".svh",
+    ".scala",
+    ".rb",
+    ".swift",
+    ".kt",
 )
 
 
@@ -200,9 +228,7 @@ def _window_for_anchor(
     by_index: dict[int, ChunkRow], anchor_idx: int, cfg: ExpansionConfig, is_code: bool
 ) -> tuple[int, int]:
     s_lo, s_hi = _section_bounds(by_index, anchor_idx)
-    section_tokens = sum(
-        by_index[i].tokens for i in range(s_lo, s_hi + 1) if i in by_index
-    )
+    section_tokens = sum(by_index[i].tokens for i in range(s_lo, s_hi + 1) if i in by_index)
     if section_tokens <= cfg.token_budget:
         return s_lo, s_hi
 
@@ -247,9 +273,7 @@ def _window_for_anchor(
     return lo, hi
 
 
-def _stitch(
-    by_index: dict[int, ChunkRow], lo: int, hi: int
-) -> tuple[str, int | None, int | None]:
+def _stitch(by_index: dict[int, ChunkRow], lo: int, hi: int) -> tuple[str, int | None, int | None]:
     rows = [by_index[i] for i in range(lo, hi + 1) if i in by_index]
     text = "\n".join(r.text for r in rows)
     starts = [r.line_start for r in rows if r.line_start is not None]
@@ -317,8 +341,15 @@ class _FakeFetcher:
 
 
 def _row(idx, path="/a.md", heading="A", tokens=10, text=None, ls=None, le=None):
-    return ChunkRow(path=path, chunk_index=idx, text=text or f"c{idx}",
-                    tokens=tokens, line_start=ls, line_end=le, heading_prefix=heading)
+    return ChunkRow(
+        path=path,
+        chunk_index=idx,
+        text=text or f"c{idx}",
+        tokens=tokens,
+        line_start=ls,
+        line_end=le,
+        heading_prefix=heading,
+    )
 
 
 @pytest.mark.asyncio
@@ -338,7 +369,7 @@ async def test_expand_single_batched_fetch_and_section_dedup():
     # two hits in the SAME section
     res = [_Result("/a.md", 1), _Result("/a.md", 2)]
     out = await expand_results(res, fetcher, ExpansionConfig(token_budget=1024, window=8))
-    assert len(fetcher.calls) == 1                 # one batched fetch
+    assert len(fetcher.calls) == 1  # one batched fetch
     assert out[0].macro_text == out[1].macro_text  # section computed once, shared
 
 
@@ -381,8 +412,7 @@ async def expand_results(
         return results
 
     spans = [
-        (r.path, max(0, r.chunk_index - cfg.window), r.chunk_index + cfg.window)
-        for r in results
+        (r.path, max(0, r.chunk_index - cfg.window), r.chunk_index + cfg.window) for r in results
     ]
     try:
         rows = await fetcher.fetch_ranges(merge_spans(spans), zone_id)
@@ -403,9 +433,7 @@ async def expand_results(
             s_lo, s_hi = _section_bounds(by_index, r.chunk_index)
             key = (r.path, s_lo, s_hi)
             if key not in section_cache:
-                w_lo, w_hi = _window_for_anchor(
-                    by_index, r.chunk_index, cfg, _is_code_path(r.path)
-                )
+                w_lo, w_hi = _window_for_anchor(by_index, r.chunk_index, cfg, _is_code_path(r.path))
                 section_cache[key] = _stitch(by_index, w_lo, w_hi)
             text, ls, le = section_cache[key]
             r.macro_text = text
@@ -479,6 +507,7 @@ Revision ID: add_chunk_heading_prefix
 Revises: <CURRENT_HEAD>
 Create Date: 2026-06-17
 """
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -690,6 +719,7 @@ Expected: FAIL — `AttributeError: 'PgVectorBackend' object has no attribute 'f
 from typing import Sequence
 from nexus.bricks.search.macro_chunk import ChunkRow
 
+
 async def fetch_ranges(
     self, spans: Sequence[tuple[str, int, int]], zone_id: str | None
 ) -> list[ChunkRow]:
@@ -698,9 +728,7 @@ async def fetch_ranges(
     clauses = []
     params: dict = {"zone_id": zone_id}
     for i, (path, lo, hi) in enumerate(spans):
-        clauses.append(
-            f"(fp.virtual_path = :p{i} AND c.chunk_index BETWEEN :lo{i} AND :hi{i})"
-        )
+        clauses.append(f"(fp.virtual_path = :p{i} AND c.chunk_index BETWEEN :lo{i} AND :hi{i})")
         params[f"p{i}"] = path
         params[f"lo{i}"] = lo
         params[f"hi{i}"] = hi
@@ -717,9 +745,13 @@ async def fetch_ranges(
         rows = (await conn.execute(sql, params)).mappings().all()
     return [
         ChunkRow(
-            path=r["path"], chunk_index=int(r["chunk_index"]), text=r["chunk_text"],
-            tokens=int(r["chunk_tokens"] or 0), line_start=r["line_start"],
-            line_end=r["line_end"], heading_prefix=r["heading_prefix"],
+            path=r["path"],
+            chunk_index=int(r["chunk_index"]),
+            text=r["chunk_text"],
+            tokens=int(r["chunk_tokens"] or 0),
+            line_start=r["line_start"],
+            line_end=r["line_end"],
+            heading_prefix=r["heading_prefix"],
         )
         for r in rows
     ]
@@ -761,11 +793,15 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_sqlite_fetch_ranges_returns_rows_with_metadata(sqlite_vec_backend, seeded_doc_sqlite):
+async def test_sqlite_fetch_ranges_returns_rows_with_metadata(
+    sqlite_vec_backend, seeded_doc_sqlite
+):
     rows = await sqlite_vec_backend.fetch_ranges([("/ws/doc.md", 0, 2)], zone_id="z1")
     idxs = sorted(r.chunk_index for r in rows)
     assert idxs == [0, 1, 2]
-    assert rows[0].heading_prefix is None or isinstance(rows[0].heading_prefix, str)  # metadata column present + typed
+    assert rows[0].heading_prefix is None or isinstance(
+        rows[0].heading_prefix, str
+    )  # metadata column present + typed
     assert rows[0].tokens >= 0
 ```
 
@@ -786,8 +822,10 @@ async def fetch_ranges(self, spans, zone_id):
         return []
     return await asyncio.to_thread(self._fetch_ranges_sync, list(spans), zone_id)
 
+
 def _fetch_ranges_sync(self, spans, zone_id):
     from nexus.bricks.search.macro_chunk import ChunkRow
+
     out = []
     with self._lock:  # mirror existing connection-guard pattern in this module
         cur = self._conn.cursor()
@@ -801,11 +839,17 @@ def _fetch_ranges_sync(self, spans, zone_id):
                 (zone_id, path, lo, hi),
             )
             for row in cur.fetchall():
-                out.append(ChunkRow(
-                    path=row[0], chunk_index=int(row[1]), text=row[2],
-                    tokens=int(row[3] or 0), line_start=row[4],
-                    line_end=row[5], heading_prefix=row[6],
-                ))
+                out.append(
+                    ChunkRow(
+                        path=row[0],
+                        chunk_index=int(row[1]),
+                        text=row[2],
+                        tokens=int(row[3] or 0),
+                        line_start=row[4],
+                        line_end=row[5],
+                        heading_prefix=row[6],
+                    )
+                )
     return out
 ```
 
@@ -872,22 +916,23 @@ In `config.py` `SearchConfig` + `search_config_from_env()`:
     macro_chunk_code_forward_bias: bool = True
 ```
 ```python
-    macro_chunk_tokens=get_env_int("NEXUS_SEARCH_MACRO_CHUNK_TOKENS", 1024),
-    macro_chunk_window=get_env_int("NEXUS_SEARCH_MACRO_CHUNK_WINDOW", 8),
-    macro_chunk_code_forward_bias=get_env_bool("NEXUS_SEARCH_MACRO_CHUNK_FORWARD_BIAS", True),
+macro_chunk_tokens = (get_env_int("NEXUS_SEARCH_MACRO_CHUNK_TOKENS", 1024),)
+macro_chunk_window = (get_env_int("NEXUS_SEARCH_MACRO_CHUNK_WINDOW", 8),)
+macro_chunk_code_forward_bias = (get_env_bool("NEXUS_SEARCH_MACRO_CHUNK_FORWARD_BIAS", True),)
 ```
 
 In `daemon.py` `search`: add `expand: str = "none"` (last param). After the final `results` list is built and before returning:
 ```python
-    if expand == "macro" and results:
-        from nexus.bricks.search.macro_chunk import expand_results, ExpansionConfig
-        fetcher = self._vector_backend_for(zone_id)  # the active PgVectorBackend/SqliteVecBackend
-        cfg = ExpansionConfig(
-            token_budget=self._config.macro_chunk_tokens,
-            window=self._config.macro_chunk_window,
-            code_forward_bias=self._config.macro_chunk_code_forward_bias,
-        )
-        await expand_results(results, fetcher, cfg, zone_id=zone_id)
+if expand == "macro" and results:
+    from nexus.bricks.search.macro_chunk import expand_results, ExpansionConfig
+
+    fetcher = self._vector_backend_for(zone_id)  # the active PgVectorBackend/SqliteVecBackend
+    cfg = ExpansionConfig(
+        token_budget=self._config.macro_chunk_tokens,
+        window=self._config.macro_chunk_window,
+        code_forward_bias=self._config.macro_chunk_code_forward_bias,
+    )
+    await expand_results(results, fetcher, cfg, zone_id=zone_id)
 ```
 
 > `_vector_backend_for` / the backend handle: use whatever attribute the daemon already holds for the active vector backend (grep `PgVectorBackend(`/`SqliteVecBackend(` in `daemon.py` to find the stored attribute, e.g. `self._vec_backend`). If the daemon stores the backend per-zone, fetch that; otherwise use the single stored backend. Do NOT add new construction — reuse the existing backend instance.
@@ -951,7 +996,7 @@ Expected: FAIL — `expand` not accepted / `macro_text` absent.
 
 In `search_query()` add the query param (next to `fusion`):
 ```python
-    expand: str = "none",
+expand: str = ("none",)
 ```
 Thread it into the daemon/search-service call that produces `results`:
 ```python

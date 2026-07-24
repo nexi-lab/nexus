@@ -86,7 +86,9 @@ def _op(
         id=op_id,
         module=op_id.split(".", 1)[0],
         summary="surface row",
-        transports={"cli": TransportCell(name="nexus read", source="src/nexus/cli/commands/__init__.py:1")},
+        transports={
+            "cli": TransportCell(name="nexus read", source="src/nexus/cli/commands/__init__.py:1")
+        },
         profiles=profiles
         or {
             "lite": ProfileStatus.SUPPORTED,
@@ -272,10 +274,30 @@ def _validate_supported_completeness(op: Operation) -> list[ValidationFinding]:
         return []
 
     checks = (
-        ("owning_issue", op.owning_issue, "supported_missing_owner", "supported row needs an owning issue"),
-        ("correctness_test", op.correctness_test, "supported_missing_test", "supported row needs a correctness test link"),
-        ("perf_class", op.perf_class, "supported_missing_perf_class", "supported row needs a performance class"),
-        ("perf_link", op.perf_link, "supported_missing_perf_link", "supported row needs performance evidence or rationale"),
+        (
+            "owning_issue",
+            op.owning_issue,
+            "supported_missing_owner",
+            "supported row needs an owning issue",
+        ),
+        (
+            "correctness_test",
+            op.correctness_test,
+            "supported_missing_test",
+            "supported row needs a correctness test link",
+        ),
+        (
+            "perf_class",
+            op.perf_class,
+            "supported_missing_perf_class",
+            "supported row needs a performance class",
+        ),
+        (
+            "perf_link",
+            op.perf_link,
+            "supported_missing_perf_link",
+            "supported row needs performance evidence or rationale",
+        ),
     )
     findings: list[ValidationFinding] = []
     for field, value, code, message in checks:
@@ -293,7 +315,10 @@ def _validate_supported_completeness(op: Operation) -> list[ValidationFinding]:
 
 
 def _validate_gap_policy(op: Operation) -> list[ValidationFinding]:
-    if any(status in _GAP_REQUIRED_STATUSES for status in op.profiles.values()) and op.gap_issue is None:
+    if (
+        any(status in _GAP_REQUIRED_STATUSES for status in op.profiles.values())
+        and op.gap_issue is None
+    ):
         return [
             ValidationFinding(
                 code="gap_missing_issue",
@@ -367,9 +392,7 @@ def test_correctness_test_path_must_exist_when_reference_checks_enabled(tmp_path
 
     findings = validate_coverage(_coverage(row), repo_root=Path.cwd(), check_references=True)
 
-    assert [(f.code, f.field) for f in findings] == [
-        ("invalid_test_reference", "correctness_test")
-    ]
+    assert [(f.code, f.field) for f in findings] == [("invalid_test_reference", "correctness_test")]
 
 
 def test_correctness_test_accepts_existing_repo_path() -> None:
@@ -388,9 +411,7 @@ def test_hot_perf_link_must_reference_existing_path() -> None:
 
     findings = validate_coverage(_coverage(row), repo_root=Path.cwd(), check_references=True)
 
-    assert [(f.code, f.field) for f in findings] == [
-        ("invalid_perf_reference", "perf_link")
-    ]
+    assert [(f.code, f.field) for f in findings] == [("invalid_perf_reference", "perf_link")]
 
 
 def test_not_perf_sensitive_accepts_text_rationale() -> None:
@@ -562,7 +583,11 @@ def test_compare_runtime_exposed_methods_reports_runtime_only_methods() -> None:
     )
 
     assert [(f.code, f.operation_id, f.message) for f in findings] == [
-        ("runtime_exposed_method_missing_matrix_row", "runtime_only", "runtime method is not represented by any grpc_expose or grpc_call matrix row")
+        (
+            "runtime_exposed_method_missing_matrix_row",
+            "runtime_only",
+            "runtime method is not represented by any grpc_expose or grpc_call matrix row",
+        )
     ]
 
 

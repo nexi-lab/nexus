@@ -78,16 +78,18 @@ class RuntimeDep(BaseModel):
     extras: tuple[str, ...] = ()
     install_hint: str | None = None
 
+
 class ExtensionManifest(BaseModel):
-    name: str                              # unique within kind
-    kind: Literal["connector", "brick", "plugin"]   # discriminator
-    module: str                            # dotted path; NOT imported by manifest
-    factory: str                           # callable/class name in module
+    name: str  # unique within kind
+    kind: Literal["connector", "brick", "plugin"]  # discriminator
+    module: str  # dotted path; NOT imported by manifest
+    factory: str  # callable/class name in module
     description: str = ""
     runtime_deps: tuple[RuntimeDep, ...] = ()
-    config_schema: str | None = None       # dotted path to Pydantic model
-    profile_gate: str | None = None        # None == always enabled
-    import_probes: tuple[str, ...] = ()    # optional dep modules; checked w/o raising
+    config_schema: str | None = None  # dotted path to Pydantic model
+    profile_gate: str | None = None  # None == always enabled
+    import_probes: tuple[str, ...] = ()  # optional dep modules; checked w/o raising
+
 
 class ConnectorManifest(ExtensionManifest):
     kind: Literal["connector"] = "connector"
@@ -97,6 +99,7 @@ class ConnectorManifest(ExtensionManifest):
     user_scoped: bool = False
     config_mapping: dict[str, str] = {}
 
+
 class BrickManifest(ExtensionManifest):
     kind: Literal["brick"] = "brick"
     tier: Literal["independent", "dependent"]
@@ -104,12 +107,14 @@ class BrickManifest(ExtensionManifest):
     produces: tuple[str, ...] = ()
     consumes: tuple[str, ...] = ()
 
+
 class PluginManifest(ExtensionManifest):
     kind: Literal["plugin"] = "plugin"
     entry_point_group: str = "nexus.plugins"
-    hooks: dict[str, str] = {}             # hook_name -> dotted callable path
-    commands: dict[str, str] = {}          # cmd_name -> dotted callable path
+    hooks: dict[str, str] = {}  # hook_name -> dotted callable path
+    commands: dict[str, str] = {}  # cmd_name -> dotted callable path
     # version/author/homepage pulled from importlib.metadata (package-level)
+
 
 AnyManifest = Annotated[
     Union[ConnectorManifest, BrickManifest, PluginManifest],
@@ -131,9 +136,13 @@ src/nexus/backends/s3/
 
 ```python
 class ManifestStore:
-    def list(self, *, kind: Kind | None = None,
-             profile: ProfileSet | None = None,
-             include_unavailable: bool = False) -> list[AnyManifest]: ...
+    def list(
+        self,
+        *,
+        kind: Kind | None = None,
+        profile: ProfileSet | None = None,
+        include_unavailable: bool = False,
+    ) -> list[AnyManifest]: ...
     def get(self, name: str, kind: Kind) -> AnyManifest: ...
     def check(self, m: AnyManifest) -> CheckReport: ...
     def resolve_factory(self, m: AnyManifest) -> Callable: ...
@@ -195,6 +204,7 @@ class ConnectorRegistry:
     @classmethod
     def list(cls) -> list[ConnectorInfo]:
         return [_to_connector_info(m) for m in store.list(kind="connector")]
+
     @classmethod
     def get(cls, name: str) -> ConnectorInfo:
         return _to_connector_info(store.get(name, kind="connector"))
@@ -227,9 +237,9 @@ class ConnectorRegistry:
 **Programmatic API** (`nexus.extensions.introspect`):
 
 ```python
-def list_extensions(*, kind: Kind | None = None,
-                    profile: ProfileSet | None = None,
-                    available_only: bool = False) -> list[AnyManifest]: ...
+def list_extensions(
+    *, kind: Kind | None = None, profile: ProfileSet | None = None, available_only: bool = False
+) -> list[AnyManifest]: ...
 def get_extension(name: str, kind: Kind) -> AnyManifest: ...
 def check_extension(name: str, kind: Kind) -> CheckReport: ...
 def list_kinds() -> list[Kind]: ...

@@ -83,6 +83,7 @@ Create `tests/extensions/test_package.py`:
 
 ```python
 """Smoke test: nexus.extensions package importable with zero side effects."""
+
 import sys
 
 
@@ -154,6 +155,7 @@ Create `tests/extensions/test_types.py`:
 
 ```python
 """Pure data types — must be importable with zero backend deps."""
+
 import sys
 
 from nexus.extensions.types import ArgType, ConnectionArg
@@ -183,9 +185,7 @@ def test_connection_arg_round_trip():
 
 
 def test_connection_arg_with_config_key():
-    arg = ConnectionArg(
-        type=ArgType.STRING, description="x", required=True, config_key="bucket"
-    )
+    arg = ConnectionArg(type=ArgType.STRING, description="x", required=True, config_key="bucket")
     d = arg.to_dict()
     assert d["config_key"] == "bucket"
 
@@ -361,9 +361,7 @@ def test_all_inherit_from_extension_error():
 
 
 def test_duplicate_manifest_error_carries_sources():
-    err = DuplicateManifestError(
-        kind="connector", name="s3", sources=("entry_point", "fs_scan")
-    )
+    err = DuplicateManifestError(kind="connector", name="s3", sources=("entry_point", "fs_scan"))
     msg = str(err)
     assert "connector" in msg
     assert "s3" in msg
@@ -413,9 +411,7 @@ class DuplicateManifestError(ExtensionError):
     """Raised when the same (kind, name) pair is declared twice from one source."""
 
     def __init__(self, kind: str, name: str, sources: tuple[str, ...]) -> None:
-        super().__init__(
-            f"Duplicate manifest for {kind}/{name} declared by: {', '.join(sources)}"
-        )
+        super().__init__(f"Duplicate manifest for {kind}/{name} declared by: {', '.join(sources)}")
         self.kind = kind
         self.name = name
         self.sources = sources
@@ -425,9 +421,7 @@ class ReservedNameError(ExtensionError):
     """Raised when a manifest declares a reserved name."""
 
     def __init__(self, name: str, pattern: str) -> None:
-        super().__init__(
-            f"Manifest name '{name}' matches reserved pattern: {pattern}"
-        )
+        super().__init__(f"Manifest name '{name}' matches reserved pattern: {pattern}")
         self.name = name
         self.pattern = pattern
 
@@ -476,6 +470,7 @@ Create `tests/extensions/test_manifest.py`:
 
 ```python
 """Pydantic discriminated-union manifest contract tests."""
+
 from __future__ import annotations
 
 import pytest
@@ -493,9 +488,7 @@ class TestRuntimeDep:
         assert dep.install_hint is None
 
     def test_binary_dep_with_hint(self):
-        dep = RuntimeDep(
-            kind="binary", name="git", install_hint="apt install git"
-        )
+        dep = RuntimeDep(kind="binary", name="git", install_hint="apt install git")
         assert dep.install_hint == "apt install git"
 
     def test_service_dep(self):
@@ -621,17 +614,13 @@ class TestExtensionManifestBase:
         from nexus.extensions.manifest import PluginManifest
 
         with pytest.raises(ValidationError):
-            PluginManifest(
-                name="ok", module="", factory="Z", entry_point_group="nexus.plugins"
-            )
+            PluginManifest(name="ok", module="", factory="Z", entry_point_group="nexus.plugins")
 
     def test_factory_required(self):
         from nexus.extensions.manifest import PluginManifest
 
         with pytest.raises(ValidationError):
-            PluginManifest(
-                name="ok", module="x.y", factory="", entry_point_group="nexus.plugins"
-            )
+            PluginManifest(name="ok", module="x.y", factory="", entry_point_group="nexus.plugins")
 ```
 
 - [ ] **Step 5.2: Run test to verify it fails**
@@ -739,8 +728,10 @@ from nexus.extensions.types import ArgType, ConnectionArg
 class TestConnectorManifest:
     def test_minimal(self):
         m = ConnectorManifest(
-            name="hn", module="nexus.backends.connectors.hn.connector",
-            factory="HNConnector", service_name="hn",
+            name="hn",
+            module="nexus.backends.connectors.hn.connector",
+            factory="HNConnector",
+            service_name="hn",
         )
         assert m.kind == "connector"
         assert m.service_name == "hn"
@@ -749,11 +740,12 @@ class TestConnectorManifest:
 
     def test_with_capabilities_and_args(self):
         m = ConnectorManifest(
-            name="x", module="m", factory="F", service_name="x",
+            name="x",
+            module="m",
+            factory="F",
+            service_name="x",
             capabilities=frozenset({"streaming"}),
-            connection_args={
-                "url": ConnectionArg(type=ArgType.STRING, description="endpoint")
-            },
+            connection_args={"url": ConnectionArg(type=ArgType.STRING, description="endpoint")},
             user_scoped=True,
         )
         assert "streaming" in m.capabilities
@@ -763,8 +755,11 @@ class TestConnectorManifest:
 class TestBrickManifest:
     def test_independent_tier(self):
         m = BrickManifest(
-            name="search", module="nexus.bricks.search.brick_factory",
-            factory="create", tier="independent", result_key="search_service",
+            name="search",
+            module="nexus.bricks.search.brick_factory",
+            factory="create",
+            tier="independent",
+            result_key="search_service",
             profile_gate="search",
         )
         assert m.kind == "brick"
@@ -773,9 +768,13 @@ class TestBrickManifest:
 
     def test_dependent_tier_with_artifacts(self):
         m = BrickManifest(
-            name="upload", module="m", factory="create",
-            tier="dependent", result_key="upload_service",
-            produces=("upload_observer",), consumes=("artifact_bus",),
+            name="upload",
+            module="m",
+            factory="create",
+            tier="dependent",
+            result_key="upload_service",
+            produces=("upload_observer",),
+            consumes=("artifact_bus",),
         )
         assert m.produces == ("upload_observer",)
         assert m.consumes == ("artifact_bus",)
@@ -783,15 +782,20 @@ class TestBrickManifest:
     def test_invalid_tier_rejected(self):
         with pytest.raises(ValidationError):
             BrickManifest(
-                name="x", module="m", factory="F",
-                tier="weird", result_key="r",
+                name="x",
+                module="m",
+                factory="F",
+                tier="weird",
+                result_key="r",
             )
 
 
 class TestPluginManifest:
     def test_minimal(self):
         m = PluginManifest(
-            name="koi", module="koi.plugin", factory="KoiPlugin",
+            name="koi",
+            module="koi.plugin",
+            factory="KoiPlugin",
         )
         assert m.kind == "plugin"
         assert m.entry_point_group == "nexus.plugins"
@@ -800,7 +804,9 @@ class TestPluginManifest:
 
     def test_hooks_and_commands(self):
         m = PluginManifest(
-            name="x", module="m", factory="F",
+            name="x",
+            module="m",
+            factory="F",
             hooks={"on_boot": "m.on_boot"},
             commands={"do": "m.do_command"},
         )
@@ -810,7 +816,10 @@ class TestPluginManifest:
 class TestDiscriminatedUnion:
     def test_parse_connector(self):
         data = {
-            "kind": "connector", "name": "hn", "module": "m", "factory": "F",
+            "kind": "connector",
+            "name": "hn",
+            "module": "m",
+            "factory": "F",
             "service_name": "hn",
         }
         m = parse_manifest(data)
@@ -818,15 +827,22 @@ class TestDiscriminatedUnion:
 
     def test_parse_brick(self):
         data = {
-            "kind": "brick", "name": "search", "module": "m", "factory": "F",
-            "tier": "independent", "result_key": "r",
+            "kind": "brick",
+            "name": "search",
+            "module": "m",
+            "factory": "F",
+            "tier": "independent",
+            "result_key": "r",
         }
         m = parse_manifest(data)
         assert isinstance(m, BrickManifest)
 
     def test_parse_plugin(self):
         data = {
-            "kind": "plugin", "name": "koi", "module": "m", "factory": "F",
+            "kind": "plugin",
+            "name": "koi",
+            "module": "m",
+            "factory": "F",
         }
         m = parse_manifest(data)
         assert isinstance(m, PluginManifest)
@@ -838,12 +854,13 @@ class TestDiscriminatedUnion:
 
     def test_json_round_trip_each_kind(self):
         manifests: list[AnyManifest] = [
-            ConnectorManifest(
-                name="hn", module="m", factory="F", service_name="hn"
-            ),
+            ConnectorManifest(name="hn", module="m", factory="F", service_name="hn"),
             BrickManifest(
-                name="search", module="m", factory="F",
-                tier="independent", result_key="r",
+                name="search",
+                module="m",
+                factory="F",
+                tier="independent",
+                result_key="r",
             ),
             PluginManifest(name="koi", module="m", factory="F"),
         ]
@@ -992,6 +1009,7 @@ Create `tests/extensions/fixtures/conftest.py`:
 
 ```python
 """Fixtures for store tests — synthetic manifests covering all kinds."""
+
 from __future__ import annotations
 
 import pytest
@@ -1008,8 +1026,10 @@ from nexus.extensions.manifest import (
 @pytest.fixture
 def hn_manifest() -> ConnectorManifest:
     return ConnectorManifest(
-        name="hn", module="nexus.backends.connectors.hn.connector",
-        factory="HNConnector", service_name="hn",
+        name="hn",
+        module="nexus.backends.connectors.hn.connector",
+        factory="HNConnector",
+        service_name="hn",
         runtime_deps=(RuntimeDep(kind="python", name="httpx"),),
     )
 
@@ -1017,8 +1037,11 @@ def hn_manifest() -> ConnectorManifest:
 @pytest.fixture
 def search_manifest() -> BrickManifest:
     return BrickManifest(
-        name="search", module="nexus.bricks.search.brick_factory",
-        factory="create", tier="independent", result_key="search_service",
+        name="search",
+        module="nexus.bricks.search.brick_factory",
+        factory="create",
+        tier="independent",
+        result_key="search_service",
         profile_gate="search",
     )
 
@@ -1026,7 +1049,9 @@ def search_manifest() -> BrickManifest:
 @pytest.fixture
 def koi_manifest() -> PluginManifest:
     return PluginManifest(
-        name="koi", module="koi.plugin", factory="KoiPlugin",
+        name="koi",
+        module="koi.plugin",
+        factory="KoiPlugin",
     )
 
 
@@ -1043,6 +1068,7 @@ Create `tests/extensions/test_store.py`:
 
 ```python
 """ManifestStore tests — list/get/check/resolve_factory + lazy invariants."""
+
 from __future__ import annotations
 
 import pytest
@@ -1195,7 +1221,8 @@ class ManifestStore:
         if key in seen_in_source:
             existing_source = self._entries[key][1]
             raise DuplicateManifestError(
-                kind=manifest.kind, name=manifest.name,
+                kind=manifest.kind,
+                name=manifest.name,
                 sources=(existing_source, source),
             )
         # Cross-source: respect precedence — first source wins.
@@ -1240,7 +1267,9 @@ class TestSourcePrecedence:
         from nexus.extensions.manifest import ConnectorManifest
 
         alt = ConnectorManifest(
-            name="hn", module="some.other.module", factory="Other",
+            name="hn",
+            module="some.other.module",
+            factory="Other",
             service_name="hn",
         )
         store._register(alt, source="entry_point")  # should be ignored
@@ -1364,7 +1393,9 @@ class TestResolveFactory:
 
         store = ManifestStore()
         m = PluginManifest(
-            name="synthetic", module="synthetic_target", factory="make",
+            name="synthetic",
+            module="synthetic_target",
+            factory="make",
         )
         store._register(m, source="test")
 
@@ -1379,7 +1410,9 @@ class TestResolveFactory:
 
         store = ManifestStore()
         m = PluginManifest(
-            name="ghost", module="nonexistent.module.path", factory="X",
+            name="ghost",
+            module="nonexistent.module.path",
+            factory="X",
         )
         store._register(m, source="test")
         with pytest.raises(FactoryResolutionError) as excinfo:
@@ -1398,7 +1431,9 @@ class TestResolveFactory:
 
         store = ManifestStore()
         m = PluginManifest(
-            name="bad", module="has_no_factory", factory="missing_callable",
+            name="bad",
+            module="has_no_factory",
+            factory="missing_callable",
         )
         store._register(m, source="test")
         with pytest.raises(FactoryResolutionError) as excinfo:
@@ -1587,9 +1622,7 @@ class TestFilesystemLoader:
             "MANIFEST = PluginManifest(name='good', module='m', factory='F')\n"
         )
         (tmp_path / "broken").mkdir()
-        (tmp_path / "broken" / "_manifest.py").write_text(
-            "raise RuntimeError('intentional')\n"
-        )
+        (tmp_path / "broken" / "_manifest.py").write_text("raise RuntimeError('intentional')\n")
         monkeypatch.syspath_prepend(str(tmp_path))
 
         store = ManifestStore()
@@ -1620,46 +1653,42 @@ logger = logging.getLogger(__name__)
 Append to the `ManifestStore` class:
 
 ```python
-    def load_filesystem(self, root: Path) -> None:
-        """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.
+def load_filesystem(self, root: Path) -> None:
+    """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.
 
-        Per-extension import isolation: a broken `_manifest.py` is logged at
-        WARN level and skipped; siblings continue loading.
-        """
-        for child in sorted(Path(root).iterdir()):
-            if not child.is_dir():
-                continue
-            manifest_file = child / "_manifest.py"
-            if not manifest_file.exists():
-                continue
-            try:
-                # Use importlib to load the file directly. The file's parent
-                # must be on sys.path for relative imports inside the manifest
-                # to work — callers are expected to have ensured this.
-                spec = importlib.util.spec_from_file_location(
-                    f"_nexus_manifest_{child.name}", manifest_file
-                )
-                if spec is None or spec.loader is None:
-                    raise ImportError(f"could not build spec for {manifest_file}")
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-            except Exception as exc:
-                logger.warning(
-                    "Skipping broken manifest at %s: %s", manifest_file, exc
-                )
-                continue
+    Per-extension import isolation: a broken `_manifest.py` is logged at
+    WARN level and skipped; siblings continue loading.
+    """
+    for child in sorted(Path(root).iterdir()):
+        if not child.is_dir():
+            continue
+        manifest_file = child / "_manifest.py"
+        if not manifest_file.exists():
+            continue
+        try:
+            # Use importlib to load the file directly. The file's parent
+            # must be on sys.path for relative imports inside the manifest
+            # to work — callers are expected to have ensured this.
+            spec = importlib.util.spec_from_file_location(
+                f"_nexus_manifest_{child.name}", manifest_file
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"could not build spec for {manifest_file}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)
+            continue
 
-            manifest = getattr(module, "MANIFEST", None)
-            if manifest is None:
-                logger.warning(
-                    "No MANIFEST constant in %s; skipping", manifest_file
-                )
-                continue
+        manifest = getattr(module, "MANIFEST", None)
+        if manifest is None:
+            logger.warning("No MANIFEST constant in %s; skipping", manifest_file)
+            continue
 
-            try:
-                self._register(manifest, source=f"fs_scan:{manifest_file}")
-            except DuplicateManifestError as exc:
-                logger.warning("Duplicate manifest skipped: %s", exc)
+        try:
+            self._register(manifest, source=f"fs_scan:{manifest_file}")
+        except DuplicateManifestError as exc:
+            logger.warning("Duplicate manifest skipped: %s", exc)
 ```
 
 Add to imports:
@@ -1707,23 +1736,21 @@ class TestEntryPointLoader:
         from nexus.extensions.manifest import ConnectorManifest
 
         fake_mod.MANIFEST = ConnectorManifest(
-            name="alpha", module="fake_pkg.alpha.connector",
-            factory="F", service_name="alpha",
+            name="alpha",
+            module="fake_pkg.alpha.connector",
+            factory="F",
+            service_name="alpha",
         )
         sys.modules["fake_pkg.alpha._manifest"] = fake_mod
 
-        ep = EntryPoint(
-            name="alpha", value="fake_pkg.alpha._manifest", group="nexus.connectors"
-        )
+        ep = EntryPoint(name="alpha", value="fake_pkg.alpha._manifest", group="nexus.connectors")
 
         def fake_entry_points(group: str):
             if group == "nexus.connectors":
                 return [ep]
             return []
 
-        monkeypatch.setattr(
-            "nexus.extensions.store._entry_points", fake_entry_points
-        )
+        monkeypatch.setattr("nexus.extensions.store._entry_points", fake_entry_points)
 
         store = ManifestStore()
         store.load_entry_points()
@@ -1736,12 +1763,8 @@ class TestEntryPointLoader:
         import logging
         from importlib.metadata import EntryPoint
 
-        good_ep = EntryPoint(
-            name="good", value="fake_pkg.good._manifest", group="nexus.plugins"
-        )
-        bad_ep = EntryPoint(
-            name="bad", value="nonexistent.module._manifest", group="nexus.plugins"
-        )
+        good_ep = EntryPoint(name="good", value="fake_pkg.good._manifest", group="nexus.plugins")
+        bad_ep = EntryPoint(name="bad", value="nonexistent.module._manifest", group="nexus.plugins")
 
         import sys
         import types
@@ -1749,9 +1772,7 @@ class TestEntryPointLoader:
         good_mod = types.ModuleType("fake_pkg.good._manifest")
         from nexus.extensions.manifest import PluginManifest
 
-        good_mod.MANIFEST = PluginManifest(
-            name="good", module="m", factory="F"
-        )
+        good_mod.MANIFEST = PluginManifest(name="good", module="m", factory="F")
         sys.modules["fake_pkg.good._manifest"] = good_mod
 
         def fake_entry_points(group: str):
@@ -1759,9 +1780,7 @@ class TestEntryPointLoader:
                 return [good_ep, bad_ep]
             return []
 
-        monkeypatch.setattr(
-            "nexus.extensions.store._entry_points", fake_entry_points
-        )
+        monkeypatch.setattr("nexus.extensions.store._entry_points", fake_entry_points)
 
         store = ManifestStore()
         with caplog.at_level(logging.WARNING):
@@ -1795,41 +1814,45 @@ def _entry_points(group: str):
 Append to the `ManifestStore` class:
 
 ```python
-    _ENTRY_POINT_GROUPS: tuple[str, ...] = (
-        "nexus.connectors",
-        "nexus.bricks",
-        "nexus.plugins",
-    )
+_ENTRY_POINT_GROUPS: tuple[str, ...] = (
+    "nexus.connectors",
+    "nexus.bricks",
+    "nexus.plugins",
+)
 
-    def load_entry_points(self) -> None:
-        """Discover manifests via importlib.metadata entry points.
 
-        Entry-point targets must be `_manifest` modules — i.e., the entry-point
-        value points to a module whose top level defines `MANIFEST` as a
-        manifest instance. This is the documented contract for third-party
-        extensions.
-        """
-        for group in self._ENTRY_POINT_GROUPS:
-            for ep in _entry_points(group):
-                try:
-                    module = importlib.import_module(ep.value)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to load entry point %s in group %s: %s",
-                        ep.name, group, exc,
-                    )
-                    continue
-                manifest = getattr(module, "MANIFEST", None)
-                if manifest is None:
-                    logger.warning(
-                        "Entry point %s in group %s has no MANIFEST",
-                        ep.name, group,
-                    )
-                    continue
-                try:
-                    self._register(manifest, source=f"entry_point:{group}/{ep.name}")
-                except DuplicateManifestError as exc:
-                    logger.warning("Duplicate entry-point manifest: %s", exc)
+def load_entry_points(self) -> None:
+    """Discover manifests via importlib.metadata entry points.
+
+    Entry-point targets must be `_manifest` modules — i.e., the entry-point
+    value points to a module whose top level defines `MANIFEST` as a
+    manifest instance. This is the documented contract for third-party
+    extensions.
+    """
+    for group in self._ENTRY_POINT_GROUPS:
+        for ep in _entry_points(group):
+            try:
+                module = importlib.import_module(ep.value)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load entry point %s in group %s: %s",
+                    ep.name,
+                    group,
+                    exc,
+                )
+                continue
+            manifest = getattr(module, "MANIFEST", None)
+            if manifest is None:
+                logger.warning(
+                    "Entry point %s in group %s has no MANIFEST",
+                    ep.name,
+                    group,
+                )
+                continue
+            try:
+                self._register(manifest, source=f"entry_point:{group}/{ep.name}")
+            except DuplicateManifestError as exc:
+                logger.warning("Duplicate entry-point manifest: %s", exc)
 ```
 
 - [ ] **Step 13.4: Run tests to verify they pass**
@@ -1891,9 +1914,7 @@ class TestJsonIndexLoader:
 
         assert store.list() == []
         # An INFO log explains the fall-through.
-        assert any(
-            "extensions.json" in r.message for r in caplog.records
-        )
+        assert any("extensions.json" in r.message for r in caplog.records)
 
     def test_corrupt_json_raises(self, tmp_path):
         from nexus.extensions.errors import IndexCorruptError
@@ -1909,9 +1930,15 @@ class TestJsonIndexLoader:
         import logging
 
         bad = tmp_path / "extensions.json"
-        bad.write_text(json.dumps({
-            "schema_version": 999, "generated_at": "x", "manifests": [],
-        }))
+        bad.write_text(
+            json.dumps(
+                {
+                    "schema_version": 999,
+                    "generated_at": "x",
+                    "manifests": [],
+                }
+            )
+        )
 
         store = ManifestStore()
         with caplog.at_level(logging.WARNING):
@@ -1943,51 +1970,47 @@ INDEX_SCHEMA_VERSION = 1
 Append to the `ManifestStore` class:
 
 ```python
-    def load_json_index(self, path: Path) -> None:
-        """Load manifests from a pre-built `extensions.json` index.
+def load_json_index(self, path: Path) -> None:
+    """Load manifests from a pre-built `extensions.json` index.
 
-        Behavior:
-        - Missing file → INFO log, return (so callers can fall back to
-          entry-points + fs scan).
-        - Malformed JSON → IndexCorruptError.
-        - Schema-version mismatch → WARN, skip (caller falls back).
-        """
-        from nexus.extensions.errors import IndexCorruptError
-        from nexus.extensions.manifest import parse_manifest
+    Behavior:
+    - Missing file → INFO log, return (so callers can fall back to
+      entry-points + fs scan).
+    - Malformed JSON → IndexCorruptError.
+    - Schema-version mismatch → WARN, skip (caller falls back).
+    """
+    from nexus.extensions.errors import IndexCorruptError
+    from nexus.extensions.manifest import parse_manifest
 
-        path = Path(path)
-        if not path.exists():
-            logger.info(
-                "No extensions.json at %s; falling back to live discovery", path
-            )
-            return
+    path = Path(path)
+    if not path.exists():
+        logger.info("No extensions.json at %s; falling back to live discovery", path)
+        return
 
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise IndexCorruptError(f"extensions.json at {path} is not valid JSON: {exc}") from exc
+
+    version = payload.get("schema_version")
+    if version != INDEX_SCHEMA_VERSION:
+        logger.warning(
+            "extensions.json schema_version=%s does not match expected %s; ignoring index",
+            version,
+            INDEX_SCHEMA_VERSION,
+        )
+        return
+
+    for raw in payload.get("manifests", []):
         try:
-            payload = json.loads(path.read_text())
-        except json.JSONDecodeError as exc:
-            raise IndexCorruptError(
-                f"extensions.json at {path} is not valid JSON: {exc}"
-            ) from exc
-
-        version = payload.get("schema_version")
-        if version != INDEX_SCHEMA_VERSION:
-            logger.warning(
-                "extensions.json schema_version=%s does not match expected %s; "
-                "ignoring index",
-                version, INDEX_SCHEMA_VERSION,
-            )
-            return
-
-        for raw in payload.get("manifests", []):
-            try:
-                manifest = parse_manifest(raw)
-            except Exception as exc:
-                logger.warning("Skipping malformed manifest in index: %s", exc)
-                continue
-            try:
-                self._register(manifest, source="json_index")
-            except DuplicateManifestError as exc:
-                logger.warning("Duplicate index manifest: %s", exc)
+            manifest = parse_manifest(raw)
+        except Exception as exc:
+            logger.warning("Skipping malformed manifest in index: %s", exc)
+            continue
+        try:
+            self._register(manifest, source="json_index")
+        except DuplicateManifestError as exc:
+            logger.warning("Duplicate index manifest: %s", exc)
 ```
 
 - [ ] **Step 14.4: Run tests to verify they pass**
@@ -2024,7 +2047,9 @@ class TestCheckMethod:
 
         store = ManifestStore()
         m = PluginManifest(
-            name="ok", module="m", factory="F",
+            name="ok",
+            module="m",
+            factory="F",
             runtime_deps=(RuntimeDep(kind="python", name="sys"),),
             import_probes=("sys",),
         )
@@ -2039,10 +2064,10 @@ class TestCheckMethod:
 
         store = ManifestStore()
         m = PluginManifest(
-            name="needs", module="m", factory="F",
-            runtime_deps=(
-                RuntimeDep(kind="python", name="totally_not_a_real_pkg_xyz"),
-            ),
+            name="needs",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="python", name="totally_not_a_real_pkg_xyz"),),
             import_probes=("totally_not_a_real_pkg_xyz",),
         )
         store._register(m, source="test")
@@ -2063,7 +2088,9 @@ class TestCheckMethod:
 
         store = ManifestStore()
         m = PluginManifest(
-            name="lazy_check", module="impl_no_import", factory="F",
+            name="lazy_check",
+            module="impl_no_import",
+            factory="F",
             import_probes=("sys",),  # only probe sys, not the impl module
         )
         store._register(m, source="test")
@@ -2082,46 +2109,41 @@ Expected: `AttributeError: 'ManifestStore' object has no attribute 'check'`.
 Append to the `ManifestStore` class:
 
 ```python
-    def check(self, manifest: AnyManifest) -> CheckReport:
-        """Run import probes and dependency declarations to report availability.
+def check(self, manifest: AnyManifest) -> CheckReport:
+    """Run import probes and dependency declarations to report availability.
 
-        Does NOT import the manifest's impl module. Only `import_probes` are
-        attempted; binary/service deps are reported as declared (we don't
-        execute them here).
-        """
-        probe_failures: list[str] = []
-        for probe in manifest.import_probes:
-            try:
-                importlib.import_module(probe)
-            except ImportError:
-                probe_failures.append(probe)
+    Does NOT import the manifest's impl module. Only `import_probes` are
+    attempted; binary/service deps are reported as declared (we don't
+    execute them here).
+    """
+    probe_failures: list[str] = []
+    for probe in manifest.import_probes:
+        try:
+            importlib.import_module(probe)
+        except ImportError:
+            probe_failures.append(probe)
 
-        missing_python = tuple(
-            d.name for d in manifest.runtime_deps
-            if d.kind == "python" and d.name in probe_failures
-        )
-        # Binary and service deps are declarative; we report them as "missing"
-        # only if their corresponding import_probe failed (best-effort).
-        # In practice, a follow-up could shell out to `which` for binary deps.
-        missing_binary = tuple(
-            d.name for d in manifest.runtime_deps if d.kind == "binary"
-        )
-        missing_service = tuple(
-            d.name for d in manifest.runtime_deps if d.kind == "service"
-        )
+    missing_python = tuple(
+        d.name for d in manifest.runtime_deps if d.kind == "python" and d.name in probe_failures
+    )
+    # Binary and service deps are declarative; we report them as "missing"
+    # only if their corresponding import_probe failed (best-effort).
+    # In practice, a follow-up could shell out to `which` for binary deps.
+    missing_binary = tuple(d.name for d in manifest.runtime_deps if d.kind == "binary")
+    missing_service = tuple(d.name for d in manifest.runtime_deps if d.kind == "service")
 
-        # We don't gate "available" on binary/service deps in this PR — those
-        # are advisory until an active checker is added (out of scope).
-        available = not probe_failures
+    # We don't gate "available" on binary/service deps in this PR — those
+    # are advisory until an active checker is added (out of scope).
+    available = not probe_failures
 
-        return CheckReport(
-            available=available,
-            missing_python_deps=missing_python,
-            missing_binary_deps=() if available else missing_binary,
-            missing_services=() if available else missing_service,
-            import_probe_failures=tuple(probe_failures),
-            profile_gate_disabled=False,
-        )
+    return CheckReport(
+        available=available,
+        missing_python_deps=missing_python,
+        missing_binary_deps=() if available else missing_binary,
+        missing_services=() if available else missing_service,
+        import_probe_failures=tuple(probe_failures),
+        profile_gate_disabled=False,
+    )
 ```
 
 - [ ] **Step 15.4: Run tests to verify they pass**
@@ -2201,9 +2223,7 @@ def get_store() -> ManifestStore:
     store = ManifestStore()
 
     # 1. JSON index (shipped with the wheel). Path resolved at import time.
-    index_path = (
-        Path(__file__).parent / "_index" / "extensions.json"
-    )
+    index_path = Path(__file__).parent / "_index" / "extensions.json"
     store.load_json_index(index_path)
 
     # 2. Entry points (third-party packages declaring nexus.* groups).
@@ -2283,6 +2303,7 @@ Create `tests/extensions/test_index.py`:
 
 ```python
 """Index generator — deterministic JSON build + drift detection."""
+
 from __future__ import annotations
 
 import json
@@ -2319,9 +2340,7 @@ class TestBuildIndex:
         out1 = tmp_path / "a.json"
         out2 = tmp_path / "b.json"
         build_index(manifests=all_manifests, output_path=out1, frozen_time="X")
-        build_index(
-            manifests=list(reversed(all_manifests)), output_path=out2, frozen_time="X"
-        )
+        build_index(manifests=list(reversed(all_manifests)), output_path=out2, frozen_time="X")
 
         # Output is deterministic: sorted by (kind, name), stable formatting.
         assert out1.read_text() == out2.read_text()
@@ -2400,9 +2419,7 @@ def _serialize(manifests: Iterable[AnyManifest], frozen_time: str | None) -> str
     payload = {
         "schema_version": INDEX_SCHEMA_VERSION,
         "generated_at": frozen_time
-        or _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds").replace(
-            "+00:00", "Z"
-        ),
+        or _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "manifests": sorted_manifests,
     }
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -2486,13 +2503,15 @@ def main(argv: list[str] | None = None) -> int:
 
     build_p = sub.add_parser("build", help="Generate extensions.json")
     build_p.add_argument(
-        "--output", type=Path,
+        "--output",
+        type=Path,
         default=Path(__file__).parent / "_index" / "extensions.json",
     )
 
     verify_p = sub.add_parser("verify", help="Check extensions.json is up to date")
     verify_p.add_argument(
-        "--against", type=Path,
+        "--against",
+        type=Path,
         default=Path(__file__).parent / "_index" / "extensions.json",
     )
 

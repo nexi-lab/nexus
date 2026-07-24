@@ -53,17 +53,17 @@ from nexus import NexusFS
 from nexus.backends import XConnectorBackend
 
 # Initialize
-nx = NexusFS(backend=XConnectorBackend(
-    token_manager_db="~/.nexus/nexus.db",
-))
+nx = NexusFS(
+    backend=XConnectorBackend(
+        token_manager_db="~/.nexus/nexus.db",
+    )
+)
 
 # Read timeline
 timeline = nx.read("/x/timeline/recent.json")
 
 # Post tweet
-nx.write("/x/posts/new.json", json.dumps({
-    "text": "Hello from Nexus! 🚀"
-}).encode())
+nx.write("/x/posts/new.json", json.dumps({"text": "Hello from Nexus! 🚀"}).encode())
 
 # Search tweets
 results = nx.grep("python", path="/x/search/")
@@ -149,26 +149,29 @@ profile = json.loads(nx.read("/x/users/elonmusk/profile.json"))
 
 ```python
 # Post a tweet
-nx.write("/x/posts/new.json", json.dumps({
-    "text": "Hello from Nexus! 🚀"
-}).encode())
+nx.write("/x/posts/new.json", json.dumps({"text": "Hello from Nexus! 🚀"}).encode())
 
 # Reply to a tweet
-nx.write("/x/posts/new.json", json.dumps({
-    "text": "@username Thanks for the feedback!",
-    "reply_to": "1234567890"  # Tweet ID to reply to
-}).encode())
+nx.write(
+    "/x/posts/new.json",
+    json.dumps(
+        {
+            "text": "@username Thanks for the feedback!",
+            "reply_to": "1234567890",  # Tweet ID to reply to
+        }
+    ).encode(),
+)
 
 # Quote tweet
-nx.write("/x/posts/new.json", json.dumps({
-    "text": "This is amazing!",
-    "quote_tweet_id": "1234567890"
-}).encode())
+nx.write(
+    "/x/posts/new.json",
+    json.dumps({"text": "This is amazing!", "quote_tweet_id": "1234567890"}).encode(),
+)
 
 # Save draft (local, not posted)
-nx.write("/x/posts/drafts/my-draft.json", json.dumps({
-    "text": "Draft tweet (not posted yet)"
-}).encode())
+nx.write(
+    "/x/posts/drafts/my-draft.json", json.dumps({"text": "Draft tweet (not posted yet)"}).encode()
+)
 ```
 
 ### Delete Operations
@@ -310,32 +313,26 @@ from nexus import NexusFS
 from nexus.backends import XConnectorBackend
 
 # Initialize
-nx = NexusFS(backend=XConnectorBackend(
-    token_manager_db="~/.nexus/nexus.db"
-))
+nx = NexusFS(backend=XConnectorBackend(token_manager_db="~/.nexus/nexus.db"))
 client = anthropic.Anthropic()
 
 # Read mentions
 mentions = json.loads(nx.read("/x/mentions/recent.json"))
 
 # Process each mention with Claude
-for tweet in mentions['data']:
+for tweet in mentions["data"]:
     # Generate response
     response = client.messages.create(
         model="claude-3-5-sonnet-20241022",
-        messages=[{
-            "role": "user",
-            "content": f"Reply to: {tweet['text']}"
-        }]
+        messages=[{"role": "user", "content": f"Reply to: {tweet['text']}"}],
     )
 
     reply_text = response.content[0].text
 
     # Post reply
-    nx.write("/x/posts/new.json", json.dumps({
-        "text": reply_text,
-        "reply_to": tweet['id']
-    }).encode())
+    nx.write(
+        "/x/posts/new.json", json.dumps({"text": reply_text, "reply_to": tweet["id"]}).encode()
+    )
 ```
 
 ### Batch Operations
@@ -367,9 +364,9 @@ timeline = json.loads(nx.read("/x/timeline/recent.json"))
 
 # Analyze sentiment
 positive_tweets = []
-for tweet in timeline['data']:
+for tweet in timeline["data"]:
     # Use your sentiment analysis model
-    sentiment = analyze_sentiment(tweet['text'])
+    sentiment = analyze_sentiment(tweet["text"])
 
     if sentiment > 0.7:
         positive_tweets.append(tweet)

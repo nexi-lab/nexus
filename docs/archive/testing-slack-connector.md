@@ -245,9 +245,10 @@ if messages:
 # Post message
 message_data = {
     "channel": "C1234567890",  # Replace with real channel ID
-    "text": "Hello from Nexus!"
+    "text": "Hello from Nexus!",
 }
 import json
+
 nx.write("/channels/general/new.json", json.dumps(message_data).encode())
 ```
 

@@ -106,10 +106,9 @@ CREATE INDEX idx_content_cache_stale ON content_cache(stale) WHERE stale = TRUE;
 
 ```python
 class BaseConnector(Backend):
-
     def sync(
         self,
-        path: str | None = None,      # None = sync all, or specific path
+        path: str | None = None,  # None = sync all, or specific path
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         max_file_size: int = 100 * 1024 * 1024,  # 100MB
@@ -140,6 +139,7 @@ class BaseConnector(Backend):
                 semantic_search.index_document(file)
 
         return SyncResult(...)
+
 
 @dataclass
 class SyncResult:
@@ -319,6 +319,7 @@ connector.write(path, content, expected_version="v1")
 ```python
 class VersionConflictError(Exception):
     """Write rejected - backend version changed."""
+
     def __init__(self, path: str, expected: str, actual: str):
         self.path = path
         self.expected_version = expected

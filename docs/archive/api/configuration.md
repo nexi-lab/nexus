@@ -12,10 +12,7 @@ Nexus supports multiple storage backends that can be configured at connection ti
 import nexus
 
 # Use local filesystem (default)
-nx = nexus.connect(config={
-    "backend": "local",
-    "data_dir": "./nexus-data"
-})
+nx = nexus.connect(config={"backend": "local", "data_dir": "./nexus-data"})
 ```
 
 ### Google Cloud Storage (GCS)
@@ -24,12 +21,14 @@ nx = nexus.connect(config={
 import nexus
 
 # Use GCS backend
-nx = nexus.connect(config={
-    "backend": "gcs",
-    "gcs_bucket_name": "my-bucket",
-    "gcs_project_id": "my-project",  # Optional
-    "gcs_credentials_path": "/path/to/credentials.json"  # Optional
-})
+nx = nexus.connect(
+    config={
+        "backend": "gcs",
+        "gcs_bucket_name": "my-bucket",
+        "gcs_project_id": "my-project",  # Optional
+        "gcs_credentials_path": "/path/to/credentials.json",  # Optional
+    }
+)
 ```
 
 Environment variables:
@@ -50,51 +49,34 @@ export NEXUS_GCS_CREDENTIALS_PATH=/path/to/credentials.json
 ```python
 config = {
     # Deployment mode
-    "mode": "standalone",               # "standalone", "remote", or "federation"
-
+    "mode": "standalone",  # "standalone", "remote", or "federation"
     # Backend configuration
-    "backend": "local",                # "local" or "gcs"
-    "data_dir": "./nexus-data",        # Root directory (local backend)
-
+    "backend": "local",  # "local" or "gcs"
+    "data_dir": "./nexus-data",  # Root directory (local backend)
     # GCS backend (when backend="gcs")
-    "gcs_bucket_name": "my-bucket",    # Required for GCS
-    "gcs_project_id": "my-project",    # Optional
-    "gcs_credentials_path": "/path",   # Optional
-
+    "gcs_bucket_name": "my-bucket",  # Required for GCS
+    "gcs_project_id": "my-project",  # Optional
+    "gcs_credentials_path": "/path",  # Optional
     # Database
-    "db_path": None,                   # Custom database path (auto-generated if None)
-
+    "db_path": None,  # Custom database path (auto-generated if None)
     # Caching
-    "cache_path_size": 512,            # Path metadata cache size
-    "cache_list_size": 128,            # Directory listing cache size
-    "cache_kv_size": 256,              # File metadata KV cache size
-    "cache_exists_size": 1024,         # Existence check cache size
-    "cache_ttl_seconds": 300,          # Cache TTL in seconds (None = no expiry)
-
+    "cache_path_size": 512,  # Path metadata cache size
+    "cache_list_size": 128,  # Directory listing cache size
+    "cache_kv_size": 256,  # File metadata KV cache size
+    "cache_exists_size": 1024,  # Existence check cache size
+    "cache_ttl_seconds": 300,  # Cache TTL in seconds (None = no expiry)
     # Parsing
-    "auto_parse": True,                # Auto-parse files on upload
-    "parsers": [                       # Custom parser configurations
-        {
-            "module": "my_parsers.csv",
-            "class": "CSVParser",
-            "priority": 60,
-            "enabled": True
-        }
+    "auto_parse": True,  # Auto-parse files on upload
+    "parsers": [  # Custom parser configurations
+        {"module": "my_parsers.csv", "class": "CSVParser", "priority": 60, "enabled": True}
     ],
-
     # Permissions
-    "enforce_permissions": False,      # Enable permission enforcement
-    "is_admin": False,                 # Admin privileges for this instance
-
+    "enforce_permissions": False,  # Enable permission enforcement
+    "is_admin": False,  # Admin privileges for this instance
     # Custom namespaces
     "namespaces": [
-        {
-            "name": "custom",
-            "readonly": False,
-            "admin_only": False,
-            "requires_tenant": True
-        }
-    ]
+        {"name": "custom", "readonly": False, "admin_only": False, "requires_tenant": True}
+    ],
 }
 
 nx = nexus.connect(config=config)
@@ -172,10 +154,7 @@ nx = nexus.connect()
 ```python
 from nexus import NexusConfig
 
-config = NexusConfig(
-    mode="standalone",
-    data_dir="./nexus-data"
-)
+config = NexusConfig(mode="standalone", data_dir="./nexus-data")
 
 nx = nexus.connect(config=config)
 ```

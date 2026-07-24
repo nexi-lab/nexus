@@ -207,7 +207,7 @@ class ApprovalService:
         reason: str | None,
         source: DecisionSource,
     ) -> ApprovalRequest: ...
-    async def cancel(self, request_id: str, by: str) -> None: ...   # for stale callers
+    async def cancel(self, request_id: str, by: str) -> None: ...  # for stale callers
     async def watch(self, zone_id: str | None) -> AsyncIterator[Event]: ...
 ```
 

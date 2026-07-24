@@ -68,17 +68,23 @@ def stat_cmd(paths, output_opts, remote_url, remote_api_key, operation_context):
     Examples:
         nexus stat /workspace/data.txt
     """
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = ...  # call nx.<rpc>(...)
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -107,13 +113,15 @@ def inproc_nexus(tmp_path):
     from nexus.factory import create_nexus_fs
     from nexus.core.config import PermissionConfig, ParseConfig
     from nexus.backends.storage.path_local import PathLocalBackend
+
     (tmp_path / "data").mkdir(exist_ok=True)
     k = KernelClient()
     k.set_metastore_path(str(tmp_path / "metastore.redb"))
     k.open()
     nx = create_nexus_fs(
         backend=PathLocalBackend(root_path=str(tmp_path / "data")),
-        metadata_store=k, record_store=None,
+        metadata_store=k,
+        record_store=None,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
     )
@@ -121,16 +129,18 @@ def inproc_nexus(tmp_path):
     nx.close()
     k.close()
 
+
 @pytest.fixture()
 def patched_fs(inproc_nexus, monkeypatch):
     """Make every CLI command use the in-process FS (no daemon)."""
     import contextlib
+
     @contextlib.asynccontextmanager
     async def _open(*a, **k):
         yield inproc_nexus
+
     monkeypatch.setattr("nexus.cli.commands.file_ops.open_filesystem", _open)
-    monkeypatch.setattr("nexus.cli.commands.file_ops.get_filesystem",
-                         lambda *a, **k: inproc_nexus)
+    monkeypatch.setattr("nexus.cli.commands.file_ops.get_filesystem", lambda *a, **k: inproc_nexus)
     return inproc_nexus
 ```
 
@@ -161,6 +171,7 @@ Use the "Parity-test fixture pattern" code above **verbatim** (it is proven work
 
 ```python
 """CLI <-> RPC <-> syscall parity for the core FS surface (Issue #4133)."""
+
 from __future__ import annotations
 import json
 from click.testing import CliRunner
@@ -199,6 +210,7 @@ git commit -m "test(#4133): in-process FS parity harness fixture"
 ```python
 def test_stat_single_parity(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import stat_cmd
+
     nx = patched_fs
     nx.write("/s.txt", b"abcde")
     rpc = nx.stat("/s.txt")
@@ -208,10 +220,13 @@ def test_stat_single_parity(patched_fs, cli_runner: CliRunner):
     assert out["size"] == rpc["size"] == 5
     assert out["content_id"] == rpc["content_id"]
 
+
 def test_stat_multi_uses_stat_bulk(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import stat_cmd
+
     nx = patched_fs
-    nx.write("/a.txt", b"aa"); nx.write("/b.txt", b"bbb")
+    nx.write("/a.txt", b"aa")
+    nx.write("/b.txt", b"bbb")
     rpc = nx.stat_bulk(["/a.txt", "/b.txt"])
     res = cli_runner.invoke(stat_cmd, ["/a.txt", "/b.txt", "--json"])
     assert res.exit_code == 0
@@ -244,6 +259,7 @@ def stat_cmd(paths, output_opts, remote_url, remote_api_key, operation_context):
         nexus stat /workspace/data.txt
         nexus stat /a.txt /b.txt --json
     """
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
@@ -253,11 +269,16 @@ def stat_cmd(paths, output_opts, remote_url, remote_api_key, operation_context):
                         data: Any = nx.stat(paths[0], context=cast(Any, operation_context))
                     else:
                         data = nx.stat_bulk(list(paths), context=cast(Any, operation_context))
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -286,6 +307,7 @@ git commit -m "feat(#4133): nexus stat (stat / stat_bulk) CLI"
 ```python
 def test_metadata_extended_parity(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import metadata_cmd
+
     nx = patched_fs
     nx.write("/m.txt", b"hi")
     rpc = nx.metadata_batch(["/m.txt", "/nope.txt"])
@@ -319,17 +341,23 @@ def metadata_cmd(paths, output_opts, remote_url, remote_api_key, operation_conte
     Examples:
         nexus metadata /a.txt /b.txt --json
     """
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = nx.metadata_batch(list(paths), context=cast(Any, operation_context))
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -356,6 +384,7 @@ git add -A && git commit -m "feat(#4133): nexus metadata (metadata_batch) CLI"
 ```python
 def test_exists_batch_parity_and_exit(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import exists_cmd
+
     nx = patched_fs
     nx.write("/here.txt", b"x")
     rpc = nx.exists_batch(["/here.txt", "/gone.txt"])
@@ -390,14 +419,19 @@ def exists_cmd(paths, output_opts, remote_url, remote_api_key, operation_context
         nexus exists /a.txt /b.txt
         nexus exists /a.txt --json
     """
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = nx.exists_batch(list(paths), context=cast(Any, operation_context))
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
             if not all(data.values()):
                 sys.exit(1)
         except SystemExit:
@@ -405,6 +439,7 @@ def exists_cmd(paths, output_opts, remote_url, remote_api_key, operation_context
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -431,8 +466,10 @@ git add -A && git commit -m "feat(#4133): nexus exists (exists_batch) CLI"
 ```python
 def test_read_bulk_parity(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import read_bulk_cmd
+
     nx = patched_fs
-    nx.write("/r1.txt", b"one"); nx.write("/r2.txt", b"two")
+    nx.write("/r1.txt", b"one")
+    nx.write("/r2.txt", b"two")
     rpc = nx.read_bulk(["/r1.txt", "/r2.txt"])
     res = cli_runner.invoke(read_bulk_cmd, ["/r1.txt", "/r2.txt", "--json"])
     assert res.exit_code == 0
@@ -440,8 +477,10 @@ def test_read_bulk_parity(patched_fs, cli_runner: CliRunner):
     assert out["/r1.txt"] == rpc["/r1.txt"].decode() == "one"
     assert out["/r2.txt"] == "two"
 
+
 def test_read_bulk_atomic_raises_on_missing(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import read_bulk_cmd
+
     nx = patched_fs
     nx.write("/r1.txt", b"one")
     res = cli_runner.invoke(read_bulk_cmd, ["/r1.txt", "/missing.txt", "--atomic", "--json"])
@@ -457,8 +496,9 @@ Run: `pytest tests/unit/cli/test_fs_parity.py -k read_bulk -q`
 ```python
 @click.command(name="read-bulk")
 @click.argument("paths", nargs=-1, required=True, type=str)
-@click.option("--atomic", is_flag=True,
-              help="Use read_batch (all-or-nothing: error on first missing path)")
+@click.option(
+    "--atomic", is_flag=True, help="Use read_batch (all-or-nothing: error on first missing path)"
+)
 @add_output_options
 @add_backend_options
 @add_context_options
@@ -472,24 +512,30 @@ def read_bulk_cmd(paths, atomic, output_opts, remote_url, remote_api_key, operat
         nexus read-bulk /a.txt /b.txt --json
         nexus read-bulk /a.txt /b.txt --atomic --json
     """
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     if atomic:
-                        items = nx.read_batch(list(paths), partial=False,
-                                              context=cast(Any, operation_context))
-                        data: Any = {it["path"]: _b2s(it.get("content"))
-                                     for it in items}
+                        items = nx.read_batch(
+                            list(paths), partial=False, context=cast(Any, operation_context)
+                        )
+                        data: Any = {it["path"]: _b2s(it.get("content")) for it in items}
                     else:
                         raw = nx.read_bulk(list(paths), context=cast(Any, operation_context))
                         data = {p: _b2s(v) for p, v in raw.items()}
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 
 
@@ -500,6 +546,7 @@ def _b2s(v):
             return v.decode()
         except UnicodeDecodeError:
             import base64
+
             return {"_base64": base64.b64encode(v).decode()}
     return v
 ```
@@ -527,10 +574,12 @@ git add -A && git commit -m "feat(#4133): nexus read-bulk (read_bulk/read_batch)
 ```python
 def test_rename_batch_per_item_independent(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import rename_batch_cmd
+
     nx = patched_fs
     nx.write("/old1.txt", b"1")  # /old2.txt deliberately absent
-    res = cli_runner.invoke(rename_batch_cmd,
-                            ["/old1.txt:/new1.txt", "/old2.txt:/new2.txt", "--json"])
+    res = cli_runner.invoke(
+        rename_batch_cmd, ["/old1.txt:/new1.txt", "/old2.txt:/new2.txt", "--json"]
+    )
     assert res.exit_code == 0  # independent: one failure does not abort the rest
     out = json.loads(res.output)
     assert out["/old1.txt"]["success"] is True
@@ -573,11 +622,16 @@ def rename_batch_cmd(pairs, output_opts, remote_url, remote_api_key, operation_c
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = nx.rename_batch(renames, context=cast(Any, operation_context))
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -604,8 +658,10 @@ git add -A && git commit -m "feat(#4133): nexus rename-batch (rename_batch) CLI"
 ```python
 def test_rm_batch_per_item_independent(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import rm_batch_cmd
+
     nx = patched_fs
-    nx.write("/d1.txt", b"1"); nx.write("/d2.txt", b"2")
+    nx.write("/d1.txt", b"1")
+    nx.write("/d2.txt", b"2")
     res = cli_runner.invoke(rm_batch_cmd, ["/d1.txt", "/missing.txt", "/d2.txt", "--json"])
     assert res.exit_code == 0
     out = json.loads(res.output)
@@ -637,18 +693,25 @@ def rm_batch_cmd(paths, recursive, output_opts, remote_url, remote_api_key, oper
         nexus rm-batch /a.txt /b.txt --json
         nexus rm-batch /dir1 /dir2 -r
     """
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
-                    data = nx.delete_batch(list(paths), recursive=recursive,
-                                           context=cast(Any, operation_context))
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+                    data = nx.delete_batch(
+                        list(paths), recursive=recursive, context=cast(Any, operation_context)
+                    )
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -680,6 +743,7 @@ Expected: see the `cat` decorator stack and `_impl`'s read branch. Note where `n
 ```python
 def test_cat_range_equals_slice(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import cat
+
     nx = patched_fs
     nx.write("/big.txt", b"0123456789")
     assert nx.read_range("/big.txt", 2, 5) == b"234"
@@ -687,8 +751,10 @@ def test_cat_range_equals_slice(patched_fs, cli_runner: CliRunner):
     assert res.exit_code == 0
     assert res.output.rstrip("\n") == "234"
 
+
 def test_cat_no_range_unchanged(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import cat
+
     nx = patched_fs
     nx.write("/whole.txt", b"hello world")
     res = cli_runner.invoke(cat, ["/whole.txt"])
@@ -751,6 +817,7 @@ git add -A && git commit -m "feat(#4133): nexus cat --offset/--length (read_rang
 ```python
 def test_cat_stream_matches_full(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import cat
+
     nx = patched_fs
     body = b"x" * 200_000
     nx.write("/strm.bin", body)
@@ -758,8 +825,10 @@ def test_cat_stream_matches_full(patched_fs, cli_runner: CliRunner):
     assert res.exit_code == 0
     assert res.output.encode() == body or res.stdout_bytes == body
 
+
 def test_write_stream_from_stdin(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import write
+
     nx = patched_fs
     res = cli_runner.invoke(write, ["/ws.txt", "--stream"], input="streamed-bytes")
     assert res.exit_code == 0
@@ -789,11 +858,11 @@ Add `stream_mode: bool, chunk_size: int` to `cat(...)` signature. In `_impl()`, 
 if stream_mode:
     if offset is not None:
         end = (offset + length) if length is not None else nx.stat(path)["size"]
-        gen = nx.stream_range(path, offset, end, chunk_size=chunk_size,
-                              context=cast(Any, operation_context))
+        gen = nx.stream_range(
+            path, offset, end, chunk_size=chunk_size, context=cast(Any, operation_context)
+        )
     else:
-        gen = nx.stream(path, chunk_size=chunk_size,
-                        context=cast(Any, operation_context))
+        gen = nx.stream(path, chunk_size=chunk_size, context=cast(Any, operation_context))
     for chunk in gen:
         sys.stdout.buffer.write(chunk)
     return
@@ -809,10 +878,14 @@ Add option `@click.option("--stream", "stream_mode", is_flag=True, help="Read co
 if stream_mode:
     raw = sys.stdin.buffer.read()
     cs = 65536
-    chunks = (raw[i:i + cs] for i in range(0, len(raw), cs))
+    chunks = (raw[i : i + cs] for i in range(0, len(raw), cs))
     result = nx.write_stream(path, chunks, context=cast(Any, operation_context))
-    render_output(data=result, output_opts=output_opts, timing=timing,
-                  human_formatter=lambda d: console.print(d))
+    render_output(
+        data=result,
+        output_opts=output_opts,
+        timing=timing,
+        human_formatter=lambda d: console.print(d),
+    )
     return
 ```
 
@@ -851,11 +924,14 @@ Expected: locate the top-level `admin` `click.Group` object and how existing sub
 ```python
 def test_admin_fs_flush_and_backfill(patched_fs, cli_runner: CliRunner, monkeypatch):
     import contextlib
+
     @contextlib.asynccontextmanager
     async def _open(*a, **k):
         yield patched_fs
+
     monkeypatch.setattr("nexus.cli.commands.admin.open_filesystem", _open, raising=False)
     from nexus.cli.commands.admin import admin
+
     r1 = cli_runner.invoke(admin, ["fs", "flush-write-observer", "--json"])
     assert r1.exit_code == 0
     assert "flushed" in json.loads(r1.output)
@@ -885,17 +961,23 @@ def admin_fs() -> None:
 @add_output_options
 def admin_fs_backfill_index(prefix, output_opts) -> None:
     """Backfill the sparse directory index (admin_only)."""
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(None, None, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = nx.backfill_directory_index(prefix)
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 
 
@@ -903,17 +985,23 @@ def admin_fs_backfill_index(prefix, output_opts) -> None:
 @add_output_options
 def admin_fs_flush_write_observer(output_opts) -> None:
     """Flush pending write-observer events to the DB (admin_only)."""
+
     async def _impl() -> None:
         timing = CommandTiming()
         try:
             async with open_filesystem(None, None, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = nx.flush_write_observer()
-            render_output(data=data, output_opts=output_opts, timing=timing,
-                          human_formatter=lambda d: console.print(d))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)
+
     asyncio.run(_impl())
 ```
 
@@ -940,6 +1028,7 @@ git add -A && git commit -m "feat(#4133): nexus admin fs backfill-index / flush-
 ```python
 def test_cli_read_equals_rpc_read(patched_fs, cli_runner: CliRunner):
     from nexus.cli.commands.file_ops import cat
+
     nx = patched_fs
     nx.write("/p.txt", b"parity-bytes")
     rpc = nx.read("/p.txt")
@@ -947,11 +1036,13 @@ def test_cli_read_equals_rpc_read(patched_fs, cli_runner: CliRunner):
     assert cli.exit_code == 0
     assert cli.output.rstrip("\n").encode() == rpc == b"parity-bytes"
 
+
 def test_write_roundtrips_content_id(patched_fs):
     nx = patched_fs
     w = nx.write("/cid.txt", b"data")
     s = nx.stat("/cid.txt")
     assert w["content_id"] == s["content_id"]
+
 
 def test_etag_if_match_conflict(patched_fs):
     """Stale content_id write is rejected; matching id succeeds."""
@@ -959,14 +1050,17 @@ def test_etag_if_match_conflict(patched_fs):
     first = nx.write("/occ.txt", b"v1")
     nx.write("/occ.txt", b"v2")  # advances content_id/version
     import pytest as _pt
+
     with _pt.raises(Exception):
         nx.write("/occ.txt", b"v3", content_id=first["content_id"])  # stale -> conflict
+
 
 def test_range_out_of_bounds_is_bounded(patched_fs):
     nx = patched_fs
     nx.write("/short.txt", b"abc")
     # end past EOF returns what exists, does not crash
     assert nx.read_range("/short.txt", 0, 100) == b"abc"
+
 
 def test_admin_only_denied_for_non_admin(tmp_path):
     """backfill/flush are admin_only — a non-admin FS is refused."""
@@ -975,13 +1069,20 @@ def test_admin_only_denied_for_non_admin(tmp_path):
     from nexus.contracts.config import PermissionConfig, ParseConfig, CacheConfig
     from tests.benchmarks.conftest import _build_kernel_metastore
     from nexus.records.sqlalchemy_store import SQLAlchemyRecordStore
+
     (tmp_path / "s").mkdir()
     _, meta = _build_kernel_metastore(str(tmp_path / "k.db"))
-    nx = create_nexus_fs(backend=CASLocalBackend(str(tmp_path / "s")),
-                         metadata_store=meta, record_store=SQLAlchemyRecordStore(),
-                         is_admin=False, permissions=PermissionConfig(enforce=True),
-                         parsing=ParseConfig(auto_parse=False), cache=CacheConfig())
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(str(tmp_path / "s")),
+        metadata_store=meta,
+        record_store=SQLAlchemyRecordStore(),
+        is_admin=False,
+        permissions=PermissionConfig(enforce=True),
+        parsing=ParseConfig(auto_parse=False),
+        cache=CacheConfig(),
+    )
     import pytest as _pt
+
     with _pt.raises(Exception):
         nx.flush_write_observer()
     nx.close()
@@ -1066,6 +1167,7 @@ git commit -m "docs(#4133): FS/metadata/stream/batch coverage matrix rows (full=
 @pytest.mark.benchmark_file_ops
 class TestRangeRead:
     """read_range vs full read of a 1 MB file (Issue #4133)."""
+
     def test_read_range_1mb_slice(self, benchmark, benchmark_nexus):
         nx = benchmark_nexus
         nx.write("/rr.bin", b"z" * (1024 * 1024))
@@ -1076,6 +1178,7 @@ class TestRangeRead:
 @pytest.mark.benchmark_file_ops
 class TestStatBulkVsSequential:
     """stat_bulk(100) vs 100x stat (Issue #4133)."""
+
     def test_stat_bulk_100(self, benchmark, populated_nexus):
         nx = populated_nexus
         paths = [f"/many_files/file_{i:04d}.txt" for i in range(100)]
@@ -1086,6 +1189,7 @@ class TestStatBulkVsSequential:
 @pytest.mark.benchmark_file_ops
 class TestTypedVsGenericRead:
     """Typed nx.read vs generic dispatch path (Issue #4133)."""
+
     def test_typed_read(self, benchmark, populated_nexus):
         nx = populated_nexus
         result = benchmark(lambda: nx.read("/many_files/file_0000.txt"))
@@ -1095,13 +1199,16 @@ class TestTypedVsGenericRead:
 @pytest.mark.benchmark_file_ops
 class TestLockAcquireRelease:
     """sys_lock + sys_unlock round-trip (Issue #4133, control plane)."""
+
     def test_lock_cycle(self, benchmark, benchmark_nexus):
         nx = benchmark_nexus
         nx.write("/lk.txt", b"x")
+
         def cycle():
             lid = nx.sys_lock("/lk.txt")
             nx.sys_unlock("/lk.txt", lid) if lid else None
             return lid
+
         benchmark(cycle)
 ```
 
@@ -1298,6 +1405,7 @@ Expected: see the `@pytest.mark.integration` marker, the `NEXUS_E2E` skip guard,
 
 Skipped unless NEXUS_E2E=1. Reuses #4132's profile-agnostic boot fixture.
 """
+
 from __future__ import annotations
 import os
 import pytest

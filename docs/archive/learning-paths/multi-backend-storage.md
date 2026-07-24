@@ -101,10 +101,7 @@ import nexus
 nx = nexus.connect()
 
 # Or connect explicitly
-nx = nexus.connect(config={
-    "url": "http://localhost:8765",
-    "api_key": "nxk_abc123..."
-})
+nx = nexus.connect(config={"url": "http://localhost:8765", "api_key": "nxk_abc123..."})
 ```
 
 Alternatively, use `nexus.connect()` directly:
@@ -113,7 +110,9 @@ Alternatively, use `nexus.connect()` directly:
 import nexus
 
 # Direct remote connection
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:8765", "api_key": "nxk_abc123..."})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:8765", "api_key": "nxk_abc123..."}
+)
 ```
 
 ### Step 2: Add GCS Backend Dynamically
@@ -127,11 +126,11 @@ gcs_mount_id = nx.mount_manager.add_mount(
     backend_type="gcs",
     backend_config={
         "bucket": "my-nexus-archives",
-        "project_id": "my-gcp-project"
+        "project_id": "my-gcp-project",
         # credentials_path: "/path/to/service-account.json"  # Optional
     },
     priority=10,
-    readonly=False
+    readonly=False,
 )
 print(f"✓ GCS backend mounted at /archives (ID: {gcs_mount_id})")
 
@@ -139,12 +138,9 @@ print(f"✓ GCS backend mounted at /archives (ID: {gcs_mount_id})")
 dataset_mount_id = nx.mount_manager.add_mount(
     mount_point="/datasets",
     backend_type="gcs",
-    backend_config={
-        "bucket": "company-ml-datasets",
-        "project_id": "my-gcp-project"
-    },
+    backend_config={"bucket": "company-ml-datasets", "project_id": "my-gcp-project"},
     priority=20,
-    readonly=True  # Prevent accidental modifications
+    readonly=True,  # Prevent accidental modifications
 )
 print(f"✓ Dataset backend mounted at /datasets (ID: {dataset_mount_id})")
 ```
@@ -155,8 +151,10 @@ print(f"✓ Dataset backend mounted at /datasets (ID: {dataset_mount_id})")
 # List all mounts
 mounts = nx.list_mounts()
 for mount in mounts:
-    print(f"📂 {mount.mount_point}: {mount.backend_type} "
-          f"(priority={mount.priority}, readonly={mount.readonly})")
+    print(
+        f"📂 {mount.mount_point}: {mount.backend_type} "
+        f"(priority={mount.priority}, readonly={mount.readonly})"
+    )
 
 # Output:
 # 📂 /workspace: local (priority=0, readonly=False)
@@ -200,7 +198,7 @@ nx.mount_manager.add_mount(
     mount_point="/workspace/shared",
     backend_type="gcs",
     backend_config={"bucket": "team-shared", "project_id": "my-project"},
-    priority=10  # Higher than default /workspace (priority=0)
+    priority=10,  # Higher than default /workspace (priority=0)
 )
 
 # Routing examples:
@@ -235,6 +233,7 @@ Optimize costs by storing frequently-accessed data locally, archive to cloud:
 ```python
 from datetime import datetime, timedelta
 
+
 def tier_old_files(nx, hot_path: str, cold_path: str, days_threshold: int = 30):
     """Move old files from hot (local) to cold (GCS) storage"""
 
@@ -243,12 +242,12 @@ def tier_old_files(nx, hot_path: str, cold_path: str, days_threshold: int = 30):
 
     # List files in hot storage
     for entry in nx.list(hot_path, recursive=True):
-        if not entry['is_directory']:
-            file_path = entry['path']
+        if not entry["is_directory"]:
+            file_path = entry["path"]
 
             # Get file metadata
             metadata = nx.stat(file_path)
-            created_at = datetime.fromisoformat(metadata['created_at'])
+            created_at = datetime.fromisoformat(metadata["created_at"])
 
             # Move to cold storage if older than threshold
             if created_at < cutoff_date:
@@ -269,11 +268,13 @@ def tier_old_files(nx, hot_path: str, cold_path: str, days_threshold: int = 30):
     print(f"✓ Moved {files_moved} files to cold storage")
     return files_moved
 
+
 # Example: Archive old workspace files to GCS
-tier_old_files(nx,
+tier_old_files(
+    nx,
     hot_path="/workspace/processed",
     cold_path="/archives/workspace-archive",
-    days_threshold=7  # Move files older than 7 days
+    days_threshold=7,  # Move files older than 7 days
 )
 ```
 
@@ -315,9 +316,9 @@ def provision_tenant_storage(nx, zone_id: str, gcs_bucket: str):
         backend_config={
             "bucket": gcs_bucket,
             "prefix": f"tenant-{zone_id}/",  # Bucket prefix isolation
-            "project_id": "my-gcp-project"
+            "project_id": "my-gcp-project",
         },
-        priority=20
+        priority=20,
     )
 
     # Create tenant workspace structure
@@ -327,6 +328,7 @@ def provision_tenant_storage(nx, zone_id: str, gcs_bucket: str):
 
     print(f"✓ Tenant {zone_id} provisioned with mount {mount_id}")
     return mount_id
+
 
 # Provision storage for new tenants
 provision_tenant_storage(nx, "acme-corp", "nexus-prod-storage")
@@ -361,11 +363,14 @@ def smart_write(nx, path: str, content: bytes, local_limit_gb: float = 100.0):
         nx.write(cloud_path, content)
         print(f"☁️  Burst to cloud: {cloud_path}")
 
+
 def get_local_storage_usage() -> float:
     """Get local storage usage in GB"""
     import shutil
+
     stat = shutil.disk_usage("/var/nexus/data")
     return (stat.total - stat.free) / (1024**3)
+
 
 # Usage
 for i in range(1000):
@@ -425,20 +430,14 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 ```python
 import nexus
 
-nx = nexus.connect(config={
-    "url": "http://localhost:8765",
-    "api_key": "nxk_abc123..."
-})
+nx = nexus.connect(config={"url": "http://localhost:8765", "api_key": "nxk_abc123..."})
 
 # Add GCS mount
 nx.mount_manager.add_mount(
     mount_point="/archives",
     backend_type="gcs",
-    backend_config={
-        "bucket": "my-nexus-archives",
-        "project_id": "my-gcp-project"
-    },
-    priority=10
+    backend_config={"bucket": "my-nexus-archives", "project_id": "my-gcp-project"},
+    priority=10,
 )
 
 # Test write to GCS
@@ -467,10 +466,7 @@ import nexus
 # Start server with default local backend
 # nexus serve --auth-type database --init --port 8765
 
-nx = nexus.connect(config={
-    "url": "http://localhost:8765",
-    "api_key": "nxk_abc123..."
-})
+nx = nexus.connect(config={"url": "http://localhost:8765", "api_key": "nxk_abc123..."})
 
 # Add multiple local backends (simulating different storage tiers)
 # Fast SSD storage
@@ -478,7 +474,7 @@ nx.mount_manager.add_mount(
     mount_point="/fast",
     backend_type="local",
     backend_config={"data_dir": "/tmp/nexus/fast-ssd"},
-    priority=20
+    priority=20,
 )
 
 # Slow but large storage (simulating archive)
@@ -486,7 +482,7 @@ nx.mount_manager.add_mount(
     mount_point="/archive",
     backend_type="local",
     backend_config={"data_dir": "/tmp/nexus/archive-hdd"},
-    priority=10
+    priority=10,
 )
 
 # Temporary scratch space
@@ -494,7 +490,7 @@ nx.mount_manager.add_mount(
     mount_point="/scratch",
     backend_type="local",
     backend_config={"data_dir": "/tmp/nexus/scratch"},
-    priority=5
+    priority=5,
 )
 
 # Use exactly the same API with multiple local backends
@@ -538,7 +534,7 @@ nx.mount_manager.add_mount(
     mount_point="/archives",
     backend_type="gcs",
     backend_config={"bucket": "my-bucket", "project_id": "my-project"},
-    priority=10
+    priority=10,
 )
 ```
 
@@ -628,32 +624,24 @@ import nexus
 from datetime import datetime, timedelta
 
 # Connect to server
-nx = nexus.connect(config={
-    "url": "https://nexus.company.com",
-    "api_key": "nxk_prod_key_..."
-})
+nx = nexus.connect(config={"url": "https://nexus.company.com", "api_key": "nxk_prod_key_..."})
 
 # Add GCS archive backend
 nx.mount_manager.add_mount(
     mount_point="/archives",
     backend_type="gcs",
-    backend_config={
-        "bucket": "company-archives",
-        "project_id": "prod-project"
-    },
-    priority=10
+    backend_config={"bucket": "company-archives", "project_id": "prod-project"},
+    priority=10,
 )
 
 # Add GCS cold storage
 nx.mount_manager.add_mount(
     mount_point="/cold",
     backend_type="gcs",
-    backend_config={
-        "bucket": "company-coldline",
-        "project_id": "prod-project"
-    },
-    priority=5
+    backend_config={"bucket": "company-coldline", "project_id": "prod-project"},
+    priority=5,
 )
+
 
 class StorageManager:
     def __init__(self, nx):
@@ -668,10 +656,7 @@ class StorageManager:
         self.nx.write(hot_file, content)
 
         # Tag for future tiering
-        self.nx.set_metadata(hot_file, {
-            "tier": "hot",
-            "accessed_at": datetime.now().isoformat()
-        })
+        self.nx.set_metadata(hot_file, {"tier": "hot", "accessed_at": datetime.now().isoformat()})
 
         return hot_file
 
@@ -681,25 +666,25 @@ class StorageManager:
 
         # Hot → Warm (after 7 days)
         for entry in self.nx.list(self.hot_path, recursive=True):
-            if entry['is_directory']:
+            if entry["is_directory"]:
                 continue
 
-            meta = self.nx.get_metadata(entry['path'])
-            accessed = datetime.fromisoformat(meta.get('accessed_at', now.isoformat()))
+            meta = self.nx.get_metadata(entry["path"])
+            accessed = datetime.fromisoformat(meta.get("accessed_at", now.isoformat()))
 
             if now - accessed > timedelta(days=7):
-                self._move_to_tier(entry['path'], self.hot_path, self.warm_path, "warm")
+                self._move_to_tier(entry["path"], self.hot_path, self.warm_path, "warm")
 
         # Warm → Cold (after 90 days)
         for entry in self.nx.list(self.warm_path, recursive=True):
-            if entry['is_directory']:
+            if entry["is_directory"]:
                 continue
 
-            meta = self.nx.get_metadata(entry['path'])
-            accessed = datetime.fromisoformat(meta.get('accessed_at', now.isoformat()))
+            meta = self.nx.get_metadata(entry["path"])
+            accessed = datetime.fromisoformat(meta.get("accessed_at", now.isoformat()))
 
             if now - accessed > timedelta(days=90):
-                self._move_to_tier(entry['path'], self.warm_path, self.cold_path, "cold")
+                self._move_to_tier(entry["path"], self.warm_path, self.cold_path, "cold")
 
     def _move_to_tier(self, path: str, from_tier: str, to_tier: str, tier_name: str):
         """Move file between tiers"""
@@ -711,15 +696,15 @@ class StorageManager:
         self.nx.write(new_path, content)
 
         # Update metadata
-        self.nx.set_metadata(new_path, {
-            "tier": tier_name,
-            "accessed_at": datetime.now().isoformat(),
-            "original_path": path
-        })
+        self.nx.set_metadata(
+            new_path,
+            {"tier": tier_name, "accessed_at": datetime.now().isoformat(), "original_path": path},
+        )
 
         # Remove from old tier
         self.nx.remove(path)
         print(f"✓ Tiered: {path} → {new_path}")
+
 
 # Usage
 storage = StorageManager(nx)

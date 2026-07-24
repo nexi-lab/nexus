@@ -199,17 +199,11 @@ class UserModel(Base):
     __tablename__ = "users"
 
     # Primary key - UUID for all new users
-    user_id: Mapped[str] = mapped_column(
-        String(255), primary_key=True
-    )
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
 
     # Identity (uniqueness enforced via partial indexes)
-    username: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )
-    email: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Profile
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -224,17 +218,13 @@ class UserModel(Base):
     )  # 'password', 'oauth', 'external', 'api_key'
 
     # External user management
-    external_user_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )
+    external_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     external_user_service: Mapped[str | None] = mapped_column(
         String(100), nullable=True, index=True
     )
 
     # API key (for programmatic access)
-    api_key: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )
+    api_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Tenant membership (via ReBAC groups only - no zone_id field)
     # Managed via: (user:user_id, member-of, group:tenant-{zone_id})
@@ -245,15 +235,9 @@ class UserModel(Base):
     )  # Global admin across all tenants
 
     # Status (soft delete support)
-    is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False, index=True
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
-    )
-    email_verified: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    email_verified: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Metadata
     metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
@@ -263,13 +247,12 @@ class UserModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False,
+        DateTime,
+        nullable=False,
         default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC)
+        onupdate=lambda: datetime.now(UTC),
     )
-    last_login_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
-    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     # Relationships
     oauth_accounts: Mapped[list["UserOAuthAccountModel"]] = relationship(
@@ -320,10 +303,7 @@ class UserOAuthAccountModel(Base):
     )
 
     user_id: Mapped[str] = mapped_column(
-        String(255),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
+        String(255), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # OAuth provider
@@ -333,17 +313,13 @@ class UserOAuthAccountModel(Base):
     provider_user_id: Mapped[str] = mapped_column(
         String(255), nullable=False, index=True
     )  # OAuth provider's user ID (e.g., Google 'sub')
-    provider_email: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )
+    provider_email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Token storage (ID token only)
     encrypted_id_token: Mapped[str | None] = mapped_column(
         Text, nullable=True
     )  # Encrypted ID token for authentication verification
-    token_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Profile data
     provider_profile: Mapped[str | None] = mapped_column(
@@ -357,9 +333,7 @@ class UserOAuthAccountModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Relationships
-    user: Mapped["UserModel"] = relationship(
-        "UserModel", back_populates="oauth_accounts"
-    )
+    user: Mapped["UserModel"] = relationship("UserModel", back_populates="oauth_accounts")
 
     # Indexes
     __table_args__ = (
@@ -397,9 +371,7 @@ class ExternalUserServiceModel(Base):
     auth_endpoint: Mapped[str] = mapped_column(
         Text, nullable=False
     )  # JWKS URI, userinfo endpoint, etc.
-    user_lookup_endpoint: Mapped[str | None] = mapped_column(
-        Text, nullable=True
-    )
+    user_lookup_endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     auth_method: Mapped[str] = mapped_column(
         String(50), nullable=False
@@ -410,17 +382,16 @@ class ExternalUserServiceModel(Base):
         Text, nullable=True
     )  # Encrypted JSON: client_id, client_secret, audience, etc.
 
-    is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False
-    )
+    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False,
+        DateTime,
+        nullable=False,
         default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC)
+        onupdate=lambda: datetime.now(UTC),
     )
 ```
 
@@ -462,7 +433,7 @@ rebac_create(
     subject=("user", user_id),
     relation="member",
     object=("group", f"tenant-{zone_id}"),
-    zone_id=zone_id
+    zone_id=zone_id,
 )
 
 # Add user as admin
@@ -470,7 +441,7 @@ rebac_create(
     subject=("user", user_id),
     relation="member",
     object=("group", f"tenant-{zone_id}-admins"),
-    zone_id=zone_id
+    zone_id=zone_id,
 )
 ```
 
@@ -517,30 +488,22 @@ def tenant_group_id(zone_id: str) -> str:
     """Generate tenant group ID from zone_id."""
     return f"tenant-{zone_id}"
 
-def add_user_to_tenant(
-    rebac_manager,
-    user_id: str,
-    zone_id: str,
-    role: str = "member"
-) -> str:
+
+def add_user_to_tenant(rebac_manager, user_id: str, zone_id: str, role: str = "member") -> str:
     """Add user to tenant via ReBAC group."""
     group_id = tenant_group_id(zone_id)
     if role == "admin":
         group_id = f"{group_id}-admins"
 
     return rebac_manager.rebac_write(
-        subject=("user", user_id),
-        relation="member",
-        object=("group", group_id),
-        zone_id=zone_id
+        subject=("user", user_id), relation="member", object=("group", group_id), zone_id=zone_id
     )
+
 
 def get_user_tenants(rebac_manager, user_id: str) -> list[dict]:
     """Get all tenants user belongs to."""
     tuples = rebac_manager.rebac_query(
-        subject=("user", user_id),
-        relation="member",
-        object_type="group"
+        subject=("user", user_id), relation="member", object_type="group"
     )
 
     tenants = []
@@ -769,32 +732,39 @@ POST /auth/switch-tenant
 # Alembic migration
 def upgrade():
     from sqlalchemy import inspect, text
+
     inspector = inspect(op.get_bind())
 
     if inspector.dialect.name == "sqlite":
         # Check SQLite version
         version = op.get_bind().execute(text("SELECT sqlite_version()")).scalar()
-        major, minor = map(int, version.split('.')[:2])
+        major, minor = map(int, version.split(".")[:2])
 
         if major > 3 or (major == 3 and minor >= 8):
             # SQLite 3.8.0+ supports partial indexes
-            op.execute(text("""
+            op.execute(
+                text("""
                 CREATE UNIQUE INDEX idx_users_email_active ON users(email)
                 WHERE is_active=1 AND deleted_at IS NULL AND email IS NOT NULL
-            """))
-            op.execute(text("""
+            """)
+            )
+            op.execute(
+                text("""
                 CREATE UNIQUE INDEX idx_users_username_active ON users(username)
                 WHERE is_active=1 AND deleted_at IS NULL AND username IS NOT NULL
-            """))
+            """)
+            )
         else:
             # Fallback: Application-level uniqueness check
             logger.warning("SQLite < 3.8.0: Use application-level uniqueness checks")
     else:
         # PostgreSQL: Full support
-        op.execute(text("""
+        op.execute(
+            text("""
             CREATE UNIQUE INDEX idx_users_email_active ON users(email)
             WHERE is_active=1 AND deleted_at IS NULL AND email IS NOT NULL
-        """))
+        """)
+        )
 ```
 
 #### 2. User Lookup Helper Functions
@@ -804,42 +774,38 @@ def get_user_by_email(session, email: str) -> UserModel | None:
     """Get active user by email."""
     return session.scalar(
         select(UserModel).where(
-            UserModel.email == email,
-            UserModel.is_active == 1,
-            UserModel.deleted_at.is_(None)
+            UserModel.email == email, UserModel.is_active == 1, UserModel.deleted_at.is_(None)
         )
     )
+
 
 def get_user_by_username(session, username: str) -> UserModel | None:
     """Get active user by username."""
     return session.scalar(
         select(UserModel).where(
-            UserModel.username == username,
-            UserModel.is_active == 1,
-            UserModel.deleted_at.is_(None)
+            UserModel.username == username, UserModel.is_active == 1, UserModel.deleted_at.is_(None)
         )
     )
+
 
 def get_user_by_id(session, user_id: str) -> UserModel | None:
     """Get active user by user ID."""
     return session.scalar(
         select(UserModel).where(
-            UserModel.user_id == user_id,
-            UserModel.is_active == 1,
-            UserModel.deleted_at.is_(None)
+            UserModel.user_id == user_id, UserModel.is_active == 1, UserModel.deleted_at.is_(None)
         )
     )
+
 
 def check_email_available(session, email: str) -> bool:
     """Check if email is available for registration."""
     existing = session.scalar(
         select(UserModel).where(
-            UserModel.email == email,
-            UserModel.is_active == 1,
-            UserModel.deleted_at.is_(None)
+            UserModel.email == email, UserModel.is_active == 1, UserModel.deleted_at.is_(None)
         )
     )
     return existing is None
+
 
 def validate_user_uniqueness(session, email: str | None, username: str | None):
     """Validate that email and username are unique."""
@@ -860,6 +826,7 @@ ALLOWED_AUTH_ENDPOINT_DOMAINS = {
     "accounts.google.com",
 }
 
+
 def validate_auth_endpoint(endpoint: str) -> bool:
     """Validate auth_endpoint against whitelist (SSRF prevention)."""
     from urllib.parse import urlparse
@@ -873,8 +840,7 @@ def validate_auth_endpoint(endpoint: str) -> bool:
                 return True
 
         raise ValueError(
-            f"Auth endpoint domain '{domain}' not in whitelist. "
-            f"Contact admin to add domain."
+            f"Auth endpoint domain '{domain}' not in whitelist. Contact admin to add domain."
         )
     except Exception as e:
         raise ValueError(f"Invalid auth endpoint URL: {e}")

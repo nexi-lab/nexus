@@ -92,7 +92,10 @@ def test_create_hub_token_supports_multi_zone_permissions(session_factory):
     assert result["token"].startswith("sk_")
     assert result["name"] == "remote-admin"
     assert result["admin"] is True
-    assert result["zones"] == [{"zone_id": "eng", "permission": "r"}, {"zone_id": "ops", "permission": "rw"}]
+    assert result["zones"] == [
+        {"zone_id": "eng", "permission": "r"},
+        {"zone_id": "ops", "permission": "rw"},
+    ]
 
 
 def test_list_hub_tokens_returns_local_cli_payload_shape(session_factory):
@@ -126,7 +129,9 @@ def test_revoke_hub_token_matches_local_message(session_factory):
 
     assert result["key_id"] == key_id
     assert result["name"] == "revoke-me"
-    assert result["message"] == f"revoked revoke-me ({key_id}). Effective within 60s (auth cache TTL)."
+    assert (
+        result["message"] == f"revoked revoke-me ({key_id}). Effective within 60s (auth cache TTL)."
+    )
 
 
 def test_get_hub_status_reports_postgres_and_token_counts(session_factory, monkeypatch):
@@ -281,9 +286,18 @@ from nexus.cli.commands import _hub_remote
 
 
 def test_normalize_remote_url_appends_mcp_path():
-    assert _hub_remote.normalize_mcp_url("https://nexus.example.com") == "https://nexus.example.com/mcp"
-    assert _hub_remote.normalize_mcp_url("https://nexus.example.com/mcp") == "https://nexus.example.com/mcp"
-    assert _hub_remote.normalize_mcp_url("https://nexus.example.com/") == "https://nexus.example.com/mcp"
+    assert (
+        _hub_remote.normalize_mcp_url("https://nexus.example.com")
+        == "https://nexus.example.com/mcp"
+    )
+    assert (
+        _hub_remote.normalize_mcp_url("https://nexus.example.com/mcp")
+        == "https://nexus.example.com/mcp"
+    )
+    assert (
+        _hub_remote.normalize_mcp_url("https://nexus.example.com/")
+        == "https://nexus.example.com/mcp"
+    )
 
 
 def test_remote_list_requires_admin_token(monkeypatch):
@@ -325,7 +339,9 @@ def test_remote_list_uses_env_token_and_renders_json(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert calls == [("https://hub.example", "sk_env", "nexus_hub_token_list", {"show_revoked": False})]
+    assert calls == [
+        ("https://hub.example", "sk_env", "nexus_hub_token_list", {"show_revoked": False})
+    ]
     assert json.loads(result.output)["tokens"][0]["key_id"] == "nk_123"
 
 
@@ -334,7 +350,13 @@ def test_remote_create_calls_mcp_tool_and_prints_one_time_token(monkeypatch):
 
     def fake_call(remote, token, tool_name, arguments):
         calls.append((remote, token, tool_name, arguments))
-        return {"key_id": "nk_new", "token": "sk_new", "name": "ci", "admin": False, "zones": [{"zone_id": "eng", "permission": "rw"}]}
+        return {
+            "key_id": "nk_new",
+            "token": "sk_new",
+            "name": "ci",
+            "admin": False,
+            "zones": [{"zone_id": "eng", "permission": "rw"}],
+        }
 
     monkeypatch.setattr("nexus.cli.commands.hub.call_hub_admin_tool", fake_call)
 
@@ -360,7 +382,14 @@ def test_remote_create_calls_mcp_tool_and_prints_one_time_token(monkeypatch):
         "https://hub.example/mcp",
         "sk_admin",
         "nexus_hub_token_create",
-        {"name": "ci", "zones": "eng:rw", "zones_glob": None, "admin": False, "expires": None, "user_id": None},
+        {
+            "name": "ci",
+            "zones": "eng:rw",
+            "zones_glob": None,
+            "admin": False,
+            "expires": None,
+            "user_id": None,
+        },
     )
     assert "key_id: nk_new" in result.output
     assert "token:  sk_new" in result.output
@@ -371,17 +400,32 @@ def test_remote_revoke_calls_mcp_tool(monkeypatch):
 
     def fake_call(remote, token, tool_name, arguments):
         calls.append((remote, token, tool_name, arguments))
-        return {"key_id": "nk_old", "name": "old", "message": "revoked old (nk_old). Effective within 60s (auth cache TTL)."}
+        return {
+            "key_id": "nk_old",
+            "name": "old",
+            "message": "revoked old (nk_old). Effective within 60s (auth cache TTL).",
+        }
 
     monkeypatch.setattr("nexus.cli.commands.hub.call_hub_admin_tool", fake_call)
 
     result = CliRunner().invoke(
         cli,
-        ["hub", "token", "revoke", "old", "--remote", "https://hub.example", "--admin-token", "sk_admin"],
+        [
+            "hub",
+            "token",
+            "revoke",
+            "old",
+            "--remote",
+            "https://hub.example",
+            "--admin-token",
+            "sk_admin",
+        ],
     )
 
     assert result.exit_code == 0
-    assert calls == [("https://hub.example", "sk_admin", "nexus_hub_token_revoke", {"identifier": "old"})]
+    assert calls == [
+        ("https://hub.example", "sk_admin", "nexus_hub_token_revoke", {"identifier": "old"})
+    ]
     assert "revoked old (nk_old)" in result.output
 
 
@@ -390,7 +434,15 @@ def test_remote_status_calls_mcp_tool_and_renders_json(monkeypatch):
 
     def fake_call(remote, token, tool_name, arguments):
         calls.append((remote, token, tool_name, arguments))
-        return {"endpoint": "https://hub.example/mcp", "profile": "full", "postgres": "ok", "redis": "n/a", "tokens": {"active": 1, "revoked": 0}, "connections": None, "qps_5m": None}
+        return {
+            "endpoint": "https://hub.example/mcp",
+            "profile": "full",
+            "postgres": "ok",
+            "redis": "n/a",
+            "tokens": {"active": 1, "revoked": 0},
+            "connections": None,
+            "qps_5m": None,
+        }
 
     monkeypatch.setattr("nexus.cli.commands.hub.call_hub_admin_tool", fake_call)
 
@@ -451,9 +503,14 @@ def normalize_mcp_url(remote: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
-def call_hub_admin_tool(remote: str, admin_token: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def call_hub_admin_tool(
+    remote: str, admin_token: str, tool_name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
     url = normalize_mcp_url(remote)
-    headers = {"Authorization": f"Bearer {admin_token}", "Accept": "application/json, text/event-stream"}
+    headers = {
+        "Authorization": f"Bearer {admin_token}",
+        "Accept": "application/json, text/event-stream",
+    }
     with httpx.Client(timeout=30.0) as client:
         session_id = _initialize(client, url, headers)
         headers["Mcp-Session-Id"] = session_id
@@ -462,7 +519,12 @@ def call_hub_admin_tool(remote: str, admin_token: str, tool_name: str, arguments
             client,
             url,
             headers,
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool_name, "arguments": arguments}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": arguments},
+            },
         )
     return _extract_tool_payload(envelope)
 ```
@@ -479,7 +541,9 @@ def _resolve_remote_admin_token(admin_token: str | None, remote: str | None) -> 
         return None
     token = admin_token or os.environ.get("NEXUS_HUB_ADMIN_TOKEN")
     if not token:
-        raise click.ClickException("--admin-token or NEXUS_HUB_ADMIN_TOKEN is required with --remote")
+        raise click.ClickException(
+            "--admin-token or NEXUS_HUB_ADMIN_TOKEN is required with --remote"
+        )
     return token
 ```
 
@@ -488,7 +552,9 @@ In each command, branch before local DB work:
 ```python
 if remote:
     token = _resolve_remote_admin_token(admin_token, remote)
-    payload = call_hub_admin_tool(remote, token, "nexus_hub_token_list", {"show_revoked": show_revoked})
+    payload = call_hub_admin_tool(
+        remote, token, "nexus_hub_token_list", {"show_revoked": show_revoked}
+    )
     _render_token_list(payload, as_json=as_json)
     return
 ```
@@ -560,7 +626,9 @@ def test_hub_admin_create_delegates_to_shared_ops(monkeypatch):
 
     result = hub_admin.handle_hub_admin_token_create(
         auth_provider,
-        SimpleNamespace(name="ci", zones="eng:rw", zones_glob=None, admin=True, expires="7d", user_id="u1"),
+        SimpleNamespace(
+            name="ci", zones="eng:rw", zones_glob=None, admin=True, expires="7d", user_id="u1"
+        ),
         SimpleNamespace(is_admin=True, user_id="admin"),
     )
 
@@ -568,7 +636,14 @@ def test_hub_admin_create_delegates_to_shared_ops(monkeypatch):
     assert calls == [
         (
             "factory",
-            {"name": "ci", "zones_csv": "eng:rw", "zones_glob": None, "is_admin": True, "expires": "7d", "user_id": "u1"},
+            {
+                "name": "ci",
+                "zones_csv": "eng:rw",
+                "zones_glob": None,
+                "is_admin": True,
+                "expires": "7d",
+                "user_id": "u1",
+            },
         )
     ]
 
@@ -578,7 +653,11 @@ def test_hub_admin_revoke_delegates_to_shared_ops(monkeypatch):
 
     def fake_revoke(session_factory, **kwargs):
         calls.append((session_factory, kwargs))
-        return {"key_id": "nk_1", "name": "old", "message": "revoked old (nk_1). Effective within 60s (auth cache TTL)."}
+        return {
+            "key_id": "nk_1",
+            "name": "old",
+            "message": "revoked old (nk_1). Effective within 60s (auth cache TTL).",
+        }
 
     monkeypatch.setattr(hub_admin.admin_ops, "revoke_hub_token", fake_revoke)
 
@@ -642,7 +721,9 @@ def handle_hub_admin_token_create(auth_provider: Any, params: Any, context: Any)
 
 def handle_hub_admin_token_list(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     require_admin(context)
-    return admin_ops.list_hub_tokens(_session_factory(auth_provider), show_revoked=bool(getattr(params, "show_revoked", False)))
+    return admin_ops.list_hub_tokens(
+        _session_factory(auth_provider), show_revoked=bool(getattr(params, "show_revoked", False))
+    )
 
 
 def handle_hub_admin_token_revoke(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
@@ -824,7 +905,17 @@ async def nexus_hub_token_list(show_revoked: bool = False) -> str:
 Add equivalent tools for create, revoke, and status:
 
 ```python
-call_rpc("hub_admin_token_create", {"name": name, "zones": zones, "zones_glob": zones_glob, "admin": admin, "expires": expires, "user_id": user_id})
+call_rpc(
+    "hub_admin_token_create",
+    {
+        "name": name,
+        "zones": zones,
+        "zones_glob": zones_glob,
+        "admin": admin,
+        "expires": expires,
+        "user_id": user_id,
+    },
+)
 call_rpc("hub_admin_token_revoke", {"identifier": identifier})
 call_rpc("hub_admin_status", {})
 ```

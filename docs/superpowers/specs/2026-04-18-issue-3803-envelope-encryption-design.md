@@ -25,7 +25,10 @@ class EncryptionProvider(Protocol):
     def wrap_dek(self, dek: bytes, *, tenant_id: uuid.UUID, aad: bytes) -> tuple[bytes, int]:
         """Return (wrapped_bytes, kek_version). wrap always uses the provider's current version."""
         ...
-    def unwrap_dek(self, wrapped: bytes, *, tenant_id: uuid.UUID, aad: bytes, kek_version: int) -> bytes: ...
+
+    def unwrap_dek(
+        self, wrapped: bytes, *, tenant_id: uuid.UUID, aad: bytes, kek_version: int
+    ) -> bytes: ...
 ```
 
 `wrap_dek` always uses the provider's current version and returns it alongside the wrapped bytes — matches how Vault Transit (`encrypt_data` always picks the latest key version unless explicitly overridden) and AWS KMS (`Encrypt` always uses the primary version of the CMK) behave natively. `unwrap_dek` takes the stored `kek_version` because rows persist history — Vault Transit takes `key_version` on decrypt; AWS KMS decrypt ignores it (the ciphertext blob encodes the key version internally) so our `AwsKmsProvider` uses `kek_version` for tracking only.
@@ -38,8 +41,12 @@ class EncryptionProvider(Protocol):
 
 ```python
 class CredentialCarryingProfileStore(AuthProfileStore, Protocol):
-    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None: ...
-    def get_with_credential(self, profile_id: str) -> tuple[AuthProfile, ResolvedCredential | None]: ...
+    def upsert_with_credential(
+        self, profile: AuthProfile, credential: ResolvedCredential
+    ) -> None: ...
+    def get_with_credential(
+        self, profile_id: str
+    ) -> tuple[AuthProfile, ResolvedCredential | None]: ...
 ```
 
 Only `PostgresAuthProfileStore` implements it. Callers that don't need ciphertext keep the base Protocol. `get_with_credential` returns `None` for the credential when a row was written via plain `upsert` (PR 1 shape, NULL ciphertext columns) — so the sub-protocol is read-compatible with the existing contract.

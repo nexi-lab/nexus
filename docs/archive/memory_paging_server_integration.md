@@ -69,6 +69,7 @@ Simply replace Memory with MemoryWithPaging everywhere:
 ```python
 # Replace all occurrences
 from nexus.services.memory.memory_api import Memory
+
 # With:
 from nexus.services.memory.memory_with_paging import MemoryWithPaging as Memory
 ```
@@ -114,7 +115,7 @@ async def get_memory_stats(
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
     # Check if paging is enabled
-    if hasattr(app_state.nexus_fs.memory, 'get_paging_stats'):
+    if hasattr(app_state.nexus_fs.memory, "get_paging_stats"):
         return app_state.nexus_fs.memory.get_paging_stats()
     else:
         return {"paging_enabled": False, "message": "Memory paging not enabled"}

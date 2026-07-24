@@ -29,6 +29,7 @@ async def grep_files(pattern: str, path: str = "/") -> str:
     """Search file content."""
     return nx.grep(pattern, path)
 
+
 agent = Agent(name="FileAgent", tools=[grep_files])
 result = Runner.run_sync(agent, "Find all async/await patterns")
 ```
@@ -126,6 +127,7 @@ Transform Nexus filesystem operations into agent tools:
 ```python
 from agents import function_tool
 
+
 @function_tool
 async def grep_files(pattern: str, path: str = "/") -> str:
     """Search file content using grep patterns."""
@@ -133,16 +135,18 @@ async def grep_files(pattern: str, path: str = "/") -> str:
     # Format and return results
     return formatted_results
 
+
 @function_tool
 async def read_file(path: str, preview: bool = False) -> str:
     """Read file content."""
-    content = nx.read(path).decode('utf-8')
+    content = nx.read(path).decode("utf-8")
     return content if not preview else content[:1000]
+
 
 @function_tool
 async def write_file(path: str, content: str) -> str:
     """Write content to file."""
-    nx.write(path, content.encode('utf-8'))
+    nx.write(path, content.encode("utf-8"))
     return f"Wrote to {path}"
 ```
 
@@ -161,7 +165,7 @@ agent = Agent(
     Use read_file to examine code.
     Use write_file to save reports.""",
     tools=[grep_files, read_file, write_file],
-    model="gpt-4o"
+    model="gpt-4o",
 )
 ```
 
@@ -172,10 +176,7 @@ Run the agent with automatic ReAct loop:
 ```python
 from agents import Runner
 
-result = Runner.run_sync(
-    agent,
-    "Find all async/await patterns and create a summary"
-)
+result = Runner.run_sync(agent, "Find all async/await patterns and create a summary")
 print(result.final_output)
 ```
 
@@ -189,13 +190,16 @@ Automatically analyze codebases and generate documentation:
 agent = Agent(
     name="CodeAnalyzer",
     instructions="Analyze code structure and generate documentation",
-    tools=[grep_files, glob_files, read_file, write_file]
+    tools=[grep_files, glob_files, read_file, write_file],
 )
 
-Runner.run_sync(agent, """
+Runner.run_sync(
+    agent,
+    """
 Find all API endpoint definitions in /src and create
 comprehensive API documentation in /docs/api.md
-""")
+""",
+)
 ```
 
 ### 2. TODO/FIXME Tracker
@@ -203,10 +207,13 @@ comprehensive API documentation in /docs/api.md
 Scan codebase for TODOs and generate task lists:
 
 ```python
-Runner.run_sync(agent, """
+Runner.run_sync(
+    agent,
+    """
 Find all TODO and FIXME comments in the codebase.
 Categorize by priority and create a task list in /reports/todos.md
-""")
+""",
+)
 ```
 
 ### 3. Research Agent with Memory
@@ -220,17 +227,19 @@ async def store_memory(content: str, memory_type: str = "fact") -> str:
     nx.memory.store(content, scope="agent", memory_type=memory_type)
     return f"Stored {memory_type}"
 
+
 @function_tool
 async def recall_memory(query: str) -> str:
     """Query stored memories."""
     results = nx.memory.query(query, scope="agent")
     return format_memories(results)
 
+
 # Agent remembers across sessions!
 agent = Agent(
     name="ResearchAgent",
     instructions="Research topics and remember key findings",
-    tools=[grep_files, read_file, store_memory, recall_memory]
+    tools=[grep_files, read_file, store_memory, recall_memory],
 )
 ```
 
@@ -239,11 +248,14 @@ agent = Agent(
 Find and update deprecated patterns:
 
 ```python
-Runner.run_sync(agent, """
+Runner.run_sync(
+    agent,
+    """
 Find all uses of deprecated function 'old_api()'.
 Read the files, understand context, and create a migration
 plan in /docs/migration-plan.md
-""")
+""",
+)
 ```
 
 ## 📊 Comparison with Other Frameworks

@@ -107,10 +107,12 @@ Create a Python script to write a file:
 import nexus
 
 # Connect to server with API key
-nx = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "nxk_1234567890abcdef..."  # Replace with YOUR key
-})
+nx = nexus.connect(
+    config={
+        "url": "http://localhost:2026",
+        "api_key": "nxk_1234567890abcdef...",  # Replace with YOUR key
+    }
+)
 
 # Write a simple text file
 content = b"Hello from Nexus! This is my first file."
@@ -233,11 +235,13 @@ Here's the full script you can copy and run:
 Simple File Storage Demo with Nexus
 Prerequisites: Nexus server running on localhost:2026
 """
+
 import nexus
 
 # Configuration
 NEXUS_URL = "http://localhost:2026"
 NEXUS_API_KEY = "nxk_1234567890abcdef..."  # Replace with YOUR key
+
 
 def main():
     # Connect to Nexus server
@@ -292,6 +296,7 @@ def main():
     print(f"   📁 {len(files)} file(s) remaining")
 
     print("\n✨ Demo complete!")
+
 
 if __name__ == "__main__":
     main()
@@ -456,9 +461,9 @@ All file paths in Nexus:
 Workspaces provide isolation:
 ```python
 # Files in different workspaces are isolated
-nx.write("/workspace/file.txt", b"data")       # User workspace
-nx.write("/shared/file.txt", b"data")          # Shared workspace
-nx.write("/private/file.txt", b"data")         # Private workspace
+nx.write("/workspace/file.txt", b"data")  # User workspace
+nx.write("/shared/file.txt", b"data")  # Shared workspace
+nx.write("/private/file.txt", b"data")  # Private workspace
 ```
 
 ---
@@ -503,10 +508,7 @@ import nexus
 nx = nexus.connect()  # Reads NEXUS_URL and NEXUS_API_KEY
 
 # Or connect with explicit config
-nx = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "your-key"
-})
+nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-key"})
 
 # Write
 nx.write("/path/to/file.txt", b"content")

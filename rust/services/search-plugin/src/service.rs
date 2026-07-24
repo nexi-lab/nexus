@@ -69,8 +69,10 @@ fn do_glob(
         }
         // Match against the path RELATIVE to `root_path` — this is
         // what globset patterns naturally target (`docs/*.md` reads
-        // relative to the walk root; the caller composes back to
-        // absolute if they want).
+        // relative to the walk root).  The RESPONSE, however, carries
+        // the absolute vfs_path (line below + search.proto's
+        // GlobResponse.paths contract, matching GrepMatch.path so
+        // callers decode both rpcs' path outputs with one rule).
         let relative = strip_root(root_path, vfs_path);
         let matched = matcher
             .as_ref()

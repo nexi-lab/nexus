@@ -35,6 +35,7 @@ Nexus provides a flexible authentication and authorization system that supports:
 - **Embedded Mode** (library/SDK usage): No authentication required
   ```python
   from nexus.sdk import connect
+
   nx = connect()  # Direct access, no auth needed
   nx.write("/workspace/file.txt", b"Hello!")
   ```
@@ -42,7 +43,10 @@ Nexus provides a flexible authentication and authorization system that supports:
 - **Server Mode** (client-server): Authentication required
   ```python
   import nexus
-  nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
+
+  nx = nexus.connect(
+      config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"}
+  )
   nx.write("/workspace/file.txt", b"Hello!")
   ```
 
@@ -189,7 +193,9 @@ api_keys:
 import nexus
 
 # Connect with API key
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"}
+)
 
 # Use normally
 nx.write("/workspace/file.txt", b"Hello, World!")
@@ -267,7 +273,7 @@ with SessionFactory() as session:
         user_id="alice",
         name="Alice's Production Key",
         is_admin=True,
-        expires_at=datetime.now(UTC) + timedelta(days=90)
+        expires_at=datetime.now(UTC) + timedelta(days=90),
     )
     session.commit()
 
@@ -282,18 +288,15 @@ from nexus.server.rpc_server import NexusRPCServer
 nx = connect({"data_dir": "./nexus-data"})
 auth_provider = create_auth_provider("database", session_factory=SessionFactory)
 
-server = NexusRPCServer(
-    nexus_fs=nx,
-    host="0.0.0.0",
-    port=2026,
-    auth_provider=auth_provider
-)
+server = NexusRPCServer(nexus_fs=nx, host="0.0.0.0", port=2026, auth_provider=auth_provider)
 server.serve_forever()
 
 # Use the key from client
 import nexus
 
-client = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": raw_key})
+client = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": raw_key}
+)
 client.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -382,7 +385,7 @@ from nexus.server.auth import LocalAuth
 # Create auth provider
 auth = LocalAuth(
     jwt_secret="your-secret-key-here",  # Auto-generated if not provided
-    token_expiry=3600  # 1 hour
+    token_expiry=3600,  # 1 hour
 )
 
 # Create users
@@ -392,7 +395,7 @@ auth.create_user(
     subject_type="user",
     subject_id="alice",
     zone_id="org_acme",
-    is_admin=True
+    is_admin=True,
 )
 
 auth.create_user(
@@ -401,14 +404,11 @@ auth.create_user(
     subject_type="user",
     subject_id="bob",
     zone_id="org_acme",
-    is_admin=False
+    is_admin=False,
 )
 
 # Verify credentials and get token
-token = auth.verify_password_and_create_token(
-    "alice@example.com",
-    "secure-password-123"
-)
+token = auth.verify_password_and_create_token("alice@example.com", "secure-password-123")
 
 print(f"JWT Token: {token}")
 
@@ -466,14 +466,16 @@ from nexus.server.auth import OIDCAuth
 auth = OIDCAuth(
     issuer="https://accounts.google.com",
     audience="your-client-id.apps.googleusercontent.com",
-    admin_emails=["admin@example.com"]
+    admin_emails=["admin@example.com"],
 )
 
 # After user completes OAuth flow on frontend, they receive an ID token
 # Use that token to authenticate with Nexus
 import nexus
 
-client = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": id_token})
+client = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": id_token}
+)
 client.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -483,31 +485,28 @@ client.write("/workspace/file.txt", b"Hello!")
 from nexus.server.auth import OIDCAuth, MultiOIDCAuth
 
 # Support multiple providers
-auth = MultiOIDCAuth(providers={
-    "google": OIDCAuth(
-        issuer="https://accounts.google.com",
-        audience="google-client-id.apps.googleusercontent.com",
-        admin_emails=["admin@example.com"]
-    ),
-    "github": OIDCAuth(
-        issuer="https://github.com",
-        audience="github-client-id",
-        admin_emails=["admin@example.com"]
-    ),
-    "microsoft": OIDCAuth(
-        issuer="https://login.microsoftonline.com/tenant-id/v2.0",
-        audience="microsoft-client-id.apps.microsoft.com",
-        admin_emails=["admin@example.com"]
-    )
-})
+auth = MultiOIDCAuth(
+    providers={
+        "google": OIDCAuth(
+            issuer="https://accounts.google.com",
+            audience="google-client-id.apps.googleusercontent.com",
+            admin_emails=["admin@example.com"],
+        ),
+        "github": OIDCAuth(
+            issuer="https://github.com",
+            audience="github-client-id",
+            admin_emails=["admin@example.com"],
+        ),
+        "microsoft": OIDCAuth(
+            issuer="https://login.microsoftonline.com/tenant-id/v2.0",
+            audience="microsoft-client-id.apps.microsoft.com",
+            admin_emails=["admin@example.com"],
+        ),
+    }
+)
 
 # Server will try each provider until one validates the token
-server = NexusRPCServer(
-    nexus_fs=nx,
-    host="0.0.0.0",
-    port=2026,
-    auth_provider=auth
-)
+server = NexusRPCServer(nexus_fs=nx, host="0.0.0.0", port=2026, auth_provider=auth)
 ```
 
 **Configuration:**
@@ -556,34 +555,19 @@ from nexus.server.auth import create_auth_provider
 from sqlalchemy.orm import sessionmaker
 
 # Static keys
-auth_provider = create_auth_provider(
-    "static",
-    auth_config={"api_keys": {...}}
-)
+auth_provider = create_auth_provider("static", auth_config={"api_keys": {...}})
 
 # Database keys
-auth_provider = create_auth_provider(
-    "database",
-    session_factory=SessionFactory
-)
+auth_provider = create_auth_provider("database", session_factory=SessionFactory)
 
 # Local auth
-auth_provider = create_auth_provider(
-    "local",
-    auth_config={"jwt_secret": "...", "users": {...}}
-)
+auth_provider = create_auth_provider("local", auth_config={"jwt_secret": "...", "users": {...}})
 
 # OIDC
-auth_provider = create_auth_provider(
-    "oidc",
-    auth_config={"issuer": "...", "audience": "..."}
-)
+auth_provider = create_auth_provider("oidc", auth_config={"issuer": "...", "audience": "..."})
 
 # Multi-OIDC
-auth_provider = create_auth_provider(
-    "multi-oidc",
-    auth_config={"providers": {...}}
-)
+auth_provider = create_auth_provider("multi-oidc", auth_config={"providers": {...}})
 
 # No authentication
 auth_provider = create_auth_provider(None)  # Returns None
@@ -637,7 +621,7 @@ Permission: string
        subject=("user", "alice"),
        permission="read",
        object=("file", "/workspace/file.txt"),
-       zone_id="org_acme"
+       zone_id="org_acme",
    )
    # → Returns True (owner can read)
    ```
@@ -649,7 +633,7 @@ Permission: string
            "relations": {
                "owner": {"can": ["read", "write", "execute"]},
                "editor": {"can": ["read", "write"]},
-               "viewer": {"can": ["read"]}
+               "viewer": {"can": ["read"]},
            }
        }
    }
@@ -668,7 +652,7 @@ rebac.rebac_write(
     subject=("user", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/file.txt"),
-    zone_id="org_acme"
+    zone_id="org_acme",
 )
 
 # Check permission
@@ -676,14 +660,12 @@ can_read = rebac.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/workspace/file.txt"),
-    zone_id="org_acme"
+    zone_id="org_acme",
 )
 
 # List all subjects with permission
 subjects = rebac.rebac_expand(
-    permission="read",
-    object=("file", "/workspace/file.txt"),
-    zone_id="org_acme"
+    permission="read", object=("file", "/workspace/file.txt"), zone_id="org_acme"
 )
 # → [("user", "alice"), ("user", "bob"), ...]
 ```
@@ -727,7 +709,7 @@ rebac.rebac_write(
     subject=("user", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/file.txt"),
-    zone_id="org_acme"  # REQUIRED
+    zone_id="org_acme",  # REQUIRED
 )
 
 # Attempts to create cross-tenant relationships will fail
@@ -735,7 +717,7 @@ rebac.rebac_write(
     subject=("user", "alice"),  # From tenant org_acme
     relation="viewer",
     object=("file", "/workspace/file.txt"),  # From tenant org_xyz
-    zone_id="org_acme"
+    zone_id="org_acme",
 )
 # → Raises ValidationError: Cross-tenant relationship not allowed
 ```
@@ -971,7 +953,7 @@ payload = {
     "sub": "alice",
     "email": "alice@example.com",
     "iat": int(time.time()),
-    "exp": int(time.time()) + 3600
+    "exp": int(time.time()) + 3600,
 }
 token = jwt.encode(header, payload, secret)
 
@@ -1161,7 +1143,9 @@ Old (v0.4.x):
 ```python
 import nexus
 
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"}
+)
 ```
 
 New (v0.5.0+):
@@ -1169,7 +1153,9 @@ New (v0.5.0+):
 # Same API - no changes required!
 import nexus
 
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-alice-xxx"}
+)
 ```
 
 ### From UNIX Permissions to ReBAC
@@ -1193,7 +1179,7 @@ If you were using UNIX-style permissions (owner/group/mode), these have been **r
        subject=("user", owner),
        relation="direct_owner",
        object=("file", "/workspace/file.txt"),
-       zone_id="default"
+       zone_id="default",
    )
 
    # If mode allowed group read (040)
@@ -1201,7 +1187,7 @@ If you were using UNIX-style permissions (owner/group/mode), these have been **r
        subject=("group", group),
        relation="viewer",
        object=("file", "/workspace/file.txt"),
-       zone_id="default"
+       zone_id="default",
    )
    ```
 
@@ -1216,7 +1202,7 @@ If you were using UNIX-style permissions (owner/group/mode), these have been **r
        subject=("user", owner),
        permission="read",
        object=("file", "/workspace/file.txt"),
-       zone_id="default"
+       zone_id="default",
    ):
        ...
    ```
@@ -1245,7 +1231,7 @@ from nexus.server.auth.factory import DiscriminatingAuthProvider
 
 auth = DiscriminatingAuthProvider(
     api_key_provider=DatabaseAPIKeyAuth(session_factory),
-    jwt_provider=OIDCAuth.from_config(oidc_config)
+    jwt_provider=OIDCAuth.from_config(oidc_config),
 )
 
 # Routes sk-xxx to DatabaseAPIKeyAuth
@@ -1272,7 +1258,7 @@ auth = OIDCAuth(
     audience="your-client-id",
     zone_id_claim="org_id",
     require_tenant=True,  # Deny if org_id missing
-    allow_default_tenant=False  # No fallback
+    allow_default_tenant=False,  # No fallback
 )
 ```
 
@@ -1308,7 +1294,7 @@ JWKS_CACHE_TTL = 3600  # 1 hour
 ```python
 enforcer = EnhancedPermissionEnforcer(
     allow_admin_bypass=False,  # DEFAULT: Off
-    admin_bypass_paths=["/admin/*", "/system/*"]  # Scoped
+    admin_bypass_paths=["/admin/*", "/system/*"],  # Scoped
 )
 ```
 
@@ -1354,14 +1340,10 @@ enforce_permissions: bool = True  # Secure by default
 
 ```python
 # OLD
-api_keys = {
-    "alice-secret-key": {"user_id": "alice", "is_admin": True}
-}
+api_keys = {"alice-secret-key": {"user_id": "alice", "is_admin": True}}
 
 # NEW (add sk- prefix)
-api_keys = {
-    "sk-alice-secret-key": {"user_id": "alice", "is_admin": True}
-}
+api_keys = {"sk-alice-secret-key": {"user_id": "alice", "is_admin": True}}
 ```
 
 **2. Database API Keys Need Re-generation**
@@ -1379,7 +1361,7 @@ with session_factory() as session:
         name="Production API Key",
         zone_id="org_acme",
         is_admin=True,
-        expires_at=datetime.now(UTC) + timedelta(days=90)
+        expires_at=datetime.now(UTC) + timedelta(days=90),
     )
     print(f"New key: {raw_key}")
     session.commit()
@@ -1404,7 +1386,7 @@ To enable (with scoping):
 ```python
 enforcer = EnhancedPermissionEnforcer(
     allow_admin_bypass=True,
-    admin_bypass_paths=["/admin/*", "/workspace/*"]  # Scope it!
+    admin_bypass_paths=["/admin/*", "/workspace/*"],  # Scope it!
 )
 ```
 

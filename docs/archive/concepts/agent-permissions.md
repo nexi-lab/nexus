@@ -207,10 +207,7 @@ if (
     and self.entity_registry
 ):
     # Look up agent's owner
-    parent = self.entity_registry.get_parent(
-        entity_type="agent",
-        entity_id=context.agent_id
-    )
+    parent = self.entity_registry.get_parent(entity_type="agent", entity_id=context.agent_id)
 
     if parent and parent.entity_type == "user":
         # Check if user has permission
@@ -577,8 +574,9 @@ nx.rebac.create(
     subject=("agent", "crewai_researcher"),
     relation="direct_editor",
     object=("file", "/workspace/research/"),
-    zone_id="default"
+    zone_id="default",
 )
+
 
 # Create CrewAI agent with Nexus tools
 def write_research(content: str) -> str:
@@ -587,15 +585,14 @@ def write_research(content: str) -> str:
         user="alice",
         agent_id="crewai_researcher",
         subject_type="agent",
-        subject_id="crewai_researcher"
+        subject_id="crewai_researcher",
     )
     nx.write("/workspace/research/findings.txt", content.encode(), context=ctx)
     return "✓ Research saved"
 
+
 researcher = Agent(
-    role="Research Agent",
-    goal="Gather and store research findings",
-    tools=[write_research]
+    role="Research Agent", goal="Gather and store research findings", tools=[write_research]
 )
 ```
 
@@ -610,19 +607,18 @@ from nexus.contracts.types import OperationContext
 
 nx = connect()
 
+
 # Agent inherits from user "alice"
 def read_user_files() -> str:
     """Read files from user's workspace"""
     ctx = OperationContext(
-        user="alice",
-        agent_id="langgraph_agent",
-        subject_type="agent",
-        subject_id="langgraph_agent"
+        user="alice", agent_id="langgraph_agent", subject_type="agent", subject_id="langgraph_agent"
     )
 
     # Agent inherits alice's permissions
     files = nx.readdir("/workspace/alice/", context=ctx)
     return "\n".join([f.name for f in files])
+
 
 agent = create_react_agent(model, tools=[read_user_files])
 ```
@@ -637,7 +633,14 @@ import nexus
 import os
 
 # Agent authenticates with its own API key
-nx = nexus.connect(config={"mode": "remote", "url": os.environ['NEXUS_URL'], "api_key": os.environ['AGENT_API_KEY']})
+nx = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": os.environ["NEXUS_URL"],
+        "api_key": os.environ["AGENT_API_KEY"],
+    }
+)
+
 
 @function_tool
 async def store_data(data: str) -> str:
@@ -646,11 +649,12 @@ async def store_data(data: str) -> str:
     nx.write("/data/output.txt", data.encode())
     return "✓ Data stored"
 
+
 agent = Agent(
     name="StorageAgent",
     instructions="Store data in Nexus filesystem",
     tools=[store_data],
-    model="gpt-4o"
+    model="gpt-4o",
 )
 ```
 

@@ -252,55 +252,37 @@ X API responses are transformed to simplified JSON for file storage:
 ```python
 # Raw X API Response
 {
-  "data": [
-    {
-      "id": "1234567890",
-      "text": "Hello world!",
-      "author_id": "9876543210",
-      "created_at": "2025-01-22T12:00:00.000Z",
-      "public_metrics": {
-        "like_count": 42,
-        "retweet_count": 10
-      }
-    }
-  ],
-  "includes": {
-    "users": [
-      {
-        "id": "9876543210",
-        "username": "nexusai",
-        "name": "Nexus AI"
-      }
-    ]
-  }
+    "data": [
+        {
+            "id": "1234567890",
+            "text": "Hello world!",
+            "author_id": "9876543210",
+            "created_at": "2025-01-22T12:00:00.000Z",
+            "public_metrics": {"like_count": 42, "retweet_count": 10},
+        }
+    ],
+    "includes": {"users": [{"id": "9876543210", "username": "nexusai", "name": "Nexus AI"}]},
 }
 
 # Transformed for Nexus (flattened)
 {
-  "tweets": [
-    {
-      "id": "1234567890",
-      "text": "Hello world!",
-      "author": {
-        "id": "9876543210",
-        "username": "nexusai",
-        "name": "Nexus AI"
-      },
-      "created_at": "2025-01-22T12:00:00.000Z",
-      "metrics": {
-        "likes": 42,
-        "retweets": 10
-      },
-      "media": [],
-      "urls": []
-    }
-  ],
-  "meta": {
-    "result_count": 1,
-    "next_token": "abc123...",
-    "cached_at": "2025-01-22T12:05:00.000Z",
-    "cache_ttl": 300
-  }
+    "tweets": [
+        {
+            "id": "1234567890",
+            "text": "Hello world!",
+            "author": {"id": "9876543210", "username": "nexusai", "name": "Nexus AI"},
+            "created_at": "2025-01-22T12:00:00.000Z",
+            "metrics": {"likes": 42, "retweets": 10},
+            "media": [],
+            "urls": [],
+        }
+    ],
+    "meta": {
+        "result_count": 1,
+        "next_token": "abc123...",
+        "cached_at": "2025-01-22T12:05:00.000Z",
+        "cache_ttl": 300,
+    },
 }
 ```
 
@@ -324,22 +306,22 @@ REVOKE_URL = "https://api.twitter.com/2/oauth2/revoke"
 
 ```python
 SCOPES = [
-    "tweet.read",        # Read tweets
-    "tweet.write",       # Post tweets
+    "tweet.read",  # Read tweets
+    "tweet.write",  # Post tweets
     "tweet.moderate.write",  # Delete tweets
-    "users.read",        # Read user profiles
-    "follows.read",      # Read followers/following
-    "follows.write",     # Follow/unfollow users
-    "offline.access",    # Refresh tokens (persistent access)
-    "space.read",        # Read Spaces
-    "mute.read",         # Read muted accounts
-    "mute.write",        # Mute/unmute accounts
-    "like.read",         # Read likes
-    "like.write",        # Like/unlike tweets
-    "list.read",         # Read lists
-    "list.write",        # Create/modify lists
-    "bookmark.read",     # Read bookmarks
-    "bookmark.write",    # Add/remove bookmarks
+    "users.read",  # Read user profiles
+    "follows.read",  # Read followers/following
+    "follows.write",  # Follow/unfollow users
+    "offline.access",  # Refresh tokens (persistent access)
+    "space.read",  # Read Spaces
+    "mute.read",  # Read muted accounts
+    "mute.write",  # Mute/unmute accounts
+    "like.read",  # Read likes
+    "like.write",  # Like/unlike tweets
+    "list.read",  # Read lists
+    "list.write",  # Create/modify lists
+    "bookmark.read",  # Read bookmarks
+    "bookmark.write",  # Add/remove bookmarks
 ]
 ```
 
@@ -361,10 +343,7 @@ class XOAuthProvider(OAuthProvider):
         self.redirect_uri = redirect_uri
         self.scopes = scopes or DEFAULT_SCOPES
 
-    async def get_authorization_url(
-        self,
-        state: str
-    ) -> tuple[str, dict[str, Any]]:
+    async def get_authorization_url(self, state: str) -> tuple[str, dict[str, Any]]:
         """
         Generate authorization URL with PKCE challenge.
 
@@ -372,17 +351,11 @@ class XOAuthProvider(OAuthProvider):
             (auth_url, pkce_data) - URL for user and PKCE verifier to store
         """
         # Generate PKCE code verifier (43-128 chars, URL-safe)
-        code_verifier = base64.urlsafe_b64encode(
-            os.urandom(32)
-        ).decode('utf-8').rstrip('=')
+        code_verifier = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
 
         # Generate PKCE code challenge (SHA256 hash)
-        challenge = hashlib.sha256(
-            code_verifier.encode('utf-8')
-        ).digest()
-        code_challenge = base64.urlsafe_b64encode(
-            challenge
-        ).decode('utf-8').rstrip('=')
+        challenge = hashlib.sha256(code_verifier.encode("utf-8")).digest()
+        code_challenge = base64.urlsafe_b64encode(challenge).decode("utf-8").rstrip("=")
 
         # Build authorization URL
         params = {
@@ -400,11 +373,7 @@ class XOAuthProvider(OAuthProvider):
         # Return URL and verifier (to be stored temporarily)
         return auth_url, {"code_verifier": code_verifier}
 
-    async def exchange_code_for_token(
-        self,
-        code: str,
-        pkce_data: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def exchange_code_for_token(self, code: str, pkce_data: dict[str, Any]) -> dict[str, Any]:
         """
         Exchange authorization code for access token using PKCE verifier.
 
@@ -437,15 +406,10 @@ class XOAuthProvider(OAuthProvider):
             async with session.post(TOKEN_URL, data=data) as response:
                 if response.status != 200:
                     error = await response.text()
-                    raise AuthenticationError(
-                        f"Token exchange failed: {error}"
-                    )
+                    raise AuthenticationError(f"Token exchange failed: {error}")
                 return await response.json()
 
-    async def refresh_token(
-        self,
-        refresh_token: str
-    ) -> dict[str, Any]:
+    async def refresh_token(self, refresh_token: str) -> dict[str, Any]:
         """Refresh access token using refresh token."""
         data = {
             "grant_type": "refresh_token",
@@ -460,9 +424,7 @@ class XOAuthProvider(OAuthProvider):
             async with session.post(TOKEN_URL, data=data) as response:
                 if response.status != 200:
                     error = await response.text()
-                    raise AuthenticationError(
-                        f"Token refresh failed: {error}"
-                    )
+                    raise AuthenticationError(f"Token refresh failed: {error}")
                 return await response.json()
 
     async def revoke_token(self, token: str) -> None:
@@ -479,9 +441,7 @@ class XOAuthProvider(OAuthProvider):
             async with session.post(REVOKE_URL, data=data) as response:
                 if response.status != 200:
                     error = await response.text()
-                    raise AuthenticationError(
-                        f"Token revocation failed: {error}"
-                    )
+                    raise AuthenticationError(f"Token revocation failed: {error}")
 ```
 
 ### CLI Authentication Setup
@@ -541,41 +501,13 @@ CREATE TABLE oauth_tokens (
 
 ```python
 RATE_LIMITS = {
-    "user_timeline": RateLimit(
-        requests=180,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
-    "user_tweets": RateLimit(
-        requests=900,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
-    "single_tweet": RateLimit(
-        requests=900,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
-    "mentions": RateLimit(
-        requests=180,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
-    "search_recent": RateLimit(
-        requests=450,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
-    "create_tweet": RateLimit(
-        requests=200,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
-    "delete_tweet": RateLimit(
-        requests=50,
-        window_seconds=15*60,
-        tier="user_context"
-    ),
+    "user_timeline": RateLimit(requests=180, window_seconds=15 * 60, tier="user_context"),
+    "user_tweets": RateLimit(requests=900, window_seconds=15 * 60, tier="user_context"),
+    "single_tweet": RateLimit(requests=900, window_seconds=15 * 60, tier="user_context"),
+    "mentions": RateLimit(requests=180, window_seconds=15 * 60, tier="user_context"),
+    "search_recent": RateLimit(requests=450, window_seconds=15 * 60, tier="user_context"),
+    "create_tweet": RateLimit(requests=200, window_seconds=15 * 60, tier="user_context"),
+    "delete_tweet": RateLimit(requests=50, window_seconds=15 * 60, tier="user_context"),
 }
 ```
 
@@ -608,16 +540,12 @@ class RateLimitHandler:
                         endpoint=endpoint,
                         reset_at=datetime.fromtimestamp(reset_time),
                         wait_seconds=wait_seconds,
-                        message=f"Rate limit exceeded. Resets in {wait_seconds:.0f}s"
+                        message=f"Rate limit exceeded. Resets in {wait_seconds:.0f}s",
                     )
 
             return True
 
-    async def update_from_headers(
-        self,
-        endpoint: str,
-        headers: dict[str, str]
-    ) -> None:
+    async def update_from_headers(self, endpoint: str, headers: dict[str, str]) -> None:
         """Update rate limit state from X API response headers."""
         async with self._lock:
             # X API v2 rate limit headers
@@ -691,11 +619,7 @@ class TieredCache:
         # Level 3: Database cache (PostgreSQL/SQLite)
         self._db_cache = DatabaseCache(db_path) if db_path else None
 
-    async def get(
-        self,
-        key: str,
-        max_age: float | None = None
-    ) -> bytes | None:
+    async def get(self, key: str, max_age: float | None = None) -> bytes | None:
         """
         Get cached content from tiered cache.
 
@@ -734,12 +658,7 @@ class TieredCache:
         logger.debug(f"Cache miss: {key}")
         return None
 
-    async def set(
-        self,
-        key: str,
-        content: bytes,
-        tier: int = 1
-    ) -> None:
+    async def set(self, key: str, content: bytes, tier: int = 1) -> None:
         """
         Store content in cache tier(s).
 
@@ -765,11 +684,7 @@ class TieredCache:
 #### Cache Key Generation
 
 ```python
-def generate_cache_key(
-    endpoint: str,
-    params: dict[str, Any],
-    user_id: str
-) -> str:
+def generate_cache_key(endpoint: str, params: dict[str, Any], user_id: str) -> str:
     """
     Generate deterministic cache key for API request.
 
@@ -792,24 +707,21 @@ def generate_cache_key(
 ```python
 CACHE_TTL = {
     # Frequently changing data (short TTL)
-    "timeline": 300,           # 5 minutes
-    "mentions": 300,           # 5 minutes
-    "search": 1800,            # 30 minutes
-
+    "timeline": 300,  # 5 minutes
+    "mentions": 300,  # 5 minutes
+    "search": 1800,  # 30 minutes
     # Semi-static data (medium TTL)
-    "user_tweets": 3600,       # 1 hour
-    "bookmarks": 3600,         # 1 hour
-    "user_profile": 3600,      # 1 hour
-    "followers": 3600,         # 1 hour
-    "following": 3600,         # 1 hour
-
+    "user_tweets": 3600,  # 1 hour
+    "bookmarks": 3600,  # 1 hour
+    "user_profile": 3600,  # 1 hour
+    "followers": 3600,  # 1 hour
+    "following": 3600,  # 1 hour
     # Static data (long TTL)
-    "single_tweet": 86400,     # 24 hours
-    "user_media": 86400,       # 24 hours
-
+    "single_tweet": 86400,  # 24 hours
+    "user_media": 86400,  # 24 hours
     # No caching
-    "create_tweet": 0,         # Write operation
-    "delete_tweet": 0,         # Write operation
+    "create_tweet": 0,  # Write operation
+    "delete_tweet": 0,  # Write operation
 }
 ```
 
@@ -914,15 +826,18 @@ def grep(self, pattern: str, path: str = "/", **kwargs) -> list[dict]:
         # Fallback: search cached files
         return self._grep_cached(regex, path, kwargs.get("max_results", 100))
 
+
 def _grep_global(self, pattern: str, params: dict) -> list[dict]:
     """Global tweet search using X API."""
     client = self._get_api_client(params.get("context"))
 
     # Use X search API
-    response = asyncio.run(client.search_tweets(
-        query=pattern,
-        max_results=params.get("max_results", 100),
-    ))
+    response = asyncio.run(
+        client.search_tweets(
+            query=pattern,
+            max_results=params.get("max_results", 100),
+        )
+    )
 
     # Transform to grep result format
     results = []
@@ -931,13 +846,15 @@ def _grep_global(self, pattern: str, params: dict) -> list[dict]:
         lines = tweet["text"].split("\n")
         for line_num, line in enumerate(lines, start=1):
             if re.search(pattern, line, re.IGNORECASE):
-                results.append({
-                    "file": f"/x/posts/{tweet['id']}.json",
-                    "line": line_num,
-                    "content": line,
-                    "match": re.search(pattern, line, re.IGNORECASE).group(0),
-                    "source": "x_api",
-                })
+                results.append(
+                    {
+                        "file": f"/x/posts/{tweet['id']}.json",
+                        "line": line_num,
+                        "content": line,
+                        "match": re.search(pattern, line, re.IGNORECASE).group(0),
+                        "source": "x_api",
+                    }
+                )
 
     return results
 ```
@@ -1042,10 +959,7 @@ def glob(self, pattern: str, path: str = "/", context: Any = None) -> list[str]:
         response = asyncio.run(client.get_user_tweets(max_results=100))
 
         # Return virtual paths for each tweet
-        return [
-            f"/x/posts/{tweet['id']}.json"
-            for tweet in response.get("data", [])
-        ]
+        return [f"/x/posts/{tweet['id']}.json" for tweet in response.get("data", [])]
 
     # Handle media glob: /x/timeline/media/*/*.jpg
     if "media" in pattern:
@@ -1123,8 +1037,7 @@ def write_content(self, content: bytes, context: OperationContext | None = None)
     # Check if path is writable
     if not self._is_writable(path):
         raise PermissionError(
-            f"Path '{path}' is read-only. "
-            f"Writable paths: /x/posts/new.json, /x/posts/drafts/*.json"
+            f"Path '{path}' is read-only. Writable paths: /x/posts/new.json, /x/posts/drafts/*.json"
         )
 
     # Route to appropriate handler
@@ -1134,6 +1047,7 @@ def write_content(self, content: bytes, context: OperationContext | None = None)
         return self._save_draft(content, context)
     else:
         raise BackendError(f"Unknown writable path: {path}")
+
 
 def _is_writable(self, path: str) -> bool:
     """Check if virtual path is writable."""
@@ -1153,14 +1067,12 @@ def _is_writable(self, path: str) -> bool:
 
 ```python
 # ✅ Valid: Post new tweet
-nx.write("/x/posts/new.json", json.dumps({
-    "text": "Hello world!"
-}).encode())
+nx.write("/x/posts/new.json", json.dumps({"text": "Hello world!"}).encode())
 
 # ✅ Valid: Save draft
-nx.write("/x/posts/drafts/my-draft.json", json.dumps({
-    "text": "Draft tweet (not posted yet)"
-}).encode())
+nx.write(
+    "/x/posts/drafts/my-draft.json", json.dumps({"text": "Draft tweet (not posted yet)"}).encode()
+)
 
 # ❌ Invalid: Cannot write to timeline
 nx.write("/x/timeline/fake.json", b"...")
@@ -1222,9 +1134,7 @@ def delete_content(self, content_hash: str, context: OperationContext | None = N
             return True
         except Exception as e:
             if "403" in str(e):
-                raise PermissionError(
-                    f"Cannot delete tweet {tweet_id}: Not owned by user"
-                ) from e
+                raise PermissionError(f"Cannot delete tweet {tweet_id}: Not owned by user") from e
             raise BackendError(f"Failed to delete tweet: {e}") from e
 
     # Cannot delete other paths
@@ -1277,10 +1187,7 @@ def list_dir(self, path: str, context: OperationContext | None = None) -> list[s
         response = asyncio.run(client.get_user_tweets(max_results=100))
 
         entries = ["all.json", "drafts/"]
-        entries.extend([
-            f"{tweet['id']}.json"
-            for tweet in response.get("data", [])
-        ])
+        entries.extend([f"{tweet['id']}.json" for tweet in response.get("data", [])])
 
         return sorted(entries)
 
@@ -1310,9 +1217,7 @@ def stat(self, path: str, context: OperationContext | None = None) -> dict[str, 
         tweet = asyncio.run(client.get_tweet(tweet_id))
 
         # Map to stat structure
-        created_at = datetime.fromisoformat(
-            tweet["created_at"].replace("Z", "+00:00")
-        )
+        created_at = datetime.fromisoformat(tweet["created_at"].replace("Z", "+00:00"))
 
         return {
             "size": len(json.dumps(tweet)),  # JSON size
@@ -1325,7 +1230,7 @@ def stat(self, path: str, context: OperationContext | None = None) -> dict[str, 
                 "author": tweet["author_id"],
                 "likes": tweet["public_metrics"]["like_count"],
                 "retweets": tweet["public_metrics"]["retweet_count"],
-            }
+            },
         }
 
     # Default: return minimal stat
@@ -1436,20 +1341,13 @@ class XConnectorBackend(Backend):
     def user_scoped(self) -> bool:
         return True
 
-    def _get_api_client(
-        self,
-        context: OperationContext | None
-    ) -> XAPIClient:
+    def _get_api_client(self, context: OperationContext | None) -> XAPIClient:
         """Get authenticated X API client."""
         # Determine user email
-        user_email = self.user_email or (
-            context.user_id if context else None
-        )
+        user_email = self.user_email or (context.user_id if context else None)
 
         if not user_email:
-            raise BackendError(
-                "X connector requires user_email or context.user_id"
-            )
+            raise BackendError("X connector requires user_email or context.user_id")
 
         # Get OAuth token
         zone_id = context.zone_id if context else "default"
@@ -1467,16 +1365,10 @@ class XConnectorBackend(Backend):
             rate_limiter=self._rate_limiter,
         )
 
-    def read_content(
-        self,
-        content_hash: str,
-        context: OperationContext | None = None
-    ) -> bytes:
+    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
         """Read content from X API via virtual path."""
         if not context or not context.backend_path:
-            raise BackendError(
-                "X connector requires context with backend_path"
-            )
+            raise BackendError("X connector requires context with backend_path")
 
         path = context.backend_path
         user_id = context.user_id or self.user_email
@@ -1507,16 +1399,10 @@ class XConnectorBackend(Backend):
 
         return content
 
-    def write_content(
-        self,
-        content: bytes,
-        context: OperationContext | None = None
-    ) -> str:
+    def write_content(self, content: bytes, context: OperationContext | None = None) -> str:
         """Write content (post tweet or save draft)."""
         if not context or not context.backend_path:
-            raise BackendError(
-                "X connector requires context with backend_path"
-            )
+            raise BackendError("X connector requires context with backend_path")
 
         path = context.backend_path
 
@@ -1549,10 +1435,7 @@ class XConnectorBackend(Backend):
         return response["data"]["id"]
 
     async def _fetch_from_api(
-        self,
-        client: XAPIClient,
-        endpoint: str,
-        params: dict[str, Any]
+        self, client: XAPIClient, endpoint: str, params: dict[str, Any]
     ) -> dict[str, Any]:
         """Fetch data from X API with rate limit handling."""
         # Check rate limit
@@ -1567,19 +1450,14 @@ class XConnectorBackend(Backend):
             raise
         except Exception as e:
             raise BackendError(
-                f"X API request failed: {e}",
-                backend="x",
-                path=f"{endpoint}?{params}"
+                f"X API request failed: {e}", backend="x", path=f"{endpoint}?{params}"
             ) from e
 ```
 
 ### Path Resolution
 
 ```python
-def _resolve_path(
-    self,
-    backend_path: str
-) -> tuple[str, dict[str, Any]]:
+def _resolve_path(self, backend_path: str) -> tuple[str, dict[str, Any]]:
     """
     Resolve virtual path to X API endpoint.
 
@@ -1600,11 +1478,14 @@ def _resolve_path(
         elif parts[1].endswith(".json"):
             # Daily archive format: 2025-01-22.json
             date_str = parts[1].replace(".json", "")
-            return ("user_timeline", {
-                "start_time": f"{date_str}T00:00:00Z",
-                "end_time": f"{date_str}T23:59:59Z",
-                "max_results": 100,
-            })
+            return (
+                "user_timeline",
+                {
+                    "start_time": f"{date_str}T00:00:00Z",
+                    "end_time": f"{date_str}T23:59:59Z",
+                    "max_results": 100,
+                },
+            )
 
     # Mentions paths
     elif namespace == "mentions":
@@ -1630,10 +1511,13 @@ def _resolve_path(
     elif namespace == "search":
         if len(parts) > 1:
             query = parts[1].replace(".json", "").replace("_", " ")
-            return ("search_recent", {
-                "query": query,
-                "max_results": 100,
-            })
+            return (
+                "search_recent",
+                {
+                    "query": query,
+                    "max_results": 100,
+                },
+            )
 
     # User paths
     elif namespace == "users":
@@ -1678,7 +1562,7 @@ timeline_json = nx.read("/x/timeline/recent.json")
 timeline = json.loads(timeline_json)
 
 print(f"Timeline has {len(timeline['tweets'])} tweets")
-for tweet in timeline['tweets'][:5]:
+for tweet in timeline["tweets"][:5]:
     print(f"  @{tweet['author']['username']}: {tweet['text'][:50]}...")
 
 # Read mentions
@@ -1687,10 +1571,12 @@ mentions = json.loads(mentions_json)
 print(f"You have {len(mentions['tweets'])} mentions")
 
 # Post a tweet
-nx.write("/x/posts/new.json", json.dumps({
-    "text": "Hello from Nexus! Building AI agents on X. 🚀",
-    "reply_settings": "following"
-}).encode())
+nx.write(
+    "/x/posts/new.json",
+    json.dumps(
+        {"text": "Hello from Nexus! Building AI agents on X. 🚀", "reply_settings": "following"}
+    ).encode(),
+)
 
 # Search tweets
 search_json = nx.read("/x/search/python_ai.json")
@@ -1712,9 +1598,7 @@ from nexus.backends import XConnectorBackend
 import anthropic
 
 # Initialize Nexus with X connector
-nx = NexusFS(backend=XConnectorBackend(
-    token_manager_db="~/.nexus/nexus.db"
-))
+nx = NexusFS(backend=XConnectorBackend(token_manager_db="~/.nexus/nexus.db"))
 
 # Initialize Claude
 client = anthropic.Anthropic()
@@ -1723,29 +1607,24 @@ client = anthropic.Anthropic()
 mentions = json.loads(nx.read("/x/mentions/recent.json"))
 
 # Process each mention with AI
-for tweet in mentions['tweets']:
+for tweet in mentions["tweets"]:
     # Skip if already replied
-    if tweet.get('replied_to'):
+    if tweet.get("replied_to"):
         continue
 
     # Generate response using Claude
     response = client.messages.create(
         model="claude-3-5-sonnet-20241022",
-        messages=[{
-            "role": "user",
-            "content": f"Generate a helpful reply to: {tweet['text']}"
-        }]
+        messages=[{"role": "user", "content": f"Generate a helpful reply to: {tweet['text']}"}],
     )
 
     reply_text = response.content[0].text
 
     # Post reply
-    nx.write("/x/posts/new.json", json.dumps({
-        "text": reply_text,
-        "reply": {
-            "in_reply_to_tweet_id": tweet['id']
-        }
-    }).encode())
+    nx.write(
+        "/x/posts/new.json",
+        json.dumps({"text": reply_text, "reply": {"in_reply_to_tweet_id": tweet["id"]}}).encode(),
+    )
 
     print(f"Replied to @{tweet['author']['username']}")
 ```
@@ -1756,9 +1635,9 @@ for tweet in mentions['tweets']:
 # Download all media from timeline
 timeline = json.loads(nx.read("/x/timeline/recent.json"))
 
-for tweet in timeline['tweets']:
-    if 'media' in tweet and tweet['media']:
-        tweet_id = tweet['id']
+for tweet in timeline["tweets"]:
+    if "media" in tweet and tweet["media"]:
+        tweet_id = tweet["id"]
 
         # List media files
         media_files = nx.list(f"/x/timeline/media/{tweet_id}/")

@@ -17,20 +17,17 @@ nx = nexus.connect(config={"data_dir": "./nexus-data"})
 conversation_data = {
     "user": "What are your pricing tiers?",
     "assistant": "We offer Basic ($10/mo), Pro ($50/mo), and Enterprise (custom)",
-    "timestamp": "2024-01-15T10:30:00Z"
+    "timestamp": "2024-01-15T10:30:00Z",
 }
 
 nx.write(
     "/agent/memory/conversation.json",
     json.dumps(conversation_data).encode(),
-    metadata={"agent_id": "gpt-4", "session": "abc123", "topic": "pricing"}
+    metadata={"agent_id": "gpt-4", "session": "abc123", "topic": "pricing"},
 )
 
 # Later, query semantic memory across all sessions
-results = nx.search(
-    "/agent/memory",
-    query="user preferences about pricing"
-)
+results = nx.search("/agent/memory", query="user preferences about pricing")
 
 print(f"Found {len(results)} relevant conversations")
 ```
@@ -47,9 +44,7 @@ nx = nexus.connect(remote_url="https://nexus.example.com", api_key="admin-key")
 
 # Create isolated workspace for tenant
 nx.workspace.create(
-    "/tenant/acme-corp",
-    zone_id="acme-123",
-    metadata={"company": "Acme Corp", "plan": "enterprise"}
+    "/tenant/acme-corp", zone_id="acme-123", metadata={"company": "Acme Corp", "plan": "enterprise"}
 )
 
 # Grant permissions to tenant admin
@@ -58,21 +53,14 @@ nx.rebac_create(
     subject_id="admin@acme.com",
     relation="owner",
     object_type="file",
-    object_id="/tenant/acme-corp"
+    object_id="/tenant/acme-corp",
 )
 
 # User connection (permissions checked automatically)
-user_nx = nexus.connect(
-    remote_url="https://nexus.example.com",
-    api_key="user-key"
-)
+user_nx = nexus.connect(remote_url="https://nexus.example.com", api_key="user-key")
 
 # Write to tenant workspace
-user_nx.write(
-    "/tenant/acme-corp/data.json",
-    b'{"records": 1000}',
-    context={"user_id": "user-456"}
-)
+user_nx.write("/tenant/acme-corp/data.json", b'{"records": 1000}', context={"user_id": "user-456"})
 ```
 
 ## Distributed Teams
@@ -89,10 +77,7 @@ local_nx = nexus.connect(config={"data_dir": "./local-dev"})
 local_nx.write("/project/config.yaml", b"env: development")
 
 # Production with cloud storage and PostgreSQL
-prod_nx = nexus.connect(
-    remote_url="https://nexus.example.com",
-    api_key="prod-key"
-)
+prod_nx = nexus.connect(remote_url="https://nexus.example.com", api_key="prod-key")
 
 # Same API, different backend
 prod_nx.write("/project/config.yaml", b"env: production")
@@ -149,18 +134,14 @@ nx = nexus.connect(config={"data_dir": "./nexus-data"})
 docs = [
     "Machine learning improves model accuracy",
     "Deep neural networks for image classification",
-    "Natural language processing with transformers"
+    "Natural language processing with transformers",
 ]
 
 for i, doc in enumerate(docs):
     nx.write(f"/docs/doc{i}.txt", doc.encode())
 
 # Semantic search across documents
-results = nx.search(
-    "/docs",
-    query="AI and computer vision",
-    limit=5
-)
+results = nx.search("/docs", query="AI and computer vision", limit=5)
 
 for result in results:
     print(f"Match: {result.path} (score: {result.score})")
@@ -212,18 +193,20 @@ import random
 from datetime import datetime
 
 # Connect with agent identity
-nx = nexus.connect(config={
-    "data_dir": "./nexus-task-demo",
-    "agent_id": "agent_demo",
-})
+nx = nexus.connect(
+    config={
+        "data_dir": "./nexus-task-demo",
+        "agent_id": "agent_demo",
+    }
+)
 
 # Store task as structured memory
 task_data = {
     "task_id": "task_001",
     "title": "Implement authentication",
-    "status": "pending",      # pending | in_progress | completed
-    "priority": 1,            # 1=highest
-    "blocked_by": [],         # List of task_ids that block this
+    "status": "pending",  # pending | in_progress | completed
+    "priority": 1,  # 1=highest
+    "blocked_by": [],  # List of task_ids that block this
     "discovered_from": None,  # Parent task_id for discovered tasks
     "agent_id": None,
     "created_at": datetime.now().isoformat(),
@@ -231,26 +214,21 @@ task_data = {
 }
 
 # Store task in memory
-memory_id = nx.memory.store(
-    json.dumps(task_data),
-    scope="agent",
-    memory_type="task"
-)
+memory_id = nx.memory.store(json.dumps(task_data), scope="agent", memory_type="task")
+
 
 # Query ready tasks (no blockers)
 def find_ready_work(nx):
     memories = nx.memory.query(scope="agent", memory_type="task")
-    tasks = [json.loads(m['content']) for m in memories]
+    tasks = [json.loads(m["content"]) for m in memories]
 
     # Filter to pending tasks with no blockers
-    ready = [
-        t for t in tasks
-        if t['status'] == 'pending' and not t['blocked_by']
-    ]
+    ready = [t for t in tasks if t["status"] == "pending" and not t["blocked_by"]]
 
     # Sort by priority
-    ready.sort(key=lambda t: t['priority'])
+    ready.sort(key=lambda t: t["priority"])
     return ready
+
 
 # Autonomous agent loop
 ready_tasks = find_ready_work(nx)
@@ -265,7 +243,7 @@ for task in ready_tasks:
             "title": f"Test: {task['title']}",
             "status": "pending",
             "priority": 2,
-            "discovered_from": task['task_id'],
+            "discovered_from": task["task_id"],
             "created_at": datetime.now().isoformat(),
         }
         nx.memory.store(json.dumps(new_task), scope="agent", memory_type="task")
@@ -304,16 +282,17 @@ nx = nexus.connect(config={"enable_workflows": True})
 agent = create_deep_agent(
     model="anthropic:claude-sonnet-4",
     backend=NexusBackend(nx, base_path="/workspace"),
-    tools=[internet_search]
+    tools=[internet_search],
 )
 
 # Define workflow to auto-process agent outputs
 workflow = {
     "name": "agent-processor",
     "triggers": [{"type": "file_write", "pattern": "/workspace/*.md"}],
-    "actions": [{
-        "type": "python",
-        "code": """
+    "actions": [
+        {
+            "type": "python",
+            "code": """
 nx = nexus.connect()
 content = nx.read(context.file_path).decode()
 
@@ -321,17 +300,16 @@ content = nx.read(context.file_path).decode()
 insight = f"Agent researched: {context.file_path}"
 nx.memory.store(insight, scope="user", memory_type="research")
 nx.memory.session.commit()
-        """
-    }]
+        """,
+        }
+    ],
 }
 
 # Register workflow (runs automatically on file writes)
 WorkflowAPI().load(workflow, enabled=True)
 
 # Agent writes files → workflow triggers → memory updates
-agent.invoke({
-    "messages": [{"role": "user", "content": "Research transformers"}]
-})
+agent.invoke({"messages": [{"role": "user", "content": "Research transformers"}]})
 
 # Query consolidated memories
 memories = nx.memory.search("transformers", scope="user")
@@ -368,8 +346,7 @@ nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
 # Start tracking an agent task
 traj_id = nx.memory.start_trajectory(
-    task_description="Validate customer data records",
-    playbook="data_validator"
+    task_description="Validate customer data records", playbook="data_validator"
 )
 
 # Load learned strategies from previous runs
@@ -380,20 +357,13 @@ strategies = playbook.get("strategies", [])
 accuracy = validate_data(records, strategies=strategies)
 
 # Complete trajectory with performance metric
-nx.memory.complete_trajectory(
-    traj_id,
-    outcome="success",
-    success_score=accuracy
-)
+nx.memory.complete_trajectory(traj_id, outcome="success", success_score=accuracy)
 
 # Agent automatically reflects on what worked
 reflection = nx.memory.reflect(traj_id)
 
 # Curate playbook with high-performing strategies
-nx.memory.curate_playbook(
-    reflection_ids=[reflection.id],
-    playbook_name="data_validator"
-)
+nx.memory.curate_playbook(reflection_ids=[reflection.id], playbook_name="data_validator")
 
 # Next run will use improved strategies
 # Repeat over epochs → continuous improvement
@@ -432,19 +402,23 @@ from langgraph_react_demo import create_react_agent
 # Connect to remote Nexus server
 nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"zone_id": "team-dev", "agent_id": "code-analyzer"}
+    config={"zone_id": "team-dev", "agent_id": "code-analyzer"},
 )
 
 # Create ReAct agent with file operation tools
 agent = create_react_agent(nx)
 
 # Agent autonomously searches, reads, and writes files
-result = agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Find all async/await patterns, analyze them, and create a summary report"
-    }]
-})
+result = agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Find all async/await patterns, analyze them, and create a summary report",
+            }
+        ]
+    }
+)
 
 # Agent automatically:
 # 1. grep_files("async def /workspace") - Search for patterns
@@ -484,9 +458,9 @@ from agents import Agent, function_tool
 
 # Connect to Nexus
 nx = nexus.connect(
-    remote_url="http://nexus-server:2026",
-    config={"zone_id": "team-dev", "agent_id": "file-agent"}
+    remote_url="http://nexus-server:2026", config={"zone_id": "team-dev", "agent_id": "file-agent"}
 )
+
 
 # Define tools with @function_tool decorator
 @function_tool
@@ -495,24 +469,24 @@ async def grep_files(pattern: str, path: str = "/") -> str:
     results = nx.grep(pattern, path)
     return format_results(results)
 
+
 @function_tool
 async def write_file(path: str, content: str) -> str:
     """Write content to Nexus filesystem."""
-    nx.write(path, content.encode('utf-8'))
+    nx.write(path, content.encode("utf-8"))
     return f"Successfully wrote to {path}"
+
 
 # Create agent (ReAct loop is automatic!)
 agent = Agent(
     name="FileAgent",
     instructions="You are a file analysis assistant with Nexus filesystem access.",
     tools=[grep_files, read_file, write_file],
-    model="gpt-4o"
+    model="gpt-4o",
 )
 
 # Run agent - automatic Think→Act→Observe loop
-result = agent.run(
-    "Find all async/await patterns and create a summary report"
-)
+result = agent.run("Find all async/await patterns and create a summary report")
 ```
 
 **With persistent memory:**
@@ -524,17 +498,19 @@ async def store_memory(content: str, memory_type: str = "fact") -> str:
     nx.memory.store(content, scope="agent", memory_type=memory_type)
     return f"Stored {memory_type}: {content}"
 
+
 @function_tool
 async def recall_memory(query: str) -> str:
     """Query stored memories using semantic search."""
     results = nx.memory.query(query, scope="agent")
     return format_memories(results)
 
+
 # Agent remembers across sessions!
 agent = Agent(
     name="MemoryAgent",
     instructions="Store important information and recall when relevant.",
-    tools=[store_memory, recall_memory]
+    tools=[store_memory, recall_memory],
 )
 ```
 

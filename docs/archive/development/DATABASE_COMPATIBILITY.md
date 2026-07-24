@@ -54,9 +54,7 @@ sqlalchemy.url = sqlite:///nexus.db
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # PostgreSQL
-store = SQLAlchemyMetadataStore(
-    "postgresql://user/password@localhost:5432/nexus"
-)
+store = SQLAlchemyMetadataStore("postgresql://user/password@localhost:5432/nexus")
 ```
 
 ### Alembic Configuration (alembic.ini)
@@ -73,9 +71,7 @@ The current models are designed to work with both databases, but for optimal Pos
    ```python
    from sqlalchemy.dialects.postgresql import UUID
 
-   path_id: Mapped[uuid.UUID] = mapped_column(
-       UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-   )
+   path_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
    ```
 
 2. **Use JSONB for metadata:**
@@ -87,7 +83,7 @@ The current models are designed to work with both databases, but for optimal Pos
 
 3. **Add GIN indexes:**
    ```python
-   Index('idx_file_metadata_value_gin', 'value', postgresql_using='gin')
+   Index("idx_file_metadata_value_gin", "value", postgresql_using="gin")
    ```
 
 ## Running Migrations
@@ -120,10 +116,7 @@ Or modify `alembic/env.py` to read from environment:
 ```python
 from os import environ
 
-config.set_main_option(
-    'sqlalchemy.url',
-    environ.get('DATABASE_URL', 'sqlite:///nexus.db')
-)
+config.set_main_option("sqlalchemy.url", environ.get("DATABASE_URL", "sqlite:///nexus.db"))
 ```
 
 ## Type Compatibility Matrix

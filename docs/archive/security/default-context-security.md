@@ -44,6 +44,7 @@ def _validate_auth(self) -> bool:
     token = auth_header[7:]  # Remove "Bearer " prefix
     return bool(token == self.api_key)  # ⚠️ Only checks static API key!
 
+
 def _handle_rpc_call(self, request: RPCRequest) -> None:
     # ... validate auth ...
 
@@ -94,6 +95,7 @@ def _handle_rpc_call(self, request: RPCRequest):
     # Calls method WITHOUT context
     result = nx.write(path, content)  # Uses _default_context!
 
+
 # SHOULD BE:
 def _handle_rpc_call(self, request: RPCRequest):
     # Parse JWT from Authorization header
@@ -104,7 +106,7 @@ def _handle_rpc_call(self, request: RPCRequest):
     ctx = OperationContext(
         user=claims["subject_id"],
         groups=claims.get("groups", []),
-        is_admin=claims.get("is_admin", False)
+        is_admin=claims.get("is_admin", False),
     )
 
     # Pass context to operation
@@ -131,6 +133,7 @@ self._default_context = OperationContext(
     is_admin=False,  # ❌ NO admin
     is_system=False,  # ❌ NO system bypass
 )
+
 
 # Or even better - REQUIRE context:
 def write(self, path, content, context):  # NO default!
@@ -162,13 +165,13 @@ from nexus.server import RPCServer
 nx = NexusFS(
     backend=GCSBackend("production-bucket"),
     enforce_permissions=True,  # ⚠️ Doesn't matter!
-    is_admin=False  # ⚠️ Doesn't matter!
+    is_admin=False,  # ⚠️ Doesn't matter!
 )
 
 # Start RPC server
 server = RPCServer(
     nexus_fs=nx,
-    api_key="static-api-key"  # All users share same key
+    api_key="static-api-key",  # All users share same key
 )
 server.start()
 
@@ -220,12 +223,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         auth_header = self.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             # No auth - use anonymous context
-            return OperationContext(
-                user="anonymous",
-                groups=[],
-                is_admin=False,
-                is_system=False
-            )
+            return OperationContext(user="anonymous", groups=[], is_admin=False, is_system=False)
 
         token = auth_header[7:]
 
@@ -237,16 +235,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 user=claims["subject_id"],
                 groups=claims.get("groups", []),
                 is_admin=claims.get("is_admin", False),
-                is_system=False  # ← NEVER allow is_system from JWT
+                is_system=False,  # ← NEVER allow is_system from JWT
             )
         except Exception:
             # Invalid token - deny access
-            return OperationContext(
-                user="anonymous",
-                groups=[],
-                is_admin=False,
-                is_system=False
-            )
+            return OperationContext(user="anonymous", groups=[], is_admin=False, is_system=False)
 
     def _handle_rpc_call(self, request: RPCRequest):
         # ... existing code ...
@@ -267,10 +260,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 ```python
 # src/nexus/core/nexus_fs.py:200-207
 self._default_context = OperationContext(
-    user="anonymous",      # ← Not "system"
+    user="anonymous",  # ← Not "system"
     groups=[],
-    is_admin=False,        # ← Not based on init param
-    is_system=False,       # ← CRITICAL: No bypass!
+    is_admin=False,  # ← Not based on init param
+    is_system=False,  # ← CRITICAL: No bypass!
 )
 
 # Document that operations REQUIRE context when permissions enabled
@@ -323,7 +316,7 @@ from nexus.contracts.types import OperationContext
 # Setup
 nx = NexusFS(
     backend=LocalBackend("/tmp/test"),
-    enforce_permissions=True  # ← Permissions enabled
+    enforce_permissions=True,  # ← Permissions enabled
 )
 
 # Create file as admin
@@ -332,9 +325,7 @@ nx.write("/admin/secret.txt", b"secret data", context=admin_ctx)
 
 # Create ReBAC permission - ONLY admin can read
 nx.rebac_create(
-    subject=("user", "admin"),
-    relation="direct_reader",
-    object=("file", "/admin/secret.txt")
+    subject=("user", "admin"), relation="direct_reader", object=("file", "/admin/secret.txt")
 )
 
 # Try to read as regular user

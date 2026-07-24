@@ -171,7 +171,7 @@ workflows.load(definition, enabled=True)
 workflow_dict = {
     "name": "test-workflow",
     "triggers": [{"type": "file_write", "pattern": "/test/*.txt"}],
-    "actions": [{"name": "log", "type": "shell", "config": {...}}]
+    "actions": [{"name": "log", "type": "shell", "config": {...}}],
 }
 definition = WorkflowLoader.load_from_dict(workflow_dict)
 workflows.load(definition, enabled=True)
@@ -203,10 +203,7 @@ workflows.discover(".nexus/workflows/", load=True)
 
 ```python
 # Trigger workflow manually (without file event)
-result = await workflows.execute(
-    "my-workflow",
-    context={"file_path": "/test/manual.txt"}
-)
+result = await workflows.execute("my-workflow", context={"file_path": "/test/manual.txt"})
 print(f"Status: {result.status}")
 ```
 
@@ -432,6 +429,7 @@ Check:
 
 ```python
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 # Shows workflow execution logs
 ```
@@ -441,6 +439,7 @@ logging.basicConfig(level=logging.DEBUG)
 ```python
 # Test trigger matching
 from nexus.workflows.triggers import FileWriteTrigger
+
 trigger = FileWriteTrigger(pattern="/uploads/*.pdf")
 matches = trigger.matches({"file_path": "/uploads/test.pdf"})
 print(f"Matches: {matches}")  # True/False

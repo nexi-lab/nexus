@@ -39,49 +39,50 @@ from types import SimpleNamespace
 Add these tests inside `class TestApplyRebacFilterNoOpPaths` after `test_enforcer_without_filter_search_results_method`:
 
 ```python
-    def test_admin_bypass_from_auth_result_skips_filter_work(self) -> None:
-        results = [_StubResult("/a.py"), _StubResult("/b.py")]
-        enforcer = MagicMock()
-        enforcer.allow_admin_bypass = True
-        enforcer.filter_list = MagicMock(return_value=[])
-        enforcer.filter_search_results = MagicMock(return_value=[])
-        enforcer.check = MagicMock(return_value=False)
+def test_admin_bypass_from_auth_result_skips_filter_work(self) -> None:
+    results = [_StubResult("/a.py"), _StubResult("/b.py")]
+    enforcer = MagicMock()
+    enforcer.allow_admin_bypass = True
+    enforcer.filter_list = MagicMock(return_value=[])
+    enforcer.filter_search_results = MagicMock(return_value=[])
+    enforcer.check = MagicMock(return_value=False)
 
-        filtered, filter_ms = _apply_rebac_filter(
-            results=results,
-            permission_enforcer=enforcer,
-            auth_result=_auth(is_admin=True),
-            zone_id=ROOT_ZONE_ID,
-        )
+    filtered, filter_ms = _apply_rebac_filter(
+        results=results,
+        permission_enforcer=enforcer,
+        auth_result=_auth(is_admin=True),
+        zone_id=ROOT_ZONE_ID,
+    )
 
-        assert filtered is results
-        assert filter_ms == 0.0
-        enforcer.filter_list.assert_not_called()
-        enforcer.filter_search_results.assert_not_called()
-        enforcer.check.assert_not_called()
+    assert filtered is results
+    assert filter_ms == 0.0
+    enforcer.filter_list.assert_not_called()
+    enforcer.filter_search_results.assert_not_called()
+    enforcer.check.assert_not_called()
 
-    def test_admin_bypass_from_operation_context_skips_filter_work(self) -> None:
-        results = [_StubResult("/a.py"), _StubResult("/b.py")]
-        op_context = SimpleNamespace(is_admin=True)
-        enforcer = MagicMock()
-        enforcer.allow_admin_bypass = True
-        enforcer.filter_list = MagicMock(return_value=[])
-        enforcer.filter_search_results = MagicMock(return_value=[])
-        enforcer.check = MagicMock(return_value=False)
 
-        filtered, filter_ms = _apply_rebac_filter(
-            results=results,
-            permission_enforcer=enforcer,
-            auth_result=_auth(is_admin=False),
-            zone_id=ROOT_ZONE_ID,
-            operation_context=op_context,
-        )
+def test_admin_bypass_from_operation_context_skips_filter_work(self) -> None:
+    results = [_StubResult("/a.py"), _StubResult("/b.py")]
+    op_context = SimpleNamespace(is_admin=True)
+    enforcer = MagicMock()
+    enforcer.allow_admin_bypass = True
+    enforcer.filter_list = MagicMock(return_value=[])
+    enforcer.filter_search_results = MagicMock(return_value=[])
+    enforcer.check = MagicMock(return_value=False)
 
-        assert filtered is results
-        assert filter_ms == 0.0
-        enforcer.filter_list.assert_not_called()
-        enforcer.filter_search_results.assert_not_called()
-        enforcer.check.assert_not_called()
+    filtered, filter_ms = _apply_rebac_filter(
+        results=results,
+        permission_enforcer=enforcer,
+        auth_result=_auth(is_admin=False),
+        zone_id=ROOT_ZONE_ID,
+        operation_context=op_context,
+    )
+
+    assert filtered is results
+    assert filter_ms == 0.0
+    enforcer.filter_list.assert_not_called()
+    enforcer.filter_search_results.assert_not_called()
+    enforcer.check.assert_not_called()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -264,99 +265,102 @@ Expected: the new timing tests fail with missing keys such as `embed_ms` or `key
 In `src/nexus/bricks/search/daemon.py`, replace the body of `_search_via_backends()` from `path = path_filter or "/"` through the final hybrid return with this implementation:
 
 ```python
-        path = path_filter or "/"
-        timing: dict[str, float] = {
-            "backend_ms": 0.0,
-            "embed_ms": 0.0,
-            "keyword_ms": 0.0,
-            "page_keyword_ms": 0.0,
-            "vector_ms": 0.0,
-            "fusion_ms": 0.0,
-            "rerank_ms": 0.0,
-        }
-        backend_start = time.perf_counter()
+path = path_filter or "/"
+timing: dict[str, float] = {
+    "backend_ms": 0.0,
+    "embed_ms": 0.0,
+    "keyword_ms": 0.0,
+    "page_keyword_ms": 0.0,
+    "vector_ms": 0.0,
+    "fusion_ms": 0.0,
+    "rerank_ms": 0.0,
+}
+backend_start = time.perf_counter()
 
-        async def _time_leg(name: str, awaitable: Any) -> Any:
-            leg_start = time.perf_counter()
-            try:
-                return await awaitable
-            finally:
-                timing[name] = (time.perf_counter() - leg_start) * 1000
 
-        def _publish_timing() -> None:
-            timing["backend_ms"] = (time.perf_counter() - backend_start) * 1000
-            self.last_search_timing = dict(timing)
+async def _time_leg(name: str, awaitable: Any) -> Any:
+    leg_start = time.perf_counter()
+    try:
+        return await awaitable
+    finally:
+        timing[name] = (time.perf_counter() - leg_start) * 1000
 
-        if search_type == "keyword":
-            results = await _time_leg(
-                "keyword_ms",
-                self._fts_backend.keyword_search(query, path, limit, zone_id),
-            )
-            _publish_timing()
-            return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
-        if search_type == "semantic":
-            embed_start = time.perf_counter()
-            qvec = await self._embed_query(query)
-            timing["embed_ms"] = (time.perf_counter() - embed_start) * 1000
-            if qvec is None:
-                _publish_timing()
-                return []
-            results = await _time_leg(
-                "vector_ms",
-                self._vector_backend.semantic_search(qvec, path, limit, zone_id),
-            )
-            _publish_timing()
-            return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
+def _publish_timing() -> None:
+    timing["backend_ms"] = (time.perf_counter() - backend_start) * 1000
+    self.last_search_timing = dict(timing)
 
-        embed_start = time.perf_counter()
-        qvec = await self._embed_query(query)
-        timing["embed_ms"] = (time.perf_counter() - embed_start) * 1000
-        if qvec is None:
-            results = await _time_leg(
-                "keyword_ms",
-                self._fts_backend.keyword_search(query, path, limit, zone_id),
-            )
-            _publish_timing()
-            return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
-        is_pg = isinstance(self._fts_backend, PgFtsBackend)
-        if is_pg:
-            chunk_kw, page_kw, dense = await asyncio.gather(
-                _time_leg(
-                    "keyword_ms",
-                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                ),
-                _time_leg(
-                    "page_keyword_ms",
-                    self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
-                ),
-                _time_leg(
-                    "vector_ms",
-                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
-                ),
-                return_exceptions=False,
-            )
-        else:
-            chunk_kw, dense = await asyncio.gather(
-                _time_leg(
-                    "keyword_ms",
-                    self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
-                ),
-                _time_leg(
-                    "vector_ms",
-                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
-                ),
-                return_exceptions=False,
-            )
-            page_kw = []
+if search_type == "keyword":
+    results = await _time_leg(
+        "keyword_ms",
+        self._fts_backend.keyword_search(query, path, limit, zone_id),
+    )
+    _publish_timing()
+    return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
-        fusion_start = time.perf_counter()
-        kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
-        fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
-        timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+if search_type == "semantic":
+    embed_start = time.perf_counter()
+    qvec = await self._embed_query(query)
+    timing["embed_ms"] = (time.perf_counter() - embed_start) * 1000
+    if qvec is None:
         _publish_timing()
-        return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+        return []
+    results = await _time_leg(
+        "vector_ms",
+        self._vector_backend.semantic_search(qvec, path, limit, zone_id),
+    )
+    _publish_timing()
+    return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
+
+embed_start = time.perf_counter()
+qvec = await self._embed_query(query)
+timing["embed_ms"] = (time.perf_counter() - embed_start) * 1000
+if qvec is None:
+    results = await _time_leg(
+        "keyword_ms",
+        self._fts_backend.keyword_search(query, path, limit, zone_id),
+    )
+    _publish_timing()
+    return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
+
+is_pg = isinstance(self._fts_backend, PgFtsBackend)
+if is_pg:
+    chunk_kw, page_kw, dense = await asyncio.gather(
+        _time_leg(
+            "keyword_ms",
+            self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+        ),
+        _time_leg(
+            "page_keyword_ms",
+            self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
+        ),
+        _time_leg(
+            "vector_ms",
+            self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+        ),
+        return_exceptions=False,
+    )
+else:
+    chunk_kw, dense = await asyncio.gather(
+        _time_leg(
+            "keyword_ms",
+            self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+        ),
+        _time_leg(
+            "vector_ms",
+            self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+        ),
+        return_exceptions=False,
+    )
+    page_kw = []
+
+fusion_start = time.perf_counter()
+kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
+fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+_publish_timing()
+return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
 ```
 
 - [ ] **Step 4: Preserve detailed timing in outer search wrappers**

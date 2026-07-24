@@ -56,10 +56,7 @@ Secure deployment with API key authentication.
     import nexus
 
     # Embedded mode with SQLite
-    nx = nexus.connect(config={
-        "data_dir": "./nexus-data",
-        "backend": "sqlite"
-    })
+    nx = nexus.connect(config={"data_dir": "./nexus-data", "backend": "sqlite"})
     ```
 
 === "Server (Production)"
@@ -82,11 +79,13 @@ Secure deployment with API key authentication.
     ```python
     import nexus
 
-    nx = nexus.connect(config={
-        "backend": "postgresql",
-        "db_url": "postgresql://user:pass@localhost/nexus",
-        "data_dir": "/var/lib/nexus"
-    })
+    nx = nexus.connect(
+        config={
+            "backend": "postgresql",
+            "db_url": "postgresql://user:pass@localhost/nexus",
+            "data_dir": "/var/lib/nexus",
+        }
+    )
     ```
 
 === "Docker (Quick)"
@@ -197,10 +196,12 @@ export NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT=true
 ### Caching
 
 ```python
-nx = nexus.connect(config={
-    "cache_ttl": 300,  # 5 minutes
-    "cache_size": 1000
-})
+nx = nexus.connect(
+    config={
+        "cache_ttl": 300,  # 5 minutes
+        "cache_size": 1000,
+    }
+)
 ```
 
 ---
@@ -226,8 +227,7 @@ curl http://localhost:2026/metrics/pool
 import logging
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 ```
 

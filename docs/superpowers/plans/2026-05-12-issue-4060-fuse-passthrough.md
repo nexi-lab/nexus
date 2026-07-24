@@ -1850,7 +1850,9 @@ class PassthroughOptions:
             enabled=_parse_bool(os.environ.get("NEXUS_FUSE_PASSTHROUGH")),
             patterns=_parse_patterns(os.environ.get("NEXUS_FUSE_PASSTHROUGH_PATTERNS")),
             deny_patterns=_parse_patterns(os.environ.get("NEXUS_FUSE_PASSTHROUGH_DENY_PATTERNS")),
-            threshold_bytes=int(os.environ.get("NEXUS_FUSE_PASSTHROUGH_THRESHOLD_BYTES", str(128 * 1024))),
+            threshold_bytes=int(
+                os.environ.get("NEXUS_FUSE_PASSTHROUGH_THRESHOLD_BYTES", str(128 * 1024))
+            ),
             require=_parse_bool(os.environ.get("NEXUS_FUSE_PASSTHROUGH_REQUIRE")),
             backing_dir=Path(backing_dir) if backing_dir else None,
         )
@@ -2082,31 +2084,33 @@ from nexus.fuse.passthrough import (
 Add constructor parameters after `use_rust`:
 
 ```python
-        passthrough_enabled: bool | None = None,
-        passthrough_patterns: list[str] | None = None,
-        passthrough_deny_patterns: list[str] | None = None,
-        passthrough_threshold_bytes: int = 128 * 1024,
-        passthrough_require: bool = False,
-        passthrough_backing_dir: str | Path | None = None,
+passthrough_enabled: bool | None = (None,)
+passthrough_patterns: list[str] | None = (None,)
+passthrough_deny_patterns: list[str] | None = (None,)
+passthrough_threshold_bytes: int = (128 * 1024,)
+passthrough_require: bool = (False,)
+passthrough_backing_dir: str | Path | None = (None,)
 ```
 
 Set fields after `self._use_rust = use_rust`:
 
 ```python
-        env_options = PassthroughOptions.from_env()
-        self._passthrough_options = PassthroughOptions(
-            enabled=env_options.enabled if passthrough_enabled is None else passthrough_enabled,
-            patterns=passthrough_patterns if passthrough_patterns is not None else env_options.patterns,
-            deny_patterns=(
-                passthrough_deny_patterns
-                if passthrough_deny_patterns is not None
-                else env_options.deny_patterns
-            ),
-            threshold_bytes=passthrough_threshold_bytes,
-            require=passthrough_require or env_options.require,
-            backing_dir=Path(passthrough_backing_dir) if passthrough_backing_dir else env_options.backing_dir,
-        )
-        self._rust_passthrough_mount: RustPassthroughMount | None = None
+env_options = PassthroughOptions.from_env()
+self._passthrough_options = PassthroughOptions(
+    enabled=env_options.enabled if passthrough_enabled is None else passthrough_enabled,
+    patterns=passthrough_patterns if passthrough_patterns is not None else env_options.patterns,
+    deny_patterns=(
+        passthrough_deny_patterns
+        if passthrough_deny_patterns is not None
+        else env_options.deny_patterns
+    ),
+    threshold_bytes=passthrough_threshold_bytes,
+    require=passthrough_require or env_options.require,
+    backing_dir=Path(passthrough_backing_dir)
+    if passthrough_backing_dir
+    else env_options.backing_dir,
+)
+self._rust_passthrough_mount: RustPassthroughMount | None = None
 ```
 
 - [ ] **Step 4: Route eligible mounts before creating Python FUSE operations**
@@ -2122,34 +2126,37 @@ In `NexusFUSE.mount`, after the mount-point validation and namespace `context` c
 Add these methods to `NexusFUSE`:
 
 ```python
-    def _should_use_rust_passthrough(self, context: Any | None) -> bool:
-        if not (self._use_rust and self._passthrough_options.enabled):
-            return False
-        if not hasattr(self.nexus_fs, "_base_url") or not hasattr(self.nexus_fs, "_api_key"):
-            if self._passthrough_options.require:
-                raise RuntimeError("FUSE passthrough requires a remote NexusFS with _base_url and _api_key")
-            return False
-        if not mount_is_passthrough_safe(
-            self.nexus_fs,
-            mode_value=self.mode.value,
-            context=context,
-        ):
-            if self._passthrough_options.require:
-                raise RuntimeError("FUSE passthrough is not safe for this mount configuration")
-            return False
-        return True
+def _should_use_rust_passthrough(self, context: Any | None) -> bool:
+    if not (self._use_rust and self._passthrough_options.enabled):
+        return False
+    if not hasattr(self.nexus_fs, "_base_url") or not hasattr(self.nexus_fs, "_api_key"):
+        if self._passthrough_options.require:
+            raise RuntimeError(
+                "FUSE passthrough requires a remote NexusFS with _base_url and _api_key"
+            )
+        return False
+    if not mount_is_passthrough_safe(
+        self.nexus_fs,
+        mode_value=self.mode.value,
+        context=context,
+    ):
+        if self._passthrough_options.require:
+            raise RuntimeError("FUSE passthrough is not safe for this mount configuration")
+        return False
+    return True
 
-    def _start_rust_passthrough_mount(self) -> None:
-        self._rust_passthrough_mount = RustPassthroughMount.create(
-            nexus_url=self.nexus_fs._base_url,  # noqa: SLF001
-            api_key=self.nexus_fs._api_key,  # noqa: SLF001
-            mount_point=self.mount_point,
-            options=self._passthrough_options,
-            agent_id=getattr(self.nexus_fs, "_agent_id", self._agent_id),
-        )
-        self._rust_passthrough_mount.start()
-        self._mounted = True
-        self._start_warmup()
+
+def _start_rust_passthrough_mount(self) -> None:
+    self._rust_passthrough_mount = RustPassthroughMount.create(
+        nexus_url=self.nexus_fs._base_url,  # noqa: SLF001
+        api_key=self.nexus_fs._api_key,  # noqa: SLF001
+        mount_point=self.mount_point,
+        options=self._passthrough_options,
+        agent_id=getattr(self.nexus_fs, "_agent_id", self._agent_id),
+    )
+    self._rust_passthrough_mount.start()
+    self._mounted = True
+    self._start_warmup()
 ```
 
 - [ ] **Step 5: Stop Rust passthrough process during unmount**
@@ -2169,12 +2176,12 @@ If unmount command fails because the Rust process has already exited, call `stop
 Add the same passthrough parameters to `mount_nexus(...)` and pass them into `NexusFUSE(...)`:
 
 ```python
-        passthrough_enabled=passthrough_enabled,
-        passthrough_patterns=passthrough_patterns,
-        passthrough_deny_patterns=passthrough_deny_patterns,
-        passthrough_threshold_bytes=passthrough_threshold_bytes,
-        passthrough_require=passthrough_require,
-        passthrough_backing_dir=passthrough_backing_dir,
+passthrough_enabled = (passthrough_enabled,)
+passthrough_patterns = (passthrough_patterns,)
+passthrough_deny_patterns = (passthrough_deny_patterns,)
+passthrough_threshold_bytes = (passthrough_threshold_bytes,)
+passthrough_require = (passthrough_require,)
+passthrough_backing_dir = (passthrough_backing_dir,)
 ```
 
 - [ ] **Step 7: Run Python routing tests**

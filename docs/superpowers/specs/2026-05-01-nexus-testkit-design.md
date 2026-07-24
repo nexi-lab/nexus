@@ -88,6 +88,7 @@ The compatibility wrappers should contain no logic beyond imports and `__all__`.
 from dataclasses import dataclass
 from typing import Any
 
+
 @dataclass(frozen=True)
 class TestProfile:
     name: str

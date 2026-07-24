@@ -50,6 +50,7 @@ def test_full_concurrency(self) -> None:
     assert c.max_async_concurrency == 10
     assert c.task_runner_workers == 4
 
+
 def test_full_storage(self) -> None:
     s = DeploymentProfile.FULL.tuning().storage
     assert s.write_buffer_flush_ms == 100
@@ -58,11 +59,13 @@ def test_full_storage(self) -> None:
     assert s.db_pool_size == 5  # was 20; Cloud SQL sample sizing (#3997)
     assert s.db_max_overflow == 5  # was 30; single-tenant burst (#3997)
 
+
 def test_full_connector(self) -> None:
     cn = DeploymentProfile.FULL.tuning().connector
     assert cn.blob_operation_timeout == 60.0
     assert cn.large_upload_timeout == 300.0
     assert cn.connector_max_workers == 6  # was 20; blob ops are I/O-bound (#3997)
+
 
 def test_full_pool(self) -> None:
     p = DeploymentProfile.FULL.tuning().pool
@@ -309,7 +312,9 @@ def _resolve_txtai_runtime_config() -> tuple[str | None, dict[str, str] | None]:
         return explicit_model, None
 
     # OpenAI key present -> API embeddings, ~0 RAM
-    if openai_api_key and (use_api_explicit or not explicit_model or explicit_model.startswith("openai/")):
+    if openai_api_key and (
+        use_api_explicit or not explicit_model or explicit_model.startswith("openai/")
+    ):
         model = explicit_model or "openai/text-embedding-3-small"
         vectors: dict[str, str] = {"api_key": openai_api_key}
         if openai_base_url:
@@ -470,35 +475,32 @@ Edit `src/nexus/bricks/search/daemon.py:137`:
 Edit `src/nexus/bricks/search/txtai_backend.py:_startup_impl`. After the `try: from txtai import Embeddings` block (after line 357) and before the GPU detection block (line 359), insert:
 
 ```python
-        # Issue #3997: BM25 fast-path. When no embedding model is configured
-        # (resolver returned (None, None) — typical default deploy), skip the
-        # heavy Embeddings(path=...) load and start txtai with keyword-only
-        # config directly. Saves ~900 MB RSS at boot.
-        if self._model is None:
-            content_store: bool | str = self._database_url or True
-            bm25_config: dict[str, Any] = {
-                "keyword": True,
-                "content": content_store,
-                "objects": True,
-            }
-            try:
-                self._embeddings = Embeddings(bm25_config)
-                self._hybrid = False
-                self._started = True
-                self._configure_litellm()
-                logger.info(
-                    "txtai backend started in BM25-only mode "
-                    "(no embedding model configured)"
-                )
-                return
-            except Exception:
-                logger.error(
-                    "BM25-only init failed; entering degraded mode (no results).",
-                    exc_info=True,
-                )
-                self._embeddings = None
-                self._started = True
-                return
+# Issue #3997: BM25 fast-path. When no embedding model is configured
+# (resolver returned (None, None) — typical default deploy), skip the
+# heavy Embeddings(path=...) load and start txtai with keyword-only
+# config directly. Saves ~900 MB RSS at boot.
+if self._model is None:
+    content_store: bool | str = self._database_url or True
+    bm25_config: dict[str, Any] = {
+        "keyword": True,
+        "content": content_store,
+        "objects": True,
+    }
+    try:
+        self._embeddings = Embeddings(bm25_config)
+        self._hybrid = False
+        self._started = True
+        self._configure_litellm()
+        logger.info("txtai backend started in BM25-only mode (no embedding model configured)")
+        return
+    except Exception:
+        logger.error(
+            "BM25-only init failed; entering degraded mode (no results).",
+            exc_info=True,
+        )
+        self._embeddings = None
+        self._started = True
+        return
 ```
 
 - [ ] **Step 5: Run test, verify pass**
@@ -572,8 +574,9 @@ async def test_idle_trimmer_invokes_gc_and_malloc_trim():
     fake_libc = MagicMock()
     fake_libc.malloc_trim = MagicMock(return_value=1)
 
-    with patch("ctypes.CDLL", return_value=fake_libc), patch(
-        "asyncio.sleep", side_effect=[None, asyncio.CancelledError()]
+    with (
+        patch("ctypes.CDLL", return_value=fake_libc),
+        patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError()]),
     ):
         with patch("gc.collect") as mock_collect:
             with pytest.raises(asyncio.CancelledError):
@@ -1017,9 +1020,16 @@ def test_demo_idle_rss_under_limit():
         ready = False
         while time.time() < deadline:
             rc = subprocess.call(
-                ["docker", "exec", container, "curl", "-fsS",
-                 "http://localhost:2026/healthz/ready"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                [
+                    "docker",
+                    "exec",
+                    container,
+                    "curl",
+                    "-fsS",
+                    "http://localhost:2026/healthz/ready",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             if rc == 0:
                 ready = True
@@ -1032,8 +1042,14 @@ def test_demo_idle_rss_under_limit():
 
         # Pull /proc/$pid/status from inside container
         status = subprocess.check_output(
-            ["docker", "exec", container, "sh", "-c",
-             "pid=$(pgrep -f nexusd | head -1); cat /proc/$pid/status"]
+            [
+                "docker",
+                "exec",
+                container,
+                "sh",
+                "-c",
+                "pid=$(pgrep -f nexusd | head -1); cat /proc/$pid/status",
+            ]
         ).decode()
 
         metrics = _parse_proc_status(status)
@@ -1042,8 +1058,14 @@ def test_demo_idle_rss_under_limit():
         def _diag():
             try:
                 maps = subprocess.check_output(
-                    ["docker", "exec", container, "sh", "-c",
-                     "pid=$(pgrep -f nexusd | head -1); head -20 /proc/$pid/maps"]
+                    [
+                        "docker",
+                        "exec",
+                        container,
+                        "sh",
+                        "-c",
+                        "pid=$(pgrep -f nexusd | head -1); head -20 /proc/$pid/maps",
+                    ]
                 ).decode()
             except Exception as e:
                 maps = f"<diag failed: {e}>"

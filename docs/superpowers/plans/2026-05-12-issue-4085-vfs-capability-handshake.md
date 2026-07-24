@@ -507,7 +507,9 @@ def build_initialize_response_dict(
     }
 
 
-def capability_for_path(capabilities: Mapping[str, Any] | None, path: str, capability: str) -> bool | None:
+def capability_for_path(
+    capabilities: Mapping[str, Any] | None, path: str, capability: str
+) -> bool | None:
     if not capabilities:
         return None
     normalized = normalize_path(path)
@@ -1170,87 +1172,89 @@ Add in `__init__`:
 Add methods:
 
 ```python
-    def _posix_to_dict(self, posix: Any) -> dict[str, bool]:
-        return {
-            "read": bool(posix.read),
-            "readdir": bool(posix.readdir),
-            "stat": bool(posix.stat),
-            "write": bool(posix.write),
-            "unlink": bool(posix.unlink),
-            "mkdir": bool(posix.mkdir),
-            "rmdir": bool(posix.rmdir),
-            "rename": bool(posix.rename),
-            "glob": bool(posix.glob),
-        }
+def _posix_to_dict(self, posix: Any) -> dict[str, bool]:
+    return {
+        "read": bool(posix.read),
+        "readdir": bool(posix.readdir),
+        "stat": bool(posix.stat),
+        "write": bool(posix.write),
+        "unlink": bool(posix.unlink),
+        "mkdir": bool(posix.mkdir),
+        "rmdir": bool(posix.rmdir),
+        "rename": bool(posix.rename),
+        "glob": bool(posix.glob),
+    }
 
-    def _initialize_response_to_dict(self, response: Any) -> dict[str, Any]:
-        capabilities = response.capabilities
-        backends = {}
-        for mount_point, backend in capabilities.backends.items():
-            backends[mount_point] = {
-                "backend_name": backend.backend_name,
-                "backend_type": backend.backend_type,
-                "posix": self._posix_to_dict(backend.posix),
-                "features": list(backend.features),
-                "extensions": list(backend.extensions),
-                "rust_native": bool(backend.rust_native),
-                "external": bool(backend.external),
-            }
-        return {
-            "server_name": response.server_name,
-            "server_version": response.server_version,
-            "protocol_version": response.protocol_version,
-            "capabilities": {
-                "posix": self._posix_to_dict(capabilities.posix),
-                "commands": {
-                    "grep": {
-                        "supported": bool(capabilities.commands.grep.supported),
-                        "filetype": {
-                            "allow": list(capabilities.commands.grep.filetype.allow),
-                            "deny": list(capabilities.commands.grep.filetype.deny),
-                        },
-                    },
-                    "glob": {
-                        "supported": bool(capabilities.commands.glob.supported),
-                        "filetype": {
-                            "allow": list(capabilities.commands.glob.filetype.allow),
-                            "deny": list(capabilities.commands.glob.filetype.deny),
-                        },
+
+def _initialize_response_to_dict(self, response: Any) -> dict[str, Any]:
+    capabilities = response.capabilities
+    backends = {}
+    for mount_point, backend in capabilities.backends.items():
+        backends[mount_point] = {
+            "backend_name": backend.backend_name,
+            "backend_type": backend.backend_type,
+            "posix": self._posix_to_dict(backend.posix),
+            "features": list(backend.features),
+            "extensions": list(backend.extensions),
+            "rust_native": bool(backend.rust_native),
+            "external": bool(backend.external),
+        }
+    return {
+        "server_name": response.server_name,
+        "server_version": response.server_version,
+        "protocol_version": response.protocol_version,
+        "capabilities": {
+            "posix": self._posix_to_dict(capabilities.posix),
+            "commands": {
+                "grep": {
+                    "supported": bool(capabilities.commands.grep.supported),
+                    "filetype": {
+                        "allow": list(capabilities.commands.grep.filetype.allow),
+                        "deny": list(capabilities.commands.grep.filetype.deny),
                     },
                 },
-                "workspace": {
-                    "snapshot": bool(capabilities.workspace.snapshot),
-                    "restore": bool(capabilities.workspace.restore),
-                    "watch": bool(capabilities.workspace.watch),
+                "glob": {
+                    "supported": bool(capabilities.commands.glob.supported),
+                    "filetype": {
+                        "allow": list(capabilities.commands.glob.filetype.allow),
+                        "deny": list(capabilities.commands.glob.filetype.deny),
+                    },
                 },
-                "backends": backends,
-                "extensions": list(capabilities.extensions),
             },
-        }
+            "workspace": {
+                "snapshot": bool(capabilities.workspace.snapshot),
+                "restore": bool(capabilities.workspace.restore),
+                "watch": bool(capabilities.workspace.watch),
+            },
+            "backends": backends,
+            "extensions": list(capabilities.extensions),
+        },
+    }
 
-    def initialize(
-        self,
-        *,
-        client_name: str = "nexus-python",
-        client_version: str = "unknown",
-        protocol_version: str = PROTOCOL_VERSION,
-    ) -> dict[str, Any] | None:
-        request = vfs_pb2.InitializeRequest(
-            client_name=client_name,
-            client_version=client_version,
-            protocol_version=protocol_version,
-            auth_token=self._auth_token,
-        )
-        try:
-            response = self._stub.Initialize(request, timeout=self._connect_timeout)
-        except grpc.RpcError as exc:
-            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
-                self.capabilities = None
-                return None
-            self._raise_transport_error(exc, self._connect_timeout, "Initialize")
-        payload = self._initialize_response_to_dict(response)
-        self.capabilities = payload["capabilities"]
-        return payload
+
+def initialize(
+    self,
+    *,
+    client_name: str = "nexus-python",
+    client_version: str = "unknown",
+    protocol_version: str = PROTOCOL_VERSION,
+) -> dict[str, Any] | None:
+    request = vfs_pb2.InitializeRequest(
+        client_name=client_name,
+        client_version=client_version,
+        protocol_version=protocol_version,
+        auth_token=self._auth_token,
+    )
+    try:
+        response = self._stub.Initialize(request, timeout=self._connect_timeout)
+    except grpc.RpcError as exc:
+        if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+            self.capabilities = None
+            return None
+        self._raise_transport_error(exc, self._connect_timeout, "Initialize")
+    payload = self._initialize_response_to_dict(response)
+    self.capabilities = payload["capabilities"]
+    return payload
 ```
 
 - [ ] **Step 4: Call initialize from remote connect**

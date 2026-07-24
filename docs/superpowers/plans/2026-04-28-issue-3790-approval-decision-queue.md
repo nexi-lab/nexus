@@ -488,7 +488,12 @@ def upgrade() -> None:
         sa.Column("token_id", sa.String(255), nullable=True),
         sa.Column("session_id", sa.String(512), nullable=True),
         sa.Column("reason", sa.Text, nullable=False, server_default=""),
-        sa.Column("metadata", sa.dialects.postgresql.JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "metadata",
+            sa.dialects.postgresql.JSONB,
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
@@ -517,7 +522,9 @@ def upgrade() -> None:
     op.create_table(
         "approval_decisions",
         sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
-        sa.Column("request_id", sa.String(64), sa.ForeignKey("approval_requests.id"), nullable=False),
+        sa.Column(
+            "request_id", sa.String(64), sa.ForeignKey("approval_requests.id"), nullable=False
+        ),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("decided_by", sa.String(255), nullable=False),
         sa.Column("decision", sa.String(16), nullable=False),
@@ -540,9 +547,14 @@ def upgrade() -> None:
         sa.Column("subject", sa.String(512), nullable=False),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("decided_by", sa.String(255), nullable=False),
-        sa.Column("request_id", sa.String(64), sa.ForeignKey("approval_requests.id"), nullable=True),
+        sa.Column(
+            "request_id", sa.String(64), sa.ForeignKey("approval_requests.id"), nullable=True
+        ),
         sa.UniqueConstraint(
-            "session_id", "zone_id", "kind", "subject",
+            "session_id",
+            "zone_id",
+            "kind",
+            "subject",
             name="uq_approval_session_allow",
         ),
     )
@@ -636,7 +648,16 @@ def test_request_columns_complete():
 
 def test_decision_columns_complete():
     cols = {c.name for c in ApprovalDecisionModel.__table__.columns}
-    assert {"id", "request_id", "decided_at", "decided_by", "decision", "scope", "reason", "source"} <= cols
+    assert {
+        "id",
+        "request_id",
+        "decided_at",
+        "decided_by",
+        "decision",
+        "scope",
+        "reason",
+        "source",
+    } <= cols
 
 
 def test_session_allow_unique():
@@ -879,8 +900,12 @@ async def test_transition_returns_none_when_not_pending(session_factory):
         now=now,
         expires_at=now + timedelta(seconds=60),
     )
-    await repo.transition(req.id, "approved", "op", DecisionScope.ONCE, None, DecisionSource.GRPC, now)
-    second = await repo.transition(req.id, "rejected", "op2", DecisionScope.ONCE, None, DecisionSource.GRPC, now)
+    await repo.transition(
+        req.id, "approved", "op", DecisionScope.ONCE, None, DecisionSource.GRPC, now
+    )
+    second = await repo.transition(
+        req.id, "rejected", "op2", DecisionScope.ONCE, None, DecisionSource.GRPC, now
+    )
     assert second is None
 
 
@@ -1398,7 +1423,9 @@ async def test_notify_payload_round_trip(asyncpg_pool):
     bridge = NotifyBridge(asyncpg_pool)
     await bridge.start({"approvals_decided": on_decided})
     try:
-        await bridge.notify("approvals_decided", json.dumps({"request_id": "rx", "decision": "approved"}))
+        await bridge.notify(
+            "approvals_decided", json.dumps({"request_id": "rx", "decision": "approved"})
+        )
         await asyncio.wait_for(event.wait(), 2.0)
     finally:
         await bridge.stop()
@@ -1911,9 +1938,7 @@ def _db_url() -> str:
 
     url = os.environ.get("NEXUS_TEST_DATABASE_URL")
     if not url:
-        raise RuntimeError(
-            "NEXUS_TEST_DATABASE_URL must be set for approvals integration tests"
-        )
+        raise RuntimeError("NEXUS_TEST_DATABASE_URL must be set for approvals integration tests")
     return url
 
 
@@ -1954,9 +1979,7 @@ async def approval_service(session_factory, asyncpg_pool) -> AsyncIterator[Appro
 async def approval_service_short(session_factory, asyncpg_pool) -> AsyncIterator[ApprovalService]:
     repo = ApprovalRepository(session_factory)
     bridge = NotifyBridge(asyncpg_pool)
-    svc = ApprovalService(
-        repo, bridge, ApprovalConfig(enabled=True, auto_deny_after_seconds=0.2)
-    )
+    svc = ApprovalService(repo, bridge, ApprovalConfig(enabled=True, auto_deny_after_seconds=0.2))
     await svc.start()
     try:
         yield svc
@@ -2100,40 +2123,42 @@ class ApprovalService:  # extend the existing class — re-declare in same file
 Update `_on_new_payload` and `_on_decided_payload` to fan out to watchers:
 
 ```python
-    async def _on_new_payload(self, payload: str) -> None:
-        try:
-            msg = json.loads(payload)
-            rid = msg["request_id"]
-            zone = msg["zone_id"]
-        except Exception:
-            return
-        self._broadcast(WatchEvent(type="pending", request_id=rid, zone_id=zone, decision=None))
+async def _on_new_payload(self, payload: str) -> None:
+    try:
+        msg = json.loads(payload)
+        rid = msg["request_id"]
+        zone = msg["zone_id"]
+    except Exception:
+        return
+    self._broadcast(WatchEvent(type="pending", request_id=rid, zone_id=zone, decision=None))
 
-    async def _on_decided_payload(self, payload: str) -> None:
-        try:
-            msg = json.loads(payload)
-            rid = msg["request_id"]
-            decision = Decision(msg["decision"])
-        except Exception:
-            logger.warning("bad approvals_decided payload: %s", payload)
-            return
-        self._dispatcher.resolve(rid, decision)
-        # zone is not on the payload; look it up if we have it.
-        row = await self._repo.get(rid)
-        zone = row.zone_id if row else ""
-        self._broadcast(
-            WatchEvent(type="decided", request_id=rid, zone_id=zone, decision=decision.value)
-        )
 
-    def _broadcast(self, ev: WatchEvent) -> None:
-        for zone, q in list(self._watchers):
-            if zone is not None and zone != ev.zone_id:
-                continue
-            try:
-                q.put_nowait(ev)
-            except asyncio.QueueFull:
-                # Slow watcher: drop and let it reconcile via list_pending.
-                logger.warning("watch buffer overflow; dropping event for %s", ev.request_id)
+async def _on_decided_payload(self, payload: str) -> None:
+    try:
+        msg = json.loads(payload)
+        rid = msg["request_id"]
+        decision = Decision(msg["decision"])
+    except Exception:
+        logger.warning("bad approvals_decided payload: %s", payload)
+        return
+    self._dispatcher.resolve(rid, decision)
+    # zone is not on the payload; look it up if we have it.
+    row = await self._repo.get(rid)
+    zone = row.zone_id if row else ""
+    self._broadcast(
+        WatchEvent(type="decided", request_id=rid, zone_id=zone, decision=decision.value)
+    )
+
+
+def _broadcast(self, ev: WatchEvent) -> None:
+    for zone, q in list(self._watchers):
+        if zone is not None and zone != ev.zone_id:
+            continue
+        try:
+            q.put_nowait(ev)
+        except asyncio.QueueFull:
+            # Slow watcher: drop and let it reconcile via list_pending.
+            logger.warning("watch buffer overflow; dropping event for %s", ev.request_id)
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -2987,9 +3012,7 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
             )
         except GatewayClosed as e:
             await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
-        return approvals_pb2.SubmitDecision(
-            decision=decision.value, request_id=""
-        )
+        return approvals_pb2.SubmitDecision(decision=decision.value, request_id="")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -3052,7 +3075,9 @@ async def test_diag_dump_returns_pending_rows(approval_service):
     await asyncio.sleep(0.05)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        r = await c.get("/hub/approvals/dump?zone_id=z", headers={"Authorization": "Bearer tok_test"})
+        r = await c.get(
+            "/hub/approvals/dump?zone_id=z", headers={"Authorization": "Bearer tok_test"}
+        )
     assert r.status_code == 200
     payload = r.json()
     assert any(p["subject"] == "diag.example:443" for p in payload["pending"])
@@ -3658,9 +3683,7 @@ async def test_unlisted_host_pause_then_approve_unblocks_tool_call(running_nexus
     """`running_nexus` boots a real nexus with approvals enabled.
     `mcp_client` is a stub MCP client wired to call `nexus_fetch`."""
     tool_call = asyncio.create_task(
-        mcp_client.call_tool(
-            "nexus_fetch", {"url": "https://api.stripe.com/healthz"}
-        )
+        mcp_client.call_tool("nexus_fetch", {"url": "https://api.stripe.com/healthz"})
     )
     await asyncio.sleep(0.2)
 
@@ -3832,9 +3855,7 @@ async def test_watch_emits_pending_and_decided(running_nexus, mcp_client):
         )
         rid = pending.requests[0].id
         await stub.Decide(
-            approvals_pb2.DecideRequest(
-                request_id=rid, decision="approved", scope="once"
-            ),
+            approvals_pb2.DecideRequest(request_id=rid, decision="approved", scope="once"),
             metadata=(("authorization", f"Bearer {running_nexus.admin_token}"),),
         )
         tool_call.cancel()

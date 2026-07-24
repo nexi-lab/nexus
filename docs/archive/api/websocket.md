@@ -40,10 +40,12 @@ ws.onclose = () => {
 import asyncio
 import websockets
 
+
 async def listen():
-    async with websockets.connect('wss://nexus.example.com/ws/my-tenant') as ws:
+    async with websockets.connect("wss://nexus.example.com/ws/my-tenant") as ws:
         async for message in ws:
             print(f"Event: {message}")
+
 
 asyncio.run(listen())
 ```
@@ -279,6 +281,7 @@ import asyncio
 import json
 import websockets
 
+
 async def listen_with_reconnect(url: str):
     """Connect with automatic reconnection using websockets library."""
     async for ws in websockets.connect(url):
@@ -286,20 +289,22 @@ async def listen_with_reconnect(url: str):
             async for message in ws:
                 data = json.loads(message)
 
-                if data['type'] == 'ping':
-                    await ws.send(json.dumps({'type': 'pong'}))
-                elif data['type'] == 'event':
-                    handle_event(data['data'])
+                if data["type"] == "ping":
+                    await ws.send(json.dumps({"type": "pong"}))
+                elif data["type"] == "event":
+                    handle_event(data["data"])
 
         except websockets.ConnectionClosed:
-            print('Disconnected, reconnecting...')
+            print("Disconnected, reconnecting...")
             continue  # Auto-reconnects on next iteration
+
 
 def handle_event(event: dict):
     print(f"File {event['type']}: {event['path']}")
 
+
 # Run
-asyncio.run(listen_with_reconnect('wss://nexus.example.com/ws/my-tenant'))
+asyncio.run(listen_with_reconnect("wss://nexus.example.com/ws/my-tenant"))
 ```
 
 **Option 2: Manual Backoff**
@@ -309,6 +314,7 @@ import asyncio
 import json
 import random
 import websockets
+
 
 async def listen_with_backoff(url: str):
     """Connect with manual exponential backoff."""
@@ -320,27 +326,28 @@ async def listen_with_backoff(url: str):
         try:
             async with websockets.connect(url) as ws:
                 attempt = 0  # Reset on success
-                print('Connected to Nexus')
+                print("Connected to Nexus")
 
                 async for message in ws:
                     data = json.loads(message)
 
-                    if data['type'] == 'ping':
-                        await ws.send(json.dumps({'type': 'pong'}))
-                    elif data['type'] == 'event':
+                    if data["type"] == "ping":
+                        await ws.send(json.dumps({"type": "pong"}))
+                    elif data["type"] == "event":
                         print(f"Event: {data['data']}")
 
         except (websockets.ConnectionClosed, OSError) as e:
             # Full Jitter algorithm
-            exp_delay = min(max_delay, base_delay * (2 ** attempt))
+            exp_delay = min(max_delay, base_delay * (2**attempt))
             delay = random.uniform(0, exp_delay)
 
             attempt += 1
-            print(f'Disconnected. Reconnecting in {delay:.1f}s (attempt {attempt})')
+            print(f"Disconnected. Reconnecting in {delay:.1f}s (attempt {attempt})")
             await asyncio.sleep(delay)
 
+
 # Run
-asyncio.run(listen_with_backoff('wss://nexus.example.com/ws/my-tenant'))
+asyncio.run(listen_with_backoff("wss://nexus.example.com/ws/my-tenant"))
 ```
 
 ## Close Codes

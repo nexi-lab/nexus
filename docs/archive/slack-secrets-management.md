@@ -98,6 +98,7 @@ source .env
 ```python
 from google.cloud import secretmanager
 
+
 def get_slack_credentials():
     client = secretmanager.SecretManagerServiceClient()
     project_id = "your-project-id"

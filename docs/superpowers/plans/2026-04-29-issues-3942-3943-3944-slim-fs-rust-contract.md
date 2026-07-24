@@ -303,9 +303,7 @@ def slim_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     wheels = list(out_dir.glob("nexus_fs-*.whl"))
     if len(wheels) != 1:
-        raise RuntimeError(
-            f"Expected exactly one nexus_fs wheel in {out_dir}, found {wheels}"
-        )
+        raise RuntimeError(f"Expected exactly one nexus_fs wheel in {out_dir}, found {wheels}")
     return wheels[0]
 
 
@@ -567,13 +565,10 @@ def wheel_namelist(slim_wheel: Path) -> list[str]:
 
 
 @pytest.mark.parametrize("required_path", REQUIRED_BRICKS_PATHS)
-def test_slim_wheel_includes_required_bricks(
-    wheel_namelist: list[str], required_path: str
-) -> None:
+def test_slim_wheel_includes_required_bricks(wheel_namelist: list[str], required_path: str) -> None:
     assert required_path in wheel_namelist, (
         f"slim wheel missing required path: {required_path}\n"
-        f"Wheel contents (first 50 entries):\n"
-        + "\n".join(wheel_namelist[:50])
+        f"Wheel contents (first 50 entries):\n" + "\n".join(wheel_namelist[:50])
     )
 
 
@@ -583,8 +578,7 @@ def test_slim_wheel_excludes_forbidden_bricks(
 ) -> None:
     leaks = [p for p in wheel_namelist if p.startswith(forbidden_prefix)]
     assert not leaks, (
-        f"slim wheel leaked forbidden bricks paths under {forbidden_prefix!r}:\n"
-        + "\n".join(leaks)
+        f"slim wheel leaked forbidden bricks paths under {forbidden_prefix!r}:\n" + "\n".join(leaks)
     )
 
 

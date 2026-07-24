@@ -62,9 +62,7 @@ class TestSSRFBlockedException:
         assert isinstance(exc, ValueError)
 
     def test_ssrf_blocked_exposes_fields(self) -> None:
-        exc = SSRFBlocked(
-            "http://10.0.0.1/", reason="private_ip", ip="10.0.0.1", cidr="10.0.0.0/8"
-        )
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1", cidr="10.0.0.0/8")
         assert exc.url == "http://10.0.0.1/"
         assert exc.reason == "private_ip"
         assert exc.ip == "10.0.0.1"
@@ -417,23 +415,26 @@ In `validate_outbound_url`, after the scheme check, insert userinfo rejection:
 Then in the IP loop, check `CLOUD_METADATA_IPS` *before* the CIDR loop:
 
 ```python
-    for _family, _type, _proto, _canonname, sockaddr in addr_infos:
-        ip = ipaddress.ip_address(sockaddr[0])
-        if ip in CLOUD_METADATA_IPS:
-            logger.warning("SSRF blocked: %r resolved to metadata IP %s", url, ip)
-            raise SSRFBlocked(url, reason="cloud_metadata", ip=str(ip))
-        for network in BLOCKED_NETWORKS:
-            if ip in network:
-                logger.warning(
-                    "SSRF blocked: URL %r resolved to %s (in %s)", url, ip, network,
-                )
-                raise SSRFBlocked(
-                    url,
-                    reason="blocked_network",
-                    ip=str(ip),
-                    cidr=str(network),
-                )
-        resolved_ips.append(str(ip))
+for _family, _type, _proto, _canonname, sockaddr in addr_infos:
+    ip = ipaddress.ip_address(sockaddr[0])
+    if ip in CLOUD_METADATA_IPS:
+        logger.warning("SSRF blocked: %r resolved to metadata IP %s", url, ip)
+        raise SSRFBlocked(url, reason="cloud_metadata", ip=str(ip))
+    for network in BLOCKED_NETWORKS:
+        if ip in network:
+            logger.warning(
+                "SSRF blocked: URL %r resolved to %s (in %s)",
+                url,
+                ip,
+                network,
+            )
+            raise SSRFBlocked(
+                url,
+                reason="blocked_network",
+                ip=str(ip),
+                cidr=str(network),
+            )
+    resolved_ips.append(str(ip))
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -605,9 +606,7 @@ def _check_ip(
         if ip in network:
             if allow_private and _is_private_range(network):
                 continue
-            logger.warning(
-                "SSRF blocked: URL %r resolved to %s (in %s)", url, ip, network
-            )
+            logger.warning("SSRF blocked: URL %r resolved to %s (in %s)", url, ip, network)
             raise SSRFBlocked(
                 url,
                 reason="blocked_network",
@@ -715,9 +714,7 @@ class TestAllowPrivateKwarg:
     def test_private_allowed_when_flag_set(self) -> None:
         with patch("socket.getaddrinfo") as mock_dns:
             mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.1", 80))]
-            result = validate_outbound_url(
-                "http://dev-internal/", allow_private=True
-            )
+            result = validate_outbound_url("http://dev-internal/", allow_private=True)
             assert "10.0.0.1" in result.resolved_ips
 
     def test_loopback_still_blocked_when_flag_set(self) -> None:
@@ -872,9 +869,7 @@ class TestPinnedResolverBackend:
         # original one, because make_pinned_client_factory wires the transport
         # through a backend whose connect_tcp we can patch via the exposed
         # `network_backend` attribute.
-        with patch.object(
-            transport.network_backend, "connect_tcp", side_effect=fake_connect_tcp
-        ):
+        with patch.object(transport.network_backend, "connect_tcp", side_effect=fake_connect_tcp):
             async with httpx.AsyncClient(transport=transport) as client:
                 with pytest.raises(httpx.ConnectError):
                     await client.get("https://example.com/")
@@ -895,9 +890,7 @@ class TestPinnedResolverBackend:
             attempts.append(host)
             raise httpx.ConnectError("simulated")
 
-        with patch.object(
-            transport.network_backend, "connect_tcp", side_effect=fake_connect_tcp
-        ):
+        with patch.object(transport.network_backend, "connect_tcp", side_effect=fake_connect_tcp):
             async with httpx.AsyncClient(transport=transport) as client:
                 with pytest.raises(httpx.ConnectError):
                     await client.get("https://example.com/")
@@ -912,9 +905,7 @@ class TestMakePinnedClientFactory:
     AsyncClient wired to PinnedResolverTransport with redirects off."""
 
     @pytest.mark.asyncio
-    async def test_factory_signature_is_mcp_compatible(
-        self, validated_url: ValidatedURL
-    ) -> None:
+    async def test_factory_signature_is_mcp_compatible(self, validated_url: ValidatedURL) -> None:
         factory = make_pinned_client_factory(validated_url)
         client = factory(headers={"X-Test": "1"}, timeout=None, auth=None)
         try:
@@ -925,9 +916,7 @@ class TestMakePinnedClientFactory:
             await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_factory_accepts_timeout_and_auth(
-        self, validated_url: ValidatedURL
-    ) -> None:
+    async def test_factory_accepts_timeout_and_auth(self, validated_url: ValidatedURL) -> None:
         factory = make_pinned_client_factory(validated_url)
         client = factory(
             headers=None,
@@ -1379,104 +1368,103 @@ Expected: FAIL — validation not yet wired into `_create_sse_client`.
 Edit `src/nexus/bricks/mcp/mount.py`. Find `_create_sse_client` (around line 361). Replace the method body with:
 
 ```python
-    async def _create_sse_client(self, mount_config: MCPMount) -> Any:
-        """Create an SSE/HTTP MCP client with SSRF validation + DNS pinning.
+async def _create_sse_client(self, mount_config: MCPMount) -> Any:
+    """Create an SSE/HTTP MCP client with SSRF validation + DNS pinning.
 
-        The URL is validated with ``validate_outbound_url`` and the
-        resulting pinned IP set is injected into the MCP client's
-        ``httpx_client_factory`` so the TCP connect cannot target a
-        different host than the one that was validated.
-        """
-        try:
-            from mcp import ClientSession
-            from mcp.client.sse import sse_client
-        except ImportError as e:
-            raise MCPMountError(
-                "MCP client library not installed. Install with: pip install mcp"
-            ) from e
+    The URL is validated with ``validate_outbound_url`` and the
+    resulting pinned IP set is injected into the MCP client's
+    ``httpx_client_factory`` so the TCP connect cannot target a
+    different host than the one that was validated.
+    """
+    try:
+        from mcp import ClientSession
+        from mcp.client.sse import sse_client
+    except ImportError as e:
+        raise MCPMountError(
+            "MCP client library not installed. Install with: pip install mcp"
+        ) from e
 
-        if not mount_config.url:
-            raise MCPMountError("URL is required for SSE/HTTP transport")
+    if not mount_config.url:
+        raise MCPMountError("URL is required for SSE/HTTP transport")
 
-        # SSRF validation + DNS pinning (Issue #3792).
-        from nexus.lib.security.ssrf_transport import make_pinned_client_factory
-        from nexus.lib.security.url_validator import (
-            SSRFBlocked,
-            validate_outbound_url,
+    # SSRF validation + DNS pinning (Issue #3792).
+    from nexus.lib.security.ssrf_transport import make_pinned_client_factory
+    from nexus.lib.security.url_validator import (
+        SSRFBlocked,
+        validate_outbound_url,
+    )
+
+    ssrf_cfg = self._ssrf_config()
+    try:
+        validated = validate_outbound_url(
+            mount_config.url,
+            allow_private=ssrf_cfg.allow_private,
+            extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
         )
+    except SSRFBlocked as exc:
+        self._emit_ssrf_audit(mount_config, exc)
+        logger.warning("SSRF blocked for MCP mount %r: %s", mount_config.name, exc)
+        raise
 
-        ssrf_cfg = self._ssrf_config()
-        try:
-            validated = validate_outbound_url(
-                mount_config.url,
-                allow_private=ssrf_cfg.allow_private,
-                extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
-            )
-        except SSRFBlocked as exc:
-            self._emit_ssrf_audit(mount_config, exc)
-            logger.warning(
-                "SSRF blocked for MCP mount %r: %s", mount_config.name, exc
-            )
-            raise
+    headers: dict[str, str] = dict(mount_config.headers) if mount_config.headers else {}
+    if mount_config.auth_type == "api_key" and mount_config.auth_config:
+        api_key = mount_config.auth_config.get("api_key")
+        header_name = mount_config.auth_config.get("header_name", "Authorization")
+        if api_key:
+            headers[header_name] = f"Bearer {api_key}"
 
-        headers: dict[str, str] = dict(mount_config.headers) if mount_config.headers else {}
-        if mount_config.auth_type == "api_key" and mount_config.auth_config:
-            api_key = mount_config.auth_config.get("api_key")
-            header_name = mount_config.auth_config.get("header_name", "Authorization")
-            if api_key:
-                headers[header_name] = f"Bearer {api_key}"
+    pinned_factory = make_pinned_client_factory(validated)
 
-        pinned_factory = make_pinned_client_factory(validated)
-
-        async with (
-            sse_client(
-                mount_config.url,
-                headers=headers,
-                httpx_client_factory=pinned_factory,
-            ) as (read, write),
-            ClientSession(read, write) as session,
-        ):
-            await session.initialize()
-            return session
+    async with (
+        sse_client(
+            mount_config.url,
+            headers=headers,
+            httpx_client_factory=pinned_factory,
+        ) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        return session
 ```
 
 Add the helpers on `MCPMountManager` (near the bottom of the class). Find a clean insertion point just before `async def unmount`:
 
 ```python
-    def _ssrf_config(self) -> Any:
-        """Fetch SSRF config; fall back to safe defaults if config missing."""
-        try:
-            from nexus.config import SSRFConfig
+def _ssrf_config(self) -> Any:
+    """Fetch SSRF config; fall back to safe defaults if config missing."""
+    try:
+        from nexus.config import SSRFConfig
 
-            cfg = getattr(getattr(self, "config", None), "security", None)
-            if cfg is not None and getattr(cfg, "ssrf", None) is not None:
-                return cfg.ssrf
-            return SSRFConfig()
-        except Exception:
-            from nexus.config import SSRFConfig
+        cfg = getattr(getattr(self, "config", None), "security", None)
+        if cfg is not None and getattr(cfg, "ssrf", None) is not None:
+            return cfg.ssrf
+        return SSRFConfig()
+    except Exception:
+        from nexus.config import SSRFConfig
 
-            return SSRFConfig()
+        return SSRFConfig()
 
-    def _emit_ssrf_audit(self, mount_config: Any, exc: Any) -> None:
-        """Emit a security.ssrf_blocked audit event; never raise."""
-        try:
-            from nexus.lib.events import emit_audit_event  # best-effort; see Task 8
-        except ImportError:
-            return
-        try:
-            emit_audit_event(
-                "security.ssrf_blocked",
-                {
-                    "url": exc.url,
-                    "reason": exc.reason,
-                    "ip": exc.ip,
-                    "cidr": exc.cidr,
-                    "integration": "mcp",
-                    "mount_name": getattr(mount_config, "name", None),
-                },
-            )
-        except Exception as audit_err:  # pragma: no cover — audit must never raise
-            logger.warning("Failed to emit SSRF audit event: %s", audit_err)
+
+def _emit_ssrf_audit(self, mount_config: Any, exc: Any) -> None:
+    """Emit a security.ssrf_blocked audit event; never raise."""
+    try:
+        from nexus.lib.events import emit_audit_event  # best-effort; see Task 8
+    except ImportError:
+        return
+    try:
+        emit_audit_event(
+            "security.ssrf_blocked",
+            {
+                "url": exc.url,
+                "reason": exc.reason,
+                "ip": exc.ip,
+                "cidr": exc.cidr,
+                "integration": "mcp",
+                "mount_name": getattr(mount_config, "name", None),
+            },
+        )
+    except Exception as audit_err:  # pragma: no cover — audit must never raise
+        logger.warning("Failed to emit SSRF audit event: %s", audit_err)
 ```
 
 Also patch the second `sse_client` call around line 599 in `mount.py` (used in a different code path — likely tool listing). Wrap it with the same validation + factory:

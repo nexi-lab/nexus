@@ -103,8 +103,8 @@ results = nx.grep("conclusion", file_pattern="**/*.pdf")
 **Parser** (Abstract Base Class)
 ```python
 class Parser(ABC):
-    name: str                    # Parser identifier
-    priority: int               # Selection priority (higher = preferred)
+    name: str  # Parser identifier
+    priority: int  # Selection priority (higher = preferred)
 
     @abstractmethod
     def can_parse(self, file_path: str, mime_type: str | None) -> bool:
@@ -124,12 +124,12 @@ class Parser(ABC):
 ```python
 @dataclass
 class ParseResult:
-    text: str                              # Extracted plain text
-    metadata: dict[str, Any]               # File metadata
-    structure: dict[str, Any]              # Document structure (headings, etc.)
-    chunks: list[TextChunk]                # Semantic text chunks
-    images: list[ImageData]                # Extracted images
-    raw_content: str | None                # Original content
+    text: str  # Extracted plain text
+    metadata: dict[str, Any]  # File metadata
+    structure: dict[str, Any]  # Document structure (headings, etc.)
+    chunks: list[TextChunk]  # Semantic text chunks
+    images: list[ImageData]  # Extracted images
+    raw_content: str | None  # Original content
 ```
 
 **ParserRegistry** (Manager)
@@ -185,20 +185,16 @@ class MyCustomParser(Parser):
             True if this parser can handle the file
         """
         # Method 1: Check file extension
-        if file_path.endswith('.custom'):
+        if file_path.endswith(".custom"):
             return True
 
         # Method 2: Check MIME type
-        if mime_type == 'application/x-custom':
+        if mime_type == "application/x-custom":
             return True
 
         return False
 
-    async def parse(
-        self,
-        content: bytes,
-        metadata: dict | None = None
-    ) -> ParseResult:
+    async def parse(self, content: bytes, metadata: dict | None = None) -> ParseResult:
         """
         Parse the file content.
 
@@ -214,7 +210,7 @@ class MyCustomParser(Parser):
         """
         try:
             # 1. Decode content
-            text = content.decode('utf-8')
+            text = content.decode("utf-8")
 
             # 2. Extract structure (example: find headers)
             structure = self._extract_structure(text)
@@ -224,8 +220,8 @@ class MyCustomParser(Parser):
 
             # 4. Build metadata
             parse_metadata = metadata or {}
-            parse_metadata['parser'] = self.name
-            parse_metadata['char_count'] = len(text)
+            parse_metadata["parser"] = self.name
+            parse_metadata["char_count"] = len(text)
 
             return ParseResult(
                 text=text,
@@ -237,7 +233,7 @@ class MyCustomParser(Parser):
             )
 
         except Exception as e:
-            path = metadata.get('path', 'unknown') if metadata else 'unknown'
+            path = metadata.get("path", "unknown") if metadata else "unknown"
             raise ParserError(
                 f"Failed to parse file: {e}",
                 path=path,
@@ -247,23 +243,25 @@ class MyCustomParser(Parser):
     @property
     def supported_formats(self) -> list[str]:
         """List of supported file extensions (with leading dot)."""
-        return ['.custom', '.cst']
+        return [".custom", ".cst"]
 
     def _extract_structure(self, text: str) -> dict:
         """Extract document structure (headings, sections, etc.)."""
         structure = {
-            'headings': [],
-            'sections': [],
+            "headings": [],
+            "sections": [],
         }
 
         # Example: Find lines starting with '#' as headings
-        for i, line in enumerate(text.split('\n')):
-            if line.startswith('#'):
-                structure['headings'].append({
-                    'level': len(line) - len(line.lstrip('#')),
-                    'text': line.lstrip('#').strip(),
-                    'line': i + 1,
-                })
+        for i, line in enumerate(text.split("\n")):
+            if line.startswith("#"):
+                structure["headings"].append(
+                    {
+                        "level": len(line) - len(line.lstrip("#")),
+                        "text": line.lstrip("#").strip(),
+                        "line": i + 1,
+                    }
+                )
 
         return structure
 
@@ -272,16 +270,18 @@ class MyCustomParser(Parser):
         chunks = []
 
         # Example: Split by double newlines (paragraphs)
-        paragraphs = text.split('\n\n')
+        paragraphs = text.split("\n\n")
 
         for i, para in enumerate(paragraphs):
             if para.strip():
-                chunks.append(TextChunk(
-                    text=para.strip(),
-                    metadata={'chunk_id': i, 'type': 'paragraph'},
-                    start_char=text.find(para),
-                    end_char=text.find(para) + len(para),
-                ))
+                chunks.append(
+                    TextChunk(
+                        text=para.strip(),
+                        metadata={"chunk_id": i, "type": "paragraph"},
+                        start_char=text.find(para),
+                        end_char=text.find(para) + len(para),
+                    )
+                )
 
         return chunks
 ```
@@ -301,6 +301,7 @@ class BinaryFormatParser(Parser):
         # Import required library
         try:
             import some_binary_library
+
             self.lib = some_binary_library
         except ImportError:
             raise ImportError(
@@ -324,7 +325,7 @@ class BinaryFormatParser(Parser):
 
     @property
     def supported_formats(self) -> list[str]:
-        return ['.bin', '.dat']
+        return [".bin", ".dat"]
 ```
 
 ---
@@ -474,12 +475,14 @@ import nexus
 nx = nexus.connect()
 
 # Or specify in code
-nx = nexus.connect(config={
-    "parsers": [
-        {"module": "my_parsers.csv_parser", "class": "CSVParser", "priority": 60},
-        {"module": "my_parsers.log_parser", "class": "LogParser", "priority": 50},
-    ]
-})
+nx = nexus.connect(
+    config={
+        "parsers": [
+            {"module": "my_parsers.csv_parser", "class": "CSVParser", "priority": 60},
+            {"module": "my_parsers.log_parser", "class": "LogParser", "priority": 50},
+        ]
+    }
+)
 
 # Upload and search - parsers work automatically!
 with open("users.csv", "rb") as f:
@@ -542,6 +545,7 @@ with open("document.custom", "rb") as f:
 
 # Wait for background parsing
 import time
+
 time.sleep(1)
 
 # Search parsed content
@@ -581,6 +585,7 @@ with open("document.custom", "rb") as f:
 
 # Explicitly parse when needed
 import asyncio
+
 result = asyncio.run(nx.parse("/docs/document.custom"))
 print(f"Parsed: {result.text[:100]}...")
 
@@ -605,6 +610,7 @@ with open("document.custom", "rb") as f:
 
 # Wait for parsing, then search
 import time
+
 time.sleep(1)
 
 results = nx.grep("search term", file_pattern="**/*.custom")
@@ -627,6 +633,7 @@ nx.parser_registry._format_index.clear()
 
 # Register only your parser
 from my_custom_parser import MyCustomParser
+
 nx.parser_registry.register(MyCustomParser())
 
 # Upload file - will use only your parser
@@ -665,9 +672,11 @@ import asyncio
 import nexus
 from my_custom_parser import MyCustomParser
 
+
 async def main():
     # Use Embedded directly to disable auto-parse
     from nexus import Embedded
+
     nx = Embedded(data_dir="./data", auto_parse=False)
 
     # Register parser
@@ -685,6 +694,7 @@ async def main():
     print(f"Chunks: {len(result.chunks)}")
 
     nx.close()
+
 
 asyncio.run(main())
 ```
@@ -718,12 +728,12 @@ class SmartParser(Parser):
         # Prefer MIME type over extension
         if mime_type:
             return mime_type in [
-                'application/x-custom',
-                'text/x-custom',
+                "application/x-custom",
+                "text/x-custom",
             ]
 
         # Fallback to extension
-        return file_path.endswith('.custom')
+        return file_path.endswith(".custom")
 ```
 
 ### Async Operations
@@ -737,11 +747,11 @@ class AsyncParser(Parser):
         import aiofiles
 
         # Save to temp file for processing
-        async with aiofiles.open('/tmp/temp.bin', 'wb') as f:
+        async with aiofiles.open("/tmp/temp.bin", "wb") as f:
             await f.write(content)
 
         # Process asynchronously
-        text = await self._process_async('/tmp/temp.bin')
+        text = await self._process_async("/tmp/temp.bin")
 
         return ParseResult(text=text, metadata=metadata or {})
 
@@ -758,6 +768,7 @@ Always raise `ParserError` for parse failures:
 ```python
 from nexus.contracts.exceptions import ParserError
 
+
 class SafeParser(Parser):
     async def parse(self, content: bytes, metadata: dict | None = None) -> ParseResult:
         try:
@@ -766,13 +777,13 @@ class SafeParser(Parser):
         except UnicodeDecodeError as e:
             raise ParserError(
                 "Invalid encoding - file may be corrupted",
-                path=metadata.get('path') if metadata else None,
+                path=metadata.get("path") if metadata else None,
                 parser=self.name,
             ) from e
         except Exception as e:
             raise ParserError(
                 f"Unexpected error: {e}",
-                path=metadata.get('path') if metadata else None,
+                path=metadata.get("path") if metadata else None,
                 parser=self.name,
             ) from e
 ```
@@ -794,6 +805,7 @@ class OptionalLibParser(Parser):
         if self._lib is None:
             try:
                 import optional_library
+
                 self._lib = optional_library
             except ImportError:
                 raise ImportError(
@@ -832,8 +844,8 @@ def parser():
 def test_supported_formats(parser: MyCustomParser):
     """Test supported format listing."""
     formats = parser.supported_formats
-    assert '.custom' in formats
-    assert '.cst' in formats
+    assert ".custom" in formats
+    assert ".cst" in formats
 
 
 def test_can_parse_by_extension(parser: MyCustomParser):
@@ -866,9 +878,9 @@ async def test_parse_with_structure(parser: MyCustomParser):
     content = b"# Heading 1\nContent\n\n## Heading 2\nMore content"
     result = await parser.parse(content)
 
-    assert len(result.structure.get('headings', [])) == 2
-    assert result.structure['headings'][0]['level'] == 1
-    assert result.structure['headings'][0]['text'] == "Heading 1"
+    assert len(result.structure.get("headings", [])) == 2
+    assert result.structure["headings"][0]["level"] == 1
+    assert result.structure["headings"][0]["text"] == "Heading 1"
 
 
 @pytest.mark.asyncio
@@ -894,7 +906,7 @@ async def test_parse_empty_file(parser: MyCustomParser):
 @pytest.mark.asyncio
 async def test_parse_invalid_utf8(parser: MyCustomParser):
     """Test parsing invalid UTF-8 raises ParserError."""
-    content = b'\xff\xfe'  # Invalid UTF-8
+    content = b"\xff\xfe"  # Invalid UTF-8
 
     with pytest.raises(ParserError) as exc_info:
         await parser.parse(content, metadata={"path": "/test.custom"})
@@ -947,6 +959,7 @@ def test_auto_parse_on_write(fs: Embedded):
 
     # Wait for background parsing
     import time
+
     time.sleep(0.5)
 
     # Check parsed text was stored in metadata
@@ -962,12 +975,13 @@ def test_grep_searches_parsed_text(fs: Embedded):
 
     # Wait for parsing
     import time
+
     time.sleep(0.5)
 
     # Search should find text in parsed content
     results = fs.grep("Secret", file_pattern="**/*.custom")
     assert len(results) > 0
-    assert results[0]['path'] == "/docs/secret.custom"
+    assert results[0]["path"] == "/docs/secret.custom"
 
 
 @pytest.mark.asyncio
@@ -1027,44 +1041,48 @@ class CSVParser(Parser):
         self.priority = priority
 
     def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:
-        if mime_type in ['text/csv', 'application/csv']:
+        if mime_type in ["text/csv", "application/csv"]:
             return True
-        return file_path.endswith('.csv')
+        return file_path.endswith(".csv")
 
     async def parse(self, content: bytes, metadata: dict | None = None) -> ParseResult:
         try:
             # Decode and parse CSV
-            text = content.decode('utf-8')
+            text = content.decode("utf-8")
             reader = csv.DictReader(StringIO(text))
             rows = list(reader)
 
             # Extract structure
             structure = {
-                'columns': reader.fieldnames or [],
-                'row_count': len(rows),
-                'has_header': bool(reader.fieldnames),
+                "columns": reader.fieldnames or [],
+                "row_count": len(rows),
+                "has_header": bool(reader.fieldnames),
             }
 
             # Create chunks (one per row)
             chunks = []
             for i, row in enumerate(rows):
-                row_text = ', '.join(f"{k}: {v}" for k, v in row.items())
-                chunks.append(TextChunk(
-                    text=row_text,
-                    metadata={'row_number': i + 1, 'type': 'csv_row'},
-                ))
+                row_text = ", ".join(f"{k}: {v}" for k, v in row.items())
+                chunks.append(
+                    TextChunk(
+                        text=row_text,
+                        metadata={"row_number": i + 1, "type": "csv_row"},
+                    )
+                )
 
             # Create searchable text representation
-            searchable_text = '\n'.join(chunk.text for chunk in chunks)
+            searchable_text = "\n".join(chunk.text for chunk in chunks)
 
             # Enhanced metadata
             parse_metadata = metadata or {}
-            parse_metadata.update({
-                'parser': self.name,
-                'row_count': len(rows),
-                'column_count': len(reader.fieldnames or []),
-                'columns': reader.fieldnames or [],
-            })
+            parse_metadata.update(
+                {
+                    "parser": self.name,
+                    "row_count": len(rows),
+                    "column_count": len(reader.fieldnames or []),
+                    "columns": reader.fieldnames or [],
+                }
+            )
 
             return ParseResult(
                 text=searchable_text,
@@ -1077,13 +1095,13 @@ class CSVParser(Parser):
         except Exception as e:
             raise ParserError(
                 f"Failed to parse CSV: {e}",
-                path=metadata.get('path') if metadata else None,
+                path=metadata.get("path") if metadata else None,
                 parser=self.name,
             ) from e
 
     @property
     def supported_formats(self) -> list[str]:
-        return ['.csv']
+        return [".csv"]
 ```
 
 ### Example 2: Log File Parser
@@ -1101,10 +1119,10 @@ class LogParser(Parser):
 
     # Common log level patterns
     LOG_PATTERN = re.compile(
-        r'(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+'
-        r'\[(?P<level>\w+)\]\s+'
-        r'(?P<message>.*)',
-        re.MULTILINE
+        r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+        r"\[(?P<level>\w+)\]\s+"
+        r"(?P<message>.*)",
+        re.MULTILINE,
     )
 
     def __init__(self, priority: int = 50):
@@ -1112,11 +1130,11 @@ class LogParser(Parser):
         self.priority = priority
 
     def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:
-        return file_path.endswith(('.log', '.logs'))
+        return file_path.endswith((".log", ".logs"))
 
     async def parse(self, content: bytes, metadata: dict | None = None) -> ParseResult:
         try:
-            text = content.decode('utf-8', errors='replace')
+            text = content.decode("utf-8", errors="replace")
 
             # Parse log entries
             entries = []
@@ -1124,41 +1142,45 @@ class LogParser(Parser):
 
             for match in self.LOG_PATTERN.finditer(text):
                 entry = {
-                    'timestamp': match.group('timestamp'),
-                    'level': match.group('level'),
-                    'message': match.group('message'),
+                    "timestamp": match.group("timestamp"),
+                    "level": match.group("level"),
+                    "message": match.group("message"),
                 }
                 entries.append(entry)
 
                 # Create chunk for each log entry
-                chunks.append(TextChunk(
-                    text=f"[{entry['level']}] {entry['message']}",
-                    metadata=entry,
-                    start_char=match.start(),
-                    end_char=match.end(),
-                ))
+                chunks.append(
+                    TextChunk(
+                        text=f"[{entry['level']}] {entry['message']}",
+                        metadata=entry,
+                        start_char=match.start(),
+                        end_char=match.end(),
+                    )
+                )
 
             # Extract structure/statistics
             level_counts = {}
             for entry in entries:
-                level = entry['level']
+                level = entry["level"]
                 level_counts[level] = level_counts.get(level, 0) + 1
 
             structure = {
-                'total_entries': len(entries),
-                'level_counts': level_counts,
-                'first_timestamp': entries[0]['timestamp'] if entries else None,
-                'last_timestamp': entries[-1]['timestamp'] if entries else None,
+                "total_entries": len(entries),
+                "level_counts": level_counts,
+                "first_timestamp": entries[0]["timestamp"] if entries else None,
+                "last_timestamp": entries[-1]["timestamp"] if entries else None,
             }
 
             # Enhanced metadata
             parse_metadata = metadata or {}
-            parse_metadata.update({
-                'parser': self.name,
-                'log_entries': len(entries),
-                'error_count': level_counts.get('ERROR', 0),
-                'warning_count': level_counts.get('WARNING', 0),
-            })
+            parse_metadata.update(
+                {
+                    "parser": self.name,
+                    "log_entries": len(entries),
+                    "error_count": level_counts.get("ERROR", 0),
+                    "warning_count": level_counts.get("WARNING", 0),
+                }
+            )
 
             return ParseResult(
                 text=text,
@@ -1171,13 +1193,13 @@ class LogParser(Parser):
         except Exception as e:
             raise ParserError(
                 f"Failed to parse log file: {e}",
-                path=metadata.get('path') if metadata else None,
+                path=metadata.get("path") if metadata else None,
                 parser=self.name,
             ) from e
 
     @property
     def supported_formats(self) -> list[str]:
-        return ['.log', '.logs']
+        return [".log", ".logs"]
 ```
 
 ### Example 3: Using Both Custom Parsers
@@ -1281,10 +1303,10 @@ except ParserError as e:
 ```python
 def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:
     # Check file size limit
-    if metadata and metadata.get('size', 0) > 100_000_000:  # 100 MB
+    if metadata and metadata.get("size", 0) > 100_000_000:  # 100 MB
         return False
 
-    return file_path.endswith('.custom')
+    return file_path.endswith(".custom")
 ```
 
 ### 3. Use Lazy Loading for Heavy Dependencies
@@ -1292,8 +1314,9 @@ def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:
 ```python
 @property
 def heavy_lib(self):
-    if not hasattr(self, '_heavy_lib'):
+    if not hasattr(self, "_heavy_lib"):
         import heavy_library
+
         self._heavy_lib = heavy_library
     return self._heavy_lib
 ```
@@ -1302,7 +1325,7 @@ def heavy_lib(self):
 
 ```python
 parse_metadata = metadata.copy() if metadata else {}
-parse_metadata['parser'] = self.name
+parse_metadata["parser"] = self.name
 # Don't overwrite existing keys
 ```
 
@@ -1316,7 +1339,7 @@ def supported_formats(self) -> list[str]:
     - .custom: Custom text format
     - .cst: Custom binary format
     """
-    return ['.custom', '.cst']
+    return [".custom", ".cst"]
 ```
 
 ---
@@ -1365,6 +1388,7 @@ print(f'Selected parser: {parser.name}')
 ```python
 # Use Embedded to access metadata directly
 from nexus import Embedded
+
 nx = Embedded(data_dir="./data")
 
 # Check if file was parsed
@@ -1376,6 +1400,7 @@ else:
 
 # Try explicit parse to see errors
 import asyncio
+
 try:
     result = asyncio.run(nx.parse("/path/to/file.custom"))
     print(f"Success: {result.text[:100]}")

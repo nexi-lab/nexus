@@ -71,12 +71,14 @@ content = self.sys_read(path, ...)
 meta = self.metadata.get(path)
 result = {"content": content}
 if meta:
-    result.update({
-        "etag": meta.etag,
-        "version": meta.version,
-        "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-        "size": len(content),
-    })
+    result.update(
+        {
+            "etag": meta.etag,
+            "version": meta.version,
+            "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+            "size": len(content),
+        }
+    )
 ```
 
 Same pattern `read_bulk` already uses (lines 1567-1574 small-batch, 1679-1688 large-batch).

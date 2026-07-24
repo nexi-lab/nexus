@@ -79,9 +79,7 @@ nexus status
 ```python
 from nexus.sdk import connect
 
-nx = connect(config={"profile": "remote",
-                     "url": "http://hub:2026",
-                     "api_key": "..."})
+nx = connect(config={"profile": "remote", "url": "http://hub:2026", "api_key": "..."})
 ```
 
 Set `NEXUS_GRPC_PORT` if the server's gRPC port is non-default. The

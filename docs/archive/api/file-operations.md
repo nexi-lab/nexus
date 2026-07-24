@@ -45,6 +45,7 @@ nx.write("/documents/readme.txt", b"Hello World")
 
 # Write JSON
 import json
+
 data = {"key": "value"}
 nx.write("/data/config.json", json.dumps(data).encode())
 
@@ -107,6 +108,7 @@ nx.append("/logs/application.log", "INFO: Server started\n")
 
 # Build JSONL file incrementally
 import json
+
 events = [
     {"timestamp": "2024-01-01T00:00:00Z", "event": "login", "user": "alice"},
     {"timestamp": "2024-01-01T00:01:00Z", "event": "upload", "user": "bob"},
@@ -119,7 +121,7 @@ for event in events:
 # Append with optimistic concurrency control
 result = nx.read("/workspace/log.txt", return_metadata=True)
 try:
-    nx.append("/workspace/log.txt", "New entry\n", if_match=result['etag'])
+    nx.append("/workspace/log.txt", "New entry\n", if_match=result["etag"])
 except ConflictError:
     print("File was modified by another process!")
 
@@ -190,6 +192,7 @@ text = content.decode("utf-8")
 
 # Read JSON
 import json
+
 content = nx.read("/data/config.json")
 data = json.loads(content)
 
@@ -234,6 +237,7 @@ assert not nx.exists("/documents/old.txt")
 
 # Delete with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.delete("/workspace/alice/temp.txt", context=ctx)
 ```
@@ -308,6 +312,7 @@ if not nx.exists("/cache/data.json"):
 
 # Check with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="charlie", groups=["project-beta"])
 if nx.exists("/workspace/alice/secret.txt", context=ctx):
     print("Charlie can see this file")
@@ -418,6 +423,7 @@ nx.rename("/temp/data.csv", "/archive/data.csv")
 
 # Rename with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.rename("/workspace/alice/draft.txt", "/workspace/alice/final.txt", context=ctx)
 ```

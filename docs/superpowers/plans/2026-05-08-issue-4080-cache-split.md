@@ -230,7 +230,9 @@ class MemoryIndexCache:
 
     def invalidate_parent_listing(self, backend_id: str, scope_id: str, path: str) -> None:
         parent = str(PurePosixPath(path).parent) or "/"
-        listing_key = IndexKey(backend_id=backend_id, scope_id=scope_id, path=parent, kind="listing")
+        listing_key = IndexKey(
+            backend_id=backend_id, scope_id=scope_id, path=parent, kind="listing"
+        )
         self.invalidate_path(listing_key)
 ```
 
@@ -285,7 +287,9 @@ class MemoryFileCache:
         ttl_seconds: int | None = None,
     ) -> None:
         expires_at = None if ttl_seconds is None else self._now_fn() + max(ttl_seconds, 0)
-        self._entries[key] = _FileEntry(content=content, fingerprint=fingerprint, expires_at=expires_at)
+        self._entries[key] = _FileEntry(
+            content=content, fingerprint=fingerprint, expires_at=expires_at
+        )
 
     async def invalidate(self, key: FileKey) -> None:
         self._entries.pop(key, None)
@@ -444,6 +448,7 @@ Apply these changes:
 # src/nexus/backends/base/backend.py
 class Backend(ObjectStoreABC):
     ...
+
     def fingerprint(
         self,
         path: str,
@@ -545,7 +550,9 @@ def test_readdir_cache_hit_uses_logical_listing_cache(
 
 
 def test_parent_only_listing_invalidation_keeps_grandparent() -> None:
-    cache = FUSECacheManager(attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8)
+    cache = FUSECacheManager(
+        attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8
+    )
     cache.cache_listing("/a", [".", "..", "b"])
     cache.cache_listing("/a/b", [".", "..", "c.txt"])
 
@@ -732,7 +739,9 @@ async def test_logical_file_cache_singleflight_keeps_one_origin_fill() -> None:
 
 
 def test_invalidate_file_clears_parsed_views_for_source_path() -> None:
-    cache = FUSECacheManager(attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8)
+    cache = FUSECacheManager(
+        attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8
+    )
     cache.cache_content("/report.xlsx", b"raw", fingerprint="etag:1")
     cache.cache_parsed("/report.xlsx", "md", b"# parsed")
 
@@ -858,6 +867,7 @@ async def get_file_content(...):
 def _make_cache_key(self, cache_key: str, zone_id: str | None = None) -> str:
     if zone_id:
         from nexus.lib.zone import validate_zone_id
+
         validate_zone_id(zone_id)
         return f"{zone_id}:{cache_key}"
     return cache_key
@@ -1091,7 +1101,9 @@ Add these assertions:
 ```python
 # tests/unit/fuse/test_cache_split_coherence.py
 def test_parent_only_invalidation_does_not_clear_grandparent_listing() -> None:
-    cache = FUSECacheManager(attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8)
+    cache = FUSECacheManager(
+        attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8
+    )
     cache.cache_listing("/a", [".", "..", "b"])
     cache.cache_listing("/a/b", [".", "..", "c.txt"])
 
@@ -1110,7 +1122,9 @@ async def test_ttl_fallback_path_is_used_for_cli_backends_without_fingerprint() 
 
 
 def test_parsed_view_invalidation_tracks_source_path() -> None:
-    cache = FUSECacheManager(attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8)
+    cache = FUSECacheManager(
+        attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8
+    )
     cache.cache_content("/report.xlsx", b"raw", fingerprint="etag:1")
     cache.cache_parsed("/report.xlsx", "md", b"# parsed")
 
@@ -1123,7 +1137,9 @@ def test_parsed_view_invalidation_tracks_source_path() -> None:
 ```python
 # tests/unit/integration/test_lease_aware_cache.py
 def test_lease_revocation_clears_logical_file_and_listing_entries() -> None:
-    cache = FUSECacheManager(attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8)
+    cache = FUSECacheManager(
+        attr_cache_size=8, attr_cache_ttl=60, content_cache_size=8, parsed_cache_size=8
+    )
     cache.cache_attr(PATH, {"st_size": 11})
     cache.cache_listing("/mnt/gcs", [".", "..", "file.txt"])
     cache.cache_content(PATH, b"hello world", fingerprint="etag:1")

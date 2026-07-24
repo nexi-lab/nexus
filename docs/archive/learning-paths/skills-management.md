@@ -110,10 +110,7 @@ Skills are Markdown files with YAML frontmatter. Let's create one:
 import nexus
 
 # Connect to server
-nx = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "your-api-key"
-})
+nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
 # Create skill content
 skill_content = """---
@@ -190,12 +187,10 @@ import asyncio
 import nexus
 from nexus.skills.registry import SkillRegistry
 
+
 async def main():
     # Connect to Nexus
-    nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "your-api-key"
-    })
+    nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
     # Create skill registry
     registry = SkillRegistry(filesystem=nx)
@@ -219,6 +214,7 @@ async def main():
     system_skills = registry.list_skills(tier="system")
     for skill_name in system_skills:
         print(f"  • {skill_name}")
+
 
 asyncio.run(main())
 ```
@@ -254,11 +250,9 @@ import asyncio
 import nexus
 from nexus.skills.registry import SkillRegistry
 
+
 async def main():
-    nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "your-api-key"
-    })
+    nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
     registry = SkillRegistry(filesystem=nx)
     await registry.discover()
@@ -276,6 +270,7 @@ async def main():
     # Read the content
     print(f"\n📄 Content Preview:")
     print(skill.content[:300] + "...")
+
 
 asyncio.run(main())
 ```
@@ -382,21 +377,16 @@ import asyncio
 import nexus
 from nexus.skills.registry import SkillRegistry
 
+
 async def main():
-    nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "your-api-key"
-    })
+    nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
     registry = SkillRegistry(filesystem=nx)
     await registry.discover()
 
     # Search by keyword
     query = "git"
-    results = [
-        name for name in registry.list_skills()
-        if query.lower() in name.lower()
-    ]
+    results = [name for name in registry.list_skills() if query.lower() in name.lower()]
 
     print(f"🔍 Found {len(results)} skills matching '{query}':")
     for name in results:
@@ -404,6 +394,7 @@ async def main():
         print(f"  • {name}")
         print(f"    Tier: {skill.metadata.tier}")
         print(f"    Description: {skill.metadata.description}")
+
 
 asyncio.run(main())
 ```
@@ -419,11 +410,9 @@ Publish agent-tier skills to tenant tier for team sharing:
 import asyncio
 import nexus
 
+
 async def main():
-    nx = nexus.connect(config={
-        "url": "http://localhost:2026",
-        "api_key": "your-api-key"
-    })
+    nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
     # Read agent-tier skill
     agent_skill = nx.read("/workspace/.nexus/skills/git-best-practices/SKILL.md")
@@ -437,11 +426,12 @@ async def main():
         subject=("group", "engineering"),
         relation="can_read",
         object=("file", "/shared/skills/git-best-practices"),
-        zone_id="default"
+        zone_id="default",
     )
 
     print("✅ Skill published to tenant tier")
     print("   Team members can now discover and use it!")
+
 
 asyncio.run(main())
 ```
@@ -581,6 +571,7 @@ nexus ls /workspace/.nexus/skills/*/SKILL.md
 ```python
 # Check API keys
 import os
+
 print(f"OpenRouter: {bool(os.getenv('OPENROUTER_API_KEY'))}")
 print(f"Anthropic: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
 print(f"OpenAI: {bool(os.getenv('OPENAI_API_KEY'))}")
@@ -616,6 +607,7 @@ nexus rebac create \
 ```python
 # ✅ Good: Descriptive, clear
 "api-authentication-guide"
+
 "python-testing-pytest"
 "deployment-kubernetes-helm"
 

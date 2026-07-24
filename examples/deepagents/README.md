@@ -31,7 +31,7 @@ from nexus_tools import create_nexus_tools
 nx = nexus.connect()
 agent = create_deep_agent(
     backend=NexusBackend(nx),
-    tools=[*create_nexus_tools(nx)]  # Add memory & search tools
+    tools=[*create_nexus_tools(nx)],  # Add memory & search tools
 )
 ```
 
@@ -58,18 +58,20 @@ nx = nexus.connect()
 # Tier 1: Basic integration
 agent_basic = create_deep_agent(
     model="anthropic:claude-sonnet-4-20250514",
-    backend=NexusBackend(nx)  # Just filesystem
+    backend=NexusBackend(nx),  # Just filesystem
 )
 
 # Tier 2: With enhanced capabilities
 agent_enhanced = create_deep_agent(
     model="anthropic:claude-sonnet-4-20250514",
     backend=NexusBackend(nx),
-    tools=[*create_nexus_tools(nx)]  # Add memory & search tools
+    tools=[*create_nexus_tools(nx)],  # Add memory & search tools
 )
 
 # Use the agent - files are in Nexus!
-agent_enhanced.invoke({"messages": [{"role": "user", "content": "Research quantum computing and store key insights"}]})
+agent_enhanced.invoke(
+    {"messages": [{"role": "user", "content": "Research quantum computing and store key insights"}]}
+)
 
 # Agent can now:
 # - Use nexus_store_memory() to remember insights
@@ -152,9 +154,7 @@ Deploy agents to cloud with centralized storage:
 nx = nexus.connect("https://nexus.yourcompany.com")
 
 # Agents run anywhere, files in one place
-agent = create_deep_agent(
-    middleware=[FilesystemMiddleware(backend=NexusBackend(nx))]
-)
+agent = create_deep_agent(middleware=[FilesystemMiddleware(backend=NexusBackend(nx))])
 ```
 
 ## Implementation Details

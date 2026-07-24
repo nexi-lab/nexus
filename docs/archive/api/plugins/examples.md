@@ -13,6 +13,7 @@ from nexus.plugins import NexusPlugin, PluginMetadata
 import json
 import ast
 
+
 class ValidatorPlugin(NexusPlugin):
     """Validates files before writing."""
 
@@ -21,13 +22,11 @@ class ValidatorPlugin(NexusPlugin):
             name="validator",
             version="1.0.0",
             description="Validates file content before writing",
-            author="Nexus Team"
+            author="Nexus Team",
         )
 
     def hooks(self) -> dict[str, Callable]:
-        return {
-            "before_write": self.validate_content
-        }
+        return {"before_write": self.validate_content}
 
     async def validate_content(self, context: dict) -> dict | None:
         """Validate file content."""
@@ -61,6 +60,7 @@ Official plugin for Claude Skills API integration:
 from nexus.plugins import NexusPlugin, PluginMetadata
 import anthropic
 
+
 class AnthropicPlugin(NexusPlugin):
     """Anthropic Claude Skills API integration."""
 
@@ -70,7 +70,7 @@ class AnthropicPlugin(NexusPlugin):
             version="0.2.0",
             description="Anthropic Claude Skills API integration",
             author="Nexus Team",
-            homepage="https://github.com/nexi-lab/nexus-plugin-anthropic"
+            homepage="https://github.com/nexi-lab/nexus-plugin-anthropic",
         )
 
     def commands(self) -> dict[str, Callable]:
@@ -104,8 +104,7 @@ class AnthropicPlugin(NexusPlugin):
         # Upload to Claude
         with open(export_path, "rb") as f:
             response = client.beta.skills.create(
-                display_title=skill_name,
-                files=[("skill.zip", f.read())]
+                display_title=skill_name, files=[("skill.zip", f.read())]
             )
 
         print(f"✅ Uploaded: {response.id}")
@@ -122,6 +121,7 @@ from nexus.plugins import NexusPlugin, PluginMetadata
 import black
 import autopep8
 
+
 class FormatterPlugin(NexusPlugin):
     """Auto-formats code files."""
 
@@ -130,13 +130,11 @@ class FormatterPlugin(NexusPlugin):
             name="formatter",
             version="1.0.0",
             description="Auto-formats code files on write",
-            author="Dev Team"
+            author="Dev Team",
         )
 
     def hooks(self) -> dict[str, Callable]:
-        return {
-            "before_write": self.auto_format
-        }
+        return {"before_write": self.auto_format}
 
     async def auto_format(self, context: dict) -> dict:
         """Auto-format code files."""
@@ -146,10 +144,7 @@ class FormatterPlugin(NexusPlugin):
         # Format Python with Black
         if path.endswith(".py"):
             try:
-                formatted = black.format_str(
-                    content.decode("utf-8"),
-                    mode=black.Mode()
-                )
+                formatted = black.format_str(content.decode("utf-8"), mode=black.Mode())
                 context["content"] = formatted.encode("utf-8")
                 print(f"✨ Formatted: {path}")
             except Exception as e:
@@ -166,6 +161,7 @@ Creates backups before overwriting files:
 from nexus.plugins import NexusPlugin, PluginMetadata
 from datetime import datetime
 
+
 class BackupPlugin(NexusPlugin):
     """Creates backups before overwriting."""
 
@@ -174,13 +170,11 @@ class BackupPlugin(NexusPlugin):
             name="backup",
             version="1.0.0",
             description="Creates backups before overwriting files",
-            author="Safety Team"
+            author="Safety Team",
         )
 
     def hooks(self) -> dict[str, Callable]:
-        return {
-            "before_write": self.create_backup
-        }
+        return {"before_write": self.create_backup}
 
     async def create_backup(self, context: dict) -> dict:
         """Create backup before overwriting."""
@@ -212,6 +206,7 @@ from collections import defaultdict
 from rich.console import Console
 from rich.table import Table
 
+
 class StatsPlugin(NexusPlugin):
     """Tracks file operation statistics."""
 
@@ -224,7 +219,7 @@ class StatsPlugin(NexusPlugin):
             name="stats",
             version="1.0.0",
             description="Tracks file operation statistics",
-            author="Analytics Team"
+            author="Analytics Team",
         )
 
     def commands(self) -> dict[str, Callable]:
@@ -288,6 +283,7 @@ Enforces storage quotas:
 ```python
 from nexus.plugins import NexusPlugin, PluginMetadata
 
+
 class QuotaPlugin(NexusPlugin):
     """Enforces storage quotas."""
 
@@ -296,13 +292,11 @@ class QuotaPlugin(NexusPlugin):
             name="quota",
             version="1.0.0",
             description="Enforces storage quotas per user",
-            author="Admin Team"
+            author="Admin Team",
         )
 
     def hooks(self) -> dict[str, Callable]:
-        return {
-            "before_write": self.check_quota
-        }
+        return {"before_write": self.check_quota}
 
     async def check_quota(self, context: dict) -> dict | None:
         """Check storage quota before write."""
@@ -349,6 +343,7 @@ from nexus.plugins import NexusPlugin, PluginMetadata
 from whoosh.index import create_in, open_dir
 from whoosh.fields import Schema, TEXT, ID
 
+
 class SearchPlugin(NexusPlugin):
     """Indexes files for full-text search."""
 
@@ -362,7 +357,7 @@ class SearchPlugin(NexusPlugin):
             version="1.0.0",
             description="Full-text search indexing",
             author="Search Team",
-            requires=["whoosh>=2.7.4"]
+            requires=["whoosh>=2.7.4"],
         )
 
     def commands(self) -> dict[str, Callable]:

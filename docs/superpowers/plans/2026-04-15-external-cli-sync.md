@@ -495,7 +495,7 @@ Add to `src/nexus/bricks/auth/external_sync/__init__.py`:
 from nexus.bricks.auth.external_sync.file_adapter import FileAdapter
 
 # Add to __all__:
-"FileAdapter",
+("FileAdapter",)
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -811,7 +811,7 @@ Add to `src/nexus/bricks/auth/external_sync/__init__.py`:
 from nexus.bricks.auth.external_sync.subprocess_adapter import SubprocessAdapter
 
 # Add to __all__:
-"SubprocessAdapter",
+("SubprocessAdapter",)
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -1000,7 +1000,9 @@ class TestAwsPaths:
 
 
 class TestAwsSync:
-    async def test_full_sync_from_fixture(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_full_sync_from_fixture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from nexus.bricks.auth.external_sync.aws_sync import AwsCliSyncAdapter
 
         # Point AWS env vars to tmp dir with fixture data
@@ -1048,9 +1050,7 @@ class AwsCliSyncAdapter(FileAdapter):
 
     def paths(self) -> list[Path]:
         return [
-            Path(
-                os.environ.get("AWS_SHARED_CREDENTIALS_FILE", "~/.aws/credentials")
-            ).expanduser(),
+            Path(os.environ.get("AWS_SHARED_CREDENTIALS_FILE", "~/.aws/credentials")).expanduser(),
             Path(os.environ.get("AWS_CONFIG_FILE", "~/.aws/config")).expanduser(),
         ]
 
@@ -1094,9 +1094,7 @@ class AwsCliSyncAdapter(FileAdapter):
 
             # Try exact section name, then "profile <name>" variant
             for section in [profile_name, f"profile {profile_name}"]:
-                if parser.has_section(section) and parser.has_option(
-                    section, "aws_access_key_id"
-                ):
+                if parser.has_section(section) and parser.has_option(section, "aws_access_key_id"):
                     return ResolvedCredential(
                         kind="api_key",
                         api_key=parser.get(section, "aws_access_key_id"),
@@ -1104,9 +1102,7 @@ class AwsCliSyncAdapter(FileAdapter):
                             "secret_access_key": parser.get(
                                 section, "aws_secret_access_key", fallback=""
                             ),
-                            "session_token": parser.get(
-                                section, "aws_session_token", fallback=""
-                            ),
+                            "session_token": parser.get(section, "aws_session_token", fallback=""),
                             "region": parser.get(section, "region", fallback=""),
                         },
                     )
@@ -1128,7 +1124,7 @@ Add to `src/nexus/bricks/auth/external_sync/__init__.py`:
 from nexus.bricks.auth.external_sync.aws_sync import AwsCliSyncAdapter
 
 # Add to __all__:
-"AwsCliSyncAdapter",
+("AwsCliSyncAdapter",)
 ```
 
 - [ ] **Step 6: Run tests to verify they pass**
@@ -1573,9 +1569,7 @@ class AdapterRegistry:
         startup_timeout: float = 3.0,
         loop_tick_seconds: float = 30.0,
     ) -> None:
-        self._adapters: dict[str, ExternalCliSyncAdapter] = {
-            a.adapter_name: a for a in adapters
-        }
+        self._adapters: dict[str, ExternalCliSyncAdapter] = {a.adapter_name: a for a in adapters}
         self._store = profile_store
         self._startup_timeout = startup_timeout
         self._loop_tick_seconds = loop_tick_seconds
@@ -1597,6 +1591,7 @@ class AdapterRegistry:
         Decision 15A: asyncio.gather with startup_timeout. Adapters
         that miss the deadline get a degraded SyncResult.
         """
+
         async def _sync_one(adapter: ExternalCliSyncAdapter) -> SyncResult:
             if not await adapter.detect():
                 return SyncResult(
@@ -1702,9 +1697,7 @@ class AdapterRegistry:
                 backend="external-cli",
                 backend_key=sp.backend_key,
                 last_synced_at=now,
-                sync_ttl_seconds=int(
-                    self._adapters[result.adapter_name].sync_ttl_seconds
-                ),
+                sync_ttl_seconds=int(self._adapters[result.adapter_name].sync_ttl_seconds),
                 usage_stats=(existing.usage_stats if existing else ProfileUsageStats()),
             )
             self._store.upsert(profile)
@@ -1718,8 +1711,8 @@ Add to `src/nexus/bricks/auth/external_sync/__init__.py`:
 from nexus.bricks.auth.external_sync.registry import AdapterRegistry, CircuitBreaker
 
 # Add to __all__:
-"AdapterRegistry",
-"CircuitBreaker",
+("AdapterRegistry",)
+("CircuitBreaker",)
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -1965,7 +1958,7 @@ Add to `src/nexus/bricks/auth/external_sync/__init__.py`:
 from nexus.bricks.auth.external_sync.external_cli_backend import ExternalCliBackend
 
 # Add to __all__:
-"ExternalCliBackend",
+("ExternalCliBackend",)
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -2116,6 +2109,7 @@ class TestAuthListJsonOutput:
             result = runner.invoke(auth, ["list", "--json"])
             assert result.exit_code == 0
             import json
+
             data = json.loads(result.output)
             assert isinstance(data, list)
             assert len(data) == 3
@@ -2197,6 +2191,7 @@ def _format_relative_time(dt: "datetime | None") -> str:
     # Handle naive datetimes by assuming UTC
     if dt.tzinfo is None:
         from datetime import timezone
+
         dt = dt.replace(tzinfo=timezone.utc)
     delta = now - dt
     minutes = int(delta.total_seconds() / 60)
@@ -2244,9 +2239,7 @@ def list_auth(output_opts: OutputOptions) -> None:
         ]
 
         def _human_display(_data: object) -> None:
-            table = Table(
-                title="Unified Auth", show_header=True, header_style="bold cyan"
-            )
+            table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
             table.add_column("Provider", style="green")
             table.add_column("Account", style="cyan")
             table.add_column("Source", style="blue")
@@ -2335,6 +2328,7 @@ Add to `src/nexus/bricks/auth/tests/test_auth_list_cutover.py` (or create a sepa
 ```python
 # Append to test_auth_list_cutover.py or create test_s3_routing.py
 
+
 class TestS3BackendRouting:
     def test_s3_routes_through_profile_store_when_populated(self) -> None:
         """When profile store has an S3 profile, use ExternalCliBackend."""
@@ -2345,7 +2339,11 @@ class TestS3BackendRouting:
 
         mock_cred = MagicMock()
         mock_cred.api_key = "AKIAEXAMPLE"
-        mock_cred.metadata = {"secret_access_key": "secret", "session_token": "", "region": "us-east-1"}
+        mock_cred.metadata = {
+            "secret_access_key": "secret",
+            "session_token": "",
+            "region": "us-east-1",
+        }
 
         with (
             patch("nexus.fs._backend_factory._try_profile_store_select", return_value=mock_profile),
@@ -2363,7 +2361,10 @@ class TestS3BackendRouting:
 
             mock_s3.assert_called_once()
             call_kwargs = mock_s3.call_args
-            assert call_kwargs[1].get("access_key_id") == "AKIAEXAMPLE" or call_kwargs.kwargs.get("access_key_id") == "AKIAEXAMPLE"
+            assert (
+                call_kwargs[1].get("access_key_id") == "AKIAEXAMPLE"
+                or call_kwargs.kwargs.get("access_key_id") == "AKIAEXAMPLE"
+            )
 
     def test_s3_falls_back_when_no_profile(self) -> None:
         """When profile store has no S3 profile, use old discover_credentials path."""
@@ -2560,9 +2561,7 @@ class TestConcurrency:
 
 
 class TestOfflineSafety:
-    async def test_file_adapter_returns_degraded_with_no_network(
-        self, no_network: None
-    ) -> None:
+    async def test_file_adapter_returns_degraded_with_no_network(self, no_network: None) -> None:
         """FileAdapter must work offline (it reads local files, no network)."""
         from nexus.bricks.auth.external_sync.file_adapter import FileAdapter
 
@@ -2686,13 +2685,7 @@ def aws_home(tmp_path):
     )
 
     config = aws_dir / "config"
-    config.write_text(
-        "[default]\n"
-        "region = us-east-1\n"
-        "\n"
-        "[profile staging]\n"
-        "region = eu-west-1\n"
-    )
+    config.write_text("[default]\nregion = us-east-1\n\n[profile staging]\nregion = eu-west-1\n")
 
     return tmp_path
 

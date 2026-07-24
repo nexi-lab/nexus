@@ -318,17 +318,17 @@ Here's how to use the same features with the Python SDK:
 import asyncio
 from nexus import connect
 
+
 async def main():
     # Connect to Nexus (uses NEXUS_URL and NEXUS_API_KEY from environment)
     async with connect() as nx:
-
         # Simple question
         print("=== Simple Question ===\n")
         answer = await nx.llm_read(
             path="/workspace/docs/authentication.md",
             prompt="What security best practices are mentioned?",
             model="claude-sonnet-4",
-            max_tokens=300
+            max_tokens=300,
         )
         print(answer)
         print()
@@ -339,7 +339,7 @@ async def main():
             path="/workspace/reports/q4-2024.txt",
             prompt="What were the Q4 achievements?",
             model="claude-sonnet-4",
-            max_tokens=500
+            max_tokens=500,
         )
 
         print(result.answer)
@@ -348,6 +348,7 @@ async def main():
             print(f"  • {source}")
         print(f"\nCost: ${result.cost:.4f}")
         print(f"Tokens: {result.tokens_used:,}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -412,11 +413,12 @@ async def stream_demo():
             path="/workspace/reports/q4-2024.txt",
             prompt="Provide a comprehensive analysis of Q4 performance",
             model="claude-sonnet-4",
-            max_tokens=800
+            max_tokens=800,
         ):
             print(chunk, end="", flush=True)
 
         print("\n")
+
 
 asyncio.run(stream_demo())
 ```
@@ -482,13 +484,13 @@ reader = nx.create_llm_reader(
         "You are an executive assistant. Provide concise, "
         "bullet-point summaries focused on key business metrics "
         "and actionable insights. Use executive language."
-    )
+    ),
 )
 
 result = await reader.read(
     path="/workspace/reports/q4-2024.txt",
     prompt="Summarize Q4 performance for the executive team",
-    max_tokens=400
+    max_tokens=400,
 )
 print(result.answer)
 ```
@@ -505,8 +507,10 @@ Here's a complete Python script demonstrating all features:
 Document Q&A System Demo
 Prerequisites: Nexus server running with documents
 """
+
 import asyncio
 from nexus import connect
+
 
 async def main():
     async with connect() as nx:
@@ -517,25 +521,21 @@ async def main():
         answer = await nx.llm_read(
             "/workspace/docs/authentication.md",
             "What are the token expiration times?",
-            model="claude-sonnet-4"
+            model="claude-sonnet-4",
         )
         print(f"   {answer}\n")
 
         # 2. Multi-document query
         print("2️⃣ Multi-Document Query")
         answer = await nx.llm_read(
-            "/workspace/**/*.txt",
-            "What were the Q4 challenges?",
-            model="claude-sonnet-4"
+            "/workspace/**/*.txt", "What were the Q4 challenges?", model="claude-sonnet-4"
         )
         print(f"   {answer}\n")
 
         # 3. Detailed results
         print("3️⃣ Detailed Results with Citations")
         result = await nx.llm_read_detailed(
-            "/workspace/reports/q4-2024.txt",
-            "What are the key metrics?",
-            model="claude-sonnet-4"
+            "/workspace/reports/q4-2024.txt", "What are the key metrics?", model="claude-sonnet-4"
         )
         print(f"   {result.answer}")
         print(f"   Sources: {result.sources}")
@@ -548,7 +548,7 @@ async def main():
             "/workspace/reports/q4-2024.txt",
             "Analyze Q4 performance trends",
             model="claude-sonnet-4",
-            max_tokens=400
+            max_tokens=400,
         ):
             print(chunk, end="", flush=True)
         print("\n")
@@ -557,16 +557,15 @@ async def main():
         print("5️⃣ Custom System Prompt")
         reader = nx.create_llm_reader(
             model="claude-sonnet-4",
-            system_prompt="You are a technical writer. Be precise and concise."
+            system_prompt="You are a technical writer. Be precise and concise.",
         )
         result = await reader.read(
-            "/workspace/docs/authentication.md",
-            "Explain the JWT implementation",
-            max_tokens=300
+            "/workspace/docs/authentication.md", "Explain the JWT implementation", max_tokens=300
         )
         print(f"   {result.answer}\n")
 
         print("✨ Demo complete!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -113,14 +113,16 @@ nexus size /workspace
 total_size = nx.calculate_size("/workspace")
 print(f"Total size: {total_size} bytes")
 
+
 # Calculate recursively with details
 def calculate_size_detailed(path):
     entries = nx.list(path, recursive=True)
     total = 0
     for entry in entries:
-        if entry['type'] == 'file':
-            total += entry['size']
+        if entry["type"] == "file":
+            total += entry["size"]
     return total
+
 
 size = calculate_size_detailed("/workspace")
 print(f"Total: {size:,} bytes ({size / 1024 / 1024:.2f} MB)")
@@ -243,7 +245,7 @@ wasted_space = 0
 for hash_value, files in duplicates.items():
     if len(files) > 1:
         # Get size of one file, multiply by number of duplicates - 1
-        file_size = nx.get_metadata(files[0])['size']
+        file_size = nx.get_metadata(files[0])["size"]
         wasted_space += file_size * (len(files) - 1)
 
 print(f"Wasted space: {wasted_space:,} bytes ({wasted_space / 1024 / 1024:.2f} MB)")

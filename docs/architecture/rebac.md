@@ -149,10 +149,12 @@ result = manager.rebac_check_detailed(...)
 ```python
 # Production (nexus_fs.py)
 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
 self.rebac_manager = EnhancedReBACManager(engine)
 
 # SDK (sdk/__init__.py) - SHOULD BE UPGRADED
 from nexus.core.rebac_manager import ReBACManager  # ⚠️ No tenant isolation!
+
 self.rebac = ReBACManager(engine)
 
 # Tests (tests/unit/test_rebac.py)
@@ -211,12 +213,14 @@ Since `TenantAwareReBACManager` and `EnhancedReBACManager` **inherit** from `ReB
 ```python
 # sdk/__init__.py:116
 from nexus.core.rebac_manager import ReBACManager  # ⚠️ INSECURE
+
 self.rebac = ReBACManager(engine)
 ```
 
 **Should be:**
 ```python
 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
 self.rebac = EnhancedReBACManager(engine)
 ```
 

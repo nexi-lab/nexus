@@ -185,8 +185,10 @@ def path_pattern_matches(pattern_object_id: str, requested_object_id: str) -> bo
             if pattern_object_id == RECURSIVE_SUFFIX
             else pattern_object_id[: -len(RECURSIVE_SUFFIX)]
         )
-        return prefix == "/" or requested_object_id == prefix or requested_object_id.startswith(
-            prefix + "/"
+        return (
+            prefix == "/"
+            or requested_object_id == prefix
+            or requested_object_id.startswith(prefix + "/")
         )
     if pattern_object_id.endswith(SINGLE_LEVEL_SUFFIX):
         prefix = (
@@ -449,16 +451,19 @@ from nexus.bricks.rebac.path_patterns import path_pattern_candidates
 Add these methods inside `PermissionComputer` before `_query_direct_tuple()`:
 
 ```python
-    @staticmethod
-    def _candidate_object_ids(obj: Entity) -> list[str]:
-        return path_pattern_candidates(obj.entity_type, obj.entity_id)
+@staticmethod
+def _candidate_object_ids(obj: Entity) -> list[str]:
+    return path_pattern_candidates(obj.entity_type, obj.entity_id)
 
-    @staticmethod
-    def _ordered_matching_rows(rows: list[dict[str, Any]], candidates: list[str]) -> list[dict[str, Any]]:
-        ordered: list[dict[str, Any]] = []
-        for candidate in candidates:
-            ordered.extend(row for row in rows if row["object_id"] == candidate)
-        return ordered
+
+@staticmethod
+def _ordered_matching_rows(
+    rows: list[dict[str, Any]], candidates: list[str]
+) -> list[dict[str, Any]]:
+    ordered: list[dict[str, Any]] = []
+    for candidate in candidates:
+        ordered.extend(row for row in rows if row["object_id"] == candidate)
+    return ordered
 ```
 
 Replace `_query_direct_tuple()` with:
@@ -748,13 +753,12 @@ from nexus.bricks.rebac.path_patterns import is_path_pattern
 In `check_permissions_bulk_with_fallback()`, before the `if RUST_AVAILABLE and not force_python:` block, add:
 
 ```python
-    has_path_pattern_tuple = any(
-        is_path_pattern(str(t.get("object_type", "")), str(t.get("object_id", "")))
-        for t in tuples
-    )
-    if has_path_pattern_tuple:
-        logger.debug("Skipping Rust ReBAC bulk path because path-pattern tuples are present")
-        return _check_permissions_bulk_python(checks, tuples, namespace_configs)
+has_path_pattern_tuple = any(
+    is_path_pattern(str(t.get("object_type", "")), str(t.get("object_id", ""))) for t in tuples
+)
+if has_path_pattern_tuple:
+    logger.debug("Skipping Rust ReBAC bulk path because path-pattern tuples are present")
+    return _check_permissions_bulk_python(checks, tuples, namespace_configs)
 ```
 
 This keeps the Python evaluator authoritative for this feature.

@@ -215,14 +215,17 @@ Storage Layer
 if TYPE_CHECKING:
     from module_b import ClassB
 
-def function() -> 'ClassB':
+
+def function() -> "ClassB":
     pass
+
 
 # File B
 if TYPE_CHECKING:
     from module_a import ClassA
 
-def other_function() -> 'ClassA':
+
+def other_function() -> "ClassA":
     pass
 ```
 

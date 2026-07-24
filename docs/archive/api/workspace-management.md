@@ -43,11 +43,7 @@ def register_workspace(
 
 ```python
 # Register a workspace
-config = nx.register_workspace(
-    "/my-workspace",
-    name="main",
-    description="My main workspace"
-)
+config = nx.register_workspace("/my-workspace", name="main", description="My main workspace")
 print(f"Registered workspace: {config['path']}")
 
 # Register with metadata
@@ -56,7 +52,7 @@ config = nx.register_workspace(
     name="project-1",
     description="Project workspace",
     created_by="alice",
-    metadata={"project_id": "12345", "team": "engineering"}
+    metadata={"project_id": "12345", "team": "engineering"},
 )
 ```
 
@@ -179,8 +175,7 @@ with open("nexus.yaml") as f:
     config = yaml.safe_load(f)
 
 results = nx.load_workspace_memory_config(
-    workspaces=config.get("workspaces"),
-    memories=config.get("memories")
+    workspaces=config.get("workspaces"), memories=config.get("memories")
 )
 print(f"Registered {results['workspaces_registered']} workspaces")
 print(f"Registered {results['memories_registered']} memories")
@@ -189,11 +184,9 @@ print(f"Registered {results['memories_registered']} memories")
 config = {
     "workspaces": [
         {"path": "/my-workspace", "name": "main"},
-        {"path": "/team/project", "name": "team-project"}
+        {"path": "/team/project", "name": "team-project"},
     ],
-    "memories": [
-        {"path": "/my-memory", "name": "kb"}
-    ]
+    "memories": [{"path": "/my-memory", "name": "kb"}],
 }
 results = nx.load_workspace_memory_config(**config)
 ```

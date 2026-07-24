@@ -85,33 +85,25 @@ def add_mount(
 mount_id = nx.add_mount(
     mount_point="/personal/alice",
     backend_type="gcs",
-    backend_config={
-        "bucket": "alice-personal-bucket",
-        "project_id": "my-project"
-    },
-    priority=10
+    backend_config={"bucket": "alice-personal-bucket", "project_id": "my-project"},
+    priority=10,
 )
 
 # Add local shared mount
 mount_id = nx.add_mount(
     mount_point="/shared/team",
     backend_type="local",
-    backend_config={
-        "data_dir": "/mnt/shared/team-data"
-    },
-    priority=5
+    backend_config={"data_dir": "/mnt/shared/team-data"},
+    priority=5,
 )
 
 # Add read-only archive mount
 mount_id = nx.add_mount(
     mount_point="/archive/2024",
     backend_type="gcs",
-    backend_config={
-        "bucket": "archive-bucket",
-        "prefix": "2024/"
-    },
+    backend_config={"bucket": "archive-bucket", "prefix": "2024/"},
     priority=1,
-    readonly=True
+    readonly=True,
 )
 ```
 

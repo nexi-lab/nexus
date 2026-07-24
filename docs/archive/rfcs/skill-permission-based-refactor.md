@@ -337,6 +337,7 @@ def skills_share(
         {"success": True, "shared_with": "tenant:acme"}
     """
 
+
 @rpc_expose
 def skills_unshare(
     skill_path: str,
@@ -344,6 +345,7 @@ def skills_unshare(
     context: OperationContext,
 ) -> dict:
     """Revoke skill access by removing permission."""
+
 
 @rpc_expose
 def skills_discover(
@@ -367,6 +369,7 @@ def skills_discover(
         }
     """
 
+
 @rpc_expose
 def skills_subscribe(
     skill_path: str,
@@ -378,12 +381,14 @@ def skills_subscribe(
     Requires read permission on the skill.
     """
 
+
 @rpc_expose
 def skills_unsubscribe(
     skill_path: str,
     context: OperationContext,
 ) -> dict:
     """Unsubscribe from a skill (remove from user's library)."""
+
 
 @rpc_expose
 def skills_get_prompt_context(
@@ -411,6 +416,7 @@ def skills_get_prompt_context(
             "token_estimate": 1200
         }
     """
+
 
 @rpc_expose
 def skills_load(
@@ -551,7 +557,9 @@ class SkillService:
     def unsubscribe(self, skill_path: str, context: OperationContext) -> None: ...
 
     # Runner
-    def get_prompt_context(self, context: OperationContext, max_skills: int = 50) -> PromptContext: ...
+    def get_prompt_context(
+        self, context: OperationContext, max_skills: int = 50
+    ) -> PromptContext: ...
     def load(self, skill_path: str, context: OperationContext) -> SkillContent: ...
 ```
 

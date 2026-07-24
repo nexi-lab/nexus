@@ -31,7 +31,7 @@ Nexus uses **Python entry points** for automatic plugin discovery. When you inst
 import importlib.metadata
 
 entry_points = importlib.metadata.entry_points()
-nexus_plugins = entry_points.select(group='nexus.plugins')
+nexus_plugins = entry_points.select(group="nexus.plugins")
 ```
 
 No manual registration needed - just install the package!
@@ -168,6 +168,7 @@ All plugins inherit from `NexusPlugin`:
 
 ```python
 from nexus.plugins import NexusPlugin, PluginMetadata
+
 
 class MyPlugin(NexusPlugin):
     """Your plugin implementation."""
@@ -333,7 +334,7 @@ class DocSummarizerPlugin(NexusPlugin):
         try:
             # Read file from Nexus
             console.print(f"[cyan]Reading:[/cyan] {path}")
-            content = self.nx.read(path).decode('utf-8')
+            content = self.nx.read(path).decode("utf-8")
 
             # Generate summary
             console.print(f"[cyan]Generating summary...[/cyan]")
@@ -342,10 +343,12 @@ class DocSummarizerPlugin(NexusPlugin):
             response = client.messages.create(
                 model=model,
                 max_tokens=1024,
-                messages=[{
-                    "role": "user",
-                    "content": f"Summarize this documentation in 2-3 paragraphs:\n\n{content}"
-                }]
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"Summarize this documentation in 2-3 paragraphs:\n\n{content}",
+                    }
+                ],
             )
 
             summary = response.content[0].text
@@ -354,9 +357,9 @@ class DocSummarizerPlugin(NexusPlugin):
             if output:
                 output_path = output
             else:
-                output_path = str(Path(path).with_suffix('.summary.md'))
+                output_path = str(Path(path).with_suffix(".summary.md"))
 
-            self.nx.write(output_path, summary.encode('utf-8'))
+            self.nx.write(output_path, summary.encode("utf-8"))
             console.print(f"[green]✓ Summary saved to:[/green] {output_path}")
             console.print(f"\n{summary}")
 
@@ -388,7 +391,7 @@ class DocSummarizerPlugin(NexusPlugin):
 
             # Process each file
             for file_path in track(files, description="Summarizing..."):
-                output_name = Path(file_path).name.replace('.md', '.summary.md')
+                output_name = Path(file_path).name.replace(".md", ".summary.md")
                 output_path = f"{output_dir}/{output_name}"
 
                 await self.summarize_file(file_path, output=output_path)
@@ -509,11 +512,11 @@ class NexusPlugin:
 class PluginMetadata:
     """Plugin metadata."""
 
-    name: str                          # Plugin identifier
-    version: str                       # Semantic version
-    description: str                   # Short description
-    author: str                        # Author name
-    homepage: Optional[str] = None     # Plugin homepage URL
+    name: str  # Plugin identifier
+    version: str  # Semantic version
+    description: str  # Short description
+    author: str  # Author name
+    homepage: Optional[str] = None  # Plugin homepage URL
     requires: Optional[list[str]] = None  # Required dependencies
 ```
 
@@ -523,6 +526,7 @@ Plugins can hook into file operations:
 
 ```python
 from nexus.plugins import HookType
+
 
 class MyPlugin(NexusPlugin):
     def hooks(self) -> dict[str, Callable]:
@@ -547,11 +551,12 @@ class MyPlugin(NexusPlugin):
             Modified context or None to cancel operation
         """
         # Validate or transform content
-        if context['path'].endswith('.json'):
+        if context["path"].endswith(".json"):
             # Validate JSON
             import json
+
             try:
-                json.loads(context['content'])
+                json.loads(context["content"])
             except json.JSONDecodeError:
                 console.print("[red]Invalid JSON[/red]")
                 return None  # Cancel write
@@ -571,9 +576,9 @@ class MyPlugin(NexusPlugin):
             Modified context with updated content
         """
         # Transform content on read
-        if context['path'].endswith('.env'):
+        if context["path"].endswith(".env"):
             # Decrypt environment file
-            context['content'] = self._decrypt(context['content'])
+            context["content"] = self._decrypt(context["content"])
 
         return context
 ```
@@ -584,14 +589,14 @@ class MyPlugin(NexusPlugin):
 class HookType(Enum):
     """Available lifecycle hooks."""
 
-    BEFORE_WRITE = "before_write"      # Before writing file
-    AFTER_WRITE = "after_write"        # After writing file
-    BEFORE_READ = "before_read"        # Before reading file
-    AFTER_READ = "after_read"          # After reading file
-    BEFORE_DELETE = "before_delete"    # Before deleting file
-    AFTER_DELETE = "after_delete"      # After deleting file
-    BEFORE_LIST = "before_list"        # Before listing directory
-    AFTER_LIST = "after_list"          # After listing directory
+    BEFORE_WRITE = "before_write"  # Before writing file
+    AFTER_WRITE = "after_write"  # After writing file
+    BEFORE_READ = "before_read"  # Before reading file
+    AFTER_READ = "after_read"  # After reading file
+    BEFORE_DELETE = "before_delete"  # Before deleting file
+    AFTER_DELETE = "after_delete"  # After deleting file
+    BEFORE_LIST = "before_list"  # Before listing directory
+    AFTER_LIST = "after_list"  # After listing directory
 ```
 
 ## Testing Your Plugin
@@ -640,7 +645,7 @@ async def test_summarize_file():
     plugin = DocSummarizerPlugin(nexus_fs=mock_nx)
 
     # Mock Anthropic API
-    with patch('nexus_doc_summarizer.plugin.Anthropic') as mock_anthropic:
+    with patch("nexus_doc_summarizer.plugin.Anthropic") as mock_anthropic:
         mock_client = Mock()
         mock_response = Mock()
         mock_response.content = [Mock(text="Test summary")]
@@ -805,6 +810,7 @@ The `NexusPlugin` base class provides four utility methods for pipeline support:
 ```python
 from nexus.plugins import NexusPlugin
 
+
 class MyPlugin(NexusPlugin):
     async def my_command(self, url: str, json_output: bool = False):
         """Command with pipeline support."""
@@ -812,11 +818,13 @@ class MyPlugin(NexusPlugin):
         # Detect if output is being piped
         if self.is_piped_output():
             # Output JSON for next command in pipeline
-            self.write_json_output({
-                "type": "my_data",
-                "url": url,
-                "content": "...",
-            })
+            self.write_json_output(
+                {
+                    "type": "my_data",
+                    "url": url,
+                    "content": "...",
+                }
+            )
             return
 
         # Normal human-readable output
@@ -837,11 +845,7 @@ class MyPlugin(NexusPlugin):
 #### 1. Output JSON for Piping
 
 ```python
-async def scrape_command(
-    self,
-    url: str,
-    json_output: bool = False
-) -> None:
+async def scrape_command(self, url: str, json_output: bool = False) -> None:
     """Scrape web content (supports piping).
 
     Args:
@@ -852,15 +856,14 @@ async def scrape_command(
 
     # Pipe mode: output JSON
     if json_output or self.is_piped_output():
-        self.write_json_output({
-            "type": "scraped_content",
-            "url": url,
-            "content": content,
-            "metadata": {
-                "scraped_at": datetime.now().isoformat(),
-                "format": "markdown"
+        self.write_json_output(
+            {
+                "type": "scraped_content",
+                "url": url,
+                "content": content,
+                "metadata": {"scraped_at": datetime.now().isoformat(), "format": "markdown"},
             }
-        })
+        )
         return
 
     # Normal mode: human-readable
@@ -871,10 +874,7 @@ async def scrape_command(
 #### 2. Accept JSON from stdin
 
 ```python
-async def process_command(
-    self,
-    stdin_input: bool = False
-) -> None:
+async def process_command(self, stdin_input: bool = False) -> None:
     """Process data from pipeline (supports stdin).
 
     Args:
@@ -891,11 +891,9 @@ async def process_command(
             result = await self.process(content)
 
             # Output for next command
-            self.write_json_output({
-                "type": "processed_data",
-                "original_url": url,
-                "result": result
-            })
+            self.write_json_output(
+                {"type": "processed_data", "original_url": url, "result": result}
+            )
         except json.JSONDecodeError:
             console.print("[red]Invalid JSON from stdin[/red]")
             return
@@ -942,6 +940,7 @@ Add `--json` and `--stdin` flags to your plugin commands:
 
 ```python
 import click
+
 
 @click.command()
 @click.argument("url")
@@ -996,27 +995,27 @@ import pytest
 from io import StringIO
 import sys
 
+
 def test_plugin_json_output(capsys):
     """Test JSON output for piping."""
     plugin = MyPlugin()
-    plugin.write_json_output({
-        "type": "test_data",
-        "value": 123
-    })
+    plugin.write_json_output({"type": "test_data", "value": 123})
 
     captured = capsys.readouterr()
     import json
+
     output = json.loads(captured.out.strip())
 
     assert output["type"] == "test_data"
     assert output["value"] == 123
+
 
 def test_plugin_pipe_detection(monkeypatch):
     """Test pipe detection."""
     # Mock stdin as piped
     mock_stdin = StringIO('{"test": "data"}')
     mock_stdin.isatty = lambda: False
-    monkeypatch.setattr(sys, 'stdin', mock_stdin)
+    monkeypatch.setattr(sys, "stdin", mock_stdin)
 
     plugin = MyPlugin()
     assert plugin.is_piped_input() is True
@@ -1090,6 +1089,7 @@ except FileNotFoundError:
 except Exception as e:
     console.print(f"[red]Error: {e}[/red]")
     import traceback
+
     traceback.print_exc()
     return
 ```
@@ -1101,11 +1101,7 @@ Support both config files and environment variables:
 ```python
 def get_api_key(self) -> Optional[str]:
     """Get API key from config or environment."""
-    return (
-        self.get_config("api_key") or
-        os.getenv("MY_PLUGIN_API_KEY") or
-        os.getenv("API_KEY")
-    )
+    return self.get_config("api_key") or os.getenv("MY_PLUGIN_API_KEY") or os.getenv("API_KEY")
 ```
 
 ### 5. Provide Rich Output

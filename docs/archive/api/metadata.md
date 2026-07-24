@@ -42,9 +42,7 @@ from nexus.core.export_import import ExportFilter
 from datetime import datetime
 
 filter = ExportFilter(
-    path_prefix="/workspace",
-    after_time=datetime(2024, 1, 1),
-    zone_id="acme-corp"
+    path_prefix="/workspace", after_time=datetime(2024, 1, 1), zone_id="acme-corp"
 )
 count = nx.export_metadata("backup.jsonl", filter=filter)
 
@@ -163,6 +161,7 @@ content_map = nx.batch_get_content_ids(all_paths)
 
 # Group by content ID
 from collections import defaultdict
+
 duplicates = defaultdict(list)
 for path, cid in content_map.items():
     if cid:
@@ -212,15 +211,15 @@ store.close()
 ```python
 @dataclass
 class FileMetadata:
-    path: str                      # Virtual path
-    backend_name: str              # Backend identifier
-    physical_path: str             # Physical storage path
-    size: int                      # File size in bytes
-    etag: str | None               # ETag (MD5 hash)
-    mime_type: str | None          # MIME type
-    created_at: datetime | None    # Creation timestamp
-    modified_at: datetime | None   # Last modification timestamp
-    version: int                   # Version number (always 1 in v0.1.0)
+    path: str  # Virtual path
+    backend_name: str  # Backend identifier
+    physical_path: str  # Physical storage path
+    size: int  # File size in bytes
+    etag: str | None  # ETag (MD5 hash)
+    mime_type: str | None  # MIME type
+    created_at: datetime | None  # Creation timestamp
+    modified_at: datetime | None  # Last modification timestamp
+    version: int  # Version number (always 1 in v0.1.0)
 ```
 
 ---

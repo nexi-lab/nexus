@@ -82,23 +82,35 @@ Run code in multiple languages:
 
 ```python
 # Python
-nx.sandbox_run(sandbox_id, "python", code="""
+nx.sandbox_run(
+    sandbox_id,
+    "python",
+    code="""
 import pandas as pd
 df = pd.read_csv('data.csv')
 print(df.describe())
-""")
+""",
+)
 
 # JavaScript
-nx.sandbox_run(sandbox_id, "javascript", code="""
+nx.sandbox_run(
+    sandbox_id,
+    "javascript",
+    code="""
 const data = [1, 2, 3, 4, 5];
 console.log(data.map(x => x * 2));
-""")
+""",
+)
 
 # Bash
-nx.sandbox_run(sandbox_id, "bash", code="""
+nx.sandbox_run(
+    sandbox_id,
+    "bash",
+    code="""
 ls -la /home/user
 df -h
-""")
+""",
+)
 ```
 
 ### 3. Provider Abstraction
@@ -107,17 +119,10 @@ Switch providers without changing agent code:
 
 ```python
 # Development: Local Docker
-nx = NexusFS(
-    backend=LocalBackend(),
-    sandbox_provider="docker"
-)
+nx = NexusFS(backend=LocalBackend(), sandbox_provider="docker")
 
 # Production: E2B cloud sandboxes
-nx = NexusFS(
-    backend=LocalBackend(),
-    sandbox_provider="e2b",
-    e2b_api_key=os.getenv("E2B_API_KEY")
-)
+nx = NexusFS(backend=LocalBackend(), sandbox_provider="e2b", e2b_api_key=os.getenv("E2B_API_KEY"))
 
 # Same API works for both
 sandbox = nx.sandbox_create("my-sandbox")
@@ -156,10 +161,7 @@ from nexus import NexusFS, LocalBackend
 nx = NexusFS(backend=LocalBackend(), is_admin=True)
 
 # Create sandbox
-sandbox = nx.sandbox_create(
-    name="my-python-sandbox",
-    ttl_minutes=20
-)
+sandbox = nx.sandbox_create(name="my-python-sandbox", ttl_minutes=20)
 
 sandbox_id = sandbox["sandbox_id"]
 print(f"Created: {sandbox_id}")
@@ -173,7 +175,7 @@ import sys
 print(f"Python {sys.version}")
 print("2 + 2 =", 2 + 2)
 """,
-    timeout=30  # seconds
+    timeout=30,  # seconds
 )
 
 print("STDOUT:", result["stdout"])
@@ -263,7 +265,7 @@ try:
         sandbox_id,
         "python",
         code="import time; time.sleep(10)",
-        timeout=5  # Will timeout
+        timeout=5,  # Will timeout
     )
 except Exception as e:
     print(f"Timeout: {e}")  # Code execution exceeded 5 second timeout
@@ -292,7 +294,7 @@ Capture and handle execution errors:
 result = nx.sandbox_run(
     sandbox_id,
     "python",
-    code="print(1/0)"  # Division by zero
+    code="print(1/0)",  # Division by zero
 )
 
 if result["exit_code"] != 0:
@@ -327,6 +329,7 @@ from nexus import NexusFS, LocalBackend
 
 nx = NexusFS(backend=LocalBackend(), is_admin=True)
 
+
 # Agent analyzes CSV data
 def analyze_csv_data(csv_path: str) -> dict:
     # Create temporary sandbox
@@ -358,12 +361,13 @@ print(df.describe())
         return {
             "success": result["exit_code"] == 0,
             "output": result["stdout"],
-            "time": result["execution_time"]
+            "time": result["execution_time"],
         }
 
     finally:
         # Always cleanup
         nx.sandbox_stop(sandbox_id)
+
 
 # Use it
 report = analyze_csv_data("/workspace/data/sales.csv")
@@ -382,18 +386,21 @@ def execute_multi_language(sandbox_id: str, tasks: list) -> list:
             sandbox_id=sandbox_id,
             language=task["language"],
             code=task["code"],
-            timeout=task.get("timeout", 30)
+            timeout=task.get("timeout", 30),
         )
 
-        results.append({
-            "task": task["name"],
-            "language": task["language"],
-            "success": result["exit_code"] == 0,
-            "output": result["stdout"],
-            "time": result["execution_time"]
-        })
+        results.append(
+            {
+                "task": task["name"],
+                "language": task["language"],
+                "success": result["exit_code"] == 0,
+                "output": result["stdout"],
+                "time": result["execution_time"],
+            }
+        )
 
     return results
+
 
 # Run mixed workload
 sandbox = nx.sandbox_create("multi-lang", ttl_minutes=30)
@@ -402,18 +409,10 @@ tasks = [
     {
         "name": "process-json",
         "language": "javascript",
-        "code": "console.log(JSON.stringify({result: 42}))"
+        "code": "console.log(JSON.stringify({result: 42}))",
     },
-    {
-        "name": "analyze-data",
-        "language": "python",
-        "code": "print(sum([1, 2, 3, 4, 5]))"
-    },
-    {
-        "name": "check-env",
-        "language": "bash",
-        "code": "echo $USER && pwd"
-    }
+    {"name": "analyze-data", "language": "python", "code": "print(sum([1, 2, 3, 4, 5]))"},
+    {"name": "check-env", "language": "bash", "code": "echo $USER && pwd"},
 ]
 
 results = execute_multi_language(sandbox["sandbox_id"], tasks)
@@ -520,11 +519,7 @@ Always wrap sandbox operations in try/finally:
 ```python
 sandbox = nx.sandbox_create("critical-task")
 try:
-    result = nx.sandbox_run(
-        sandbox["sandbox_id"],
-        "python",
-        code=dangerous_code
-    )
+    result = nx.sandbox_run(sandbox["sandbox_id"], "python", code=dangerous_code)
     return result
 except Exception as e:
     logger.error(f"Sandbox execution failed: {e}")
@@ -584,6 +579,7 @@ finally:
 # Error: E2B API key required
 # Solution: Set environment variable
 import os
+
 os.environ["E2B_API_KEY"] = "your-key"
 ```
 
@@ -634,6 +630,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def run_with_logging(sandbox_id: str, code: str):
     result = nx.sandbox_run(sandbox_id, "python", code)
 
@@ -643,8 +640,8 @@ def run_with_logging(sandbox_id: str, code: str):
             "sandbox_id": sandbox_id,
             "exit_code": result["exit_code"],
             "execution_time": result["execution_time"],
-            "stdout_length": len(result["stdout"])
-        }
+            "stdout_length": len(result["stdout"]),
+        },
     )
 
     return result

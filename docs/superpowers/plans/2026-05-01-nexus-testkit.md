@@ -590,9 +590,9 @@ from tests.testkit.profiles import TestProfile, profile_matrix, pytest_profile_p
 Add these names to `__all__`:
 
 ```python
-"TestProfile",
-"profile_matrix",
-"pytest_profile_params",
+("TestProfile",)
+("profile_matrix",)
+("pytest_profile_params",)
 ```
 
 - [ ] **Step 5: Run profile tests to verify they pass**
@@ -816,7 +816,9 @@ def server_smoke_service(
 
 
 @contextmanager
-def patched_service_env(monkeypatch: pytest.MonkeyPatch, service: ServiceInfo) -> Iterator[ServiceInfo]:
+def patched_service_env(
+    monkeypatch: pytest.MonkeyPatch, service: ServiceInfo
+) -> Iterator[ServiceInfo]:
     """Patch service environment variables for the duration of a test."""
     for key, value in service.env.items():
         monkeypatch.setenv(key, value)
@@ -982,7 +984,9 @@ def assert_metadata_contains(metadata: Any, **expected: Any) -> None:
     """Assert selected metadata fields match expected values."""
     for key, expected_value in expected.items():
         actual = _read_field(metadata, key)
-        assert actual == expected_value, f"metadata.{key}: expected {expected_value!r}, got {actual!r}"
+        assert actual == expected_value, (
+            f"metadata.{key}: expected {expected_value!r}, got {actual!r}"
+        )
 
 
 def assert_permission_denied(value: Any) -> None:
@@ -1059,10 +1063,10 @@ from tests.testkit.assertions import (
 Add these names to `__all__`:
 
 ```python
-"assert_dependency_failure",
-"assert_event_matches",
-"assert_metadata_contains",
-"assert_permission_denied",
+("assert_dependency_failure",)
+("assert_event_matches",)
+("assert_metadata_contains",)
+("assert_permission_denied",)
 ```
 
 - [ ] **Step 5: Run assertion tests to verify they pass**
@@ -1329,6 +1333,7 @@ Use `pytest_profile_params` for cross-profile tests:
 import pytest
 from tests.testkit.profiles import TestProfile, pytest_profile_params
 
+
 @pytest.mark.parametrize("profile", pytest_profile_params("slim", "sandbox", "remote"))
 def test_profile_behavior(profile: TestProfile) -> None:
     assert profile.config["profile"] in {"slim", "sandbox", "remote"}
@@ -1346,6 +1351,7 @@ Call a helper inside a fixture or test when the service is explicitly needed:
 
 ```python
 from tests.testkit.containers import postgres_service, patched_service_env
+
 
 def test_postgres_case(monkeypatch):
     service = postgres_service()

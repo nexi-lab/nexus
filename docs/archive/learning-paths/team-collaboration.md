@@ -159,10 +159,12 @@ Alice creates a shared workspace for the team:
 import nexus
 
 # Alice connects to the server
-alice = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "alice_key_here"  # Replace with actual key
-})
+alice = nexus.connect(
+    config={
+        "url": "http://localhost:2026",
+        "api_key": "alice_key_here",  # Replace with actual key
+    }
+)
 
 # Alice creates a shared project workspace
 alice.mkdir("/workspace/team-project")
@@ -181,7 +183,7 @@ Welcome to our collaborative project!
 - Use descriptive file names
 - Add comments to your work
 - Coordinate on shared files
-"""
+""",
 )
 
 print("✅ Alice created shared workspace")
@@ -201,7 +203,7 @@ This is our project design document.
 - Storage: Nexus
 
 Created by: Alice
-"""
+""",
 )
 
 print("✅ Alice created design document")
@@ -217,10 +219,7 @@ Alice grants permissions to team members:
 # alice_permissions.py
 import nexus
 
-alice = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "alice_key_here"
-})
+alice = nexus.connect(config={"url": "http://localhost:2026", "api_key": "alice_key_here"})
 
 # Grant Bob read and write access to the project
 alice.grant_permission(
@@ -228,7 +227,7 @@ alice.grant_permission(
     subject_id="bob",
     object_type="file",
     object_id="/workspace/team-project",
-    relation="can_write"
+    relation="can_write",
 )
 
 print("✅ Bob granted write access to team-project")
@@ -239,7 +238,7 @@ alice.grant_permission(
     subject_id="carol",
     object_type="file",
     object_id="/workspace/team-project",
-    relation="can_read"
+    relation="can_read",
 )
 
 print("✅ Carol granted read access to team-project")
@@ -250,7 +249,7 @@ can_bob_write = alice.check_permission(
     subject_id="bob",
     object_type="file",
     object_id="/workspace/team-project/design-doc.md",
-    relation="can_write"
+    relation="can_write",
 )
 
 can_carol_write = alice.check_permission(
@@ -258,10 +257,10 @@ can_carol_write = alice.check_permission(
     subject_id="carol",
     object_type="file",
     object_id="/workspace/team-project/design-doc.md",
-    relation="can_write"
+    relation="can_write",
 )
 
-print(f"Can Bob write? {can_bob_write}")      # True
+print(f"Can Bob write? {can_bob_write}")  # True
 print(f"Can Carol write? {can_carol_write}")  # False
 ```
 
@@ -275,10 +274,7 @@ Bob adds his contribution:
 # bob_contributes.py
 import nexus
 
-bob = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "bob_key_here"
-})
+bob = nexus.connect(config={"url": "http://localhost:2026", "api_key": "bob_key_here"})
 
 # Bob reads the design doc
 design_doc = bob.read("/workspace/team-project/design-doc.md").decode()
@@ -331,7 +327,7 @@ async def create_file(path: str, content: str):
     \"\"\"Create a new file\"\"\"
     nx.write(f"/workspace/team-project/{path}", content.encode())
     return {"status": "created", "path": path}
-"""
+""",
 )
 
 print("✅ Bob created API code")
@@ -343,10 +339,7 @@ Carol views the project (read-only):
 # carol_views.py
 import nexus
 
-carol = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "carol_key_here"
-})
+carol = nexus.connect(config={"url": "http://localhost:2026", "api_key": "carol_key_here"})
 
 # Carol lists project files
 files = carol.list_files("/workspace/team-project", recursive=True)
@@ -361,10 +354,7 @@ print(design_doc)
 
 # Carol tries to write (will fail - she only has read access)
 try:
-    carol.write(
-        "/workspace/team-project/designs.md",
-        b"# UI Designs\n\nDesign concepts..."
-    )
+    carol.write("/workspace/team-project/designs.md", b"# UI Designs\n\nDesign concepts...")
 except nexus.NexusPermissionError as e:
     print(f"\n❌ Carol cannot write: {e}")
     print("   (She only has read access)")
@@ -381,15 +371,11 @@ Use sessions to isolate user workspaces:
 import nexus
 
 # Alice creates a session for her work
-alice = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "alice_key_here"
-})
+alice = nexus.connect(config={"url": "http://localhost:2026", "api_key": "alice_key_here"})
 
 # Create session-scoped workspace
 alice_session = alice.create_session(
-    name="alice-research",
-    description="Alice's research workspace"
+    name="alice-research", description="Alice's research workspace"
 )
 
 print(f"✅ Created session: {alice_session['id']}")
@@ -405,21 +391,15 @@ These are my personal notes, not shared with the team.
 - New feature concept
 - Performance optimization ideas
 - Architecture improvements
-"""
+""",
 )
 
 print("✅ Alice created private session notes")
 
 # Bob creates his own session
-bob = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "bob_key_here"
-})
+bob = nexus.connect(config={"url": "http://localhost:2026", "api_key": "bob_key_here"})
 
-bob_session = bob.create_session(
-    name="bob-experiments",
-    description="Bob's experimental code"
-)
+bob_session = bob.create_session(name="bob-experiments", description="Bob's experimental code")
 
 bob.write(
     f"/sessions/{bob_session['id']}/experiment.py",
@@ -430,7 +410,7 @@ import nexus
 def test_feature():
     # Testing new ideas...
     pass
-"""
+""",
 )
 
 print(f"✅ Bob created session: {bob_session['id']}")
@@ -458,10 +438,7 @@ Set up complex permission hierarchies:
 # advanced_permissions.py
 import nexus
 
-alice = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "alice_key_here"
-})
+alice = nexus.connect(config={"url": "http://localhost:2026", "api_key": "alice_key_here"})
 
 # Create a hierarchy of workspaces
 alice.mkdir("/workspace/team-project/public")
@@ -474,7 +451,7 @@ alice.grant_permission(
     subject_id="bob",
     object_type="file",
     object_id="/workspace/team-project/public",
-    relation="can_read"
+    relation="can_read",
 )
 
 alice.grant_permission(
@@ -482,7 +459,7 @@ alice.grant_permission(
     subject_id="carol",
     object_type="file",
     object_id="/workspace/team-project/public",
-    relation="can_read"
+    relation="can_read",
 )
 
 # Internal: Bob can write, Carol can read
@@ -491,7 +468,7 @@ alice.grant_permission(
     subject_id="bob",
     object_type="file",
     object_id="/workspace/team-project/internal",
-    relation="can_write"
+    relation="can_write",
 )
 
 alice.grant_permission(
@@ -499,7 +476,7 @@ alice.grant_permission(
     subject_id="carol",
     object_type="file",
     object_id="/workspace/team-project/internal",
-    relation="can_read"
+    relation="can_read",
 )
 
 # Confidential: Only Alice (owner) has access
@@ -539,10 +516,7 @@ Create user groups for easier permission management:
 # groups.py
 import nexus
 
-admin = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "admin_key_here"
-})
+admin = nexus.connect(config={"url": "http://localhost:2026", "api_key": "admin_key_here"})
 
 # Create a "developers" group
 admin.create_group("developers", description="Development team")
@@ -558,7 +532,7 @@ admin.grant_permission(
     subject_id="developers",
     object_type="file",
     object_id="/workspace/team-project/internal",
-    relation="can_write"
+    relation="can_write",
 )
 
 print("✅ Granted developers write access to internal/")
@@ -575,7 +549,7 @@ admin.grant_permission(
     subject_id="designers",
     object_type="file",
     object_id="/workspace/team-project/public",
-    relation="can_write"
+    relation="can_write",
 )
 
 print("✅ Created 'designers' group with Carol")
@@ -594,13 +568,11 @@ import nexus
 import json
 from datetime import datetime
 
+
 class CollaborationWorkflow:
     def __init__(self, user_name, api_key):
         self.user_name = user_name
-        self.nx = nexus.connect(config={
-            "url": "http://localhost:2026",
-            "api_key": api_key
-        })
+        self.nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": api_key})
 
     def claim_file(self, file_path):
         """Claim a file for editing (simple locking)"""
@@ -613,10 +585,7 @@ class CollaborationWorkflow:
             return False
 
         # Create lock
-        lock_data = {
-            "user": self.user_name,
-            "time": datetime.now().isoformat()
-        }
+        lock_data = {"user": self.user_name, "time": datetime.now().isoformat()}
         self.nx.write(lock_path, json.dumps(lock_data).encode())
         print(f"🔒 {self.user_name} claimed {file_path}")
         return True
@@ -639,11 +608,9 @@ class CollaborationWorkflow:
             comments = []
 
         # Add new comment
-        comments.append({
-            "user": self.user_name,
-            "time": datetime.now().isoformat(),
-            "comment": comment
-        })
+        comments.append(
+            {"user": self.user_name, "time": datetime.now().isoformat(), "comment": comment}
+        )
 
         self.nx.write(comments_path, json.dumps(comments, indent=2).encode())
         print(f"💬 {self.user_name} commented on {file_path}")
@@ -656,6 +623,7 @@ class CollaborationWorkflow:
             return []
 
         return json.loads(self.nx.read(comments_path).decode())
+
 
 # Usage example
 alice_flow = CollaborationWorkflow("alice", "alice_key_here")
@@ -701,10 +669,12 @@ Here's a production-ready team collaboration system:
 Team Collaboration System with Nexus
 Demonstrates: multi-user, permissions, sessions, locking
 """
+
 import nexus
 import json
 from datetime import datetime
 from typing import List, Dict, Optional
+
 
 class TeamCollaboration:
     """Manage team collaboration with Nexus"""
@@ -715,10 +685,7 @@ class TeamCollaboration:
 
     def add_user(self, username: str, api_key: str):
         """Register a user"""
-        self.users[username] = nexus.connect(config={
-            "url": self.server_url,
-            "api_key": api_key
-        })
+        self.users[username] = nexus.connect(config={"url": self.server_url, "api_key": api_key})
         print(f"✅ Registered user: {username}")
 
     def create_shared_workspace(self, owner: str, workspace_path: str):
@@ -730,21 +697,14 @@ class TeamCollaboration:
         metadata = {
             "owner": owner,
             "created": datetime.now().isoformat(),
-            "type": "shared_workspace"
+            "type": "shared_workspace",
         }
-        nx.write(
-            f"{workspace_path}/.metadata.json",
-            json.dumps(metadata, indent=2).encode()
-        )
+        nx.write(f"{workspace_path}/.metadata.json", json.dumps(metadata, indent=2).encode())
 
         print(f"✅ {owner} created workspace: {workspace_path}")
 
     def share_with_user(
-        self,
-        owner: str,
-        workspace_path: str,
-        user: str,
-        permission: str = "can_read"
+        self, owner: str, workspace_path: str, user: str, permission: str = "can_read"
     ):
         """Share workspace with another user"""
         nx = self.users[owner]
@@ -754,17 +714,13 @@ class TeamCollaboration:
             subject_id=user,
             object_type="file",
             object_id=workspace_path,
-            relation=permission
+            relation=permission,
         )
 
         print(f"✅ {owner} granted {user} '{permission}' on {workspace_path}")
 
     def create_document(
-        self,
-        username: str,
-        file_path: str,
-        content: str,
-        notify_users: Optional[List[str]] = None
+        self, username: str, file_path: str, content: str, notify_users: Optional[List[str]] = None
     ):
         """Create a document and optionally notify team members"""
         nx = self.users[username]
@@ -777,12 +733,9 @@ class TeamCollaboration:
         metadata = {
             "author": username,
             "created": datetime.now().isoformat(),
-            "notified": notify_users or []
+            "notified": notify_users or [],
         }
-        nx.write(
-            f"{file_path}.meta.json",
-            json.dumps(metadata, indent=2).encode()
-        )
+        nx.write(f"{file_path}.meta.json", json.dumps(metadata, indent=2).encode())
 
         # Notify team members (by creating notification files)
         if notify_users:
@@ -792,7 +745,7 @@ class TeamCollaboration:
                     "message": f"New document created: {file_path}",
                     "time": datetime.now().isoformat(),
                     "action": "view",
-                    "target": file_path
+                    "target": file_path,
                 }
 
                 notif_path = f"/workspace/.notifications/{user}/{datetime.now().timestamp()}.json"
@@ -807,7 +760,7 @@ class TeamCollaboration:
         return [
             {"user": "alice", "action": "created", "file": "design-doc.md"},
             {"user": "bob", "action": "updated", "file": "implementation.md"},
-            {"user": "carol", "action": "viewed", "file": "design-doc.md"}
+            {"user": "carol", "action": "viewed", "file": "design-doc.md"},
         ]
 
     def list_team_files(self, username: str, workspace_path: str) -> List[Dict]:
@@ -820,6 +773,7 @@ class TeamCollaboration:
         except nexus.NexusPermissionError:
             print(f"❌ {username} does not have access to {workspace_path}")
             return []
+
 
 # Demo usage
 def main():
@@ -862,7 +816,7 @@ This is our new collaborative project.
 - Week 3: Testing
 - Week 4: Launch
 """,
-        notify_users=["bob", "carol"]
+        notify_users=["bob", "carol"],
     )
 
     # Bob contributes
@@ -877,7 +831,7 @@ This is our new collaborative project.
 - Database: PostgreSQL
 - Storage: Nexus
 """,
-        notify_users=["alice"]
+        notify_users=["alice"],
     )
 
     # List files each user can see
@@ -887,6 +841,7 @@ This is our new collaborative project.
         print(f"\n{user}:")
         for file in files:
             print(f"  - {file['path']}")
+
 
 if __name__ == "__main__":
     main()
@@ -936,10 +891,7 @@ nexus rebac grant group developers file /workspace/dev --relation can_write
 **Solution:**
 ```python
 # Check current permissions
-permissions = nx.list_permissions(
-    object_type="file",
-    object_id="/workspace/shared"
-)
+permissions = nx.list_permissions(object_type="file", object_id="/workspace/shared")
 
 for perm in permissions:
     print(f"{perm['subject_id']} has {perm['relation']}")
@@ -950,7 +902,7 @@ nx.grant_permission(
     subject_id="bob",
     object_type="file",
     object_id="/workspace/shared",
-    relation="can_write"
+    relation="can_write",
 )
 ```
 
@@ -964,7 +916,7 @@ nx.grant_permission(
 ```python
 # Ensure using session-specific paths
 session = nx.create_session(name="my-session")
-session_id = session['id']
+session_id = session["id"]
 
 # Use session prefix in all paths
 nx.write(f"/sessions/{session_id}/private.txt", b"data")
@@ -1018,7 +970,7 @@ nx.grant_permission(
     subject_id="bob",
     object_type="file",
     object_id="/workspace/team-project",
-    relation="can_write"
+    relation="can_write",
 )
 
 # Bob automatically has access to all files in the directory
@@ -1038,7 +990,7 @@ Sessions provide isolation:
 # Create temporary session (auto-expires)
 session = nx.create_session(
     name="temp-work",
-    ttl=3600  # 1 hour
+    ttl=3600,  # 1 hour
 )
 ```
 
@@ -1074,18 +1026,14 @@ nx.grant_permission(subject_type="user", subject_id="bob", ...)
 def safe_update(file_path, update_fn):
     # Read current version
     current = nx.read_with_metadata(file_path)
-    version = current['metadata']['version']
+    version = current["metadata"]["version"]
 
     # Apply update
-    updated_content = update_fn(current['content'])
+    updated_content = update_fn(current["content"])
 
     # Write only if version unchanged
     try:
-        nx.write(
-            file_path,
-            updated_content,
-            if_version=version
-        )
+        nx.write(file_path, updated_content, if_version=version)
         return True
     except nexus.NexusConflictError:
         # File was modified by someone else
@@ -1101,11 +1049,11 @@ def cleanup_old_sessions():
     now = datetime.now()
 
     for session in sessions:
-        created = datetime.fromisoformat(session['created'])
+        created = datetime.fromisoformat(session["created"])
         age_days = (now - created).days
 
         if age_days > 7:  # Older than 7 days
-            nx.delete_session(session['id'])
+            nx.delete_session(session["id"])
             print(f"Cleaned up session: {session['name']}")
 ```
 
@@ -1118,13 +1066,10 @@ def log_access(user, action, file_path):
         "timestamp": datetime.now().isoformat(),
         "user": user,
         "action": action,
-        "file": file_path
+        "file": file_path,
     }
 
-    nx.append(
-        "/workspace/.audit/access.log",
-        (json.dumps(log_entry) + '\n').encode()
-    )
+    nx.append("/workspace/.audit/access.log", (json.dumps(log_entry) + "\n").encode())
 ```
 
 ---

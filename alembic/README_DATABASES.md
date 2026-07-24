@@ -37,10 +37,7 @@ import os
 from alembic import context
 
 # Get URL from environment or use default
-config.set_main_option(
-    'sqlalchemy.url',
-    os.environ.get('DATABASE_URL', 'sqlite:///nexus.db')
-)
+config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL", "sqlite:///nexus.db"))
 ```
 
 Then use:

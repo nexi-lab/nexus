@@ -84,7 +84,13 @@ requirements = nexus.read(state["research_file"])
 ### Nexus Version
 ```python
 # Connect as specific agent with restricted permissions
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": os.getenv("NEXUS_API_KEY")})
+nx = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+        "api_key": os.getenv("NEXUS_API_KEY"),
+    }
+)
 nx.agent_id = "researcher"  # Identifies agent for permission checks
 ```
 
@@ -108,7 +114,7 @@ nx.agent_id = "researcher"  # Identifies agent for permission checks
 admin_nx.rebac_create(
     subject=("agent", "researcher"),
     relation="direct_editor",
-    object=("file", "/workspace/research")
+    object=("file", "/workspace/research"),
 )
 # Researcher can ONLY write to /workspace/research/
 ```
@@ -147,7 +153,13 @@ def researcher_node(state: AgentState) -> AgentState:
     print(f"\n🔍 Researcher is analyzing task: {state['task']}")
 
     # Connect as researcher agent
-    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": os.getenv("NEXUS_API_KEY")})
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": os.getenv("NEXUS_API_KEY"),
+        }
+    )
     nx.agent_id = "researcher"
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
@@ -233,11 +245,7 @@ To migrate from standard file I/O to Nexus:
 
 4. **Setup permissions** (optional, but recommended)
    ```python
-   admin_nx.rebac_create(
-       subject=("agent", "name"),
-       relation="direct_editor",
-       object=("file", "/path")
-   )
+   admin_nx.rebac_create(subject=("agent", "name"), relation="direct_editor", object=("file", "/path"))
    ```
 
 **Total time:** ~30 minutes for a typical multi-agent workflow

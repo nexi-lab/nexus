@@ -79,6 +79,7 @@ Wire a production-grade `EncryptionProvider` on the FastAPI app state before `cr
 ```python
 # In your startup hook (before create_app returns):
 from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
+
 app.state.encryption_provider = AwsKmsProvider(key_id="arn:aws:kms:...")
 ```
 

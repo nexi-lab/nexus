@@ -57,7 +57,7 @@ trajectory_mgr = TrajectoryManager(
     user_id="user_123",
     agent_id="agent_456",
     zone_id="tenant_789",
-    context=operation_context  # Optional
+    context=operation_context,  # Optional
 )
 ```
 
@@ -82,7 +82,7 @@ trajectory_id = trajectory_mgr.start_trajectory(
     task_type="data_processing",
     parent_trajectory_id=None,
     metadata={"invoice_id": "inv_123"},
-    path="/project-a/invoices"
+    path="/project-a/invoices",
 )
 ```
 
@@ -103,10 +103,7 @@ trajectory_id = trajectory_mgr.start_trajectory(
 traj_id = trajectory_mgr.start_trajectory(
     task_description="Fetch user data from API",
     task_type="api_call",
-    metadata={
-        "endpoint": "/api/v1/users",
-        "method": "GET"
-    }
+    metadata={"endpoint": "/api/v1/users", "method": "GET"},
 )
 print(f"Started trajectory: {traj_id}")
 ```
@@ -123,7 +120,7 @@ trajectory_mgr.log_step(
     step_type="action",
     description="Sent GET request to /api/v1/users",
     result={"status_code": 200, "users": 10},
-    metadata={"retry_count": 0}
+    metadata={"retry_count": 0},
 )
 ```
 
@@ -147,7 +144,7 @@ trajectory_mgr.log_step(
     traj_id,
     step_type="decision",
     description="Chose exponential backoff strategy",
-    metadata={"max_retries": 3, "base_delay": 1.0}
+    metadata={"max_retries": 3, "base_delay": 1.0},
 )
 
 # Log action
@@ -155,7 +152,7 @@ trajectory_mgr.log_step(
     traj_id,
     step_type="action",
     description="Retrying request with 2s delay",
-    result={"attempt": 2, "delay_ms": 2000}
+    result={"attempt": 2, "delay_ms": 2000},
 )
 
 # Log observation
@@ -163,7 +160,7 @@ trajectory_mgr.log_step(
     traj_id,
     step_type="observation",
     description="Request succeeded on retry",
-    result={"status_code": 200, "latency_ms": 340}
+    result={"status_code": 200, "latency_ms": 340},
 )
 ```
 
@@ -179,11 +176,7 @@ trajectory_id = trajectory_mgr.complete_trajectory(
     status="success",
     success_score=0.95,
     error_message=None,
-    metrics={
-        "duration_ms": 2340,
-        "tokens_used": 567,
-        "cost_usd": 0.03
-    }
+    metrics={"duration_ms": 2340, "tokens_used": 567, "cost_usd": 0.03},
 )
 ```
 
@@ -208,11 +201,7 @@ trajectory_mgr.complete_trajectory(
     traj_id,
     status="success",
     success_score=0.95,
-    metrics={
-        "duration_ms": 1234,
-        "records_processed": 100,
-        "errors": 0
-    }
+    metrics={"duration_ms": 1234, "records_processed": 100, "errors": 0},
 )
 
 # Failure case
@@ -221,10 +210,7 @@ trajectory_mgr.complete_trajectory(
     status="failure",
     success_score=0.0,
     error_message="API rate limit exceeded",
-    metrics={
-        "duration_ms": 567,
-        "retry_count": 3
-    }
+    metrics={"duration_ms": 567, "retry_count": 3},
 )
 ```
 
@@ -268,14 +254,14 @@ trajectory = trajectory_mgr.get_trajectory(trajectory_id=traj_id)
                 "step_type": "action",
                 "description": "Parsed invoice PDF",
                 "result": {"pages": 3},
-                "metadata": {}
+                "metadata": {},
             },
-            ...
+            ...,
         ],
         "decisions": [...],
         "observations": [...],
-        "metadata": {...}
-    }
+        "metadata": {...},
+    },
 }
 ```
 
@@ -299,11 +285,7 @@ Query trajectories by filters with permission checks.
 
 ```python
 trajectories = trajectory_mgr.query_trajectories(
-    agent_id="agent_456",
-    task_type="api_call",
-    status="success",
-    path="/project-a/",
-    limit=50
+    agent_id="agent_456", task_type="api_call", status="success", path="/project-a/", limit=50
 )
 ```
 
@@ -322,10 +304,7 @@ trajectories = trajectory_mgr.query_trajectories(
 ```python
 # Get recent successful API calls
 successful_calls = trajectory_mgr.query_trajectories(
-    agent_id="agent_456",
-    task_type="api_call",
-    status="success",
-    limit=10
+    agent_id="agent_456", task_type="api_call", status="success", limit=10
 )
 
 for traj in successful_calls:
@@ -345,37 +324,34 @@ nx = nexus.connect()
 
 # Start trajectory
 traj_id = nx.memory.start_trajectory(
-    task_description="Deploy microservice update",
-    task_type="deployment"
+    task_description="Deploy microservice update", task_type="deployment"
 )
 
 try:
     # Log deployment steps
     nx.memory.log_step(
-        traj_id,
-        step_type="decision",
-        description="Chose blue-green deployment strategy"
+        traj_id, step_type="decision", description="Chose blue-green deployment strategy"
     )
 
     nx.memory.log_step(
         traj_id,
         step_type="action",
         description="Deployed to staging environment",
-        result={"environment": "staging", "version": "v2.3.0"}
+        result={"environment": "staging", "version": "v2.3.0"},
     )
 
     nx.memory.log_step(
         traj_id,
         step_type="observation",
         description="Health checks passed",
-        result={"healthy_instances": 5, "total_instances": 5}
+        result={"healthy_instances": 5, "total_instances": 5},
     )
 
     nx.memory.log_step(
         traj_id,
         step_type="action",
         description="Promoted to production",
-        result={"environment": "production"}
+        result={"environment": "production"},
     )
 
     # Success!
@@ -383,7 +359,7 @@ try:
         traj_id,
         status="success",
         success_score=1.0,
-        metrics={"duration_ms": 45000, "downtime_ms": 0}
+        metrics={"duration_ms": 45000, "downtime_ms": 0},
     )
 
 except Exception as e:
@@ -392,14 +368,11 @@ except Exception as e:
         traj_id,
         step_type="observation",
         description=f"Deployment failed: {str(e)}",
-        result={"error": str(e)}
+        result={"error": str(e)},
     )
 
     nx.memory.complete_trajectory(
-        traj_id,
-        status="failure",
-        success_score=0.0,
-        error_message=str(e)
+        traj_id, status="failure", success_score=0.0, error_message=str(e)
     )
 ```
 
@@ -412,8 +385,7 @@ Track parent-child relationships for complex workflows:
 ```python
 # Parent trajectory
 parent_id = nx.memory.start_trajectory(
-    task_description="Process batch of 100 invoices",
-    task_type="batch_processing"
+    task_description="Process batch of 100 invoices", task_type="batch_processing"
 )
 
 # Child trajectories
@@ -421,24 +393,17 @@ for invoice in invoices[:100]:
     child_id = nx.memory.start_trajectory(
         task_description=f"Process invoice {invoice.id}",
         task_type="data_processing",
-        parent_trajectory_id=parent_id  # Link to parent
+        parent_trajectory_id=parent_id,  # Link to parent
     )
 
     # Process invoice...
     process_invoice(invoice)
 
-    nx.memory.complete_trajectory(
-        child_id,
-        status="success",
-        success_score=0.9
-    )
+    nx.memory.complete_trajectory(child_id, status="success", success_score=0.9)
 
 # Complete parent
 nx.memory.complete_trajectory(
-    parent_id,
-    status="success",
-    success_score=0.95,
-    metrics={"invoices_processed": 100}
+    parent_id, status="success", success_score=0.95, metrics={"invoices_processed": 100}
 )
 ```
 
@@ -450,15 +415,13 @@ Trajectories can receive delayed feedback:
 
 ```python
 # Initial trajectory
-traj_id = nx.memory.start_trajectory(
-    task_description="Deploy caching strategy"
-)
+traj_id = nx.memory.start_trajectory(task_description="Deploy caching strategy")
 
 # ... execute and complete ...
 nx.memory.complete_trajectory(
     traj_id,
     status="success",
-    success_score=0.95  # Initially looks good
+    success_score=0.95,  # Initially looks good
 )
 
 # 2 hours later: Monitoring detects issues
@@ -468,15 +431,11 @@ nx.memory.add_feedback(
     score=0.3,  # Revised down!
     source="datadog_monitor",
     message="15% stale data rate detected",
-    metrics={"stale_rate": 0.15, "user_complaints": 47}
+    metrics={"stale_rate": 0.15, "user_complaints": 47},
 )
 
 # Auto-flagged for re-learning
-nx.memory.mark_for_relearning(
-    traj_id,
-    reason="production_failure",
-    priority=9
-)
+nx.memory.mark_for_relearning(traj_id, reason="production_failure", priority=9)
 ```
 
 ---
@@ -504,11 +463,7 @@ trajectories = trajectory_mgr.query_trajectories(
 
 ```python
 # Share trajectory with another user via ReBAC
-nx.rebac.create(
-    subject=("user", "alice"),
-    relation="viewer",
-    object=("trajectory", traj_id)
-)
+nx.rebac.create(subject=("user", "alice"), relation="viewer", object=("trajectory", traj_id))
 ```
 
 ---
@@ -524,9 +479,7 @@ Write clear, specific task descriptions:
 start_trajectory("process data")
 
 # ✓ Good: Specific and actionable
-start_trajectory(
-    "Process customer invoice PDF with OCR and line item extraction"
-)
+start_trajectory("Process customer invoice PDF with OCR and line item extraction")
 ```
 
 ### 2. Structured Logging
@@ -553,15 +506,8 @@ trajectory_mgr.log_step(
     traj_id,
     step_type="action",
     description="Validated input data",
-    result={
-        "total_records": 1000,
-        "valid_records": 987,
-        "invalid_records": 13
-    },
-    metadata={
-        "validation_rules": ["email", "phone", "address"],
-        "validation_duration_ms": 234
-    }
+    result={"total_records": 1000, "valid_records": 987, "invalid_records": 13},
+    metadata={"validation_rules": ["email", "phone", "address"], "validation_duration_ms": 234},
 )
 ```
 
@@ -573,18 +519,11 @@ Always complete trajectories, even on failure:
 try:
     # Task execution
     result = execute_task()
-    trajectory_mgr.complete_trajectory(
-        traj_id,
-        status="success",
-        success_score=1.0
-    )
+    trajectory_mgr.complete_trajectory(traj_id, status="success", success_score=1.0)
 except Exception as e:
     # Still complete, but as failure
     trajectory_mgr.complete_trajectory(
-        traj_id,
-        status="failure",
-        success_score=0.0,
-        error_message=str(e)
+        traj_id, status="failure", success_score=0.0, error_message=str(e)
     )
     raise  # Re-raise if needed
 ```

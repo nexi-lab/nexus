@@ -58,7 +58,7 @@ consolidation_engine = ConsolidationEngine(
     llm_provider=llm_provider,
     user_id="user_123",
     agent_id="agent_456",
-    zone_id="tenant_789"
+    zone_id="tenant_789",
 )
 ```
 
@@ -79,11 +79,7 @@ Consolidate memories matching specific criteria.
 
 ```python
 results = consolidation_engine.consolidate_by_criteria(
-    memory_type="experience",
-    importance_max=0.5,
-    batch_size=10,
-    min_age_days=7,
-    scope="agent"
+    memory_type="experience", importance_max=0.5, batch_size=10, min_age_days=7, scope="agent"
 )
 ```
 
@@ -109,9 +105,9 @@ results = consolidation_engine.consolidate_by_criteria(
         "memories_merged": int,
         "content_preview": str,
         "importance": float,
-        "consolidation_strategy": str
+        "consolidation_strategy": str,
     },
-    ...
+    ...,
 ]
 ```
 
@@ -124,7 +120,7 @@ results = consolidation_engine.consolidate_by_criteria(
     importance_max=0.5,  # Only importance ≤ 0.5
     batch_size=20,
     min_age_days=7,  # Only memories > 7 days old
-    scope="agent"
+    scope="agent",
 )
 
 for result in results:
@@ -141,9 +137,7 @@ Consolidate semantically similar memories.
 
 ```python
 result = consolidation_engine.consolidate_similar_memories(
-    memory_ids=["mem_1", "mem_2", "mem_3"],
-    preserve_importance=True,
-    strategy="semantic_merge"
+    memory_ids=["mem_1", "mem_2", "mem_3"], preserve_importance=True, strategy="semantic_merge"
 )
 ```
 
@@ -164,7 +158,7 @@ result = consolidation_engine.consolidate_similar_memories(
     "source_memory_ids": List[str],
     "content": str,
     "importance": float,
-    "metadata": dict
+    "metadata": dict,
 }
 ```
 
@@ -173,16 +167,13 @@ result = consolidation_engine.consolidate_similar_memories(
 ```python
 # Find similar memories
 similar_groups = consolidation_engine.find_similar_memory_groups(
-    scope="agent",
-    similarity_threshold=0.85
+    scope="agent", similarity_threshold=0.85
 )
 
 # Consolidate each group
 for group in similar_groups:
     result = consolidation_engine.consolidate_similar_memories(
-        memory_ids=group,
-        preserve_importance=True,
-        strategy="semantic_merge"
+        memory_ids=group, preserve_importance=True, strategy="semantic_merge"
     )
     print(f"Consolidated {len(group)} → {result['consolidated_memory_id']}")
 ```
@@ -199,7 +190,7 @@ groups = consolidation_engine.find_similar_memory_groups(
     memory_type="experience",
     similarity_threshold=0.85,
     min_group_size=2,
-    max_groups=10
+    max_groups=10,
 )
 ```
 
@@ -215,9 +206,9 @@ groups = consolidation_engine.find_similar_memory_groups(
 
 ```python
 [
-    ["mem_1", "mem_2", "mem_3"],      # Group 1: Similar memories
-    ["mem_10", "mem_11"],             # Group 2: Similar memories
-    ...
+    ["mem_1", "mem_2", "mem_3"],  # Group 1: Similar memories
+    ["mem_10", "mem_11"],  # Group 2: Similar memories
+    ...,
 ]
 ```
 
@@ -228,12 +219,12 @@ groups = consolidation_engine.find_similar_memory_groups(
 groups = consolidation_engine.find_similar_memory_groups(
     scope="agent",
     memory_type="experience",
-    similarity_threshold=0.9  # High similarity required
+    similarity_threshold=0.9,  # High similarity required
 )
 
 print(f"Found {len(groups)} groups of similar memories")
 for i, group in enumerate(groups):
-    print(f"Group {i+1}: {len(group)} memories")
+    print(f"Group {i + 1}: {len(group)} memories")
 ```
 
 ---
@@ -244,10 +235,7 @@ Get memories eligible for consolidation.
 
 ```python
 candidates = consolidation_engine.get_consolidation_candidates(
-    importance_max=0.5,
-    min_age_days=7,
-    memory_type="experience",
-    limit=100
+    importance_max=0.5, min_age_days=7, memory_type="experience", limit=100
 )
 ```
 
@@ -265,9 +253,7 @@ candidates = consolidation_engine.get_consolidation_candidates(
 ```python
 # Preview consolidation candidates
 candidates = consolidation_engine.get_consolidation_candidates(
-    importance_max=0.5,
-    min_age_days=30,
-    limit=50
+    importance_max=0.5, min_age_days=30, limit=50
 )
 
 print(f"Found {len(candidates)} consolidation candidates")
@@ -282,9 +268,7 @@ for c in candidates[:5]:
 Rollback a consolidation by restoring source memories.
 
 ```python
-success = consolidation_engine.rollback_consolidation(
-    consolidated_memory_id="mem_consolidated_123"
-)
+success = consolidation_engine.rollback_consolidation(consolidated_memory_id="mem_consolidated_123")
 ```
 
 **Parameters:**
@@ -315,7 +299,7 @@ else:
 # Safe consolidation
 consolidation_engine.consolidate_by_criteria(
     importance_max=0.5,  # Only low-importance
-    batch_size=10
+    batch_size=10,
 )
 
 # High-importance memories (>0.5) are protected!
@@ -332,8 +316,7 @@ consolidation_engine.consolidate_by_criteria(
 # mem_3: "User uses dark color scheme"
 
 result = consolidation_engine.consolidate_similar_memories(
-    memory_ids=["mem_1", "mem_2", "mem_3"],
-    strategy="semantic_merge"
+    memory_ids=["mem_1", "mem_2", "mem_3"], strategy="semantic_merge"
 )
 
 # After consolidation:
@@ -346,10 +329,7 @@ result = consolidation_engine.consolidate_similar_memories(
 
 ```python
 # Only consolidate memories >30 days old
-results = consolidation_engine.consolidate_by_criteria(
-    min_age_days=30,
-    importance_max=0.6
-)
+results = consolidation_engine.consolidate_by_criteria(min_age_days=30, importance_max=0.6)
 ```
 
 ---
@@ -365,10 +345,7 @@ nx = nexus.connect()
 
 # Run consolidation
 results = nx.ace.consolidation_engine.consolidate_by_criteria(
-    memory_type="experience",
-    importance_max=0.5,
-    batch_size=20,
-    min_age_days=7
+    memory_type="experience", importance_max=0.5, batch_size=20, min_age_days=7
 )
 
 print(f"Consolidated {len(results)} memory batches")
@@ -385,18 +362,18 @@ for result in results:
 import schedule
 import time
 
+
 def consolidation_job():
     """Background job for memory consolidation."""
     results = nx.ace.consolidation_engine.consolidate_by_criteria(
-        importance_max=0.5,
-        batch_size=10,
-        min_age_days=7
+        importance_max=0.5, batch_size=10, min_age_days=7
     )
 
     if results:
         print(f"Consolidated {len(results)} batches")
     else:
         print("No consolidation needed")
+
 
 # Run daily at 2 AM
 schedule.every().day.at("02:00").do(consolidation_job)
@@ -413,9 +390,7 @@ while True:
 ```python
 # Preview what would be consolidated
 candidates = nx.ace.consolidation_engine.get_consolidation_candidates(
-    importance_max=0.5,
-    min_age_days=7,
-    limit=100
+    importance_max=0.5, min_age_days=7, limit=100
 )
 
 print(f"Would consolidate {len(candidates)} memories:")
@@ -424,10 +399,9 @@ for c in candidates[:10]:
     print(f"    Importance: {c['importance']}, Age: {c['age_days']} days")
 
 # Proceed if acceptable
-if input("Consolidate? (y/n): ").lower() == 'y':
+if input("Consolidate? (y/n): ").lower() == "y":
     results = nx.ace.consolidation_engine.consolidate_by_criteria(
-        importance_max=0.5,
-        min_age_days=7
+        importance_max=0.5, min_age_days=7
     )
     print(f"Consolidated {len(results)} batches")
 ```
@@ -441,19 +415,17 @@ if input("Consolidate? (y/n): ").lower() == 'y':
 groups = nx.ace.consolidation_engine.find_similar_memory_groups(
     scope="agent",
     similarity_threshold=0.85,
-    min_group_size=3  # At least 3 similar memories
+    min_group_size=3,  # At least 3 similar memories
 )
 
 print(f"Found {len(groups)} groups of similar memories")
 
 # Consolidate each group
 for i, group in enumerate(groups):
-    print(f"Consolidating group {i+1} ({len(group)} memories)...")
+    print(f"Consolidating group {i + 1} ({len(group)} memories)...")
 
     result = nx.ace.consolidation_engine.consolidate_similar_memories(
-        memory_ids=group,
-        preserve_importance=True,
-        strategy="semantic_merge"
+        memory_ids=group, preserve_importance=True, strategy="semantic_merge"
     )
 
     print(f"  ✓ Created: {result['consolidated_memory_id']}")
@@ -469,27 +441,25 @@ from nexus.core.ace.learning_loop import LearningLoop
 
 learning_loop = nx.ace.learning_loop
 
+
 # After executing many tasks, consolidate old memories
 def cleanup_old_memories():
     """Periodic memory cleanup."""
 
     # Consolidate low-importance memories
     results = learning_loop.consolidate_memories(
-        memory_type="experience",
-        importance_max=0.5,
-        batch_size=10
+        memory_type="experience", importance_max=0.5, batch_size=10
     )
 
     print(f"Consolidated {len(results)} memory batches")
 
     # Also consolidate old reflections
     results = learning_loop.consolidate_memories(
-        memory_type="reflection",
-        importance_max=0.6,
-        batch_size=5
+        memory_type="reflection", importance_max=0.6, batch_size=5
     )
 
     print(f"Consolidated {len(results)} reflection batches")
+
 
 # Run cleanup
 cleanup_old_memories()
@@ -505,7 +475,7 @@ result = nx.ace.consolidation_engine.consolidate_similar_memories(
     memory_ids=["mem_1", "mem_2", "mem_3"]
 )
 
-consolidated_id = result['consolidated_memory_id']
+consolidated_id = result["consolidated_memory_id"]
 
 # Later: User reports loss of important detail
 # Rollback the consolidation
@@ -565,7 +535,7 @@ Protect recent memories:
 # Only consolidate memories >30 days old
 consolidate_by_criteria(
     importance_max=0.5,
-    min_age_days=30  # Keep recent memories fresh
+    min_age_days=30,  # Keep recent memories fresh
 )
 ```
 
@@ -593,16 +563,14 @@ def consolidate_with_metrics():
     """Consolidation with monitoring."""
     before_count = count_memories(scope="agent")
 
-    results = consolidation_engine.consolidate_by_criteria(
-        importance_max=0.5,
-        batch_size=10
-    )
+    results = consolidation_engine.consolidate_by_criteria(importance_max=0.5, batch_size=10)
 
     after_count = count_memories(scope="agent")
 
     reduction = before_count - after_count
     print(f"Memories: {before_count} → {after_count} (-{reduction})")
     print(f"Reduction: {reduction / before_count:.1%}")
+
 
 consolidate_with_metrics()
 ```
@@ -613,18 +581,10 @@ Different consolidation for different types:
 
 ```python
 # Aggressive for observations (transient)
-consolidate_by_criteria(
-    memory_type="observation",
-    importance_max=0.6,
-    batch_size=20
-)
+consolidate_by_criteria(memory_type="observation", importance_max=0.6, batch_size=20)
 
 # Conservative for facts (persistent)
-consolidate_by_criteria(
-    memory_type="fact",
-    importance_max=0.3,
-    batch_size=5
-)
+consolidate_by_criteria(memory_type="fact", importance_max=0.3, batch_size=5)
 
 # Never consolidate preferences
 # (Don't run consolidation on preference type)
@@ -640,14 +600,11 @@ Process in batches for efficiency:
 
 ```python
 # Process in chunks
-total_candidates = get_consolidation_candidates(
-    importance_max=0.5,
-    limit=1000
-)
+total_candidates = get_consolidation_candidates(importance_max=0.5, limit=1000)
 
 for i in range(0, len(total_candidates), 10):
-    batch = total_candidates[i:i+10]
-    consolidate_similar_memories([m['memory_id'] for m in batch])
+    batch = total_candidates[i : i + 10]
+    consolidate_similar_memories([m["memory_id"] for m in batch])
     time.sleep(0.1)  # Rate limiting
 ```
 
@@ -658,13 +615,12 @@ Use async for background consolidation:
 ```python
 import asyncio
 
+
 async def async_consolidate():
     """Async consolidation job."""
-    results = await consolidation_engine.consolidate_async(
-        importance_max=0.5,
-        batch_size=10
-    )
+    results = await consolidation_engine.consolidate_async(importance_max=0.5, batch_size=10)
     return results
+
 
 # Run in background
 asyncio.create_task(async_consolidate())
@@ -687,18 +643,16 @@ Track consolidation history:
 
 ```python
 # After consolidation
-result = consolidate_similar_memories(
-    memory_ids=["mem_1", "mem_2", "mem_3"]
-)
+result = consolidate_similar_memories(memory_ids=["mem_1", "mem_2", "mem_3"])
 
 # Lineage tracked automatically
-consolidated_memory = nx.memory.get(result['consolidated_memory_id'])
+consolidated_memory = nx.memory.get(result["consolidated_memory_id"])
 
 print(f"Consolidated from: {consolidated_memory['consolidated_from']}")
 # Output: ["mem_1", "mem_2", "mem_3"]
 
 # Can rollback anytime
-rollback_consolidation(result['consolidated_memory_id'])
+rollback_consolidation(result["consolidated_memory_id"])
 ```
 
 ---

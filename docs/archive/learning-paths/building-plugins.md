@@ -112,6 +112,7 @@ Create your first plugin:
 Image Optimizer Plugin
 Automatically optimizes images on write
 """
+
 from typing import Any, Dict
 from nexus.core.plugin_base import NexusPlugin
 from pathlib import Path
@@ -141,7 +142,9 @@ class ImageOptimizerPlugin(NexusPlugin):
         """Called when Nexus shuts down"""
         logger.info("ImageOptimizer plugin stopped")
 
-    async def pre_write(self, path: str, content: bytes, metadata: Dict[str, Any]) -> tuple[bytes, Dict[str, Any]]:
+    async def pre_write(
+        self, path: str, content: bytes, metadata: Dict[str, Any]
+    ) -> tuple[bytes, Dict[str, Any]]:
         """
         Called before writing a file
         Optimize image if it's a supported format
@@ -307,19 +310,18 @@ import nexus
 from nexus_image_optimizer.plugin import create_plugin
 
 # Create filesystem with plugin
-nx = nexus.connect(config={
-    "data_dir": "./nexus-data",
-    "plugins": [
-        {
-            "module": "nexus_image_optimizer.plugin",
-            "factory": "create_plugin",
-            "config": {
-                "quality": 85,
-                "max_width": 1920
+nx = nexus.connect(
+    config={
+        "data_dir": "./nexus-data",
+        "plugins": [
+            {
+                "module": "nexus_image_optimizer.plugin",
+                "factory": "create_plugin",
+                "config": {"quality": 85, "max_width": 1920},
             }
-        }
-    ]
-})
+        ],
+    }
+)
 
 # Write an image - will be automatically optimized
 with open("large_photo.jpg", "rb") as f:
@@ -347,10 +349,7 @@ nexus serve --host 0.0.0.0 --port 2026 \
 # Client using the plugin-enabled server
 import nexus
 
-nx = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "your-api-key"
-})
+nx = nexus.connect(config={"url": "http://localhost:2026", "api_key": "your-api-key"})
 
 # Images written to server will be automatically optimized
 nx.write("/photos/vacation.jpg", image_data)
@@ -368,6 +367,7 @@ Create a plugin with a custom file parser:
 YAML Parser Plugin
 Parse YAML files with schema validation
 """
+
 import yaml
 from typing import Any, Dict
 from nexus.core.plugin_base import NexusPlugin
@@ -379,7 +379,9 @@ logger = logging.getLogger(__name__)
 class YAMLParserPlugin(NexusPlugin):
     """Parse and validate YAML files"""
 
-    async def post_read(self, path: str, content: bytes, metadata: Dict[str, Any]) -> tuple[bytes, Dict[str, Any]]:
+    async def post_read(
+        self, path: str, content: bytes, metadata: Dict[str, Any]
+    ) -> tuple[bytes, Dict[str, Any]]:
         """
         Parse YAML files after reading
         Add parsed data to metadata
@@ -403,7 +405,9 @@ class YAMLParserPlugin(NexusPlugin):
 
         return content, metadata
 
-    async def pre_write(self, path: str, content: bytes, metadata: Dict[str, Any]) -> tuple[bytes, Dict[str, Any]]:
+    async def pre_write(
+        self, path: str, content: bytes, metadata: Dict[str, Any]
+    ) -> tuple[bytes, Dict[str, Any]]:
         """
         Validate YAML before writing
         """
@@ -443,6 +447,7 @@ Create a plugin that triggers workflows:
 Invoice Processor Plugin
 Automatically process invoices when uploaded
 """
+
 from nexus.core.plugin_base import NexusPlugin
 from typing import Any, Dict
 import logging
@@ -492,14 +497,12 @@ class InvoiceProcessorPlugin(NexusPlugin):
                 "original_path": path,
                 "extracted_data": extracted_data,
                 "valid": is_valid,
-                "processed_at": metadata.get("timestamp")
+                "processed_at": metadata.get("timestamp"),
             }
 
             import json
-            self.filesystem.write(
-                f"{result_path}.json",
-                json.dumps(result_data, indent=2).encode()
-            )
+
+            self.filesystem.write(f"{result_path}.json", json.dumps(result_data, indent=2).encode())
 
             # Trigger notification
             await self._notify(path, result_data)
@@ -516,7 +519,7 @@ class InvoiceProcessorPlugin(NexusPlugin):
             "invoice_number": "INV-12345",
             "amount": 1250.00,
             "vendor": "Acme Corp",
-            "date": "2025-01-15"
+            "date": "2025-01-15",
         }
 
     async def _validate_invoice(self, data: Dict[str, Any]) -> bool:
@@ -550,16 +553,18 @@ from nexus_image_optimizer.plugin import ImageOptimizerPlugin
 @pytest.fixture
 async def filesystem():
     """Create test filesystem with plugin"""
-    nx = nexus.connect(config={
-        "data_dir": "./test-data",
-        "plugins": [
-            {
-                "module": "nexus_image_optimizer.plugin",
-                "factory": "create_plugin",
-                "config": {"quality": 85}
-            }
-        ]
-    })
+    nx = nexus.connect(
+        config={
+            "data_dir": "./test-data",
+            "plugins": [
+                {
+                    "module": "nexus_image_optimizer.plugin",
+                    "factory": "create_plugin",
+                    "config": {"quality": 85},
+                }
+            ],
+        }
+    )
     yield nx
     # Cleanup
     nx.rmdir("/", recursive=True)
@@ -659,19 +664,18 @@ pip install nexus-plugin-image-optimizer
 ```python
 import nexus
 
-nx = nexus.connect(config={
-    "data_dir": "./data",
-    "plugins": [
-        {
-            "module": "nexus_image_optimizer.plugin",
-            "factory": "create_plugin",
-            "config": {
-                "quality": 85,
-                "max_width": 1920
+nx = nexus.connect(
+    config={
+        "data_dir": "./data",
+        "plugins": [
+            {
+                "module": "nexus_image_optimizer.plugin",
+                "factory": "create_plugin",
+                "config": {"quality": 85, "max_width": 1920},
             }
-        }
-    ]
-})
+        ],
+    }
+)
 
 # Images are automatically optimized
 nx.write("/photos/vacation.jpg", image_data)
@@ -782,11 +786,10 @@ def create_plugin(config: Dict[str, Any] = None) -> SkillSeekersPlugin:
 ```python
 # Check plugin registration
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
-nx = nexus.connect(config={
-    "plugins": [{"module": "your_plugin", "factory": "create_plugin"}]
-})
+nx = nexus.connect(config={"plugins": [{"module": "your_plugin", "factory": "create_plugin"}]})
 
 # Check logs for plugin initialization
 ```
@@ -803,6 +806,7 @@ nx = nexus.connect(config={
 async def pre_write(self, path: str, content: bytes, metadata: Dict[str, Any]):
     # Must return tuple
     return content, metadata
+
 
 # Check that you're calling the method that triggers the hook
 nx.write("/test.txt", b"data")  # Triggers pre_write and post_write
@@ -844,6 +848,7 @@ async def pre_write(self, path, content, metadata):
         logger.error(f"Processing failed: {e}")
         return content, metadata  # Return original
 
+
 # ❌ Bad: Let exceptions propagate
 async def pre_write(self, path, content, metadata):
     processed = await self._process(content)  # Can crash Nexus!
@@ -856,6 +861,7 @@ async def pre_write(self, path, content, metadata):
 # ✅ Good: Async operations
 async def post_write(self, path, metadata):
     await self._send_webhook(path)  # Non-blocking
+
 
 # ❌ Bad: Blocking operations
 async def post_write(self, path, metadata):
@@ -871,6 +877,7 @@ class MyPlugin(NexusPlugin):
         super().__init__(config)
         self.enabled = config.get("enabled", True)
         self.threshold = config.get("threshold", 100)
+
 
 # Usage:
 # plugins: [{"module": "my_plugin", "config": {"threshold": 200}}]

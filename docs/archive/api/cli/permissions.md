@@ -31,33 +31,28 @@ nexus rebac create agent bob direct_viewer file secret --expires 2025-12-31T23:5
 ```python
 # Create relationship
 nx.create_relationship(
-    subject=("agent", "alice"),
-    relation="member-of",
-    object=("group", "eng-team")
+    subject=("agent", "alice"), relation="member-of", object=("group", "eng-team")
 )
 
 # Give viewer access
-nx.create_relationship(
-    subject=("agent", "alice"),
-    relation="viewer",
-    object=("file", "file123")
-)
+nx.create_relationship(subject=("agent", "alice"), relation="viewer", object=("file", "file123"))
 
 # With tenant isolation
 nx.create_relationship(
     subject=("agent", "alice"),
     relation="member-of",
     object=("group", "eng-team"),
-    zone_id="org_acme"
+    zone_id="org_acme",
 )
 
 # With expiration
 from datetime import datetime
+
 nx.create_relationship(
     subject=("agent", "bob"),
     relation="viewer",
     object=("file", "secret"),
-    expires_at=datetime(2025, 12, 31, 23, 59, 59)
+    expires_at=datetime(2025, 12, 31, 23, 59, 59),
 )
 ```
 
@@ -80,9 +75,7 @@ nexus rebac check agent alice read file file123
 ```python
 # Check permission
 has_permission = nx.check_permission(
-    subject=("agent", "alice"),
-    permission="read",
-    object=("file", "file123")
+    subject=("agent", "alice"), permission="read", object=("file", "file123")
 )
 print(f"Has permission: {has_permission}")
 ```
@@ -112,13 +105,11 @@ nexus rebac explain agent bob write workspace main
 ```python
 # Explain permission
 explanation = nx.explain_permission(
-    subject=("agent", "alice"),
-    permission="read",
-    object=("file", "file123")
+    subject=("agent", "alice"), permission="read", object=("file", "file123")
 )
 print(f"Granted: {explanation['granted']}")
 print(f"Reason: {explanation['reason']}")
-if explanation.get('path'):
+if explanation.get("path"):
     print(f"Path: {explanation['path']}")
 ```
 
@@ -143,10 +134,7 @@ nexus rebac expand read file file123
 **Python API:**
 ```python
 # Expand permission
-subjects = nx.expand_permission(
-    permission="read",
-    object=("file", "file123")
-)
+subjects = nx.expand_permission(permission="read", object=("file", "file123"))
 for subject in subjects:
     print(f"{subject[0]}:{subject[1]}")
 ```
@@ -172,11 +160,7 @@ nexus rebac delete <tuple-id>
 nx.delete_relationship(tuple_id="123")
 
 # Or delete by components
-nx.delete_relationship(
-    subject=("agent", "alice"),
-    relation="viewer",
-    object=("file", "file123")
-)
+nx.delete_relationship(subject=("agent", "alice"), relation="viewer", object=("file", "file123"))
 ```
 
 **See Also:**
@@ -226,17 +210,13 @@ nexus rebac namespace-create project \
 nx.create_namespace(
     object_type="document",
     config={
-        "relations": {
-            "owner": {},
-            "editor": {},
-            "viewer": {"union": ["editor", "owner"]}
-        },
+        "relations": {"owner": {}, "editor": {}, "viewer": {"union": ["editor", "owner"]}},
         "permissions": {
             "read": ["viewer", "editor", "owner"],
             "write": ["editor", "owner"],
-            "delete": ["owner"]
-        }
-    }
+            "delete": ["owner"],
+        },
+    },
 )
 ```
 
@@ -354,31 +334,15 @@ for subject, relation, obj in teams:
     nx.create_relationship(subject, relation, obj)
 
 # Give team access to workspaces
-nx.create_relationship(
-    ("group", "eng-team"),
-    "editor",
-    ("workspace", "eng-workspace")
-)
-nx.create_relationship(
-    ("group", "product-team"),
-    "viewer",
-    ("workspace", "product-workspace")
-)
+nx.create_relationship(("group", "eng-team"), "editor", ("workspace", "eng-workspace"))
+nx.create_relationship(("group", "product-team"), "viewer", ("workspace", "product-workspace"))
 
 # Check access
-can_write = nx.check_permission(
-    ("agent", "alice"),
-    "write",
-    ("workspace", "eng-workspace")
-)
+can_write = nx.check_permission(("agent", "alice"), "write", ("workspace", "eng-workspace"))
 print(f"Alice can write: {can_write}")
 
 # Explain access
-explanation = nx.explain_permission(
-    ("agent", "alice"),
-    "write",
-    ("workspace", "eng-workspace")
-)
+explanation = nx.explain_permission(("agent", "alice"), "write", ("workspace", "eng-workspace"))
 print(f"Reason: {explanation['reason']}")
 ```
 

@@ -61,9 +61,7 @@ def get_primary_zone(session: Session, key_id: str) -> str | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
-def get_primary_zones_for_keys(
-    session: Session, key_ids: list[str]
-) -> dict[str, str]:
+def get_primary_zones_for_keys(session: Session, key_ids: list[str]) -> dict[str, str]:
     """Batch variant for renderers that walk many rows (e.g., `token list`).
 
     Single round-trip. Returns {key_id: primary_zone}; missing keys (zoneless
@@ -71,10 +69,14 @@ def get_primary_zones_for_keys(
     """
     if not key_ids:
         return {}
-    rn = func.row_number().over(
-        partition_by=APIKeyZoneModel.key_id,
-        order_by=(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc()),
-    ).label("rn")
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=APIKeyZoneModel.key_id,
+            order_by=(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc()),
+        )
+        .label("rn")
+    )
     inner = (
         select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id, rn)
         .where(APIKeyZoneModel.key_id.in_(key_ids))
@@ -95,9 +97,8 @@ Pattern applied uniformly:
 stmt = stmt.where(APIKeyModel.zone_id == zone_id)
 
 # After
-stmt = (
-    stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-        .where(APIKeyZoneModel.zone_id == zone_id)
+stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+    APIKeyZoneModel.zone_id == zone_id
 )
 ```
 
@@ -166,20 +167,23 @@ New alembic revision `<rev>_assert_api_key_junction_populated_for_3871.py`:
 ```python
 def upgrade():
     bind = op.get_bind()
-    rows = bind.execute(text("""
+    rows = bind.execute(
+        text("""
         SELECT k.key_id
         FROM api_keys k
         LEFT JOIN api_key_zones z ON z.key_id = k.key_id
         WHERE k.revoked = 0
           AND k.is_admin = 0
           AND z.key_id IS NULL
-    """)).fetchall()
+    """)
+    ).fetchall()
     if rows:
         raise RuntimeError(
             f"Phase 2 cleanup blocked: {len(rows)} non-admin live keys lack junction "
             f"rows. Re-run the #3785 backfill before upgrading. "
             f"Sample key_ids: {[r[0] for r in rows[:5]]}"
         )
+
 
 def downgrade():
     pass  # assertion-only

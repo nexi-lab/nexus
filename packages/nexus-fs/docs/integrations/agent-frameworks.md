@@ -31,13 +31,15 @@ class NexusDocumentLoader(BaseLoader):
         for entry in entries:
             if entry.get("entry_type") == 0:  # 0 = file, 1 = directory
                 content = self.fs.read(entry["path"])
-                docs.append(Document(
-                    page_content=content.decode(errors="replace"),
-                    metadata={
-                        "source": entry["path"],
-                        "size": entry.get("size", 0),
-                    },
-                ))
+                docs.append(
+                    Document(
+                        page_content=content.decode(errors="replace"),
+                        metadata={
+                            "source": entry["path"],
+                            "size": entry.get("size", 0),
+                        },
+                    )
+                )
         return docs
 
 
@@ -55,16 +57,19 @@ import nexus.fs
 
 fs = nexus.fs.mount_sync("s3://my-bucket", "local://./workspace")
 
+
 @tool
 def read_file(path: str) -> str:
     """Read a file from the mounted filesystem."""
     return fs.read(path).decode(errors="replace")
+
 
 @tool
 def write_file(path: str, content: str) -> str:
     """Write content to a file."""
     fs.write(path, content.encode())
     return f"Written to {path}"
+
 
 @tool
 def list_files(path: str) -> list[str]:
@@ -84,16 +89,19 @@ import nexus.fs
 
 fs = nexus.fs.mount_sync("local://./workspace")
 
+
 @tool("Read File")
 def read_file(path: str) -> str:
     """Read a file from the workspace."""
     return fs.read(path).decode(errors="replace")
+
 
 @tool("Write File")
 def write_file(path: str, content: str) -> str:
     """Write content to a file in the workspace."""
     fs.write(path, content.encode())
     return f"Saved to {path}"
+
 
 researcher = Agent(
     role="Researcher",
@@ -125,6 +133,7 @@ tools = [
     },
 ]
 
+
 def handle_tool_call(name: str, input: dict) -> str:
     if name == "read_file":
         return fs.read(input["path"]).decode(errors="replace")
@@ -155,6 +164,7 @@ tools = [
     },
 ]
 
+
 def handle_function_call(name: str, arguments: dict) -> str:
     if name == "read_file":
         return fs.read(arguments["path"]).decode(errors="replace")
@@ -172,16 +182,19 @@ import nexus.fs
 
 fs = nexus.fs.mount_sync("s3://my-bucket", "local://./cache")
 
+
 @tool
 def filesystem_read(path: str) -> str:
     """Read a file from any mounted backend."""
     return fs.read(path).decode(errors="replace")
+
 
 @tool
 def filesystem_write(path: str, content: str) -> str:
     """Write content to any mounted backend."""
     fs.write(path, content.encode())
     return f"Written {len(content)} bytes to {path}"
+
 
 # Use these tools in a LangGraph ToolNode
 ```

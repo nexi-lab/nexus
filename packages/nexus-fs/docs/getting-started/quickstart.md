@@ -31,8 +31,10 @@ pip install nexus-fs
     import asyncio
     import nexus.fs
 
+
     async def main():
         fs = await nexus.fs.mount("local://./my-data")
+
 
     asyncio.run(main())
     ```
@@ -56,9 +58,11 @@ This mounts `./my-data` at `/local/my-data/` in the virtual filesystem.
     import asyncio
     import nexus.fs
 
+
     async def main():
         fs = await nexus.fs.mount("local://./my-data")
         await fs.write("/local/my-data/hello.txt", b"Hello from nexus-fs!")
+
 
     asyncio.run(main())
     ```
@@ -74,7 +78,7 @@ This mounts `./my-data` at `/local/my-data/` in the virtual filesystem.
     fs.write("/local/my-data/hello.txt", b"Hello from nexus-fs!")
     content = fs.read("/local/my-data/hello.txt")
     print(content)
-    #> b'Hello from nexus-fs!'
+    # > b'Hello from nexus-fs!'
     ```
 
 === "Async"
@@ -83,11 +87,13 @@ This mounts `./my-data` at `/local/my-data/` in the virtual filesystem.
     import asyncio
     import nexus.fs
 
+
     async def main():
         fs = await nexus.fs.mount("local://./my-data")
         await fs.write("/local/my-data/hello.txt", b"Hello from nexus-fs!")
         content = await fs.read("/local/my-data/hello.txt")
         print(content)
+
 
     asyncio.run(main())
     ```
@@ -111,11 +117,13 @@ This mounts `./my-data` at `/local/my-data/` in the virtual filesystem.
     import asyncio
     import nexus.fs
 
+
     async def main():
         fs = await nexus.fs.mount("local://./my-data")
         await fs.write("/local/my-data/hello.txt", b"Hello from nexus-fs!")
         files = await fs.ls("/local/my-data/")
         print(files)
+
 
     asyncio.run(main())
     ```

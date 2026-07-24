@@ -38,19 +38,15 @@ nexus anthropic list-skills
 ```python
 from nexus.plugins import NexusPlugin, PluginMetadata
 
+
 class MyPlugin(NexusPlugin):
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
-            name="my-plugin",
-            version="1.0.0",
-            description="My custom plugin",
-            author="Your Name"
+            name="my-plugin", version="1.0.0", description="My custom plugin", author="Your Name"
         )
 
     def commands(self) -> dict[str, Callable]:
-        return {
-            "hello": self.hello_command
-        }
+        return {"hello": self.hello_command}
 
     async def hello_command(self, name: str = "World"):
         print(f"Hello, {name}!")
@@ -91,12 +87,12 @@ class NexusPlugin(ABC):
 ```python
 @dataclass
 class PluginMetadata:
-    name: str                      # Plugin name (used in CLI)
-    version: str                   # Semantic version (e.g., "1.0.0")
-    description: str               # Short description
-    author: str                    # Author name
-    homepage: str | None          # Homepage URL (optional)
-    requires: list[str] | None    # Plugin dependencies (optional)
+    name: str  # Plugin name (used in CLI)
+    version: str  # Semantic version (e.g., "1.0.0")
+    description: str  # Short description
+    author: str  # Author name
+    homepage: str | None  # Homepage URL (optional)
+    requires: list[str] | None  # Plugin dependencies (optional)
 ```
 
 ## Documentation

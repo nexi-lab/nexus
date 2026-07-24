@@ -29,11 +29,7 @@ context = OperationContext(
 from nexus.contracts.types import OperationContext
 
 # Create context for a user
-ctx = OperationContext(
-    user="alice",
-    groups=["team-engineering", "project-alpha"],
-    is_admin=False
-)
+ctx = OperationContext(user="alice", groups=["team-engineering", "project-alpha"], is_admin=False)
 
 # Write file with context
 nx.write("/workspace/alice/notes.txt", b"Hello", context=ctx)
@@ -69,10 +65,7 @@ from nexus.contracts.types_enhanced import EnhancedOperationContext, AdminCapabi
 
 # Regular user context
 user_ctx = EnhancedOperationContext(
-    user="alice",
-    groups=["team-engineering"],
-    zone_id="acme-corp",
-    is_admin=False
+    user="alice", groups=["team-engineering"], zone_id="acme-corp", is_admin=False
 )
 
 # Admin with scoped capabilities (P0-4)
@@ -81,9 +74,9 @@ admin_ctx = EnhancedOperationContext(
     groups=["admins"],
     is_admin=True,
     admin_capabilities={
-        AdminCapability.READ_ALL,       # Can read any file
-        AdminCapability.MANAGE_REBAC    # Can manage permissions
-    }
+        AdminCapability.READ_ALL,  # Can read any file
+        AdminCapability.MANAGE_REBAC,  # Can manage permissions
+    },
 )
 
 # System operation with audit trail (P0-4)
@@ -91,7 +84,7 @@ system_ctx = EnhancedOperationContext(
     user="backup-service",
     is_system=True,  # Bypasses checks but logs to audit trail
     subject_type="service",
-    subject_id="backup-prod"
+    subject_id="backup-prod",
 )
 
 # All operations work with both context types
@@ -136,25 +129,22 @@ def rebac_create(
 ```python
 # Alice is member of developers group
 tuple_id = nx.rebac_create(
-    subject=("agent", "alice"),
-    relation="member-of",
-    object=("group", "developers")
+    subject=("agent", "alice"), relation="member-of", object=("group", "developers")
 )
 
 # Developers group owns file
 nx.rebac_create(
-    subject=("group", "developers"),
-    relation="owner-of",
-    object=("file", "/workspace/project.txt")
+    subject=("group", "developers"), relation="owner-of", object=("file", "/workspace/project.txt")
 )
 
 # Temporary viewer access (expires in 1 hour)
 from datetime import datetime, timedelta, UTC
+
 nx.rebac_create(
     subject=("agent", "bob"),
     relation="viewer-of",
     object=("file", "/workspace/secret.txt"),
-    expires_at=datetime.now(UTC) + timedelta(hours=1)
+    expires_at=datetime.now(UTC) + timedelta(hours=1),
 )
 ```
 
@@ -188,26 +178,25 @@ has_access = nx.rebac_check(
     subject=("agent", "alice"),
     permission="read",
     object=("file", "/workspace/doc.txt"),
-    zone_id="org_acme"
+    zone_id="org_acme",
 )
 
 # ABAC check with time window
 from datetime import datetime, UTC
+
 has_access = nx.rebac_check(
     subject=("agent", "contractor"),
     permission="read",
     object=("file", "/sensitive.txt"),
     context={
         "time": datetime.now(UTC).isoformat(),  # ISO8601 format
-        "ip": "10.0.1.5"
-    }
+        "ip": "10.0.1.5",
+    },
 )
 
 # Check if group owns workspace
 is_owner = nx.rebac_check(
-    subject=("group", "developers"),
-    permission="owner",
-    object=("workspace", "/workspace")
+    subject=("group", "developers"), permission="owner", object=("workspace", "/workspace")
 )
 ```
 
@@ -244,11 +233,13 @@ explanation = nx.rebac_explain(
     subject=("agent", "alice"),
     permission="read",
     object=("file", "/workspace/doc.txt"),
-    zone_id="org_acme"
+    zone_id="org_acme",
 )
 
 print(explanation["result"])  # True
-print(explanation["reason"])  # "agent:alice has 'read' on file:/workspace/doc.txt (expanded to relations: viewer) via parent inheritance"
+print(
+    explanation["reason"]
+)  # "agent:alice has 'read' on file:/workspace/doc.txt (expanded to relations: viewer) via parent inheritance"
 
 # Inspect the permission path
 if explanation["successful_path"]:
@@ -281,17 +272,11 @@ def rebac_expand(
 **Example:**
 ```python
 # Who can read this file?
-subjects = nx.rebac_expand(
-    permission="read",
-    object=("file", "/workspace/doc.txt")
-)
+subjects = nx.rebac_expand(permission="read", object=("file", "/workspace/doc.txt"))
 # Returns: [('agent', 'alice'), ('agent', 'bob'), ('group', 'developers')]
 
 # Who owns this workspace?
-owners = nx.rebac_expand(
-    permission="owner",
-    object=("workspace", "/workspace")
-)
+owners = nx.rebac_expand(permission="owner", object=("workspace", "/workspace"))
 # Returns: [('group', 'admins')]
 ```
 
@@ -312,9 +297,7 @@ def rebac_delete(tuple_id: str) -> bool
 ```python
 # Create a relationship
 tuple_id = nx.rebac_create(
-    subject=("agent", "alice"),
-    relation="viewer-of",
-    object=("file", "/workspace/doc.txt")
+    subject=("agent", "alice"), relation="viewer-of", object=("file", "/workspace/doc.txt")
 )
 
 # Delete it later
@@ -348,23 +331,18 @@ def grant_consent(
 from datetime import datetime, timedelta, UTC
 
 # Alice grants Bob permanent consent to discover her profile
-consent_id = nx.grant_consent(
-    from_subject=("profile", "alice"),
-    to_subject=("user", "bob")
-)
+consent_id = nx.grant_consent(from_subject=("profile", "alice"), to_subject=("user", "bob"))
 
 # Grant temporary consent (expires in 30 days)
 temp_consent = nx.grant_consent(
     from_subject=("file", "/doc.txt"),
     to_subject=("user", "charlie"),
-    expires_at=datetime.now(UTC) + timedelta(days=30)
+    expires_at=datetime.now(UTC) + timedelta(days=30),
 )
 
 # Check if Bob can now discover
 can_discover = nx.rebac_check(
-    subject=("user", "bob"),
-    permission="discover",
-    object=("profile", "alice")
+    subject=("user", "bob"), permission="discover", object=("profile", "alice")
 )  # True
 ```
 
@@ -388,16 +366,11 @@ def revoke_consent(
 **Example:**
 ```python
 # Revoke Bob's consent to see Alice's profile
-revoked = nx.revoke_consent(
-    from_subject=("profile", "alice"),
-    to_subject=("user", "bob")
-)
+revoked = nx.revoke_consent(from_subject=("profile", "alice"), to_subject=("user", "bob"))
 
 # Bob can no longer discover
 can_discover = nx.rebac_check(
-    subject=("user", "bob"),
-    permission="discover",
-    object=("profile", "alice")
+    subject=("user", "bob"), permission="discover", object=("profile", "alice")
 )  # False
 ```
 
@@ -425,9 +398,7 @@ public_id = nx.make_public(("profile", "alice"))
 
 # Anyone can now discover (no consent needed)
 can_discover = nx.rebac_check(
-    subject=("user", "anyone"),
-    permission="discover",
-    object=("profile", "alice")
+    subject=("user", "anyone"), permission="discover", object=("profile", "alice")
 )  # True
 ```
 
@@ -453,9 +424,7 @@ made_private = nx.make_private(("profile", "alice"))
 
 # Public access removed (individual consent still works)
 can_discover_public = nx.rebac_check(
-    subject=("user", "anyone"),
-    permission="discover",
-    object=("profile", "alice")
+    subject=("user", "anyone"), permission="discover", object=("profile", "alice")
 )  # False
 ```
 
@@ -487,15 +456,13 @@ discoverable_viewers = nx.rebac_expand_with_privacy(
     permission="view",
     object=("workspace", "/project"),
     respect_consent=True,
-    requester=("user", "alice")
+    requester=("user", "alice"),
 )
 # Returns: Only viewers that Alice has consent to discover
 
 # Standard expand (no privacy filtering)
 all_viewers = nx.rebac_expand_with_privacy(
-    permission="view",
-    object=("workspace", "/project"),
-    respect_consent=False
+    permission="view", object=("workspace", "/project"), respect_consent=False
 )
 # Returns: All viewers regardless of consent
 ```
@@ -541,31 +508,24 @@ def namespace_create(
 **Example:**
 ```python
 # Create a custom document namespace
-nx.namespace_create("document", {
-    "relations": {
-        "owner": {},
-        "editor": {},
-        "viewer": {"union": ["editor", "owner"]}
+nx.namespace_create(
+    "document",
+    {
+        "relations": {"owner": {}, "editor": {}, "viewer": {"union": ["editor", "owner"]}},
+        "permissions": {
+            "read": ["viewer", "editor", "owner"],
+            "write": ["editor", "owner"],
+            "delete": ["owner"],
+        },
     },
-    "permissions": {
-        "read": ["viewer", "editor", "owner"],
-        "write": ["editor", "owner"],
-        "delete": ["owner"]
-    }
-})
+)
 
 # Now you can use it with ReBAC
-nx.rebac_create(
-    subject=("user", "alice"),
-    relation="owner",
-    object=("document", "doc123")
-)
+nx.rebac_create(subject=("user", "alice"), relation="owner", object=("document", "doc123"))
 
 # Check permissions
 can_write = nx.rebac_check(
-    subject=("user", "alice"),
-    permission="write",
-    object=("document", "doc123")
+    subject=("user", "alice"), permission="write", object=("document", "doc123")
 )  # True
 ```
 
@@ -644,44 +604,41 @@ print(deleted)  # True
 Combine multiple relations for inheritance:
 
 ```python
-nx.namespace_create("project", {
-    "relations": {
-        "owner": {},
-        "maintainer": {},
-        "contributor": {},
-        # Viewer = anyone who is maintainer, contributor, or owner
-        "viewer": {"union": ["maintainer", "contributor", "owner"]}
+nx.namespace_create(
+    "project",
+    {
+        "relations": {
+            "owner": {},
+            "maintainer": {},
+            "contributor": {},
+            # Viewer = anyone who is maintainer, contributor, or owner
+            "viewer": {"union": ["maintainer", "contributor", "owner"]},
+        },
+        "permissions": {"read": ["viewer"], "write": ["maintainer", "owner"], "admin": ["owner"]},
     },
-    "permissions": {
-        "read": ["viewer"],
-        "write": ["maintainer", "owner"],
-        "admin": ["owner"]
-    }
-})
+)
 ```
 
 #### Computed Usersets (tupleToUserset)
 Delegate permissions through relationships:
 
 ```python
-nx.namespace_create("document", {
-    "relations": {
-        "parent_folder": {},  # Link to parent folder
-        # Inherit owner from parent
-        "parent_owner": {
-            "tupleToUserset": {
-                "tupleset": "parent_folder",
-                "computedUserset": "owner"
-            }
+nx.namespace_create(
+    "document",
+    {
+        "relations": {
+            "parent_folder": {},  # Link to parent folder
+            # Inherit owner from parent
+            "parent_owner": {
+                "tupleToUserset": {"tupleset": "parent_folder", "computedUserset": "owner"}
+            },
+            "direct_owner": {},
+            # Owner = direct OR inherited from parent
+            "owner": {"union": ["direct_owner", "parent_owner"]},
         },
-        "direct_owner": {},
-        # Owner = direct OR inherited from parent
-        "owner": {"union": ["direct_owner", "parent_owner"]}
+        "permissions": {"write": ["owner"]},
     },
-    "permissions": {
-        "write": ["owner"]
-    }
-})
+)
 ```
 
 ---

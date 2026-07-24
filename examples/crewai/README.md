@@ -402,6 +402,7 @@ This demo uses **direct SDK calls** wrapped as CrewAI tools for reliability:
 def read_file(path: str) -> str:
     """Read a file from Nexus filesystem."""
     from nexus import connect
+
     nx = connect(config={"remote_url": NEXUS_URL})
     return nx.read(path).decode("utf-8")
 ```
@@ -414,11 +415,7 @@ When `crewai-tools` MCPServerAdapter is stable, you can use:
 from crewai_tools import MCPServerAdapter
 
 # Connect to Nexus MCP server
-nexus_mcp = MCPServerAdapter(
-    transport="stdio",
-    command="nexus",
-    args=["mcp", "serve"]
-)
+nexus_mcp = MCPServerAdapter(transport="stdio", command="nexus", args=["mcp", "serve"])
 
 # Tools are automatically discovered!
 agent = Agent(
@@ -497,9 +494,7 @@ Store a memory for long-term learning.
 ```python
 # Store insight
 store_memory(
-    "Always validate user input before processing",
-    memory_type="security_insight",
-    importance=0.9
+    "Always validate user input before processing", memory_type="security_insight", importance=0.9
 )
 ```
 
@@ -520,11 +515,13 @@ Create new tools following the CrewAI pattern:
 ```python
 from crewai.tools import tool
 
+
 @tool("Custom Tool")
 def my_custom_tool(param: str) -> str:
     """Description of what this tool does."""
     # Implementation
     return result
+
 
 # Add to agent
 agent = Agent(
@@ -564,6 +561,7 @@ def demo_4_custom_workflow():
 
     result = crew.kickoff()
     return result
+
 
 # Add to demos list in main()
 demos = [

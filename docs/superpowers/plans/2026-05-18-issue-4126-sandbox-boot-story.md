@@ -89,9 +89,7 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _spawn_sandbox_daemon(
-    tmp_path: Path, port: int
-) -> tuple[subprocess.Popen[bytes], Path, Path]:
+def _spawn_sandbox_daemon(tmp_path: Path, port: int) -> tuple[subprocess.Popen[bytes], Path, Path]:
     """Spawn `nexusd --profile sandbox` with an isolated HOME + data dir.
 
     Returns (process, ready_file_path, log_file_path). The HOME override
@@ -136,26 +134,20 @@ def _spawn_sandbox_daemon(
     return proc, ready_file, log_path
 
 
-def _wait_ready(
-    proc: subprocess.Popen[bytes], ready_file: Path, log_path: Path
-) -> tuple[str, int]:
+def _wait_ready(proc: subprocess.Popen[bytes], ready_file: Path, log_path: Path) -> tuple[str, int]:
     """Poll the readiness file until it appears; return (host, port)."""
     deadline = time.monotonic() + BOOT_TIMEOUT_S
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             log = log_path.read_text(errors="replace")
-            raise AssertionError(
-                f"nexusd exited early (code {proc.returncode}). Log:\n{log}"
-            )
+            raise AssertionError(f"nexusd exited early (code {proc.returncode}). Log:\n{log}")
         if ready_file.exists():
             content = ready_file.read_text().strip()
             host, _, port_s = content.partition(":")
             return host, int(port_s)
         time.sleep(0.25)
     log = log_path.read_text(errors="replace")
-    raise AssertionError(
-        f"nexusd not ready within {BOOT_TIMEOUT_S}s. Log:\n{log}"
-    )
+    raise AssertionError(f"nexusd not ready within {BOOT_TIMEOUT_S}s. Log:\n{log}")
 
 
 @pytest.fixture()
@@ -256,13 +248,11 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
             "permissions",
         }
         assert expected_subset.issubset(enabled), (
-            f"sandbox missing bricks {expected_subset - enabled}; "
-            f"enabled={sorted(enabled)}"
+            f"sandbox missing bricks {expected_subset - enabled}; enabled={sorted(enabled)}"
         )
         for forbidden in ("llm", "pay", "observability", "federation"):
             assert forbidden not in enabled, (
-                f"sandbox must not enable '{forbidden}'; "
-                f"enabled={sorted(enabled)}"
+                f"sandbox must not enable '{forbidden}'; enabled={sorted(enabled)}"
             )
 ```
 
@@ -357,9 +347,7 @@ RSS_CEILING_MB = 800  # loose gross-regression guard, not a tuned baseline
 WARM_BOOT_CEILING_S = 60.0  # matches Issue #3778 in-process precedent
 
 
-def test_sandbox_boot_time_and_rss_within_loose_bounds(
-    tmp_path: Path, record_property
-) -> None:
+def test_sandbox_boot_time_and_rss_within_loose_bounds(tmp_path: Path, record_property) -> None:
     """Measure cold + warm boot time and RSS; assert loose ceilings only.
 
     Boot is a setup path and RSS a resource budget — neither is a hot
@@ -402,17 +390,12 @@ def test_sandbox_boot_time_and_rss_within_loose_bounds(
     record_property("sandbox_cold_boot_s", round(cold_boot_s, 2))
     record_property("sandbox_warm_boot_s", round(warm_boot_s, 2))
     record_property("sandbox_rss_mb", round(rss_mb, 1))
-    print(
-        f"\n[#4126] cold_boot={cold_boot_s:.2f}s "
-        f"warm_boot={warm_boot_s:.2f}s rss={rss_mb:.1f}MB"
-    )
+    print(f"\n[#4126] cold_boot={cold_boot_s:.2f}s warm_boot={warm_boot_s:.2f}s rss={rss_mb:.1f}MB")
 
     assert warm_boot_s < WARM_BOOT_CEILING_S, (
         f"warm boot {warm_boot_s:.2f}s exceeds {WARM_BOOT_CEILING_S}s ceiling"
     )
-    assert rss_mb < RSS_CEILING_MB, (
-        f"RSS {rss_mb:.1f}MB exceeds {RSS_CEILING_MB}MB ceiling"
-    )
+    assert rss_mb < RSS_CEILING_MB, f"RSS {rss_mb:.1f}MB exceeds {RSS_CEILING_MB}MB ceiling"
 ```
 
 - [ ] **Step 2: Run test and record the observed numbers**

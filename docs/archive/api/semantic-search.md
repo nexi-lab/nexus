@@ -32,16 +32,11 @@ async def initialize_semantic_search(
 ```python
 # Initialize with OpenAI
 await nx.initialize_semantic_search(
-    embedding_provider="openai",
-    embedding_model="text-embedding-3-small"
+    embedding_provider="openai", embedding_model="text-embedding-3-small"
 )
 
 # Initialize with custom configuration
-await nx.initialize_semantic_search(
-    embedding_provider="openai",
-    chunk_size=1024,
-    chunk_overlap=100
-)
+await nx.initialize_semantic_search(embedding_provider="openai", chunk_size=1024, chunk_overlap=100)
 ```
 
 ---
@@ -96,31 +91,25 @@ for r in results:
     print(f"  {r['chunk_text'][:100]}...")
 
 # Search only in documentation directory
-results = await nx.semantic_search(
-    "database migration",
-    path="/docs",
-    limit=5
-)
+results = await nx.semantic_search("database migration", path="/docs", limit=5)
 
 # Search with permission filtering
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["engineering"])
 results = await nx.semantic_search(
     "authentication",
-    context=ctx  # Only returns files alice can read
+    context=ctx,  # Only returns files alice can read
 )
 
 # Hybrid search (keyword + semantic)
-results = await nx.semantic_search(
-    "error handling",
-    search_mode="hybrid"
-)
+results = await nx.semantic_search("error handling", search_mode="hybrid")
 
 # Adaptive retrieval - automatically adjusts limit based on query complexity
 results = await nx.semantic_search(
     "How does authentication compare to authorization?",
-    limit=10,          # Used as k_base
-    adaptive_k=True    # Complex query → limit increased to ~14
+    limit=10,  # Used as k_base
+    adaptive_k=True,  # Complex query → limit increased to ~14
 )
 ```
 
@@ -166,6 +155,7 @@ print(f"Created {result['/docs/README.md']} chunks")
 
 # Index with specific context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["engineering"])
 result = await nx.semantic_search_index("/workspace", context=ctx)
 ```
@@ -244,11 +234,11 @@ Configure adaptive retrieval using `AdaptiveRetrievalConfig`:
 from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
 config = AdaptiveRetrievalConfig(
-    k_base=10,      # Default retrieval count
-    k_min=3,        # Minimum results (never go below)
-    k_max=20,       # Maximum results (never exceed)
-    delta=0.5,      # Complexity scaling factor
-    enabled=True    # Enable/disable adaptive retrieval
+    k_base=10,  # Default retrieval count
+    k_min=3,  # Minimum results (never go below)
+    k_max=20,  # Maximum results (never exceed)
+    delta=0.5,  # Complexity scaling factor
+    enabled=True,  # Enable/disable adaptive retrieval
 )
 
 builder = ContextBuilder(adaptive_config=config)
@@ -260,17 +250,13 @@ builder = ContextBuilder(adaptive_config=config)
 # Enable adaptive k for search
 results = await nx.semantic_search(
     "How does authentication compare to authorization in web security?",
-    limit=10,         # Used as k_base
-    adaptive_k=True   # Enable adaptive retrieval
+    limit=10,  # Used as k_base
+    adaptive_k=True,  # Enable adaptive retrieval
 )
 # Complex query → limit automatically increased to ~14
 
 # Simple query gets fewer results
-results = await nx.semantic_search(
-    "What is Python?",
-    limit=10,
-    adaptive_k=True
-)
+results = await nx.semantic_search("What is Python?", limit=10, adaptive_k=True)
 # Simple query → limit stays at ~10
 
 # Calculate k manually
@@ -325,10 +311,12 @@ from nexus.bricks.search.contextual_chunking import (
     create_heuristic_generator,
 )
 
+
 # Option 1: LLM-powered context (best quality)
 async def my_llm(prompt: str) -> str:
     # Call your LLM API here
     return await anthropic_client.messages.create(...)
+
 
 llm_gen = await create_context_generator(my_llm)
 
@@ -354,10 +342,10 @@ Fine-tune contextual chunking behavior:
 
 ```python
 config = ContextualChunkingConfig(
-    enabled=True,               # Enable/disable (default: False)
-    max_context_length=200,     # Max chars for situating context (default: 200)
-    batch_concurrency=5,        # Max parallel LLM calls (default: 5)
-    use_heuristic_fallback=True # Use heuristic when LLM fails (default: True)
+    enabled=True,  # Enable/disable (default: False)
+    max_context_length=200,  # Max chars for situating context (default: 200)
+    batch_concurrency=5,  # Max parallel LLM calls (default: 5)
+    use_heuristic_fallback=True,  # Use heuristic when LLM fails (default: True)
 )
 ```
 

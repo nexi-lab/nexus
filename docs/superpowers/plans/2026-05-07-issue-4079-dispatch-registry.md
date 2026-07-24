@@ -1376,7 +1376,15 @@ class FakeGitHub(GitHubConnector):
 def test_github_raw_read_uses_gh_api_for_raw_paths() -> None:
     backend = FakeGitHub()
     assert backend.raw_read("owner/repo/main/README.md") == b"hello"
-    assert backend.calls == [["gh", "api", "repos/owner/repo/contents/README.md?ref=main", "-H", "Accept: application/vnd.github.raw"]]
+    assert backend.calls == [
+        [
+            "gh",
+            "api",
+            "repos/owner/repo/contents/README.md?ref=main",
+            "-H",
+            "Accept: application/vnd.github.raw",
+        ]
+    ]
 ```
 
 Create `tests/unit/backends/test_s3_dispatch.py`:
@@ -1528,11 +1536,9 @@ Add to `src/nexus/backends/transports/s3_transport.py`:
 Add to `src/nexus/backends/storage/path_s3.py`:
 
 ```python
-    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str:
-        backend_path = (
-            context.backend_path if context and context.backend_path else path.lstrip("/")
-        )
-        return self._s3_transport.fingerprint(self._get_key_path(backend_path))
+def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str:
+    backend_path = context.backend_path if context and context.backend_path else path.lstrip("/")
+    return self._s3_transport.fingerprint(self._get_key_path(backend_path))
 ```
 
 - [ ] **Step 7: Route grep through Python registry for Slack override**

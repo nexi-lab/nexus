@@ -29,7 +29,7 @@ nx.register_workspace(
     "/my-workspace",
     name="main",
     description="My workspace",
-    metadata={"created_by": "alice", "project": "app"}
+    metadata={"created_by": "alice", "project": "app"},
 )
 ```
 
@@ -109,10 +109,7 @@ nexus workspace snapshot /my-workspace --description "Stable" --tag stable --tag
 **Python API:**
 ```python
 # Create snapshot
-snapshot_id = nx.create_workspace_snapshot(
-    "/my-workspace",
-    description="Before refactor"
-)
+snapshot_id = nx.create_workspace_snapshot("/my-workspace", description="Before refactor")
 print(f"Created snapshot: {snapshot_id}")
 
 # With tags and metadata
@@ -120,7 +117,7 @@ snapshot_id = nx.create_workspace_snapshot(
     "/my-workspace",
     description="Stable release",
     tags=["stable", "v1.0"],
-    metadata={"release": "1.0.0", "author": "alice"}
+    metadata={"release": "1.0.0", "author": "alice"},
 )
 ```
 
@@ -220,11 +217,11 @@ print(f"Files added: {len(diff['added'])}")
 print(f"Files modified: {len(diff['modified'])}")
 print(f"Files deleted: {len(diff['deleted'])}")
 
-for file in diff['added']:
+for file in diff["added"]:
     print(f"  + {file}")
-for file in diff['modified']:
+for file in diff["modified"]:
     print(f"  M {file}")
-for file in diff['deleted']:
+for file in diff["deleted"]:
     print(f"  - {file}")
 ```
 
@@ -308,9 +305,7 @@ nx.write("/projects/myapp/README.md", b"# My App")
 
 # Create checkpoint before refactoring
 snapshot1 = nx.create_workspace_snapshot(
-    "/projects/myapp",
-    description="Before refactor",
-    tags=["pre-refactor"]
+    "/projects/myapp", description="Before refactor", tags=["pre-refactor"]
 )
 print(f"Created snapshot: {snapshot1}")
 
@@ -320,9 +315,7 @@ nx.mkdir("/projects/myapp/tests", parents=True)
 
 # Create another snapshot
 snapshot2 = nx.create_workspace_snapshot(
-    "/projects/myapp",
-    description="After refactor",
-    tags=["post-refactor"]
+    "/projects/myapp", description="After refactor", tags=["post-refactor"]
 )
 
 # View history

@@ -26,6 +26,7 @@ Add custom storage backends:
 ```python
 from nexus.backends import Backend
 
+
 class S3Backend(Backend):
     @property
     def name(self) -> str:
@@ -55,6 +56,7 @@ Add custom commands to `nexus` CLI:
 ```python
 from nexus.plugins import NexusPlugin
 
+
 class MyPlugin(NexusPlugin):
     def commands(self) -> dict:
         return {
@@ -83,6 +85,7 @@ Extend workflows with custom actions:
 ```python
 from nexus.workflows.actions import BaseAction
 
+
 class CustomAction(BaseAction):
     async def execute(self, context: WorkflowContext) -> ActionResult:
         # Custom processing logic
@@ -106,6 +109,7 @@ Add custom workflow triggers:
 
 ```python
 from nexus.workflows.triggers import BaseTrigger
+
 
 class WebhookTrigger(BaseTrigger):
     def matches(self, event_context: dict) -> bool:
@@ -145,6 +149,7 @@ class AuditPlugin(NexusPlugin):
 
 ```python
 from nexus.plugins import NexusPlugin, PluginMetadata
+
 
 class HelloPlugin(NexusPlugin):
     def metadata(self) -> PluginMetadata:
@@ -211,6 +216,7 @@ build-backend = "setuptools.build_meta"
 ```python
 # src/nexus_myplugin/plugin.py
 from nexus.plugins import NexusPlugin, PluginMetadata
+
 
 class MyPlugin(NexusPlugin):
     def metadata(self) -> PluginMetadata:
@@ -301,6 +307,7 @@ Override config with environment variables:
 
 ```python
 import os
+
 
 class MyPlugin(NexusPlugin):
     async def initialize(self, config: dict):
@@ -396,12 +403,7 @@ hook_priority:
 
 ```python
 class PluginHooks:
-    def register(
-        self,
-        hook_type: str,
-        handler: Callable,
-        priority: int = 0
-    ):
+    def register(self, hook_type: str, handler: Callable, priority: int = 0):
         """Higher priority = executed first."""
         pass
 ```
@@ -449,10 +451,7 @@ class AnthropicPlugin(NexusPlugin):
         skill_content = self.nx.read(f"/skills/{skill_name}.md")
 
         # Upload to Claude
-        response = await claude_api.upload_skill(
-            name=skill_name,
-            content=skill_content.decode()
-        )
+        response = await claude_api.upload_skill(name=skill_name, content=skill_content.decode())
 
         print(f"✓ Uploaded skill: {response['skill_id']}")
 ```
@@ -506,11 +505,7 @@ class FirecrawlPlugin(NexusPlugin):
 
         # JSON output for piping
         if self.is_piped_output():
-            self.write_json_output({
-                "url": url,
-                "markdown": result,
-                "metadata": {...}
-            })
+            self.write_json_output({"url": url, "markdown": result, "metadata": {...}})
             return
 
         # Normal console output
@@ -549,10 +544,7 @@ class SkillSeekersPlugin(NexusPlugin):
         docs = await self.scrape_docs(url)
 
         # Generate skill with AI
-        skill_content = await claude.generate_skill(
-            docs=docs,
-            name=name
-        )
+        skill_content = await claude.generate_skill(docs=docs, name=name)
 
         # Save to Nexus skills directory
         self.nx.write(f"/skills/{name}.md", skill_content.encode())
@@ -756,6 +748,7 @@ async def command(self, url: str):
         console.print(f"[red]Unexpected error: {e}[/red]")
         traceback.print_exc()
 
+
 # ❌ Bad
 async def command(self, url: str):
     result = await scrape(url)  # No error handling
@@ -784,6 +777,7 @@ api_key = "hardcoded-key-123"  # Never hardcode secrets
 # ✅ Good
 async def command(self):
     result = await async_operation()
+
 
 # ❌ Bad
 def command(self):  # Not async
@@ -832,11 +826,12 @@ print(data)  # Always print, breaks piping
 from nexus.backends import Backend
 from nexus.contracts.types import OperationContext
 
+
 class S3Backend(Backend):
     def __init__(self, bucket: str, region: str = "us-east-1"):
         self.bucket = bucket
         self.region = region
-        self.s3_client = boto3.client('s3', region_name=region)
+        self.s3_client = boto3.client("s3", region_name=region)
 
     @property
     def name(self) -> str:
@@ -848,22 +843,15 @@ class S3Backend(Backend):
 
         # Upload to S3
         key = f"cas/{content_hash[:2]}/{content_hash[2:4]}/{content_hash}"
-        self.s3_client.put_object(
-            Bucket=self.bucket,
-            Key=key,
-            Body=content
-        )
+        self.s3_client.put_object(Bucket=self.bucket, Key=key, Body=content)
 
         return content_hash
 
     def read_content(self, content_hash: str, context: OperationContext) -> bytes:
         # Download from S3
         key = f"cas/{content_hash[:2]}/{content_hash[2:4]}/{content_hash}"
-        response = self.s3_client.get_object(
-            Bucket=self.bucket,
-            Key=key
-        )
-        return response['Body'].read()
+        response = self.s3_client.get_object(Bucket=self.bucket, Key=key)
+        return response["Body"].read()
 ```
 
 **Usage:**
@@ -890,6 +878,7 @@ async def command(self):
         print(f"DEBUG: Result = {result}")
     except Exception as e:
         import traceback
+
         traceback.print_exc()
 ```
 
@@ -933,6 +922,7 @@ enabled: false
 # tests/test_plugin.py
 import pytest
 from nexus_myplugin import MyPlugin
+
 
 @pytest.mark.asyncio
 async def test_command():

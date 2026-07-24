@@ -147,7 +147,7 @@ Complete Stripe payment processing documentation.
 - List charges
 """,
     source_url="https://docs.stripe.com/api",
-    tier="agent"
+    tier="agent",
 )
 ```
 
@@ -165,7 +165,7 @@ path = await manager.create_skill(
     author="Alice",
     creator_id="alice-id",
     creator_type="agent",
-    zone_id="org-1"
+    zone_id="org-1",
 )
 
 print(path)  # /workspace/.nexus/skills/my-skill/SKILL.md
@@ -247,7 +247,7 @@ await manager.fork_skill(
     target_name="my-analyzer",
     tier="agent",
     author="Bob",
-    creator_id="bob-id"
+    creator_id="bob-id",
 )
 ```
 
@@ -368,7 +368,7 @@ approval_id = await gov.submit_for_approval(
     skill_name="my-analyzer",
     submitted_by="alice",
     reviewers=["bob", "charlie"],
-    comments="Ready for org-wide use"
+    comments="Ready for org-wide use",
 )
 ```
 
@@ -394,11 +394,7 @@ nexus skills reject-skill <approval_id> \
 ```python
 # Reviewer approves
 await gov.approve_skill(
-    approval_id,
-    reviewed_by="bob",
-    comments="Looks great!",
-    reviewer_type="user",
-    zone_id="org-1"
+    approval_id, reviewed_by="bob", comments="Looks great!", reviewer_type="user", zone_id="org-1"
 )
 
 # Check approval status
@@ -449,7 +445,7 @@ await manager.publish_skill(
     target_tier="tenant",
     publisher_id="alice-id",
     publisher_type="agent",
-    zone_id="org-1"
+    zone_id="org-1",
 )
 ```
 
@@ -484,15 +480,15 @@ rebac.write(
     subject=("agent", "alice"),
     relation="owner-of",
     object=("skill", "my-analyzer"),
-    zone_id="org-1"
+    zone_id="org-1",
 )
 
 # Make system skill public
 rebac.write(
-    subject=("*", "*"),        # Wildcard = everyone
+    subject=("*", "*"),  # Wildcard = everyone
     relation="public",
     object=("skill", "base-parser"),
-    zone_id=None             # Global scope
+    zone_id=None,  # Global scope
 )
 
 # Grant tenant access
@@ -500,7 +496,7 @@ rebac.write(
     subject=("tenant", "org-1"),
     relation="tenant",
     object=("skill", "shared-analyzer"),
-    zone_id="org-1"
+    zone_id="org-1",
 )
 ```
 
@@ -528,10 +524,7 @@ requires:
 
 ```python
 # Load skill with all dependencies
-skill = await registry.get_skill(
-    "advanced-analyzer",
-    load_dependencies=True
-)
+skill = await registry.get_skill("advanced-analyzer", load_dependencies=True)
 
 # Dependencies are loaded recursively
 for dep in skill.metadata.requires:
@@ -568,8 +561,8 @@ exporter = SkillExporter(registry)
 zip_bytes = await exporter.export_skill(
     name="my-analyzer",
     output_path="/tmp/my-analyzer.zip",
-    format="claude",              # Enforces 8MB limit
-    include_dependencies=True
+    format="claude",  # Enforces 8MB limit
+    include_dependencies=True,
 )
 ```
 
@@ -662,11 +655,7 @@ tracker = SkillAnalyticsTracker()
 
 # Track skill execution
 await tracker.track_usage(
-    skill_name="analyze-code",
-    agent_id="agent-1",
-    zone_id="org-1",
-    execution_time=2.5,
-    success=True
+    skill_name="analyze-code", agent_id="agent-1", zone_id="org-1", execution_time=2.5, success=True
 )
 ```
 
@@ -681,7 +670,7 @@ class SkillAnalytics:
     usage_count: int
     success_count: int
     failure_count: int
-    success_rate: float           # success / total
+    success_rate: float  # success / total
     avg_execution_time: float
     unique_users: int
     last_used: datetime
@@ -800,9 +789,7 @@ nexus skills create my-skill --template data-analysis
 1. Permission:
    ```python
    has_perm = await rebac.check(
-       subject=("agent", "bob"),
-       permission="fork",
-       object=("skill", "analyze-code")
+       subject=("agent", "bob"), permission="fork", object=("skill", "analyze-code")
    )
    ```
 

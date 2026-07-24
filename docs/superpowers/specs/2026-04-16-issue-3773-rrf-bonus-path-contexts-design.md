@@ -101,7 +101,9 @@ sa.Column("zone_id", sa.String(255), nullable=False, server_default=ROOT_ZONE_ID
 sa.Column("path_prefix", sa.String(1024), nullable=False)
 sa.Column("description", sa.Text, nullable=False)
 sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False)
-sa.Column("updated_at", sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False)
+sa.Column(
+    "updated_at", sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False
+)
 sa.UniqueConstraint("zone_id", "path_prefix", name="uq_path_contexts_zone_prefix")
 sa.Index("ix_path_contexts_zone_updated", "zone_id", "updated_at")
 ```
@@ -134,6 +136,7 @@ class PathContextRecord:
     created_at: datetime
     updated_at: datetime
 
+
 class PathContextStore:
     def __init__(self, async_session_factory): ...
 
@@ -159,6 +162,7 @@ API:
 ```python
 async def lookup(self, zone_id: str | None, path: str) -> str | None:
     """Return longest-matching description for path, or None."""
+
 
 async def refresh_if_stale(self, zone_id: str) -> None:
     """Compare store.max_updated_at to cached stamp; reload if newer."""
@@ -193,6 +197,7 @@ class PathContextIn(BaseModel):
     zone_id: str = Field(default=ROOT_ZONE_ID, max_length=255)
     path_prefix: str = Field(max_length=1024)
     description: str = Field(max_length=4096)
+
 
 class PathContextOut(BaseModel):
     zone_id: str

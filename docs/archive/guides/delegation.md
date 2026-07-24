@@ -33,7 +33,7 @@ nx.rebac_create(
     subject=("agent", agent_id),
     relation="direct_owner",
     object=("file", "/alice/documents/report.pdf"),
-    expires_at=datetime.now(UTC) + timedelta(hours=1)  # ← Auto-expires!
+    expires_at=datetime.now(UTC) + timedelta(hours=1),  # ← Auto-expires!
 )
 ```
 
@@ -64,7 +64,7 @@ tuple_id = nx.rebac_create(
     subject=("agent", agent_session_id),
     relation="direct_viewer",  # Read-only access
     object=("file", "/alice/workspaces/q4-reports"),
-    expires_at=expires_in_1_hour
+    expires_at=expires_in_1_hour,
 )
 
 print(f"✅ Agent {agent_session_id} granted read access for 1 hour")
@@ -72,10 +72,7 @@ print(f"   Expires: {expires_in_1_hour.isoformat()}")
 
 # 3. Agent can now read alice's files (as agent, not alice)
 context = OperationContext(
-    subject_type="agent",
-    subject_id=agent_session_id,
-    groups=[],
-    zone_id="alice_tenant"
+    subject_type="agent", subject_id=agent_session_id, groups=[], zone_id="alice_tenant"
 )
 
 reports = nx.list("/alice/workspaces/q4-reports", subject=("agent", agent_session_id))
@@ -95,6 +92,7 @@ nx._rebac_manager.cleanup_expired_tuples()
 
 # Or set up periodic cleanup (recommended for production)
 import schedule
+
 schedule.every(1).hour.do(nx._rebac_manager.cleanup_expired_tuples)
 ```
 
@@ -122,30 +120,25 @@ DELEGATION_NAMESPACE = NamespaceConfig(
         "relations": {
             # Direct ownership
             "direct_owner": {},
-
             # Ownership via delegation
             "delegated_owner": {
                 "tupleToUserset": {
                     # If user delegates-to agent, and user owns file,
                     # then agent has delegated_owner permission
                     "tupleset": "delegates-to",
-                    "computedUserset": "owner"
+                    "computedUserset": "owner",
                 }
             },
-
             # Combined ownership (direct OR delegated)
-            "owner": {
-                "union": ["direct_owner", "delegated_owner", "parent_owner"]
-            },
-
+            "owner": {"union": ["direct_owner", "delegated_owner", "parent_owner"]},
             # ... rest of namespace config
         },
         "permissions": {
             "read": ["viewer", "editor", "owner"],
             "write": ["editor", "owner"],
             "execute": ["owner"],
-        }
-    }
+        },
+    },
 )
 
 # Register namespace
@@ -164,14 +157,14 @@ delegation_tuple = nx.rebac_create(
     subject=("user", "alice"),
     relation="delegates-to",
     object=("agent", "claude_001"),
-    expires_at=expires_in_1_hour
+    expires_at=expires_in_1_hour,
 )
 
 # Alice owns files
 nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_owner",
-    object=("file", "/alice/documents/report.pdf")
+    object=("file", "/alice/documents/report.pdf"),
 )
 ```
 
@@ -188,7 +181,7 @@ nx.rebac_create(
 can_agent_read = nx.rebac_check(
     subject=("agent", "claude_001"),
     permission="read",
-    object=("file", "/alice/documents/report.pdf")
+    object=("file", "/alice/documents/report.pdf"),
 )
 # → True (via delegation!)
 ```
@@ -228,14 +221,14 @@ nx.rebac_create(
     subject=("agent", "claude_001"),
     relation="direct_viewer",
     object=("file", "/alice/q4-report.pdf"),
-    expires_at=datetime.now(UTC) + timedelta(hours=1)
+    expires_at=datetime.now(UTC) + timedelta(hours=1),
 )
 
 nx.rebac_create(
     subject=("agent", "claude_001"),
     relation="direct_viewer",
     object=("file", "/alice/budget.xlsx"),
-    expires_at=datetime.now(UTC) + timedelta(hours=1)
+    expires_at=datetime.now(UTC) + timedelta(hours=1),
 )
 
 # Agent ONLY has access to these 2 files (principle of least privilege)
@@ -256,7 +249,7 @@ nx.rebac_create(
     subject=("user", "alice"),
     relation="delegates-to",
     object=("agent", "claude_assistant"),
-    expires_at=datetime.now(UTC) + timedelta(days=30)  # 30 days
+    expires_at=datetime.now(UTC) + timedelta(days=30),  # 30 days
 )
 
 # Agent now inherits ALL alice's permissions automatically!
@@ -272,13 +265,14 @@ nx.rebac_create(
 ```python
 from datetime import datetime, timedelta, UTC
 
+
 def grant_agent_temporary_access(
     nx,
     user_id: str,
     agent_id: str,
     files: list[str],
     duration_hours: int = 1,
-    permission: str = "viewer"  # viewer, editor, or owner
+    permission: str = "viewer",  # viewer, editor, or owner
 ):
     """Grant agent temporary access to specific files.
 
@@ -301,7 +295,7 @@ def grant_agent_temporary_access(
             subject=("agent", agent_id),
             relation=f"direct_{permission}",
             object=("file", file_path),
-            expires_at=expires_at
+            expires_at=expires_at,
         )
         tuple_ids.append(tuple_id)
 
@@ -310,6 +304,7 @@ def grant_agent_temporary_access(
 
     return tuple_ids
 
+
 # Usage
 grant_agent_temporary_access(
     nx,
@@ -317,7 +312,7 @@ grant_agent_temporary_access(
     agent_id="claude_001",
     files=["/alice/report.pdf", "/alice/data.csv"],
     duration_hours=2,
-    permission="viewer"
+    permission="viewer",
 )
 ```
 
@@ -326,6 +321,7 @@ grant_agent_temporary_access(
 ```python
 from nexus.bricks.rebac.domain import NamespaceConfig
 from datetime import datetime, timedelta, UTC
+
 
 def setup_delegation_system(nx):
     """One-time setup for delegation support."""
@@ -338,51 +334,35 @@ def setup_delegation_system(nx):
                 "direct_owner": {},
                 "direct_editor": {},
                 "direct_viewer": {},
-
                 # Delegation support
                 "delegated_owner": {
-                    "tupleToUserset": {
-                        "tupleset": "delegates-to",
-                        "computedUserset": "owner"
-                    }
+                    "tupleToUserset": {"tupleset": "delegates-to", "computedUserset": "owner"}
                 },
                 "delegated_editor": {
-                    "tupleToUserset": {
-                        "tupleset": "delegates-to",
-                        "computedUserset": "editor"
-                    }
+                    "tupleToUserset": {"tupleset": "delegates-to", "computedUserset": "editor"}
                 },
-
                 # Combined (direct OR delegated)
                 "owner": {"union": ["direct_owner", "delegated_owner", "parent_owner"]},
                 "editor": {"union": ["direct_editor", "delegated_editor", "owner"]},
                 "viewer": {"union": ["direct_viewer", "editor"]},
-
                 # Parent inheritance
                 "parent_owner": {
-                    "tupleToUserset": {
-                        "tupleset": "parent",
-                        "computedUserset": "owner"
-                    }
+                    "tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}
                 },
             },
             "permissions": {
                 "read": ["viewer", "editor", "owner"],
                 "write": ["editor", "owner"],
                 "execute": ["owner"],
-            }
-        }
+            },
+        },
     )
 
     nx._rebac_manager.create_namespace(DELEGATION_NAMESPACE)
     print("✅ Delegation system enabled")
 
-def delegate_to_agent(
-    nx,
-    user_id: str,
-    agent_id: str,
-    duration_hours: int = 24
-):
+
+def delegate_to_agent(nx, user_id: str, agent_id: str, duration_hours: int = 24):
     """Delegate all user permissions to agent temporarily.
 
     Args:
@@ -400,7 +380,7 @@ def delegate_to_agent(
         subject=("user", user_id),
         relation="delegates-to",
         object=("agent", agent_id),
-        expires_at=expires_at
+        expires_at=expires_at,
     )
 
     print(f"✅ Delegated all {user_id} permissions to {agent_id}")
@@ -408,6 +388,7 @@ def delegate_to_agent(
     print(f"   Agent now inherits ALL user permissions automatically")
 
     return tuple_id
+
 
 # Usage
 setup_delegation_system(nx)  # One-time
@@ -466,16 +447,14 @@ nx.write(analysis_path, b"AI analysis results...")
 
 # Agent grants itself ownership
 nx.rebac_create(
-    subject=("agent", "claude_001"),
-    relation="direct_owner",
-    object=("file", analysis_path)
+    subject=("agent", "claude_001"), relation="direct_owner", object=("file", analysis_path)
 )
 
 # IMPORTANT: Agent grants Alice access to see the results!
 nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_viewer",  # Or direct_owner to let Alice own it
-    object=("file", analysis_path)
+    object=("file", analysis_path),
 )
 
 # Now Alice can read the analysis
@@ -499,14 +478,12 @@ nx.write(analysis_path, b"Analysis results...")
 nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_owner",  # Alice owns it, not agent
-    object=("file", analysis_path)
+    object=("file", analysis_path),
 )
 
 # Agent can also grant itself viewer access if it needs to read later
 nx.rebac_create(
-    subject=("agent", "claude_001"),
-    relation="direct_viewer",
-    object=("file", analysis_path)
+    subject=("agent", "claude_001"), relation="direct_viewer", object=("file", analysis_path)
 )
 ```
 

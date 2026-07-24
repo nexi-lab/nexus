@@ -428,62 +428,61 @@ def _clean_registry() -> Any:
 Then append these methods to `TestFactoryDepCheck` in the same file:
 
 ```python
-    def test_path_s3_missing_boto3_uses_s3_extra_hint(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import importlib.util
+def test_path_s3_missing_boto3_uses_s3_extra_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
 
-        real_find_spec = importlib.util.find_spec
+    real_find_spec = importlib.util.find_spec
 
-        def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "boto3":
-                return None
-            return real_find_spec(name, *args, **kwargs)
+    def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "boto3":
+            return None
+        return real_find_spec(name, *args, **kwargs)
 
-        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
-        monkeypatch.setattr(
-            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
-            lambda: True,
-        )
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(
+        "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+        lambda: True,
+    )
 
-        with pytest.raises(MissingDependencyError) as exc_info:
-            BackendFactory.create("path_s3", {"bucket": "example"})
+    with pytest.raises(MissingDependencyError) as exc_info:
+        BackendFactory.create("path_s3", {"bucket": "example"})
 
-        msg = str(exc_info.value)
-        assert "path_s3" in msg
-        assert "boto3" in msg
-        assert "pip install nexus-fs[s3]" in msg
+    msg = str(exc_info.value)
+    assert "path_s3" in msg
+    assert "boto3" in msg
+    assert "pip install nexus-fs[s3]" in msg
 
-    def test_slack_missing_sdk_and_token_manager_are_enumerated(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import importlib.util
 
-        real_find_spec = importlib.util.find_spec
+def test_slack_missing_sdk_and_token_manager_are_enumerated(
+    self, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.util
 
-        def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "slack_sdk":
-                return None
-            return real_find_spec(name, *args, **kwargs)
+    real_find_spec = importlib.util.find_spec
 
-        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
-        monkeypatch.setattr(
-            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
-            lambda: True,
-        )
-        monkeypatch.setattr(
-            "nexus.backends.base.runtime_deps._service_available",
-            lambda name: False if name == "token_manager" else True,
-        )
+    def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "slack_sdk":
+            return None
+        return real_find_spec(name, *args, **kwargs)
 
-        with pytest.raises(MissingDependencyError) as exc_info:
-            BackendFactory.create("slack_connector", {"token_manager_db": "tokens.db"})
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(
+        "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "nexus.backends.base.runtime_deps._service_available",
+        lambda name: False if name == "token_manager" else True,
+    )
 
-        msg = str(exc_info.value)
-        assert "slack_connector" in msg
-        assert "slack_sdk" in msg
-        assert "pip install nexus-fs[slack]" in msg
-        assert "service 'token_manager'" in msg
+    with pytest.raises(MissingDependencyError) as exc_info:
+        BackendFactory.create("slack_connector", {"token_manager_db": "tokens.db"})
+
+    msg = str(exc_info.value)
+    assert "slack_connector" in msg
+    assert "slack_sdk" in msg
+    assert "pip install nexus-fs[slack]" in msg
+    assert "service 'token_manager'" in msg
 ```
 
 - [ ] **Step 2: Run the real-connector dependency tests**

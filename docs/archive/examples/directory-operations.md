@@ -194,23 +194,11 @@ Master directory management with hierarchical permissions and automatic inherita
     nx.mkdir("/workspace/company/engineering/backend", parents=True)
 
     # Grant permissions at top level
-    nx.rebac_create(
-        "group", "all-employees",
-        "viewer",
-        "file", "/workspace/company"
-    )
+    nx.rebac_create("group", "all-employees", "viewer", "file", "/workspace/company")
 
-    nx.rebac_create(
-        "group", "engineers",
-        "editor",
-        "file", "/workspace/company/engineering"
-    )
+    nx.rebac_create("group", "engineers", "editor", "file", "/workspace/company/engineering")
 
-    nx.rebac_create(
-        "group", "backend-team",
-        "owner",
-        "file", "/workspace/company/engineering/backend"
-    )
+    nx.rebac_create("group", "backend-team", "owner", "file", "/workspace/company/engineering/backend")
     ```
 
 === "Verify Inheritance"
@@ -222,25 +210,19 @@ Master directory management with hierarchical permissions and automatic inherita
 
     # Employee (in all-employees group) can read anywhere
     employee_can_read = nx.rebac_check(
-        "user", "alice",
-        "read",
-        "file", "/workspace/company/engineering/backend/code.py"
+        "user", "alice", "read", "file", "/workspace/company/engineering/backend/code.py"
     )
     print(f"Employee can read: {employee_can_read}")  # True (inherited)
 
     # Engineer can write to engineering/*
     engineer_can_write = nx.rebac_check(
-        "user", "bob",
-        "write",
-        "file", "/workspace/company/engineering/doc.md"
+        "user", "bob", "write", "file", "/workspace/company/engineering/doc.md"
     )
     print(f"Engineer can write: {engineer_can_write}")  # True (inherited)
 
     # Backend team member is owner of backend/*
     backend_can_delete = nx.rebac_check(
-        "user", "charlie",
-        "delete",
-        "file", "/workspace/company/engineering/backend/old.py"
+        "user", "charlie", "delete", "file", "/workspace/company/engineering/backend/old.py"
     )
     print(f"Backend member can delete: {backend_can_delete}")  # True
     ```
@@ -269,9 +251,9 @@ Master directory management with hierarchical permissions and automatic inherita
     files = nx.list("/workspace/my-project", recursive=True)
     for file in files:
         # Show indented tree
-        depth = file.path.count('/') - 3
+        depth = file.path.count("/") - 3
         indent = "  " * depth
-        name = file.path.split('/')[-1]
+        name = file.path.split("/")[-1]
         print(f"{indent}{name}")
 
     # 4. Archive old project
@@ -301,11 +283,7 @@ Master directory management with hierarchical permissions and automatic inherita
         nx.mkdir(f"{workspace_path}/logs", parents=True)
 
         # Grant tenant admin full access
-        nx.rebac_create(
-            "user", f"admin@{tenant}.com",
-            "owner",
-            "file", workspace_path
-        )
+        nx.rebac_create("user", f"admin@{tenant}.com", "owner", "file", workspace_path)
 
         # Permissions automatically inherited to subdirectories!
 

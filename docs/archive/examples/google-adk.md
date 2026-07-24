@@ -146,7 +146,7 @@ Read file content from Nexus:
 ```python
 def read_file(path: str, preview_only: bool) -> str:
     """Read file content."""
-    content = nx.read(path).decode('utf-8')
+    content = nx.read(path).decode("utf-8")
     # Returns file content as string
 ```
 
@@ -163,7 +163,7 @@ Write reports and results:
 ```python
 def write_file(path: str, content: str) -> str:
     """Write content to file."""
-    nx.write(path, content.encode('utf-8'))
+    nx.write(path, content.encode("utf-8"))
     # Returns success message
 ```
 
@@ -187,37 +187,24 @@ agent = LlmAgent(
     name="file_agent",
     model="gemini-2.5-flash",
     instruction="You are a filesystem assistant",
-    tools=[grep_files, glob_files, read_file, write_file]
+    tools=[grep_files, glob_files, read_file, write_file],
 )
 
 # 2. Create session service
 session_service = InMemorySessionService()
 
 # 3. Create runner
-runner = Runner(
-    app_name="nexus-file-agent",
-    agent=agent,
-    session_service=session_service
-)
+runner = Runner(app_name="nexus-file-agent", agent=agent, session_service=session_service)
 
 # 4. Create session
 session = session_service.create_session_sync(
-    app_name="nexus-file-agent",
-    user_id="demo-user",
-    session_id="session-001"
+    app_name="nexus-file-agent", user_id="demo-user", session_id="session-001"
 )
 
 # 5. Run agent
-message = types.Content(
-    role="user",
-    parts=[types.Part(text="Analyze async patterns")]
-)
+message = types.Content(role="user", parts=[types.Part(text="Analyze async patterns")])
 
-for event in runner.run(
-    user_id="demo-user",
-    session_id="session-001",
-    new_message=message
-):
+for event in runner.run(user_id="demo-user", session_id="session-001", new_message=message):
     # Process events...
     pass
 ```
@@ -311,8 +298,7 @@ aiplatform.init(project="YOUR_PROJECT", location="us-central1")
 
 # Upload agent
 agent = aiplatform.Agent.upload(
-    display_name="nexus-file-agent",
-    agent_source="gs://bucket/agent.py"
+    display_name="nexus-file-agent", agent_source="gs://bucket/agent.py"
 )
 
 # Deploy endpoint
@@ -345,10 +331,12 @@ session_service = InMemorySessionService()
 
 # Database sessions (production)
 from google.adk.sessions import DatabaseSessionService
+
 session_service = DatabaseSessionService(connection_string="...")
 
 # Vertex AI sessions (cloud)
 from google.adk.sessions import VertexAiSessionService
+
 session_service = VertexAiSessionService(project_id="...")
 ```
 
@@ -386,6 +374,7 @@ The demo creates test data automatically. If running with your own data:
 
 ```python
 import nexus
+
 nx = nexus.connect()
 
 # Add your files to Nexus

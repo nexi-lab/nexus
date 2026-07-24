@@ -26,6 +26,7 @@ All connectors use `Backend.resolve_database_url()`:
 def resolve_database_url(db_param: str) -> str:
     """Resolve database URL with TOKEN_MANAGER_DB priority."""
     import os
+
     return os.getenv("TOKEN_MANAGER_DB") or db_param
 ```
 
@@ -45,20 +46,11 @@ from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
 DB_PATH = os.getenv("TOKEN_MANAGER_DB", "~/.nexus/nexus.db")
 
 # All connectors share the same database
-gmail = GmailConnectorBackend(
-    token_manager_db=DB_PATH,
-    user_email="user@example.com"
-)
+gmail = GmailConnectorBackend(token_manager_db=DB_PATH, user_email="user@example.com")
 
-slack = SlackConnectorBackend(
-    token_manager_db=DB_PATH,
-    user_email="user@example.com"
-)
+slack = SlackConnectorBackend(token_manager_db=DB_PATH, user_email="user@example.com")
 
-gdrive = GoogleDriveConnectorBackend(
-    token_manager_db=DB_PATH,
-    user_email="user@example.com"
-)
+gdrive = GoogleDriveConnectorBackend(token_manager_db=DB_PATH, user_email="user@example.com")
 
 # All OAuth tokens stored in the same database!
 ```
@@ -189,6 +181,7 @@ CREATE TABLE encryption_keys (
 **Solution:** Use WAL mode
 ```python
 import sqlite3
+
 conn = sqlite3.connect("~/.nexus/nexus.db")
 conn.execute("PRAGMA journal_mode=WAL")
 ```
@@ -229,7 +222,7 @@ slack_tm = TokenManager(db_path="~/.nexus/slack.db")
 shared_tm = TokenManager(db_path="~/.nexus/nexus.db")
 
 # Export and import tokens
-for provider in ['gmail', 'slack']:
+for provider in ["gmail", "slack"]:
     tokens = old_tm.list_tokens(provider=provider)
     for token in tokens:
         shared_tm.store_token(token)

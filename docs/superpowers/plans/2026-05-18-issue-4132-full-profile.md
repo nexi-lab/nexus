@@ -579,11 +579,13 @@ def test_full_stack_boots_and_serves(full_stack):
 def test_remote_sdk_connect(full_stack):
     from nexus.sdk import connect
 
-    nx = connect(config={
-        "profile": "remote",
-        "url": full_stack.url,
-        "api_key": full_stack.api_key,
-    })
+    nx = connect(
+        config={
+            "profile": "remote",
+            "url": full_stack.url,
+            "api_key": full_stack.api_key,
+        }
+    )
     assert nx is not None
     # gRPC-backed op proves the remote path, not just HTTP reachability.
     nx.ls("/")
@@ -595,11 +597,13 @@ def test_remote_sdk_without_grpc_fails_clearly(full_stack, monkeypatch):
 
     monkeypatch.setenv("NEXUS_GRPC_PORT", "1")  # unreachable
     with pytest.raises(Exception):
-        connect(config={
-            "profile": "remote",
-            "url": full_stack.url,
-            "api_key": full_stack.api_key,
-        }).ls("/")
+        connect(
+            config={
+                "profile": "remote",
+                "url": full_stack.url,
+                "api_key": full_stack.api_key,
+            }
+        ).ls("/")
 ```
 
 - [ ] **Step 2: Add the `full_stack` fixture (profile-agnostic, sibling-reusable)**

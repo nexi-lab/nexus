@@ -141,8 +141,9 @@ nx.mount("/workspace/db", PostgreSQLBackend(db="documents"))
 nx.workflows.create(
     name="pdf-processor",
     trigger="write:/workspace/uploads/*.pdf",
-    action=lambda event: process_pdf(event.path)
+    action=lambda event: process_pdf(event.path),
 )
+
 
 def process_pdf(pdf_path: str):
     # Extract text from PDF
@@ -178,10 +179,7 @@ nx.rebac.grant("agent-a1", "owner", "file", "/workspace/tenant-a/*")
 
 # Tenant A: Isolated memory
 nx.memory.store(
-    identity="agent-a1",
-    key="preferences",
-    value={"model": "gpt-4"},
-    namespace="tenant:tenant-a"
+    identity="agent-a1", key="preferences", value={"model": "gpt-4"}, namespace="tenant:tenant-a"
 )
 
 # Tenant B: Completely isolated (same pattern)
@@ -215,7 +213,7 @@ nx.learning.record_feedback(
     agent_id="agent-code-reviewer",
     task_id="review-123",
     feedback_type="thumbs_down",
-    correction="Missed null pointer check on line 45"
+    correction="Missed null pointer check on line 45",
 )
 
 # Agent retrieves feedback for next review
@@ -297,12 +295,12 @@ nx.rebac.grant("agent1", "member", "team", "team:backend")
 ```python
 # Workflows: Trigger on file write (real-time)
 nx.workflows.create(
-    trigger="write:/workspace/uploads/*.csv",
-    action=lambda event: process_csv(event.path)
+    trigger="write:/workspace/uploads/*.csv", action=lambda event: process_csv(event.path)
 )
 
 # Polling: Check every 5 minutes (delayed)
 import time
+
 while True:
     files = nx.ls("/workspace/uploads", pattern="*.csv")
     for file in files:
@@ -327,10 +325,7 @@ while True:
 **Example**:
 ```python
 # Semantic Search: Find by meaning
-results = nx.semantic_search(
-    "/workspace/docs",
-    query="How do I authenticate users?"
-)
+results = nx.semantic_search("/workspace/docs", query="How do I authenticate users?")
 # Returns: ["auth-guide.md", "oauth-setup.md", "jwt-tutorial.md"]
 
 # Grep: Find by pattern
@@ -628,10 +623,7 @@ while True:
     time.sleep(300)
 
 # After (event-driven)
-nx.workflows.create(
-    trigger="write:/workspace/uploads/*",
-    action=lambda event: process(event.path)
-)
+nx.workflows.create(trigger="write:/workspace/uploads/*", action=lambda event: process(event.path))
 ```
 
 ---

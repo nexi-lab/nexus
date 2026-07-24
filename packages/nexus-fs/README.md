@@ -29,11 +29,13 @@ pip install nexus-fs[all]       # everything
 import asyncio
 import nexus.fs
 
+
 async def main():
     fs = await nexus.fs.mount("s3://my-bucket", "local://./data")
     await fs.write("/local/data/hello.txt", b"Hello!")
     content = await fs.read("/local/data/hello.txt")
     print(content)
+
 
 asyncio.run(main())
 ```

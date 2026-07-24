@@ -117,13 +117,14 @@ Append to `tests/unit/scripts/test_permissions_demo_enhanced.py`:
 def test_owner_role_requires_read_write_and_execute() -> None:
     text = SCRIPT.read_text()
     owner_block = text[
-        text.index('print_subsection "1.1 Understanding Permission Roles"') :
-        text.index('print_test "Verify bob (editor)')
+        text.index('print_subsection "1.1 Understanding Permission Roles"') : text.index(
+            'print_test "Verify bob (editor)'
+        )
     ]
 
     assert "OWNER:  read ✓  write ✓  execute ✓" in owner_block
     assert "owners need editor/viewer role for read" not in owner_block
-    assert 'ALICE_READ=$(nexus rebac check user alice read file' in owner_block
+    assert "ALICE_READ=$(nexus rebac check user alice read file" in owner_block
     assert (
         'if echo "$ALICE_READ" | grep -q "GRANTED" '
         '&& echo "$ALICE_WRITE" | grep -q "GRANTED" '
@@ -199,17 +200,16 @@ Append to `tests/unit/scripts/test_permissions_demo_enhanced.py`:
 def test_group_explanation_targets_and_requires_the_granted_parent() -> None:
     text = SCRIPT.read_text()
     explain_block = text[
-        text.index('log_step "rebac check user bob write file $DEMO_BASE') :
-        text.index('print_subsection "2.4 PROVE group composition')
+        text.index('log_step "rebac check user bob write file $DEMO_BASE') : text.index(
+            'print_subsection "2.4 PROVE group composition'
+        )
     ]
 
     assert (
-        'EXPLAIN_OUT=$(nexus rebac explain user bob write file $DEMO_BASE 2>&1) '
-        '&& EXPLAIN_RC=0 || EXPLAIN_RC=$?'
+        "EXPLAIN_OUT=$(nexus rebac explain user bob write file $DEMO_BASE 2>&1) "
+        "&& EXPLAIN_RC=0 || EXPLAIN_RC=$?"
     ) in explain_block
-    assert (
-        '[ "$EXPLAIN_RC" -eq 0 ] && echo "$EXPLAIN_OUT" | grep -q "GRANTED"'
-    ) in explain_block
+    assert ('[ "$EXPLAIN_RC" -eq 0 ] && echo "$EXPLAIN_OUT" | grep -q "GRANTED"') in explain_block
     assert "Group explanation failed" in explain_block
     assert "$DEMO_BASE/team-file.txt" not in explain_block
 ```

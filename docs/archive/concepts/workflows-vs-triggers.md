@@ -250,7 +250,7 @@ Extract text from documents:
 {
     "text": "Extracted document text...",
     "pages": 5,
-    "metadata": {"author": "Alice", "title": "Report"}
+    "metadata": {"author": "Alice", "title": "Report"},
 }
 ```
 
@@ -321,11 +321,7 @@ Use AI to process content:
 
 **Outputs:**
 ```python
-{
-    "invoice_number": "INV-2025-001",
-    "date": "2025-01-15",
-    "total_amount": 1500.00
-}
+{"invoice_number": "INV-2025-001", "date": "2025-01-15", "total_amount": 1500.00}
 ```
 
 ---
@@ -598,6 +594,7 @@ nexus workflows discover /path/to/workflows/ --load
 import asyncio
 from nexus.workflows import WorkflowAPI
 
+
 async def main():
     workflows = WorkflowAPI()
 
@@ -609,13 +606,11 @@ async def main():
         print(f"{wf['name']}: {wf['status']}")
 
     # Execute manually
-    result = await workflows.execute(
-        "invoice-processor",
-        file_path="/inbox/invoices/test.pdf"
-    )
+    result = await workflows.execute("invoice-processor", file_path="/inbox/invoices/test.pdf")
 
     print(f"Status: {result.status}")
     print(f"Actions completed: {result.actions_completed}/{result.actions_total}")
+
 
 asyncio.run(main())
 ```
@@ -628,16 +623,8 @@ asyncio.run(main())
 workflow_def = {
     "name": "my-workflow",
     "version": "1.0",
-    "triggers": [
-        {"type": "file_write", "pattern": "*.pdf"}
-    ],
-    "actions": [
-        {
-            "name": "tag",
-            "type": "tag",
-            "tags": ["processed"]
-        }
-    ]
+    "triggers": [{"type": "file_write", "pattern": "*.pdf"}],
+    "actions": [{"name": "tag", "type": "tag", "tags": ["processed"]}],
 }
 
 workflows.load(workflow_def, enabled=True)
@@ -653,11 +640,7 @@ from nexus.workflows import TriggerType
 # Fire event manually
 triggered = await workflows.fire_event(
     TriggerType.FILE_WRITE,
-    {
-        "file_path": "/uploads/doc.pdf",
-        "size": 1024,
-        "timestamp": datetime.now()
-    }
+    {"file_path": "/uploads/doc.pdf", "size": 1024, "timestamp": datetime.now()},
 )
 
 print(f"Triggered {triggered} workflows")
@@ -697,11 +680,13 @@ from nexus import NexusFS
 nx = NexusFS(enable_workflows=True)
 
 # Load workflow
-nx.workflows.load({
-    "name": "auto-tagger",
-    "triggers": [{"type": "file_write", "pattern": "*.pdf"}],
-    "actions": [{"name": "tag", "type": "tag", "tags": ["pdf"]}]
-})
+nx.workflows.load(
+    {
+        "name": "auto-tagger",
+        "triggers": [{"type": "file_write", "pattern": "*.pdf"}],
+        "actions": [{"name": "tag", "type": "tag", "tags": ["pdf"]}],
+    }
+)
 
 # Write file → workflow fires automatically!
 nx.write("/uploads/report.pdf", pdf_data)
@@ -1042,6 +1027,7 @@ nexus workflows load my-workflow.yaml --enabled  # Hope it works!
 2. Does pattern match?
    ```python
    import fnmatch
+
    fnmatch.fnmatch("/uploads/doc.pdf", "*.pdf")  # True
    ```
 

@@ -353,7 +353,8 @@ Enable debug logging for boto3:
 
 ```python
 import logging
-logging.getLogger('botocore').setLevel(logging.DEBUG)
+
+logging.getLogger("botocore").setLevel(logging.DEBUG)
 ```
 
 ### Verify Credentials
@@ -376,17 +377,17 @@ backend = S3ConnectorBackend(
     bucket_name="my-bucket",
     region_name="us-east-1",
     prefix="nexus-data",
-    access_key_id=None,         # Optional: explicit credentials
-    secret_access_key=None,     # Optional: explicit credentials
-    session_token=None,         # Optional: for temporary credentials
-    credentials_path=None,      # Optional: path to credentials file
+    access_key_id=None,  # Optional: explicit credentials
+    secret_access_key=None,  # Optional: explicit credentials
+    session_token=None,  # Optional: for temporary credentials
+    credentials_path=None,  # Optional: path to credentials file
 )
 
 # Properties
-backend.name                    # "s3_connector"
-backend.bucket_name             # "my-bucket"
-backend.prefix                  # "nexus-data"
-backend.versioning_enabled      # True/False
+backend.name  # "s3_connector"
+backend.bucket_name  # "my-bucket"
+backend.prefix  # "nexus-data"
+backend.versioning_enabled  # True/False
 ```
 
 ### Operations
@@ -452,11 +453,7 @@ nx = connect()
 mount_id = nx.add_mount(
     mount_point="/workspace/s3",
     backend_type="s3_connector",
-    backend_config={
-        "bucket": "my-bucket",
-        "region_name": "us-east-1",
-        "prefix": "agent-workspace"
-    },
+    backend_config={"bucket": "my-bucket", "region_name": "us-east-1", "prefix": "agent-workspace"},
     priority=10,
 )
 

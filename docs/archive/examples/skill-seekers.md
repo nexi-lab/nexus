@@ -99,9 +99,12 @@ import asyncio
 import nexus
 from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
+
 async def main():
     # Connect to Nexus
-    nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "your-key"})
+    nx = nexus.connect(
+        config={"mode": "remote", "url": "http://localhost:2026", "api_key": "your-key"}
+    )
 
     # Initialize plugin
     plugin = SkillSeekersPlugin(nx)
@@ -111,11 +114,12 @@ async def main():
         url="https://docs.python.org/3/library/json.html",
         name="json-module",
         tier="agent",
-        use_ai=True  # Enable AI enhancement
+        use_ai=True,  # Enable AI enhancement
     )
 
     print(f"✓ Skill created: {skill_path}")
     # /workspace/.nexus/skills/json-module/SKILL.md
+
 
 asyncio.run(main())
 ```
@@ -258,8 +262,7 @@ await plugin.generate_skill(
 
 # Or specify custom name
 await plugin.generate_skill(
-    url="https://docs.python.org/3/library/json.html",
-    name="python-json-complete-guide"
+    url="https://docs.python.org/3/library/json.html", name="python-json-complete-guide"
 )
 ```
 
@@ -269,7 +272,7 @@ await plugin.generate_skill(
 # Agent tier - personal skills
 await plugin.generate_skill(
     url="...",
-    tier="agent"  # /workspace/.nexus/skills/
+    tier="agent",  # /workspace/.nexus/skills/
 )
 
 # Tenant tier - team skills (requires approval)
@@ -277,13 +280,13 @@ await plugin.generate_skill(
     url="...",
     tier="tenant",  # /shared/skills/
     creator_id="alice",
-    zone_id="acme-corp"
+    zone_id="acme-corp",
 )
 
 # System tier - global skills (admin only)
 await plugin.generate_skill(
     url="...",
-    tier="system"  # /system/skills/
+    tier="system",  # /system/skills/
 )
 ```
 
@@ -328,7 +331,7 @@ await plugin.generate_skill(
     name="api-users-v2",
     tier="tenant",
     creator_id="engineering",
-    zone_id="company"
+    zone_id="company",
 )
 
 # Claude can now understand your API
@@ -365,12 +368,7 @@ docs = {
 }
 
 for name, url in docs.items():
-    await plugin.generate_skill(
-        url=url,
-        name=f"kb-{name}",
-        tier="tenant",
-        zone_id="engineering"
-    )
+    await plugin.generate_skill(url=url, name=f"kb-{name}", tier="tenant", zone_id="engineering")
 ```
 
 ## 📚 Skills CLI Reference

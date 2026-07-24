@@ -45,11 +45,7 @@ This document catalogs all deprecated features in Nexus, explains why they were 
 nx.chmod(path="/file.txt", mode=0o644)
 
 # ✅ REPLACEMENT: Use ReBAC
-nx.rebac_create(
-    subject=("user", "alice"),
-    relation="owner",
-    object=("file", "/file.txt")
-)
+nx.rebac_create(subject=("user", "alice"), relation="owner", object=("file", "/file.txt"))
 ```
 
 ```python
@@ -57,11 +53,7 @@ nx.rebac_create(
 nx.chown(path="/file.txt", owner="alice")
 
 # ✅ REPLACEMENT: Use ReBAC
-nx.rebac_create(
-    subject=("user", "alice"),
-    relation="owner",
-    object=("file", "/file.txt")
-)
+nx.rebac_create(subject=("user", "alice"), relation="owner", object=("file", "/file.txt"))
 ```
 
 ```python
@@ -69,11 +61,7 @@ nx.rebac_create(
 nx.chgrp(path="/file.txt", group="developers")
 
 # ✅ REPLACEMENT: Use ReBAC
-nx.rebac_create(
-    subject=("group", "developers"),
-    relation="can-write",
-    object=("file", "/file.txt")
-)
+nx.rebac_create(subject=("group", "developers"), relation="can-write", object=("file", "/file.txt"))
 ```
 
 **Why Deprecated:**
@@ -101,16 +89,8 @@ See [docs/migration/unix-to-rebac.md](docs/migration/unix-to-rebac.md) for detai
 nx.grant_user(path="/file.txt", user="alice", permissions="rwx")
 
 # ✅ REPLACEMENT: Use ReBAC relations
-nx.rebac_create(
-    subject=("user", "alice"),
-    relation="can-read",
-    object=("file", "/file.txt")
-)
-nx.rebac_create(
-    subject=("user", "alice"),
-    relation="can-write",
-    object=("file", "/file.txt")
-)
+nx.rebac_create(subject=("user", "alice"), relation="can-read", object=("file", "/file.txt"))
+nx.rebac_create(subject=("user", "alice"), relation="can-write", object=("file", "/file.txt"))
 ```
 
 ```python
@@ -118,11 +98,7 @@ nx.rebac_create(
 nx.grant_group(path="/file.txt", group="team", permissions="r--")
 
 # ✅ REPLACEMENT: Use ReBAC with groups
-nx.rebac_create(
-    subject=("group", "team"),
-    relation="can-read",
-    object=("file", "/file.txt")
-)
+nx.rebac_create(subject=("group", "team"), relation="can-read", object=("file", "/file.txt"))
 ```
 
 ```python
@@ -138,11 +114,7 @@ nx.deny(path="/file.txt", user="bob")
 nx.revoke(path="/file.txt", user="alice")
 
 # ✅ REPLACEMENT: Use rebac_delete()
-nx.rebac_delete(
-    subject=("user", "alice"),
-    relation="owner",
-    object=("file", "/file.txt")
-)
+nx.rebac_delete(subject=("user", "alice"), relation="owner", object=("file", "/file.txt"))
 ```
 
 ```python
@@ -177,13 +149,13 @@ from nexus.rebac.enforcer import PermissionEnforcer
 
 enforcer = PermissionEnforcer(
     metadata_store=metadata,
-    acl_store=acl_store  # ⚠️  Deprecated parameter
+    acl_store=acl_store,  # ⚠️  Deprecated parameter
 )
 
 # ✅ REPLACEMENT:
 enforcer = PermissionEnforcer(
     metadata_store=metadata,
-    rebac_manager=rebac_manager  # Use ReBAC manager instead
+    rebac_manager=rebac_manager,  # Use ReBAC manager instead
 )
 ```
 
@@ -219,10 +191,10 @@ from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 manager = EnhancedReBACManager(
     engine,
-    enable_graph_limits=True,      # P0-5: DoS protection
-    enable_leopard=True,            # Leopard: O(1) group lookups
-    enable_tiger_cache=True,        # Tiger: Advanced caching
-    enforce_tenant_isolation=True  # P0-2: Tenant security
+    enable_graph_limits=True,  # P0-5: DoS protection
+    enable_leopard=True,  # Leopard: O(1) group lookups
+    enable_tiger_cache=True,  # Tiger: Advanced caching
+    enforce_tenant_isolation=True,  # P0-2: Tenant security
 )
 
 # Then use consistency levels for cache control (P0-1)
@@ -231,7 +203,7 @@ result = manager.rebac_check(
     permission="read",
     object=("file", "/doc.txt"),
     zone_id="org_123",
-    consistency=ConsistencyLevel.STRONG  # Bypass cache for critical checks
+    consistency=ConsistencyLevel.STRONG,  # Bypass cache for critical checks
 )
 ```
 
@@ -298,7 +270,7 @@ See REBAC_CONSOLIDATION_ANALYSIS.md for migration guide.
 nx = NexusFS(
     backend=backend,
     zone_id="tenant-123",  # ⚠️  Instance-level zone_id
-    agent_id="agent-456"      # ⚠️  Instance-level agent_id
+    agent_id="agent-456",  # ⚠️  Instance-level agent_id
 )
 
 # This is UNSAFE if NexusFS instance is shared across multiple users!
@@ -310,11 +282,7 @@ nx = NexusFS(backend=backend)  # No instance-level identity
 nx.write(
     path="/file.txt",
     content=b"data",
-    context=OperationContext(
-        zone_id="tenant-123",
-        agent_id="agent-456",
-        user_id="user-789"
-    )
+    context=OperationContext(zone_id="tenant-123", agent_id="agent-456", user_id="user-789"),
 )
 ```
 
@@ -352,8 +320,8 @@ Using instance-level zone_id/agent_id in server mode creates SECURITY RISKS!
 ```python
 # ❌ DEPRECATED:
 tenant = nx.zone_id  # Instance property
-agent = nx.agent_id    # Instance property
-user = nx.user_id      # Instance property
+agent = nx.agent_id  # Instance property
+user = nx.user_id  # Instance property
 
 # ✅ REPLACEMENT:
 # Access from context parameter in each operation
@@ -376,7 +344,7 @@ nx.write(path="/file.txt", content=b"data", context=context)
 # ❌ DEPRECATED:
 cache = TigerReBACCache(
     db_session=session,
-    zone_id="tenant-123"  # ⚠️  Ignored parameter (kept for API compat)
+    zone_id="tenant-123",  # ⚠️  Ignored parameter (kept for API compat)
 )
 
 # ✅ REPLACEMENT:
@@ -413,7 +381,9 @@ nx.delete_workspace_file(agent_id="agent-123", file_path="file.txt")
 
 # ✅ REPLACEMENT:
 nx.list_workspace_files(workspace_path="/workspaces/agent-123")
-nx.save_workspace_file(workspace_path="/workspaces/agent-123", file_path="file.txt", content=b"data")
+nx.save_workspace_file(
+    workspace_path="/workspaces/agent-123", file_path="file.txt", content=b"data"
+)
 nx.load_workspace_file(workspace_path="/workspaces/agent-123", file_path="file.txt")
 nx.delete_workspace_file(workspace_path="/workspaces/agent-123", file_path="file.txt")
 ```
@@ -444,13 +414,7 @@ Conversion: workspace_path = f"/workspaces/{agent_id}"
 
 ```python
 # ❌ DEPRECATED:
-nx = NexusFS(
-    backend=backend,
-    custom_parsers={
-        "pdf": MyPDFParser,
-        "docx": MyDocxParser
-    }
-)
+nx = NexusFS(backend=backend, custom_parsers={"pdf": MyPDFParser, "docx": MyDocxParser})
 
 # ✅ REPLACEMENT:
 nx = NexusFS(
@@ -458,8 +422,8 @@ nx = NexusFS(
     parse_providers=[
         {"name": "unstructured", "priority": 1, "api_key": "..."},
         {"name": "llamaparse", "priority": 2, "api_key": "..."},
-        {"name": "markitdown", "priority": 3}  # Local fallback
-    ]
+        {"name": "markitdown", "priority": 3},  # Local fallback
+    ],
 )
 ```
 
@@ -541,16 +505,12 @@ results = nx.search(query="README", filters={"path_prefix": "/docs/"})
 
 ```python
 # ❌ DEPRECATED:
-results = nx.hybrid_search(
-    query="neural networks",
-    keyword_weight=0.3,
-    semantic_weight=0.7
-)
+results = nx.hybrid_search(query="neural networks", keyword_weight=0.3, semantic_weight=0.7)
 
 # ✅ REPLACEMENT:
 results = nx.hybrid_search(
     query="neural networks",
-    alpha=0.7  # 0 = pure keyword, 1 = pure semantic
+    alpha=0.7,  # 0 = pure keyword, 1 = pure semantic
 )
 ```
 
@@ -578,18 +538,10 @@ Use alpha instead: alpha=0 (pure keyword) to alpha=1 (pure semantic).
 
 ```python
 # ❌ DEPRECATED:
-nx.rebac_check(
-    context={"user_id": "alice"},
-    relation="owner",
-    object=("file", "/file.txt")
-)
+nx.rebac_check(context={"user_id": "alice"}, relation="owner", object=("file", "/file.txt"))
 
 # ✅ REPLACEMENT:
-nx.rebac_check(
-    subject=("user", "alice"),
-    relation="owner",
-    object=("file", "/file.txt")
-)
+nx.rebac_check(subject=("user", "alice"), relation="owner", object=("file", "/file.txt"))
 ```
 
 **Why Deprecated:**
@@ -616,13 +568,13 @@ nx.rebac_check(
 # ❌ DEPRECATED (BROKEN):
 rebac_manager = EnhancedReBACManager(
     db_session=session,
-    l1_cache_quantization_interval=100  # ⚠️  Was broken, now ignored
+    l1_cache_quantization_interval=100,  # ⚠️  Was broken, now ignored
 )
 
 # ✅ REPLACEMENT:
 rebac_manager = EnhancedReBACManager(
     db_session=session,
-    l1_cache_revision_window=100  # Correctly implemented
+    l1_cache_revision_window=100,  # Correctly implemented
 )
 ```
 
@@ -714,7 +666,7 @@ Use sync_content_to_cache() instead.
 # ❌ OLD: Binary content in PostgreSQL
 ContentCache(
     path_id="...",
-    content_binary=b"large binary data..."  # ⚠️  Deprecated, bloats DB
+    content_binary=b"large binary data...",  # ⚠️  Deprecated, bloats DB
 )
 
 # ✅ NEW: Binary content on disk
@@ -753,13 +705,13 @@ ContentCache(
 # ❌ DEPRECATED:
 s3_backend = S3Backend(
     bucket="my-bucket",
-    db_session=session  # ⚠️  Single session, not thread-safe
+    db_session=session,  # ⚠️  Single session, not thread-safe
 )
 
 # ✅ REPLACEMENT:
 s3_backend = S3Backend(
     bucket="my-bucket",
-    session_factory=lambda: Session(bind=engine)  # Factory pattern
+    session_factory=lambda: Session(bind=engine),  # Factory pattern
 )
 ```
 
@@ -847,6 +799,7 @@ Use database authentication for production deployments.
 ```python
 # ❌ DEPRECATED:
 from googleapiclient.http import BatchHttpRequest
+
 batch = BatchHttpRequest()
 
 # ✅ REPLACEMENT:
@@ -873,17 +826,12 @@ batch = service.new_batch_http_request()
 nx.memory_create(
     path="/note.txt",
     content="My note",
-    _metadata={"tags": ["important"]}  # Unstructured metadata
+    _metadata={"tags": ["important"]},  # Unstructured metadata
 )
 
 # ✅ REPLACEMENT:
 nx.memory_create(
-    path="/note.txt",
-    content={
-        "text": "My note",
-        "tags": ["important"],
-        "priority": "high"
-    }
+    path="/note.txt", content={"text": "My note", "tags": ["important"], "priority": "high"}
 )
 ```
 
@@ -1009,9 +957,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Suppress specific warning (better)
 warnings.filterwarnings(
-    "ignore",
-    message="zone_id and agent_id parameters.*are DEPRECATED",
-    category=DeprecationWarning
+    "ignore", message="zone_id and agent_id parameters.*are DEPRECATED", category=DeprecationWarning
 )
 ```
 

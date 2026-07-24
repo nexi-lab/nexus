@@ -160,10 +160,7 @@ export DOCKER_CLEANUP_INTERVAL=60             # Cleanup interval (seconds)
 from nexus import NexusFilesystem, LocalBackend
 
 # Basic usage
-nx = NexusFilesystem(
-    backend=LocalBackend(),
-    sandbox_provider="docker"
-)
+nx = NexusFilesystem(backend=LocalBackend(), sandbox_provider="docker")
 
 # Custom configuration
 nx = NexusFilesystem(
@@ -173,29 +170,19 @@ nx = NexusFilesystem(
         "docker_image": "nexus-runtime:latest",
         "memory_limit": "1g",
         "cpu_limit": 2.0,
-        "cleanup_interval": 120
-    }
+        "cleanup_interval": 120,
+    },
 )
 
 # Create sandbox
-sandbox = nx.sandbox_create(
-    name="dev-env",
-    ttl_minutes=30,
-    template_id="python:3.11-slim"
-)
+sandbox = nx.sandbox_create(name="dev-env", ttl_minutes=30, template_id="python:3.11-slim")
 
 # Run code
-result = nx.sandbox_run(
-    sandbox["sandbox_id"],
-    language="python",
-    code='print("Hello!")'
-)
+result = nx.sandbox_run(sandbox["sandbox_id"], language="python", code='print("Hello!")')
 
 # Mount filesystem
 mount = nx.sandbox_connect(
-    sandbox["sandbox_id"],
-    nexus_url="http://localhost:2026",
-    nexus_api_key="sk-your-key"
+    sandbox["sandbox_id"], nexus_url="http://localhost:2026", nexus_api_key="sk-your-key"
 )
 ```
 
@@ -287,8 +274,8 @@ sudo NEXUS_API_KEY=sk-xxx \
 ```python
 # Configure limits
 provider = DockerSandboxProvider(
-    memory_limit="512m",      # Max memory
-    cpu_limit=1.0,           # Max 1 CPU core
+    memory_limit="512m",  # Max memory
+    cpu_limit=1.0,  # Max 1 CPU core
 )
 ```
 
@@ -350,20 +337,13 @@ docker ps -a --filter "label=org.nexus.sandbox=true" -q | xargs docker rm -f
 ```python
 from nexus import NexusFilesystem, LocalBackend
 
-nx = NexusFilesystem(
-    backend=LocalBackend(),
-    sandbox_provider="docker"
-)
+nx = NexusFilesystem(backend=LocalBackend(), sandbox_provider="docker")
 
 # Create sandbox
 sb = nx.sandbox_create("test")
 
 # Run Python
-result = nx.sandbox_run(
-    sb["sandbox_id"],
-    "python",
-    "import sys; print(sys.version)"
-)
+result = nx.sandbox_run(sb["sandbox_id"], "python", "import sys; print(sys.version)")
 print(result["stdout"])
 
 # Cleanup
@@ -378,11 +358,7 @@ nx.write("/data/input.csv", "name,age\nAlice,30\nBob,25")
 
 # Create sandbox and mount
 sb = nx.sandbox_create("data-processor")
-nx.sandbox_connect(
-    sb["sandbox_id"],
-    nexus_url="http://localhost:2026",
-    nexus_api_key=api_key
-)
+nx.sandbox_connect(sb["sandbox_id"], nexus_url="http://localhost:2026", nexus_api_key=api_key)
 
 # Process file
 code = """

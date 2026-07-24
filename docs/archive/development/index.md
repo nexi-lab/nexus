@@ -127,6 +127,7 @@ pytest --cov=src/nexus --cov-report=html
 import pytest
 from nexus import connect
 
+
 def test_write_and_read():
     """Test basic write and read operations."""
     with connect(config={"data_dir": ":memory:"}) as nx:
@@ -136,6 +137,7 @@ def test_write_and_read():
         # Read
         content = nx.read("/test.txt")
         assert content == b"hello"
+
 
 def test_permission_denied(nx_with_auth):
     """Test permission enforcement."""
@@ -186,6 +188,7 @@ pre-commit run --all-files
 # my_plugin/plugin.py
 from nexus.plugins import NexusPlugin
 
+
 class MyPlugin(NexusPlugin):
     """Custom Nexus plugin."""
 
@@ -211,10 +214,7 @@ class MyPlugin(NexusPlugin):
 from nexus import connect
 from my_plugin import MyPlugin
 
-nx = connect(
-    config={"data_dir": "./data"},
-    plugins=[MyPlugin()]
-)
+nx = connect(config={"data_dir": "./data"}, plugins=[MyPlugin()])
 ```
 
 ---
@@ -246,7 +246,7 @@ profiler.disable()
 
 # Print stats
 stats = pstats.Stats(profiler)
-stats.sort_stats('cumulative')
+stats.sort_stats("cumulative")
 stats.print_stats(20)
 ```
 
@@ -260,8 +260,7 @@ stats.print_stats(20)
 import logging
 
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 # Now all Nexus operations will be logged
@@ -284,7 +283,8 @@ nx = connect(config={"data_dir": "./data"})
     ```python
     # Enable query logging
     import logging
-    logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
     ```
 
 === "Connection Issues"

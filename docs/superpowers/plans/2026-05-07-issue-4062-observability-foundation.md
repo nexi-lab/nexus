@@ -80,13 +80,9 @@ def test_cache_gauges_and_future_counters_update() -> None:
     io_metrics.set_cache_bytes_in_use("sqlite", 1234)
     assert _sample("nexus_cache_bytes_in_use", tier="sqlite") == 1234
 
-    before_evictions = _sample(
-        "nexus_cache_evictions_total", tier="sqlite", reason="capacity"
-    )
+    before_evictions = _sample("nexus_cache_evictions_total", tier="sqlite", reason="capacity")
     io_metrics.record_cache_eviction("sqlite", "capacity")
-    after_evictions = _sample(
-        "nexus_cache_evictions_total", tier="sqlite", reason="capacity"
-    )
+    after_evictions = _sample("nexus_cache_evictions_total", tier="sqlite", reason="capacity")
     assert after_evictions == before_evictions + 1
 
     before_rejected = _sample("nexus_cache_admission_rejected_total")
@@ -251,7 +247,18 @@ _CACHE_EVICTION_REASONS = frozenset({"capacity", "ttl", "manual", "other"})
 _ETAG_RESULTS = frozenset({"304", "updated", "error", "fallback", "unexpected_304", "other"})
 _PREFETCH_PATTERNS = frozenset({"sequential", "stride", "random", "majority_trend", "other"})
 _READ_TIERS = frozenset(
-    {"backend", "virtual", "error", "batch", "cache", "sqlite", "dram", "nvme", "passthrough", "other"}
+    {
+        "backend",
+        "virtual",
+        "error",
+        "batch",
+        "cache",
+        "sqlite",
+        "dram",
+        "nvme",
+        "passthrough",
+        "other",
+    }
 )
 _WRITE_FLUSH_TRIGGERS = frozenset({"time", "bytes", "close", "sync", "snapshot", "other"})
 _SCOPES = frozenset({"default", "root", "local", "server", "fuse", "other"})
@@ -589,7 +596,9 @@ class _Harness(ContentMixin):
     def _parse_context(self, context: object | None) -> object | None:
         return context
 
-    def resolve_read(self, path: str, *, context: object | None = None) -> tuple[bool, bytes | None]:
+    def resolve_read(
+        self, path: str, *, context: object | None = None
+    ) -> tuple[bool, bytes | None]:
         return (False, None)
 
     def resolve_write(
@@ -614,7 +623,9 @@ class _Harness(ContentMixin):
 
 
 class _VirtualHarness(_Harness):
-    def resolve_read(self, path: str, *, context: object | None = None) -> tuple[bool, bytes | None]:
+    def resolve_read(
+        self, path: str, *, context: object | None = None
+    ) -> tuple[bool, bytes | None]:
         return (True, b"virtual")
 
 
@@ -705,82 +716,78 @@ from nexus.lib import io_metrics
 Wrap the existing `sys_read()` body with a timer and record on every return path. Preserve the existing read hook behavior. The resulting method body should follow this structure:
 
 ```python
-        start = time.perf_counter()
-        try:
-            context = self._parse_context(context)
-            _handled, _resolve_hint = self.resolve_read(path, context=context)
-            if _handled:
-                content = _resolve_hint or b""
-                if offset or count is not None:
-                    content = (
-                        content[offset : offset + count]
-                        if count is not None
-                        else content[offset:]
-                    )
-                io_metrics.record_read(
-                    tier="virtual",
-                    bytes_read=len(content),
-                    latency_seconds=time.perf_counter() - start,
-                )
-                return content
+start = time.perf_counter()
+try:
+    context = self._parse_context(context)
+    _handled, _resolve_hint = self.resolve_read(path, context=context)
+    if _handled:
+        content = _resolve_hint or b""
+        if offset or count is not None:
+            content = content[offset : offset + count] if count is not None else content[offset:]
+        io_metrics.record_read(
+            tier="virtual",
+            bytes_read=len(content),
+            latency_seconds=time.perf_counter() - start,
+        )
+        return content
 
-            _is_admin = (
-                getattr(context, "is_admin", False)
-                if context is not None and not isinstance(context, dict)
-                else (context.get("is_admin", False) if isinstance(context, dict) else False)
-            )
+    _is_admin = (
+        getattr(context, "is_admin", False)
+        if context is not None and not isinstance(context, dict)
+        else (context.get("is_admin", False) if isinstance(context, dict) else False)
+    )
 
-            if self._kernel is None:
-                raise NexusFileNotFoundError(path)
-            _rust_ctx = self._build_rust_ctx(context, _is_admin)
-            _timeout_ms = 5000
-            result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
+    if self._kernel is None:
+        raise NexusFileNotFoundError(path)
+    _rust_ctx = self._build_rust_ctx(context, _is_admin)
+    _timeout_ms = 5000
+    result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
 
-            if result.entry_type == 4:
-                payload = bytes(result.data) if result.data else b""
-                io_metrics.record_read(
-                    tier="backend",
-                    bytes_read=len(payload),
-                    latency_seconds=time.perf_counter() - start,
-                )
-                return {
-                    "data": payload,
-                    "next_offset": result.stream_next_offset or 0,
-                }
+    if result.entry_type == 4:
+        payload = bytes(result.data) if result.data else b""
+        io_metrics.record_read(
+            tier="backend",
+            bytes_read=len(payload),
+            latency_seconds=time.perf_counter() - start,
+        )
+        return {
+            "data": payload,
+            "next_offset": result.stream_next_offset or 0,
+        }
 
-            data = result.data or b""
+    data = result.data or b""
 
-            if offset or count is not None:
-                data = data[offset : offset + count] if count is not None else data[offset:]
+    if offset or count is not None:
+        data = data[offset : offset + count] if count is not None else data[offset:]
 
-            if result.post_hook_needed:
-                zone_id, agent_id, _ = self._get_context_identity(context)
-                from nexus.contracts.vfs_hooks import ReadHookContext
+    if result.post_hook_needed:
+        zone_id, agent_id, _ = self._get_context_identity(context)
+        from nexus.contracts.vfs_hooks import ReadHookContext
 
-                _read_ctx = ReadHookContext(
-                    path=path,
-                    context=context,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    content=data,
-                    content_id=result.content_id,
-                )
-                self._kernel.dispatch_post_hooks("read", _read_ctx)
-                data = _read_ctx.content or data
+        _read_ctx = ReadHookContext(
+            path=path,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            content=data,
+            content_id=result.content_id,
+        )
+        self._kernel.dispatch_post_hooks("read", _read_ctx)
+        data = _read_ctx.content or data
 
-            io_metrics.record_read(
-                tier="backend",
-                bytes_read=len(data),
-                latency_seconds=time.perf_counter() - start,
-            )
-            return data
-        except Exception:
-            io_metrics.record_read(
-                tier="error",
-                bytes_read=0,
-                latency_seconds=time.perf_counter() - start,
-            )
-            raise
+    io_metrics.record_read(
+        tier="backend",
+        bytes_read=len(data),
+        latency_seconds=time.perf_counter() - start,
+    )
+    return data
+except Exception:
+    io_metrics.record_read(
+        tier="error",
+        bytes_read=0,
+        latency_seconds=time.perf_counter() - start,
+    )
+    raise
 ```
 
 - [ ] **Step 5: Instrument `sys_write()` and `_write_locked()`**

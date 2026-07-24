@@ -49,10 +49,7 @@ manager = SkillManager(nx, registry)
 
 # Create from template
 path = await manager.create_skill(
-    name="my-skill",
-    description="Custom skill",
-    template="basic",
-    tier="agent"
+    name="my-skill", description="Custom skill", template="basic", tier="agent"
 )
 ```
 
@@ -156,11 +153,7 @@ Export skills for distribution:
 from nexus.skills import SkillExporter
 
 exporter = SkillExporter(registry)
-await exporter.export_skill(
-    "my-skill",
-    "/tmp/my-skill.zip",
-    format="claude"
-)
+await exporter.export_skill("my-skill", "/tmp/my-skill.zip", format="claude")
 ```
 
 [Learn more →](exporter.md)

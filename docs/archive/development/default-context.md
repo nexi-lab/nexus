@@ -28,13 +28,13 @@ self._default_context = OperationContext(
 nx = NexusFS(
     backend,
     zone_id="org_acme",  # ← Configured at init
-    agent_id="bot1",       # ← Configured at init
-    user_id="alice"        # ← Configured at init
+    agent_id="bot1",  # ← Configured at init
+    user_id="alice",  # ← Configured at init
 )
 
 # Operations used instance-level identity
 nx.write("/file.txt", content)  # Implicitly uses nx.zone_id, nx.user_id
-nx.read("/file.txt")             # Implicitly uses nx.zone_id, nx.user_id
+nx.read("/file.txt")  # Implicitly uses nx.zone_id, nx.user_id
 ```
 
 **Problem:** One NexusFS instance = one user. Can't handle multiple users.
@@ -50,7 +50,7 @@ ctx_alice = OperationContext(user="alice", groups=[], is_admin=False)
 ctx_bob = OperationContext(user="bob", groups=[], is_admin=False)
 
 nx.write("/file.txt", content, context=ctx_alice)  # Alice's operation
-nx.read("/file.txt", context=ctx_bob)              # Bob's operation
+nx.read("/file.txt", context=ctx_bob)  # Bob's operation
 ```
 
 **Benefit:** One NexusFS instance can serve multiple users!
@@ -158,10 +158,10 @@ def write(self, path, content, context=None):
 ```python
 # Backward compatibility but SECURE by default
 self._default_context = OperationContext(
-    user="anonymous",      # Not "system"
+    user="anonymous",  # Not "system"
     groups=[],
-    is_admin=False,        # Not True
-    is_system=False,       # ← CRITICAL: No bypass
+    is_admin=False,  # Not True
+    is_system=False,  # ← CRITICAL: No bypass
 )
 ```
 
@@ -179,7 +179,7 @@ def write(self, path, content, context=None):
             "Calling write() without context is deprecated and will be removed in v0.7.0. "
             "Pass context=OperationContext(...) explicitly.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
     ctx = context or self._default_context
@@ -220,10 +220,12 @@ nx.write("/my-notes.txt", data)  # Works fine, no context needed
 # Production deployment
 nx = NexusFS(backend, enforce_permissions=True)
 
+
 # RPC server handles request from user Alice
 def handle_write_request(path, content):
     # ⚠️ Doesn't pass context - uses _default_context!
     nx.write(path, content)  # System bypass - Alice can access EVERYTHING
+
 
 # RPC server handles request from user Bob
 def handle_read_request(path):
@@ -262,11 +264,12 @@ nx.write("/file.txt", data)  # ❌ May fail with permission errors
 ```python
 # src/nexus/core/nexus_fs.py:202-207
 self._default_context = OperationContext(
-    user="anonymous",      # ← Change from "system"
+    user="anonymous",  # ← Change from "system"
     groups=[],
-    is_admin=False,        # ← Never True
-    is_system=False,       # ← CRITICAL FIX
+    is_admin=False,  # ← Never True
+    is_system=False,  # ← CRITICAL FIX
 )
+
 
 # Add validation
 def write(self, path, content, context=None):
@@ -286,7 +289,7 @@ nx = NexusFS(backend, enforce_permissions=False)  # ← Explicitly disable
 nx.write("/file.txt", data)  # Works without context
 
 # For new code with permissions:
-nx = NexusFS(backend, enforce_permissions=True)   # ← Enable security
+nx = NexusFS(backend, enforce_permissions=True)  # ← Enable security
 ctx = OperationContext(user="alice", groups=[], is_admin=False)
 nx.write("/file.txt", data, context=ctx)  # ← Must pass context
 ```

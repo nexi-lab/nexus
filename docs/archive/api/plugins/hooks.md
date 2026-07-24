@@ -10,20 +10,20 @@ Lifecycle hooks allow plugins to react to filesystem events in real-time. Hooks 
 from nexus.plugins.hooks import HookType
 
 # File Operations
-HookType.BEFORE_WRITE    # Before writing a file
-HookType.AFTER_WRITE     # After writing a file
-HookType.BEFORE_READ     # Before reading a file
-HookType.AFTER_READ      # After reading a file
-HookType.BEFORE_DELETE   # Before deleting a file
-HookType.AFTER_DELETE    # After deleting a file
+HookType.BEFORE_WRITE  # Before writing a file
+HookType.AFTER_WRITE  # After writing a file
+HookType.BEFORE_READ  # Before reading a file
+HookType.AFTER_READ  # After reading a file
+HookType.BEFORE_DELETE  # Before deleting a file
+HookType.AFTER_DELETE  # After deleting a file
 
 # Directory Operations
-HookType.BEFORE_MKDIR    # Before creating directory
-HookType.AFTER_MKDIR     # After creating directory
+HookType.BEFORE_MKDIR  # Before creating directory
+HookType.AFTER_MKDIR  # After creating directory
 
 # Other Operations
-HookType.BEFORE_COPY     # Before copying file
-HookType.AFTER_COPY      # After copying file
+HookType.BEFORE_COPY  # Before copying file
+HookType.AFTER_COPY  # After copying file
 ```
 
 ## Registering Hooks
@@ -32,6 +32,7 @@ Register hooks in your plugin's `hooks()` method:
 
 ```python
 from nexus.plugins import NexusPlugin
+
 
 class MyPlugin(NexusPlugin):
     def hooks(self) -> dict[str, Callable]:
@@ -74,11 +75,11 @@ async def my_hook(self, context: dict) -> dict | None:
 
 ```python
 context = {
-    "path": str,              # File path
-    "content": bytes,         # File content
-    "if_match": str | None,   # Optional etag for OCC
-    "if_none_match": bool,    # Create-only flag
-    "result": dict | None,    # Result metadata (after_write only)
+    "path": str,  # File path
+    "content": bytes,  # File content
+    "if_match": str | None,  # Optional etag for OCC
+    "if_none_match": bool,  # Create-only flag
+    "result": dict | None,  # Result metadata (after_write only)
 }
 ```
 
@@ -97,6 +98,7 @@ async def validate_write(self, context: dict) -> dict | None:
     # Validate JSON files
     if path.endswith(".json"):
         import json
+
         try:
             json.loads(content)
         except json.JSONDecodeError:
@@ -104,6 +106,7 @@ async def validate_write(self, context: dict) -> dict | None:
             return None  # Cancel write
 
     return context  # Continue
+
 
 async def log_write(self, context: dict) -> dict:
     """Log after writing."""
@@ -119,10 +122,10 @@ async def log_write(self, context: dict) -> dict:
 
 ```python
 context = {
-    "path": str,                # File path
-    "return_metadata": bool,    # Whether to return metadata
-    "content": bytes | None,    # File content (after_read only)
-    "metadata": dict | None,    # File metadata (after_read only)
+    "path": str,  # File path
+    "return_metadata": bool,  # Whether to return metadata
+    "content": bytes | None,  # File content (after_read only)
+    "metadata": dict | None,  # File metadata (after_read only)
 }
 ```
 
@@ -140,6 +143,7 @@ async def track_read(self, context: dict) -> dict:
     self._record_access(path)
 
     return context
+
 
 async def decrypt_content(self, context: dict) -> dict:
     """Decrypt content after reading."""
@@ -176,6 +180,7 @@ async def check_dependencies(self, context: dict) -> dict | None:
 
     return context
 
+
 async def cleanup_cache(self, context: dict) -> dict:
     """Cleanup cache after deleting."""
     path = context["path"]
@@ -192,9 +197,9 @@ async def cleanup_cache(self, context: dict) -> dict:
 
 ```python
 context = {
-    "path": str,         # Directory path
-    "parents": bool,     # Create parent directories
-    "exist_ok": bool,    # Don't error if exists
+    "path": str,  # Directory path
+    "parents": bool,  # Create parent directories
+    "exist_ok": bool,  # Don't error if exists
 }
 ```
 
@@ -212,6 +217,7 @@ async def validate_mkdir(self, context: dict) -> dict | None:
 
     return context
 
+
 async def log_mkdir(self, context: dict) -> dict:
     """Log directory creation."""
     path = context["path"]
@@ -223,8 +229,8 @@ async def log_mkdir(self, context: dict) -> dict:
 
 ```python
 context = {
-    "source": str,      # Source path
-    "destination": str, # Destination path
+    "source": str,  # Source path
+    "destination": str,  # Destination path
 }
 ```
 
@@ -293,6 +299,7 @@ async def validate_size(self, context: dict) -> dict:
         context["is_large"] = True
     return context
 
+
 # Plugin B: before_write (priority: 5)
 async def compress_large_files(self, context: dict) -> dict:
     if context.get("is_large"):
@@ -300,6 +307,7 @@ async def compress_large_files(self, context: dict) -> dict:
         context["content"] = compress(context["content"])
         context["compressed"] = True
     return context
+
 
 # Plugin C: before_write (priority: 0)
 async def log_write(self, context: dict) -> dict:
@@ -369,6 +377,7 @@ async def validate_content(self, context: dict) -> dict | None:
     # Validate JSON
     if path.endswith(".json"):
         import json
+
         try:
             json.loads(content)
         except json.JSONDecodeError as e:
@@ -378,6 +387,7 @@ async def validate_content(self, context: dict) -> dict | None:
     # Validate Python
     if path.endswith(".py"):
         import ast
+
         try:
             ast.parse(content.decode("utf-8"))
         except SyntaxError as e:
@@ -398,10 +408,8 @@ async def auto_format(self, context: dict) -> dict:
     # Format Python files
     if path.endswith(".py"):
         import black
-        formatted = black.format_str(
-            content.decode("utf-8"),
-            mode=black.Mode()
-        )
+
+        formatted = black.format_str(content.decode("utf-8"), mode=black.Mode())
         context["content"] = formatted.encode("utf-8")
 
     return context
@@ -416,8 +424,7 @@ async def track_access(self, context: dict) -> dict:
 
     # Log to database
     self._db.execute(
-        "INSERT INTO access_log (path, timestamp) VALUES (?, ?)",
-        (path, datetime.now())
+        "INSERT INTO access_log (path, timestamp) VALUES (?, ?)", (path, datetime.now())
     )
 
     return context
@@ -436,11 +443,7 @@ async def index_content(self, context: dict) -> dict:
     size = result.get("size")
 
     # Index for search
-    self._search_index.add_document(
-        path=path,
-        etag=etag,
-        size=size
-    )
+    self._search_index.add_document(path=path, etag=etag, size=size)
 
     return context
 ```
@@ -493,6 +496,7 @@ async def create_backup(self, context: dict) -> dict:
 ```python
 import pytest
 
+
 @pytest.mark.asyncio
 async def test_validate_hook():
     """Test validation hook."""
@@ -501,18 +505,12 @@ async def test_validate_hook():
     plugin = MyPlugin()
 
     # Test valid content
-    context = {
-        "path": "/test.json",
-        "content": b'{"valid": "json"}'
-    }
+    context = {"path": "/test.json", "content": b'{"valid": "json"}'}
     result = await plugin.validate_content(context)
     assert result is not None
 
     # Test invalid content
-    context = {
-        "path": "/test.json",
-        "content": b'invalid json'
-    }
+    context = {"path": "/test.json", "content": b"invalid json"}
     result = await plugin.validate_content(context)
     assert result is None  # Should cancel
 ```

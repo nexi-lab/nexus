@@ -26,17 +26,22 @@ New module `src/nexus/backends/base/runtime_deps.py`:
 from __future__ import annotations
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True, slots=True)
 class PythonDep:
     """A Python importable module that must be available."""
-    module: str                    # importable dotted name, e.g. "google.api_core"
-    extras: tuple[str, ...] = ()   # pip extras that pull this in, e.g. ("gcs",)
+
+    module: str  # importable dotted name, e.g. "google.api_core"
+    extras: tuple[str, ...] = ()  # pip extras that pull this in, e.g. ("gcs",)
+
 
 @dataclass(frozen=True, slots=True)
 class BinaryDep:
     """An executable that must be on PATH."""
-    name: str                      # binary basename, e.g. "gws"
-    install_hint: str              # actionable install command shown on failure
+
+    name: str  # binary basename, e.g. "gws"
+    install_hint: str  # actionable install command shown on failure
+
 
 @dataclass(frozen=True, slots=True)
 class ServiceDep:
@@ -46,7 +51,9 @@ class ServiceDep:
     excluded), any ServiceDep causes mount to fail cleanly with
     `requires_server=True`-style messaging.
     """
-    name: str                      # e.g. "kernel", "metastore", "token_manager"
+
+    name: str  # e.g. "kernel", "metastore", "token_manager"
+
 
 RuntimeDep = PythonDep | BinaryDep | ServiceDep
 ```
@@ -110,6 +117,7 @@ class MissingDependencyError(BackendError):
         backend: connector name
         missing: list of (dep, reason) pairs
     """
+
     def __init__(self, backend: str, missing: list[tuple[RuntimeDep, str]]) -> None:
         self.missing = missing
         lines = [f"mount '{backend}' failed: missing {len(missing)} runtime dep(s)"]
@@ -140,7 +148,8 @@ def check_runtime_deps(
                 if importlib.util.find_spec(mod) is None:
                     hint = (
                         f"pip install nexus-fs[{','.join(extras)}]"
-                        if extras else f"pip install {mod}"
+                        if extras
+                        else f"pip install {mod}"
                     )
                     missing.append((dep, f"python '{mod}': install with: {hint}"))
             case BinaryDep(name=name, install_hint=hint):
@@ -148,10 +157,12 @@ def check_runtime_deps(
                     missing.append((dep, f"binary '{name}': not on PATH — install with: {hint}"))
             case ServiceDep(name=name):
                 if not server_available:
-                    missing.append((
-                        dep,
-                        f"service '{name}': requires a full nexus install (slim wheel has no server runtime)",
-                    ))
+                    missing.append(
+                        (
+                            dep,
+                            f"service '{name}': requires a full nexus install (slim wheel has no server runtime)",
+                        )
+                    )
     return missing
 
 

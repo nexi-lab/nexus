@@ -67,7 +67,9 @@ Save this API key securely - it won't be shown again!
 ```python
 import nexus
 
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_a1b2c3d4e5f6..."})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk_a1b2c3d4e5f6..."}
+)
 ```
 
 ### 3. Local Authentication (Username/Password + JWT)
@@ -193,8 +195,12 @@ google_token = "eyJ..."  # From Google OAuth
 microsoft_token = "eyJ..."  # From Microsoft OAuth
 
 # Both work!
-nx1 = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": google_token})
-nx2 = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": microsoft_token})
+nx1 = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": google_token}
+)
+nx2 = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": microsoft_token}
+)
 ```
 
 ### 6. Static API Key (Deprecated)

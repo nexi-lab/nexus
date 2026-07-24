@@ -41,7 +41,9 @@ with open("workspace/research/requirements.txt") as f:
 import nexus
 
 # Connect to Nexus
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": get_demo_user_key()})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": get_demo_user_key()}
+)
 nx.agent_id = "researcher"
 
 # Write file (auto-creates directories, enforces permissions)
@@ -103,7 +105,7 @@ def setup_nexus_permissions(admin_nx: NexusFS, workspace: str):
     admin_nx.rebac_create(
         subject=("agent", "researcher"),
         relation="direct_editor",
-        object=("file", f"{workspace}/research")
+        object=("file", f"{workspace}/research"),
     )
     print("  ✓ Researcher can write to /research/")
 
@@ -111,12 +113,10 @@ def setup_nexus_permissions(admin_nx: NexusFS, workspace: str):
     admin_nx.rebac_create(
         subject=("agent", "coder"),
         relation="direct_viewer",
-        object=("file", f"{workspace}/research")
+        object=("file", f"{workspace}/research"),
     )
     admin_nx.rebac_create(
-        subject=("agent", "coder"),
-        relation="direct_editor",
-        object=("file", f"{workspace}/code")
+        subject=("agent", "coder"), relation="direct_editor", object=("file", f"{workspace}/code")
     )
     print("  ✓ Coder can read /research/ and write to /code/")
 
@@ -124,12 +124,12 @@ def setup_nexus_permissions(admin_nx: NexusFS, workspace: str):
     admin_nx.rebac_create(
         subject=("agent", "reviewer"),
         relation="direct_viewer",
-        object=("file", f"{workspace}/code")
+        object=("file", f"{workspace}/code"),
     )
     admin_nx.rebac_create(
         subject=("agent", "reviewer"),
         relation="direct_editor",
-        object=("file", f"{workspace}/reviews")
+        object=("file", f"{workspace}/reviews"),
     )
     print("  ✓ Reviewer can read /code/ and write to /reviews/")
 
@@ -150,7 +150,7 @@ def researcher_node(state: AgentState) -> AgentState:
 
     messages = [
         SystemMessage(content="You are a technical researcher..."),
-        HumanMessage(content=f"Task: {state['task']}...")
+        HumanMessage(content=f"Task: {state['task']}..."),
     ]
 
     response = llm.invoke(messages)
@@ -175,14 +175,20 @@ def researcher_node(state: AgentState) -> AgentState:
     print(f"\n🔍 Researcher is analyzing task: {state['task']}")
 
     # ✨ Connect as researcher agent
-    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": get_demo_user_key()})
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
+    )
     nx.agent_id = "researcher"  # Set agent identity
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
 
     messages = [
         SystemMessage(content="You are a technical researcher..."),
-        HumanMessage(content=f"Task: {state['task']}...")
+        HumanMessage(content=f"Task: {state['task']}..."),
     ]
 
     response = llm.invoke(messages)
@@ -223,7 +229,7 @@ def coder_node(state: AgentState) -> AgentState:
 
     messages = [
         SystemMessage(content="You are an expert Python developer..."),
-        HumanMessage(content=f"Requirements:\n{requirements}...")
+        HumanMessage(content=f"Requirements:\n{requirements}..."),
     ]
 
     response = llm.invoke(messages)
@@ -248,7 +254,13 @@ def coder_node(state: AgentState) -> AgentState:
     print("\n💻 Coder is implementing solution...")
 
     # ✨ Connect as coder agent
-    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": get_demo_user_key()})
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
+    )
     nx.agent_id = "coder"
 
     # ✅ Read requirements using Nexus
@@ -259,7 +271,7 @@ def coder_node(state: AgentState) -> AgentState:
 
     messages = [
         SystemMessage(content="You are an expert Python developer..."),
-        HumanMessage(content=f"Requirements:\n{requirements}...")
+        HumanMessage(content=f"Requirements:\n{requirements}..."),
     ]
 
     response = llm.invoke(messages)
@@ -299,7 +311,7 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     messages = [
         SystemMessage(content="You are a code reviewer..."),
-        HumanMessage(content=f"Review this code:\n{code}")
+        HumanMessage(content=f"Review this code:\n{code}"),
     ]
 
     response = llm.invoke(messages)
@@ -324,7 +336,13 @@ def reviewer_node(state: AgentState) -> AgentState:
     print("\n📋 Reviewer is evaluating code...")
 
     # ✨ Connect as reviewer agent
-    nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": get_demo_user_key()})
+    nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": get_demo_user_key(),
+        }
+    )
     nx.agent_id = "reviewer"
 
     # ✅ Read code using Nexus
@@ -335,7 +353,7 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     messages = [
         SystemMessage(content="You are a code reviewer..."),
-        HumanMessage(content=f"Review this code:\n{code}")
+        HumanMessage(content=f"Review this code:\n{code}"),
     ]
 
     response = llm.invoke(messages)
@@ -371,7 +389,7 @@ def main():
         "code_file": "",
         "review_file": "",
         "iteration": 0,
-        "max_iterations": 1
+        "max_iterations": 1,
     }
 
     # Build and run the graph
@@ -392,7 +410,13 @@ def main():
     print("=" * 60)
 
     # ✨ Setup admin connection for permission configuration
-    admin_nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_URL", "http://localhost:2026"), "api_key": os.getenv("NEXUS_API_KEY")})
+    admin_nx = nexus.connect(
+        config={
+            "mode": "remote",
+            "url": os.getenv("NEXUS_URL", "http://localhost:2026"),
+            "api_key": os.getenv("NEXUS_API_KEY"),
+        }
+    )
 
     workspace = "/workspace"
 
@@ -413,7 +437,7 @@ def main():
         "code_file": "",
         "review_file": "",
         "iteration": 0,
-        "max_iterations": 1
+        "max_iterations": 1,
     }
 
     # Build and run the graph (same as standard version)
@@ -568,7 +592,7 @@ setup_nexus_permissions(admin_nx, workspace)
 ```python
 # Nexus accepts both automatically
 nx.write(file, "string content")  # Auto-converts to bytes
-nx.write(file, b"bytes content")   # Direct bytes
+nx.write(file, b"bytes content")  # Direct bytes
 ```
 
 ---

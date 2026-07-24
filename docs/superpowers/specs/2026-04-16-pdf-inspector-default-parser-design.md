@@ -41,14 +41,17 @@ class PdfInspectorProvider(ParseProvider):
     DEFAULT_FORMATS = [".pdf"]  # PDF-only — no fallthrough
 
     @property
-    def name(self) -> str: return "pdf-inspector"
+    def name(self) -> str:
+        return "pdf-inspector"
 
     @property
-    def default_formats(self) -> list[str]: return self.DEFAULT_FORMATS.copy()
+    def default_formats(self) -> list[str]:
+        return self.DEFAULT_FORMATS.copy()
 
     def is_available(self) -> bool:
         try:
             import pdf_inspector  # noqa: F401
+
             return True
         except Exception:
             return False
@@ -56,8 +59,7 @@ class PdfInspectorProvider(ParseProvider):
     def _get_inspector(self) -> Any:  # thread-safe lazy singleton
         ...
 
-    async def parse(self, content, file_path, metadata=None) -> ParseResult:
-        ...
+    async def parse(self, content, file_path, metadata=None) -> ParseResult: ...
 ```
 
 **Parse flow:**
@@ -94,6 +96,7 @@ Replace the unconditional MarkItDown-as-fallback block (~lines 604-610) with:
 # pdf-inspector: fast Rust PDF parser, no API key needed
 try:
     import pdf_inspector  # noqa: F401
+
     parse_providers.append({"name": "pdf-inspector", "priority": 20})
 except ImportError:
     pass
@@ -101,6 +104,7 @@ except ImportError:
 # markitdown: optional fallback for non-PDF formats
 try:
     from markitdown import MarkItDown  # noqa: F401
+
     parse_providers.append({"name": "markitdown", "priority": 10})
 except ImportError:
     pass

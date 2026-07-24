@@ -1045,6 +1045,7 @@ If one exists, add a new test function inside it. If not, create `tests/unit/cor
 import pytest
 from nexus.core.nexus_fs_content import NexusFSContent  # adjust to actual import
 
+
 def test_read_bulk_back_compat_returns_existing_shape(tmp_nexus_fs):
     fs = tmp_nexus_fs
     fs.write("/a.txt", b"alpha")
@@ -1054,6 +1055,7 @@ def test_read_bulk_back_compat_returns_existing_shape(tmp_nexus_fs):
     assert out[0]["content"] == b"alpha"
     assert out[1]["content"] == b"beta"
     assert "content_id" in out[0]
+
 
 def test_read_bulk_partial_mode_reports_per_item_errors(tmp_nexus_fs):
     fs = tmp_nexus_fs
@@ -1080,9 +1082,7 @@ rust_results = self._kernel._read_batch(allowed_paths, _rust_ctx) if allowed_pat
 with:
 ```python
 rust_results = (
-    self._kernel._read_batch(
-        [(p, 0, None) for p in allowed_paths], _rust_ctx
-    )
+    self._kernel._read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
     if allowed_paths
     else []
 )
@@ -1108,6 +1108,7 @@ for path in validated_paths:
                 NexusFileNotFoundError,
                 NexusPermissionError,
             )
+
             if r.error_kind == "not_found":
                 raise NexusFileNotFoundError(path)
             if r.error_kind == "permission_denied":

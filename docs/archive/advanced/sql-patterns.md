@@ -196,14 +196,14 @@ while True:
     if ready_work:
         item = ready_work[0]
         # Mark as in-progress
-        store.set_file_metadata(item['virtual_path'], "status", "in_progress")
-        store.set_file_metadata(item['virtual_path'], "worker_id", worker_id)
+        store.set_file_metadata(item["virtual_path"], "status", "in_progress")
+        store.set_file_metadata(item["virtual_path"], "worker_id", worker_id)
 
         # Process work
         process_work_item(item)
 
         # Mark as completed
-        store.set_file_metadata(item['virtual_path'], "status", "completed")
+        store.set_file_metadata(item["virtual_path"], "status", "completed")
     else:
         time.sleep(1)
 ```
@@ -215,12 +215,12 @@ while True:
 blocked = store.get_blocked_work()
 for item in blocked:
     # Check if blockers are now completed
-    depends_on = store.get_file_metadata(item['virtual_path'], "depends_on")
+    depends_on = store.get_file_metadata(item["virtual_path"], "depends_on")
     if depends_on:
         blocker_status = store.get_file_metadata(depends_on, "status")
         if blocker_status == "completed":
             # Unblock this item
-            store.set_file_metadata(item['virtual_path'], "status", "ready")
+            store.set_file_metadata(item["virtual_path"], "status", "ready")
 ```
 
 ### 3. Priority-Based Scheduling
@@ -229,7 +229,7 @@ for item in blocked:
 # Process high-priority work first
 work_items = store.get_work_by_priority(limit=100)
 for item in work_items:
-    if item['status'] == 'ready':
+    if item["status"] == "ready":
         assign_to_worker(item)
 ```
 

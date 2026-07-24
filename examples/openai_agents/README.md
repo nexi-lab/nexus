@@ -304,12 +304,10 @@ Search codebases, analyze patterns, generate documentation.
 agent = Agent(
     name="CodeAnalyzer",
     instructions="Analyze code structure and patterns",
-    tools=[grep_files, glob_files, read_file, write_file]
+    tools=[grep_files, glob_files, read_file, write_file],
 )
 
-result = agent.run(
-    "Find all async patterns and create documentation"
-)
+result = agent.run("Find all async patterns and create documentation")
 ```
 
 ### 2. Documentation Generator
@@ -317,9 +315,7 @@ result = agent.run(
 Automatically generate docs from code.
 
 ```python
-agent.run(
-    "Find all API endpoint definitions and create API documentation"
-)
+agent.run("Find all API endpoint definitions and create API documentation")
 ```
 
 ### 3. TODO/FIXME Tracker
@@ -327,9 +323,7 @@ agent.run(
 Scan for TODO comments and create task lists.
 
 ```python
-agent.run(
-    "Find all TODO and FIXME comments and create a prioritized task list"
-)
+agent.run("Find all TODO and FIXME comments and create a prioritized task list")
 ```
 
 ### 4. Research Agent with Memory
@@ -340,7 +334,7 @@ Gather information and remember findings.
 agent = Agent(
     name="ResearchAgent",
     instructions="Research topics and remember findings",
-    tools=[grep_files, read_file, store_memory, recall_memory]
+    tools=[grep_files, read_file, store_memory, recall_memory],
 )
 
 agent.run("Research error handling patterns and remember key insights")
@@ -438,6 +432,7 @@ Create your own tools by decorating functions:
 ```python
 from agents import function_tool
 
+
 @function_tool
 async def custom_analysis(code: str) -> str:
     """Analyze code and return insights.
@@ -448,11 +443,9 @@ async def custom_analysis(code: str) -> str:
     # Your custom logic here
     return "Analysis results..."
 
+
 # Add to agent
-agent = Agent(
-    name="CustomAgent",
-    tools=[custom_analysis, *get_nexus_tools(nx)]
-)
+agent = Agent(name="CustomAgent", tools=[custom_analysis, *get_nexus_tools(nx)])
 ```
 
 ## License

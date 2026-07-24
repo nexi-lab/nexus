@@ -102,8 +102,8 @@ recent = memory.get_recent_context(limit=50)
 # Search across all tiers
 results = memory.search_with_paging(
     query="user preferences",
-    main_count=5,      # From main context
-    recall_count=3,    # From recall
+    main_count=5,  # From main context
+    recall_count=3,  # From recall
     archival_count=2,  # From archival (semantic)
 )
 
@@ -175,11 +175,11 @@ $ python examples/memory_paging_demo.py
 Default settings (can override):
 
 ```python
-main_capacity = 100             # Max memories in main context
-eviction_threshold = 0.7        # Evict at 70% full
-recency_weight = 0.6           # Weight recency vs importance
+main_capacity = 100  # Max memories in main context
+eviction_threshold = 0.7  # Evict at 70% full
+recency_weight = 0.6  # Weight recency vs importance
 importance_weight = 0.4
-recall_max_age_hours = 24.0    # Move to archival after 24h
+recall_max_age_hours = 24.0  # Move to archival after 24h
 ```
 
 ## Integration with Existing Code

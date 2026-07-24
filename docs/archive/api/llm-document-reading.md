@@ -17,14 +17,13 @@ The LLM Document Reading feature combines:
 ```python
 from nexus import connect
 
+
 async def main():
     nx = connect()
 
     # Simple usage - just get the answer
     answer = await nx.llm_read(
-        path="/reports/q4.pdf",
-        prompt="What were the top 3 challenges?",
-        model="claude-sonnet-4"
+        path="/reports/q4.pdf", prompt="What were the top 3 challenges?", model="claude-sonnet-4"
     )
     print(answer)
 ```
@@ -78,10 +77,7 @@ async def llm_read(
 **Example:**
 ```python
 answer = await nx.llm_read(
-    "/reports/q4.pdf",
-    "What were the key achievements?",
-    model="claude-sonnet-4",
-    max_tokens=500
+    "/reports/q4.pdf", "What were the key achievements?", model="claude-sonnet-4", max_tokens=500
 )
 print(answer)
 ```
@@ -120,9 +116,7 @@ async def llm_read_detailed(
 **Example:**
 ```python
 result = await nx.llm_read_detailed(
-    "/docs/**/*.md",
-    "How does authentication work?",
-    model="claude-sonnet-4"
+    "/docs/**/*.md", "How does authentication work?", model="claude-sonnet-4"
 )
 
 print(result.answer)
@@ -155,9 +149,7 @@ async def llm_read_stream(
 **Example:**
 ```python
 async for chunk in nx.llm_read_stream(
-    "/report.pdf",
-    "Analyze the financial trends",
-    model="claude-sonnet-4"
+    "/report.pdf", "Analyze the financial trends", model="claude-sonnet-4"
 ):
     print(chunk, end="", flush=True)
 print()  # Newline after streaming
@@ -194,15 +186,11 @@ reader = nx.create_llm_reader(
     system_prompt=(
         "You are a technical documentation expert. "
         "Provide detailed, precise answers with code examples when relevant."
-    )
+    ),
 )
 
 # Use the reader
-result = await reader.read(
-    path="/docs/**/*.md",
-    prompt="Explain the architecture",
-    max_tokens=1000
-)
+result = await reader.read(path="/docs/**/*.md", prompt="Explain the architecture", max_tokens=1000)
 print(result.answer)
 ```
 
@@ -419,13 +407,13 @@ Returned by `llm_read_detailed()`.
 ```python
 @dataclass
 class DocumentReadResult:
-    answer: str                      # LLM's answer
-    citations: list[Citation]        # Source citations
-    sources: list[str]               # Source file paths
-    tokens_used: int | None          # Total tokens used
-    cost: float | None               # Cost in USD
-    cached: bool                     # Whether cached
-    cache_savings: float | None      # Cache savings in USD
+    answer: str  # LLM's answer
+    citations: list[Citation]  # Source citations
+    sources: list[str]  # Source file paths
+    tokens_used: int | None  # Total tokens used
+    cost: float | None  # Cost in USD
+    cached: bool  # Whether cached
+    cache_savings: float | None  # Cache savings in USD
 ```
 
 ### Citation
@@ -435,11 +423,11 @@ Source reference with optional relevance score.
 ```python
 @dataclass
 class Citation:
-    path: str                        # Source file path
-    chunk_index: int | None          # Chunk index in file
-    score: float | None              # Relevance score (0-1)
-    start_offset: int | None         # Start position in file
-    end_offset: int | None           # End position in file
+    path: str  # Source file path
+    chunk_index: int | None  # Chunk index in file
+    score: float | None  # Relevance score (0-1)
+    start_offset: int | None  # Start position in file
+    end_offset: int | None  # End position in file
 ```
 
 ## Advanced Usage
@@ -456,14 +444,14 @@ reader = nx.create_llm_reader(
         "You are an executive assistant. Provide concise, "
         "bullet-point summaries focused on key business metrics and "
         "actionable insights. Use executive language and avoid technical jargon."
-    )
+    ),
 )
 
 # Use the customized reader
 result = await reader.read(
     path="/reports/q4-2024.txt",
     prompt="Summarize Q4 performance for the executive team",
-    max_tokens=400
+    max_tokens=400,
 )
 print(result.answer)
 ```
@@ -481,16 +469,12 @@ config = LLMConfig(
     api_key="your-api-key",
     temperature=0.7,
     max_output_tokens=2000,
-    timeout=60
+    timeout=60,
 )
 provider = LiteLLMProvider(config)
 
 # Use with LLM reading
-answer = await nx.llm_read(
-    "/docs/api.md",
-    "What endpoints are available?",
-    provider=provider
-)
+answer = await nx.llm_read("/docs/api.md", "What endpoints are available?", provider=provider)
 ```
 
 ### Cost Management
@@ -500,9 +484,7 @@ Track costs and optimize spending.
 ```python
 # Get detailed result with cost
 result = await nx.llm_read_detailed(
-    "/docs/**/*.md",
-    "Comprehensive analysis",
-    model="claude-sonnet-4"
+    "/docs/**/*.md", "Comprehensive analysis", model="claude-sonnet-4"
 )
 
 print(f"Cost: ${result.cost:.4f}")
@@ -513,14 +495,14 @@ answer = await nx.llm_read(
     "/doc.txt",
     "Simple question",
     model="claude-haiku-4",  # Cheaper
-    max_tokens=200           # Limit response
+    max_tokens=200,  # Limit response
 )
 
 # Use keyword search to avoid embedding costs
 answer = await nx.llm_read(
     "/code/**/*.py",
     "Find function definition",
-    search_mode="keyword"  # No embedding costs
+    search_mode="keyword",  # No embedding costs
 )
 ```
 
@@ -530,18 +512,10 @@ LLMs support multiple languages automatically.
 
 ```python
 # Ask in Chinese
-answer = await nx.llm_read(
-    "/doc.pdf",
-    "请用中文总结这个文档",
-    model="claude-sonnet-4"
-)
+answer = await nx.llm_read("/doc.pdf", "请用中文总结这个文档", model="claude-sonnet-4")
 
 # Ask in Spanish
-answer = await nx.llm_read(
-    "/report.pdf",
-    "Resume este informe en español",
-    model="claude-sonnet-4"
-)
+answer = await nx.llm_read("/report.pdf", "Resume este informe en español", model="claude-sonnet-4")
 ```
 
 ### Remote Server Mode
@@ -560,26 +534,18 @@ nx = connect()
 
 # LLM reading works exactly the same
 answer = await nx.llm_read(
-    "/workspace/doc.pdf",
-    "What are the key points?",
-    model="claude-sonnet-4"
+    "/workspace/doc.pdf", "What are the key points?", model="claude-sonnet-4"
 )
 ```
 
 ## Error Handling
 
 ```python
-from nexus.contracts.exceptions import (
-    NexusFileNotFoundError,
-    NexusPermissionError,
-    ValidationError
-)
+from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError, ValidationError
 
 try:
     answer = await nx.llm_read(
-        "/reports/q4.pdf",
-        "What were the challenges?",
-        model="claude-sonnet-4"
+        "/reports/q4.pdf", "What were the challenges?", model="claude-sonnet-4"
     )
     print(answer)
 except NexusFileNotFoundError:
@@ -602,9 +568,7 @@ nx.search_index("/workspace/docs")
 
 # Now LLM reading will use semantic search automatically
 result = await nx.llm_read_detailed(
-    "/workspace/docs/**/*.md",
-    "How does the system work?",
-    model="claude-sonnet-4"
+    "/workspace/docs/**/*.md", "How does the system work?", model="claude-sonnet-4"
 )
 ```
 
@@ -617,6 +581,7 @@ See [Semantic Search API](semantic-search.md) for indexing details.
 ```python
 import asyncio
 from nexus import connect
+
 
 async def analyze_documentation():
     """Analyze project documentation with LLM."""
@@ -637,16 +602,14 @@ async def analyze_documentation():
         print(f"\nQ: {question}")
 
         result = await nx.llm_read_detailed(
-            path="/workspace/docs/**/*.md",
-            prompt=question,
-            model="claude-sonnet-4",
-            max_tokens=500
+            path="/workspace/docs/**/*.md", prompt=question, model="claude-sonnet-4", max_tokens=500
         )
 
         print(f"A: {result.answer}")
         print(f"\nSources: {len(result.sources)}")
         print(f"Cost: ${result.cost:.4f}")
         print("-" * 60)
+
 
 if __name__ == "__main__":
     asyncio.run(analyze_documentation())

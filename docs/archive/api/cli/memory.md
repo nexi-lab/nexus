@@ -47,24 +47,14 @@ nexus memory store "Deployment failed on 2024-01-15" --scope user --type experie
 **Python API:**
 ```python
 # Store memory
-memory_id = nx.memory.store(
-    content="User prefers Python",
-    scope="user",
-    memory_type="preference"
-)
+memory_id = nx.memory.store(content="User prefers Python", scope="user", memory_type="preference")
 
 # Store with importance
-memory_id = nx.memory.store(
-    content="API key for prod: abc123",
-    scope="agent",
-    importance=0.9
-)
+memory_id = nx.memory.store(content="API key for prod: abc123", scope="agent", importance=0.9)
 
 # Store experience
 memory_id = nx.memory.store(
-    content="Deployment failed on 2024-01-15",
-    scope="user",
-    memory_type="experience"
+    content="Deployment failed on 2024-01-15", scope="user", memory_type="experience"
 )
 ```
 
@@ -111,12 +101,7 @@ results = nx.memory.query(scope="user", memory_type="preference")
 results = nx.memory.query(agent_id="agent1", limit=10)
 
 # Query with multiple filters
-results = nx.memory.query(
-    user_id="alice",
-    scope="user",
-    memory_type="fact",
-    limit=50
-)
+results = nx.memory.query(user_id="alice", scope="user", memory_type="fact", limit=50)
 ```
 
 **Options:**
@@ -151,11 +136,7 @@ nexus memory search "API keys" --json
 results = nx.memory.search(query="Python programming best practices")
 
 # Search with filters
-results = nx.memory.search(
-    query="user preferences",
-    scope="user",
-    limit=5
-)
+results = nx.memory.search(query="user preferences", scope="user", limit=5)
 
 # Process results
 for result in results:
@@ -285,27 +266,16 @@ nexus memory register /tmp/agent-context --session-id abc123 --ttl 2h
 **Python API:**
 ```python
 # Register persistent memory
-config = nx.register_memory(
-    path="/knowledge-base",
-    name="kb",
-    description="Knowledge base"
-)
+config = nx.register_memory(path="/knowledge-base", name="kb", description="Knowledge base")
 
 # Register with metadata
-config = nx.register_memory(
-    path="/kb",
-    name="kb",
-    description="Knowledge base",
-    created_by="alice"
-)
+config = nx.register_memory(path="/kb", name="kb", description="Knowledge base", created_by="alice")
 
 # Register session-scoped (v0.5.0)
 from datetime import timedelta
+
 config = nx.register_memory(
-    path="/tmp/agent-context",
-    name="temp-kb",
-    session_id="abc123",
-    ttl=timedelta(hours=2)
+    path="/tmp/agent-context", name="temp-kb", session_id="abc123", ttl=timedelta(hours=2)
 )
 ```
 
@@ -444,23 +414,14 @@ import nexus
 nx = nexus.connect()
 
 # Store various memory types
-fact_id = nx.memory.store(
-    "Python uses indentation for blocks",
-    scope="user",
-    memory_type="fact"
-)
+fact_id = nx.memory.store("Python uses indentation for blocks", scope="user", memory_type="fact")
 
 pref_id = nx.memory.store(
-    "User prefers concise explanations",
-    scope="user",
-    memory_type="preference",
-    importance=0.8
+    "User prefers concise explanations", scope="user", memory_type="preference", importance=0.8
 )
 
 exp_id = nx.memory.store(
-    "Deployment failed at 3pm on 2024-01-15",
-    scope="agent",
-    memory_type="experience"
+    "Deployment failed at 3pm on 2024-01-15", scope="agent", memory_type="experience"
 )
 
 # Query memories
@@ -478,20 +439,14 @@ for result in results:
 ```python
 # Register knowledge base
 config = nx.register_memory(
-    path="/docs/kb",
-    name="company-kb",
-    description="Company knowledge base",
-    created_by="admin"
+    path="/docs/kb", name="company-kb", description="Company knowledge base", created_by="admin"
 )
 
 # Store documentation
 kb_entries = [
-    ("Deployment process: Run tests, build Docker image, push to registry, deploy to k8s",
-     "fact"),
-    ("Code review guidelines: At least 2 approvals, all tests passing",
-     "fact"),
-    ("On-call rotation: Week-long shifts, escalate after 30min",
-     "fact"),
+    ("Deployment process: Run tests, build Docker image, push to registry, deploy to k8s", "fact"),
+    ("Code review guidelines: At least 2 approvals, all tests passing", "fact"),
+    ("On-call rotation: Week-long shifts, escalate after 30min", "fact"),
 ]
 
 for content, memory_type in kb_entries:
@@ -523,15 +478,11 @@ config = nx.register_memory(
     name="notebook-context",
     description="Temporary notebook context",
     session_id="session_abc123",
-    ttl=timedelta(hours=2)  # Auto-expires after 2 hours
+    ttl=timedelta(hours=2),  # Auto-expires after 2 hours
 )
 
 # Store session-specific memories
-nx.memory.store(
-    "Current analysis focuses on Q4 revenue",
-    scope="agent",
-    memory_type="fact"
-)
+nx.memory.store("Current analysis focuses on Q4 revenue", scope="agent", memory_type="fact")
 
 # Memory and registration auto-delete after 2 hours
 ```

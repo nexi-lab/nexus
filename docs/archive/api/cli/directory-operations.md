@@ -30,6 +30,7 @@ nx.mkdir("/workspace/data", exist_ok=True)
 
 # Create with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.mkdir("/workspace/alice/projects", parents=True, context=ctx)
 ```
@@ -67,6 +68,7 @@ nx.rmdir("/temp/cache", recursive=True)
 
 # Remove with specific user context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["team-engineering"])
 nx.rmdir("/workspace/alice/temp", recursive=True, context=ctx)
 ```
@@ -118,6 +120,7 @@ entries = nx.list("/workspace", recursive=True)
 
 # Time-travel list
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(at_operation="op_abc123")
 entries = nx.list("/workspace", context=ctx)
 ```
@@ -156,10 +159,11 @@ def print_tree(nx, path="/", prefix="", recursive=True):
         connector = "└── " if is_last else "├── "
         print(f"{prefix}{connector}{entry['name']}")
 
-        if entry['type'] == 'directory' and recursive:
+        if entry["type"] == "directory" and recursive:
             extension = "    " if is_last else "│   "
             child_path = f"{path.rstrip('/')}/{entry['name']}"
             print_tree(nx, child_path, prefix + extension)
+
 
 print_tree(nx, "/workspace")
 ```
@@ -206,15 +210,17 @@ entries = nx.list("/projects/myapp")
 for entry in entries:
     print(f"{entry['name']} ({entry['type']})")
 
+
 # List recursively with details
 def list_recursive(path, indent=0):
     entries = nx.list(path)
     for entry in entries:
         prefix = "  " * indent
         print(f"{prefix}{entry['name']} - {entry['size']} bytes")
-        if entry['type'] == 'directory':
+        if entry["type"] == "directory":
             child_path = f"{path.rstrip('/')}/{entry['name']}"
             list_recursive(child_path, indent + 1)
+
 
 list_recursive("/projects/myapp")
 

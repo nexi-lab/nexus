@@ -77,8 +77,8 @@ The relationship type between subject and object:
 
 ```python
 relation = "direct_editor"  # Alice is a direct editor
-relation = "editor"         # Includes direct + inherited via groups
-permission = "write"        # Maps to "editor" or "owner" via namespace
+relation = "editor"  # Includes direct + inherited via groups
+permission = "write"  # Maps to "editor" or "owner" via namespace
 ```
 
 ### Permission Hierarchy
@@ -126,45 +126,26 @@ DEFAULT_FILE_NAMESPACE = {
     "relations": {
         # Structural relation: parent directory
         "parent": {},
-
         # Direct relations (granted explicitly)
         "direct_owner": {},
         "direct_editor": {},
         "direct_viewer": {},
-
         # Parent inheritance via tupleToUserset
-        "parent_owner": {
-            "tupleToUserset": {
-                "tupleset": "parent",
-                "computedUserset": "owner"
-            }
-        },
-        "parent_editor": {
-            "tupleToUserset": {
-                "tupleset": "parent",
-                "computedUserset": "editor"
-            }
-        },
-        "parent_viewer": {
-            "tupleToUserset": {
-                "tupleset": "parent",
-                "computedUserset": "viewer"
-            }
-        },
-
+        "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
+        "parent_editor": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "editor"}},
+        "parent_viewer": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "viewer"}},
         # Computed relations (union of direct + parent inheritance)
         "owner": {"union": ["direct_owner", "parent_owner"]},
         "editor": {"union": ["direct_editor", "parent_editor", "owner"]},
         "viewer": {"union": ["direct_viewer", "parent_viewer"]},
     },
-
     # Explicit permission-to-userset mapping (Zanzibar-style)
     # Prevents ambiguous check("write") bugs by defining exact semantics
     "permissions": {
-        "read": ["viewer", "editor", "owner"],    # Read = viewer OR editor OR owner
-        "write": ["editor", "owner"],              # Write = editor OR owner (NOT viewer)
-        "execute": ["owner"],                      # Execute = owner only
-    }
+        "read": ["viewer", "editor", "owner"],  # Read = viewer OR editor OR owner
+        "write": ["editor", "owner"],  # Write = editor OR owner (NOT viewer)
+        "execute": ["owner"],  # Execute = owner only
+    },
 }
 ```
 
@@ -245,18 +226,14 @@ repo_namespace = NamespaceConfig(
             "direct_write": {},
             "direct_read": {},
             "direct_triage": {},
-
             # Admin (full control)
             "admin": {"union": ["direct_admin"]},
-
             # Write (push access + admin)
             "write": {"union": ["direct_write", "admin"]},
-
             # Triage (manage issues + write)
             "triage": {"union": ["direct_triage", "write"]},
-
             # Read (view + all above)
-            "read": {"union": ["direct_read", "triage"]}
+            "read": {"union": ["direct_read", "triage"]},
         },
         "permissions": {
             "view": ["read"],
@@ -265,9 +242,9 @@ repo_namespace = NamespaceConfig(
             "push": ["write"],
             "manage_issues": ["triage"],
             "manage_settings": ["admin"],
-            "delete": ["admin"]
-        }
-    }
+            "delete": ["admin"],
+        },
+    },
 )
 ```
 
@@ -281,47 +258,33 @@ drive_namespace = NamespaceConfig(
         "relations": {
             # Structural
             "parent": {},
-
             # Direct
             "direct_owner": {},
             "direct_editor": {},
             "direct_commenter": {},
             "direct_viewer": {},
-
             # Inherited from parent
-            "parent_owner": {
-                "tupleToUserset": {
-                    "tupleset": "parent",
-                    "computedUserset": "owner"
-                }
-            },
+            "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
             "parent_editor": {
-                "tupleToUserset": {
-                    "tupleset": "parent",
-                    "computedUserset": "editor"
-                }
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "editor"}
             },
             "parent_viewer": {
-                "tupleToUserset": {
-                    "tupleset": "parent",
-                    "computedUserset": "viewer"
-                }
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "viewer"}
             },
-
             # Computed
             "owner": {"union": ["direct_owner", "parent_owner"]},
             "editor": {"union": ["direct_editor", "parent_editor", "owner"]},
             "commenter": {"union": ["direct_commenter", "editor"]},
-            "viewer": {"union": ["direct_viewer", "parent_viewer", "commenter"]}
+            "viewer": {"union": ["direct_viewer", "parent_viewer", "commenter"]},
         },
         "permissions": {
             "view": ["viewer"],
             "comment": ["commenter"],
             "edit": ["editor"],
             "share": ["owner"],
-            "delete": ["owner"]
-        }
-    }
+            "delete": ["owner"],
+        },
+    },
 )
 ```
 
@@ -334,28 +297,23 @@ channel_namespace = NamespaceConfig(
     config={
         "relations": {
             "workspace_member": {},  # Member of workspace
-            "channel_member": {},    # Explicitly in channel
-            "channel_admin": {},     # Channel admin
-            "workspace_admin": {},   # Workspace admin
-
+            "channel_member": {},  # Explicitly in channel
+            "channel_admin": {},  # Channel admin
+            "workspace_admin": {},  # Workspace admin
             # Admins (channel or workspace)
             "admin": {"union": ["channel_admin", "workspace_admin"]},
-
             # Members (must be in channel AND workspace)
-            "member": {
-                "intersection": ["channel_member", "workspace_member"]
-            },
-
+            "member": {"intersection": ["channel_member", "workspace_member"]},
             # Can post (members or admins)
-            "poster": {"union": ["member", "admin"]}
+            "poster": {"union": ["member", "admin"]},
         },
         "permissions": {
             "read": ["member"],
             "post": ["poster"],
             "manage": ["admin"],
-            "archive": ["admin"]
-        }
-    }
+            "archive": ["admin"],
+        },
+    },
 )
 ```
 
@@ -460,7 +418,7 @@ try:
     nx.read(
         "/workspace/doc.txt",
         subject=("user", "alice"),
-        zone_id="org_techcorp"  # Different tenant!
+        zone_id="org_techcorp",  # Different tenant!
     )
 except PermissionError:
     print("❌ Cross-tenant access denied")
@@ -518,6 +476,7 @@ def share_workspace(nx, workspace_path, user_id, role="viewer"):
 
     print(f"✅ Shared {workspace_path} with {user_id} as {role}")
 
+
 # Usage
 share_workspace(nx, "/orgs/acme/workspaces/sales", "bob", role="editor")
 ```
@@ -551,6 +510,7 @@ ROLES = {
     "guest": "direct_viewer",
 }
 
+
 def grant_role(nx, user_id, resource_path, role):
     """Grant role-based access to resource."""
     relation = ROLES.get(role)
@@ -570,24 +530,30 @@ def grant_role(nx, user_id, resource_path, role):
 # Track permission changes via changelog
 from datetime import datetime, UTC
 
+
 def audit_permissions(nx, object_path):
     """Get permission change history for a file."""
     # Query rebac_changelog table
     conn = nx.rebac_manager._get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT change_type, subject_type, subject_id, relation, created_at
         FROM rebac_changelog
         WHERE object_type = 'file' AND object_id = ?
         ORDER BY created_at DESC
-    """, (object_path,))
+    """,
+        (object_path,),
+    )
 
     changes = cursor.fetchall()
     for change in changes:
-        print(f"{change['created_at']}: {change['change_type']} - "
-              f"{change['subject_type']}:{change['subject_id']} "
-              f"{change['relation']}")
+        print(
+            f"{change['created_at']}: {change['change_type']} - "
+            f"{change['subject_type']}:{change['subject_id']} "
+            f"{change['relation']}"
+        )
 ```
 
 ---
@@ -663,8 +629,10 @@ cursor.execute("""
 """)
 
 for change in cursor.fetchall():
-    print(f"⚠️  {change['change_type']}: {change['subject_id']} "
-          f"{change['relation']} {change['object_id']}")
+    print(
+        f"⚠️  {change['change_type']}: {change['subject_id']} "
+        f"{change['relation']} {change['object_id']}"
+    )
 ```
 
 ### 5. Separate Admin Operations
@@ -747,6 +715,7 @@ def grant_directory_access(nx, user, directory, role):
             relation=f"direct_{role}",
             object=("file", path),
         )
+
 
 grant_directory_access(nx, "alice", "/workspace/sales", "editor")
 ```

@@ -265,11 +265,7 @@ nexus memory approve-batch mem_abc123... mem_def456... mem_ghi789...
 **Python:**
 ```python
 # Batch approve
-result = nx.memory.approve_batch([
-    "mem_abc123...",
-    "mem_def456...",
-    "mem_ghi789..."
-])
+result = nx.memory.approve_batch(["mem_abc123...", "mem_def456...", "mem_ghi789..."])
 
 print(f"Approved: {result['approved']}")
 print(f"Failed: {result['failed']}")
@@ -327,6 +323,7 @@ all_memories = nx.memory.query(scope="user", state="all")
 import asyncio
 from nexus import connect
 
+
 async def main():
     async with connect() as nx:
         print("=== Memory Approval Workflow ===\n")
@@ -334,9 +331,7 @@ async def main():
         # 1. Store a memory (starts as inactive)
         print("1️⃣ Storing new memory (will be inactive)...")
         mem_id = nx.memory.store(
-            content="User prefers dark theme",
-            scope="user",
-            memory_type="preference"
+            content="User prefers dark theme", scope="user", memory_type="preference"
         )
         print(f"   ✓ Stored: {mem_id}\n")
 
@@ -363,6 +358,7 @@ async def main():
         print(f"   (New memory NOW included!)\n")
 
         print("✨ Approval workflow complete!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -411,10 +407,7 @@ import nexus
 nx = nexus.connect()
 
 # Option 2: Explicit configuration
-nx = nexus.connect(config={
-    "url": "http://localhost:8765",
-    "api_key": "nxk_abc123..."
-})
+nx = nexus.connect(config={"url": "http://localhost:8765", "api_key": "nxk_abc123..."})
 ```
 
 ### Complete Example
@@ -424,6 +417,7 @@ nx = nexus.connect(config={
 import asyncio
 from nexus import connect
 
+
 async def main():
     # Connect to Nexus server (reads NEXUS_URL and NEXUS_API_KEY from environment)
     async with connect() as nx:
@@ -432,22 +426,16 @@ async def main():
         # Store some memories
         print("1️⃣ Storing memories...")
 
-        nx.memory.store(
-            content="User's name is Alice",
-            scope="user",
-            memory_type="fact"
-        )
+        nx.memory.store(content="User's name is Alice", scope="user", memory_type="fact")
 
         nx.memory.store(
-            content="User prefers concise code examples",
-            scope="user",
-            memory_type="preference"
+            content="User prefers concise code examples", scope="user", memory_type="preference"
         )
 
         nx.memory.store(
             content="User asked about file operations yesterday",
             scope="user",
-            memory_type="experience"
+            memory_type="experience",
         )
 
         print("   ✓ Stored 3 memories\n")
@@ -478,6 +466,7 @@ async def main():
         print()
 
         print("✨ Agent successfully stored and retrieved memories!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -525,9 +514,7 @@ Memories private to a specific agent instance:
 ```python
 # Only this agent can see this memory
 nx.memory.store(
-    content="My internal state: processing request 12345",
-    scope="agent",
-    memory_type="fact"
+    content="My internal state: processing request 12345", scope="agent", memory_type="fact"
 )
 ```
 
@@ -541,11 +528,7 @@ Memories shared across all of a user's agents:
 
 ```python
 # All user's agents can access this
-nx.memory.store(
-    content="User prefers dark mode",
-    scope="user",
-    memory_type="preference"
-)
+nx.memory.store(content="User prefers dark mode", scope="user", memory_type="preference")
 ```
 
 ```bash
@@ -558,11 +541,7 @@ Memories shared within an organization:
 
 ```python
 # All agents in the organization can access
-nx.memory.store(
-    content="Company policy: Code reviews required",
-    scope="tenant",
-    memory_type="fact"
-)
+nx.memory.store(content="Company policy: Code reviews required", scope="tenant", memory_type="fact")
 ```
 
 ```bash
@@ -575,11 +554,7 @@ Globally shared knowledge (requires permissions):
 
 ```python
 # Shared across all tenants (admin only)
-nx.memory.store(
-    content="Python 3.12 released in 2024",
-    scope="global",
-    memory_type="fact"
-)
+nx.memory.store(content="Python 3.12 released in 2024", scope="global", memory_type="fact")
 ```
 
 ---
@@ -593,11 +568,7 @@ Different types of information require different memory types:
 Objective, verifiable information:
 
 ```python
-nx.memory.store(
-    content="The database is PostgreSQL 15",
-    scope="user",
-    memory_type="fact"
-)
+nx.memory.store(content="The database is PostgreSQL 15", scope="user", memory_type="fact")
 ```
 
 Examples:
@@ -611,9 +582,7 @@ User or agent preferences:
 
 ```python
 nx.memory.store(
-    content="User prefers TypeScript over JavaScript",
-    scope="user",
-    memory_type="preference"
+    content="User prefers TypeScript over JavaScript", scope="user", memory_type="preference"
 )
 ```
 
@@ -630,7 +599,7 @@ Past events and learnings:
 nx.memory.store(
     content="Deployment failed due to missing env var on 2025-01-10",
     scope="user",
-    memory_type="experience"
+    memory_type="experience",
 )
 ```
 
@@ -650,8 +619,10 @@ Here's a complete example of an agent that remembers conversations:
 """
 Conversational Agent with Persistent Memory
 """
+
 import asyncio
 from nexus import connect
+
 
 class MemoryAgent:
     def __init__(self, nx):
@@ -660,19 +631,12 @@ class MemoryAgent:
 
     async def remember(self, fact: str, memory_type: str = "fact"):
         """Store information in memory."""
-        self.nx.memory.store(
-            content=fact,
-            scope="agent",
-            memory_type=memory_type
-        )
+        self.nx.memory.store(content=fact, scope="agent", memory_type=memory_type)
         print(f"   ✓ Remembered: {fact}")
 
     async def recall(self, query: str, limit: int = 3):
         """Search for relevant memories."""
-        results = self.nx.memory.search(
-            query=query,
-            limit=limit
-        )
+        results = self.nx.memory.search(query=query, limit=limit)
         return results
 
     async def process_message(self, user_message: str):
@@ -692,6 +656,7 @@ class MemoryAgent:
         print(f"   🤖 Agent: I understand. I have {len(context)} relevant memories about this.")
 
         return context
+
 
 async def main():
     async with connect() as nx:
@@ -713,6 +678,7 @@ async def main():
         await agent.process_message("Tell me about Python")
 
         print("\n✨ Agent successfully maintained memory across 'sessions'!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -772,7 +738,7 @@ nx.memory.delete(memory_id="mem_abc123...")
 # Or delete all of a certain type
 memories = nx.memory.query(scope="user", memory_type="experience")
 for mem in memories:
-    nx.memory.delete(mem['memory_id'])
+    nx.memory.delete(mem["memory_id"])
 ```
 
 ---
@@ -786,22 +752,14 @@ You can assign importance scores to prioritize certain memories:
 nx.memory.store(
     content="Production database credentials rotated",
     scope="user",
-    importance=0.95  # 0.0 to 1.0
+    importance=0.95,  # 0.0 to 1.0
 )
 
 # Medium importance
-nx.memory.store(
-    content="User mentioned liking cats",
-    scope="user",
-    importance=0.5
-)
+nx.memory.store(content="User mentioned liking cats", scope="user", importance=0.5)
 
 # Low importance
-nx.memory.store(
-    content="Weather was nice today",
-    scope="user",
-    importance=0.2
-)
+nx.memory.store(content="Weather was nice today", scope="user", importance=0.2)
 ```
 
 ```bash
@@ -882,8 +840,10 @@ Here's the complete script combining all concepts:
 Complete AI Agent Memory Demo
 Prerequisites: Nexus server running with NEXUS_URL and NEXUS_API_KEY set
 """
+
 import asyncio
 from nexus import connect
+
 
 async def main():
     async with connect() as nx:
@@ -940,6 +900,7 @@ async def main():
         print()
 
         print("✨ Demo complete!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

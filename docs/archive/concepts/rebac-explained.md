@@ -50,14 +50,14 @@ graph LR
 ```python
 @dataclass
 class ReBACTuple:
-    tuple_id: str                   # Unique ID
-    subject: Entity                 # Who (agent, user, group)
-    relation: str                   # Relationship type
-    object: Entity                  # What (file, memory, skill)
-    subject_relation: str | None    # For group expansion (member)
-    created_at: datetime            # Creation time
-    expires_at: datetime | None     # Optional expiration
-    conditions: dict | None         # JSON conditions
+    tuple_id: str  # Unique ID
+    subject: Entity  # Who (agent, user, group)
+    relation: str  # Relationship type
+    object: Entity  # What (file, memory, skill)
+    subject_relation: str | None  # For group expansion (member)
+    created_at: datetime  # Creation time
+    expires_at: datetime | None  # Optional expiration
+    conditions: dict | None  # JSON conditions
 ```
 
 **Entity Structure:**
@@ -65,7 +65,7 @@ class ReBACTuple:
 @dataclass
 class Entity:
     entity_type: str  # "agent", "user", "group", "file", "memory"
-    entity_id: str    # Unique identifier
+    entity_id: str  # Unique identifier
     zone_id: str | None  # Multi-zone isolation
 ```
 
@@ -145,47 +145,36 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
         "relations": {
             # Structural relation
             "parent": {},  # Parent directory
-
             # Direct relations (explicitly granted)
             "direct_owner": {},
             "direct_editor": {},
             "direct_viewer": {},
-
             # Parent inheritance (tupleToUserset)
             "parent_owner": {
                 "tupleToUserset": {
-                    "tupleset": "parent",       # Find parent
-                    "computedUserset": "owner"  # Check owner on parent
+                    "tupleset": "parent",  # Find parent
+                    "computedUserset": "owner",  # Check owner on parent
                 }
             },
-
             # Group inheritance (tupleToUserset)
             "group_owner": {
                 "tupleToUserset": {
                     "tupleset": "direct_owner",  # Find groups with direct_owner
-                    "computedUserset": "member"   # Check if subject is member
+                    "computedUserset": "member",  # Check if subject is member
                 }
             },
-
             # Union relations (OR logic)
-            "owner": {
-                "union": ["direct_owner", "parent_owner", "group_owner"]
-            },
-            "editor": {
-                "union": ["direct_editor", "parent_editor", "group_editor", "owner"]
-            },
-            "viewer": {
-                "union": ["direct_viewer", "parent_viewer", "group_viewer"]
-            },
+            "owner": {"union": ["direct_owner", "parent_owner", "group_owner"]},
+            "editor": {"union": ["direct_editor", "parent_editor", "group_editor", "owner"]},
+            "viewer": {"union": ["direct_viewer", "parent_viewer", "group_viewer"]},
         },
-
         # Permission-to-relation mapping
         "permissions": {
             "read": ["viewer", "editor", "owner"],  # read = viewer OR editor OR owner
-            "write": ["editor", "owner"],           # write = editor OR owner
-            "execute": ["owner"],                   # execute = owner only
-        }
-    }
+            "write": ["editor", "owner"],  # write = editor OR owner
+            "execute": ["owner"],  # execute = owner only
+        },
+    },
 )
 ```
 
@@ -401,7 +390,7 @@ tuple_id = manager.rebac_write(
     object=("file", "/workspace/data.txt"),
     zone_id="acme",
     expires_at=None,  # Optional expiration
-    conditions=None   # Optional JSON conditions
+    conditions=None,  # Optional JSON conditions
 )
 ```
 
@@ -426,7 +415,7 @@ can_write = manager.rebac_check(
     subject=("agent", "alice"),
     permission="write",
     object=("file", "/workspace/data.txt"),
-    zone_id="acme"
+    zone_id="acme",
 )
 # Returns: True or False
 ```
@@ -449,9 +438,7 @@ nexus rebac expand read file /workspace/data.txt
 
 ```python
 subjects = manager.rebac_expand(
-    permission="read",
-    object=("file", "/workspace/data.txt"),
-    zone_id="acme"
+    permission="read", object=("file", "/workspace/data.txt"), zone_id="acme"
 )
 # Returns: [("agent", "alice"), ("agent", "bob"), ("group", "eng-team")]
 ```
@@ -509,7 +496,7 @@ ReBAC checks are **cached with TTL** for performance:
 manager = ReBACManager(
     engine=engine,
     cache_ttl_seconds=300,  # 5 minutes (default)
-    max_depth=50           # Max graph traversal depth
+    max_depth=50,  # Max graph traversal depth
 )
 ```
 
@@ -595,8 +582,8 @@ custom_namespace = NamespaceConfig(
             "read": ["viewer", "editor", "owner"],
             "write": ["editor", "owner"],
             "delete": ["owner"],
-        }
-    }
+        },
+    },
 )
 
 manager.register_namespace(custom_namespace)

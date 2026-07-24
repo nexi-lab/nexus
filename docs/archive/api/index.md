@@ -140,13 +140,10 @@ nx = nexus.connect(remote_url="http://localhost:2026")
 ```python
 from nexus.plugins import NexusPlugin, PluginMetadata
 
+
 class MyPlugin(NexusPlugin):
     def metadata(self) -> PluginMetadata:
-        return PluginMetadata(
-            name="my-plugin",
-            version="1.0.0",
-            description="Custom plugin"
-        )
+        return PluginMetadata(name="my-plugin", version="1.0.0", description="Custom plugin")
 
     def commands(self) -> dict[str, Callable]:
         return {"hello": self.hello_command}
@@ -169,11 +166,7 @@ skill = await registry.get_skill("analyze-code")
 
 # Create new skill
 manager = SkillManager(nx, registry)
-await manager.create_skill(
-    name="my-skill",
-    description="Custom skill",
-    template="basic"
-)
+await manager.create_skill(name="my-skill", description="Custom skill", template="basic")
 ```
 
 ---
@@ -210,11 +203,7 @@ except PermissionDeniedError:
 nx.workspace.create("/tenant/acme-corp", zone_id="acme-123")
 
 # All operations within workspace are isolated
-nx.write(
-    "/tenant/acme-corp/data.json",
-    data,
-    context={"zone_id": "acme-123"}
-)
+nx.write("/tenant/acme-corp/data.json", data, context={"zone_id": "acme-123"})
 ```
 
 ---

@@ -99,6 +99,7 @@ Write `tests/architecture/conftest.py`:
 
 ```python
 """Shared fixtures for surface-coverage tests."""
+
 from pathlib import Path
 
 import pytest
@@ -142,6 +143,7 @@ Write `tests/architecture/test_schema.py`:
 
 ```python
 """Schema dataclasses + YAML round-trip."""
+
 from pathlib import Path
 
 import pytest
@@ -235,6 +237,7 @@ One row per logical operation. Each transport cell is filled or None.
 Human-filled fields (usage_example, correctness_test, perf_class, perf_link,
 gap_issue, owning_issue) are None in v1 and populated by subissues.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -280,11 +283,11 @@ class Module:
 
 @dataclass
 class Operation:
-    id: str                                   # canonical "<module>.<verb>"
+    id: str  # canonical "<module>.<verb>"
     module: str
     summary: str
-    transports: dict[str, TransportCell]      # subset of TRANSPORT_KEYS
-    profiles: dict[str, ProfileStatus]        # exactly PROFILE_KEYS
+    transports: dict[str, TransportCell]  # subset of TRANSPORT_KEYS
+    profiles: dict[str, ProfileStatus]  # exactly PROFILE_KEYS
     usage_example: str | None = None
     correctness_test: str | None = None
     perf_class: PerfClass | None = None
@@ -296,7 +299,7 @@ class Operation:
 @dataclass
 class ParityWarning:
     operation_id: str
-    has: list[str]      # transport keys present
+    has: list[str]  # transport keys present
     missing: list[str]  # transport keys absent but expected
 
 
@@ -354,9 +357,7 @@ def _operation_from_dict(d: dict[str, Any]) -> Operation:
         try:
             profiles[k] = ProfileStatus(raw)
         except ValueError as e:
-            raise ValueError(
-                f"operation {d.get('id')}: invalid profile status '{raw}'"
-            ) from e
+            raise ValueError(f"operation {d.get('id')}: invalid profile status '{raw}'") from e
     perf_class_raw = d.get("perf_class")
     perf_class = PerfClass(perf_class_raw) if perf_class_raw else None
     return Operation(
@@ -426,6 +427,7 @@ Write `tests/architecture/test_normalize.py`:
 
 ```python
 """Op-id normalization across transports."""
+
 import pytest
 
 from scripts.surface_coverage.normalize import (
@@ -438,21 +440,27 @@ from scripts.surface_coverage.normalize import (
 )
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("nexus fs read", "fs.read"),
-    ("nexus rebac grant", "rebac.grant"),
-    ("nexus mounts list", "mounts.list"),
-    ("nexus workspace snapshot create", "workspace.snapshot_create"),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("nexus fs read", "fs.read"),
+        ("nexus rebac grant", "rebac.grant"),
+        ("nexus mounts list", "mounts.list"),
+        ("nexus workspace snapshot create", "workspace.snapshot_create"),
+    ],
+)
 def test_normalize_cli(raw, expected):
     assert normalize_cli(raw) == expected
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("VFS.Read", "fs.read"),
-    ("VFS.Write", "fs.write"),
-    ("ReBAC.Grant", "rebac.grant"),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("VFS.Read", "fs.read"),
+        ("VFS.Write", "fs.write"),
+        ("ReBAC.Grant", "rebac.grant"),
+    ],
+)
 def test_normalize_grpc_typed(raw, expected):
     assert normalize_grpc_typed(raw) == expected
 
@@ -463,19 +471,25 @@ def test_normalize_grpc_call_passthrough():
     assert normalize_grpc_call("rebac.grant") == "rebac.grant"
 
 
-@pytest.mark.parametrize("method,path,expected", [
-    ("POST", "/api/v1/fs/read", "fs.read"),
-    ("GET", "/api/v1/rebac/grants", "rebac.grants"),
-    ("POST", "/api/v1/workspace/snapshot/create", "workspace.snapshot_create"),
-])
+@pytest.mark.parametrize(
+    "method,path,expected",
+    [
+        ("POST", "/api/v1/fs/read", "fs.read"),
+        ("GET", "/api/v1/rebac/grants", "rebac.grants"),
+        ("POST", "/api/v1/workspace/snapshot/create", "workspace.snapshot_create"),
+    ],
+)
 def test_normalize_http(method, path, expected):
     assert normalize_http(method, path) == expected
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("nexus_fs_read", "fs.read"),
-    ("nexus_rebac_grant", "rebac.grant"),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("nexus_fs_read", "fs.read"),
+        ("nexus_rebac_grant", "rebac.grant"),
+    ],
+)
 def test_normalize_mcp(raw, expected):
     assert normalize_mcp(raw) == expected
 
@@ -510,6 +524,7 @@ Examples:
 
 Unmapped names should be added as overrides in api-rpc-surface-overrides.yaml.
 """
+
 from __future__ import annotations
 
 import re
@@ -569,7 +584,7 @@ def normalize_mcp(tool_name: str) -> str:
     """`nexus_<module>_<verb>[_<more>]` -> `<module>.<verb>[_<more>]`."""
     if not tool_name.startswith("nexus_"):
         raise ValueError(f"unrecognized MCP tool name: {tool_name!r}")
-    rest = tool_name[len("nexus_"):]
+    rest = tool_name[len("nexus_") :]
     parts = rest.split("_", 1)
     if len(parts) != 2:
         raise ValueError(f"MCP name needs module+verb: {tool_name!r}")
@@ -613,9 +628,15 @@ Write `tests/architecture/test_merge.py`:
 
 ```python
 """Merge new extraction with committed YAML, preserving human-filled fields."""
+
 from scripts.surface_coverage.merge import merge_coverage
 from scripts.surface_coverage.schema import (
-    Module, Operation, PerfClass, ProfileStatus, SurfaceCoverage, TransportCell,
+    Module,
+    Operation,
+    PerfClass,
+    ProfileStatus,
+    SurfaceCoverage,
+    TransportCell,
 )
 
 
@@ -629,8 +650,11 @@ def _profiles_all_supported():
 
 def _op(id_, module, summary="", **overrides):
     base = Operation(
-        id=id_, module=module, summary=summary,
-        transports={}, profiles=_profiles_all_supported(),
+        id=id_,
+        module=module,
+        summary=summary,
+        transports={},
+        profiles=_profiles_all_supported(),
     )
     for k, v in overrides.items():
         setattr(base, k, v)
@@ -639,7 +663,8 @@ def _op(id_, module, summary="", **overrides):
 
 def test_merge_preserves_human_fields():
     existing_op = _op(
-        "fs.read", "vfs",
+        "fs.read",
+        "vfs",
         usage_example="nexus fs read /path",
         correctness_test="tests/test_fs.py:42",
         perf_class=PerfClass.HOT,
@@ -647,15 +672,21 @@ def test_merge_preserves_human_fields():
         owning_issue=4123,
     )
     existing = SurfaceCoverage(
-        schema_version=1, modules=[Module("vfs", "VFS", "")], operations=[existing_op],
+        schema_version=1,
+        modules=[Module("vfs", "VFS", "")],
+        operations=[existing_op],
     )
     # extractor re-discovers fs.read with refreshed transport info + extractor summary
     fresh_op = _op(
-        "fs.read", "vfs", summary="extractor docstring",
+        "fs.read",
+        "vfs",
+        summary="extractor docstring",
         transports={"cli": TransportCell("nexus fs read", "src/x.py:99")},
     )
     fresh = SurfaceCoverage(
-        schema_version=1, modules=[Module("vfs", "VFS", "")], operations=[fresh_op],
+        schema_version=1,
+        modules=[Module("vfs", "VFS", "")],
+        operations=[fresh_op],
     )
 
     merged = merge_coverage(existing=existing, fresh=fresh)
@@ -675,10 +706,13 @@ def test_merge_preserves_human_fields():
 
 def test_merge_adds_new_operations():
     existing = SurfaceCoverage(
-        schema_version=1, modules=[], operations=[_op("fs.read", "vfs")],
+        schema_version=1,
+        modules=[],
+        operations=[_op("fs.read", "vfs")],
     )
     fresh = SurfaceCoverage(
-        schema_version=1, modules=[],
+        schema_version=1,
+        modules=[],
         operations=[_op("fs.read", "vfs"), _op("fs.write", "vfs")],
     )
     merged = merge_coverage(existing=existing, fresh=fresh)
@@ -687,11 +721,14 @@ def test_merge_adds_new_operations():
 
 def test_merge_flags_stale_rows():
     existing = SurfaceCoverage(
-        schema_version=1, modules=[],
+        schema_version=1,
+        modules=[],
         operations=[_op("fs.read", "vfs"), _op("fs.deprecated", "vfs", owning_issue=999)],
     )
     fresh = SurfaceCoverage(
-        schema_version=1, modules=[], operations=[_op("fs.read", "vfs")],
+        schema_version=1,
+        modules=[],
+        operations=[_op("fs.read", "vfs")],
     )
     merged = merge_coverage(existing=existing, fresh=fresh)
     # stale op preserved in operations but added to stale_rows
@@ -732,12 +769,16 @@ Extractor-owned fields refreshed from fresh:
     transports, module (if extractor reassigned), profiles (extractor seeds;
     humans override via overrides YAML applied separately).
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
 
 from scripts.surface_coverage.schema import (
-    Operation, ParityWarning, StaleRow, SurfaceCoverage,
+    Operation,
+    ParityWarning,
+    StaleRow,
+    SurfaceCoverage,
 )
 
 
@@ -776,10 +817,12 @@ def merge_coverage(
         if op_id not in fresh_by_id:
             merged_ops.append(existing_op)
             if not any(s.operation_id == op_id for s in stale_rows):
-                stale_rows.append(StaleRow(
-                    operation_id=op_id,
-                    reason="present in committed YAML but not detected by extractor",
-                ))
+                stale_rows.append(
+                    StaleRow(
+                        operation_id=op_id,
+                        reason="present in committed YAML but not detected by extractor",
+                    )
+                )
 
     # sort for deterministic output
     merged_ops.sort(key=lambda o: o.id)
@@ -825,6 +868,7 @@ Write `tests/architecture/test_extract_mcp.py`:
 
 ```python
 """MCP extractor: enumerate tools from tool_profiles.yaml."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_mcp import extract_mcp_tools
@@ -872,6 +916,7 @@ Write `scripts/surface_coverage/extract_mcp.py`:
 
 ```python
 """Extract MCP tools from src/nexus/config/tool_profiles.yaml."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -933,6 +978,7 @@ Write `tests/architecture/test_extract_cli.py`:
 
 ```python
 """CLI extractor: parse _REGISTER_COMMANDS dict from cli/commands/__init__.py."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_cli import extract_cli_commands
@@ -984,6 +1030,7 @@ Write `scripts/surface_coverage/extract_cli.py`:
 Parses the `_REGISTER_COMMANDS: dict[str, tuple[str, ...]]` literal via AST so
 we don't need to import the package (which has heavy runtime deps).
 """
+
 from __future__ import annotations
 
 import ast
@@ -993,9 +1040,9 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class RawCliCommand:
-    name: str               # e.g. "nexus fs read"
+    name: str  # e.g. "nexus fs read"
     module_file: Path
-    source: str             # "path:1" (module file; line approximate)
+    source: str  # "path:1" (module file; line approximate)
 
 
 def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
@@ -1017,11 +1064,13 @@ def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
         for cmd in command_names:
             # commands themselves may be single or multi-token; reduce - to space
             invocation = "nexus " + cmd.replace("_", " ")
-            out.append(RawCliCommand(
-                name=invocation,
-                module_file=module_file,
-                source=f"{module_file}:1",
-            ))
+            out.append(
+                RawCliCommand(
+                    name=invocation,
+                    module_file=module_file,
+                    source=f"{module_file}:1",
+                )
+            )
     return sorted(out, key=lambda r: r.name)
 
 
@@ -1069,6 +1118,7 @@ Write `tests/architecture/test_extract_http.py`:
 
 ```python
 """HTTP extractor: AST-scan FastAPI decorators."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_http import extract_http_routes
@@ -1122,6 +1172,7 @@ Write `scripts/surface_coverage/extract_http.py`:
 Recognizes @<obj>.{get,post,put,patch,delete}('/path/...') decorators
 where <obj> is any router-like instance.
 """
+
 from __future__ import annotations
 
 import ast
@@ -1133,9 +1184,9 @@ _HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 
 @dataclass(frozen=True)
 class RawHttpRoute:
-    method: str   # uppercase
+    method: str  # uppercase
     path: str
-    source: str   # "file.py:line"
+    source: str  # "file.py:line"
 
 
 def extract_http_routes(py_path: Path) -> list[RawHttpRoute]:
@@ -1149,11 +1200,13 @@ def extract_http_routes(py_path: Path) -> list[RawHttpRoute]:
             if route is None:
                 continue
             method, path = route
-            out.append(RawHttpRoute(
-                method=method.upper(),
-                path=path,
-                source=f"{py_path}:{deco.lineno}",
-            ))
+            out.append(
+                RawHttpRoute(
+                    method=method.upper(),
+                    path=path,
+                    source=f"{py_path}:{deco.lineno}",
+                )
+            )
     return sorted(out, key=lambda r: (r.path, r.method))
 
 
@@ -1198,6 +1251,7 @@ Write `tests/architecture/test_extract_grpc_typed.py`:
 
 ```python
 """gRPC typed extractor: parse `rpc <Name>(...)` from .proto via regex."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_grpc_typed import extract_grpc_typed_methods
@@ -1247,6 +1301,7 @@ Write `scripts/surface_coverage/extract_grpc_typed.py`:
 Recognizes the proto3 `service Foo { rpc Bar (...) returns (...); ... }` block.
 Multi-service files supported.
 """
+
 from __future__ import annotations
 
 import re
@@ -1262,8 +1317,8 @@ _RPC_RE = re.compile(r"\brpc\s+(?P<method>[A-Za-z_]\w*)\s*\(")
 
 @dataclass(frozen=True)
 class RawGrpcTypedMethod:
-    method: str    # "<Service>.<Method>"
-    source: str    # "file.proto:line"
+    method: str  # "<Service>.<Method>"
+    source: str  # "file.proto:line"
 
 
 def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
@@ -1276,10 +1331,12 @@ def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
         for rpc in _RPC_RE.finditer(body):
             absolute_offset = body_start_offset + rpc.start()
             line = text.count("\n", 0, absolute_offset) + 1
-            out.append(RawGrpcTypedMethod(
-                method=f"{service}.{rpc.group('method')}",
-                source=f"{proto_path}:{line}",
-            ))
+            out.append(
+                RawGrpcTypedMethod(
+                    method=f"{service}.{rpc.group('method')}",
+                    source=f"{proto_path}:{line}",
+                )
+            )
     return sorted(out, key=lambda r: r.method)
 ```
 
@@ -1314,6 +1371,7 @@ Write `tests/architecture/test_extract_grpc_call.py`:
 
 ```python
 """Extract generic gRPC Call dispatch names from a dict literal via AST."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_grpc_call import extract_grpc_call_names
@@ -1372,6 +1430,7 @@ Write `scripts/surface_coverage/extract_grpc_call.py`:
 The dispatch lives in src/nexus/server/_kernel_syscall_dispatch.py as a
 module-level dict assignment. Keys are string literals (the Call names).
 """
+
 from __future__ import annotations
 
 import ast
@@ -1409,10 +1468,12 @@ def _names_from_dict(value: ast.AST, py_path: Path) -> list[RawGrpcCallName]:
     out: list[RawGrpcCallName] = []
     for k in value.keys:
         if isinstance(k, ast.Constant) and isinstance(k.value, str):
-            out.append(RawGrpcCallName(
-                name=k.value,
-                source=f"{py_path}:{k.lineno}",
-            ))
+            out.append(
+                RawGrpcCallName(
+                    name=k.value,
+                    source=f"{py_path}:{k.lineno}",
+                )
+            )
     return sorted(out, key=lambda r: r.name)
 ```
 
@@ -1442,6 +1503,7 @@ Write `tests/architecture/test_extract_rpc_expose.py`:
 
 ```python
 """@rpc_expose extractor: AST-scan src tree for the decorator."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_rpc_expose import extract_rpc_exposes
@@ -1500,6 +1562,7 @@ The decorator pattern is:
 
 When `name=` is omitted, the method name itself is used.
 """
+
 from __future__ import annotations
 
 import ast
@@ -1537,12 +1600,14 @@ def _scan_module(tree: ast.AST, py: Path) -> list[RawRpcExpose]:
             for deco in item.decorator_list:
                 name = _extract_rpc_expose_name(deco, item.name)
                 if name is not None:
-                    out.append(RawRpcExpose(
-                        name=name,
-                        class_name=cls.name,
-                        method_name=item.name,
-                        source=f"{py}:{deco.lineno}",
-                    ))
+                    out.append(
+                        RawRpcExpose(
+                            name=name,
+                            class_name=cls.name,
+                            method_name=item.name,
+                            source=f"{py}:{deco.lineno}",
+                        )
+                    )
     return out
 
 
@@ -1558,7 +1623,11 @@ def _extract_rpc_expose_name(deco: ast.AST, fallback_method_name: str) -> str | 
     else:
         return None
     for kw in deco.keywords:
-        if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+        if (
+            kw.arg == "name"
+            and isinstance(kw.value, ast.Constant)
+            and isinstance(kw.value.value, str)
+        ):
             return kw.value.value
     return fallback_method_name
 ```
@@ -1589,6 +1658,7 @@ Write `tests/architecture/test_extract_sdk.py`:
 
 ```python
 """SDK extractor: enumerate public methods on remote client classes."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_sdk import extract_sdk_methods
@@ -1630,6 +1700,7 @@ Write `scripts/surface_coverage/extract_sdk.py`:
 
 Public = doesn't start with underscore. Includes sync + async methods.
 """
+
 from __future__ import annotations
 
 import ast
@@ -1659,11 +1730,13 @@ def extract_sdk_methods(
                 continue
             if item.name.startswith("_"):
                 continue
-            out.append(RawSdkMethod(
-                class_name=node.name,
-                method_name=item.name,
-                source=f"{py_path}:{item.lineno}",
-            ))
+            out.append(
+                RawSdkMethod(
+                    class_name=node.name,
+                    method_name=item.name,
+                    source=f"{py_path}:{item.lineno}",
+                )
+            )
     return sorted(out, key=lambda r: r.method_name)
 ```
 
@@ -1698,6 +1771,7 @@ Write `tests/architecture/test_extract_profiles.py`:
 
 ```python
 """Profiles extractor: enumerate values from the DeploymentProfile enum."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.extract_profiles import extract_profile_names
@@ -1737,6 +1811,7 @@ Write `scripts/surface_coverage/extract_profiles.py`:
 
 ```python
 """Extract DeploymentProfile enum values via AST."""
+
 from __future__ import annotations
 
 import ast
@@ -1784,6 +1859,7 @@ Write `tests/architecture/test_orchestrator.py`:
 
 ```python
 """Orchestrator integration test: end-to-end extraction against fixture tree."""
+
 from pathlib import Path
 
 from scripts.gen_api_surface_coverage import generate_coverage
@@ -1887,6 +1963,7 @@ Write `scripts/gen_api_surface_coverage.py`:
 
 Reads the existing YAML (if present) and merges, preserving human-filled fields.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -1906,8 +1983,15 @@ from scripts.surface_coverage import (
 )
 from scripts.surface_coverage.merge import merge_coverage
 from scripts.surface_coverage.schema import (
-    Module, Operation, ParityWarning, ProfileStatus, SurfaceCoverage,
-    TransportCell, UnmappedSurface, dump_yaml, load_yaml,
+    Module,
+    Operation,
+    ParityWarning,
+    ProfileStatus,
+    SurfaceCoverage,
+    TransportCell,
+    UnmappedSurface,
+    dump_yaml,
+    load_yaml,
 )
 
 # Modules to seed in the architecture graph (heuristic; real modules come from extractor output)
@@ -2030,7 +2114,7 @@ def generate_coverage(
         modules=list(_SEED_MODULES),
         operations=sorted(operations.values(), key=lambda o: o.id),
         parity_warnings=parity_warnings,
-        unmapped_surfaces=[],   # populated when normalize raises (left empty for v1)
+        unmapped_surfaces=[],  # populated when normalize raises (left empty for v1)
         stale_rows=[],
     )
 
@@ -2067,11 +2151,15 @@ def _upsert(
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--repo-root", type=Path, default=Path.cwd())
-    p.add_argument("--output", type=Path,
-                   default=Path("docs/architecture/api-rpc-surface-coverage.yaml"))
-    p.add_argument("--overrides", type=Path,
-                   default=Path("docs/architecture/api-rpc-surface-overrides.yaml"),
-                   help="reserved for v2; ignored in v1")
+    p.add_argument(
+        "--output", type=Path, default=Path("docs/architecture/api-rpc-surface-coverage.yaml")
+    )
+    p.add_argument(
+        "--overrides",
+        type=Path,
+        default=Path("docs/architecture/api-rpc-surface-overrides.yaml"),
+        help="reserved for v2; ignored in v1",
+    )
     args = p.parse_args(argv)
     generate_coverage(repo_root=args.repo_root, output=args.output, overrides=args.overrides)
     return 0
@@ -2109,11 +2197,17 @@ Write `tests/architecture/test_render.py`:
 
 ```python
 """Renderer: YAML + template -> deterministic HTML."""
+
 from pathlib import Path
 
 from scripts.surface_coverage.render import render_html
 from scripts.surface_coverage.schema import (
-    Module, Operation, ProfileStatus, SurfaceCoverage, TransportCell, dump_yaml,
+    Module,
+    Operation,
+    ProfileStatus,
+    SurfaceCoverage,
+    TransportCell,
+    dump_yaml,
 )
 
 
@@ -2126,7 +2220,9 @@ def _sample_coverage() -> SurfaceCoverage:
         ],
         operations=[
             Operation(
-                id="fs.read", module="fs", summary="Read bytes from a path",
+                id="fs.read",
+                module="fs",
+                summary="Read bytes from a path",
                 transports={
                     "cli": TransportCell("nexus fs read", "src/x.py:1"),
                     "http": TransportCell("POST /api/v1/fs/read", "src/y.py:2"),
@@ -2303,6 +2399,7 @@ Write `scripts/surface_coverage/render.py`:
 
 ```python
 """Render SurfaceCoverage to HTML via jinja2."""
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -2331,9 +2428,7 @@ def _load_mermaid_js() -> str:
     For initial impl we use the CDN-style script tag inline; a follow-up replaces
     this with a vendored copy under docs/architecture/_vendor/.
     """
-    return (
-        '<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>\n'
-    )
+    return '<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>\n'
 
 
 def render_html(coverage: SurfaceCoverage) -> str:
@@ -2363,6 +2458,7 @@ Write `scripts/render_api_surface_coverage.py`:
 ```python
 #!/usr/bin/env python3
 """Render the surface-coverage YAML into HTML."""
+
 from __future__ import annotations
 
 import argparse
@@ -2375,10 +2471,12 @@ from scripts.surface_coverage.schema import load_yaml
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--input", type=Path,
-                   default=Path("docs/architecture/api-rpc-surface-coverage.yaml"))
-    p.add_argument("--output", type=Path,
-                   default=Path("docs/architecture/api-rpc-surface-coverage.html"))
+    p.add_argument(
+        "--input", type=Path, default=Path("docs/architecture/api-rpc-surface-coverage.yaml")
+    )
+    p.add_argument(
+        "--output", type=Path, default=Path("docs/architecture/api-rpc-surface-coverage.html")
+    )
     args = p.parse_args(argv)
     coverage = load_yaml(args.input)
     args.output.write_text(render_html(coverage))
@@ -2520,6 +2618,7 @@ This test always passes in v1 — it emits warnings when drift is detected.
 It will be promoted to hard-fail in a follow-up issue (likely #4139) once
 subissues catch up filling per-row content.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -2733,8 +2832,12 @@ Write `tests/architecture/test_distribute.py`:
 
 ```python
 """distribute.py: append idempotent contract appendix to a subissue body."""
+
 from scripts.surface_coverage.distribute import (
-    APPENDIX_BEGIN, APPENDIX_END, apply_appendix, build_appendix,
+    APPENDIX_BEGIN,
+    APPENDIX_END,
+    apply_appendix,
+    build_appendix,
 )
 
 
@@ -2758,7 +2861,9 @@ def test_apply_is_idempotent():
 def test_apply_replaces_existing_appendix():
     body = "# Original\n"
     once = apply_appendix(body, build_appendix(issue_number=4123, owned_op_ids=["fs.read"]))
-    twice = apply_appendix(once, build_appendix(issue_number=4123, owned_op_ids=["fs.read", "fs.write"]))
+    twice = apply_appendix(
+        once, build_appendix(issue_number=4123, owned_op_ids=["fs.read", "fs.write"])
+    )
     assert "fs.write" in twice
     # only one appendix block
     assert twice.count(APPENDIX_BEGIN) == 1
@@ -2786,6 +2891,7 @@ Write `scripts/surface_coverage/distribute.py`:
 
 Idempotent: replaces any existing appendix bounded by sentinel comments.
 """
+
 from __future__ import annotations
 
 import re
@@ -2860,6 +2966,7 @@ Idempotent — re-runs replace the prior appendix in-place via sentinel match.
 
 Run AFTER #4161 PR merges to develop, not as part of the PR itself.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -2874,10 +2981,27 @@ from scripts.surface_coverage.schema import load_yaml
 
 # All subissues to amend (epics + children)
 _TARGET_ISSUES: tuple[int, ...] = (
-    4119, 4120, 4121, 4139,                      # epics
-    4122, 4123, 4124, 4125,                       # lite children
-    4126, 4127, 4128, 4129, 4130, 4131,           # sandbox children
-    4132, 4133, 4134, 4135, 4136, 4137, 4138,     # full children
+    4119,
+    4120,
+    4121,
+    4139,  # epics
+    4122,
+    4123,
+    4124,
+    4125,  # lite children
+    4126,
+    4127,
+    4128,
+    4129,
+    4130,
+    4131,  # sandbox children
+    4132,
+    4133,
+    4134,
+    4135,
+    4136,
+    4137,
+    4138,  # full children
 )
 
 _REPO = "nexi-lab/nexus"
@@ -2915,11 +3039,13 @@ def _owners_from_yaml(yaml_path: Path) -> dict[int, list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--yaml", type=Path,
-                   default=Path("docs/architecture/api-rpc-surface-coverage.yaml"))
+    p.add_argument(
+        "--yaml", type=Path, default=Path("docs/architecture/api-rpc-surface-coverage.yaml")
+    )
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--only", type=int, action="append",
-                   help="restrict to specific issue number(s) (testing)")
+    p.add_argument(
+        "--only", type=int, action="append", help="restrict to specific issue number(s) (testing)"
+    )
     args = p.parse_args(argv)
 
     owners = _owners_from_yaml(args.yaml)

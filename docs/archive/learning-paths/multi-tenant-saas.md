@@ -114,15 +114,13 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
+
 class TenantManager:
     """Manage multi-zone SaaS tenants"""
 
     def __init__(self, admin_api_key: str, server_url: str = "http://localhost:2026"):
         self.server_url = server_url
-        self.admin = nexus.connect(config={
-            "url": server_url,
-            "api_key": admin_api_key
-        })
+        self.admin = nexus.connect(config={"url": server_url, "api_key": admin_api_key})
 
     def create_tenant(
         self,
@@ -130,7 +128,7 @@ class TenantManager:
         name: str,
         plan: str = "free",
         max_users: int = 5,
-        max_storage_gb: int = 10
+        max_storage_gb: int = 10,
     ) -> Dict:
         """Create a new tenant with isolated workspace"""
 
@@ -148,20 +146,13 @@ class TenantManager:
             "limits": {
                 "max_users": max_users,
                 "max_storage_gb": max_storage_gb,
-                "max_files": 10000 if plan == "free" else None
+                "max_files": 10000 if plan == "free" else None,
             },
-            "usage": {
-                "users": 0,
-                "storage_gb": 0,
-                "files": 0
-            }
+            "usage": {"users": 0, "storage_gb": 0, "files": 0},
         }
 
         # Save metadata
-        self.admin.write(
-            f"{tenant_path}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
-        )
+        self.admin.write(f"{tenant_path}/.tenant.json", json.dumps(metadata, indent=2).encode())
 
         # Create standard tenant directories
         for subdir in ["users", "shared", "uploads", "exports"]:
@@ -177,13 +168,16 @@ class TenantManager:
 
         # Create user account and API key
         # Note: In Nexus, users are created implicitly when their first API key is generated
-        result = self.admin._call_rpc("admin_create_key", {
-            "user_id": username,
-            "name": f"{username} (Tenant Admin)",
-            "subject_type": "user",
-            "zone_id": zone_id,
-            "is_admin": False,  # Tenant admin, not system admin
-        })
+        result = self.admin._call_rpc(
+            "admin_create_key",
+            {
+                "user_id": username,
+                "name": f"{username} (Tenant Admin)",
+                "subject_type": "user",
+                "zone_id": zone_id,
+                "is_admin": False,  # Tenant admin, not system admin
+            },
+        )
 
         api_key = result["api_key"]
 
@@ -193,7 +187,7 @@ class TenantManager:
             subject=("user", username),
             relation="owner",
             object=("file", tenant_path),
-            zone_id=zone_id
+            zone_id=zone_id,
         )
 
         print(f"✅ Created tenant admin: {username}")
@@ -204,26 +198,23 @@ class TenantManager:
             "email": email,
             "zone_id": zone_id,
             "api_key": api_key,
-            "role": "tenant_admin"
+            "role": "tenant_admin",
         }
 
-    def add_tenant_user(
-        self,
-        zone_id: str,
-        username: str,
-        email: str,
-        role: str = "user"
-    ) -> Dict:
+    def add_tenant_user(self, zone_id: str, username: str, email: str, role: str = "user") -> Dict:
         """Add a user to a tenant"""
 
         # Create user account and API key
-        result = self.admin._call_rpc("admin_create_key", {
-            "user_id": username,
-            "name": username,
-            "subject_type": "user",
-            "zone_id": zone_id,
-            "is_admin": False,
-        })
+        result = self.admin._call_rpc(
+            "admin_create_key",
+            {
+                "user_id": username,
+                "name": username,
+                "subject_type": "user",
+                "zone_id": zone_id,
+                "is_admin": False,
+            },
+        )
 
         api_key = result["api_key"]
 
@@ -241,7 +232,7 @@ class TenantManager:
             subject=("user", username),
             relation=relation,
             object=("file", f"{tenant_path}/shared"),
-            zone_id=zone_id
+            zone_id=zone_id,
         )
 
         # Grant user access to their personal folder
@@ -251,7 +242,7 @@ class TenantManager:
             subject=("user", username),
             relation="owner",
             object=("file", user_folder),
-            zone_id=zone_id
+            zone_id=zone_id,
         )
 
         print(f"✅ Added user: {username} (role: {role})")
@@ -264,14 +255,12 @@ class TenantManager:
             "email": email,
             "zone_id": zone_id,
             "role": role,
-            "api_key": api_key
+            "api_key": api_key,
         }
 
     def get_tenant_info(self, zone_id: str) -> Dict:
         """Get tenant information and usage"""
-        metadata = json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        metadata = json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
         return metadata
 
     def list_tenants(self) -> List[Dict]:
@@ -280,7 +269,7 @@ class TenantManager:
 
         tenants = []
         for tenant_dir in tenant_dirs:
-            zone_id = tenant_dir['path'].split('/')[-1]
+            zone_id = tenant_dir["path"].split("/")[-1]
             try:
                 info = self.get_tenant_info(zone_id)
                 tenants.append(info)
@@ -294,34 +283,34 @@ class TenantManager:
         metadata = self.get_tenant_info(zone_id)
 
         for key, value in kwargs.items():
-            if key.endswith('_delta'):
-                metric = key.replace('_delta', '')
-                if metric in metadata['usage']:
-                    metadata['usage'][metric] += value
+            if key.endswith("_delta"):
+                metric = key.replace("_delta", "")
+                if metric in metadata["usage"]:
+                    metadata["usage"][metric] += value
 
         self.admin.write(
-            f"/tenants/{zone_id}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
+            f"/tenants/{zone_id}/.tenant.json", json.dumps(metadata, indent=2).encode()
         )
 
     def check_quota(self, zone_id: str, resource: str, amount: int = 1) -> bool:
         """Check if tenant is within quota limits"""
         metadata = self.get_tenant_info(zone_id)
 
-        limits = metadata['limits']
-        usage = metadata['usage']
+        limits = metadata["limits"]
+        usage = metadata["usage"]
 
-        if resource == 'users':
-            return usage['users'] + amount <= limits['max_users']
-        elif resource == 'storage_gb':
-            return usage['storage_gb'] + amount <= limits['max_storage_gb']
-        elif resource == 'files':
-            max_files = limits.get('max_files')
+        if resource == "users":
+            return usage["users"] + amount <= limits["max_users"]
+        elif resource == "storage_gb":
+            return usage["storage_gb"] + amount <= limits["max_storage_gb"]
+        elif resource == "files":
+            max_files = limits.get("max_files")
             if max_files is None:
                 return True
-            return usage['files'] + amount <= max_files
+            return usage["files"] + amount <= max_files
 
         return True
+
 
 # Demo usage
 if __name__ == "__main__":
@@ -337,58 +326,34 @@ if __name__ == "__main__":
         name="Acme Corporation",
         plan="enterprise",
         max_users=100,
-        max_storage_gb=1000
+        max_storage_gb=1000,
     )
 
     beta_tenant = tm.create_tenant(
-        zone_id="beta",
-        name="Beta Inc",
-        plan="pro",
-        max_users=50,
-        max_storage_gb=500
+        zone_id="beta", name="Beta Inc", plan="pro", max_users=50, max_storage_gb=500
     )
 
     startup_tenant = tm.create_tenant(
-        zone_id="startup",
-        name="Startup Co",
-        plan="free",
-        max_users=5,
-        max_storage_gb=10
+        zone_id="startup", name="Startup Co", plan="free", max_users=5, max_storage_gb=10
     )
 
     # Create tenant admins
-    acme_admin = tm.create_tenant_admin(
-        zone_id="acme",
-        username="alice",
-        email="alice@acme.com"
-    )
+    acme_admin = tm.create_tenant_admin(zone_id="acme", username="alice", email="alice@acme.com")
 
-    beta_admin = tm.create_tenant_admin(
-        zone_id="beta",
-        username="bob",
-        email="bob@beta.com"
-    )
+    beta_admin = tm.create_tenant_admin(zone_id="beta", username="bob", email="bob@beta.com")
 
     # Add users to tenants
-    tm.add_tenant_user(
-        zone_id="acme",
-        username="charlie",
-        email="charlie@acme.com",
-        role="editor"
-    )
+    tm.add_tenant_user(zone_id="acme", username="charlie", email="charlie@acme.com", role="editor")
 
-    tm.add_tenant_user(
-        zone_id="acme",
-        username="diana",
-        email="diana@acme.com",
-        role="user"
-    )
+    tm.add_tenant_user(zone_id="acme", username="diana", email="diana@acme.com", role="user")
 
     # List all tenants
     print("\n📋 All Tenants:")
     for tenant in tm.list_tenants():
         print(f"  - {tenant['name']} ({tenant['zone_id']})")
-        print(f"    Plan: {tenant['plan']}, Users: {tenant['usage']['users']}/{tenant['limits']['max_users']}")
+        print(
+            f"    Plan: {tenant['plan']}, Users: {tenant['usage']['users']}/{tenant['limits']['max_users']}"
+        )
 ```
 
 **Run it:**
@@ -408,16 +373,10 @@ Ensure complete data isolation between tenants:
 import nexus
 
 # Acme tenant user (Alice)
-alice = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "alice_key_here"
-})
+alice = nexus.connect(config={"url": "http://localhost:2026", "api_key": "alice_key_here"})
 
 # Beta tenant user (Bob)
-bob = nexus.connect(config={
-    "url": "http://localhost:2026",
-    "api_key": "bob_key_here"
-})
+bob = nexus.connect(config={"url": "http://localhost:2026", "api_key": "bob_key_here"})
 
 # Alice creates files in Acme tenant workspace
 alice.write(
@@ -430,16 +389,13 @@ alice.write(
 - Hire 10 engineers
 
 CONFIDENTIAL - Acme Corporation
-"""
+""",
 )
 
 print("✅ Alice created Acme project plan")
 
 # Alice creates personal files
-alice.write(
-    "/tenants/acme/users/alice/notes.md",
-    b"Personal notes for Alice - Acme internal"
-)
+alice.write("/tenants/acme/users/alice/notes.md", b"Personal notes for Alice - Acme internal")
 
 print("✅ Alice created personal notes")
 
@@ -454,7 +410,7 @@ bob.write(
 - API v2
 
 CONFIDENTIAL - Beta Inc
-"""
+""",
 )
 
 print("✅ Bob created Beta roadmap")
@@ -502,14 +458,14 @@ import nexus
 import json
 from datetime import datetime, timedelta
 
+
 class CrossTenantSharing:
     """Manage secure cross-tenant data sharing"""
 
     def __init__(self, admin_api_key: str):
-        self.admin = nexus.connect(config={
-            "url": "http://localhost:2026",
-            "api_key": admin_api_key
-        })
+        self.admin = nexus.connect(
+            config={"url": "http://localhost:2026", "api_key": admin_api_key}
+        )
 
     def create_shared_link(
         self,
@@ -517,7 +473,7 @@ class CrossTenantSharing:
         file_path: str,
         target_zone_id: str,
         permission: str = "can_read",
-        expires_in_days: int = 7
+        expires_in_days: int = 7,
     ) -> Dict:
         """Create a secure cross-tenant share"""
 
@@ -533,7 +489,7 @@ class CrossTenantSharing:
             "permission": permission,
             "created_at": datetime.now().isoformat(),
             "expires_at": expires_at.isoformat(),
-            "status": "active"
+            "status": "active",
         }
 
         # Grant temporary cross-tenant permission
@@ -551,13 +507,12 @@ class CrossTenantSharing:
             subject=("tenant", target_zone_id),
             relation=permission,
             object=("file", shared_file_path),
-            zone_id=zone_id
+            zone_id=zone_id,
         )
 
         # Store share metadata
         self.admin.write(
-            f"{target_path}/.share-{share_id}.json",
-            json.dumps(share_metadata, indent=2).encode()
+            f"{target_path}/.share-{share_id}.json", json.dumps(share_metadata, indent=2).encode()
         )
 
         print(f"✅ Created cross-tenant share: {share_id}")
@@ -580,6 +535,7 @@ class CrossTenantSharing:
         # Implementation would scan for share metadata
         pass
 
+
 # Usage example
 sharing = CrossTenantSharing("admin_key_here")
 
@@ -589,7 +545,7 @@ share = sharing.create_shared_link(
     file_path="/tenants/acme/shared/partnership-proposal.pdf",
     target_zone_id="beta",
     permission="can_read",
-    expires_in_days=30
+    expires_in_days=30,
 )
 ```
 
@@ -605,46 +561,39 @@ import nexus
 import json
 from typing import Dict
 
+
 class TenantQuotaManager:
     """Manage tenant quotas and usage tracking"""
 
     def __init__(self, admin_api_key: str):
-        self.admin = nexus.connect(config={
-            "url": "http://localhost:2026",
-            "api_key": admin_api_key
-        })
+        self.admin = nexus.connect(
+            config={"url": "http://localhost:2026", "api_key": admin_api_key}
+        )
 
-    def check_and_enforce_quota(
-        self,
-        zone_id: str,
-        operation: str,
-        amount: int = 1
-    ) -> bool:
+    def check_and_enforce_quota(self, zone_id: str, operation: str, amount: int = 1) -> bool:
         """Check quota before allowing operation"""
 
         # Get tenant metadata
-        metadata = json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        metadata = json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
 
-        limits = metadata['limits']
-        usage = metadata['usage']
+        limits = metadata["limits"]
+        usage = metadata["usage"]
 
         # Check specific quota
         if operation == "create_user":
-            if usage['users'] >= limits['max_users']:
+            if usage["users"] >= limits["max_users"]:
                 raise QuotaExceededError(
                     f"Tenant {zone_id} has reached user limit: {limits['max_users']}"
                 )
 
         elif operation == "upload_file":
-            if limits.get('max_files') and usage['files'] >= limits['max_files']:
+            if limits.get("max_files") and usage["files"] >= limits["max_files"]:
                 raise QuotaExceededError(
                     f"Tenant {zone_id} has reached file limit: {limits['max_files']}"
                 )
 
         elif operation == "storage":
-            if usage['storage_gb'] + (amount / 1024**3) > limits['max_storage_gb']:
+            if usage["storage_gb"] + (amount / 1024**3) > limits["max_storage_gb"]:
                 raise QuotaExceededError(
                     f"Tenant {zone_id} would exceed storage limit: {limits['max_storage_gb']}GB"
                 )
@@ -653,74 +602,63 @@ class TenantQuotaManager:
 
     def update_usage(self, zone_id: str, metric: str, delta: float):
         """Update tenant usage metrics"""
-        metadata = json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        metadata = json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
 
-        metadata['usage'][metric] += delta
+        metadata["usage"][metric] += delta
 
         self.admin.write(
-            f"/tenants/{zone_id}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
+            f"/tenants/{zone_id}/.tenant.json", json.dumps(metadata, indent=2).encode()
         )
 
     def get_usage_report(self, zone_id: str) -> Dict:
         """Generate usage report for billing"""
-        metadata = json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        metadata = json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
 
-        usage = metadata['usage']
-        limits = metadata['limits']
+        usage = metadata["usage"]
+        limits = metadata["limits"]
 
         return {
             "zone_id": zone_id,
-            "plan": metadata['plan'],
+            "plan": metadata["plan"],
             "usage": usage,
             "limits": limits,
             "utilization": {
-                "users": f"{usage['users']}/{limits['max_users']} ({usage['users']/limits['max_users']*100:.1f}%)",
-                "storage": f"{usage['storage_gb']:.2f}/{limits['max_storage_gb']}GB ({usage['storage_gb']/limits['max_storage_gb']*100:.1f}%)",
-            }
+                "users": f"{usage['users']}/{limits['max_users']} ({usage['users'] / limits['max_users'] * 100:.1f}%)",
+                "storage": f"{usage['storage_gb']:.2f}/{limits['max_storage_gb']}GB ({usage['storage_gb'] / limits['max_storage_gb'] * 100:.1f}%)",
+            },
         }
 
     def calculate_overage_charges(self, zone_id: str) -> Dict:
         """Calculate overage charges for billing"""
         report = self.get_usage_report(zone_id)
 
-        charges = {
-            "base_charge": 0,
-            "overage_charges": {},
-            "total": 0
-        }
+        charges = {"base_charge": 0, "overage_charges": {}, "total": 0}
 
         # Example pricing
-        plan_prices = {
-            "free": 0,
-            "pro": 99,
-            "enterprise": 499
-        }
+        plan_prices = {"free": 0, "pro": 99, "enterprise": 499}
 
-        charges["base_charge"] = plan_prices.get(report['plan'], 0)
+        charges["base_charge"] = plan_prices.get(report["plan"], 0)
 
         # Calculate overages (simplified)
-        usage = report['usage']
-        limits = report['limits']
+        usage = report["usage"]
+        limits = report["limits"]
 
-        if usage['users'] > limits['max_users']:
-            overage = usage['users'] - limits['max_users']
+        if usage["users"] > limits["max_users"]:
+            overage = usage["users"] - limits["max_users"]
             charges["overage_charges"]["users"] = overage * 10  # $10 per extra user
 
-        if usage['storage_gb'] > limits['max_storage_gb']:
-            overage = usage['storage_gb'] - limits['max_storage_gb']
+        if usage["storage_gb"] > limits["max_storage_gb"]:
+            overage = usage["storage_gb"] - limits["max_storage_gb"]
             charges["overage_charges"]["storage"] = overage * 0.50  # $0.50 per extra GB
 
         charges["total"] = charges["base_charge"] + sum(charges["overage_charges"].values())
 
         return charges
 
+
 class QuotaExceededError(Exception):
     pass
+
 
 # Usage
 quota_mgr = TenantQuotaManager("admin_key_here")
@@ -743,7 +681,7 @@ print(f"  Storage: {report['utilization']['storage']}")
 charges = quota_mgr.calculate_overage_charges("acme")
 print(f"\n💰 Acme Billing:")
 print(f"  Base: ${charges['base_charge']}")
-if charges['overage_charges']:
+if charges["overage_charges"]:
     print(f"  Overages: ${sum(charges['overage_charges'].values()):.2f}")
 print(f"  Total: ${charges['total']:.2f}")
 ```
@@ -761,30 +699,27 @@ import json
 from datetime import datetime
 from typing import Dict
 
+
 class TenantLifecycle:
     """Manage complete tenant lifecycle"""
 
     def __init__(self, admin_api_key: str):
-        self.admin = nexus.connect(config={
-            "url": "http://localhost:2026",
-            "api_key": admin_api_key
-        })
+        self.admin = nexus.connect(
+            config={"url": "http://localhost:2026", "api_key": admin_api_key}
+        )
 
     def suspend_tenant(self, zone_id: str, reason: str):
         """Suspend a tenant (maintain data, block access)"""
 
         # Update tenant status
-        metadata = json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        metadata = json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
 
-        metadata['status'] = 'suspended'
-        metadata['suspended_at'] = datetime.now().isoformat()
-        metadata['suspension_reason'] = reason
+        metadata["status"] = "suspended"
+        metadata["suspended_at"] = datetime.now().isoformat()
+        metadata["suspension_reason"] = reason
 
         self.admin.write(
-            f"/tenants/{zone_id}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
+            f"/tenants/{zone_id}/.tenant.json", json.dumps(metadata, indent=2).encode()
         )
 
         # Revoke all user access (but keep data)
@@ -798,16 +733,13 @@ class TenantLifecycle:
     def reactivate_tenant(self, zone_id: str):
         """Reactivate a suspended tenant"""
 
-        metadata = json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        metadata = json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
 
-        metadata['status'] = 'active'
-        metadata['reactivated_at'] = datetime.now().isoformat()
+        metadata["status"] = "active"
+        metadata["reactivated_at"] = datetime.now().isoformat()
 
         self.admin.write(
-            f"/tenants/{zone_id}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
+            f"/tenants/{zone_id}/.tenant.json", json.dumps(metadata, indent=2).encode()
         )
 
         # Restore user access
@@ -867,6 +799,7 @@ class TenantLifecycle:
         """Restore user access to tenant"""
         pass
 
+
 # Usage
 lifecycle = TenantLifecycle("admin_key_here")
 
@@ -893,14 +826,14 @@ from typing import Dict, List
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+
 class ScalableSaaS:
     """Production-ready multi-zone SaaS implementation"""
 
     def __init__(self, admin_api_key: str, max_workers: int = 10):
-        self.admin = nexus.connect(config={
-            "url": "http://localhost:2026",
-            "api_key": admin_api_key
-        })
+        self.admin = nexus.connect(
+            config={"url": "http://localhost:2026", "api_key": admin_api_key}
+        )
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def bulk_create_tenants(self, tenant_configs: List[Dict]):
@@ -942,26 +875,28 @@ class ScalableSaaS:
             "total_users": 0,
             "total_storage_gb": 0,
             "avg_users_per_tenant": 0,
-            "avg_storage_per_tenant": 0
+            "avg_storage_per_tenant": 0,
         }
 
         for tenant in all_tenants:
             # Count by plan
-            plan = tenant.get('plan', 'unknown')
-            metrics['by_plan'][plan] = metrics['by_plan'].get(plan, 0) + 1
+            plan = tenant.get("plan", "unknown")
+            metrics["by_plan"][plan] = metrics["by_plan"].get(plan, 0) + 1
 
             # Count by status
-            status = tenant.get('status', 'unknown')
-            metrics['by_status'][status] = metrics['by_status'].get(status, 0) + 1
+            status = tenant.get("status", "unknown")
+            metrics["by_status"][status] = metrics["by_status"].get(status, 0) + 1
 
             # Aggregate usage
-            usage = tenant.get('usage', {})
-            metrics['total_users'] += usage.get('users', 0)
-            metrics['total_storage_gb'] += usage.get('storage_gb', 0)
+            usage = tenant.get("usage", {})
+            metrics["total_users"] += usage.get("users", 0)
+            metrics["total_storage_gb"] += usage.get("storage_gb", 0)
 
-        if metrics['total_tenants'] > 0:
-            metrics['avg_users_per_tenant'] = metrics['total_users'] / metrics['total_tenants']
-            metrics['avg_storage_per_tenant'] = metrics['total_storage_gb'] / metrics['total_tenants']
+        if metrics["total_tenants"] > 0:
+            metrics["avg_users_per_tenant"] = metrics["total_users"] / metrics["total_tenants"]
+            metrics["avg_storage_per_tenant"] = (
+                metrics["total_storage_gb"] / metrics["total_tenants"]
+            )
 
         return metrics
 
@@ -982,13 +917,13 @@ class ScalableSaaS:
         print("   - Permission cache: In-memory LRU")
         print("   - Quota cache: 5-minute TTL")
 
+
 # Usage
 saas = ScalableSaaS("admin_key_here", max_workers=20)
 
 # Bulk create 100 tenants
 tenant_configs = [
-    {"zone_id": f"tenant{i:03d}", "name": f"Tenant {i}", "plan": "free"}
-    for i in range(100)
+    {"zone_id": f"tenant{i:03d}", "name": f"Tenant {i}", "plan": "free"} for i in range(100)
 ]
 
 results = saas.bulk_create_tenants(tenant_configs)
@@ -1014,16 +949,19 @@ Here's a full multi-zone SaaS implementation:
 Production Multi-Tenant SaaS Platform
 Complete implementation with isolation, quotas, and lifecycle management
 """
+
 import nexus
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from enum import Enum
 
+
 class TenantPlan(Enum):
     FREE = "free"
     PRO = "pro"
     ENTERPRISE = "enterprise"
+
 
 class TenantStatus(Enum):
     ACTIVE = "active"
@@ -1031,15 +969,13 @@ class TenantStatus(Enum):
     TRIAL = "trial"
     CANCELLED = "cancelled"
 
+
 class MultiTenantSaaS:
     """Complete multi-zone SaaS platform"""
 
     def __init__(self, server_url: str, admin_api_key: str):
         self.server_url = server_url
-        self.admin = nexus.connect(config={
-            "url": server_url,
-            "api_key": admin_api_key
-        })
+        self.admin = nexus.connect(config={"url": server_url, "api_key": admin_api_key})
 
         # Plan configurations
         self.plan_limits = {
@@ -1047,28 +983,24 @@ class MultiTenantSaaS:
                 "max_users": 5,
                 "max_storage_gb": 10,
                 "max_files": 1000,
-                "features": ["basic_storage", "basic_sharing"]
+                "features": ["basic_storage", "basic_sharing"],
             },
             TenantPlan.PRO: {
                 "max_users": 50,
                 "max_storage_gb": 500,
                 "max_files": 50000,
-                "features": ["advanced_storage", "advanced_sharing", "api_access"]
+                "features": ["advanced_storage", "advanced_sharing", "api_access"],
             },
             TenantPlan.ENTERPRISE: {
                 "max_users": None,  # Unlimited
                 "max_storage_gb": None,  # Unlimited
                 "max_files": None,  # Unlimited
-                "features": ["all", "custom_integrations", "dedicated_support"]
-            }
+                "features": ["all", "custom_integrations", "dedicated_support"],
+            },
         }
 
     def onboard_tenant(
-        self,
-        zone_id: str,
-        name: str,
-        admin_email: str,
-        plan: TenantPlan = TenantPlan.FREE
+        self, zone_id: str, name: str, admin_email: str, plan: TenantPlan = TenantPlan.FREE
     ) -> Dict:
         """Complete tenant onboarding workflow"""
 
@@ -1094,34 +1026,29 @@ class MultiTenantSaaS:
             "created_at": datetime.now().isoformat(),
             "trial_ends_at": (datetime.now() + timedelta(days=14)).isoformat(),
             "limits": limits,
-            "usage": {
-                "users": 0,
-                "storage_gb": 0,
-                "files": 0,
-                "api_calls": 0
-            },
+            "usage": {"users": 0, "storage_gb": 0, "files": 0, "api_calls": 0},
             "settings": {
                 "allow_public_sharing": False,
                 "enforce_2fa": False,
-                "data_retention_days": 90
-            }
+                "data_retention_days": 90,
+            },
         }
 
-        self.admin.write(
-            f"{tenant_path}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
-        )
+        self.admin.write(f"{tenant_path}/.tenant.json", json.dumps(metadata, indent=2).encode())
         print(f"  ✅ Saved tenant metadata")
 
         # Step 4: Create admin user
         admin_username = f"{zone_id}_admin"
-        result = self.admin._call_rpc("admin_create_key", {
-            "user_id": admin_username,
-            "name": f"{name} Admin",
-            "subject_type": "user",
-            "zone_id": zone_id,
-            "is_admin": False,
-        })
+        result = self.admin._call_rpc(
+            "admin_create_key",
+            {
+                "user_id": admin_username,
+                "name": f"{name} Admin",
+                "subject_type": "user",
+                "zone_id": zone_id,
+                "is_admin": False,
+            },
+        )
 
         api_key = result["api_key"]
 
@@ -1130,7 +1057,7 @@ class MultiTenantSaaS:
             subject=("user", admin_username),
             relation="owner",
             object=("file", tenant_path),
-            zone_id=zone_id
+            zone_id=zone_id,
         )
         print(f"  ✅ Created admin user: {admin_email}")
 
@@ -1151,7 +1078,7 @@ class MultiTenantSaaS:
             "zone_id": zone_id,
             "admin_username": admin_username,
             "api_key": api_key,
-            "metadata": metadata
+            "metadata": metadata,
         }
 
     def _copy_welcome_templates(self, zone_id: str):
@@ -1173,10 +1100,7 @@ class MultiTenantSaaS:
 
 Need help? Contact support@example.com
 """
-        self.admin.write(
-            f"/tenants/{zone_id}/shared/Welcome.md",
-            welcome_doc
-        )
+        self.admin.write(f"/tenants/{zone_id}/shared/Welcome.md", welcome_doc)
 
     def _send_welcome_email(self, tenant_name: str, email: str, api_key: str):
         """Send welcome email (simulated)"""
@@ -1190,11 +1114,11 @@ Need help? Contact support@example.com
 
         metadata = self._get_tenant_metadata(zone_id)
 
-        old_plan = TenantPlan(metadata['plan'])
-        metadata['plan'] = new_plan.value
-        metadata['limits'] = self.plan_limits[new_plan]
-        metadata['upgraded_at'] = datetime.now().isoformat()
-        metadata['status'] = TenantStatus.ACTIVE.value
+        old_plan = TenantPlan(metadata["plan"])
+        metadata["plan"] = new_plan.value
+        metadata["limits"] = self.plan_limits[new_plan]
+        metadata["upgraded_at"] = datetime.now().isoformat()
+        metadata["status"] = TenantStatus.ACTIVE.value
 
         self._save_tenant_metadata(zone_id, metadata)
 
@@ -1207,14 +1131,14 @@ Need help? Contact support@example.com
 
         metadata = self._get_tenant_metadata(zone_id)
 
-        usage = metadata['usage']
-        limits = metadata['limits']
+        usage = metadata["usage"]
+        limits = metadata["limits"]
 
         # Calculate utilization percentages
         utilization = {}
 
-        for resource in ['users', 'storage_gb', 'files']:
-            limit = limits.get(f'max_{resource}')
+        for resource in ["users", "storage_gb", "files"]:
+            limit = limits.get(f"max_{resource}")
             if limit is None:
                 utilization[resource] = 0  # Unlimited
             else:
@@ -1223,9 +1147,9 @@ Need help? Contact support@example.com
 
         # Check for quota violations
         warnings = []
-        if utilization.get('users', 0) > 80:
+        if utilization.get("users", 0) > 80:
             warnings.append(f"Users at {utilization['users']:.0f}% of limit")
-        if utilization.get('storage_gb', 0) > 80:
+        if utilization.get("storage_gb", 0) > 80:
             warnings.append(f"Storage at {utilization['storage_gb']:.0f}% of limit")
 
         return {
@@ -1233,21 +1157,19 @@ Need help? Contact support@example.com
             "usage": usage,
             "limits": limits,
             "utilization": utilization,
-            "warnings": warnings
+            "warnings": warnings,
         }
 
     def _get_tenant_metadata(self, zone_id: str) -> Dict:
         """Get tenant metadata"""
-        return json.loads(
-            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
-        )
+        return json.loads(self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode())
 
     def _save_tenant_metadata(self, zone_id: str, metadata: Dict):
         """Save tenant metadata"""
         self.admin.write(
-            f"/tenants/{zone_id}/.tenant.json",
-            json.dumps(metadata, indent=2).encode()
+            f"/tenants/{zone_id}/.tenant.json", json.dumps(metadata, indent=2).encode()
         )
+
 
 def main():
     """Demo the multi-zone SaaS platform"""
@@ -1262,21 +1184,15 @@ def main():
         zone_id="acme",
         name="Acme Corporation",
         admin_email="admin@acme.com",
-        plan=TenantPlan.ENTERPRISE
+        plan=TenantPlan.ENTERPRISE,
     )
 
     beta = saas.onboard_tenant(
-        zone_id="beta",
-        name="Beta Inc",
-        admin_email="admin@beta.com",
-        plan=TenantPlan.PRO
+        zone_id="beta", name="Beta Inc", admin_email="admin@beta.com", plan=TenantPlan.PRO
     )
 
     startup = saas.onboard_tenant(
-        zone_id="startup",
-        name="Startup Co",
-        admin_email="admin@startup.com",
-        plan=TenantPlan.FREE
+        zone_id="startup", name="Startup Co", admin_email="admin@startup.com", plan=TenantPlan.FREE
     )
 
     # Upgrade a tenant
@@ -1287,8 +1203,9 @@ def main():
     print(f"\n📊 Acme Usage:")
     print(f"  Users: {usage['usage']['users']}")
     print(f"  Storage: {usage['usage']['storage_gb']}GB")
-    if usage['warnings']:
+    if usage["warnings"]:
         print(f"  ⚠️  Warnings: {', '.join(usage['warnings'])}")
+
 
 if __name__ == "__main__":
     main()
@@ -1305,13 +1222,11 @@ if __name__ == "__main__":
 **Solution:**
 ```python
 # Verify permissions are properly scoped
-permissions = nx.rebac_list_tuples(
-    subject=("user", "alice")
-)
+permissions = nx.rebac_list_tuples(subject=("user", "alice"))
 
 # Ensure all permissions start with /tenants/{zone_id}
 for perm in permissions:
-    if not perm['object_id'].startswith(f"/tenants/{alice_zone_id}"):
+    if not perm["object_id"].startswith(f"/tenants/{alice_zone_id}"):
         print(f"⚠️  Cross-tenant permission detected: {perm}")
 ```
 
@@ -1329,9 +1244,7 @@ def enforce_quota_middleware(zone_id, operation, amount):
 
     # Check before allowing operation
     if not check_quota(metadata, operation, amount):
-        raise QuotaExceededError(
-            f"Tenant {zone_id} quota exceeded for {operation}"
-        )
+        raise QuotaExceededError(f"Tenant {zone_id} quota exceeded for {operation}")
 
     # Allow operation
     # ...
@@ -1363,13 +1276,10 @@ def audit_log(zone_id, user, action, resource):
         "zone_id": zone_id,
         "user": user,
         "action": action,
-        "resource": resource
+        "resource": resource,
     }
 
-    nx.append(
-        f"/tenants/{zone_id}/.audit/log.jsonl",
-        (json.dumps(log_entry) + '\n').encode()
-    )
+    nx.append(f"/tenants/{zone_id}/.audit/log.jsonl", (json.dumps(log_entry) + "\n").encode())
 ```
 
 ### 3. Use Database for Tenant Metadata

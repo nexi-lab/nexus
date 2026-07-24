@@ -147,10 +147,10 @@ The connector detects export format from filename extension:
 ```python
 backend = GoogleDriveConnectorBackend(
     token_manager=token_manager,
-    root_folder="nexus-data",      # Root folder name in Drive
-    use_shared_drives=False,        # Use shared drives?
-    shared_drive_id=None,           # Shared drive ID (if applicable)
-    provider="google",              # OAuth provider name
+    root_folder="nexus-data",  # Root folder name in Drive
+    use_shared_drives=False,  # Use shared drives?
+    shared_drive_id=None,  # Shared drive ID (if applicable)
+    provider="google",  # OAuth provider name
 )
 ```
 
@@ -229,9 +229,9 @@ The Google Drive connector is **user-scoped**, meaning it requires `OperationCon
 
 ```python
 context = OperationContext(
-    user_id="user@example.com",     # REQUIRED: User's email
-    zone_id="org_acme",            # Optional: Zone ID
-    backend_path="/path/to/file",   # REQUIRED: Path in Drive
+    user_id="user@example.com",  # REQUIRED: User's email
+    zone_id="org_acme",  # Optional: Zone ID
+    backend_path="/path/to/file",  # REQUIRED: Path in Drive
 )
 ```
 
@@ -308,13 +308,14 @@ The connector doesn't implement automatic rate limiting yet. For high-volume ope
 import time
 from googleapiclient.errors import HttpError
 
+
 def with_retry(func, max_retries=5):
     for i in range(max_retries):
         try:
             return func()
         except HttpError as e:
             if e.resp.status == 429:  # Rate limit
-                wait = 2 ** i  # Exponential backoff
+                wait = 2**i  # Exponential backoff
                 time.sleep(wait)
             else:
                 raise
@@ -341,12 +342,11 @@ For batch uploads, use async operations:
 ```python
 import asyncio
 
+
 async def upload_files(files):
-    tasks = [
-        nx.write(path, content, context=context)
-        for path, content in files
-    ]
+    tasks = [nx.write(path, content, context=context) for path, content in files]
     await asyncio.gather(*tasks)
+
 
 # Upload 100 files concurrently
 files = [(f"/file{i}.txt", f"content{i}".encode()) for i in range(100)]

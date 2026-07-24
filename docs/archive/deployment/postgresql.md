@@ -145,9 +145,7 @@ from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 store = SQLAlchemyMetadataStore()
 
 # Method 2: Pass URL directly
-store = SQLAlchemyMetadataStore(
-    db_url="postgresql://nexus:nexus@localhost/nexus"
-)
+store = SQLAlchemyMetadataStore(db_url="postgresql://nexus:nexus@localhost/nexus")
 
 # Method 3: For backward compatibility with SQLite
 store = SQLAlchemyMetadataStore(
@@ -164,11 +162,7 @@ from nexus import NexusFS
 fs = NexusFS()
 
 # Or specify explicitly
-fs = NexusFS(
-    metadata_store_config={
-        "db_url": "postgresql://nexus:nexus@localhost/nexus"
-    }
-)
+fs = NexusFS(metadata_store_config={"db_url": "postgresql://nexus:nexus@localhost/nexus"})
 ```
 
 ## Database Migrations
@@ -199,7 +193,7 @@ from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 # Auto-run migrations on startup
 store = SQLAlchemyMetadataStore(
     db_url="postgresql://nexus:nexus@localhost/nexus",
-    run_migrations=True  # This will run `alembic upgrade head`
+    run_migrations=True,  # This will run `alembic upgrade head`
 )
 ```
 
@@ -212,12 +206,12 @@ Nexus automatically configures connection pooling for PostgreSQL with production
 ```python
 # Default settings (configured automatically)
 {
-    "pool_size": 20,          # Base pool size
-    "max_overflow": 30,       # Max additional connections (burst capacity)
-    "pool_timeout": 30,       # Seconds to wait for connection
-    "pool_recycle": 1800,     # Recycle connections every 30 min
-    "pool_pre_ping": True,    # Test connections before use
-    "pool_use_lifo": True,    # LIFO mode for better connection reuse
+    "pool_size": 20,  # Base pool size
+    "max_overflow": 30,  # Max additional connections (burst capacity)
+    "pool_timeout": 30,  # Seconds to wait for connection
+    "pool_recycle": 1800,  # Recycle connections every 30 min
+    "pool_pre_ping": True,  # Test connections before use
+    "pool_use_lifo": True,  # LIFO mode for better connection reuse
 }
 ```
 
@@ -240,10 +234,10 @@ For deployments behind NAT gateways (AWS, GCP), Nexus automatically configures T
 ```python
 # Automatically configured for cloud compatibility
 {
-    "keepalives": 1,           # Enable TCP keepalive
-    "keepalives_idle": 60,     # Start probes after 60s idle
-    "keepalives_interval": 10, # Probe every 10s
-    "keepalives_count": 3,     # 3 failed probes = dead connection
+    "keepalives": 1,  # Enable TCP keepalive
+    "keepalives_idle": 60,  # Start probes after 60s idle
+    "keepalives_interval": 10,  # Probe every 10s
+    "keepalives_count": 3,  # 3 failed probes = dead connection
 }
 ```
 
@@ -349,9 +343,7 @@ Never hardcode credentials in your code:
 
 ```python
 # ❌ Bad - hardcoded credentials
-store = SQLAlchemyMetadataStore(
-    db_url="postgresql://admin:password123@localhost/nexus"
-)
+store = SQLAlchemyMetadataStore(db_url="postgresql://admin:password123@localhost/nexus")
 
 # ✅ Good - use environment variables
 store = SQLAlchemyMetadataStore()  # Reads from NEXUS_DATABASE_URL
@@ -465,8 +457,8 @@ from sqlalchemy import create_engine, pool
 engine = create_engine(
     "postgresql://user:pass@host/db",
     poolclass=pool.QueuePool,
-    pool_size=20,        # Increase from default 5
-    max_overflow=40,     # Increase from default 10
+    pool_size=20,  # Increase from default 5
+    max_overflow=40,  # Increase from default 10
 )
 ```
 
@@ -518,9 +510,7 @@ print(f"Exporting {len(all_files)} files...")
 
 ```python
 # Connect to PostgreSQL
-pg_store = SQLAlchemyMetadataStore(
-    db_url="postgresql://nexus:nexus@localhost/nexus"
-)
+pg_store = SQLAlchemyMetadataStore(db_url="postgresql://nexus:nexus@localhost/nexus")
 
 # Batch import (efficient)
 pg_store.put_batch(all_files)

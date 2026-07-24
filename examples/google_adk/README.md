@@ -55,38 +55,23 @@ agent = LlmAgent(
     name="file_agent",
     model="gemini-2.5-flash",
     instruction="You are a filesystem assistant",
-    tools=[grep_files, read_file, write_file]
+    tools=[grep_files, read_file, write_file],
 )
 
 # 2. Create session service
 session_service = InMemorySessionService()
 
 # 3. Create runner
-runner = Runner(
-    app_name="my-app",
-    agent=agent,
-    session_service=session_service
-)
+runner = Runner(app_name="my-app", agent=agent, session_service=session_service)
 
 # 4. Create session
-session = Session(
-    id="session-123",
-    user_id="user-123",
-    app_name="my-app"
-)
+session = Session(id="session-123", user_id="user-123", app_name="my-app")
 session_service.create(session)
 
 # 5. Run with formatted message
-message = types.Content(
-    role="user",
-    parts=[types.Part(text="Find Python files")]
-)
+message = types.Content(role="user", parts=[types.Part(text="Find Python files")])
 
-for event in runner.run(
-    user_id="user-123",
-    session_id="session-123",
-    new_message=message
-):
+for event in runner.run(user_id="user-123", session_id="session-123", new_message=message):
     # Process events...
     pass
 ```

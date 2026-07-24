@@ -212,10 +212,7 @@ from mcp.client.stdio import stdio_client
 server_params = StdioServerParameters(
     command="nexus",
     args=["mcp", "serve", "--transport", "stdio"],
-    env={
-        "NEXUS_URL": "http://localhost:2026",
-        "NEXUS_API_KEY": "your-key"
-    }
+    env={"NEXUS_URL": "http://localhost:2026", "NEXUS_API_KEY": "your-key"},
 )
 
 async with stdio_client(server_params) as (read, write):
@@ -227,9 +224,7 @@ async with stdio_client(server_params) as (read, write):
         print(f"Available tools: {[t.name for t in tools.tools]}")
 
         # Call a tool
-        result = await session.call_tool("nexus_read_file", {
-            "path": "/workspace/data.txt"
-        })
+        result = await session.call_tool("nexus_read_file", {"path": "/workspace/data.txt"})
         print(result.content)
 ```
 

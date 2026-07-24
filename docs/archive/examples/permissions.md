@@ -128,11 +128,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Check if user has permission
-    can_write = nx.rebac_check(
-        "user", "alice",
-        "write",
-        "file", "/workspace/code/main.py"
-    )
+    can_write = nx.rebac_check("user", "alice", "write", "file", "/workspace/code/main.py")
 
     if can_write:
         # Proceed with operation
@@ -149,11 +145,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Get detailed explanation
-    explanation = nx.rebac_explain(
-        "user", "alice",
-        "write",
-        "file", "/workspace/code/main.py"
-    )
+    explanation = nx.rebac_explain("user", "alice", "write", "file", "/workspace/code/main.py")
 
     # Shows the permission chain:
     # alice -> member of engineers -> engineers has write on /workspace/code
@@ -185,17 +177,15 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Grant permission on parent directory
-    nx.rebac_create(
-        "group", "engineers",
-        "write",
-        "file", "/workspace/project"
-    )
+    nx.rebac_create("group", "engineers", "write", "file", "/workspace/project")
 
     # Permission automatically inherited to all subdirectories and files
     can_write_file = nx.rebac_check(
-        "user", "alice",  # member of engineers
+        "user",
+        "alice",  # member of engineers
         "write",
-        "file", "/workspace/project/src/main.py"
+        "file",
+        "/workspace/project/src/main.py",
     )
     print(can_write_file)  # True (inherited from /workspace/project)
     ```
@@ -230,10 +220,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Find all users with write access
-    users_with_write = nx.rebac_expand(
-        "write",
-        "file", "/workspace/project"
-    )
+    users_with_write = nx.rebac_expand("write", "file", "/workspace/project")
 
     print("Users with write access:")
     for user in users_with_write:
@@ -265,11 +252,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Remove user's permission
-    nx.rebac_delete(
-        "user", "alice",
-        "write",
-        "file", "/workspace/code"
-    )
+    nx.rebac_delete("user", "alice", "write", "file", "/workspace/code")
     ```
 
 === "Remove from Group"
@@ -280,11 +263,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Remove user from group
-    nx.rebac_delete(
-        "user", "alice",
-        "member",
-        "group", "engineers"
-    )
+    nx.rebac_delete("user", "alice", "member", "group", "engineers")
 
     # Alice loses all permissions granted via engineers group
     ```
@@ -307,7 +286,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     team_members = {
         "backend-team": ["alice", "bob"],
         "frontend-team": ["charlie", "diana"],
-        "docs-team": ["eve"]
+        "docs-team": ["eve"],
     }
 
     for team, members in team_members.items():
@@ -315,34 +294,18 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
             nx.rebac_create("user", member, "member", "group", team)
 
     # 3. Grant team permissions
-    nx.rebac_create(
-        "group", "backend-team",
-        "write",
-        "file", "/workspace/project-alpha/src"
-    )
+    nx.rebac_create("group", "backend-team", "write", "file", "/workspace/project-alpha/src")
 
-    nx.rebac_create(
-        "group", "frontend-team",
-        "write",
-        "file", "/workspace/project-alpha/src"
-    )
+    nx.rebac_create("group", "frontend-team", "write", "file", "/workspace/project-alpha/src")
 
-    nx.rebac_create(
-        "group", "docs-team",
-        "write",
-        "file", "/workspace/project-alpha/docs"
-    )
+    nx.rebac_create("group", "docs-team", "write", "file", "/workspace/project-alpha/docs")
 
     # 4. Grant read access to everyone
     all_teams = ["backend-team", "frontend-team", "docs-team"]
     for team in all_teams:
         nx.rebac_create("group", team, "member", "group", "project-alpha-all")
 
-    nx.rebac_create(
-        "group", "project-alpha-all",
-        "read",
-        "file", "/workspace/project-alpha"
-    )
+    nx.rebac_create("group", "project-alpha-all", "read", "file", "/workspace/project-alpha")
 
     # 5. Verify permissions
     # Alice (backend) can write to src
@@ -352,7 +315,9 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     assert nx.rebac_check("user", "alice", "read", "file", "/workspace/project-alpha/docs/README.md")
 
     # Alice cannot write to docs (not in docs-team)
-    assert not nx.rebac_check("user", "alice", "write", "file", "/workspace/project-alpha/docs/README.md")
+    assert not nx.rebac_check(
+        "user", "alice", "write", "file", "/workspace/project-alpha/docs/README.md"
+    )
 
     print("✅ Team collaboration setup complete!")
     ```
@@ -373,11 +338,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
         nx.mkdir(workspace_path, parents=True)
 
         # Grant tenant admin full ownership
-        nx.rebac_create(
-            "user", f"admin@{tenant}.com",
-            "owner",
-            "file", workspace_path
-        )
+        nx.rebac_create("user", f"admin@{tenant}.com", "owner", "file", workspace_path)
 
         # Add tenant users to tenant group
         tenant_users = [f"user1@{tenant}.com", f"user2@{tenant}.com"]
@@ -385,26 +346,18 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
             nx.rebac_create("user", user, "member", "group", tenant)
 
         # Grant group access to tenant workspace
-        nx.rebac_create(
-            "group", tenant,
-            "write",
-            "file", workspace_path
-        )
+        nx.rebac_create("group", tenant, "write", "file", workspace_path)
 
     # Verify isolation
     # ACME user can access ACME workspace
     acme_can_read = nx.rebac_check(
-        "user", "user1@acme-corp.com",
-        "read",
-        "file", "/tenants/acme-corp/data.json"
+        "user", "user1@acme-corp.com", "read", "file", "/tenants/acme-corp/data.json"
     )
     assert acme_can_read  # True
 
     # ACME user CANNOT access Beta workspace
     acme_to_beta = nx.rebac_check(
-        "user", "user1@acme-corp.com",
-        "read",
-        "file", "/tenants/beta-inc/data.json"
+        "user", "user1@acme-corp.com", "read", "file", "/tenants/beta-inc/data.json"
     )
     assert not acme_to_beta  # False - isolated!
 

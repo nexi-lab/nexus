@@ -41,7 +41,7 @@ session_factory = sessionmaker(bind=engine)
 auth_provider = DatabaseLocalAuth(
     session_factory=session_factory,
     jwt_secret=os.getenv("NEXUS_JWT_SECRET", "your-secret-key-here"),
-    token_expiry=3600  # 1 hour
+    token_expiry=3600,  # 1 hour
 )
 
 # Initialize OAuth authentication (if using Google OAuth)
@@ -50,9 +50,11 @@ oauth_provider = OAuthUserAuth(
     session_factory=session_factory,
     google_client_id=os.getenv("GOOGLE_CLIENT_ID"),
     google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-    google_redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:2026/auth/oauth/callback"),
+    google_redirect_uri=os.getenv(
+        "GOOGLE_REDIRECT_URI", "http://localhost:2026/auth/oauth/callback"
+    ),
     jwt_secret=os.getenv("NEXUS_JWT_SECRET", "your-secret-key-here"),
-    oauth_crypto=oauth_crypto
+    oauth_crypto=oauth_crypto,
 )
 
 # Set up dependency injection
@@ -272,6 +274,7 @@ import httpx
 
 BASE_URL = "http://localhost:2026"
 
+
 # Test password authentication
 async def test_password_auth():
     async with httpx.AsyncClient() as client:
@@ -281,8 +284,8 @@ async def test_password_auth():
             json={
                 "email": "test@example.com",
                 "password": "securepassword123",
-                "username": "testuser"
-            }
+                "username": "testuser",
+            },
         )
         data = response.json()
         token = data["token"]
@@ -290,8 +293,7 @@ async def test_password_auth():
 
         # Get user info
         response = await client.get(
-            f"{BASE_URL}/auth/me",
-            headers={"Authorization": f"Bearer {token}"}
+            f"{BASE_URL}/auth/me", headers={"Authorization": f"Bearer {token}"}
         )
         user = response.json()
         print(f"User info: {user}")
@@ -299,13 +301,11 @@ async def test_password_auth():
         # Login
         response = await client.post(
             f"{BASE_URL}/auth/login",
-            json={
-                "identifier": "test@example.com",
-                "password": "securepassword123"
-            }
+            json={"identifier": "test@example.com", "password": "securepassword123"},
         )
         data = response.json()
         print(f"Logged in: {data['user']['email']}")
+
 
 # Test OAuth authentication
 async def test_oauth_auth():
@@ -320,19 +320,17 @@ async def test_oauth_auth():
         # (Replace 'code' with actual authorization code from Google)
         response = await client.post(
             f"{BASE_URL}/auth/oauth/callback",
-            json={
-                "provider": "google",
-                "code": "4/0AY0e-...",
-                "state": data['state']
-            }
+            json={"provider": "google", "code": "4/0AY0e-...", "state": data["state"]},
         )
         data = response.json()
         token = data["token"]
         print(f"OAuth login successful: {data['user']['email']}")
         print(f"Is new user: {data['is_new_user']}")
 
+
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(test_password_auth())
     # asyncio.run(test_oauth_auth())
 ```

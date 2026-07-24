@@ -40,6 +40,7 @@ content_v3 = nx.get_version("/documents/report.txt", 3)
 
 # Get version with specific context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["engineering"])
 content = nx.get_version("/workspace/file.txt", 5, context=ctx)
 ```
@@ -82,6 +83,7 @@ for v in versions:
 
 # List versions with specific context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["engineering"])
 versions = nx.list_versions("/workspace/file.txt", context=ctx)
 ```
@@ -163,6 +165,7 @@ print(diff)  # Unified diff output
 
 # Compare with specific context
 from nexus.contracts.types import OperationContext
+
 ctx = OperationContext(user="alice", groups=["engineering"])
 diff = nx.diff_versions("/workspace/file.txt", 1, 3, context=ctx)
 ```
@@ -214,15 +217,13 @@ nx.register_workspace("/my-workspace", name="dev", description="Development work
 snapshot = nx.workspace_snapshot(
     workspace_path="/my-workspace",
     description="Before major refactoring",
-    tags=["pre-refactor", "stable"]
+    tags=["pre-refactor", "stable"],
 )
 print(f"Created snapshot {snapshot['snapshot_number']}")
 
 # Create snapshot with created_by tracking
 snapshot = nx.workspace_snapshot(
-    workspace_path="/my-workspace",
-    description="Checkpoint",
-    created_by="alice"
+    workspace_path="/my-workspace", description="Checkpoint", created_by="alice"
 )
 ```
 

@@ -56,6 +56,7 @@ Subscribers can consume the channel with any Redis client:
 
 ```python
 import redis.asyncio as redis
+
 client = redis.from_url("redis://dragonfly:6379")
 pubsub = client.pubsub()
 await pubsub.subscribe("nexus:audit:mcp")

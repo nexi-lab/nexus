@@ -69,9 +69,9 @@ import nexus
 nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026"})
 
 # Set identity context
-nx.zone_id = "acme"      # Organization
-nx.user_id = "alice"       # Real user
-nx.agent_id = "agent1"     # Agent that created it
+nx.zone_id = "acme"  # Organization
+nx.user_id = "alice"  # Real user
+nx.agent_id = "agent1"  # Agent that created it
 
 # Identity automatically included in all operations
 memory_id = nx.memory.store(content="User prefers Python")
@@ -134,6 +134,7 @@ Organize memories hierarchically like filesystems:
 ```python
 # Hierarchical structure
 "knowledge/geography/facts"
+
 "knowledge/history/events"
 "user/preferences/ui"
 "user/preferences/notifications"
@@ -170,14 +171,14 @@ nx.agent_id = "settings-agent"
 nx.memory.store(
     content={"theme": "dark", "font_size": 14},
     namespace="user/preferences/ui",
-    path_key="settings"  # Unique key within namespace
+    path_key="settings",  # Unique key within namespace
 )
 
 # Second call with SAME path_key: updates existing memory
 nx.memory.store(
     content={"theme": "light", "font_size": 16},
     namespace="user/preferences/ui",
-    path_key="settings"  # UPDATES previous memory
+    path_key="settings",  # UPDATES previous memory
 )
 ```
 
@@ -243,7 +244,7 @@ nx.agent_id = "my-agent"
 memory_id = nx.memory.store("User prefers Python")
 
 # List inactive memories (pending review)
-pending = nx.memory.list(state='inactive')
+pending = nx.memory.list(state="inactive")
 
 # Approve a memory
 nx.memory.approve(memory_id)
@@ -261,18 +262,18 @@ nx.memory.delete_batch([mem_id6, mem_id7])
 
 ```python
 # List only active memories (default)
-active_mems = nx.memory.list(state='active')
+active_mems = nx.memory.list(state="active")
 
 # List only inactive memories (pending review)
-pending_mems = nx.memory.list(state='inactive')
+pending_mems = nx.memory.list(state="inactive")
 
 # List all memories regardless of state
-all_mems = nx.memory.list(state='all')
+all_mems = nx.memory.list(state="all")
 
 # Query with state filter
 active_prefs = nx.memory.query(
-    memory_type='preference',
-    state='active'  # Defaults to 'active' if not specified
+    memory_type="preference",
+    state="active",  # Defaults to 'active' if not specified
 )
 ```
 
@@ -356,12 +357,14 @@ nexus serve --host 0.0.0.0 --port 2026
 import nexus
 
 # Connect to server
-nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "your-api-key"})
+nx = nexus.connect(
+    config={"mode": "remote", "url": "http://localhost:2026", "api_key": "your-api-key"}
+)
 
 # Set identity context (who is using the memory)
-nx.zone_id = "acme"      # Organization
-nx.user_id = "alice"       # User
-nx.agent_id = "agent1"     # Agent instance
+nx.zone_id = "acme"  # Organization
+nx.user_id = "alice"  # User
+nx.agent_id = "agent1"  # Agent instance
 
 # Now use memory API - identity is automatically included
 memory_id = nx.memory.store("User prefers Python", scope="user")
@@ -382,7 +385,13 @@ import os
 import nexus
 
 # Load from environment
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv("NEXUS_SERVER_URL"), "api_key": os.getenv("NEXUS_API_KEY")})
+nx = nexus.connect(
+    config={
+        "mode": "remote",
+        "url": os.getenv("NEXUS_SERVER_URL"),
+        "api_key": os.getenv("NEXUS_API_KEY"),
+    }
+)
 nx.zone_id = os.getenv("NEXUS_TENANT_ID", "default")
 nx.agent_id = os.getenv("NEXUS_AGENT_ID", "my-agent")
 
@@ -398,12 +407,7 @@ from nexus.backends.local import LocalBackend
 
 # No server needed - uses local SQLite database
 backend = LocalBackend(root_path="./nexus-data")
-nx = NexusFS(
-    backend=backend,
-    zone_id="acme",
-    user_id="alice",
-    agent_id="agent1"
-)
+nx = NexusFS(backend=backend, zone_id="acme", user_id="alice", agent_id="agent1")
 
 # Memory API works the same way
 memory_id = nx.memory.store("User prefers Python", scope="user")
@@ -416,13 +420,13 @@ memory_id = nx.memory.store("User prefers Python", scope="user")
 from nexus.services.memory.memory_api import Memory
 
 memory = Memory(
-    session=db_session,          # SQLAlchemy session
-    backend=local_backend,       # Content storage backend
-    zone_id="acme",            # Organization context
-    user_id="alice",             # Real user
-    agent_id="agent1",           # Creating agent
-    entity_registry=registry,    # Identity relationships
-    llm_provider=llm             # Optional for reflection
+    session=db_session,  # SQLAlchemy session
+    backend=local_backend,  # Content storage backend
+    zone_id="acme",  # Organization context
+    user_id="alice",  # Real user
+    agent_id="agent1",  # Creating agent
+    entity_registry=registry,  # Identity relationships
+    llm_provider=llm,  # Optional for reflection
 )
 ```
 
@@ -453,23 +457,19 @@ nx.agent_id = "my-agent"
 
 # Simple fact (append mode)
 memory_id = nx.memory.store(
-    content="User prefers Python over JavaScript",
-    scope="user",
-    memory_type="fact",
-    importance=0.9
+    content="User prefers Python over JavaScript", scope="user", memory_type="fact", importance=0.9
 )
 
 # Structured data (dict auto-serialized to JSON)
 memory_id = nx.memory.store(
-    content={"language": "Python", "framework": "FastAPI"},
-    namespace="user/preferences/coding"
+    content={"language": "Python", "framework": "FastAPI"}, namespace="user/preferences/coding"
 )
 
 # Upsert mode (updates if exists)
 memory_id = nx.memory.store(
     content={"theme": "dark", "font_size": 14},
     namespace="user/preferences/ui",
-    path_key="settings"  # Enables update-or-insert
+    path_key="settings",  # Enables update-or-insert
 )
 ```
 
@@ -508,7 +508,7 @@ memories = nx.memory.query(
         "namespace": "user/preferences/coding",
         "path_key": None,
         "created_at": "2025-01-15T10:00:00Z",
-        "updated_at": "2025-01-15T10:00:00Z"
+        "updated_at": "2025-01-15T10:00:00Z",
     }
 ]
 ```
@@ -588,16 +588,13 @@ mem = nx.memory.retrieve(
 
 ```python
 # By namespace + path_key
-mem = nx.memory.retrieve(
-    namespace="user/preferences/ui",
-    path_key="settings"
-)
+mem = nx.memory.retrieve(namespace="user/preferences/ui", path_key="settings")
 
 # By combined path (sugar syntax)
 mem = nx.memory.retrieve(path="user/preferences/ui/settings")
 
 if mem:
-    print(mem['content'])  # {"theme": "dark", "font_size": 14}
+    print(mem["content"])  # {"theme": "dark", "font_size": 14}
 ```
 
 ---
@@ -620,10 +617,7 @@ memories = nx.memory.list(
 
 ```python
 # List all user preferences (active only by default)
-prefs = nx.memory.list(
-    scope="user",
-    memory_type="preference"
-)
+prefs = nx.memory.list(scope="user", memory_type="preference")
 
 # List memories in specific namespace
 ui_prefs = nx.memory.list(namespace="user/preferences/ui")
@@ -716,10 +710,10 @@ result = nx.memory.delete_batch(memory_ids: list[str]) -> dict[str, Any]
 
 ```python
 {
-    "approved": 3,              # Number of successfully approved
-    "failed": 1,                # Number that failed
-    "approved_ids": [...],      # List of successful IDs
-    "failed_ids": [...]         # List of failed IDs
+    "approved": 3,  # Number of successfully approved
+    "failed": 1,  # Number that failed
+    "approved_ids": [...],  # List of successful IDs
+    "failed_ids": [...],  # List of failed IDs
 }
 ```
 
@@ -727,8 +721,8 @@ result = nx.memory.delete_batch(memory_ids: list[str]) -> dict[str, Any]
 
 ```python
 # Review and approve multiple memories
-pending = nx.memory.list(state='inactive')
-pending_ids = [m['memory_id'] for m in pending]
+pending = nx.memory.list(state="inactive")
+pending_ids = [m["memory_id"] for m in pending]
 
 result = nx.memory.approve_batch(pending_ids)
 print(f"Approved {result['approved']} memories")
@@ -759,25 +753,18 @@ nx.agent_id = "chatbot1"
 
 # Store user preferences (upsert mode)
 nx.memory.store(
-    content={
-        "language": "Python",
-        "framework": "FastAPI",
-        "theme": "dark"
-    },
+    content={"language": "Python", "framework": "FastAPI", "theme": "dark"},
     namespace="user/preferences/coding",
     path_key="settings",  # Updates if already exists
-    scope="user",         # Shared across all user's agents
+    scope="user",  # Shared across all user's agents
     memory_type="preference",
-    importance=0.9
+    importance=0.9,
 )
 
 # Later session - retrieve preferences
-prefs = nx.memory.retrieve(
-    namespace="user/preferences/coding",
-    path_key="settings"
-)
+prefs = nx.memory.retrieve(namespace="user/preferences/coding", path_key="settings")
 
-print(prefs['content'])  # {"language": "Python", ...}
+print(prefs["content"])  # {"language": "Python", ...}
 ```
 
 ---
@@ -799,7 +786,7 @@ nx.memory.store(
     namespace="knowledge/python/frameworks",
     scope="tenant",  # Share across entire organization
     memory_type="fact",
-    importance=0.8
+    importance=0.8,
 )
 
 # Connect as code assistant (different user, same tenant)
@@ -809,13 +796,10 @@ nx2.user_id = "bob"
 nx2.agent_id = "code_assistant"
 
 # Can access tenant-scoped memories from research agent
-facts = nx2.memory.list(
-    scope="tenant",
-    namespace_prefix="knowledge/python/"
-)
+facts = nx2.memory.list(scope="tenant", namespace_prefix="knowledge/python/")
 
 for fact in facts:
-    print(fact['content'])  # "FastAPI uses Pydantic for validation"
+    print(fact["content"])  # "FastAPI uses Pydantic for validation"
 ```
 
 ---
@@ -833,7 +817,7 @@ nx.memory.store(
     content={"strategy": "Use caching for repeated queries", "success_rate": 0.95},
     scope="agent",  # Only this agent
     memory_type="strategy",
-    namespace="agent/learning/strategies"
+    namespace="agent/learning/strategies",
 )
 
 # Store what NOT to do
@@ -841,7 +825,7 @@ nx.memory.store(
     content={"mistake": "Forgot to validate input", "impact": "High"},
     scope="agent",
     memory_type="anti_pattern",
-    namespace="agent/learning/anti_patterns"
+    namespace="agent/learning/anti_patterns",
 )
 
 # Retrieve agent's learned strategies
@@ -865,12 +849,12 @@ nx.memory.store(
         "task": "Deploy microservice",
         "approach": "Used Docker + Kubernetes",
         "outcome": "Deployed in 30 minutes",
-        "metrics": {"uptime": "99.9%", "latency_ms": 45}
+        "metrics": {"uptime": "99.9%", "latency_ms": 45},
     },
     namespace="agent/learning/strategies",
     scope="agent",
     memory_type="strategy",
-    importance=0.95
+    importance=0.95,
 )
 
 # Store anti-pattern (what NOT to do)
@@ -878,22 +862,19 @@ nx.memory.store(
     content={
         "task": "Database migration",
         "mistake": "Ran migration without backup",
-        "consequence": "Lost 1 hour rolling back"
+        "consequence": "Lost 1 hour rolling back",
     },
     namespace="agent/learning/anti_patterns",
     scope="agent",
     memory_type="anti_pattern",
-    importance=0.9
+    importance=0.9,
 )
 
 # Later: retrieve strategies for similar task
-strategies = nx.memory.list(
-    namespace_prefix="agent/learning/strategies",
-    memory_type="strategy"
-)
+strategies = nx.memory.list(namespace_prefix="agent/learning/strategies", memory_type="strategy")
 
 # Filter by importance
-high_value = [s for s in strategies if s['importance'] > 0.8]
+high_value = [s for s in strategies if s["importance"] > 0.8]
 ```
 
 ---
@@ -906,18 +887,9 @@ from nexus import connect
 nx = connect()
 
 # Store geography facts in organized namespaces
-nx.memory.store(
-    "Paris is capital of France",
-    namespace="knowledge/geography/capitals/europe"
-)
-nx.memory.store(
-    "Tokyo is capital of Japan",
-    namespace="knowledge/geography/capitals/asia"
-)
-nx.memory.store(
-    "Nile is longest river in world",
-    namespace="knowledge/geography/rivers"
-)
+nx.memory.store("Paris is capital of France", namespace="knowledge/geography/capitals/europe")
+nx.memory.store("Tokyo is capital of Japan", namespace="knowledge/geography/capitals/asia")
+nx.memory.store("Nile is longest river in world", namespace="knowledge/geography/rivers")
 
 # Query all European capitals
 europe = nx.memory.list(namespace="knowledge/geography/capitals/europe")
@@ -943,35 +915,31 @@ nx.agent_id = "content_agent"
 
 # Step 1: Agent creates memories (defaults to inactive)
 for fact in ["Paris is in France", "Tokyo is in Japan", "London is in UK"]:
-    nx.memory.store(
-        content=fact,
-        namespace="knowledge/geography/capitals",
-        memory_type="fact"
-    )
+    nx.memory.store(content=fact, namespace="knowledge/geography/capitals", memory_type="fact")
 
 # Step 2: User reviews pending memories
-pending = nx.memory.list(state='inactive')
+pending = nx.memory.list(state="inactive")
 print(f"Found {len(pending)} memories pending review")
 
 for mem in pending:
     print(f"Review: {mem['content']}")
     # User decides to approve or reject
-    if user_approves(mem['content']):
-        nx.memory.approve(mem['memory_id'])
+    if user_approves(mem["content"]):
+        nx.memory.approve(mem["memory_id"])
     else:
-        nx.memory.delete(mem['memory_id'])
+        nx.memory.delete(mem["memory_id"])
 
 # Step 3: Agent only sees approved memories
 active_facts = nx.memory.list(
     namespace_prefix="knowledge/geography/",
-    state='active'  # Defaults to active
+    state="active",  # Defaults to active
 )
 
 # Step 4: Later, deactivate outdated info without deleting
-outdated = nx.memory.query(memory_type='fact', state='active')
+outdated = nx.memory.query(memory_type="fact", state="active")
 for mem in outdated:
-    if is_outdated(mem['content']):
-        nx.memory.deactivate(mem['memory_id'])
+    if is_outdated(mem["content"]):
+        nx.memory.deactivate(mem["memory_id"])
 ```
 
 **Benefits:**
@@ -1017,6 +985,7 @@ mem = nx3.memory.get(mem_id)  # None - no permission
 
 # Admin override - ✅ ALLOWED
 from nexus.contracts.types import OperationContext
+
 admin_ctx = OperationContext(user="admin", groups=[], is_admin=True)
 mem = nx1.memory.get(mem_id, context=admin_ctx)  # SUCCESS - admin bypass
 ```
@@ -1033,14 +1002,12 @@ from nexus import connect
 
 nx = connect()
 
+
 def store_memory(content: str, memory_type: str = "fact") -> str:
     """CrewAI tool: Store memory"""
-    nx.memory.store(
-        content=content,
-        scope="agent",
-        memory_type=memory_type
-    )
+    nx.memory.store(content=content, scope="agent", memory_type=memory_type)
     return f"✓ Stored {memory_type}"
+
 
 def recall_memory(query: str, limit: int = 5) -> str:
     """CrewAI tool: Recall memories"""
@@ -1053,11 +1020,10 @@ def recall_memory(query: str, limit: int = 5) -> str:
         output.append(f"[{mem['memory_type']}] {mem['content']}")
     return "\n".join(output)
 
+
 # Create agent with memory tools
 researcher = Agent(
-    role="Research Agent",
-    goal="Remember important facts",
-    tools=[store_memory, recall_memory]
+    role="Research Agent", goal="Remember important facts", tools=[store_memory, recall_memory]
 )
 ```
 
@@ -1071,15 +1037,12 @@ from nexus import connect
 
 nx = connect()
 
+
 def store_fact(fact: str, importance: float = 0.7) -> str:
     """Store a fact in memory"""
-    nx.memory.store(
-        content=fact,
-        scope="agent",
-        memory_type="fact",
-        importance=importance
-    )
+    nx.memory.store(content=fact, scope="agent", memory_type="fact", importance=importance)
     return f"✓ Stored fact (importance: {importance})"
+
 
 def search_memory(query: str) -> str:
     """Search stored memories"""
@@ -1087,21 +1050,16 @@ def search_memory(query: str) -> str:
     if not results:
         return "No relevant memories"
 
-    return "\n".join([
-        f"{i+1}. [{r['memory_type']}] {r['content']}"
-        for i, r in enumerate(results)
-    ])
+    return "\n".join(
+        [f"{i + 1}. [{r['memory_type']}] {r['content']}" for i, r in enumerate(results)]
+    )
+
 
 # Create ReAct agent with memory tools
-agent = create_react_agent(
-    model,
-    tools=[store_fact, search_memory]
-)
+agent = create_react_agent(model, tools=[store_fact, search_memory])
 
 # Run with memory
-result = agent.invoke({
-    "messages": [("user", "Remember: I prefer Python")]
-})
+result = agent.invoke({"messages": [("user", "Remember: I prefer Python")]})
 ```
 
 ---
@@ -1114,34 +1072,23 @@ from nexus import connect
 
 nx = connect()
 
+
 async def store_preference(pref: str) -> str:
     """Store user preference"""
-    nx.memory.store(
-        content=pref,
-        scope="user",
-        memory_type="preference",
-        importance=0.9
-    )
+    nx.memory.store(content=pref, scope="user", memory_type="preference", importance=0.9)
     return "✓ Preference saved"
+
 
 async def get_preferences() -> str:
     """Retrieve all preferences"""
-    prefs = nx.memory.query(
-        scope="user",
-        memory_type="preference"
-    )
-    return "\n".join([p['content'] for p in prefs])
+    prefs = nx.memory.query(scope="user", memory_type="preference")
+    return "\n".join([p["content"] for p in prefs])
+
 
 # Create Claude agent with memory
-agent = Agent(
-    name="MemoryAgent",
-    tools=[store_preference, get_preferences]
-)
+agent = Agent(name="MemoryAgent", tools=[store_preference, get_preferences])
 
-result = await query(
-    agent,
-    "Remember that I prefer dark mode"
-)
+result = await query(agent, "Remember that I prefer dark mode")
 ```
 
 ---
@@ -1154,15 +1101,13 @@ from nexus import connect
 
 nx = connect()
 
+
 @function_tool
 async def remember(fact: str) -> str:
     """Store information in persistent memory"""
-    nx.memory.store(
-        content=fact,
-        scope="agent",
-        memory_type="fact"
-    )
+    nx.memory.store(content=fact, scope="agent", memory_type="fact")
     return f"✓ Remembered: {fact}"
+
 
 @function_tool
 async def recall(query: str) -> str:
@@ -1171,14 +1116,15 @@ async def recall(query: str) -> str:
     if not results:
         return "No memories found"
 
-    return "\n".join([r['content'] for r in results])
+    return "\n".join([r["content"] for r in results])
+
 
 # Create OpenAI agent with memory
 agent = Agent(
     name="MemoryAgent",
     instructions="Use memory to remember important info",
     tools=[remember, recall],
-    model="gpt-4o"
+    model="gpt-4o",
 )
 ```
 
@@ -1197,8 +1143,7 @@ nx = connect()
 
 # Start tracking a task
 traj_id = nx.memory.start_trajectory(
-    task_description="Deploy caching strategy",
-    task_type="optimization"
+    task_description="Deploy caching strategy", task_type="optimization"
 )
 
 # Log steps during execution
@@ -1211,7 +1156,7 @@ nx.memory.complete_trajectory(
     trajectory_id=traj_id,
     status="success",
     success_score=0.95,
-    metrics={"improvement": "30%", "duration_hours": 2}
+    metrics={"improvement": "30%", "duration_hours": 2},
 )
 ```
 
@@ -1228,9 +1173,7 @@ reflection = nx.memory.reflect(traj_id)
 
 # Batch reflection across multiple trajectories
 patterns = nx.memory.batch_reflect(
-    agent_id="agent1",
-    since="2025-10-01T00:00:00Z",
-    min_trajectories=10
+    agent_id="agent1", since="2025-10-01T00:00:00Z", min_trajectories=10
 )
 # Returns: {
 #     "trajectories_analyzed": 50,
@@ -1247,20 +1190,19 @@ patterns = nx.memory.batch_reflect(
 playbook = nx.memory.get_playbook("default")
 
 # Update with new strategies
-nx.memory.update_playbook([
-    {
-        'category': 'helpful',
-        'pattern': 'Always validate input before processing',
-        'context': 'Data processing tasks',
-        'confidence': 0.9
-    }
-])
+nx.memory.update_playbook(
+    [
+        {
+            "category": "helpful",
+            "pattern": "Always validate input before processing",
+            "context": "Data processing tasks",
+            "confidence": 0.9,
+        }
+    ]
+)
 
 # Auto-curate from reflections
-result = nx.memory.curate_playbook(
-    reflections=["mem_123", "mem_456"],
-    playbook_name="default"
-)
+result = nx.memory.curate_playbook(reflections=["mem_123", "mem_456"], playbook_name="default")
 ```
 
 ---
@@ -1280,6 +1222,7 @@ result = nx.memory.curate_playbook(
 ```python
 # Good: Hierarchical organization
 "user/preferences/ui/theme"
+
 "knowledge/python/frameworks/fastapi"
 "agent/learning/strategies/deployment"
 
@@ -1300,13 +1243,13 @@ nx = connect()
 nx.memory.store(
     content={"theme": "dark"},
     namespace="user/preferences/ui",
-    path_key="theme"  # Enables update
+    path_key="theme",  # Enables update
 )
 
 # Events/logs: Don't use path_key
 nx.memory.store(
     content="User logged in",
-    namespace="logs/user_activity"
+    namespace="logs/user_activity",
     # No path_key = append mode
 )
 ```
@@ -1347,12 +1290,12 @@ print(f"Freed {result['resources']['memories']} memories")
 
 ```python
 # Good: Batch read content
-content_hashes = [m['content_hash'] for m in memories]
+content_hashes = [m["content_hash"] for m in memories]
 contents = backend.batch_read_content(content_hashes)
 
 # Bad: Individual reads
 for mem in memories:
-    content = backend.read_content(mem['content_hash'])  # N queries!
+    content = backend.read_content(mem["content_hash"])  # N queries!
 ```
 
 ### Limit Results
@@ -1377,7 +1320,7 @@ prefs = nx.memory.list(namespace_prefix="user/preferences/")
 
 # Bad: Fetch all then filter
 all_mems = nx.memory.list()
-prefs = [m for m in all_mems if m['namespace'].startswith("user/preferences/")]
+prefs = [m for m in all_mems if m["namespace"].startswith("user/preferences/")]
 ```
 
 ---

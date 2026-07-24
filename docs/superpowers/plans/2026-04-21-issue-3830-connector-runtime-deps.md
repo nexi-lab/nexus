@@ -200,9 +200,7 @@ def check_runtime_deps(
                     missing.append((dep, f"python '{mod}': install with: {hint}"))
             case BinaryDep(name=name, install_hint=hint):
                 if shutil.which(name) is None:
-                    missing.append(
-                        (dep, f"binary '{name}': not on PATH — install with: {hint}")
-                    )
+                    missing.append((dep, f"binary '{name}': not on PATH — install with: {hint}"))
             case ServiceDep(name=name):
                 if not server_available:
                     missing.append(
@@ -293,15 +291,11 @@ class TestCheckRuntimeDeps:
         assert "brew install xyz" in reason
 
     def test_service_dep_satisfied_when_server_available(self) -> None:
-        missing = check_runtime_deps(
-            (ServiceDep("token_manager"),), server_available=True
-        )
+        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=True)
         assert missing == []
 
     def test_service_dep_missing_when_slim(self) -> None:
-        missing = check_runtime_deps(
-            (ServiceDep("token_manager"),), server_available=False
-        )
+        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=False)
         assert len(missing) == 1
         _, reason = missing[0]
         assert "service 'token_manager'" in reason
@@ -325,9 +319,7 @@ class TestCheckRuntimeDeps:
         from nexus.backends.base.runtime_deps import _server_available
 
         _server_available.cache_clear()
-        with patch(
-            "nexus.backends.base.runtime_deps.importlib.util.find_spec"
-        ) as mock_find:
+        with patch("nexus.backends.base.runtime_deps.importlib.util.find_spec") as mock_find:
             mock_find.return_value = object()
             _server_available()
             _server_available()
@@ -373,8 +365,14 @@ class TestMissingDependencyError:
 
     def test_enumerates_all_missing(self) -> None:
         missing = [
-            (PythonDep("x", extras=("gws",)), "python 'x': install with: pip install nexus-fs[gws]"),
-            (BinaryDep("gws", "brew install gws"), "binary 'gws': not on PATH — install with: brew install gws"),
+            (
+                PythonDep("x", extras=("gws",)),
+                "python 'x': install with: pip install nexus-fs[gws]",
+            ),
+            (
+                BinaryDep("gws", "brew install gws"),
+                "binary 'gws': not on PATH — install with: brew install gws",
+            ),
         ]
         err = MissingDependencyError(backend="gws_gmail", missing=missing)
         msg = str(err)
@@ -480,7 +478,9 @@ class TestConnectorInfoRuntimeDeps:
             BinaryDep("gws", "brew install gws"),
         )
         info = ConnectorInfo(
-            name="t", connector_class=object, runtime_deps=deps  # type: ignore[arg-type]
+            name="t",
+            connector_class=object,
+            runtime_deps=deps,  # type: ignore[arg-type]
         )
         assert info.runtime_deps == deps
 
@@ -493,7 +493,9 @@ class TestConnectorInfoRuntimeDeps:
             BinaryDep("gws", "brew install gws"),  # not included in requires
         )
         info = ConnectorInfo(
-            name="t", connector_class=object, runtime_deps=deps  # type: ignore[arg-type]
+            name="t",
+            connector_class=object,
+            runtime_deps=deps,  # type: ignore[arg-type]
         )
         assert info.requires == ["boto3", "httpx"]
 
@@ -737,9 +739,7 @@ class TestRegisterRuntimeDeps:
                 backend_features: frozenset = frozenset()
                 has_feature = lambda self, f: False  # noqa: E731
 
-            assert any(
-                issubclass(w.category, DeprecationWarning) for w in caught
-            )
+            assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1242,10 +1242,12 @@ Add `from nexus.backends.base.runtime_deps import PythonDep`.
 Replace `requires=["google-api-python-client", "google-auth-oauthlib"]` (around line 69) with:
 
 ```python
-    runtime_deps=(
+runtime_deps = (
+    (
         PythonDep("googleapiclient", extras=("gmail",)),
         PythonDep("google_auth_oauthlib", extras=("gmail",)),
     ),
+)
 ```
 
 Add `PythonDep` import.
@@ -1255,10 +1257,12 @@ Add `PythonDep` import.
 There are two `@register_connector` calls in this file (lines 55 and 601). Update both. Replace each `requires=["google-api-python-client", "google-auth-oauthlib"]` with:
 
 ```python
-    runtime_deps=(
+runtime_deps = (
+    (
         PythonDep("googleapiclient", extras=("gcalendar",)),
         PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
     ),
+)
 ```
 
 Add `PythonDep` import.
@@ -1268,7 +1272,7 @@ Add `PythonDep` import.
 Replace `requires=["requests-oauthlib"]` (line 62) with:
 
 ```python
-    runtime_deps=(PythonDep("requests_oauthlib", extras=("x",)),),
+runtime_deps = ((PythonDep("requests_oauthlib", extras=("x",)),),)
 ```
 
 Add `PythonDep` import.
@@ -1278,7 +1282,7 @@ Add `PythonDep` import.
 Replace `requires=["slack-sdk"]` (line 63) with:
 
 ```python
-    runtime_deps=(PythonDep("slack_sdk", extras=("slack",)),),
+runtime_deps = ((PythonDep("slack_sdk", extras=("slack",)),),)
 ```
 
 Add `PythonDep` import.
@@ -1288,7 +1292,7 @@ Add `PythonDep` import.
 Replace `requires=["httpx"]` (line 46) with:
 
 ```python
-    runtime_deps=(),
+runtime_deps = ((),)
 ```
 
 (httpx is a core nexus-fs dep, always present — no RuntimeDep entry needed. Empty tuple is fine and documents the intent.)
@@ -1322,7 +1326,7 @@ git commit -m "refactor(backends/connectors): migrate API connectors to typed ru
 Replace `requires=["anthropic"]` (line 69) with:
 
 ```python
-    runtime_deps=(PythonDep("anthropic", extras=("anthropic",)),),
+runtime_deps = ((PythonDep("anthropic", extras=("anthropic",)),),)
 ```
 
 Add `from nexus.backends.base.runtime_deps import PythonDep`.
@@ -1332,7 +1336,7 @@ Add `from nexus.backends.base.runtime_deps import PythonDep`.
 Replace `requires=["openai"]` (line 74) with:
 
 ```python
-    runtime_deps=(PythonDep("openai", extras=("openai",)),),
+runtime_deps = ((PythonDep("openai", extras=("openai",)),),)
 ```
 
 Add `PythonDep` import.
@@ -1422,8 +1426,7 @@ Update both stacked decorators (lines 38 and 48) to add `runtime_deps=_GH_RUNTIM
     category="cli",
     runtime_deps=_GH_RUNTIME_DEPS,
 )
-class GitHubConnector(PathCLIBackend):
-    ...
+class GitHubConnector(PathCLIBackend): ...
 ```
 
 - [ ] **Step 3: Run tests**

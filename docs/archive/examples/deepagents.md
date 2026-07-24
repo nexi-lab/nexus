@@ -86,12 +86,16 @@ Agent outputs stored in Nexus filesystem with versioning, permissions, and metad
 
 ```python
 # DeepAgents writes to Nexus automatically
-agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Research transformer architecture and save to transformers.md"
-    }]
-})
+agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Research transformer architecture and save to transformers.md",
+            }
+        ]
+    }
+)
 # File appears in: /workflow-demo/transformers.md
 ```
 
@@ -103,17 +107,19 @@ Nexus workflows trigger automatically on file operations - no polling required.
 workflow = {
     "name": "agent-output-processor",
     "triggers": [{"type": "file_write", "pattern": "/workspace/*.md"}],
-    "actions": [{
-        "type": "python",
-        "code": """
+    "actions": [
+        {
+            "type": "python",
+            "code": """
 # Extract insights from file
 content = nx.read(context.file_path).decode()
 insight = analyze_content(content)
 
 # Store in memory
 nx.memory.store(insight, scope="user", memory_type="research")
-        """
-    }]
+        """,
+        }
+    ],
 }
 
 # Register once - runs automatically forever
@@ -126,11 +132,7 @@ Structured insights stored for semantic search and retrieval.
 
 ```python
 # Query memories later
-memories = nx.memory.search(
-    query="transformer architecture",
-    scope="user",
-    limit=10
-)
+memories = nx.memory.search(query="transformer architecture", scope="user", limit=10)
 
 for mem in memories:
     print(f"{mem['content']} (score: {mem['score']})")
@@ -154,7 +156,7 @@ nx = nexus.connect(config={"enable_workflows": True})
 agent = create_deep_agent(
     model="anthropic:claude-sonnet-4-20250514",
     backend=NexusBackend(nx, base_path="/agent-workspace"),
-    tools=[internet_search, calculator]  # Your custom tools
+    tools=[internet_search, calculator],  # Your custom tools
 )
 
 # Agent uses Nexus for all file operations
@@ -175,12 +177,7 @@ workflow_def = {
     "name": "research-processor",
     "version": "1.0",
     "description": "Auto-process research outputs",
-    "triggers": [
-        {
-            "type": "file_write",
-            "pattern": "/agent-workspace/*.md"
-        }
-    ],
+    "triggers": [{"type": "file_write", "pattern": "/agent-workspace/*.md"}],
     "actions": [
         {
             "name": "extract-insights",
@@ -207,9 +204,9 @@ nx.memory.store(
 nx.memory.session.commit()
 
 result = f"✓ Processed: {file_path}"
-            """
+            """,
         }
-    ]
+    ],
 }
 
 # Register workflow (runs automatically on file writes)
@@ -223,21 +220,22 @@ Retrieve consolidated knowledge:
 ```python
 # Semantic search across all agent memories
 memories = nx.memory.search(
-    query="machine learning architectures",
-    scope="user",
-    memory_type="research",
-    limit=10
+    query="machine learning architectures", scope="user", memory_type="research", limit=10
 )
 
 # Use in agent context
 context = "\n".join([m["content"] for m in memories])
 
-agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": f"Based on previous research:\n{context}\n\nWhat are the latest trends?"
-    }]
-})
+agent.invoke(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": f"Based on previous research:\n{context}\n\nWhat are the latest trends?",
+            }
+        ]
+    }
+)
 ```
 
 ### 4. Custom Tools with Nexus
@@ -247,11 +245,13 @@ Give agents direct access to Nexus operations:
 ```python
 from langchain_core.tools import tool
 
+
 @tool
 def save_to_nexus(path: str, content: str):
     """Save content to Nexus filesystem."""
     nx.write(path, content.encode())
     return f"Saved to {path}"
+
 
 @tool
 def search_previous_work(query: str):
@@ -259,11 +259,12 @@ def search_previous_work(query: str):
     results = nx.search("/agent-workspace", query=query, limit=5)
     return [{"path": r.path, "score": r.score} for r in results]
 
+
 # Add to agent
 agent = create_deep_agent(
     model="anthropic:claude-sonnet-4",
     backend=NexusBackend(nx, base_path="/workspace"),
-    tools=[save_to_nexus, search_previous_work]
+    tools=[save_to_nexus, search_previous_work],
 )
 ```
 
@@ -311,22 +312,15 @@ writer = create_deep_agent(
 )
 
 # Researcher finds information
-researcher.invoke({
-    "messages": [{"role": "user", "content": "Research AI trends"}]
-})
+researcher.invoke({"messages": [{"role": "user", "content": "Research AI trends"}]})
 
 # Writer reads researcher's work
 research_files = nx.list("/research")
-research_content = "\n".join([
-    nx.read(f).decode() for f in research_files
-])
+research_content = "\n".join([nx.read(f).decode() for f in research_files])
 
-writer.invoke({
-    "messages": [{
-        "role": "user",
-        "content": f"Write blog post based on: {research_content}"
-    }]
-})
+writer.invoke(
+    {"messages": [{"role": "user", "content": f"Write blog post based on: {research_content}"}]}
+)
 ```
 
 ### Conditional Workflows
@@ -336,12 +330,11 @@ Different processing based on file type:
 ```python
 workflow_def = {
     "name": "smart-processor",
-    "triggers": [
-        {"type": "file_write", "pattern": "/workspace/*"}
-    ],
-    "actions": [{
-        "type": "python",
-        "code": """
+    "triggers": [{"type": "file_write", "pattern": "/workspace/*"}],
+    "actions": [
+        {
+            "type": "python",
+            "code": """
 import nexus
 
 nx = nexus.connect()
@@ -365,8 +358,9 @@ elif file_path.endswith('.json'):
     nx.memory.store(f"Data: {len(data)} records", memory_type="data")
 
 result = f"✓ Processed {file_path}"
-        """
-    }]
+        """,
+        }
+    ],
 }
 ```
 
@@ -379,24 +373,27 @@ Chain multiple workflows for complex processing:
 workflow_extract = {
     "name": "extract",
     "triggers": [{"type": "file_write", "pattern": "/raw/*.txt"}],
-    "actions": [{
-        "type": "python",
-        "code": """
+    "actions": [
+        {
+            "type": "python",
+            "code": """
 # Extract and write to processed/
 content = nx.read(context.file_path).decode()
 insights = extract_insights(content)
 nx.write("/processed/insights.md", insights.encode())
-        """
-    }]
+        """,
+        }
+    ],
 }
 
 # Workflow 2: Consolidate (triggers on workflow 1 output)
 workflow_consolidate = {
     "name": "consolidate",
     "triggers": [{"type": "file_write", "pattern": "/processed/*.md"}],
-    "actions": [{
-        "type": "python",
-        "code": """
+    "actions": [
+        {
+            "type": "python",
+            "code": """
 # Read all processed files and consolidate
 files = nx.list("/processed")
 all_insights = []
@@ -405,8 +402,9 @@ for f in files:
 
 # Store consolidated memory
 nx.memory.store("\\n".join(all_insights), memory_type="consolidated")
-        """
-    }]
+        """,
+        }
+    ],
 }
 
 # Register both workflows
@@ -422,12 +420,9 @@ Agent researches topics and builds knowledge base automatically:
 
 ```python
 # Agent researches and writes files
-researcher.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Research quantum computing for beginners"
-    }]
-})
+researcher.invoke(
+    {"messages": [{"role": "user", "content": "Research quantum computing for beginners"}]}
+)
 
 # Workflow automatically:
 # 1. Extracts key concepts
@@ -444,12 +439,7 @@ Agent documents code and workflows consolidate into API docs:
 
 ```python
 # Agent analyzes code files
-doc_agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": "Document all Python files in /src"
-    }]
-})
+doc_agent.invoke({"messages": [{"role": "user", "content": "Document all Python files in /src"}]})
 
 # Workflow generates consolidated API reference
 # from individual file documentation
@@ -461,12 +451,7 @@ Agents handle tickets, workflows extract patterns:
 
 ```python
 # Support agent processes tickets
-support_agent.invoke({
-    "messages": [{
-        "role": "user",
-        "content": f"Respond to: {customer_message}"
-    }]
-})
+support_agent.invoke({"messages": [{"role": "user", "content": f"Respond to: {customer_message}"}]})
 
 # Workflow analyzes interaction:
 # - Extracts successful responses
@@ -540,7 +525,7 @@ print(f"Loaded workflows: {[w['name'] for w in loaded]}")
 
 # Check if workflow is enabled
 for wf in loaded:
-    if wf['name'] == 'your-workflow':
+    if wf["name"] == "your-workflow":
         print(f"Enabled: {wf['enabled']}")
 ```
 
@@ -563,9 +548,7 @@ Check permissions and workspace:
 nx.mkdir("/agent-workspace", parents=True)
 
 # Verify agent has write access
-can_write = nx.rebac_check(
-    "user", "agent-id", "write", "file", "/agent-workspace"
-)
+can_write = nx.rebac_check("user", "agent-id", "write", "file", "/agent-workspace")
 print(f"Can write: {can_write}")
 ```
 
@@ -587,7 +570,7 @@ try:
 except Exception as e:
     result = f"Error: {e}\\n{traceback.format_exc()}"
     print(result)  # Visible in workflow logs
-    """
+    """,
 }
 ```
 

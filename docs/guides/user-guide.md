@@ -981,9 +981,10 @@ SDK equivalent:
 
 ```python
 import nexus
+
 nx = nexus.connect()
 nx.write("/workspace/a.txt", b"hello")
-print(nx.stat("/workspace/a.txt")["size"])     # 5
+print(nx.stat("/workspace/a.txt")["size"])  # 5
 assert nx.read("/workspace/a.txt") == b"hello"
 ```
 
@@ -1979,9 +1980,7 @@ Equivalent RPC/SDK flow:
 import nexus
 from nexus.remote.domain import MCPClient, OAuthClient
 
-nx = nexus.connect(
-    config={"profile": "remote", "url": "http://localhost:2026", "api_key": "..."}
-)
+nx = nexus.connect(config={"profile": "remote", "url": "http://localhost:2026", "api_key": "..."})
 
 connectors = nx.list_connectors(category="api")
 assert any(c["name"] == "hn" for c in connectors)

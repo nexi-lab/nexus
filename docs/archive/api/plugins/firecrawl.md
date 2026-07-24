@@ -304,11 +304,7 @@ plugin = registry.get_plugin("firecrawl")
 await plugin.scrape("https://docs.example.com/api")
 
 # Crawl a site
-await plugin.crawl(
-    "https://docs.example.com",
-    max_pages=100,
-    include_paths=["/api/**"]
-)
+await plugin.crawl("https://docs.example.com", max_pages=100, include_paths=["/api/**"])
 
 # Search the web
 await plugin.search("python tutorials", limit=10)

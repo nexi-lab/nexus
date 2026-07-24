@@ -102,8 +102,10 @@ result = some_function()  # type: ignore[return-value]
 # ✅ Good: Proper typing
 from typing import Protocol
 
+
 class HasRead(Protocol):
     def read(self) -> bytes: ...
+
 
 result: HasRead = some_function()
 ```

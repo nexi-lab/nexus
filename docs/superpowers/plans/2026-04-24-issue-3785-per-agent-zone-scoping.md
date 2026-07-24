@@ -101,9 +101,7 @@ def test_junction_row_inserts_and_loads(session):
     session.commit()
 
     rows = (
-        session.execute(
-            select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == "kid_1")
-        )
+        session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == "kid_1"))
         .scalars()
         .all()
     )
@@ -156,9 +154,7 @@ class APIKeyZoneModel(Base):
         ForeignKey("zones.zone_id", ondelete="RESTRICT"),
         primary_key=True,
     )
-    granted_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(UTC)
-    )
+    granted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         Index("idx_api_key_zones_key", "key_id"),
@@ -245,12 +241,8 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.func.current_timestamp(),
         ),
-        sa.ForeignKeyConstraint(
-            ["key_id"], ["api_keys.key_id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["zone_id"], ["zones.zone_id"], ondelete="RESTRICT"
-        ),
+        sa.ForeignKeyConstraint(["key_id"], ["api_keys.key_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["zone_id"], ["zones.zone_id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("key_id", "zone_id"),
     )
     op.create_index("idx_api_key_zones_key", "api_key_zones", ["key_id"])
@@ -300,13 +292,16 @@ def test_backfill_creates_one_junction_row_per_live_token(tmp_path):
 
     # Build pre-migration shape: api_keys + zones, no junction yet.
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE zones (
                 zone_id VARCHAR(255) PRIMARY KEY,
                 phase VARCHAR(50)
             )
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             CREATE TABLE api_keys (
                 key_id VARCHAR(36) PRIMARY KEY,
                 key_hash VARCHAR(64) NOT NULL,
@@ -316,21 +311,23 @@ def test_backfill_creates_one_junction_row_per_live_token(tmp_path):
                 revoked INTEGER DEFAULT 0,
                 created_at DATETIME
             )
-        """))
-        conn.execute(text(
-            "INSERT INTO zones (zone_id, phase) VALUES ('eng', 'Active')"
-        ))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(text("INSERT INTO zones (zone_id, phase) VALUES ('eng', 'Active')"))
+        conn.execute(
+            text("""
             INSERT INTO api_keys
               (key_id, key_hash, user_id, name, zone_id, revoked, created_at)
             VALUES
               ('kid_live', 'h1', 'alice', 'alice', 'eng', 0, '2026-04-01'),
               ('kid_dead', 'h2', 'bob',   'bob',   'eng', 1, '2026-04-01')
-        """))
+        """)
+        )
 
     # Apply the upgrade body inline (DDL + backfill) — same SQL the migration runs.
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE api_key_zones (
                 key_id VARCHAR(36) NOT NULL,
                 zone_id VARCHAR(255) NOT NULL,
@@ -339,17 +336,18 @@ def test_backfill_creates_one_junction_row_per_live_token(tmp_path):
                 FOREIGN KEY (key_id) REFERENCES api_keys (key_id) ON DELETE CASCADE,
                 FOREIGN KEY (zone_id) REFERENCES zones (zone_id) ON DELETE RESTRICT
             )
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO api_key_zones (key_id, zone_id, granted_at)
             SELECT key_id, zone_id, created_at FROM api_keys WHERE revoked = 0
-        """))
+        """)
+        )
 
     # Assert: live token has one junction row, revoked token has none.
     with engine.begin() as conn:
-        rows = conn.execute(text(
-            "SELECT key_id, zone_id FROM api_key_zones ORDER BY key_id"
-        )).all()
+        rows = conn.execute(text("SELECT key_id, zone_id FROM api_key_zones ORDER BY key_id")).all()
     assert rows == [("kid_live", "eng")]
 ```
 
@@ -417,9 +415,7 @@ def test_zone_set_empty_when_zone_id_is_none():
 
 
 def test_zone_set_is_tuple_for_hashability():
-    ctx = OperationContext(
-        user_id="alice", groups=[], zone_id="eng", zone_set=("eng", "ops")
-    )
+    ctx = OperationContext(user_id="alice", groups=[], zone_id="eng", zone_set=("eng", "ops"))
     assert isinstance(ctx.zone_set, tuple)
 ```
 
@@ -469,16 +465,12 @@ from nexus.contracts.types import OperationContext, assert_zone_allowed
 
 
 def test_in_set_passes():
-    ctx = OperationContext(
-        user_id="alice", groups=[], zone_id="eng", zone_set=("eng", "ops")
-    )
+    ctx = OperationContext(user_id="alice", groups=[], zone_id="eng", zone_set=("eng", "ops"))
     assert_zone_allowed(ctx, "ops")  # no raise
 
 
 def test_out_of_set_raises():
-    ctx = OperationContext(
-        user_id="alice", groups=[], zone_id="eng", zone_set=("eng",)
-    )
+    ctx = OperationContext(user_id="alice", groups=[], zone_id="eng", zone_set=("eng",))
     with pytest.raises(PermissionError) as exc:
         assert_zone_allowed(ctx, "legal")
     assert "legal" in str(exc.value)
@@ -509,9 +501,7 @@ def assert_zone_allowed(ctx: OperationContext, requested: str) -> None:
     """
     if ctx.is_admin or requested in ctx.zone_set:
         return
-    raise PermissionError(
-        f"zone {requested!r} not in token's allow-list {ctx.zone_set}"
-    )
+    raise PermissionError(f"zone {requested!r} not in token's allow-list {ctx.zone_set}")
 ```
 
 - [ ] **Step 8: Run tests**
@@ -574,9 +564,7 @@ def test_single_zone_creates_one_junction_row(session, monkeypatch):
     session.commit()
 
     junction = (
-        session.execute(
-            select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == key_id)
-        )
+        session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == key_id))
         .scalars()
         .all()
     )
@@ -621,9 +609,7 @@ def test_zone_id_legacy_kwarg_still_works(session, monkeypatch):
     session.commit()
 
     junction = (
-        session.execute(
-            select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == key_id)
-        )
+        session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == key_id))
         .scalars()
         .all()
     )
@@ -823,9 +809,7 @@ def get_zones_for_key(session, key_id: str) -> list[str]:
     from nexus.storage.models import APIKeyZoneModel
 
     rows = (
-        session.execute(
-            sa.select(APIKeyZoneModel.zone_id).where(APIKeyZoneModel.key_id == key_id)
-        )
+        session.execute(sa.select(APIKeyZoneModel.zone_id).where(APIKeyZoneModel.key_id == key_id))
         .scalars()
         .all()
     )
@@ -910,9 +894,7 @@ def test_authenticate_loads_zone_set_from_junction(monkeypatch):
         s.add(ZoneModel(zone_id="eng", phase="Active"))
         s.add(ZoneModel(zone_id="ops", phase="Active"))
         s.commit()
-        _, raw_key = create_api_key(
-            s, user_id="alice", name="alice", zones=["eng", "ops"]
-        )
+        _, raw_key = create_api_key(s, user_id="alice", name="alice", zones=["eng", "ops"])
         s.commit()
 
     auth = DatabaseAPIKeyAuth(session_factory=Session)
@@ -939,10 +921,15 @@ def test_authenticate_legacy_token_falls_back_to_zone_id(monkeypatch):
 
     raw_key = "nxs_legacy_test_abc"
     with Session() as s:
-        s.add(APIKeyModel(
-            key_id="kid_legacy", key_hash=hash_api_key(raw_key),
-            user_id="legacy", name="legacy", zone_id="eng",
-        ))
+        s.add(
+            APIKeyModel(
+                key_id="kid_legacy",
+                key_hash=hash_api_key(raw_key),
+                user_id="legacy",
+                name="legacy",
+                zone_id="eng",
+            )
+        )
         s.commit()
 
     auth = DatabaseAPIKeyAuth(session_factory=Session)
@@ -970,9 +957,7 @@ from nexus.storage.models import APIKeyZoneModel  # add to imports
 
 zone_set_rows = (
     session.execute(
-        sa.select(APIKeyZoneModel.zone_id).where(
-            APIKeyZoneModel.key_id == api_key_row.key_id
-        )
+        sa.select(APIKeyZoneModel.zone_id).where(APIKeyZoneModel.key_id == api_key_row.key_id)
     )
     .scalars()
     .all()
@@ -987,9 +972,11 @@ If the fallback branch fires (legacy token, no junction rows), log once per key_
 ```python
 import functools
 
+
 @functools.lru_cache(maxsize=4096)
 def _warn_legacy_token_once(key_id: str) -> None:
     logger.warning("legacy api_key %s has no api_key_zones rows; backfill missing", key_id)
+
 
 # ... in the auth path, when zone_set_rows is empty:
 if not zone_set_rows:
@@ -1164,9 +1151,9 @@ def test_token_create_zones_csv(monkeypatch):
     active_zone = MagicMock()
     active_zone.zone_id = "eng"
     session.execute.return_value.scalars.return_value.first.side_effect = [
-        None,            # no existing token by name
-        active_zone,     # zone "eng" Active
-        active_zone,     # zone "ops" Active
+        None,  # no existing token by name
+        active_zone,  # zone "eng" Active
+        active_zone,  # zone "ops" Active
     ]
     session.execute.return_value.scalars.return_value.all.return_value = []
 
@@ -1197,7 +1184,8 @@ def test_token_create_zone_alias_still_works(monkeypatch):
     active_zone = MagicMock()
     active_zone.zone_id = "eng"
     session.execute.return_value.scalars.return_value.first.side_effect = [
-        None, active_zone,
+        None,
+        active_zone,
     ]
 
     monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
@@ -1207,9 +1195,7 @@ def test_token_create_zone_alias_still_works(monkeypatch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "create", "--name", "svc", "--zone", "eng"]
-    )
+    result = runner.invoke(hub, ["token", "create", "--name", "svc", "--zone", "eng"])
     assert result.exit_code == 0, result.output
     assert captured["zones"] == ["eng"]
 
@@ -1220,9 +1206,7 @@ def test_token_create_rejects_empty_zones(monkeypatch):
         lambda: _mock_session_ctx(MagicMock()),
     )
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "create", "--name", "alice", "--zones", ""]
-    )
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", ""])
     assert result.exit_code != 0
     assert "zone" in result.output.lower()
 
@@ -1234,13 +1218,15 @@ def test_token_create_rejects_inactive_zone_in_list(monkeypatch):
     active_zone.zone_id = "eng"
     # First lookup: token name doesn't exist. Then: eng Active, ops not found.
     session.execute.return_value.scalars.return_value.first.side_effect = [
-        None,            # no existing
-        active_zone,     # eng Active
-        None,            # ops not found
+        None,  # no existing
+        active_zone,  # eng Active
+        None,  # ops not found
     ]
     # `any_zone` lookup returns a zone (so bootstrap escape doesn't fire):
     session.execute.return_value.scalars.return_value.first.side_effect = [
-        None, active_zone, None,
+        None,
+        active_zone,
+        None,
     ]
     # Active zones list (for error message):
     session.execute.return_value.scalars.return_value.all.return_value = [active_zone]
@@ -1250,9 +1236,7 @@ def test_token_create_rejects_inactive_zone_in_list(monkeypatch):
         lambda: _mock_session_ctx(session),
     )
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "create", "--name", "alice", "--zones", "eng,ops"]
-    )
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng,ops"])
     assert result.exit_code != 0
     assert "ops" in result.output
 ```
@@ -1312,77 +1296,75 @@ def token_create(
 Then in the body, replace the existing single-zone validation (lines 81-114) with a loop:
 
 ```python
-    factory = get_session_factory()
-    expires_at: datetime | None = None
-    if expires:
-        try:
-            expires_at = datetime.now(UTC) + parse_duration(expires)
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from exc
+factory = get_session_factory()
+expires_at: datetime | None = None
+if expires:
+    try:
+        expires_at = datetime.now(UTC) + parse_duration(expires)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    with factory() as session, session.begin():
-        # 1. duplicate-name check (unchanged)
-        existing = (
-            session.execute(
-                select(APIKeyModel)
-                .where(APIKeyModel.name == name)
-                .where(APIKeyModel.revoked == 0)
-            )
-            .scalars()
-            .first()
+with factory() as session, session.begin():
+    # 1. duplicate-name check (unchanged)
+    existing = (
+        session.execute(
+            select(APIKeyModel).where(APIKeyModel.name == name).where(APIKeyModel.revoked == 0)
         )
-        if existing is not None:
-            raise click.ClickException(
-                f"token named {name!r} already exists (key_id={existing.key_id}). "
-                "Revoke it first or use a different --name."
-            )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        raise click.ClickException(
+            f"token named {name!r} already exists (key_id={existing.key_id}). "
+            "Revoke it first or use a different --name."
+        )
 
-        # 2. Per-zone Active+non-deleted check, with bootstrap escape if zones empty.
-        any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
-        if any_zone is not None:
-            for z in zones:
-                active = (
-                    session.execute(
+    # 2. Per-zone Active+non-deleted check, with bootstrap escape if zones empty.
+    any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
+    if any_zone is not None:
+        for z in zones:
+            active = (
+                session.execute(
+                    select(ZoneModel)
+                    .where(ZoneModel.zone_id == z)
+                    .where(ZoneModel.phase == "Active")
+                    .where(ZoneModel.deleted_at.is_(None))
+                )
+                .scalars()
+                .first()
+            )
+            if active is None:
+                known = [
+                    zm.zone_id
+                    for zm in session.execute(
                         select(ZoneModel)
-                        .where(ZoneModel.zone_id == z)
                         .where(ZoneModel.phase == "Active")
                         .where(ZoneModel.deleted_at.is_(None))
                     )
                     .scalars()
-                    .first()
+                    .all()
+                ]
+                raise click.ClickException(
+                    f"zone {z!r} is not active (not found, deleted, or "
+                    f"terminating). Active zones: "
+                    f"{', '.join(sorted(known)) or '(none)'}. "
+                    "Create it first with `nexus zone create` or use a different --zones value."
                 )
-                if active is None:
-                    known = [
-                        zm.zone_id
-                        for zm in session.execute(
-                            select(ZoneModel)
-                            .where(ZoneModel.phase == "Active")
-                            .where(ZoneModel.deleted_at.is_(None))
-                        )
-                        .scalars()
-                        .all()
-                    ]
-                    raise click.ClickException(
-                        f"zone {z!r} is not active (not found, deleted, or "
-                        f"terminating). Active zones: "
-                        f"{', '.join(sorted(known)) or '(none)'}. "
-                        "Create it first with `nexus zone create` or use a different --zones value."
-                    )
 
-        # 3. Mint.
-        key_id, raw_key = create_api_key(
-            session,
-            user_id=user_id or name,
-            name=name,
-            zones=zones,
-            is_admin=is_admin,
-            expires_at=expires_at,
-        )
+    # 3. Mint.
+    key_id, raw_key = create_api_key(
+        session,
+        user_id=user_id or name,
+        name=name,
+        zones=zones,
+        is_admin=is_admin,
+        expires_at=expires_at,
+    )
 
-    click.echo(f"key_id: {key_id}")
-    click.echo(f"token:  {raw_key}")
-    click.echo("")
-    click.echo("Save this token now — it will not be shown again.")
+click.echo(f"key_id: {key_id}")
+click.echo(f"token:  {raw_key}")
+click.echo("")
+click.echo("Save this token now — it will not be shown again.")
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1428,9 +1410,11 @@ def test_token_list_json_includes_zones(monkeypatch):
 
     session = MagicMock()
     session.execute.return_value.scalars.return_value.all.side_effect = [
-        [row],                                                 # APIKeyModel rows
-        [APIKeyZoneModel(key_id="kid_a", zone_id="eng"),
-         APIKeyZoneModel(key_id="kid_a", zone_id="ops")],     # junction rows
+        [row],  # APIKeyModel rows
+        [
+            APIKeyZoneModel(key_id="kid_a", zone_id="eng"),
+            APIKeyZoneModel(key_id="kid_a", zone_id="ops"),
+        ],  # junction rows
     ]
 
     monkeypatch.setattr(
@@ -1462,9 +1446,7 @@ key_ids = [r.key_id for r in rows]
 junction_rows = []
 if key_ids:
     junction_rows = (
-        session.execute(
-            select(APIKeyZoneModel).where(APIKeyZoneModel.key_id.in_(key_ids))
-        )
+        session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id.in_(key_ids)))
         .scalars()
         .all()
     )
@@ -1486,7 +1468,7 @@ payload = {
         {
             "key_id": r.key_id,
             "name": r.name,
-            "zone_id": r.zone_id,                      # deprecated, kept for one release
+            "zone_id": r.zone_id,  # deprecated, kept for one release
             "zones": zones_by_key.get(r.key_id, [r.zone_id]),
             "is_admin": bool(r.is_admin),
             "created_at": _iso(r.created_at),
@@ -1537,6 +1519,7 @@ def test_token_zones_add_invokes_helper(monkeypatch):
     active_zone.zone_id = "ops"
 
     captured = {}
+
     def fake_add(s, key_id, zone_id):
         captured.update(key_id=key_id, zone_id=zone_id)
         return True
@@ -1548,9 +1531,7 @@ def test_token_zones_add_invokes_helper(monkeypatch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "zones", "add", "--name", "alice", "--zone", "ops"]
-    )
+    result = runner.invoke(hub, ["token", "zones", "add", "--name", "alice", "--zone", "ops"])
     assert result.exit_code == 0, result.output
     assert captured == {"key_id": "kid_a", "zone_id": "ops"}
 
@@ -1573,9 +1554,7 @@ def test_token_zones_remove_refuses_last_zone(monkeypatch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(
-        hub, ["token", "zones", "remove", "--name", "alice", "--zone", "eng"]
-    )
+    result = runner.invoke(hub, ["token", "zones", "remove", "--name", "alice", "--zone", "eng"])
     assert result.exit_code != 0
     assert "last zone" in result.output
 
@@ -1631,9 +1610,7 @@ def token_zones() -> None:
 def _resolve_token_by_name(session, name: str) -> APIKeyModel:
     row = (
         session.execute(
-            select(APIKeyModel)
-            .where(APIKeyModel.name == name)
-            .where(APIKeyModel.revoked == 0)
+            select(APIKeyModel).where(APIKeyModel.name == name).where(APIKeyModel.revoked == 0)
         )
         .scalars()
         .first()
@@ -1735,9 +1712,7 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 
-async def test_single_zone_token_excludes_other_zones(
-    nexus_test_client, seed_docs
-):
+async def test_single_zone_token_excludes_other_zones(nexus_test_client, seed_docs):
     """AC #2: token for [eng] does not return legal-zone docs."""
     seed_docs(zone="eng", docs=[("eng_doc.txt", "alpha bravo")])
     seed_docs(zone="legal", docs=[("legal_doc.txt", "alpha charlie")])
@@ -1753,9 +1728,7 @@ async def test_single_zone_token_excludes_other_zones(
     assert not any("legal_doc" in p for p in paths)
 
 
-async def test_multi_zone_token_returns_both_zones(
-    nexus_test_client, seed_docs
-):
+async def test_multi_zone_token_returns_both_zones(nexus_test_client, seed_docs):
     """AC #3: token for [eng, legal] returns docs from both — auto fan-out."""
     seed_docs(zone="eng", docs=[("eng_doc.txt", "alpha bravo")])
     seed_docs(zone="legal", docs=[("legal_doc.txt", "alpha charlie")])
@@ -1772,9 +1745,7 @@ async def test_multi_zone_token_returns_both_zones(
     assert any("legal_doc" in p for p in paths)
 
 
-async def test_single_zone_token_unchanged_path(
-    nexus_test_client, seed_docs
-):
+async def test_single_zone_token_unchanged_path(nexus_test_client, seed_docs):
     """Regression: single-zone token hits the single-zone code path verbatim."""
     seed_docs(zone="eng", docs=[("eng_doc.txt", "alpha bravo")])
     token = nexus_test_client.mint_token(name="agent_c", zones=["eng"])
@@ -1937,7 +1908,9 @@ def _gate_zone(auth_result: dict, target_zone: str) -> None:
     zone_set = tuple(auth_result.get("zone_set") or (auth_result.get("zone_id") or ROOT_ZONE_ID,))
     if auth_result.get("is_admin") or target_zone in zone_set:
         return
-    raise HTTPException(status_code=403, detail=f"zone {target_zone!r} not in token's allow-list {zone_set}")
+    raise HTTPException(
+        status_code=403, detail=f"zone {target_zone!r} not in token's allow-list {zone_set}"
+    )
 ```
 
 Call `_gate_zone(auth_result, extracted_zone)` at the top of each handler.

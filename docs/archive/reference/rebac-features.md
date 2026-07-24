@@ -52,21 +52,18 @@ nx.rebac_create(
     relation="dynamic_viewer",
     object=("file", "/data/users.csv"),
     column_config={
-        "hidden_columns": ["password", "ssn"],       # Completely hidden
+        "hidden_columns": ["password", "ssn"],  # Completely hidden
         "aggregations": {"age": "mean", "salary": "sum"},  # Show only aggregates
-        "visible_columns": ["name", "email"]         # Show raw data
-    }
+        "visible_columns": ["name", "email"],  # Show raw data
+    },
 )
 
 # Read the file with column filtering applied
-result = nx.read_with_dynamic_viewer(
-    file_path="/data/users.csv",
-    subject=("agent", "alice")
-)
+result = nx.read_with_dynamic_viewer(file_path="/data/users.csv", subject=("agent", "alice"))
 
-print(result["content"])          # CSV with: name, email, mean(age), sum(salary)
-print(result["aggregations"])     # {"age": {"mean": 28.5}, "salary": {"sum": 500000}}
-print(result["columns_shown"])    # ["name", "email"]
+print(result["content"])  # CSV with: name, email, mean(age), sum(salary)
+print(result["aggregations"])  # {"age": {"mean": 28.5}, "salary": {"sum": 500000}}
+print(result["columns_shown"])  # ["name", "email"]
 print(result["aggregated_columns"])  # ["mean(age)", "sum(salary)"]
 ```
 
@@ -86,9 +83,9 @@ nexus rebac create agent bob dynamic_viewer file /data/employees.csv \
 
 ```python
 column_config = {
-    "hidden_columns": ["password", "ssn"],           # Completely excluded
-    "aggregations": {"age": "mean", "salary": "sum"}, # Single operation per column
-    "visible_columns": ["name", "email"]             # Optional, auto-calculated if empty or []
+    "hidden_columns": ["password", "ssn"],  # Completely excluded
+    "aggregations": {"age": "mean", "salary": "sum"},  # Single operation per column
+    "visible_columns": ["name", "email"],  # Optional, auto-calculated if empty or []
 }
 ```
 
@@ -126,7 +123,7 @@ Config:
 {
     "hidden_columns": ["password"],
     "aggregations": {"salary": "sum"},
-    "visible_columns": ["name", "age"]
+    "visible_columns": ["name", "age"],
 }
 ```
 
@@ -249,7 +246,7 @@ nx.rebac_create(
     ("agent", "admin"),
     "emergency-access",
     ("file", "/critical-system"),
-    expires_at=datetime.now(UTC) + timedelta(hours=1)
+    expires_at=datetime.now(UTC) + timedelta(hours=1),
 )
 ```
 
@@ -295,7 +292,7 @@ nx.rebac_create(
     ("public", "share-link-abc123"),
     "external-viewer",
     ("file", "/project/report.pdf"),
-    expires_at=datetime.now(UTC) + timedelta(days=7)
+    expires_at=datetime.now(UTC) + timedelta(days=7),
 )
 ```
 

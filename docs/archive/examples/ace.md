@@ -95,10 +95,7 @@ nx = nexus.connect(config={"data_dir": "./nexus-data"})
 # Start tracking
 traj_id = nx.memory.start_trajectory(
     task_description="Validate customer records",
-    context={
-        "dataset": "customers.csv",
-        "agent": "validator-v1"
-    }
+    context={"dataset": "customers.csv", "agent": "validator-v1"},
 )
 
 # Agent performs work
@@ -106,10 +103,7 @@ results = validate_records(records)
 
 # Complete with outcome
 nx.memory.complete_trajectory(
-    traj_id,
-    status="success",
-    success_score=0.85,
-    metadata={"processed": 100, "valid": 85}
+    traj_id, status="success", success_score=0.85, metadata={"processed": 100, "valid": 85}
 )
 ```
 
@@ -120,8 +114,7 @@ Extract insights from completed trajectories:
 ```python
 # Agent reflects on what worked
 reflection = nx.memory.reflect(
-    trajectory_id=traj_id,
-    reflection_prompt="What validation rules were most effective?"
+    trajectory_id=traj_id, reflection_prompt="What validation rules were most effective?"
 )
 
 print(reflection.summary)
@@ -141,9 +134,7 @@ Store learned strategies for future use:
 ```python
 # Add reflection to playbook
 nx.memory.curate_playbook(
-    reflection_ids=[reflection.id],
-    playbook_name="data_validation",
-    update_mode="merge"
+    reflection_ids=[reflection.id], playbook_name="data_validation", update_mode="merge"
 )
 
 # Retrieve strategies for next run
@@ -163,10 +154,7 @@ Merge similar strategies over time:
 
 ```python
 # Consolidate after multiple epochs
-nx.memory.consolidate(
-    playbook_name="data_validation",
-    similarity_threshold=0.8
-)
+nx.memory.consolidate(playbook_name="data_validation", similarity_threshold=0.8)
 ```
 
 ## 📈 Expected Results
@@ -224,10 +212,10 @@ run_validation_task(df, ground_truth, playbook_strategies)
 ```python
 # Customize the learning process
 config = {
-    "epochs": 20,                    # More training iterations
-    "batch_size": 50,                # Process in batches
+    "epochs": 20,  # More training iterations
+    "batch_size": 50,  # Process in batches
     "reflection_depth": "detailed",  # More thorough analysis
-    "consolidation_threshold": 0.85  # Merge similar strategies
+    "consolidation_threshold": 0.85,  # Merge similar strategies
 }
 ```
 
@@ -259,11 +247,7 @@ response = agent.generate_response(customer_query)
 satisfaction_score = customer.rate_response()
 
 # Complete trajectory with feedback
-nx.memory.complete_trajectory(
-    traj_id,
-    status="success",
-    success_score=satisfaction_score
-)
+nx.memory.complete_trajectory(traj_id, status="success", success_score=satisfaction_score)
 
 # Reflect and improve
 reflection = nx.memory.reflect(traj_id)

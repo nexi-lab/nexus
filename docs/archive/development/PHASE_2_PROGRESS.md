@@ -15,14 +15,14 @@ Phase 2 tackles the biggest architectural problem: the massive NexusFS class wit
 ```python
 class NexusFS:
     def __init__(self):
-        self.search = SearchService(...)       # Extracted from NexusFSSearchMixin (2,175 lines)
-        self.permissions = PermissionService(...) # Extracted from NexusFSReBACMixin (2,554 lines)
-        self.mounts = MountService(...)        # Extracted from NexusFSMountsMixin (2,048 lines)
-        self.oauth = OAuthService(...)         # Extracted from NexusFSOAuthMixin (1,116 lines)
-        self.skills = SkillService(...)        # Extracted from NexusFSSkillsMixin (874 lines)
-        self.versions = VersionService(...)    # Extracted from NexusFSVersionsMixin (300 lines)
-        self.mcp = MCPService(...)             # Extracted from NexusFSMCPMixin (379 lines)
-        self.llm = LLMService(...)             # Extracted from NexusFSLLMMixin (286 lines)
+        self.search = SearchService(...)  # Extracted from NexusFSSearchMixin (2,175 lines)
+        self.permissions = PermissionService(...)  # Extracted from NexusFSReBACMixin (2,554 lines)
+        self.mounts = MountService(...)  # Extracted from NexusFSMountsMixin (2,048 lines)
+        self.oauth = OAuthService(...)  # Extracted from NexusFSOAuthMixin (1,116 lines)
+        self.skills = SkillService(...)  # Extracted from NexusFSSkillsMixin (874 lines)
+        self.versions = VersionService(...)  # Extracted from NexusFSVersionsMixin (300 lines)
+        self.mcp = MCPService(...)  # Extracted from NexusFSMCPMixin (379 lines)
+        self.llm = LLMService(...)  # Extracted from NexusFSLLMMixin (286 lines)
 ```
 
 ---
@@ -75,10 +75,9 @@ class NexusFS:
 class SearchService:
     """Standalone search service with no filesystem dependencies."""
 
-    def __init__(self,
-                 metadata_store: MetadataStore,
-                 embedding_store: EmbeddingStore,
-                 vector_db: VectorDB):
+    def __init__(
+        self, metadata_store: MetadataStore, embedding_store: EmbeddingStore, vector_db: VectorDB
+    ):
         self.metadata = metadata_store
         self.embeddings = embedding_store
         self.vector_db = vector_db
@@ -108,7 +107,7 @@ class NexusFS:
         self.search = SearchService(
             metadata_store=self.metadata_store,
             embedding_store=self.embedding_store,
-            vector_db=self.vector_db
+            vector_db=self.vector_db,
         )
 
     # Backward compatibility (deprecated)

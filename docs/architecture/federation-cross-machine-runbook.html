@@ -112,6 +112,7 @@
       <p><a href="#step-1-tailscale">Step 1 · Tailscale</a></p>
       <p><a href="#step-2-build">Step 2 · Build</a></p>
       <p><a href="#step-3-bootstrap-the-cluster">Step 3 · Bootstrap</a></p>
+      <p><a href="#step-3d-auth-on-node-enrollment">Step 3d · Enrollment (mTLS)</a></p>
       <p><a href="#step-3e-expose-host-paths-via-localconnector">Step 3e · LocalConnector</a></p>
       <p><a href="#step-3f-cross-node-host-fs-sharing-cc-tasks-share-style">Step 3f · Cross-node host-fs</a></p>
       <p><a href="#step-3g-expose-the-federated-vfs-as-a-real-os-mount-via-fuse">Step 3g · FUSE mount</a></p>
@@ -436,6 +437,39 @@ target/release/nexusd-cluster \
   &gt; /tmp/nexus-mac.log 2&gt;&amp;1 &amp;
 sleep 8</code></pre>
 <p>The daemon auto-detects "resume from disk" from <code>&lt;data_dir&gt;/root/raft/</code> presence (Phase G row 0) and treats any env vars still exported as advisory — persisted ConfState + DT_MOUNT entries are the source of truth on restart.</p>
+<h3 id="step-3d-auth-on-node-enrollment">Step 3d — Auth-on federation: node enrollment (mTLS)</h3>
+<p>Steps 3a/3b run <code>--no-tls</code> (a trusted-LAN / dev bring-up). A production cross-machine cluster runs <b>mTLS</b> on the peer plane (every node authenticated by its cert) with the <code>sk-</code> token plane on top for agents. mTLS relies on all nodes sharing <b>one cluster CA</b>; a brand-new node obtains its cert by <b>enrolling</b> with a join token — the k3s/kubeadm model. Enrollment runs on a dedicated <code>NodeEnrollmentService</code> bootstrap plane: a separate <b>plaintext, token-gated</b> listener reachable before a node has its cert (the strict-mTLS data bind requires one). See <a href="https://github.com/nexi-lab/nexus-vfs/pull/180">nexus-vfs #180</a>.</p>
+<p><b>3d-1. Founder — mint a join token</b> (bootstraps the cluster CA under <code>&lt;data-dir&gt;/tls/</code> on first run). Run this before starting the founder (k3s "set the token, then start"); the token is the only stdout line, guidance goes to stderr:</p>
+<pre class="sh"><code>NEXUS_DATA_DIR=/var/lib/nexus target/release/nexusd-cluster enroll-token
+# → K10&lt;pw&gt;::server:SHA256:&lt;ca-fingerprint&gt;</code></pre>
+<p><b>3d-2. Founder — boot with the enrollment listener</b> (TLS on: omit <code>--no-tls</code>; the founder signs joiner certs with its CA). Wait for <code>node-enrollment listener up ... addr=&lt;A_tailscale_ip&gt;:2130</code> alongside <code>Static topology applied</code>:</p>
+<pre class="sh"><code>NEXUS_ADVERTISE_ADDR=&lt;A_tailscale_ip&gt;:2126 \
+NEXUS_ENROLL_LISTEN=&lt;A_tailscale_ip&gt;:2130 \
+NEXUS_API_KEY_SECRET=&lt;shared-secret&gt; \
+NEXUS_FEDERATION_ZONES=sharedzone \
+'NEXUS_FEDERATION_MOUNTS=/shared=sharedzone' \
+target/release/nexusd-cluster \
+  --bind-addr &lt;A_tailscale_ip&gt;:2126 \
+  --data-dir /var/lib/nexus \
+  --agent-bind-addr 127.0.0.1:2127   # loopback token plane for local agents</code></pre>
+<p><b>3d-3. Joiner — enroll, then boot</b> (on the new machine, before any daemon boot):</p>
+<pre class="sh"><code># 1) obtain a signed cert into &lt;data-dir&gt;/tls/ (writes ca.pem / node.pem / node-key.pem)
+NEXUS_DATA_DIR=/var/lib/nexus target/release/nexusd-cluster \
+  enroll &lt;A_tailscale_ip&gt;:2130 '&lt;token-from-3d-1&gt;'
+
+# 2) boot with TLS on — it reuses the enrolled cert; Row-3 auto-discovery joins sharedzone
+NEXUS_ADVERTISE_ADDR=&lt;B_tailscale_ip&gt;:2126 \
+NEXUS_API_KEY_SECRET=&lt;shared-secret&gt; \
+NEXUS_PEERS=&lt;A_tailscale_ip&gt;:2126 \
+target/release/nexusd-cluster \
+  --bind-addr &lt;B_tailscale_ip&gt;:2126 \
+  --data-dir /var/lib/nexus \
+  --agent-bind-addr 127.0.0.1:2127</code></pre>
+<ul>
+<li><b><code>enroll</code> vs <code>join</code>.</b> <code>enroll</code> gets the node its <em>cluster identity</em> (mTLS cert) once; <code>join</code> (Step 3b) subscribes to a <em>zone</em> over already-established mTLS. With TLS on you <code>enroll</code> first, then Row-3 auto-discovery (<code>--peers</code>) joins <code>sharedzone</code> for the initial zone.</li>
+<li><b>Security.</b> The token authenticates the joiner; the joiner pins the returned CA against the SHA256 fingerprint embedded in the token, so the CA is verified end-to-end. The enrollment channel rides the encrypted Tailscale/WireGuard overlay. An enrolled node receives ca/node/node-key; the CA private key stays on the founder.</li>
+<li><b>Agent keys</b> (the <code>sk-</code> plane, for the unforgeable A2A <code>from</code>) are minted per node with <code>nexusd-cluster auth mint --subject-type agent --subject-id &lt;name&gt; --zone sharedzone:rw --name &lt;name&gt;</code> while the daemon is stopped (offline, opens root-only), then reached over <code>--agent-bind-addr</code>.</li>
+</ul>
 <h3 id="step-3e-expose-host-paths-via-localconnector">Step 3e — Expose host paths via LocalConnector</h3>
 <p>The <code>local-connector</code> driver dylib projects a host filesystem subtree (e.g. <code>~/.claude/tasks/</code>) into the VFS at an operator-named path.  Reads and writes through the VFS surface flow through to the configured <code>local_root</code> on the host fs — the LocalConnector's defining SSOT property.</p>
 <p><b>Getting the signed plugin dylibs (fresh machine).</b>  Both driver-plugin dylibs you need — <code>local-connector</code> (this step) and <code>fuse</code> (§3g) — are published as GitHub releases on the <b><code>nexi-lab/nexus</code></b> repo, each signed against the production <code>kernel-dogfood-v1</code> key that <code>nexusd-cluster</code> trusts by default.  A fresh machine needs <b>no dev-key / trust-dir setup</b> when it uses these release dylibs.  Download the latest of each series for your platform:</p>

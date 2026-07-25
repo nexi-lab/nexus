@@ -136,7 +136,7 @@ monorepo, `nexusd-cluster` in `nexus-vfs`.
 6. Build VFS gRPC service (tonic Routes, co-hosted on raft port)
 7. Open `ZoneManager` (TLS bootstrap, peer address book, node identity)
 8. Bootstrap root zone (static / restart / dynamic mode)
-9. Bootstrap static federation topology from `NEXUS_FEDERATION_ZONES` / `_MOUNTS`
+9. Bootstrap static federation topology from `NEXUS_CLUSTER_INIT` / `_MOUNTS`
 10. Install `RaftDistributedCoordinator` (DT_MOUNT apply-cb, blob-fetcher, self-address)
 11. Install outbound `PeerBlobClient` (cross-node content fetch)
 12. Start topology convergence loop (10s tick)
@@ -158,8 +158,8 @@ Source of truth: `rust/profiles/cluster/src/main.rs::run_daemon()`.
 | `NEXUS_ROOT_FS` | `<data_dir>/root` | Host-fs directory mounted at `/` |
 | `NEXUS_BOOTSTRAP_MODE` | (required) | `static`, `dynamic`, or `restart` |
 | `NEXUS_NO_TLS` | `false` | Disable TLS (plaintext gRPC for local testing) |
-| `NEXUS_FEDERATION_ZONES` | (empty) | Static federation zone definitions |
-| `NEXUS_FEDERATION_MOUNTS` | (empty) | Static federation mount topology |
+| `NEXUS_CLUSTER_INIT` | (empty) | Static federation zone definitions |
+| `NEXUS_CLUSTER_INIT_MOUNTS` | (empty) | Static federation mount topology |
 | `RUST_LOG` / `NEXUS_LOG_LEVEL` | `info` | Logging verbosity (tracing EnvFilter) |
 
 ## Docker Integration

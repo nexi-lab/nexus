@@ -1849,8 +1849,8 @@ export NEXUS_ADVERTISE_ADDR="<this-node-ip>:2126"        # reachable from peers
 export NEXUS_RAFT_TLS=false
 
 # -- Optional: pre-configure zones and mounts at startup --
-export NEXUS_FEDERATION_ZONES="shared"
-export NEXUS_FEDERATION_MOUNTS="/shared=shared"
+export NEXUS_CLUSTER_INIT="shared"
+export NEXUS_CLUSTER_INIT_MOUNTS="/shared=shared"
 ```
 
 Then start the daemon on each node:
@@ -1860,7 +1860,7 @@ nexusd --port 2026 --data-dir "$PWD/data"
 ```
 
 All nodes bootstrap the same root zone automatically. Static zones and mounts
-declared via `NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS` are created
+declared via `NEXUS_CLUSTER_INIT` / `NEXUS_CLUSTER_INIT_MOUNTS` are created
 idempotently on every startup.
 
 ### Step 3 (optional): Set up the WireGuard mesh
@@ -1898,7 +1898,7 @@ nexus federation unmount --parent-zone root --path /shared
 
 > **Note:** `share` and `join` are daemon-level operations (triggered via
 > `NexusFederation.share()` / `NexusFederation.join()` API or pre-configured
-> via `NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS` env vars). They are
+> via `NEXUS_CLUSTER_INIT` / `NEXUS_CLUSTER_INIT_MOUNTS` env vars). They are
 > not separate CLI commands.
 
 ### Step 6 (optional): Enable TLS later
@@ -1924,8 +1924,8 @@ nexus tls show
 | `NEXUS_BIND_ADDR` | No | `0.0.0.0:2126` | Raft gRPC listen address |
 | `NEXUS_ADVERTISE_ADDR` | Recommended | — | Address peers use to reach this node |
 | `NEXUS_RAFT_TLS` | No | `true` | Set `false` to disable mTLS |
-| `NEXUS_FEDERATION_ZONES` | No | — | Comma-separated zone IDs to pre-create |
-| `NEXUS_FEDERATION_MOUNTS` | No | — | `path=zone_id,...` mount mappings |
+| `NEXUS_CLUSTER_INIT` | No | — | Comma-separated zone IDs to pre-create |
+| `NEXUS_CLUSTER_INIT_MOUNTS` | No | — | `path=zone_id,...` mount mappings |
 | `NEXUS_HOSTNAME` | No | OS hostname | Used to derive deterministic node ID |
 
 ### Packages behind this

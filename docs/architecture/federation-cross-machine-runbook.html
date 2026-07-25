@@ -466,7 +466,7 @@ target/release/nexusd-cluster \
   --cluster-init sharedzone \
   --cluster-init-mount /shared=sharedzone \
   --data-dir /var/lib/nexus \
-  --agent-bind-addr 127.0.0.1:2127   # loopback token plane for local agents</code></pre>
+  --agent-bind-addr 127.0.0.1:2129   # loopback token plane — avoid the data &amp; enrollment ports</code></pre>
 <p>The founder prints a ready-to-paste joiner command (token included) at boot — grab it from the log, or read <code>&lt;data-dir&gt;/tls/join-token</code>. (<code>nexusd-cluster enroll-token</code> mints an extra/rotated token if you need one.)</p>
 <p><b>3d-2. Joiner — one command: boot with <code>--peers</code> + <code>--token</code>.</b> A certless node auto-enrolls at boot (dials the founder’s enrollment port, derived from <code>--peers</code>), writes its cert, then Row-3 auto-discovery joins <code>sharedzone</code> over mTLS — no separate <code>enroll</code> step:</p>
 <pre class="sh"><code>NEXUS_API_KEY_SECRET=&lt;shared-secret&gt; \
@@ -475,9 +475,10 @@ target/release/nexusd-cluster \
   --peers &lt;A_tailscale_ip&gt;:2126 \
   --token '&lt;token-from-3d-1&gt;' \
   --data-dir /var/lib/nexus \
-  --agent-bind-addr 127.0.0.1:2127</code></pre>
+  --agent-bind-addr 127.0.0.1:2129</code></pre>
 <ul>
 <li><b>One address per node.</b> <code>--advertise-addr</code> is the only address you state; <code>--bind-addr</code> derives to <code>0.0.0.0:&lt;port&gt;</code> and the enrollment port to <code>&lt;port&gt;+1</code>. Both sides compute the enrollment port the same way, so it never appears on a command line.</li>
+<li><b>Local-agent port.</b> <code>--agent-bind-addr</code> is loopback-only and must use a port other than the data-plane port and its <code>+1</code> enrollment port (e.g. <code>2129</code> when the data plane is <code>2126</code>) — a founder with <code>--accept-enrollments</code> already binds <code>&lt;port&gt;+1</code>.</li>
 <li><b>Found vs join are mutually exclusive.</b> <code>--cluster-init</code> (founder: “create this cluster”) and <code>--peers</code> (joiner: “join this cluster”) cannot both be set — the daemon refuses to boot, because two nodes each founding the same zone is a split-brain. This mirrors etcd’s <code>--initial-cluster-state new</code> vs <code>existing</code> and k3s’s <code>--cluster-init</code> vs <code>--server</code>.</li>
 <li><b>Security.</b> The token authenticates the joiner; the joiner pins the returned CA against the SHA256 fingerprint embedded in the token, so the CA is verified end-to-end. The enrollment channel rides the encrypted Tailscale/WireGuard overlay. An enrolled node receives ca/node/node-key; the CA private key stays on the founder.</li>
 <li><b>Agent keys</b> (the <code>sk-</code> plane, for the unforgeable A2A <code>from</code>) are minted per node with <code>nexusd-cluster auth mint --subject-type agent --subject-id &lt;name&gt; --zone sharedzone:rw --name &lt;name&gt;</code> while the daemon is stopped (offline, opens root-only), then reached over <code>--agent-bind-addr</code>.</li>

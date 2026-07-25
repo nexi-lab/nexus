@@ -75,7 +75,7 @@ x-fuse-runtime: &fuse-runtime
 # Shared entrypoint anchor.  S3 Phase G collapsed the boot-mode
 # decision into `nexus_raft::bootstrap::plan_boot_action` — the daemon
 # auto-detects restart (via `<data_dir>/root/raft/` presence),
-# fresh founder (via `NEXUS_FEDERATION_ZONES` set), fresh joiner
+# fresh founder (via `NEXUS_CLUSTER_INIT` set), fresh joiner
 # (via `--peers`), or wipe-recovery (via identity.zones populated).
 # No operator-declared `--bootstrap-mode` needed; leftover env vars
 # are advisory on restart (persisted ConfState is authoritative).
@@ -119,8 +119,8 @@ services:
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
       # First boot only — auto-detect entrypoint strips on restart.
-      NEXUS_FEDERATION_ZONES: sharedzone
-      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      NEXUS_CLUSTER_INIT: sharedzone
+      NEXUS_CLUSTER_INIT_MOUNTS: /shared=sharedzone
       NEXUS_MOUNT_DRIVER: 'local-connector:sharedzone:/shared/cc-tasks/founder:{"local_root":"/host/tasks"}'
       # FUSE plugin env — surfaces /shared/cc-tasks (the federated
       # path) as a real OS mount at /mnt/cc-tasks.
@@ -172,7 +172,7 @@ services:
       # main daemon's next boot loads it.
       NEXUS_IDENTITY_DIR: /app/identity
       NEXUS_NO_TLS: "true"
-      # Joiner does NOT set FEDERATION_ZONES at first boot — the test
+      # Joiner does NOT set --cluster-init at first boot — the test
       # fixture's `nexusd-cluster join` CLI seeds sharedzone's
       # ConfState + DT_MOUNT entries into the data dir before the
       # entrypoint's second boot auto-detects restart mode and picks

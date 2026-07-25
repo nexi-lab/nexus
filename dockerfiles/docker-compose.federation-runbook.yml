@@ -76,8 +76,8 @@ services:
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
       # First boot only — auto-detect entrypoint strips these on restart.
-      NEXUS_FEDERATION_ZONES: sharedzone
-      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      NEXUS_CLUSTER_INIT: sharedzone
+      NEXUS_CLUSTER_INIT_MOUNTS: /shared=sharedzone
       RUST_LOG: info,nexus_raft=debug
     volumes:
       - runbook_founder_data:/app/data

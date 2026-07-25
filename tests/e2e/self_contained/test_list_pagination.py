@@ -252,6 +252,11 @@ class TestPaginationEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_directory(self, nexus_fs):
         """Should handle empty directories."""
+        # The directory must EXIST to be listed as empty: readdir is
+        # existence-aware and orthogonal to stat (nexus-vfs #173) — listing a
+        # non-existent path is NotFound, not an empty result. Create it first so
+        # this exercises a genuinely-empty directory, per the test's intent.
+        nexus_fs.mkdir("/empty", exist_ok=True, parents=True)
         result = nexus_fs.sys_readdir(path="/empty/", limit=10)
 
         assert isinstance(result, PaginatedResult)

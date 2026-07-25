@@ -31,14 +31,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # nexus-vfs SHA under test. Pinned to merged main carrying the §B mTLS
-  # drive-out (PR #150) + the learned-peer-scheme fix (PR #152) rather than
-  # read from Cargo.toml, because the repo pin has not yet been bumped to
-  # include them — this test exists to guard exactly those commits. Switch to
-  # the Cargo.toml pin once it advances past them.
-  NEXUS_VFS_REV: 13960f1ca52b94521c14fa89b7a029a88dc8ae61
-
 jobs:
   mtls-federation-e2e:
     name: mTLS Federation E2E (Docker)
@@ -49,11 +41,27 @@ jobs:
       - name: Checkout nexus
         uses: actions/checkout@v4
 
-      - name: Checkout nexus-vfs source (§B mTLS fixes)
+      # Pin SSOT: the nexus-vfs SHA lives in Cargo.toml's workspace dep rev
+      # (same source federation-e2e reads). The cluster binary AND the cert-gen
+      # helper MUST come from this one rev so the certs' SANs and the client's
+      # verification agree — a split (old certs + new binary) is exactly what
+      # broke the fixed-cluster-SAN mTLS contract (nexus-vfs #181).
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved nexus-vfs SHA: $sha"
+
+      - name: Checkout nexus-vfs source at pinned SHA
         uses: actions/checkout@v4
         with:
           repository: nexi-lab/nexus-vfs
-          ref: ${{ env.NEXUS_VFS_REV }}
+          ref: ${{ steps.vfs_rev.outputs.sha }}
           path: nexus-vfs-src
           fetch-depth: 1
 
@@ -78,10 +86,11 @@ jobs:
           rustflags: ''
 
       - name: Mint the shared cluster CA + per-node certs
-        # One CA signs both node certs, each carrying every container name in
-        # its SANs (apply_tls sets no domain_name) and a pinned .node_id so
-        # the daemon adopts the id the cert's URI SAN was minted for. Written
-        # under dockerfiles/mtls-certs/<node>/, which the compose bind-mounts.
+        # One CA signs both node certs via `generate_node_cert`, which carries
+        # the fixed `nexus-node` cluster SAN the client verifies (nexus-vfs
+        # #181) plus each container name, and a pinned .node_id so the daemon
+        # adopts the id the cert's URI SAN was minted for. Written under
+        # dockerfiles/mtls-certs/<node>/, which the compose bind-mounts.
         run: |
           cargo run --manifest-path nexus-vfs-src/rust/raft/Cargo.toml \
             --example gen_federation_certs -- \

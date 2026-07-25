@@ -4,7 +4,7 @@
 # and converges membership over it.
 #
 # Shape (env-driven S3 unified bring-up — no offline `share`/`join` sidecar):
-#   * founder — creates `sharedzone` from NEXUS_FEDERATION_ZONES, serves mTLS.
+#   * founder — creates `sharedzone` from NEXUS_CLUSTER_INIT, serves mTLS.
 #   * joiner  — NEXUS_PEERS=founder:2126, no zones of its own. At boot it
 #     DiscoverZones(founder) over mTLS, finds `sharedzone`, and auto-joins via
 #     JoinZone over mTLS. Both RPCs are exactly the one-shot helpers the §B
@@ -12,11 +12,13 @@
 #
 # Shared CA: the `mtls-federation-e2e` workflow runs
 # `raft --example gen_federation_certs` to mint ONE cluster CA + per-node
-# certs (with every container name in the SANs, since apply_tls sets no
-# domain_name), writes them under `./mtls-certs/<node>/`, and mounts each
-# node's bundle read-only at `/certs`. The entrypoint copies it into
-# `<data_dir>/tls` before boot so `bootstrap_tls` reuses the shared bundle
-# instead of self-signing a per-node CA (which would never cross-verify).
+# certs, writes them under `./mtls-certs/<node>/`, and mounts each node's
+# bundle read-only at `/certs`. The client verifies the fixed cluster
+# server-name SAN (`nexus-node`, which every node cert carries) rather than
+# the dialed host, so cross-node handshakes succeed independent of container
+# name / overlay IP. The entrypoint copies the bundle into `<data_dir>/tls`
+# before boot so `bootstrap_tls` reuses the shared CA instead of self-signing
+# a per-node CA (which would never cross-verify).
 #
 # Success signal: founder's raft log commits `AddNode peer_node_id=<joiner>`
 # for `sharedzone`, i.e. `voters=[<founder>, <joiner>]` — membership converged
@@ -48,8 +50,8 @@ services:
       NEXUS_ADVERTISE_ADDR: founder:2126
       # Static topology: create `sharedzone` and mount it at /shared. The
       # joiner discovers this over mTLS and auto-joins.
-      NEXUS_FEDERATION_ZONES: sharedzone
-      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      NEXUS_CLUSTER_INIT: sharedzone
+      NEXUS_CLUSTER_INIT_MOUNTS: /shared=sharedzone
       RUST_LOG: info,nexus_raft=info
       # Plain logs so the CI assertion's `field=value` greps aren't split by
       # tracing's ANSI colour codes (the assert also strips ANSI defensively).

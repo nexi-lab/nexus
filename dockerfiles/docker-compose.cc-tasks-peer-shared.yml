@@ -71,8 +71,8 @@ services:
       NEXUS_ADVERTISE_ADDR: founder:2126
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
-      NEXUS_FEDERATION_ZONES: sharedzone
-      NEXUS_FEDERATION_MOUNTS: /shared=sharedzone
+      NEXUS_CLUSTER_INIT: sharedzone
+      NEXUS_CLUSTER_INIT_MOUNTS: /shared=sharedzone
       # Peer-shared: SAME VFS path on both nodes.  Each side's
       # LocalConnector points at its own container-local `/host/tasks/`;
       # sys_readdir observation replicates the entry list via sharedzone

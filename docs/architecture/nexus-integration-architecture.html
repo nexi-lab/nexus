@@ -135,7 +135,7 @@ A2A messaging, audit trace, cross-instance transport.</p>
   <strong>Cross-references:</strong>
   <ul style="margin:8px 0 0">
     <li><strong><a href="https://s.shareone.vip/s/agent-context-storage-matrix">Agent Context / Image / Profile &mdash; Storage Matrix</a></strong> (<code>sudoprivacy/sudocode : docs/design/agent-context-storage-matrix.html</code>) &mdash; 1:1 maps Claude Code's on-disk context model onto &sect;2's <code>/agents/{name}/</code> + <code>/proc/{pid}/</code> layers; tracks sudocode/sudowork dedup and carries the open reconcile questions (e.g. session path <code>&lt;workspace_hash&gt;</code> vs <code>/sessions/{agent-name}/</code>). WIP &mdash; to be folded into this doc.</li>
-    <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/README.md">KERNEL-ARCHITECTURE</a> (peer doc): kernel primitives, syscall surface, dispatch model</li>
+    <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT &mdash; interface taxonomy, syscall surface, HAL contracts, dispatch model, plugin ABI. Includes the write-path dispatch appendix (formerly Appendix A here).</li>
     <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/docs/federation-architecture.md">federation-architecture</a> (peer doc): Raft, zone topology, gRPC transport</li>
     <li>sudowork repo (<code>sudoprivacy/sudowork</code>) &mdash; <code>OPEN-ITEMS.md</code>: items not yet implemented</li>
   </ul>
@@ -152,8 +152,7 @@ A2A messaging, audit trace, cross-instance transport.</p>
     <li><a href="#replication">Data Replication Mechanisms</a></li>
     <li><a href="#messenger">Messenger Surface</a></li>
     <li><a href="#orchestration">Orchestration &amp; Isolation Boundary</a></li>
-    <li><a href="#appendix-hooks">Appendix A: Kernel Dispatch Hook Lifecycle</a></li>
-    <li><a href="#appendix-raft">Appendix B: Raft Command Taxonomy</a></li>
+    <li><a href="#appendix-raft">Appendix A: Raft Command Taxonomy</a></li>
   </ol>
 </nav>
 
@@ -611,36 +610,7 @@ graph TB
 <hr>
 
 <!-- ================================================================ -->
-<h2 id="appendix-hooks">9. Appendix A: Kernel Dispatch Hook Lifecycle</h2>
-
-<pre class="mermaid">
-graph TB
-    S["syscall (sys_write, sys_read, ...)"]
-    S --> CG["CLONE GATE (sys_write only)"]
-    CG -->|"has_mutating_hook_match?"| CG_yes["true: clone content"]
-    CG -->|"false"| CG_no["WriteHookCtx.content = vec![]"]
-
-    CG_yes --> PRE
-    CG_no --> PRE
-
-    PRE["PRE: NativeInterceptHook chain"]
-    PRE -->|"Err"| ABORT["abort (PermissionHook, BoundaryHook)"]
-    PRE -->|"Pass"| EXEC
-    PRE -->|"Replace(bytes)"| EXEC["EXECUTE: backend write"]
-
-    EXEC --> POST["POST: NativeInterceptHook chain (AuditHook)"]
-    POST --> OBS["OBSERVE: MutationObserver::on_mutation"]
-    OBS --> W1["StreamEventObserver &rarr; sys_watch wakeup"]
-    OBS --> W2["FileWatcher &rarr; sys_watch subscribers"]
-    OBS --> W3["AuditZoneAutoWire (Mount filter)"]
-</pre>
-
-<p>The clone gate keeps the hot path allocation-free for writes that do not need rewriting. Each hook declares a <code>mutating_path_suffix</code>; the dispatcher only clones content into <code>WriteHookCtx</code> when one matches. <code>MailboxStampingHook</code> declares <code>/chat-with-me</code>; accept/reject hooks declare <code>None</code>.</p>
-
-<hr>
-
-<!-- ================================================================ -->
-<h2 id="appendix-raft">10. Appendix B: Raft Command Taxonomy</h2>
+<h2 id="appendix-raft">9. Appendix A: Raft Command Taxonomy</h2>
 
 <p>All commands in a zone's Raft cluster share a single <code>Command</code> enum (<code>state_machine.rs</code>):</p>
 

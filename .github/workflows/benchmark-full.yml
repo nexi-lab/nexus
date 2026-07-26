@@ -1,14 +1,26 @@
-name: Benchmark
+name: Benchmark (Full Suite)
 
+# The FULL benchmark suite — ALL benchmarks under tests/benchmarks/ (~200 fns),
+# including the kernel hot-path benches the PR-time "Benchmark (Critical Subset)"
+# (benchmark.yml, `-m benchmark_ci`) does NOT run: permission hotpath, read/write
+# overhead, syscall-vs-os, readdir-scale, CAS I/O, rebac-scale, lock contention.
+#
+# Deliberately split out of benchmark.yml and NOT triggered on `pull_request`:
+#   * A 45-60 min full suite must not run per-PR (that's the Critical Subset's
+#     job) and must not register as a phantom "skipping" check on every PR.
+#   * Instead it runs NIGHTLY (from the default branch = develop, so it tracks
+#     the active integration branch), on-demand via workflow_dispatch, and on
+#     push to main. Public repo + no LLM/API keys ⇒ ~$0/run (free Actions
+#     minutes, local in-process benchmarks).
 on:
+  schedule:
+    - cron: "17 9 * * *" # nightly ~09:17 UTC (off-peak minute to dodge cron congestion)
+  workflow_dispatch:
   push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
+    branches: [main]
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,10 +31,10 @@ env:
   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
-  benchmark-critical:
-    name: Benchmark (Critical Subset)
+  benchmark-full:
+    name: Benchmark (Full Suite)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,19 +56,11 @@ jobs:
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
-      - name: Smoke test (validate benchmark infrastructure)
+      - name: Run full benchmark suite
+        timeout-minutes: 45
         run: |
-          uv run pytest tests/benchmarks/test_search_benchmarks.py -k "test_" \
-            --benchmark-json=/tmp/smoke.json --benchmark-min-rounds=3 \
-            -o "addopts=" -q --co -q 2>/dev/null || true
-          echo '{"benchmarks":[]}' > /tmp/smoke.json
-          python -c "import json; json.load(open('/tmp/smoke.json'))"
-
-      - name: Run critical benchmarks
-        timeout-minutes: 20
-        run: |
-          uv run pytest tests/benchmarks/ -m benchmark_ci \
-            --benchmark-json=benchmark-results.json \
+          uv run pytest tests/benchmarks/ \
+            --benchmark-json=benchmark-results-full.json \
             --benchmark-min-rounds=5 \
             --benchmark-max-time=2.0 \
             --benchmark-warmup=on \
@@ -64,7 +68,6 @@ jobs:
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           PUBLISH_REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
         run: |
@@ -84,16 +87,13 @@ jobs:
       - name: Clean working tree for branch switch
         run: git checkout -- .
 
-      - name: Store benchmark results
+      - name: Store full benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: pytest
-          output-file-path: benchmark-results.json
+          output-file-path: benchmark-results-full.json
           gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench
-          alert-threshold: "130%"
-          comment-on-alert: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-          fail-on-alert: false
-          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          benchmark-data-dir-path: dev/bench-full
+          auto-push: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           summary-always: true

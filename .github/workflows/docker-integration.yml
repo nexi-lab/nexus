@@ -11,27 +11,16 @@ name: Docker Integration Test
 # 2. Click "New repository secret"
 # 3. Add each secret with the exact name and value shown above
 
+# Auto-triggers are removed while the job is disabled (`if: false` below) so this
+# workflow no longer registers a phantom "skipping" check on every PR (a skipped
+# check reads like coverage but isn't). It runs only on manual dispatch until
+# re-enabled — see #1720 for the checklist: remove `if: false`, confirm the
+# ANTHROPIC_API_KEY + NEXUS_GCS_CREDENTIALS secrets are configured, then restore
+# the `push: [main, develop]` trigger. (Kept, not deleted: this is the only job
+# exercising the nexus-langgraph + nexus-frontend + GCS full-stack path, which
+# external open-source users may rely on.)
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
-    paths:
-      # Docker-related files
-      - 'Dockerfile'
-      - 'docker-compose*.yml'
-      - 'dockerfiles/compose.yaml'
-      - 'nexus-stack.yml'
-      - 'scripts/nexus-docker.sh'
-      - 'docker-entrypoint.sh'
-      - '.github/workflows/docker-integration.yml'
-      # Core source files that affect Docker integration
-      - 'src/nexus/core/**'
-      - 'src/nexus/server/**'
-      - 'src/nexus/storage/**'
-      - 'src/nexus/backends/**'
-      - 'configs/*.yaml'
-      - 'configs/*.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

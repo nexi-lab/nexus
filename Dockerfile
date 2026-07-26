@@ -104,7 +104,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
 # Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
-ARG NEXUS_VFS_REV=307a5bef8a92643f8099f78353597821a4bd8dbd
+ARG NEXUS_VFS_REV=ad8c3290b828e54143e17d7a4bbf26d1746a6b81
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \

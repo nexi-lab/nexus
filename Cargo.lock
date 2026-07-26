@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "a2a"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=307a5bef8a92643f8099f78353597821a4bd8dbd#307a5bef8a92643f8099f78353597821a4bd8dbd"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ad8c3290b828e54143e17d7a4bbf26d1746a6b81#ad8c3290b828e54143e17d7a4bbf26d1746a6b81"
 dependencies = [
  "contracts",
  "kernel",
@@ -237,7 +237,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=307a5bef8a92643f8099f78353597821a4bd8dbd#307a5bef8a92643f8099f78353597821a4bd8dbd"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ad8c3290b828e54143e17d7a4bbf26d1746a6b81#ad8c3290b828e54143e17d7a4bbf26d1746a6b81"
 dependencies = [
  "ahash",
  "base64",
@@ -569,7 +569,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=307a5bef8a92643f8099f78353597821a4bd8dbd#307a5bef8a92643f8099f78353597821a4bd8dbd"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ad8c3290b828e54143e17d7a4bbf26d1746a6b81#ad8c3290b828e54143e17d7a4bbf26d1746a6b81"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1353,7 +1353,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=307a5bef8a92643f8099f78353597821a4bd8dbd#307a5bef8a92643f8099f78353597821a4bd8dbd"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ad8c3290b828e54143e17d7a4bbf26d1746a6b81#ad8c3290b828e54143e17d7a4bbf26d1746a6b81"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -1405,7 +1405,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=307a5bef8a92643f8099f78353597821a4bd8dbd#307a5bef8a92643f8099f78353597821a4bd8dbd"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ad8c3290b828e54143e17d7a4bbf26d1746a6b81#ad8c3290b828e54143e17d7a4bbf26d1746a6b81"
 dependencies = [
  "ahash",
  "base64",
@@ -1601,7 +1601,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=307a5bef8a92643f8099f78353597821a4bd8dbd#307a5bef8a92643f8099f78353597821a4bd8dbd"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ad8c3290b828e54143e17d7a4bbf26d1746a6b81#ad8c3290b828e54143e17d7a4bbf26d1746a6b81"
 
 [[package]]
 name = "nexus-search-plugin"

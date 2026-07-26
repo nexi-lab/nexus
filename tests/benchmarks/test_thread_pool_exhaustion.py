@@ -16,6 +16,7 @@ Or run the in-process test:
 import argparse
 import asyncio
 import os
+import shutil
 import statistics
 import sys
 import tempfile
@@ -228,6 +229,12 @@ async def test_in_process_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
+    if shutil.which("nexus-cluster") is None:
+        pytest.skip(
+            "in-process thread-exhaustion needs the nexus-cluster kernel binary "
+            "(create_nexus_fs opens a raft metastore); absent in the Python-only "
+            "benchmark env"
+        )
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
@@ -346,6 +353,12 @@ async def test_async_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
+    if shutil.which("nexus-cluster") is None:
+        pytest.skip(
+            "async thread-exhaustion needs the nexus-cluster kernel binary "
+            "(create_nexus_fs opens a raft metastore); absent in the Python-only "
+            "benchmark env"
+        )
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 

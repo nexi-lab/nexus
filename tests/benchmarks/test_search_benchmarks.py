@@ -146,7 +146,10 @@ class TestSectionAwareGrepBenchmarks:
                 },
             ],
         }
-        metadata_store.metastore_get_file_metadata.return_value = json.dumps(section_index)
+        # `_filter_results_by_section` reads md_structure via the consolidated
+        # kernel xattr API `get_xattr(path, "md_structure")` (self._kernel IS the
+        # metadata_store), NOT the old `metastore_get_file_metadata`.
+        metadata_store.get_xattr.return_value = json.dumps(section_index)
         service = SearchService(
             metadata_store=metadata_store,
             nexus_fs=None,
@@ -158,11 +161,9 @@ class TestSectionAwareGrepBenchmarks:
         ]
 
         def filter_once():
-            metadata_store.metastore_get_file_metadata.reset_mock()
+            metadata_store.get_xattr.reset_mock()
             filtered = service._filter_results_by_section(grep_results, "## API")
-            metadata_store.metastore_get_file_metadata.assert_called_once_with(
-                "/bench.md", "md_structure"
-            )
+            metadata_store.get_xattr.assert_called_once_with("/bench.md", "md_structure")
             return filtered
 
         result = benchmark(filter_once)

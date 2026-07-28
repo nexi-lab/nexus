@@ -371,6 +371,24 @@ Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus
 
 </details>
 
+## Acknowledgments
+
+We welcome **Zhuotao Liu** (Tsinghua University) as a contributor. The
+cross-trust-domain signed-authorship design — agent identity certificates and
+an unforgeable message `from` that any consumer can verify without trusting the
+ingress node — draws on **BlockA2A** (Zhenhua Zou, Zhuotao Liu et al.,
+*BlockA2A: Towards Secure and Verifiable Agent-to-Agent Interoperability*,
+[arXiv:2508.01332](https://arxiv.org/abs/2508.01332)).
+
+- **Adopted:** the sign-and-verify identity model — a sender signs each message
+  with its private key and any receiver verifies it against a resolvable public
+  key (BlockA2A Protocol 2).
+- **Realized on nexus primitives:** the raft log is the ordered, replicated,
+  tamper-evident, strongly-consistent ledger; CA-signed X.509 certificates are
+  the resolvable identity; and the kernel permission gate is the access control.
+  This keeps intra-cluster operation strongly consistent with no external
+  consensus, while leaving the path open to cross-organization (cross-CA) trust.
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.

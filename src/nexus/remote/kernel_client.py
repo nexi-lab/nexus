@@ -1434,7 +1434,6 @@ class _ProxyAgentDescriptor(SimpleNamespace):
         if ext is not None:
             d["external_info"] = {
                 "connection_id": ext.get("connection_id", ""),
-                "host_pid": ext.get("host_pid"),
                 "remote_addr": ext.get("remote_addr"),
                 "protocol": ext.get("protocol", "grpc"),
                 "last_heartbeat": _iso(ext.get("last_heartbeat")),

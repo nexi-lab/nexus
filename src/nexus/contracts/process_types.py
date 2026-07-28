@@ -107,10 +107,12 @@ class ExternalProcessInfo:
     """Connection metadata for external (gRPC/MCP) processes."""
 
     connection_id: str
-    host_pid: int | None = None
     remote_addr: str | None = None
     protocol: str = "grpc"  # "grpc" | "mcp" | "stdio"
     last_heartbeat: datetime | None = None
+    # The OS process id is NOT a field here — the agent's ``pid`` IS the OS
+    # host_pid (nexus-vfs contracts/agent_pid: pid = "{host_pid}[.{local_id}]").
+    # Decode the pid to recover it; a separate field would duplicate it (SSOT).
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +178,6 @@ class AgentDescriptor:
         if self.external_info is not None:
             d["external_info"] = {
                 "connection_id": self.external_info.connection_id,
-                "host_pid": self.external_info.host_pid,
                 "remote_addr": self.external_info.remote_addr,
                 "protocol": self.external_info.protocol,
                 "last_heartbeat": (
@@ -202,7 +203,6 @@ class AgentDescriptor:
             hb = ext_raw.get("last_heartbeat")
             ext_info = ExternalProcessInfo(
                 connection_id=ext_raw["connection_id"],
-                host_pid=ext_raw.get("host_pid"),
                 remote_addr=ext_raw.get("remote_addr"),
                 protocol=ext_raw.get("protocol", "grpc"),
                 last_heartbeat=datetime.fromisoformat(hb) if hb else None,

@@ -999,7 +999,6 @@ def test_agent_registry_proxy_descriptor_to_dict_matches_agentdescriptor_shape()
                     "labels": {"capabilities": "search,cache", "eviction_class": "spot"},
                     "external_info": {
                         "connection_id": "c1",
-                        "host_pid": 42,
                         "remote_addr": "10.0.0.1",
                         "protocol": "grpc",
                         "last_heartbeat_ms": 1_700_000_009_000,
@@ -1044,7 +1043,6 @@ def test_agent_registry_proxy_descriptor_to_dict_matches_agentdescriptor_shape()
     assert isinstance(d["created_at"], str) and "T" in d["created_at"]
     assert isinstance(d["updated_at"], str) and "T" in d["updated_at"]
     assert d["external_info"]["connection_id"] == "c1"
-    assert d["external_info"]["host_pid"] == 42
     assert isinstance(d["external_info"]["last_heartbeat"], str)
     # Must be JSON-serializable (the resolver does json.dumps(desc.to_dict())).
     import json as _json

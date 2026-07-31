@@ -112,19 +112,19 @@ Expected: `test_serialize_omits_title_score_when_absent` PASSES already (key nev
 
 `src/nexus/bricks/search/daemon.py` `_coerce_to_search_result` — in the `BaseSearchResult` branch add after `reranker_score=raw.reranker_score,`:
 
-```python
+```
                 title_score=raw.title_score,
 ```
 
 In the `dict` branch add after `reranker_score=raw.get("reranker_score"),`:
 
-```python
+```
                 title_score=raw.get("title_score"),
 ```
 
 `src/nexus/bricks/search/daemon.py` `_fuse_ranked_results` — in the `SearchResult(...)` copy add after `reranker_score=result.reranker_score,`:
 
-```python
+```
                     title_score=result.title_score,
 ```
 
@@ -209,7 +209,7 @@ Expected: FAIL with `AttributeError: 'DaemonConfig' object has no attribute 'tit
 
 And in the `DaemonConfig(...)` call, after `page_bm25_rrf_k=_page_bm25_rrf_k,`:
 
-```python
+```
             title_arm=_title_arm,
 ```
 
@@ -270,8 +270,12 @@ def _leg(path: str, score: float, chunk_index: int, text: str) -> Any:
     from nexus.bricks.search.results import BaseSearchResult
 
     return BaseSearchResult(
-        path=path, chunk_text=text, score=score, chunk_index=chunk_index,
-        line_start=1, line_end=2,
+        path=path,
+        chunk_text=text,
+        score=score,
+        chunk_index=chunk_index,
+        line_start=1,
+        line_end=2,
     )
 
 
@@ -282,7 +286,9 @@ async def test_hydrate_borrows_best_leg_chunk_no_fetch() -> None:
     chunk_kw = [_leg("/t.md", 3.0, 4, "weak"), _leg("/t.md", 9.0, 7, "strong")]
     hits = await daemon._hydrate_title_hits(
         [{"path": "/t.md", "score": 6.0, "title": "T"}],
-        chunk_kw=chunk_kw, page_kw=[], zone_id="root",
+        chunk_kw=chunk_kw,
+        page_kw=[],
+        zone_id="root",
     )
     assert calls == []
     assert hits[0].chunk_index == 7
@@ -310,15 +316,24 @@ async def test_hydrate_uncovered_path_one_batched_fetch() -> None:
     """Uncovered paths hydrate via exactly one batched fetch_ranges call."""
     from nexus.bricks.search.macro_chunk import ChunkRow
 
-    row = ChunkRow(path="/u.md", chunk_index=0, text="chunk zero", tokens=2,
-                   line_start=1, line_end=3, heading_prefix=None)
+    row = ChunkRow(
+        path="/u.md",
+        chunk_index=0,
+        text="chunk zero",
+        tokens=2,
+        line_start=1,
+        line_end=3,
+        heading_prefix=None,
+    )
     daemon, calls = _hydration_daemon(fetch_rows=[row])
     hits = await daemon._hydrate_title_hits(
         [
             {"path": "/u.md", "score": 6.0, "title": "U"},
             {"path": "/v.md", "score": 4.0, "title": "V"},
         ],
-        chunk_kw=[], page_kw=[], zone_id="root",
+        chunk_kw=[],
+        page_kw=[],
+        zone_id="root",
     )
     assert len(calls) == 1
     assert calls[0] == ([("/u.md", 0, 0), ("/v.md", 0, 0)], "root")
@@ -336,7 +351,9 @@ async def test_hydrate_fetch_failure_degrades_not_fails() -> None:
     daemon, _ = _hydration_daemon(fetch_raises=True)
     hits = await daemon._hydrate_title_hits(
         [{"path": "/u.md", "score": 6.0, "title": "U"}],
-        chunk_kw=[], page_kw=[], zone_id="root",
+        chunk_kw=[],
+        page_kw=[],
+        zone_id="root",
     )
     assert hits[0].chunk_text == ""
     assert hits[0].score == 6.0
@@ -351,7 +368,9 @@ async def test_hydrate_no_fetch_ranges_backend() -> None:
     daemon._vector_backend = object()
     hits = await daemon._hydrate_title_hits(
         [{"path": "/u.md", "score": 6.0, "title": "U"}],
-        chunk_kw=[], page_kw=[], zone_id="root",
+        chunk_kw=[],
+        page_kw=[],
+        zone_id="root",
     )
     assert hits[0].chunk_text == ""
 ```
@@ -496,8 +515,13 @@ def _make_daemon(*, title_arm: bool = True, skeleton: dict[str, dict[str, Any]] 
 
     class FakeFtsBackend:
         async def keyword_search(
-            self, query: str, path: str, limit: int, zone_id: str,
-            *, timing: dict[str, float] | None = None,
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
         ) -> list[Any]:
             return [_kw("/a.md", 10.0), _kw("/b.md", 9.0), _kw("/c.md", 8.0)]
 
@@ -509,8 +533,15 @@ def _make_daemon(*, title_arm: bool = True, skeleton: dict[str, dict[str, Any]] 
 
         async def fetch_ranges(self, spans: Any, zone_id: Any) -> list[Any]:
             return [
-                ChunkRow(path=p, chunk_index=0, text=f"body of {p}", tokens=3,
-                         line_start=1, line_end=2, heading_prefix=None)
+                ChunkRow(
+                    path=p,
+                    chunk_index=0,
+                    text=f"body of {p}",
+                    tokens=3,
+                    line_start=1,
+                    line_end=2,
+                    heading_prefix=None,
+                )
                 for p, _lo, _hi in spans
             ]
 

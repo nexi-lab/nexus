@@ -2026,6 +2026,7 @@ class SearchDaemon:
         """
         from nexus.bricks.search.fusion import rrf_fusion
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+        from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
 
         path = path_filter or "/"
         timing = _empty_backend_timing()
@@ -2127,6 +2128,12 @@ class SearchDaemon:
         fusion_start = time.perf_counter()
         kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
         fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+        # Issue #4542: pool the fused list per document so one long doc cannot
+        # occupy every hybrid slot. The route over-fetches (fetch_limit =
+        # limit × 3 for the ReBAC filter), so pooling at daemon-output size
+        # still leaves headroom before the caller's final trim.
+        if self.config.page_aggregation:
+            fused = _aggregate_chunks_to_pages(fused, chunks_per_page=self.config.chunks_per_page)
         timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
         record_total()
         return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]

@@ -89,14 +89,24 @@ _MAX_CAP_WIDEN = 4
 MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
 LEGACY_REFRESH_CONSUMER = "legacy-refresh"
 
-# Title arm safety bounds (#4545 review round 3). locate() candidates and
-# the representative-chunk hydration fetch are capped so a common-token
-# query at the max public limit (100) with ReBAC over-fetch cannot amplify
-# into hundreds of per-span SELECTs on the SQLite NeighborFetcher (one
+# Title arm safety bounds (#4545 review rounds 3-4).
+#
+# TITLE_ARM_MAX_TOKEN_DF: a query token whose zone posting bucket exceeds
+# this document frequency is skipped during candidate SELECTION — a token
+# matching thousands of titles/paths ("md", "readme") has no discriminating
+# power for a title lookup, and materializing + scoring its full bucket is
+# an unbounded synchronous scan on the owner loop (measured 251ms at 100k
+# docs). Skipped tokens still count toward per-candidate overlap SCORING
+# when the doc was selected via a selective token. A query made up solely
+# of high-DF tokens contributes no title arm (body BM25 still serves it).
+#
+# TITLE_ARM_MAX_HYDRATION_FETCH: cap on the representative-chunk fetch so
+# max public limit (100) with ReBAC over-fetch cannot fan out into
+# hundreds of per-span SELECTs on the SQLite NeighborFetcher (one
 # serialized SELECT per span) or an oversized OR expression on Postgres.
-# The arm's ranking value concentrates in the top few locate hits; 32 is
-# far above the deepest sub-fusion window that can influence final top-N.
-TITLE_ARM_MAX_HITS = 32
+# Locate recall depth is NOT capped (scales with limit*2) — hits beyond
+# the fetch cap are emitted unhydrated and stay retrievable.
+TITLE_ARM_MAX_TOKEN_DF = 1024
 TITLE_ARM_MAX_HYDRATION_FETCH = 32
 
 _BACKEND_LEG_TIMING_KEYS = (
@@ -1597,7 +1607,7 @@ class SearchDaemon:
                 rows = result.fetchall()
 
             new_docs: dict[tuple[str, str], dict[str, Any]] = {}
-            new_index: dict[str, set[tuple[str, str]]] = {}
+            new_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
             for row in rows:
                 path_id, zone_id, title, virtual_path = row
                 if not virtual_path:
@@ -1616,13 +1626,13 @@ class SearchDaemon:
             # No await between here and the swap: single-loop atomicity.
             journal = self._skeleton_bootstrap_journal or []
             self._skeleton_bootstrap_journal = None
-            for op, key, entry in journal:
-                old = new_docs.pop(key, None)
+            for op, journal_key, journal_entry in journal:
+                old = new_docs.pop(journal_key, None)
                 if old is not None:
-                    self._remove_skeleton_postings(new_index, key, old)
-                if op == "upsert" and entry is not None:
-                    new_docs[key] = entry
-                    self._add_skeleton_postings(new_index, key, entry)
+                    self._remove_skeleton_postings(new_index, journal_key, old)
+                if op == "upsert" and journal_entry is not None:
+                    new_docs[journal_key] = journal_entry
+                    self._add_skeleton_postings(new_index, journal_key, journal_entry)
 
             self._skeleton_docs = new_docs
             self._skeleton_token_index = new_index
@@ -1812,9 +1822,15 @@ class SearchDaemon:
 
         # Zone-partitioned buckets (#4545 review round 3): read only this
         # zone's postings so query cost never scales with other tenants.
+        # High-DF buckets are skipped for selection (#4545 review round 4):
+        # they are non-discriminative and would reintroduce an O(zone-corpus)
+        # synchronous scan for common tokens like "md".
         candidates: set[tuple[str, str]] = set()
         for token in query_tokens:
-            candidates |= self._skeleton_token_index.get((zone_id, token), set())
+            bucket = self._skeleton_token_index.get((zone_id, token))
+            if bucket is None or len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
+                continue
+            candidates |= bucket
 
         scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
 
@@ -1941,10 +1957,7 @@ class SearchDaemon:
         title_start = time.perf_counter()
         try:
             locate_hits = await self.locate(
-                query,
-                zone_id=zone_id,
-                limit=min(limit * 2, TITLE_ARM_MAX_HITS),
-                path_prefix=path_filter,
+                query, zone_id=zone_id, limit=limit * 2, path_prefix=path_filter
             )
             if locate_hits:
                 title_hits = await self._hydrate_title_hits(

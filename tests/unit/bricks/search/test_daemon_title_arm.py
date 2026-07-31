@@ -553,10 +553,11 @@ async def test_hydration_fetch_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gather_title_hits_caps_locate_limit() -> None:
-    """The arm asks locate for at most TITLE_ARM_MAX_HITS candidates even at
-    the max public limit with ReBAC over-fetch (#4545 review round 3)."""
-    from nexus.bricks.search.daemon import TITLE_ARM_MAX_HITS, DaemonConfig, SearchDaemon
+async def test_gather_title_hits_locate_depth_scales_with_limit() -> None:
+    """Locate recall depth scales with the request (limit*2) so ReBAC
+    over-fetch keeps deep permitted title hits reachable; only the
+    hydration FETCH is capped (#4545 review round 4)."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
     seen: dict[str, Any] = {}
 
@@ -572,7 +573,35 @@ async def test_gather_title_hits_caps_locate_limit() -> None:
     await daemon._gather_title_hits(
         "q", zone_id="root", limit=300, path_filter=None, chunk_kw=[], page_kw=[], timing=timing
     )
-    assert seen["limit"] == TITLE_ARM_MAX_HITS
+    assert seen["limit"] == 600
+
+
+@pytest.mark.asyncio
+async def test_locate_skips_high_df_tokens() -> None:
+    """A token whose zone bucket exceeds TITLE_ARM_MAX_TOKEN_DF is skipped
+    for candidate selection (non-discriminative), but still counts toward
+    overlap scoring for docs selected via selective tokens (#4545 review
+    round 4)."""
+    from nexus.bricks.search.daemon import TITLE_ARM_MAX_TOKEN_DF
+
+    daemon = _bare_locate_daemon()
+    # Flood the "md" bucket past the DF cap.
+    for i in range(TITLE_ARM_MAX_TOKEN_DF + 1):
+        daemon.upsert_skeleton_doc(
+            path_id=f"p{i}", virtual_path=f"/notes/n{i:05}.md", title=None, zone_id="root"
+        )
+    daemon.upsert_skeleton_doc(
+        path_id="px", virtual_path="/designs/atlas.md", title="Atlas Design", zone_id="root"
+    )
+
+    # Pure high-DF query: no candidates, arm contributes nothing.
+    assert await daemon.locate("md", zone_id="root", limit=5) == []
+
+    # Selective token selects the doc; the high-DF "md" token still scores.
+    hits = await daemon.locate("atlas md", zone_id="root", limit=5)
+    assert [h["path"] for h in hits] == ["/designs/atlas.md"]
+    # atlas: title(2.0) + path(1.0); md: path(1.0) => 4.0
+    assert hits[0]["score"] == pytest.approx(4.0)
 
 
 @pytest.mark.asyncio

@@ -285,6 +285,8 @@ class TestReadableZoneFilter:
 
     @pytest.mark.asyncio
     async def test_write_only_context_fails_closed_in_sandbox_dispatch(self) -> None:
+        """Round-9 strengthened round-8: a write-only context now fails
+        closed at SANDBOX entry — the dispatcher is never reached."""
         from nexus.contracts.types import OperationContext
 
         captured: dict = {}
@@ -293,8 +295,48 @@ class TestReadableZoneFilter:
             user_id="alice", groups=[], zone_id="eng", zone_perms=(("eng", "w"),)
         )
 
-        await svc._semantic_search_sandbox(
+        out = await svc._semantic_search_sandbox(
             query="q", path="/", limit=5, context=ctx, search_mode="semantic"
         )
 
-        assert captured["zone_filter"] == frozenset()
+        assert out == []
+        assert "zone_filter" not in captured  # dispatch never happened
+
+
+class TestWriteOnlyContextFailsClosedEverywhere:
+    """Issue #4542 round-9 review: an empty readable scope is an
+    authorization outcome — SANDBOX local/vector/BM25S paths must not run."""
+
+    @pytest.mark.asyncio
+    async def test_write_only_context_gets_no_results_and_no_fallback(self) -> None:
+        from nexus.contracts.types import OperationContext
+
+        svc = _make_sandbox_service()
+        # Any retrieval work reaching these would be a leak.
+        svc._hybrid_search_sandbox = None  # type: ignore[assignment]
+        svc._try_sqlite_vec_sandbox = None  # type: ignore[assignment]
+
+        dispatched = {"called": False}
+
+        async def disp_search(**kwargs):
+            dispatched["called"] = True
+            return FederatedSearchResponse(
+                results=[{"path": "/secret.md", "score": 0.9}],
+                zones_searched=["eng"],
+                zones_failed=[],
+            )
+
+        dispatcher = MagicMock()
+        dispatcher.search = disp_search
+        svc._federation_dispatcher = dispatcher
+
+        ctx = OperationContext(
+            user_id="alice", groups=[], zone_id="eng", zone_perms=(("eng", "w"),)
+        )
+
+        out = await svc._semantic_search_sandbox(
+            query="q", path="/", limit=5, context=ctx, search_mode="semantic"
+        )
+
+        assert out == []
+        assert dispatched["called"] is False

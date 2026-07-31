@@ -409,3 +409,33 @@ class TestRouterReadableZoneFilter:
         resp = client.get("/api/v2/search/query?q=alpha")
         assert resp.status_code == 200, resp.text
         assert captured["zone_filter"] == frozenset({"eng"})
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestWriteOnlyTokenSingleZoneRoute:
+    """Issue #4542 round-9 review: the non-federated single-zone route must
+    enforce the token's read attenuation too."""
+
+    def _client(self, zone_perms):
+        builder = TestSearchZoneSet()
+        app = builder._build_app(["eng"])
+        from nexus.server.dependencies import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "test_user",
+            "zone_id": "eng",
+            "zone_set": ["eng"],
+            "zone_perms": zone_perms,
+        }
+        return TestClient(app)
+
+    def test_write_only_token_rejected_on_single_zone_route(self):
+        client = self._client([["eng", "w"]])
+        resp = client.get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 403
+
+    def test_readable_token_passes_single_zone_route(self):
+        client = self._client([["eng", "r"]])
+        resp = client.get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 200, resp.text

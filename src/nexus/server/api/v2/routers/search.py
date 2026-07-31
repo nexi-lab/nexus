@@ -356,6 +356,22 @@ async def search_query(
     if len(zone_set) > 1:
         federated = True
 
+    # Issue #4542 round-9 review: enforce the token's read attenuation on
+    # BOTH routes. The federated route gets it via zone_filter; the
+    # single-zone route must check it here, and an explicitly scoped token
+    # with no readable zone fails closed regardless of route.
+    if token_zone_filter is not None:
+        if not token_zone_filter:
+            raise HTTPException(
+                status_code=403,
+                detail="Token has no zone with read permission; search requires read access",
+            )
+        if not federated and zone_id not in token_zone_filter:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Token has no read permission for zone {zone_id}",
+            )
+
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
 

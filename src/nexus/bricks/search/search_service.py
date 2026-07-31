@@ -4183,6 +4183,24 @@ class SearchService:
         # fallback actually fires.
         LAST_SEMANTIC_DEGRADED.set(False)
 
+        # Issue #4542 round-9 review: an explicitly scoped credential with no
+        # READABLE zone fails closed BEFORE any retrieval work. An empty
+        # readable scope is an authorization outcome, not a peer outage — it
+        # must not reach the local hybrid/vector paths, and it must not be
+        # laundered through is_all_peers_failed into the un-scoped BM25S/SQL
+        # fallback.
+        if context is not None and not (
+            getattr(context, "is_admin", False) or getattr(context, "is_system", False)
+        ):
+            from nexus.bricks.search.federated_search import readable_zone_filter
+
+            _readable_scope = readable_zone_filter(
+                getattr(context, "zone_set", None) or (),
+                getattr(context, "zone_perms", None) or (),
+            )
+            if _readable_scope is not None and not _readable_scope:
+                return []
+
         # Step 1 — real RRF hybrid when requested. We always invoke the
         # helper (even with no vec backend) so the one-shot "no-vec"
         # warning fires for users who asked for hybrid explicitly via

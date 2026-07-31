@@ -610,11 +610,21 @@ class SearchDaemon:
         # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
         # Bootstrapped from document_skeleton DB rows; no file reads on restart (13B).
         # Keys: virtual_path; values: {path_id, zone_id, title, path_tokens}.
-        self._skeleton_docs: dict[str, dict[str, Any]] = {}
-        # Inverted token -> {virtual_path} postings over path+title tokens so
-        # locate() scores only candidate docs instead of scanning the corpus
-        # (#4545 review: the full scan cost ~350ms at 100k docs per query).
-        self._skeleton_token_index: dict[str, set[str]] = {}
+        # Keyed by (zone_id, virtual_path): zones may legitimately contain
+        # the same virtual_path, and a path-only key let one zone's upsert
+        # or delete clobber another's entry (#4545 review round 2).
+        self._skeleton_docs: dict[tuple[str, str], dict[str, Any]] = {}
+        # Inverted token -> {(zone_id, virtual_path)} postings over path+title
+        # tokens so locate() scores only candidate docs instead of scanning
+        # the corpus (#4545 review: the full scan cost ~350ms at 100k docs).
+        self._skeleton_token_index: dict[str, set[tuple[str, str]]] = {}
+        # While bootstrap is building its side maps, live mutations are also
+        # journaled and replayed onto the new maps before the atomic swap so
+        # the snapshot can neither resurrect deletes nor roll back updates
+        # (#4545 review round 2).
+        self._skeleton_bootstrap_journal: (
+            list[tuple[str, tuple[str, str], dict[str, Any] | None]] | None
+        ) = None
         self._skeleton_bootstrap_task: asyncio.Task[None] | None = None
         self._skeleton_bootstrapped: bool = False
 
@@ -1549,12 +1559,19 @@ class SearchDaemon:
         No file reads: DB rows are the authoritative cache.  Rebuilds the
         in-memory index on every daemon restart.  Runs as a background task
         so startup() is not blocked.
+
+        Snapshot consistency (#4545 review round 2): the maps are built off
+        to the side while live mutations are journaled, the journal is
+        replayed onto the side maps, and both references are swapped without
+        an intervening await — so the snapshot can neither resurrect a
+        concurrently-deleted doc nor roll back a concurrent title update,
+        and searches never observe a partially-built index.
         """
         if self._async_session is None:
             return
 
         start = time.perf_counter()
-        count = 0
+        self._skeleton_bootstrap_journal = []
         try:
             async with self._async_session() as session:
                 result = await session.execute(
@@ -1567,25 +1584,44 @@ class SearchDaemon:
                 )
                 rows = result.fetchall()
 
+            new_docs: dict[tuple[str, str], dict[str, Any]] = {}
+            new_index: dict[str, set[tuple[str, str]]] = {}
             for row in rows:
                 path_id, zone_id, title, virtual_path = row
                 if not virtual_path:
                     continue
-                self._skeleton_docs[virtual_path] = self._make_skeleton_entry(
+                key = (zone_id, virtual_path)
+                entry = self._make_skeleton_entry(
                     path_id=path_id,
                     zone_id=zone_id,
                     title=title,
                     virtual_path=virtual_path,
                 )
-                self._index_skeleton_tokens(virtual_path)
-                count += 1
+                new_docs[key] = entry
+                self._add_skeleton_postings(new_index, key, entry)
 
+            # Replay live mutations that raced the DB snapshot, then swap.
+            # No await between here and the swap: single-loop atomicity.
+            journal = self._skeleton_bootstrap_journal or []
+            self._skeleton_bootstrap_journal = None
+            for op, key, entry in journal:
+                old = new_docs.pop(key, None)
+                if old is not None:
+                    self._remove_skeleton_postings(new_index, key, old)
+                if op == "upsert" and entry is not None:
+                    new_docs[key] = entry
+                    self._add_skeleton_postings(new_index, key, entry)
+
+            self._skeleton_docs = new_docs
+            self._skeleton_token_index = new_index
             self._skeleton_bootstrapped = True
             elapsed = (time.perf_counter() - start) * 1000
-            logger.info("[SKELETON] bootstrap complete: %d docs in %.1fms", count, elapsed)
+            logger.info("[SKELETON] bootstrap complete: %d docs in %.1fms", len(new_docs), elapsed)
 
         except Exception as e:
             logger.warning("[SKELETON] bootstrap failed: %s", e)
+        finally:
+            self._skeleton_bootstrap_journal = None
 
     async def _warm_skeleton_index(self) -> None:
         """Wait for skeleton bootstrap and log a warmup probe result (16A).
@@ -1627,45 +1663,60 @@ class SearchDaemon:
             "title_token_set": frozenset(tokenize_path(title or "").split()),
         }
 
-    def _index_skeleton_tokens(self, virtual_path: str) -> None:
-        """Add a doc's path+title tokens to the inverted postings index."""
-        doc = self._skeleton_docs.get(virtual_path)
-        if doc is None:
-            return
+    @staticmethod
+    def _add_skeleton_postings(
+        index: dict[str, set[tuple[str, str]]],
+        key: tuple[str, str],
+        doc: dict[str, Any],
+    ) -> None:
+        """Add a doc's path+title tokens to an inverted postings index."""
         for token in doc["path_token_set"] | doc["title_token_set"]:
-            self._skeleton_token_index.setdefault(token, set()).add(virtual_path)
+            index.setdefault(token, set()).add(key)
 
-    def _unindex_skeleton_tokens(self, virtual_path: str) -> None:
+    @staticmethod
+    def _remove_skeleton_postings(
+        index: dict[str, set[tuple[str, str]]],
+        key: tuple[str, str],
+        doc: dict[str, Any],
+    ) -> None:
         """Remove a doc's postings; prune empty token buckets."""
-        doc = self._skeleton_docs.get(virtual_path)
-        if doc is None:
-            return
         tokens = doc.get("path_token_set", frozenset()) | doc.get("title_token_set", frozenset())
         for token in tokens:
-            bucket = self._skeleton_token_index.get(token)
+            bucket = index.get(token)
             if bucket is not None:
-                bucket.discard(virtual_path)
+                bucket.discard(key)
                 if not bucket:
-                    del self._skeleton_token_index[token]
+                    del index[token]
 
     def _rebuild_skeleton_token_index(self) -> None:
-        """Recompute token sets + postings for every doc.
+        """Recompute keys, token sets, and postings for every doc.
 
         Self-healing path for entries inserted directly into
-        ``_skeleton_docs`` (test harnesses, older callers) without the
-        precomputed sets or postings.
+        ``_skeleton_docs`` (test harnesses, older callers) with plain
+        virtual_path keys or without the precomputed sets/postings.
         """
         from nexus.bricks.search.text_utils import tokenize_path
 
-        self._skeleton_token_index.clear()
-        for virtual_path, doc in self._skeleton_docs.items():
+        normalized: dict[tuple[str, str], dict[str, Any]] = {}
+        for raw_key, doc in self._skeleton_docs.items():
+            if isinstance(raw_key, tuple):
+                key = raw_key
+                virtual_path = raw_key[1]
+            else:
+                virtual_path = raw_key
+                key = (doc.get("zone_id") or ROOT_ZONE_ID, virtual_path)
             if "path_token_set" not in doc:
                 doc["path_token_set"] = frozenset(
                     (doc.get("path_tokens") or tokenize_path(virtual_path)).split()
                 )
             if "title_token_set" not in doc:
                 doc["title_token_set"] = frozenset(tokenize_path(doc.get("title") or "").split())
-            self._index_skeleton_tokens(virtual_path)
+            normalized[key] = doc
+
+        self._skeleton_docs = normalized
+        self._skeleton_token_index = {}
+        for key, doc in normalized.items():
+            self._add_skeleton_postings(self._skeleton_token_index, key, doc)
 
     def upsert_skeleton_doc(
         self,
@@ -1676,24 +1727,34 @@ class SearchDaemon:
         zone_id: str,
     ) -> None:
         """Upsert a skeleton document into the in-memory index (sync, called by SkeletonIndexer)."""
-        if virtual_path in self._skeleton_docs:
-            self._unindex_skeleton_tokens(virtual_path)
-        self._skeleton_docs[virtual_path] = self._make_skeleton_entry(
+        key = (zone_id, virtual_path)
+        old = self._skeleton_docs.get(key)
+        if old is not None:
+            self._remove_skeleton_postings(self._skeleton_token_index, key, old)
+        entry = self._make_skeleton_entry(
             path_id=path_id,
             zone_id=zone_id,
             title=title,
             virtual_path=virtual_path,
         )
-        self._index_skeleton_tokens(virtual_path)
+        self._skeleton_docs[key] = entry
+        self._add_skeleton_postings(self._skeleton_token_index, key, entry)
+        if self._skeleton_bootstrap_journal is not None:
+            self._skeleton_bootstrap_journal.append(("upsert", key, entry))
 
-    def delete_skeleton_doc(self, *, virtual_path: str, zone_id: str) -> None:  # noqa: ARG002
+    def delete_skeleton_doc(self, *, virtual_path: str, zone_id: str) -> None:
         """Remove a skeleton document from the in-memory index (sync).
 
-        zone_id accepted for API symmetry with upsert_skeleton_doc; not used
-        here because _skeleton_docs is keyed by virtual_path.
+        Zone-scoped: only the (zone_id, virtual_path) entry is removed, so
+        another zone's identically-named path is untouched (#4545 review
+        round 2).
         """
-        self._unindex_skeleton_tokens(virtual_path)
-        self._skeleton_docs.pop(virtual_path, None)
+        key = (zone_id, virtual_path)
+        old = self._skeleton_docs.pop(key, None)
+        if old is not None:
+            self._remove_skeleton_postings(self._skeleton_token_index, key, old)
+        if self._skeleton_bootstrap_journal is not None:
+            self._skeleton_bootstrap_journal.append(("delete", key, None))
 
     async def locate(
         self,
@@ -1737,17 +1798,20 @@ class SearchDaemon:
         if self._skeleton_docs and not self._skeleton_token_index:
             self._rebuild_skeleton_token_index()
 
-        candidates: set[str] = set()
+        candidates: set[tuple[str, str]] = set()
         for token in query_tokens:
             candidates |= self._skeleton_token_index.get(token, set())
 
         scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
 
-        for virtual_path in candidates:
-            doc = self._skeleton_docs.get(virtual_path)
-            if doc is None or doc["zone_id"] != zone_id:
+        for key in candidates:
+            doc_zone_id, virtual_path = key
+            if doc_zone_id != zone_id:
                 continue
             if path_prefix and not virtual_path.startswith(path_prefix):
+                continue
+            doc = self._skeleton_docs.get(key)
+            if doc is None:
                 continue
 
             # Title match weighted higher than path match (review decision 6A)

@@ -7,6 +7,7 @@ hydration, the sub-fusion swap, and non-title-query parity.
 
 from __future__ import annotations
 
+import asyncio
 from types import MethodType
 from typing import Any
 
@@ -364,6 +365,7 @@ def _bare_locate_daemon() -> Any:
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._skeleton_docs = {}
     daemon._skeleton_token_index = {}
+    daemon._skeleton_bootstrap_journal = None
     return daemon
 
 
@@ -405,3 +407,94 @@ async def test_locate_lazy_rebuild_from_direct_dict_fixture() -> None:
     hits = await daemon.locate("atlas design doc", zone_id="root")
     assert [h["path"] for h in hits] == ["/designs/atlas.md"]
     assert hits[0]["score"] == pytest.approx(7.0)
+
+
+@pytest.mark.asyncio
+async def test_locate_zone_scoped_same_path_no_clobber() -> None:
+    """Same virtual_path in two zones must not clobber each other (#4545
+    review round 2): upsert/delete are (zone_id, virtual_path)-scoped."""
+    daemon = _bare_locate_daemon()
+    daemon.upsert_skeleton_doc(
+        path_id="pa", virtual_path="/README.md", title="Alpha Guide", zone_id="zone-a"
+    )
+    daemon.upsert_skeleton_doc(
+        path_id="pb", virtual_path="/README.md", title="Beta Guide", zone_id="zone-b"
+    )
+    assert [h["title"] for h in await daemon.locate("guide", zone_id="zone-a")] == ["Alpha Guide"]
+    assert [h["title"] for h in await daemon.locate("guide", zone_id="zone-b")] == ["Beta Guide"]
+
+    daemon.delete_skeleton_doc(virtual_path="/README.md", zone_id="zone-b")
+    assert [h["title"] for h in await daemon.locate("guide", zone_id="zone-a")] == ["Alpha Guide"]
+    assert await daemon.locate("guide", zone_id="zone-b") == []
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_replays_live_mutations() -> None:
+    """A live delete/update racing the bootstrap DB snapshot must win: the
+    snapshot can neither resurrect a deleted doc nor roll back a newer
+    title (#4545 review round 2)."""
+    from nexus.bricks.search.daemon import SearchDaemon
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._skeleton_docs = {}
+    daemon._skeleton_token_index = {}
+    daemon._skeleton_bootstrap_journal = None
+    daemon._skeleton_bootstrapped = False
+
+    release = asyncio.Event()
+
+    class FakeResult:
+        def fetchall(self) -> list[tuple[str, str, str, str]]:
+            return [
+                ("p1", "root", "Doomed Doc", "/doomed.md"),
+                ("p2", "root", "Stale Title", "/updated.md"),
+            ]
+
+    class FakeSession:
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+            await release.wait()
+            return FakeResult()
+
+    daemon._async_session = lambda: FakeSession()
+
+    task = asyncio.create_task(daemon._bootstrap_skeleton())
+    while daemon._skeleton_bootstrap_journal is None:
+        await asyncio.sleep(0)
+
+    # Live mutations racing the snapshot (both docs are in the DB rows):
+    daemon.delete_skeleton_doc(virtual_path="/doomed.md", zone_id="root")
+    daemon.upsert_skeleton_doc(
+        path_id="p2", virtual_path="/updated.md", title="Fresh Title", zone_id="root"
+    )
+    release.set()
+    await task
+
+    assert daemon._skeleton_bootstrapped is True
+    assert daemon._skeleton_bootstrap_journal is None
+    assert ("root", "/doomed.md") not in daemon._skeleton_docs
+    assert daemon._skeleton_docs[("root", "/updated.md")]["title"] == "Fresh Title"
+    assert await daemon.locate("doomed", zone_id="root") == []
+    assert [h["path"] for h in await daemon.locate("fresh title", zone_id="root")] == [
+        "/updated.md"
+    ]
+
+
+def test_federated_strip_normalizes_title_score() -> None:
+    """Federated emission matches the single-zone omit-when-None + round-4
+    title_score contract (#4545 review round 2)."""
+    from nexus.bricks.search.daemon import SearchResult
+    from nexus.bricks.search.federated_search import _result_to_dict, _strip_none_context
+
+    assert "title_score" not in _strip_none_context({"path": "/a", "title_score": None})
+    assert _strip_none_context({"path": "/a", "title_score": 7.00004})["title_score"] == 7.0
+
+    plain = SearchResult(path="/a", chunk_text="x", score=1.0)
+    assert "title_score" not in _result_to_dict(plain)
+    scored = SearchResult(path="/a", chunk_text="x", score=1.0, title_score=3.14159)
+    assert _result_to_dict(scored)["title_score"] == 3.1416

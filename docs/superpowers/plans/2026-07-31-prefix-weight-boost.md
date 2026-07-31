@@ -127,8 +127,7 @@ SQLite branch: same shape with lowercase `excluded.description` / `excluded.weig
 
 ```python
 query = (
-    "SELECT zone_id, path_prefix, description, weight, created_at, updated_at "
-    "FROM path_contexts"
+    "SELECT zone_id, path_prefix, description, weight, created_at, updated_at FROM path_contexts"
 )
 ...
 return [
@@ -560,37 +559,35 @@ Expected: FAIL — scores unmultiplied / `tier_boost` stays None.
 In `_attach_path_contexts`, replace the final lookup loop (currently `for r in results: ... r.context = lookup_in_records(records, r.path)`) with:
 
 ```python
-        from nexus.bricks.search.path_context import lookup_record_in_records
+from nexus.bricks.search.path_context import lookup_record_in_records
 
-        # Issue #4544: apply per-prefix ranking weights while attaching
-        # context. top_score is the pre-boost max of this batch — the floor
-        # gate must compare against the unweighted ranking.
-        floor_ratio = self.config.tier_boost_floor_ratio
-        top_score = max((r.score for r in results), default=0.0)
-        boosted_any = False
-        for r in results:
-            zone = _zone_for(r)
-            records = snapshots.get(zone)
-            if records is None:
-                continue
-            try:
-                record = lookup_record_in_records(records, r.path)
-                r.context = record.description if record is not None else None
-                if record is not None and _apply_tier_weight(
-                    r, record.weight, top_score, floor_ratio
-                ):
-                    boosted_any = True
-            except Exception as exc:
-                self.stats.path_context_attach_failures += 1
-                logger.warning(
-                    "path context lookup failed for path=%r (total=%d): %s",
-                    r.path,
-                    self.stats.path_context_attach_failures,
-                    exc,
-                )
-        if boosted_any:
-            # Stable sort: equal scores keep their pre-boost relative order.
-            results.sort(key=lambda r: r.score, reverse=True)
+# Issue #4544: apply per-prefix ranking weights while attaching
+# context. top_score is the pre-boost max of this batch — the floor
+# gate must compare against the unweighted ranking.
+floor_ratio = self.config.tier_boost_floor_ratio
+top_score = max((r.score for r in results), default=0.0)
+boosted_any = False
+for r in results:
+    zone = _zone_for(r)
+    records = snapshots.get(zone)
+    if records is None:
+        continue
+    try:
+        record = lookup_record_in_records(records, r.path)
+        r.context = record.description if record is not None else None
+        if record is not None and _apply_tier_weight(r, record.weight, top_score, floor_ratio):
+            boosted_any = True
+    except Exception as exc:
+        self.stats.path_context_attach_failures += 1
+        logger.warning(
+            "path context lookup failed for path=%r (total=%d): %s",
+            r.path,
+            self.stats.path_context_attach_failures,
+            exc,
+        )
+if boosted_any:
+    # Stable sort: equal scores keep their pre-boost relative order.
+    results.sort(key=lambda r: r.score, reverse=True)
 ```
 
 (Delete the now-unused `from nexus.bricks.search.path_context import lookup_in_records` import in this method.)
@@ -726,7 +723,9 @@ def _make_daemon(cache: PathContextCache) -> Any:
             # Fresh copies: score mutation must not leak between searches.
             return [
                 SearchResult(
-                    path=r.path, chunk_text=r.chunk_text, score=r.score,
+                    path=r.path,
+                    chunk_text=r.chunk_text,
+                    score=r.score,
                     search_type=r.search_type,
                 )
                 for r in corpus[:limit]
@@ -758,9 +757,7 @@ def _make_daemon(cache: PathContextCache) -> Any:
 
 class TestOverfetchAndTrim:
     @pytest.mark.asyncio
-    async def test_demotion_promotes_below_cutoff_hit_into_returned_set(
-        self, cache
-    ) -> None:
+    async def test_demotion_promotes_below_cutoff_hit_into_returned_set(self, cache) -> None:
         # limit=2 without weights returns the two chat docs. Demoting chat
         # must let docs/x.md (rank 3, beyond the un-widened fetch) into the
         # top 2 — this is exactly the promotion the over-fetch exists for.
@@ -790,9 +787,7 @@ class TestOverfetchAndTrim:
     async def test_weight_one_rows_do_not_trigger_overfetch(self, cache) -> None:
         await cache._store.upsert("root", "chat", "Chat transcripts", weight=1.0)
         daemon = _make_daemon(cache)
-        await daemon._search_on_current_loop(
-            "q", search_type="keyword", limit=2, zone_id="root"
-        )
+        await daemon._search_on_current_loop("q", search_type="keyword", limit=2, zone_id="root")
         assert daemon._fts_backend.requested_limits == [2]
 
     @pytest.mark.asyncio
@@ -846,15 +841,13 @@ Add method to `SearchDaemon` (place directly after `_resolve_path_context_cache`
 In `_search_on_current_loop`, right after `effective_zone_id = zone_id or ROOT_ZONE_ID`:
 
 ```python
-        # Issue #4544: when the zone carries tier weights, widen every
-        # candidate fetch so a boost can promote a below-cutoff hit, then trim
-        # back to ``limit`` after _attach_path_contexts applies the weights.
-        # Zones without weights keep internal_limit == limit and take the
-        # byte-identical legacy path.
-        has_tier_weights = await self._zone_has_tier_weights(effective_zone_id)
-        internal_limit = (
-            limit * self.config.tier_boost_overfetch_factor if has_tier_weights else limit
-        )
+# Issue #4544: when the zone carries tier weights, widen every
+# candidate fetch so a boost can promote a below-cutoff hit, then trim
+# back to ``limit`` after _attach_path_contexts applies the weights.
+# Zones without weights keep internal_limit == limit and take the
+# byte-identical legacy path.
+has_tier_weights = await self._zone_has_tier_weights(effective_zone_id)
+internal_limit = limit * self.config.tier_boost_overfetch_factor if has_tier_weights else limit
 ```
 
 Then replace fetch sizes (leave `alpha`/`fusion_method`/`rrf_k` untouched):
@@ -1114,20 +1107,22 @@ class TestTierBoostFederated:
         from nexus.bricks.search.federated_search import _strip_none_context
 
         assert "tier_boost" not in _strip_none_context(
-            {"path": "a", "score": 1.0, "tier_boost": None}
+            {
+                "path": "a",
+                "score": 1.0,
+                "tier_boost": None,
+            }
         )
-        assert _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.5})[
-            "tier_boost"
-        ] == 0.5
+        assert (
+            _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.5})["tier_boost"] == 0.5
+        )
 
     def test_result_to_dict_omits_unset_tier_boost(self) -> None:
         from nexus.bricks.search.federated_search import _result_to_dict
         from nexus.bricks.search.results import BaseSearchResult
 
         plain = BaseSearchResult(path="a", chunk_text="", score=1.0, zone_id="z1")
-        boosted = BaseSearchResult(
-            path="b", chunk_text="", score=0.5, zone_id="z1", tier_boost=0.5
-        )
+        boosted = BaseSearchResult(path="b", chunk_text="", score=0.5, zone_id="z1", tier_boost=0.5)
         assert "tier_boost" not in _result_to_dict(plain)
         assert _result_to_dict(boosted)["tier_boost"] == 0.5
 

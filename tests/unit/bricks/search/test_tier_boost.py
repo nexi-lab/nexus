@@ -109,3 +109,28 @@ class TestConfigKnobs:
         cfg = DaemonConfig()
         assert cfg.tier_boost_overfetch_factor == 5
         assert cfg.tier_boost_floor_ratio == 0.5
+
+
+class TestSlashNormalizedLookup:
+    """Live-stack regression (#4544 e2e): daemon result paths carry a leading
+    slash (``/workspace/...``) while the API's ``_normalize_prefix`` strips it
+    from stored prefixes (``workspace/...``). The lookup must match anyway —
+    without normalization, context and tier-weight attach silently never fire
+    on real deployments."""
+
+    def test_slashed_path_matches_normalized_prefix(self) -> None:
+        records = [_rec("workspace/tierboost/noisy", weight=0.5)]
+        rec = lookup_record_in_records(records, "/workspace/tierboost/noisy/log-a.md")
+        assert rec is not None and rec.weight == 0.5
+
+    def test_slashed_path_exact_prefix_match(self) -> None:
+        records = [_rec("docs")]
+        assert lookup_record_in_records(records, "/docs") is not None
+
+    def test_unslashed_path_still_matches(self) -> None:
+        records = [_rec("docs")]
+        assert lookup_record_in_records(records, "docs/a.md") is not None
+
+    def test_description_wrapper_matches_slashed_path(self) -> None:
+        records = [_rec("docs")]
+        assert lookup_in_records(records, "/docs/a.md") == "desc:docs"

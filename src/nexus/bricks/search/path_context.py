@@ -214,7 +214,14 @@ def lookup_record_in_records(
 
     Records must be sorted by ``len(path_prefix)`` DESC so the first
     slash-boundary match is the longest prefix.
+
+    The path is compared with its leading slashes stripped: stored prefixes
+    are always normalized slash-free by the API's ``_normalize_prefix``,
+    while live daemon result paths arrive slash-prefixed
+    (``/workspace/...``) — without this normalization no prefix ever
+    matches on a real deployment (#4544 live-e2e regression).
     """
+    path = path.lstrip("/")
     for record in records:
         prefix = record.path_prefix
         if prefix == "":

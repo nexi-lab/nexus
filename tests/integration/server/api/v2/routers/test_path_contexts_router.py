@@ -244,3 +244,12 @@ class TestWeightField:
                 json={"path_prefix": "x", "description": "d", "weight": bad},
             )
             assert resp.status_code == 422, f"weight={bad} must be rejected"
+
+    def test_weight_boundary_values_accepted(self, client) -> None:
+        for ok in (0.1, 10.0):
+            resp = client.put(
+                "/api/v2/path-contexts/",
+                json={"path_prefix": f"b{ok}", "description": "d", "weight": ok},
+            )
+            assert resp.status_code == 200, f"weight={ok} must be accepted"
+            assert resp.json()["weight"] == ok

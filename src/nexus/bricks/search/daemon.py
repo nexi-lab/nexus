@@ -1691,9 +1691,7 @@ class SearchDaemon:
         Decides whether _search_on_current_loop widens its candidate fetch.
         Fail-soft: any error means "no over-fetch" — the search itself must
         never break on a weight probe, and _attach_path_contexts still runs
-        its own fail-soft pass later in the same request. The refresh here is
-        the same fingerprint check attach pays, so the steady-state cost is
-        one cache hit.
+        its own fail-soft pass later in the same request. The refresh here costs one zone-fingerprint query (COUNT + MAX(updated_at)) per search, in addition to the identical check attach performs later in the same request.
         """
         try:
             cache = await self._resolve_path_context_cache()
@@ -1936,10 +1934,11 @@ class SearchDaemon:
         # candidate fetch so a boost can promote a below-cutoff hit, then trim
         # back to ``limit`` after _attach_path_contexts applies the weights.
         # Zones without weights keep internal_limit == limit and take the
-        # byte-identical legacy path.
+        # byte-identical legacy path. The factor is clamped to >= 1 so a
+        # misconfigured env override can never zero-out the fetch.
         has_tier_weights = await self._zone_has_tier_weights(effective_zone_id)
         internal_limit = (
-            limit * self.config.tier_boost_overfetch_factor if has_tier_weights else limit
+            limit * max(1, self.config.tier_boost_overfetch_factor) if has_tier_weights else limit
         )
         start = time.perf_counter()
         self.last_search_timing = {}

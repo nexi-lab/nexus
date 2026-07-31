@@ -871,6 +871,10 @@ def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     for key in ("context", "tier_boost"):
         if d.get(key) is None:
             d.pop(key, None)
+    # Issue #4544: round surviving tier_boost to 4 places to match the
+    # non-federated router's serialization (_serialize_search_result).
+    if d.get("tier_boost") is not None:
+        d["tier_boost"] = round(d["tier_boost"], 4)
     return d
 
 

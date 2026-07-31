@@ -150,3 +150,14 @@ class TestOverfetchAndTrim:
             "q", search_type="keyword", limit=2, zone_id="root"
         )
         assert [r.path for r in results] == ["chat/a.md", "chat/b.md"]
+
+    @pytest.mark.asyncio
+    async def test_zero_overfetch_factor_clamped_to_one(self, cache) -> None:
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _make_daemon(cache)
+        daemon.config.tier_boost_overfetch_factor = 0
+        results = await daemon._search_on_current_loop(
+            "q", search_type="keyword", limit=2, zone_id="root"
+        )
+        assert daemon._fts_backend.requested_limits == [2]  # clamped, not zeroed
+        assert len(results) == 2

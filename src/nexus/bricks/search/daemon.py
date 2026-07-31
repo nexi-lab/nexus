@@ -611,6 +611,10 @@ class SearchDaemon:
         # Bootstrapped from document_skeleton DB rows; no file reads on restart (13B).
         # Keys: virtual_path; values: {path_id, zone_id, title, path_tokens}.
         self._skeleton_docs: dict[str, dict[str, Any]] = {}
+        # Inverted token -> {virtual_path} postings over path+title tokens so
+        # locate() scores only candidate docs instead of scanning the corpus
+        # (#4545 review: the full scan cost ~350ms at 100k docs per query).
+        self._skeleton_token_index: dict[str, set[str]] = {}
         self._skeleton_bootstrap_task: asyncio.Task[None] | None = None
         self._skeleton_bootstrapped: bool = False
 
@@ -1552,8 +1556,6 @@ class SearchDaemon:
         start = time.perf_counter()
         count = 0
         try:
-            from nexus.bricks.search.text_utils import tokenize_path
-
             async with self._async_session() as session:
                 result = await session.execute(
                     sa_text(
@@ -1569,12 +1571,13 @@ class SearchDaemon:
                 path_id, zone_id, title, virtual_path = row
                 if not virtual_path:
                     continue
-                self._skeleton_docs[virtual_path] = {
-                    "path_id": path_id,
-                    "zone_id": zone_id,
-                    "title": title,
-                    "path_tokens": tokenize_path(virtual_path),
-                }
+                self._skeleton_docs[virtual_path] = self._make_skeleton_entry(
+                    path_id=path_id,
+                    zone_id=zone_id,
+                    title=title,
+                    virtual_path=virtual_path,
+                )
+                self._index_skeleton_tokens(virtual_path)
                 count += 1
 
             self._skeleton_bootstrapped = True
@@ -1598,6 +1601,72 @@ class SearchDaemon:
             await self.locate("warmup", zone_id=ROOT_ZONE_ID, limit=1)
             logger.debug("[SKELETON] index warmed: %d docs", len(self._skeleton_docs))
 
+    @staticmethod
+    def _make_skeleton_entry(
+        *,
+        path_id: str,
+        zone_id: str,
+        title: str | None,
+        virtual_path: str,
+    ) -> dict[str, Any]:
+        """Build a skeleton entry with token sets precomputed at index time.
+
+        Tokenizing per query cost O(corpus) regex work on the search hot
+        path once locate() joined hybrid fusion (#4545 review); doing it
+        once per upsert keeps locate() to cheap set intersections.
+        """
+        from nexus.bricks.search.text_utils import tokenize_path
+
+        path_tokens = tokenize_path(virtual_path)
+        return {
+            "path_id": path_id,
+            "zone_id": zone_id,
+            "title": title,
+            "path_tokens": path_tokens,
+            "path_token_set": frozenset(path_tokens.split()),
+            "title_token_set": frozenset(tokenize_path(title or "").split()),
+        }
+
+    def _index_skeleton_tokens(self, virtual_path: str) -> None:
+        """Add a doc's path+title tokens to the inverted postings index."""
+        doc = self._skeleton_docs.get(virtual_path)
+        if doc is None:
+            return
+        for token in doc["path_token_set"] | doc["title_token_set"]:
+            self._skeleton_token_index.setdefault(token, set()).add(virtual_path)
+
+    def _unindex_skeleton_tokens(self, virtual_path: str) -> None:
+        """Remove a doc's postings; prune empty token buckets."""
+        doc = self._skeleton_docs.get(virtual_path)
+        if doc is None:
+            return
+        tokens = doc.get("path_token_set", frozenset()) | doc.get("title_token_set", frozenset())
+        for token in tokens:
+            bucket = self._skeleton_token_index.get(token)
+            if bucket is not None:
+                bucket.discard(virtual_path)
+                if not bucket:
+                    del self._skeleton_token_index[token]
+
+    def _rebuild_skeleton_token_index(self) -> None:
+        """Recompute token sets + postings for every doc.
+
+        Self-healing path for entries inserted directly into
+        ``_skeleton_docs`` (test harnesses, older callers) without the
+        precomputed sets or postings.
+        """
+        from nexus.bricks.search.text_utils import tokenize_path
+
+        self._skeleton_token_index.clear()
+        for virtual_path, doc in self._skeleton_docs.items():
+            if "path_token_set" not in doc:
+                doc["path_token_set"] = frozenset(
+                    (doc.get("path_tokens") or tokenize_path(virtual_path)).split()
+                )
+            if "title_token_set" not in doc:
+                doc["title_token_set"] = frozenset(tokenize_path(doc.get("title") or "").split())
+            self._index_skeleton_tokens(virtual_path)
+
     def upsert_skeleton_doc(
         self,
         *,
@@ -1607,14 +1676,15 @@ class SearchDaemon:
         zone_id: str,
     ) -> None:
         """Upsert a skeleton document into the in-memory index (sync, called by SkeletonIndexer)."""
-        from nexus.bricks.search.text_utils import tokenize_path
-
-        self._skeleton_docs[virtual_path] = {
-            "path_id": path_id,
-            "zone_id": zone_id,
-            "title": title,
-            "path_tokens": tokenize_path(virtual_path),
-        }
+        if virtual_path in self._skeleton_docs:
+            self._unindex_skeleton_tokens(virtual_path)
+        self._skeleton_docs[virtual_path] = self._make_skeleton_entry(
+            path_id=path_id,
+            zone_id=zone_id,
+            title=title,
+            virtual_path=virtual_path,
+        )
+        self._index_skeleton_tokens(virtual_path)
 
     def delete_skeleton_doc(self, *, virtual_path: str, zone_id: str) -> None:  # noqa: ARG002
         """Remove a skeleton document from the in-memory index (sync).
@@ -1622,6 +1692,7 @@ class SearchDaemon:
         zone_id accepted for API symmetry with upsert_skeleton_doc; not used
         here because _skeleton_docs is keyed by virtual_path.
         """
+        self._unindex_skeleton_tokens(virtual_path)
         self._skeleton_docs.pop(virtual_path, None)
 
     async def locate(
@@ -1648,6 +1719,8 @@ class SearchDaemon:
         Returns:
             List of dicts: {path, score, title}.
         """
+        import heapq
+
         from nexus.bricks.search.text_utils import tokenize_path
 
         if not q.strip():
@@ -1657,26 +1730,35 @@ class SearchDaemon:
         if not query_tokens:
             return []
 
+        # Inverted-index candidate selection (#4545 review): only docs
+        # sharing at least one token with the query can score > 0, so a
+        # no-hit query costs O(query tokens) instead of O(corpus). Rebuild
+        # lazily when docs were inserted without postings (test fixtures).
+        if self._skeleton_docs and not self._skeleton_token_index:
+            self._rebuild_skeleton_token_index()
+
+        candidates: set[str] = set()
+        for token in query_tokens:
+            candidates |= self._skeleton_token_index.get(token, set())
+
         scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
 
-        for virtual_path, doc in self._skeleton_docs.items():
-            if doc["zone_id"] != zone_id:
+        for virtual_path in candidates:
+            doc = self._skeleton_docs.get(virtual_path)
+            if doc is None or doc["zone_id"] != zone_id:
                 continue
             if path_prefix and not virtual_path.startswith(path_prefix):
                 continue
 
-            path_tokens = set((doc.get("path_tokens") or "").split())
-            title_tokens = set(tokenize_path(doc.get("title") or "").split())
-
             # Title match weighted higher than path match (review decision 6A)
-            title_overlap = len(query_tokens & title_tokens)
-            path_overlap = len(query_tokens & path_tokens)
+            title_overlap = len(query_tokens & doc["title_token_set"])
+            path_overlap = len(query_tokens & doc["path_token_set"])
             score = title_overlap * 2.0 + path_overlap * 1.0
 
             if score > 0:
                 scored.append((score, virtual_path, doc.get("title")))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored = heapq.nlargest(limit, scored, key=lambda x: x[0])
 
         return [
             {"path": path, "score": round(score, 4), "title": title}
@@ -1751,6 +1833,43 @@ class SearchDaemon:
                 )
             )
         return hits
+
+    async def _gather_title_hits(
+        self,
+        query: str,
+        *,
+        zone_id: str,
+        limit: int,
+        path_filter: str | None,
+        chunk_kw: Sequence[Any],
+        page_kw: Sequence[Any],
+        timing: dict[str, float],
+    ) -> list[BaseSearchResult]:
+        """Run the gated, fail-soft title arm: locate + hydrate + timing.
+
+        Shared by the fused hybrid path and the no-embedding keyword
+        fallback (#4545 review) so BM25-only deployments and transient
+        embedding failures keep title-only docs reachable. Returns [] when
+        the arm is disabled, locate has no hits, or the arm fails — a
+        locate/hydration bug must never fail the search.
+        """
+        if not self.config.title_arm:
+            return []
+        title_hits: list[BaseSearchResult] = []
+        title_start = time.perf_counter()
+        try:
+            locate_hits = await self.locate(
+                query, zone_id=zone_id, limit=limit * 2, path_prefix=path_filter
+            )
+            if locate_hits:
+                title_hits = await self._hydrate_title_hits(
+                    locate_hits, chunk_kw=chunk_kw, page_kw=page_kw, zone_id=zone_id
+                )
+        except Exception as exc:
+            title_hits = []
+            logger.debug("[TITLE-ARM] arm failed, degrading: %s", exc)
+        timing["title_ms"] = (time.perf_counter() - title_start) * 1000
+        return title_hits
 
     async def _check_zoekt(self) -> None:
         """Check if Zoekt trigram search is available."""
@@ -2498,12 +2617,34 @@ class SearchDaemon:
             # Issue #4542 (round-4 review): the per-doc cap must survive the
             # degraded path too — over-fetch so capping can backfill, then
             # cap and trim exactly like the fused path.
+            # The title arm still runs here (#4545 review): BM25-only
+            # deployments and transient embedding failures are exactly when
+            # a title-only doc would otherwise be unreachable.
             results = await timed_leg(
                 "keyword_ms",
                 self._fts_backend.keyword_search(
                     query, path, leg_limit if pooled else limit, zone_id, timing=timing
                 ),
             )
+            # Title arm first (#4545): fold locate hits into the keyword
+            # list so the #4541 fusion knobs and the #4542 cap below both
+            # see the merged candidate set.
+            title_hits = await self._gather_title_hits(
+                query,
+                zone_id=zone_id,
+                limit=limit,
+                path_filter=path_filter,
+                chunk_kw=results,
+                page_kw=[],
+                timing=timing,
+            )
+            if title_hits:
+                results = rrf_multi_fusion(
+                    [("chunk", results), ("title", title_hits)],
+                    k=rrf_k,
+                    limit=(len(results) + len(title_hits)) if pooled else limit,
+                    id_key=None,
+                )
             # Non-default fusion requests still flow through the configured
             # fusion (keyword leg only, empty dense leg) so the advertised
             # knobs are honoured even when the embedding dependency is down
@@ -2600,23 +2741,15 @@ class SearchDaemon:
         # Skeleton title arm (Issue #4545): locate() over the in-memory
         # path+title index, hydrated to page granularity so its fusion key
         # (path:chunk_index) lines up with the keyword legs.
-        title_hits: list[Any] = []
-        if self.config.title_arm:
-            title_start = time.perf_counter()
-            try:
-                locate_hits = await self.locate(
-                    query, zone_id=zone_id, limit=limit * 2, path_prefix=path_filter
-                )
-                if locate_hits:
-                    title_hits = await self._hydrate_title_hits(
-                        locate_hits, chunk_kw=chunk_kw, page_kw=page_kw, zone_id=zone_id
-                    )
-            except Exception as exc:
-                # Best-effort arm: a locate/hydration bug must never fail the
-                # search — degrade to the plain chunk+page sub-fusion.
-                title_hits = []
-                logger.debug("[TITLE-ARM] arm failed, degrading to 2-arm: %s", exc)
-            timing["title_ms"] = (time.perf_counter() - title_start) * 1000
+        title_hits = await self._gather_title_hits(
+            query,
+            zone_id=zone_id,
+            limit=limit,
+            path_filter=path_filter,
+            chunk_kw=chunk_kw,
+            page_kw=page_kw,
+            timing=timing,
+        )
 
         # Fuse the keyword-side arms first (chunk + page + title) with plain
         # RRF, then fuse that with dense using the request's method / alpha /

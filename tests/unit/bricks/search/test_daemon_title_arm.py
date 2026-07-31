@@ -166,7 +166,12 @@ async def test_hydrate_no_fetch_ranges_backend() -> None:
     assert hits[0].chunk_text == ""
 
 
-def _make_daemon(*, title_arm: bool = True, skeleton: dict[str, dict[str, Any]] | None = None):
+def _make_daemon(
+    *,
+    title_arm: bool = True,
+    skeleton: dict[str, dict[str, Any]] | None = None,
+    embed_none: bool = False,
+):
     """Bare SearchDaemon with fake backends + skeleton docs.
 
     Keyword (BM25): /a.md 10 > /b.md 9 > /c.md 8; dense: /d.md .99 > /c.md .9
@@ -218,8 +223,8 @@ def _make_daemon(*, title_arm: bool = True, skeleton: dict[str, dict[str, Any]] 
                 for p, _lo, _hi in spans
             ]
 
-    async def _embed_query(self: Any, query: str) -> list[float]:
-        return [0.1, 0.2]
+    async def _embed_query(self: Any, query: str) -> list[float] | None:
+        return None if embed_none else [0.1, 0.2]
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon.last_search_timing = {}
@@ -227,6 +232,7 @@ def _make_daemon(*, title_arm: bool = True, skeleton: dict[str, dict[str, Any]] 
     daemon._vector_backend = FakeVectorBackend()
     daemon._embed_query = MethodType(_embed_query, daemon)
     daemon._skeleton_docs = dict(skeleton or {})
+    daemon._skeleton_token_index = {}
     daemon.config = DaemonConfig(page_aggregation=False, title_arm=title_arm)
     return daemon
 
@@ -322,3 +328,80 @@ def test_rrf_multi_two_arms_matches_rrf_fusion() -> None:
     )
     assert [r["path"] for r in multi] == [r["path"] for r in two]
     assert [r["score"] for r in multi] == pytest.approx([r["score"] for r in two])
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_fallback_still_runs_title_arm() -> None:
+    """BM25-only / embedding-failure hybrid keeps the title arm (#4545
+    review): a title-only doc must surface even when _embed_query yields
+    None, with title_score attribution intact."""
+    daemon = _make_daemon(title_arm=True, skeleton=_ATLAS_SKELETON, embed_none=True)
+    results = await _hybrid(daemon, "atlas design doc")
+    paths = [r.path for r in results]
+    assert "/designs/atlas.md" in paths
+    atlas = next(r for r in results if r.path == "/designs/atlas.md")
+    assert atlas.title_score == pytest.approx(7.0)
+    assert atlas.search_type == "hybrid"
+    assert daemon.last_search_timing.get("title_ms", 0.0) >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_fallback_parity_when_no_title_hits() -> None:
+    """No-embedding fallback with no locate hits is byte-identical to the
+    arm-off keyword fallback: same paths, same untouched BM25 scores."""
+    on = _make_daemon(title_arm=True, skeleton=_ATLAS_SKELETON, embed_none=True)
+    off = _make_daemon(title_arm=False, skeleton=_ATLAS_SKELETON, embed_none=True)
+    r_on = await _hybrid(on, "nexus core")
+    r_off = await _hybrid(off, "nexus core")
+    assert [r.path for r in r_on] == [r.path for r in r_off] == ["/a.md", "/b.md", "/c.md"]
+    assert [r.score for r in r_on] == [10.0, 9.0, 8.0]
+    assert all(r.title_score is None for r in r_on)
+
+
+def _bare_locate_daemon() -> Any:
+    from nexus.bricks.search.daemon import SearchDaemon
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._skeleton_docs = {}
+    daemon._skeleton_token_index = {}
+    return daemon
+
+
+@pytest.mark.asyncio
+async def test_locate_index_upsert_delete_rename() -> None:
+    """The inverted postings index stays consistent through upsert, title
+    change, and delete (rename = delete + upsert)."""
+    daemon = _bare_locate_daemon()
+    daemon.upsert_skeleton_doc(
+        path_id="p1", virtual_path="/src/old_login.py", title="Old Login", zone_id="root"
+    )
+    assert [h["path"] for h in await daemon.locate("login", zone_id="root")] == [
+        "/src/old_login.py"
+    ]
+
+    # Title change must drop stale title postings.
+    daemon.upsert_skeleton_doc(
+        path_id="p1", virtual_path="/src/old_login.py", title="Auth Portal", zone_id="root"
+    )
+    hits = await daemon.locate("portal", zone_id="root")
+    assert [h["path"] for h in hits] == ["/src/old_login.py"]
+
+    # Rename: delete old path, upsert new one.
+    daemon.delete_skeleton_doc(virtual_path="/src/old_login.py", zone_id="root")
+    daemon.upsert_skeleton_doc(
+        path_id="p1", virtual_path="/src/new_login.py", title="Auth Portal", zone_id="root"
+    )
+    hits = await daemon.locate("login", zone_id="root")
+    assert [h["path"] for h in hits] == ["/src/new_login.py"]
+    assert await daemon.locate("nonexistentterm", zone_id="root") == []
+
+
+@pytest.mark.asyncio
+async def test_locate_lazy_rebuild_from_direct_dict_fixture() -> None:
+    """Docs inserted directly into _skeleton_docs (old fixture shape, no
+    postings) are found via the lazy index rebuild."""
+    daemon = _bare_locate_daemon()
+    daemon._skeleton_docs = dict(_ATLAS_SKELETON)
+    hits = await daemon.locate("atlas design doc", zone_id="root")
+    assert [h["path"] for h in hits] == ["/designs/atlas.md"]
+    assert hits[0]["score"] == pytest.approx(7.0)

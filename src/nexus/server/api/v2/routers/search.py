@@ -891,6 +891,9 @@ async def search_query_batch(
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
                 "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
             }
+            title = getattr(r, "title_score", None)
+            if title is not None:
+                entry["title_score"] = round(title, 4)
             ctx = getattr(r, "context", None)
             if ctx is not None:
                 entry["context"] = ctx

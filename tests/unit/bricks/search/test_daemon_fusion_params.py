@@ -64,6 +64,7 @@ def _make_daemon() -> Any:
     # Title arm (#4545) is on by default; bare __new__ skips __init__, so
     # give locate() an empty skeleton index (no hits → fusion unchanged).
     daemon._skeleton_docs = {}
+    daemon._skeleton_token_index = {}
     daemon._embed_query = MethodType(_embed_query, daemon)
     # Disable #4542 final-list page pooling: these tests assert chunk-grain
     # fusion ordering, which pooling would re-group.

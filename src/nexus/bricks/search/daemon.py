@@ -89,6 +89,16 @@ _MAX_CAP_WIDEN = 4
 MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
 LEGACY_REFRESH_CONSUMER = "legacy-refresh"
 
+# Title arm safety bounds (#4545 review round 3). locate() candidates and
+# the representative-chunk hydration fetch are capped so a common-token
+# query at the max public limit (100) with ReBAC over-fetch cannot amplify
+# into hundreds of per-span SELECTs on the SQLite NeighborFetcher (one
+# serialized SELECT per span) or an oversized OR expression on Postgres.
+# The arm's ranking value concentrates in the top few locate hits; 32 is
+# far above the deepest sub-fusion window that can influence final top-N.
+TITLE_ARM_MAX_HITS = 32
+TITLE_ARM_MAX_HYDRATION_FETCH = 32
+
 _BACKEND_LEG_TIMING_KEYS = (
     "backend_ms",
     "embed_ms",
@@ -614,10 +624,12 @@ class SearchDaemon:
         # the same virtual_path, and a path-only key let one zone's upsert
         # or delete clobber another's entry (#4545 review round 2).
         self._skeleton_docs: dict[tuple[str, str], dict[str, Any]] = {}
-        # Inverted token -> {(zone_id, virtual_path)} postings over path+title
-        # tokens so locate() scores only candidate docs instead of scanning
-        # the corpus (#4545 review: the full scan cost ~350ms at 100k docs).
-        self._skeleton_token_index: dict[str, set[tuple[str, str]]] = {}
+        # Inverted (zone_id, token) -> {(zone_id, virtual_path)} postings over
+        # path+title tokens so locate() scores only candidate docs instead of
+        # scanning the corpus (#4545 review: the full scan cost ~350ms at 100k
+        # docs). Zone-partitioned buckets (review round 3) keep one tenant's
+        # common-token query from expanding another tenant's postings.
+        self._skeleton_token_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
         # While bootstrap is building its side maps, live mutations are also
         # journaled and replayed onto the new maps before the atomic swap so
         # the snapshot can neither resurrect deletes nor roll back updates
@@ -1665,28 +1677,30 @@ class SearchDaemon:
 
     @staticmethod
     def _add_skeleton_postings(
-        index: dict[str, set[tuple[str, str]]],
+        index: dict[tuple[str, str], set[tuple[str, str]]],
         key: tuple[str, str],
         doc: dict[str, Any],
     ) -> None:
-        """Add a doc's path+title tokens to an inverted postings index."""
+        """Add a doc's path+title tokens to zone-partitioned postings."""
+        zone_id = key[0]
         for token in doc["path_token_set"] | doc["title_token_set"]:
-            index.setdefault(token, set()).add(key)
+            index.setdefault((zone_id, token), set()).add(key)
 
     @staticmethod
     def _remove_skeleton_postings(
-        index: dict[str, set[tuple[str, str]]],
+        index: dict[tuple[str, str], set[tuple[str, str]]],
         key: tuple[str, str],
         doc: dict[str, Any],
     ) -> None:
         """Remove a doc's postings; prune empty token buckets."""
+        zone_id = key[0]
         tokens = doc.get("path_token_set", frozenset()) | doc.get("title_token_set", frozenset())
         for token in tokens:
-            bucket = index.get(token)
+            bucket = index.get((zone_id, token))
             if bucket is not None:
                 bucket.discard(key)
                 if not bucket:
-                    del index[token]
+                    del index[(zone_id, token)]
 
     def _rebuild_skeleton_token_index(self) -> None:
         """Recompute keys, token sets, and postings for every doc.
@@ -1780,8 +1794,6 @@ class SearchDaemon:
         Returns:
             List of dicts: {path, score, title}.
         """
-        import heapq
-
         from nexus.bricks.search.text_utils import tokenize_path
 
         if not q.strip():
@@ -1798,16 +1810,16 @@ class SearchDaemon:
         if self._skeleton_docs and not self._skeleton_token_index:
             self._rebuild_skeleton_token_index()
 
+        # Zone-partitioned buckets (#4545 review round 3): read only this
+        # zone's postings so query cost never scales with other tenants.
         candidates: set[tuple[str, str]] = set()
         for token in query_tokens:
-            candidates |= self._skeleton_token_index.get(token, set())
+            candidates |= self._skeleton_token_index.get((zone_id, token), set())
 
         scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
 
         for key in candidates:
-            doc_zone_id, virtual_path = key
-            if doc_zone_id != zone_id:
-                continue
+            virtual_path = key[1]
             if path_prefix and not virtual_path.startswith(path_prefix):
                 continue
             doc = self._skeleton_docs.get(key)
@@ -1822,7 +1834,10 @@ class SearchDaemon:
             if score > 0:
                 scored.append((score, virtual_path, doc.get("title")))
 
-        scored = heapq.nlargest(limit, scored, key=lambda x: x[0])
+        # Deterministic ordering (#4545 review round 3): descending score,
+        # then ascending path — set iteration + score-only selection made
+        # tied candidates (and therefore RRF ranks) vary across restarts.
+        scored.sort(key=lambda x: (-x[0], x[1]))
 
         return [
             {"path": path, "score": round(score, 4), "title": title}
@@ -1857,6 +1872,9 @@ class SearchDaemon:
             best_by_path[r.path] = r
 
         uncovered = [h["path"] for h in locate_hits if h["path"] not in best_by_path]
+        # Bound the batched fetch (#4545 review round 3): hits beyond the cap
+        # degrade to chunk_text="" instead of growing the SQL span list.
+        uncovered = uncovered[:TITLE_ARM_MAX_HYDRATION_FETCH]
         fetched: dict[str, Any] = {}
         fetch_ranges = getattr(self._vector_backend, "fetch_ranges", None)
         if uncovered and fetch_ranges is not None:
@@ -1923,7 +1941,10 @@ class SearchDaemon:
         title_start = time.perf_counter()
         try:
             locate_hits = await self.locate(
-                query, zone_id=zone_id, limit=limit * 2, path_prefix=path_filter
+                query,
+                zone_id=zone_id,
+                limit=min(limit * 2, TITLE_ARM_MAX_HITS),
+                path_prefix=path_filter,
             )
             if locate_hits:
                 title_hits = await self._hydrate_title_hits(

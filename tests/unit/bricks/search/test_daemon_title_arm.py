@@ -498,3 +498,127 @@ def test_federated_strip_normalizes_title_score() -> None:
     assert "title_score" not in _result_to_dict(plain)
     scored = SearchResult(path="/a", chunk_text="x", score=1.0, title_score=3.14159)
     assert _result_to_dict(scored)["title_score"] == 3.1416
+
+
+def test_postings_are_zone_partitioned() -> None:
+    """Postings buckets are keyed (zone_id, token) so one tenant's query
+    never expands another tenant's postings (#4545 review round 3)."""
+    daemon = _bare_locate_daemon()
+    daemon.upsert_skeleton_doc(
+        path_id="pa", virtual_path="/guide.md", title="Guide", zone_id="zone-a"
+    )
+    daemon.upsert_skeleton_doc(
+        path_id="pb", virtual_path="/guide.md", title="Guide", zone_id="zone-b"
+    )
+    assert daemon._skeleton_token_index[("zone-a", "guide")] == {("zone-a", "/guide.md")}
+    assert daemon._skeleton_token_index[("zone-b", "guide")] == {("zone-b", "/guide.md")}
+
+
+@pytest.mark.asyncio
+async def test_locate_tied_scores_deterministic_order() -> None:
+    """Tied candidates order by (score desc, path asc) — stable across
+    set-iteration/hash order, so RRF ranks don't drift between restarts
+    (#4545 review round 3)."""
+    daemon = _bare_locate_daemon()
+    for name in ("zeta", "alpha", "mid"):
+        daemon.upsert_skeleton_doc(
+            path_id=f"p-{name}",
+            virtual_path=f"/{name}/report.md",
+            title="Quarterly Report",
+            zone_id="root",
+        )
+    first = await daemon.locate("quarterly report", zone_id="root", limit=2)
+    second = await daemon.locate("quarterly report", zone_id="root", limit=2)
+    assert first == second
+    assert [h["path"] for h in first] == ["/alpha/report.md", "/mid/report.md"]
+
+
+@pytest.mark.asyncio
+async def test_hydration_fetch_is_bounded() -> None:
+    """Uncovered hydration spans are capped at TITLE_ARM_MAX_HYDRATION_FETCH;
+    overflow hits degrade to empty text instead of growing the SQL span
+    list (#4545 review round 3)."""
+    from nexus.bricks.search.daemon import TITLE_ARM_MAX_HYDRATION_FETCH
+
+    daemon, calls = _hydration_daemon(fetch_rows=[])
+    hits = await daemon._hydrate_title_hits(
+        [{"path": f"/n{i:03}.md", "score": 5.0, "title": "N"} for i in range(50)],
+        chunk_kw=[],
+        page_kw=[],
+        zone_id="root",
+    )
+    assert len(calls) == 1
+    assert len(calls[0][0]) == TITLE_ARM_MAX_HYDRATION_FETCH
+    assert len(hits) == 50  # every hit still emitted, overflow unhydrated
+
+
+@pytest.mark.asyncio
+async def test_gather_title_hits_caps_locate_limit() -> None:
+    """The arm asks locate for at most TITLE_ARM_MAX_HITS candidates even at
+    the max public limit with ReBAC over-fetch (#4545 review round 3)."""
+    from nexus.bricks.search.daemon import TITLE_ARM_MAX_HITS, DaemonConfig, SearchDaemon
+
+    seen: dict[str, Any] = {}
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.config = DaemonConfig()
+
+    async def _locate(self: Any, q: str, **kwargs: Any) -> list[dict[str, Any]]:
+        seen.update(kwargs)
+        return []
+
+    daemon.locate = MethodType(_locate, daemon)
+    timing: dict[str, float] = {}
+    await daemon._gather_title_hits(
+        "q", zone_id="root", limit=300, path_filter=None, chunk_kw=[], page_kw=[], timing=timing
+    )
+    assert seen["limit"] == TITLE_ARM_MAX_HITS
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_replay_matches_live_order_same_doc() -> None:
+    """Journal replay is faithful to live-map application order: for
+    same-doc delete-then-upsert during bootstrap, the swapped state equals
+    the live end state (consumer-level event ordering is a pre-existing
+    #3725 ingestion concern, unchanged by the journal)."""
+    from nexus.bricks.search.daemon import SearchDaemon
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._skeleton_docs = {}
+    daemon._skeleton_token_index = {}
+    daemon._skeleton_bootstrap_journal = None
+    daemon._skeleton_bootstrapped = False
+
+    release = asyncio.Event()
+
+    class FakeResult:
+        def fetchall(self) -> list[tuple[str, str, str, str]]:
+            return [("p1", "root", "Snapshot Title", "/doc.md")]
+
+    class FakeSession:
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+            await release.wait()
+            return FakeResult()
+
+    daemon._async_session = lambda: FakeSession()
+    task = asyncio.create_task(daemon._bootstrap_skeleton())
+    while daemon._skeleton_bootstrap_journal is None:
+        await asyncio.sleep(0)
+
+    # Same-doc interleaving in live-application order: delete, then upsert.
+    daemon.delete_skeleton_doc(virtual_path="/doc.md", zone_id="root")
+    daemon.upsert_skeleton_doc(
+        path_id="p1", virtual_path="/doc.md", title="Live Title", zone_id="root"
+    )
+    live_state = dict(daemon._skeleton_docs)
+    release.set()
+    await task
+
+    assert daemon._skeleton_docs[("root", "/doc.md")]["title"] == "Live Title"
+    assert daemon._skeleton_docs.keys() == live_state.keys()

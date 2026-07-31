@@ -376,3 +376,36 @@ class TestSandboxFallbackPooling:
         assert paths == ["/long.md", "/other.md"]
         # Fetched wider than the requested limit so the cap could backfill.
         assert captured["limit"] > 3
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestRouterReadableZoneFilter:
+    """Issue #4542 round-8 review: the router's federated zone_filter keeps
+    only zones the token can READ."""
+
+    def test_write_only_zone_excluded_from_filter(self, monkeypatch):
+        builder = TestSearchZoneSet()
+        app = builder._build_app(["eng", "legal"])
+        from nexus.server.dependencies import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "test_user",
+            "zone_id": "eng",
+            "zone_set": ["eng", "legal"],
+            "zone_perms": [["eng", "r"], ["legal", "w"]],
+        }
+        client = TestClient(app)
+
+        from nexus.server.api.v2.routers import search as search_mod
+
+        captured = {}
+
+        async def fake_federated(*, zone_filter=None, **kwargs):
+            captured["zone_filter"] = zone_filter
+            return {"results": [], "federated": True}
+
+        monkeypatch.setattr(search_mod, "_handle_federated_search", fake_federated)
+        resp = client.get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 200, resp.text
+        assert captured["zone_filter"] == frozenset({"eng"})

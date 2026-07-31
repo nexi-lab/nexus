@@ -338,6 +338,18 @@ async def search_query(
     # must never be treated as a token allow-list (#4541 review round 5).
     raw_zone_set = tuple(auth_result.get("zone_set") or ())
     zone_set = raw_zone_set or (zone_id,)
+    # Issue #4542 round-8 review: search is a READ — when the token carries
+    # per-zone perms, only zones granting r/x are searchable (write-only
+    # grants fail closed). Legacy tokens without perms info keep the full
+    # explicit zone_set; root-scoped and unconstrained credentials stay
+    # unbounded (mirrors the #4541 fed_zone_filter exemption).
+    token_zone_filter = None
+    if raw_zone_set and set(raw_zone_set) != {ROOT_ZONE_ID}:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        token_zone_filter = readable_zone_filter(
+            raw_zone_set, auth_result.get("zone_perms")
+        )
     # #3785: auto-promote to federated when token grants multiple zones,
     # even if caller didn't pass federated=true. Single-zone tokens
     # (zone_set == (zone_id,)) hit the unchanged single-zone path.
@@ -383,10 +395,6 @@ async def search_query(
     # exactly {root} (root grants cross-zone access and its id never
     # intersects concrete zone names). A multi-zone scope that happens to
     # include root keeps its pre-existing filtered behaviour.
-    fed_zone_filter = (
-        frozenset(raw_zone_set) if raw_zone_set and set(raw_zone_set) != {ROOT_ZONE_ID} else None
-    )
-
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---
         # NOTE: expand= is single-zone only; federated path does not support it.
@@ -402,7 +410,7 @@ async def search_query(
                 auth_result=auth_result,
                 search_daemon=search_daemon,
                 request=request,
-                zone_filter=fed_zone_filter,
+                zone_filter=token_zone_filter,
             )
 
         return await _handle_single_zone_search(

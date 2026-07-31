@@ -254,3 +254,47 @@ class TestSandboxInnerFederationZoneScope:
         )
 
         assert captured["zone_filter"] is None
+
+
+class TestReadableZoneFilter:
+    """Issue #4542 round-8 review: write-only zone grants are not searchable."""
+
+    def test_write_only_grant_fails_closed(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        assert readable_zone_filter(("eng",), (("eng", "w"),)) == frozenset()
+
+    def test_mixed_grants_keep_readable_only(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        out = readable_zone_filter(
+            ("eng", "legal", "ops"),
+            (("eng", "r"), ("legal", "w"), ("ops", "rwx")),
+        )
+        assert out == frozenset({"eng", "ops"})
+
+    def test_zone_set_without_perms_kept_whole(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        assert readable_zone_filter(["eng", "legal"], None) == frozenset({"eng", "legal"})
+
+    def test_no_grants_means_unbounded(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        assert readable_zone_filter((), ()) is None
+
+    @pytest.mark.asyncio
+    async def test_write_only_context_fails_closed_in_sandbox_dispatch(self) -> None:
+        from nexus.contracts.types import OperationContext
+
+        captured: dict = {}
+        svc = TestSandboxInnerFederationZoneScope()._svc_with_dispatcher(captured)
+        ctx = OperationContext(
+            user_id="alice", groups=[], zone_id="eng", zone_perms=(("eng", "w"),)
+        )
+
+        await svc._semantic_search_sandbox(
+            query="q", path="/", limit=5, context=ctx, search_mode="semantic"
+        )
+
+        assert captured["zone_filter"] == frozenset()

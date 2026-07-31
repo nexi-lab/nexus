@@ -4238,12 +4238,23 @@ class SearchService:
                         or getattr(context, "is_system", False)
                         or not _ctx_zone_set
                     )
+                    # Round-8 review: search is a READ — write-only zone
+                    # grants must not be searchable, so derive the filter
+                    # from zone_perms (r/x only) when present.
+                    from nexus.bricks.search.federated_search import (
+                        readable_zone_filter,
+                    )
+
                     return await dispatcher.search(
                         query=query,
                         subject=subject,
                         search_type="semantic",
                         limit=limit,
-                        zone_filter=None if _unbounded else frozenset(_ctx_zone_set),
+                        zone_filter=None
+                        if _unbounded
+                        else readable_zone_filter(
+                            _ctx_zone_set, getattr(context, "zone_perms", None)
+                        ),
                     )
                 except Exception as exc:
                     # Real dispatch failed — treat as all-peers-failed so the

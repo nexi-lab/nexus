@@ -118,6 +118,32 @@ class FederationUnreachableError(Exception):
     """
 
 
+def readable_zone_filter(
+    zone_set: Any,
+    zone_perms: Any,
+) -> frozenset[str] | None:
+    """Derive a federated zone allow-list from a credential's grants.
+
+    Search is a READ — write-only zone grants must not be searchable
+    (Issue #4542 round-8 review). When per-zone perms are known, only
+    zones granting ``r`` or ``x`` pass; an explicit grant list with no
+    readable zones fails CLOSED (empty frozenset → zero searchable
+    zones). Credentials with a zone list but no perms info keep the
+    whole list (legacy tokens predate per-zone perms). Returns ``None``
+    (unbounded) only when the credential carries no explicit zone grant
+    at all.
+    """
+    if zone_perms:
+        return frozenset(
+            str(zp[0])
+            for zp in zone_perms
+            if len(zp) == 2 and ("r" in str(zp[1]) or "x" in str(zp[1]))
+        )
+    if zone_set:
+        return frozenset(str(z) for z in zone_set)
+    return None
+
+
 def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
     """Return True when the response reflects zero reachable peers.
 

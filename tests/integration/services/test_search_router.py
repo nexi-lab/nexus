@@ -114,6 +114,37 @@ class TestSearchQueryEndpoint:
         resp = client.get("/api/v2/search/query?q=hello&limit=101")
         assert resp.status_code == 422
 
+    def test_rrf_k_bounds(self, client: "TestClient") -> None:
+        resp = client.get("/api/v2/search/query?q=hello&rrf_k=0")
+        assert resp.status_code == 422
+        resp = client.get("/api/v2/search/query?q=hello&rrf_k=1001")
+        assert resp.status_code == 422
+
+    def test_fusion_params_forwarded_to_daemon(self, client: "TestClient") -> None:
+        """Issue #4541: alpha / fusion / rrf_k must reach daemon.search, not
+        be validated-then-dropped at the route."""
+        app: Any = client.app
+        seen: dict[str, Any] = {}
+
+        async def mock_search(**kwargs: Any) -> list[_MockResult]:
+            seen.clear()
+            seen.update(kwargs)
+            return [_MockResult()]
+
+        app.state.search_daemon.search = mock_search
+
+        resp = client.get("/api/v2/search/query?q=hello&fusion=weighted&alpha=0.9&rrf_k=30")
+        assert resp.status_code == 200
+        assert seen["fusion_method"] == "weighted"
+        assert seen["alpha"] == 0.9
+        assert seen["rrf_k"] == 30
+
+        resp = client.get("/api/v2/search/query?q=hello")
+        assert resp.status_code == 200
+        assert seen["fusion_method"] == "rrf"
+        assert seen["alpha"] == 0.5
+        assert seen["rrf_k"] == 60
+
     def test_health_endpoint(self, client: "TestClient") -> None:
         resp = client.get("/api/v2/search/health")
         assert resp.status_code == 200

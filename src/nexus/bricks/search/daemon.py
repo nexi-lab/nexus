@@ -1789,6 +1789,7 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        rrf_k: int = 60,
         zone_id: str | None = None,
         expand: str = "none",
     ) -> list[SearchResult]:
@@ -1800,6 +1801,7 @@ class SearchDaemon:
                 path_filter=path_filter,
                 alpha=alpha,
                 fusion_method=fusion_method,
+                rrf_k=rrf_k,
                 zone_id=zone_id,
             )
         else:
@@ -1812,6 +1814,7 @@ class SearchDaemon:
                     path_filter=path_filter,
                     alpha=alpha,
                     fusion_method=fusion_method,
+                    rrf_k=rrf_k,
                     zone_id=zone_id,
                 )
 
@@ -1828,6 +1831,7 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        rrf_k: int = 60,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
@@ -1839,6 +1843,7 @@ class SearchDaemon:
             path_filter: Optional path prefix filter
             alpha: Weight for semantic vs keyword (0.0 = all keyword, 1.0 = all semantic)
             fusion_method: Fusion algorithm for hybrid search ("rrf", "weighted", "rrf_weighted")
+            rrf_k: RRF rank constant for the hybrid fusion stages (default 60)
 
         Returns:
             List of search results sorted by relevance
@@ -1941,6 +1946,9 @@ class SearchDaemon:
                     search_type=search_type,
                     limit=limit,
                     path_filter=path_filter,
+                    alpha=alpha,
+                    fusion_method=fusion_method,
+                    rrf_k=rrf_k,
                     zone_id=effective_zone_id,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
@@ -2017,14 +2025,26 @@ class SearchDaemon:
         limit: int,
         path_filter: str | None,
         zone_id: str,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
     ) -> list[SearchResult]:
         """Run keyword / semantic / hybrid via the new search backends.
 
-        Hybrid mode performs 3-way RRF on Postgres (chunk-BM25 + page-BM25 +
-        dense) and 2-way RRF on SQLite (chunk-BM25 + dense — there is no
-        page-level BM25 leg yet on the FTS5 vtable).
+        Hybrid mode fuses two stages: the keyword legs first (3-way on
+        Postgres: chunk-BM25 + page-BM25; 2-way on SQLite — no page-level
+        BM25 leg yet on the FTS5 vtable), then keyword × dense. The
+        keyword sub-fusion is always plain RRF; the final stage honours
+        the request's ``fusion_method`` / ``alpha`` / ``rrf_k`` (Issue
+        #4541). Defaults reproduce the historical hardcoded behaviour
+        (plain RRF, k=60) exactly.
         """
-        from nexus.bricks.search.fusion import rrf_fusion
+        from nexus.bricks.search.fusion import (
+            FusionConfig,
+            FusionMethod,
+            fuse_results,
+            rrf_fusion,
+        )
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
         from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
 
@@ -2124,10 +2144,16 @@ class SearchDaemon:
             )
             page_kw = []
 
-        # Fuse keyword legs first (chunk + page), then RRF that with dense.
+        # Fuse keyword legs first (chunk + page) with plain RRF, then fuse
+        # that with dense using the request's method / alpha / k.
         fusion_start = time.perf_counter()
-        kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
-        fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+        kw_fused = rrf_fusion(chunk_kw, page_kw, k=rrf_k, limit=limit * 2, id_key=None)
+        fusion_config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=rrf_k,
+        )
+        fused = fuse_results(kw_fused, dense, config=fusion_config, limit=limit, id_key=None)
         # Issue #4542: pool the fused list per document so one long doc cannot
         # occupy every hybrid slot. The route over-fetches (fetch_limit =
         # limit × 3 for the ReBAC filter), so pooling at daemon-output size

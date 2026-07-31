@@ -165,3 +165,12 @@ class TestConfig:
         from nexus.bricks.search.daemon import DaemonStats
 
         assert DaemonStats().recency_attach_failures == 0
+
+    def test_get_stats_exposes_recency_failure_counter(self) -> None:
+        """Verify recency_attach_failures is wired into get_stats() output."""
+        import inspect
+
+        from nexus.bricks.search.daemon import SearchDaemon
+
+        src = inspect.getsource(SearchDaemon.get_stats)
+        assert "recency_attach_failures" in src

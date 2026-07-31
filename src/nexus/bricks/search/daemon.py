@@ -5651,6 +5651,9 @@ class SearchDaemon:
             # bypassed (probe failure / un-widened pool) must be visible.
             "tier_boost_probe_failures": self.stats.tier_boost_probe_failures,
             "tier_boost_suppressed_searches": self.stats.tier_boost_suppressed_searches,
+            # Issue #4543: recency-boost hydration may fail, tracked fail-soft
+            # like path-context above.
+            "recency_attach_failures": self.stats.recency_attach_failures,
         }
 
     def get_health(self) -> dict[str, Any]:

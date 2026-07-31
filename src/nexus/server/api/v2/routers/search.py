@@ -268,7 +268,8 @@ async def search_query(
     rrf_k: int = Query(60, description="RRF rank constant for hybrid fusion", ge=1, le=1000),
     expand: str = Query("none", description="Context expansion: none or macro"),
     recency: str | None = Query(
-        None, description="Recency boost mode: off, on, or auto (default: server config, #4543)"
+        None,
+        description="Recency boost mode: off, on, or auto (default: server config; applies to non-graph search — local zones only in federated mode, #4543)",
     ),
     recency_weight: float | None = Query(
         None,

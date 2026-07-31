@@ -209,6 +209,22 @@ Following the #4541 (`alpha`/`fusion`/`rrf_k`) and #4398 (`expand`) patterns:
 - DB migrations — none needed; `file_paths.updated_at` and its covering index
   already exist.
 
+## Known limitations
+
+- `file_paths.updated_at` bumps on ANY row update (SQLAlchemy `onupdate`),
+  including re-index bookkeeping writes (`indexed_content_id` /
+  `last_indexed_at`), not just content writes. A bulk re-index uniformly
+  freshens every document — order-preserving for ranking, but it dilutes
+  `auto`-mode discrimination and makes `recency_boost` attribution read
+  fresher than the content is until timestamps diverge again. A
+  content-write-only timestamp is a possible follow-up.
+- With recency active, boosted local-zone scores compete against unboosted
+  remote-zone scores in the federated raw-score merge — local zones are
+  systematically advantaged. Inherent to the local-only scope (rrf_k RPC
+  precedent); revisit with RPC surface versioning.
+- The graph branch (`graph_enhanced_search`) ignores the recency knobs —
+  the same pre-existing gap as `alpha`/`fusion_method`.
+
 ## Acceptance criteria (from the issue)
 
 1. Fixture with near-duplicate content at different mtimes: temporal query

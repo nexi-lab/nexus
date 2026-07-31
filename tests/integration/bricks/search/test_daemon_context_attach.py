@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import (
@@ -12,6 +14,28 @@ from sqlalchemy.ext.asyncio import (
 
 from nexus.bricks.search.path_context import PathContextCache, PathContextStore
 from nexus.bricks.search.results import BaseSearchResult
+
+if TYPE_CHECKING:
+    from nexus.bricks.search.daemon import SearchDaemon
+
+
+def _bare_daemon(cache) -> "SearchDaemon":
+    """Attach-only daemon harness (no startup())."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+
+    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon.config = DaemonConfig()
+    daemon._path_context_cache = cache
+    daemon._path_context_cache_by_loop = {}
+    daemon._path_context_engines_by_loop = {}
+
+    class _Stats:
+        path_context_attach_failures = 0
+        path_context_resolve_failures = 0
+
+    daemon.stats = _Stats()
+    return daemon
+
 
 CREATE_TABLE_SQL = """
 CREATE TABLE path_contexts (
@@ -602,3 +626,62 @@ class TestFullFlowStoreAttachSerialize:
         assert out["context"] == "search brick"  # longer prefix wins
 
         await engine.dispose()
+
+
+class TestTierWeightAttach:
+    """Issue #4544: _attach_path_contexts applies per-prefix weights."""
+
+    @pytest.mark.asyncio
+    async def test_demotion_reorders_below_equal_relevance_peer(self, cache) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _bare_daemon(cache)
+        noisy = SearchResult(path="chat/a.md", chunk_text="", score=1.0)
+        curated = SearchResult(path="docs/a.md", chunk_text="", score=0.9)
+        results = [noisy, curated]
+        await daemon._attach_path_contexts(results, zone_id="root")
+        assert noisy.score == 0.5 and noisy.tier_boost == 0.5
+        assert curated.score == 0.9 and curated.tier_boost is None
+        assert results == [curated, noisy]  # re-sorted in place
+
+    @pytest.mark.asyncio
+    async def test_no_weights_leaves_list_untouched(self, cache) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+
+        # Fixture rows have no weight → byte-identity: same objects, order, scores.
+        daemon = _bare_daemon(cache)
+        r1 = SearchResult(path="docs/a.md", chunk_text="", score=0.4)
+        r2 = SearchResult(path="docs/b.md", chunk_text="", score=0.9)
+        results = [r1, r2]  # deliberately unsorted
+        await daemon._attach_path_contexts(results, zone_id="root")
+        assert results == [r1, r2]
+        assert r1.score == 0.4 and r2.score == 0.9
+        assert r1.tier_boost is None and r2.tier_boost is None
+        assert r1.context == "Project documentation"  # context still attached
+
+    @pytest.mark.asyncio
+    async def test_uplift_gated_by_floor_ratio(self, cache) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+
+        await cache._store.upsert("root", "docs", "Project documentation", weight=2.0)
+        daemon = _bare_daemon(cache)
+        strong = SearchResult(path="src/x.py", chunk_text="", score=1.0)
+        weak_boosted = SearchResult(path="docs/a.md", chunk_text="", score=0.1)
+        near_peer_boosted = SearchResult(path="docs/b.md", chunk_text="", score=0.6)
+        results = [strong, near_peer_boosted, weak_boosted]
+        await daemon._attach_path_contexts(results, zone_id="root")
+        assert weak_boosted.score == 0.1 and weak_boosted.tier_boost is None
+        assert near_peer_boosted.score == 1.2 and near_peer_boosted.tier_boost == 2.0
+        assert results[0] is near_peer_boosted  # promoted past strong
+
+    @pytest.mark.asyncio
+    async def test_double_attach_is_idempotent(self, cache) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _bare_daemon(cache)
+        r = SearchResult(path="chat/a.md", chunk_text="", score=1.0)
+        await daemon._attach_path_contexts([r], zone_id="root")
+        await daemon._attach_path_contexts([r], zone_id="root")
+        assert r.score == 0.5  # not 0.25

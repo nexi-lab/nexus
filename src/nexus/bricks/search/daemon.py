@@ -1776,15 +1776,26 @@ class SearchDaemon:
             if snap is not None:
                 snapshots[zone] = snap
 
-        from nexus.bricks.search.path_context import lookup_in_records
+        from nexus.bricks.search.path_context import lookup_record_in_records
 
+        # Issue #4544: apply per-prefix ranking weights while attaching
+        # context. top_score is the pre-boost max of this batch — the floor
+        # gate must compare against the unweighted ranking.
+        floor_ratio = self.config.tier_boost_floor_ratio
+        top_score = max((r.score for r in results), default=0.0)
+        boosted_any = False
         for r in results:
             zone = _zone_for(r)
             records = snapshots.get(zone)
             if records is None:
                 continue
             try:
-                r.context = lookup_in_records(records, r.path)
+                record = lookup_record_in_records(records, r.path)
+                r.context = record.description if record is not None else None
+                if record is not None and _apply_tier_weight(
+                    r, record.weight, top_score, floor_ratio
+                ):
+                    boosted_any = True
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
@@ -1793,6 +1804,9 @@ class SearchDaemon:
                     self.stats.path_context_attach_failures,
                     exc,
                 )
+        if boosted_any:
+            # Stable sort: equal scores keep their pre-boost relative order.
+            results.sort(key=lambda r: r.score, reverse=True)
 
     async def _apply_macro_expansion(
         self,
@@ -2414,12 +2428,19 @@ class SearchDaemon:
                 )
                 records = None
             if records is not None:
-                from nexus.bricks.search.path_context import lookup_in_records
+                from nexus.bricks.search.path_context import lookup_record_in_records
 
+                # Issue #4544 note: weights are NOT applied here. Each inner
+                # self.search() already ran _attach_path_contexts (multiply +
+                # tier_boost stamp); re-applying against post-boost scores
+                # would re-evaluate the floor gate against a shifted top and
+                # boost previously-gated results. This block only backfills
+                # ``context`` for legacy/mocked daemons.
                 for inner in results:
                     for r in inner:
                         try:
-                            r.context = lookup_in_records(records, r.path)
+                            record = lookup_record_in_records(records, r.path)
+                            r.context = record.description if record is not None else None
                         except Exception as exc:
                             self.stats.path_context_attach_failures += 1
                             logger.warning(

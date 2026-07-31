@@ -70,9 +70,7 @@ as today, then apply the weight `w = record.weight or 1.0`:
 - **Re-sort:** stable descending sort by `score`, executed only when at
   least one multiply happened. No weights applied → the list object and its
   order are untouched.
-- The `batch_search` inline attach block gets the same boost logic (it
-  shares the snapshot walk; idempotency makes the second pass a no-op for
-  already-boosted results).
+- The `batch_search` inline attach block stays context-only — inner `search()` calls already applied weights; re-applying against post-boost scores would re-evaluate the floor gate against a shifted top.
 - Fail-soft contract unchanged: any per-result failure increments
   `path_context_attach_failures` and leaves that result unboosted.
 

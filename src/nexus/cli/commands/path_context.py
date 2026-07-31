@@ -42,6 +42,12 @@ def path_context() -> None:
 @click.argument("path_prefix")
 @click.argument("description")
 @click.option("--zone-id", default="root", show_default=True, help="Zone scope")
+@click.option(
+    "--weight",
+    type=float,
+    default=None,
+    help="Ranking weight 0.1-10.0 (<1 demotes, >1 boosts; omit to clear).",
+)
 @add_backend_options
 @click.pass_context
 def path_context_set(
@@ -49,6 +55,7 @@ def path_context_set(
     path_prefix: str,
     description: str,
     zone_id: str,
+    weight: float | None,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -56,6 +63,7 @@ def path_context_set(
 
     Example:
         nexus path-context set src/nexus/bricks/search "Hybrid search brick"
+        nexus path-context set chat/logs "Chat logs" --weight 0.5
     """
     from nexus.cli.api_client import get_api_client_from_options
 
@@ -64,14 +72,23 @@ def path_context_set(
     try:
         result = client.put(
             "/api/v2/path-contexts/",
-            {"zone_id": zone_id, "path_prefix": path_prefix, "description": description},
+            {
+                "zone_id": zone_id,
+                "path_prefix": path_prefix,
+                "description": description,
+                "weight": weight,
+            },
         )
     except Exception as e:
         console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
+    # Rich markup: escape the opening bracket so "[weight=...]" renders
+    # literally instead of being parsed as a style tag.
+    weight_note = f" \\[weight={result.get('weight')}]" if result.get("weight") is not None else ""
     console.print(
         f"[nexus.success]set[/nexus.success] "
-        f"{result.get('zone_id')}:{result.get('path_prefix')} = {result.get('description')!r}"
+        f"{result.get('zone_id')}:{result.get('path_prefix')} = "
+        f"{result.get('description')!r}{weight_note}"
     )
 
 
@@ -112,8 +129,12 @@ def path_context_list(
         console.print("[nexus.warning]No path contexts configured[/nexus.warning]")
         return
     for entry in contexts:
+        weight_note = (
+            f" \\[weight={entry.get('weight')}]" if entry.get("weight") is not None else ""
+        )
         console.print(
-            f"  {entry.get('zone_id')}:{entry.get('path_prefix')} -> {entry.get('description')}"
+            f"  {entry.get('zone_id')}:{entry.get('path_prefix')} -> "
+            f"{entry.get('description')}{weight_note}"
         )
 
 

@@ -80,6 +80,9 @@ class PathContextIn(BaseModel):
     zone_id: str = Field(default=ROOT_ZONE_ID, max_length=255)
     path_prefix: str = Field(max_length=1024)
     description: str = Field(max_length=4096, min_length=1)
+    # Issue #4544: per-prefix ranking weight; None ≡ 1.0. PUT-replace
+    # semantics — omitting weight on an update clears any stored value.
+    weight: float | None = Field(default=None, ge=0.1, le=10.0)
 
     @field_validator("path_prefix")
     @classmethod
@@ -91,6 +94,7 @@ class PathContextOut(BaseModel):
     zone_id: str
     path_prefix: str
     description: str
+    weight: float | None = None
     created_at: Any
     updated_at: Any
 
@@ -224,11 +228,12 @@ async def upsert_context(
     store: PathContextStore = Depends(_get_store),
 ) -> dict[str, Any]:
     """Upsert a path context (admin only)."""
-    await store.upsert(body.zone_id, body.path_prefix, body.description)
+    await store.upsert(body.zone_id, body.path_prefix, body.description, weight=body.weight)
     return {
         "zone_id": body.zone_id,
         "path_prefix": body.path_prefix,
         "description": body.description,
+        "weight": body.weight,
     }
 
 
@@ -260,6 +265,7 @@ async def list_contexts(
                 "zone_id": r.zone_id,
                 "path_prefix": r.path_prefix,
                 "description": r.description,
+                "weight": r.weight,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             }

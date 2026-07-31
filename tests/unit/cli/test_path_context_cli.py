@@ -36,9 +36,28 @@ class TestPathContextSet:
         assert result.exit_code == 0, result.output
         fake.put.assert_called_once_with(
             "/api/v2/path-contexts/",
-            {"zone_id": "root", "path_prefix": "src", "description": "x"},
+            {"zone_id": "root", "path_prefix": "src", "description": "x", "weight": None},
         )
         assert "root:src" in result.output
+
+    def test_weight_option_sent_in_payload(self) -> None:
+        runner = CliRunner(env=_ENV)
+        fake = _patched_client(
+            put={
+                "zone_id": "root",
+                "path_prefix": "chat",
+                "description": "x",
+                "weight": 0.5,
+            }
+        )
+        with patch("nexus.cli.api_client.get_api_client_from_options", return_value=fake):
+            result = runner.invoke(
+                path_context,
+                ["set", "chat", "x", "--weight", "0.5", "--remote-url", MOCK_URL],
+            )
+        assert result.exit_code == 0, result.output
+        assert fake.put.call_args.args[1]["weight"] == 0.5
+        assert "[weight=0.5]" in result.output
 
     def test_custom_zone_id(self) -> None:
         runner = CliRunner(env=_ENV)

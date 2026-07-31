@@ -180,6 +180,11 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     context = getattr(result, "context", None)
     if context is not None:
         out["context"] = context
+    # Issue #4544: attribute the per-prefix tier weight applied to the score
+    # (omitted when unboosted to keep responses compact).
+    tier_boost = getattr(result, "tier_boost", None)
+    if tier_boost is not None:
+        out["tier_boost"] = round(tier_boost, 4)
     macro_text = getattr(result, "macro_text", None)
     if macro_text is not None:
         out["macro_text"] = macro_text

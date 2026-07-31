@@ -509,6 +509,15 @@ class TestSerializerEmitsContext:
         out = _serialize_search_result(r)
         assert "context" not in out
 
+    def test_tier_boost_emitted_when_set_and_omitted_when_none(self) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+        from nexus.server.api.v2.routers.search import _serialize_search_result
+
+        boosted = SearchResult(path="a", chunk_text="", score=0.5, tier_boost=0.5)
+        plain = SearchResult(path="b", chunk_text="", score=0.5)
+        assert _serialize_search_result(boosted)["tier_boost"] == 0.5
+        assert "tier_boost" not in _serialize_search_result(plain)
+
 
 class TestFullFlowStoreAttachSerialize:
     """Chain the real store, real cache refresh+lookup, and real serializer.

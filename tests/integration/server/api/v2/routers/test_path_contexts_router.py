@@ -212,3 +212,35 @@ class TestPathContextRouter:
             # Own zone or implicit: allowed.
             assert c.get("/api/v2/path-contexts/", params={"zone_id": "root"}).status_code == 200
             assert c.get("/api/v2/path-contexts/").status_code == 200
+
+
+class TestWeightField:
+    """Issue #4544: weight on the path-contexts CRUD surface."""
+
+    def test_put_persists_and_echoes_weight(self, client: TestClient) -> None:
+        resp = client.put(
+            "/api/v2/path-contexts/",
+            json={"path_prefix": "chat/logs", "description": "Chat", "weight": 0.5},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["weight"] == 0.5
+        listed = client.get("/api/v2/path-contexts/").json()["contexts"]
+        entry = next(c for c in listed if c["path_prefix"] == "chat/logs")
+        assert entry["weight"] == 0.5
+
+    def test_list_emits_null_weight_for_unset(self, client: TestClient) -> None:
+        client.put(
+            "/api/v2/path-contexts/",
+            json={"path_prefix": "docs", "description": "Docs"},
+        )
+        listed = client.get("/api/v2/path-contexts/").json()["contexts"]
+        entry = next(c for c in listed if c["path_prefix"] == "docs")
+        assert entry["weight"] is None
+
+    def test_weight_bounds_rejected(self, client: TestClient) -> None:
+        for bad in (0.05, 10.5, 0.0, -1.0):
+            resp = client.put(
+                "/api/v2/path-contexts/",
+                json={"path_prefix": "x", "description": "d", "weight": bad},
+            )
+            assert resp.status_code == 422, f"weight={bad} must be rejected"

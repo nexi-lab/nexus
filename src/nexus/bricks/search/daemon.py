@@ -208,9 +208,16 @@ def _apply_tier_weight(
     range includes negatives. A plain multiply would let a demotion weight
     *raise* a negative score (-0.2 × 0.5 = -0.1), inverting tier semantics.
     Negative scores divide by the weight instead, so w < 1 always worsens
-    rank and w > 1 always improves it. The floor gate only fires when
-    ``top_score`` is positive — a non-positive top means every result is a
-    weak match and the ratio comparison is meaningless.
+    rank and w > 1 always improves it.
+
+    Floor gate (uplifts only, active when ``floor_ratio > 0``): with a
+    positive top the ratio comparison applies as documented. With a
+    non-positive top (all-negative semantic sets) uplifts are suppressed
+    outright — dividing a deeply negative score by a large weight would
+    move it toward zero and leapfrog the entire set (-0.9/10 = -0.09
+    outranks a -0.1 top), exactly the weak-past-strong promotion the gate
+    exists to prevent (Codex review R5). ``floor_ratio == 0`` disables the
+    gate entirely, including this suppression.
     """
     if weight is None or weight == 1.0:
         return False
@@ -219,8 +226,7 @@ def _apply_tier_weight(
     if (
         weight > 1.0
         and floor_ratio > 0.0
-        and top_score > 0.0
-        and result.score < floor_ratio * top_score
+        and (top_score <= 0.0 or result.score < floor_ratio * top_score)
     ):
         return False
     result.score = result.score * weight if result.score >= 0.0 else result.score / weight

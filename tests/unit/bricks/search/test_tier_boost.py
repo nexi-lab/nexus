@@ -147,16 +147,26 @@ class TestSignedScoreWeighting:
         assert _apply_tier_weight(r, 0.5, top_score=-0.1, floor_ratio=0.25) is True
         assert r.score == -0.4  # more negative = worse rank
 
-    def test_uplift_improves_negative_score(self) -> None:
+    def test_uplift_improves_negative_score_when_gate_disabled(self) -> None:
+        # floor_ratio=0 opts out of the gate: divide semantics apply.
         r = _result(score=-0.2)
-        assert _apply_tier_weight(r, 2.0, top_score=-0.1, floor_ratio=0.25) is True
+        assert _apply_tier_weight(r, 2.0, top_score=-0.1, floor_ratio=0.0) is True
         assert r.score == -0.1  # toward zero = better rank
 
-    def test_floor_gate_disabled_when_top_score_non_positive(self) -> None:
-        # All-negative result sets: the ratio comparison is meaningless, so
-        # uplifts must not be blanket-blocked.
+    def test_uplift_suppressed_when_all_scores_negative(self) -> None:
+        # Codex review R5: with an all-negative set, dividing a deeply
+        # negative score by a large weight would leapfrog the entire set
+        # (-0.9/10 = -0.09 outranks a -0.1 top) — exactly the
+        # weak-past-strong promotion the gate exists to prevent.
         r = _result(score=-0.9)
-        assert _apply_tier_weight(r, 2.0, top_score=-0.1, floor_ratio=0.25) is True
+        assert _apply_tier_weight(r, 10.0, top_score=-0.1, floor_ratio=0.25) is False
+        assert r.score == -0.9 and r.tier_boost is None
+
+    def test_demotion_still_applies_when_all_scores_negative(self) -> None:
+        # Demotion on a negative score only worsens rank — never gated.
+        r = _result(score=-0.2)
+        assert _apply_tier_weight(r, 0.5, top_score=-0.1, floor_ratio=0.25) is True
+        assert r.score == -0.4
 
     def test_floor_gate_still_blocks_negative_score_under_positive_top(self) -> None:
         # A negative score is by definition below ratio*top when top > 0.

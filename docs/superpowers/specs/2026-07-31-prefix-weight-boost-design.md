@@ -101,6 +101,17 @@ Cost: the snapshot work is the same work attach pays later in the same
 request; the incremental cost is one cache-fingerprint check per search,
 and the wider fetch only occurs for zones that actually configured weights.
 
+Bounded approximation (adversarial-review amendment): weights re-rank
+within the widened window of `limit × factor` raw candidates only — if
+more than `limit × factor` raw hits from a demoted prefix outscore an
+unweighted hit, that hit stays outside the window and cannot be promoted.
+Exact weighted top-K would require pushing weights into every backend
+query; this design explicitly trades that away for the attach-point
+approach. Weights only mutate ranking when the pool was actually widened
+(factor ≥ 2 and probe succeeded); otherwise they are suppressed and
+counted in `tier_boost_suppressed_searches` / `tier_boost_probe_failures`
+(exposed via search stats).
+
 Macro expansion (`expand=macro`, #4398) runs in `search()` after the
 trimmed list is returned — unaffected.
 

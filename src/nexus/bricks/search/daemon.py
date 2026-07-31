@@ -356,6 +356,17 @@ class DaemonConfig:
     # weights are applied. ``tier_boost_floor_ratio`` gates uplifts only:
     # a result scoring below ratio*top cannot be boosted past strong matches
     # (0 disables the gate). Demotions always apply.
+    #
+    # BOUNDED APPROXIMATION (design-accepted, Codex review R4): weights
+    # re-rank within the widened window of ``limit × factor`` raw candidates
+    # only. If more than ``limit × factor`` raw hits from a demoted prefix
+    # outscore an unweighted hit, that hit stays outside the window and
+    # cannot be promoted — exact weighted top-K would require pushing
+    # weights into every backend query (or threshold-style iterative
+    # fetch), which the #4544 design explicitly traded away for the
+    # attach-point approach. Operators with extremely noisy high-volume
+    # prefixes should raise the factor (or fence the prefix with
+    # path-scoped search) rather than expect global re-ranking.
     tier_boost_overfetch_factor: int = field(
         default_factory=lambda: _get_env_int("NEXUS_SEARCH_TIER_BOOST_OVERFETCH", 3)
     )
@@ -1873,10 +1884,12 @@ class SearchDaemon:
                     if apply_weights:
                         if _apply_tier_weight(r, record.weight, top_score, floor_ratio):
                             boosted_any = True
-                    elif getattr(r, "tier_boost", None) is None:
-                        # A configured weight was bypassed (probe failure or
-                        # un-widened pool) — count it so operators can see
+                    elif pinned_snapshots is None and getattr(r, "tier_boost", None) is None:
+                        # A configured weight was bypassed after a FAILED
+                        # probe (no pin) — count it so operators can see
                         # ranking policy being skipped (Codex review R3).
+                        # Pinned callers already counted the bypass at their
+                        # widening decision (R4), so don't double-count.
                         suppressed += 1
                         suppressed_zone = zone
             except Exception as exc:
@@ -2022,6 +2035,18 @@ class SearchDaemon:
             {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
         )
         tier_weights_ok = tier_snapshot is not None and internal_limit > limit
+        if has_tier_weights and not tier_weights_ok:
+            # Codex review R4: count suppression at the DECISION point, not
+            # only at attach — with factor <= 1 an affected candidate below
+            # the un-widened cutoff never appears in `results`, so attach
+            # alone cannot observe the bypass.
+            self.stats.tier_boost_suppressed_searches += 1
+            logger.warning(
+                "tier weights configured for zone=%r but pool not widened "
+                "(factor<=1) — ranking weights suppressed (total=%d)",
+                effective_zone_id,
+                self.stats.tier_boost_suppressed_searches,
+            )
         start = time.perf_counter()
         self.last_search_timing = {}
         hybrid_keyword_results: list[SearchResult] = []

@@ -118,6 +118,18 @@ async def graph_enhanced_search(
             1, getattr(getattr(search_daemon, "config", None), "tier_boost_overfetch_factor", 1)
         )
         fetch_limit = limit * factor
+        if fetch_limit <= limit:
+            # Codex review R4: weights exist but the pool will not be
+            # widened (factor <= 1) — ranking weights are suppressed for
+            # this request; count it at the decision point.
+            stats = getattr(search_daemon, "stats", None)
+            if stats is not None:
+                stats.tier_boost_suppressed_searches += 1
+            logger.warning(
+                "tier weights configured for zone=%r but graph pool not "
+                "widened (factor<=1) — ranking weights suppressed",
+                effective_zone_id,
+            )
 
     results: list[BaseSearchResult] = await graph_search_fn(
         query, zone_id=effective_zone_id, limit=fetch_limit, path_filter=path_filter

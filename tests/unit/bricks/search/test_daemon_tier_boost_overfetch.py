@@ -184,6 +184,22 @@ class TestOverfetchAndTrim:
         assert all(r.tier_boost is None for r in results)
         assert daemon.stats.tier_boost_suppressed_searches == 1
 
+    @pytest.mark.asyncio
+    async def test_factor_one_counts_even_when_weighted_hit_beyond_cutoff(self, cache) -> None:
+        # Codex review R4: the uplifted prefix's first candidate sits at
+        # rank N+1 (docs/x.md, rank 3, limit 2). With factor=1 nothing
+        # weighted is ever RETURNED, so attach alone could never observe
+        # the bypass — the decision-point counter must fire regardless.
+        await cache._store.upsert("root", "docs", "Curated docs", weight=2.0)
+        daemon = _make_daemon(cache)
+        daemon.config.tier_boost_overfetch_factor = 1
+        results = await daemon._search_on_current_loop(
+            "q", search_type="keyword", limit=2, zone_id="root"
+        )
+        assert [r.path for r in results] == ["chat/a.md", "chat/b.md"]
+        assert all(r.tier_boost is None for r in results)
+        assert daemon.stats.tier_boost_suppressed_searches == 1
+
 
 class TestProbeFailureSuppressesWeights:
     """Codex review R2: a failed probe means the pool was NOT widened, so

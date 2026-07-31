@@ -37,7 +37,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -1678,6 +1678,75 @@ class SearchDaemon:
             {"path": path, "score": round(score, 4), "title": title}
             for score, path, title in scored[:limit]
         ]
+
+    async def _hydrate_title_hits(
+        self,
+        locate_hits: list[dict[str, Any]],
+        *,
+        chunk_kw: Sequence[Any],
+        page_kw: Sequence[Any],
+        zone_id: str,
+    ) -> list[BaseSearchResult]:
+        """Hydrate locate() hits to page granularity for fusion (Issue #4545).
+
+        locate() returns bare ``{path, score, title}`` rows; the hybrid fusion
+        dedup key is ``path:chunk_index``, so each hit needs a representative
+        chunk. Borrow the best row already fetched by the keyword legs when
+        the path is covered (aligns the key so RRF votes accumulate instead
+        of splitting), else batch-fetch chunk 0 via the vector backend's
+        NeighborFetcher. Chunkless docs stay retrievable with empty text.
+        Best-effort: hydration failures degrade to empty text, never raise.
+        """
+        best_by_path: dict[str, Any] = {}
+        for r in chunk_kw:
+            cur = best_by_path.get(r.path)
+            if cur is None or r.score > cur.score:
+                best_by_path[r.path] = r
+        for r in page_kw:
+            # Page leg rows are already best-of-page — prefer over chunk pick.
+            best_by_path[r.path] = r
+
+        uncovered = [h["path"] for h in locate_hits if h["path"] not in best_by_path]
+        fetched: dict[str, Any] = {}
+        fetch_ranges = getattr(self._vector_backend, "fetch_ranges", None)
+        if uncovered and fetch_ranges is not None:
+            try:
+                rows = await fetch_ranges([(p, 0, 0) for p in uncovered], zone_id)
+                for row in rows:
+                    fetched.setdefault(row.path, row)
+            except Exception as exc:
+                logger.debug("[TITLE-ARM] representative-chunk fetch failed: %s", exc)
+
+        hits: list[BaseSearchResult] = []
+        for h in locate_hits:
+            path = h["path"]
+            leg = best_by_path.get(path)
+            if leg is not None:
+                hits.append(
+                    BaseSearchResult(
+                        path=path,
+                        chunk_text=leg.chunk_text,
+                        score=h["score"],
+                        chunk_index=leg.chunk_index,
+                        line_start=leg.line_start,
+                        line_end=leg.line_end,
+                        zone_id=zone_id,
+                    )
+                )
+                continue
+            row = fetched.get(path)
+            hits.append(
+                BaseSearchResult(
+                    path=path,
+                    chunk_text=row.text if row is not None else "",
+                    score=h["score"],
+                    chunk_index=row.chunk_index if row is not None else 0,
+                    line_start=row.line_start if row is not None else None,
+                    line_end=row.line_end if row is not None else None,
+                    zone_id=zone_id,
+                )
+            )
+        return hits
 
     async def _check_zoekt(self) -> None:
         """Check if Zoekt trigram search is available."""

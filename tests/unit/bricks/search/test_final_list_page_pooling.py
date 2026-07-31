@@ -681,3 +681,127 @@ async def test_result_cache_scoped_by_zone_filter() -> None:
     assert {r["zone_id"] for r in broad.results} == {"za", "zb"}
     assert not narrow.cached
     assert {r["zone_id"] for r in narrow.results} == {"za"}
+
+
+# ---------------------------------------------------------------------------
+# Round-5 review: cache-key collisions, legacy hybrid, window saturation
+# ---------------------------------------------------------------------------
+
+
+def test_cache_key_has_no_cross_field_collisions() -> None:
+    """Round-5 review: delimiter concatenation let subject_id 'alice|foo' +
+    query 'bar' collide with subject 'alice' + query 'foo|bar' — and cache
+    lookup precedes ReBAC, so a collision leaks another subject's results."""
+    dispatcher = FederatedSearchDispatcher(daemon=AsyncMock(), rebac=AsyncMock())
+
+    k1 = dispatcher._make_cache_key("bar", ("user", "alice|foo"), "hybrid", 10, None)
+    k2 = dispatcher._make_cache_key("foo|bar", ("user", "alice"), "hybrid", 10, None)
+    k3 = dispatcher._make_cache_key("bar", ("user:x", "alice"), "hybrid", 10, None)
+    k4 = dispatcher._make_cache_key("bar", ("user", "x:alice"), "hybrid", 10, None)
+
+    assert len({k1, k2, k3, k4}) == 4
+
+
+@pytest.mark.asyncio
+async def test_legacy_hybrid_fallback_caps_at_shared_boundary() -> None:
+    """Round-5 review: when the new backends are absent, hybrid routes to the
+    legacy ``_hybrid_search`` stack which bypassed the cap entirely."""
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._fts_backend = None
+    daemon._vector_backend = None
+    daemon._permission_enforcer = None
+    daemon.last_search_timing = {}
+    daemon.config = DaemonConfig(page_aggregation=True, chunks_per_page=1)
+
+    def _track_latency(self: Any, latency_ms: float) -> None:
+        self._last_latency_ms = latency_ms
+
+    async def _attach_path_contexts(
+        self: Any, results: Any, *, zone_id: str, **_attach_kwargs: Any
+    ) -> None:
+        return None
+
+    legacy_limits: list[int] = []
+
+    async def _hybrid_search(
+        self: Any,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+        alpha: float,
+        fusion_method: str,
+        *,
+        zone_id: str | None = None,
+    ) -> list[SearchResult]:
+        legacy_limits.append(limit)
+        rows = [_chunk("/long.md", i, 10.0 - i) for i in range(4)] + [
+            _chunk("/other-a.md", 0, 5.0),
+            _chunk("/other-b.md", 0, 4.0),
+        ]
+        return rows[:limit]
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
+        return []
+
+    daemon._track_latency = MethodType(_track_latency, daemon)
+    daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
+    daemon._hybrid_search = MethodType(_hybrid_search, daemon)
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    results = await daemon.search("q", search_type="hybrid", limit=3, zone_id="root")
+
+    paths = [r.path for r in results]
+    assert paths == ["/long.md", "/other-a.md", "/other-b.md"]
+    # Legacy stack was asked for a wider window so the cap could backfill.
+    assert legacy_limits[0] > 3
+
+
+@pytest.mark.asyncio
+async def test_leg_windows_widen_so_backfill_survives_saturated_prefix() -> None:
+    """Round-5 review: with limit=4 and cap=1, eight leading one-doc chunks
+    saturated the old limit*2 leg windows; alternatives at ranks 9-10 were
+    never fetched and the response underfilled."""
+
+    class _SlicingBackend:
+        def __init__(self, rows: list[SearchResult]) -> None:
+            self._rows = rows
+
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[SearchResult]:
+            return list(self._rows)[:limit]
+
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[SearchResult]:
+            return list(self._rows)[:limit]
+
+    rows = [_chunk("/long.md", i, 10.0 - i * 0.1) for i in range(8)] + [
+        _chunk("/other-a.md", 0, 5.0),
+        _chunk("/other-b.md", 0, 4.0),
+    ]
+    backend = _SlicingBackend(rows)
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon.config = DaemonConfig(page_aggregation=True, chunks_per_page=1)
+    daemon._fts_backend = backend
+    daemon._vector_backend = backend
+
+    async def _embed_query(self: Any, query: str) -> list[float]:
+        return [0.1, 0.2]
+
+    daemon._embed_query = MethodType(_embed_query, daemon)
+
+    results = await daemon._search_via_backends(
+        "query", search_type="hybrid", limit=4, path_filter=None, zone_id="root"
+    )
+
+    paths = [r.path for r in results]
+    assert paths == ["/long.md", "/other-a.md", "/other-b.md"]

@@ -20,6 +20,7 @@ Design decisions (from review):
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import time
@@ -497,15 +498,29 @@ class FederatedSearchDispatcher:
         filter, so without it a broadly-scoped request could seed a cache
         entry that a later narrowly-scoped token would read back — leaking
         results from zones outside that token's scope (#4541 review).
+
+        Canonical-JSON serialization (round-5 review): delimiter
+        concatenation allowed cross-field collisions — subject_id
+        ``alice|foo`` + query ``bar`` hashed identically to ``alice`` +
+        ``foo|bar`` — and cache lookup precedes ReBAC, so a collision would
+        leak another subject's results. JSON escaping makes field
+        boundaries unambiguous, and the empty allow-list (``[]``, zero
+        zones) stays distinct from the wildcard (``null``).
         """
-        # None means "no allow-list" (wildcard); an EMPTY set means "access
-        # to zero zones" and must not collide with the wildcard entry, or an
-        # unrestricted request could seed a cache entry that an empty-scoped
-        # token reads back (#4541 review).
-        zone_scope = "*" if zone_filter is None else "zf:" + ",".join(sorted(zone_filter))
-        raw = (
-            f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
-            f"|{alpha}|{fusion_method}|{rrf_k}|{zone_scope}"
+        raw = json.dumps(
+            [
+                subject[0],
+                subject[1],
+                query,
+                search_type,
+                limit,
+                path_filter,
+                alpha,
+                fusion_method,
+                rrf_k,
+                sorted(zone_filter) if zone_filter is not None else None,
+            ],
+            separators=(",", ":"),
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 

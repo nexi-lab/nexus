@@ -21,6 +21,7 @@ CREATE TABLE path_contexts (
     zone_id TEXT NOT NULL DEFAULT 'root',
     path_prefix TEXT NOT NULL,
     description TEXT NOT NULL,
+    weight FLOAT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(zone_id, path_prefix)

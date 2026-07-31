@@ -36,6 +36,8 @@ class PathContextRecord:
     description: str
     created_at: datetime
     updated_at: datetime
+    # Issue #4544: per-prefix ranking weight; None ≡ 1.0 (no boost).
+    weight: float | None = None
 
 
 class PathContextStore:
@@ -48,8 +50,14 @@ class PathContextStore:
         self._async_session_factory = async_session_factory
         self._db_type = db_type
 
-    async def upsert(self, zone_id: str, path_prefix: str, description: str) -> None:
-        """Insert or replace a context row. updated_at refreshed on replace."""
+    async def upsert(
+        self, zone_id: str, path_prefix: str, description: str, weight: float | None = None
+    ) -> None:
+        """Insert or replace a context row. updated_at refreshed on replace.
+
+        When weight is omitted (None), an upsert clears any existing weight on the row
+        (PUT-replace semantics: the row is fully replaced, not merged).
+        """
         now = datetime.now(UTC).replace(tzinfo=None)
         async with self._async_session_factory() as session:
             if self._db_type == "postgresql":
@@ -57,11 +65,12 @@ class PathContextStore:
                     text(
                         """
                         INSERT INTO path_contexts
-                            (zone_id, path_prefix, description, created_at, updated_at)
+                            (zone_id, path_prefix, description, weight, created_at, updated_at)
                         VALUES
-                            (:zone_id, :path_prefix, :description, :now, :now)
+                            (:zone_id, :path_prefix, :description, :weight, :now, :now)
                         ON CONFLICT (zone_id, path_prefix) DO UPDATE
                         SET description = EXCLUDED.description,
+                            weight      = EXCLUDED.weight,
                             updated_at  = EXCLUDED.updated_at
                         """
                     ),
@@ -69,6 +78,7 @@ class PathContextStore:
                         "zone_id": zone_id,
                         "path_prefix": path_prefix,
                         "description": description,
+                        "weight": weight,
                         "now": now,
                     },
                 )
@@ -81,11 +91,12 @@ class PathContextStore:
                     text(
                         """
                         INSERT INTO path_contexts
-                            (zone_id, path_prefix, description, created_at, updated_at)
+                            (zone_id, path_prefix, description, weight, created_at, updated_at)
                         VALUES
-                            (:zone_id, :path_prefix, :description, :now, :now)
+                            (:zone_id, :path_prefix, :description, :weight, :now, :now)
                         ON CONFLICT (zone_id, path_prefix) DO UPDATE
                         SET description = excluded.description,
+                            weight      = excluded.weight,
                             updated_at  = excluded.updated_at
                         """
                     ),
@@ -93,6 +104,7 @@ class PathContextStore:
                         "zone_id": zone_id,
                         "path_prefix": path_prefix,
                         "description": description,
+                        "weight": weight,
                         "now": now,
                     },
                 )
@@ -120,7 +132,8 @@ class PathContextStore:
         the DB-creation locale, which is typically case/accent-insensitive).
         """
         query = (
-            "SELECT zone_id, path_prefix, description, created_at, updated_at FROM path_contexts"
+            "SELECT zone_id, path_prefix, description, weight, created_at, updated_at "
+            "FROM path_contexts"
         )
         params: dict[str, Any] = {}
         if zone_id is not None:
@@ -137,8 +150,9 @@ class PathContextStore:
                 zone_id=row[0],
                 path_prefix=row[1],
                 description=row[2],
-                created_at=_coerce_datetime(row[3]),
-                updated_at=_coerce_datetime(row[4]),
+                weight=row[3],
+                created_at=_coerce_datetime(row[4]),
+                updated_at=_coerce_datetime(row[5]),
             )
             for row in rows
         ]

@@ -21,6 +21,7 @@ CREATE TABLE path_contexts (
     zone_id TEXT NOT NULL DEFAULT 'root',
     path_prefix TEXT NOT NULL,
     description TEXT NOT NULL,
+    weight FLOAT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(zone_id, path_prefix)
@@ -328,3 +329,30 @@ class TestPathContextCacheLRU:
         # review feedback. Re-accessing z1 creates a fresh entry using the
         # same Lock object, preserving mutual-exclusion identity.
         assert "z1" in cache._locks
+
+
+class TestWeightColumn:
+    """Issue #4544: nullable per-prefix ranking weight."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_and_list_weight_roundtrip(self, store) -> None:
+        await store.upsert("root", "chat/logs", "Chat transcripts", weight=0.5)
+        records = await store.list("root")
+        rec = next(r for r in records if r.path_prefix == "chat/logs")
+        assert rec.weight == 0.5
+
+    @pytest.mark.asyncio
+    async def test_weight_defaults_to_none(self, store) -> None:
+        await store.upsert("root", "docs/curated", "Curated docs")
+        records = await store.list("root")
+        rec = next(r for r in records if r.path_prefix == "docs/curated")
+        assert rec.weight is None
+
+    @pytest.mark.asyncio
+    async def test_upsert_without_weight_resets_existing_weight(self, store) -> None:
+        # PUT-replace semantics: an upsert that omits weight clears it.
+        await store.upsert("root", "chat/logs", "Chat transcripts", weight=0.5)
+        await store.upsert("root", "chat/logs", "Chat transcripts v2")
+        records = await store.list("root")
+        rec = next(r for r in records if r.path_prefix == "chat/logs")
+        assert rec.weight is None

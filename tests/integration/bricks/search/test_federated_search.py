@@ -13,7 +13,7 @@ Tests each responsibility in isolation with mocks:
 import asyncio
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -1441,3 +1441,71 @@ class TestRound10Hardening:
         assert seen["search_type"] == "hybrid"  # 13B promotion happened
         assert seen["alpha"] == 1.0
         assert seen["fusion_method"] == "rrf_weighted"  # not weighted
+
+
+class TestRecencyKnobs:
+    """Issue #4543: recency knobs must segregate cache entries and reach
+    local zones' daemon.search; remote RPC params stay untouched."""
+
+    def _dispatcher(self) -> Any:
+        from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+
+        return FederatedSearchDispatcher(daemon=MagicMock(), rebac=MagicMock())
+
+    def test_cache_key_includes_recency_knobs(self) -> None:
+        d = self._dispatcher()
+        base = d._make_cache_key("q", ("user", "u"), "hybrid", 10, None, 0.5, "rrf", 60)
+        with_mode = d._make_cache_key(
+            "q", ("user", "u"), "hybrid", 10, None, 0.5, "rrf", 60, recency="on"
+        )
+        with_weight = d._make_cache_key(
+            "q",
+            ("user", "u"),
+            "hybrid",
+            10,
+            None,
+            0.5,
+            "rrf",
+            60,
+            recency="on",
+            recency_weight=1.0,
+        )
+        assert base != with_mode
+        assert with_mode != with_weight
+
+    @pytest.mark.asyncio
+    async def test_local_zone_receives_recency_knobs(self) -> None:
+        """_search_zone must forward the knobs to daemon.search for local
+        zones (remote zones are exercised by existing rrf_k-omission tests)."""
+        d = self._dispatcher()
+        daemon = MagicMock()
+        daemon.search = AsyncMock(return_value=[])
+        d._get_daemon_for_zone = MagicMock(return_value=daemon)
+
+        await d._search_zone(
+            "zone-a",
+            "q",
+            "hybrid",
+            10,
+            None,
+            0.5,
+            "rrf",
+            rrf_k=60,
+            recency="auto",
+            recency_weight=0.4,
+            recency_half_life_days=14.0,
+        )
+        kwargs = daemon.search.call_args.kwargs
+        assert kwargs["recency"] == "auto"
+        assert kwargs["recency_weight"] == 0.4
+        assert kwargs["recency_half_life_days"] == 14.0
+
+    def test_strip_none_recency_boost_from_federated_dicts(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+        from nexus.bricks.search.results import BaseSearchResult
+
+        r = BaseSearchResult(path="/a", chunk_text="x", score=1.0, chunk_index=0)
+        assert "recency_boost" not in _result_to_dict(r)
+
+        r.recency_boost = 1.2
+        assert _result_to_dict(r)["recency_boost"] == 1.2

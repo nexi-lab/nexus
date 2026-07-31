@@ -418,6 +418,9 @@ class FederatedSearchDispatcher:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
+        recency: str | None = None,
+        recency_weight: float | None = None,
+        recency_half_life_days: float | None = None,
         subject: tuple[str, str] | None = None,
         rrf_k: int = 60,
     ) -> list[Any]:
@@ -437,9 +440,13 @@ class FederatedSearchDispatcher:
         # Phase 2: Check if this zone has a remote transport in the registry.
         # If so, search via gRPC with a SearchDelegation credential.
         # rrf_k travels on the wire like alpha/fusion_method so the payload is
-        # complete whenever the remote side can serve it. KNOWN GAP (pre-#4541,
-        # applies to every field including query): the remote ``search`` RPC is
-        # rejected by ``parse_method_params`` as an unknown method — it has no
+        # complete whenever the remote side can serve it. The recency knobs
+        # (recency / recency_weight / recency_half_life_days, #4543) are
+        # intentionally NOT forwarded — older remote nodes reject unknown
+        # search params, so remote zones stay unboosted until the RPC surface
+        # is versioned. KNOWN GAP (pre-#4541, applies to every field including
+        # query): the remote ``search`` RPC is rejected by
+        # ``parse_method_params`` as an unknown method — it has no
         # METHOD_PARAMS schema and is not @rpc_expose'd — so registry-remote
         # zones currently land in ``zones_failed`` and no fusion knob (or any
         # param) reaches them. Tracked as #4556; fixing the RPC
@@ -467,6 +474,9 @@ class FederatedSearchDispatcher:
             alpha=effective_alpha,
             fusion_method=effective_fusion,
             rrf_k=rrf_k,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
             zone_id=zone_id,
         )
 
@@ -583,13 +593,17 @@ class FederatedSearchDispatcher:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         rrf_k: int = 60,
+        recency: str | None = None,
+        recency_weight: float | None = None,
+        recency_half_life_days: float | None = None,
         zone_filter: frozenset[str] | None = None,
     ) -> str:
         """Phase 3: Create a cache key for result caching.
 
         Fusion knobs are part of the key: they change result ordering now
         that the daemon honours them (#4541), so requests differing only in
-        alpha / fusion_method / rrf_k must not share a cache entry.
+        alpha / fusion_method / rrf_k must not share a cache entry. The
+        recency knobs (#4543) are included for the same reason.
 
         The token's zone allow-list (#3785) is also part of the key: cache
         lookup happens before accessible zones are intersected with the
@@ -616,6 +630,9 @@ class FederatedSearchDispatcher:
                 alpha,
                 fusion_method,
                 rrf_k,
+                recency,
+                recency_weight,
+                recency_half_life_days,
                 sorted(zone_filter) if zone_filter is not None else None,
             ],
             separators=(",", ":"),
@@ -682,6 +699,9 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        recency: str | None = None,
+        recency_weight: float | None = None,
+        recency_half_life_days: float | None = None,
         zone_filter: frozenset[str] | None = None,  # NEW (#3785)
         rrf_k: int = 60,
     ) -> FederatedSearchResponse:
@@ -704,6 +724,9 @@ class FederatedSearchDispatcher:
                 alpha=alpha,
                 fusion_method=fusion_method,
                 rrf_k=rrf_k,
+                recency=recency,
+                recency_weight=recency_weight,
+                recency_half_life_days=recency_half_life_days,
                 zone_filter=zone_filter,
             )
         except Exception:
@@ -737,6 +760,9 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        recency: str | None = None,
+        recency_weight: float | None = None,
+        recency_half_life_days: float | None = None,
         zone_filter: frozenset[str] | None = None,  # NEW (#3785)
         rrf_k: int = 60,
     ) -> FederatedSearchResponse:
@@ -752,6 +778,13 @@ class FederatedSearchDispatcher:
             fusion_method: Fusion method for intra-zone hybrid search.
             rrf_k: RRF rank constant for intra-zone hybrid fusion (#4541).
                 Applied to local zones only; remote zones use their default.
+            recency: Recency boost mode override (#4543). Like rrf_k,
+                applied to LOCAL zones only — older remote nodes reject
+                unknown search params, so remote zones stay unboosted until
+                the RPC surface is versioned.
+            recency_weight: Recency boost weight override (local zones only).
+            recency_half_life_days: Recency half-life override (local zones
+                only).
             zone_filter: Optional upper-bound zone allow-list. When set,
                 intersects with accessible_zones to enforce per-token zone
                 scoping (#3785).
@@ -771,6 +804,9 @@ class FederatedSearchDispatcher:
             alpha,
             fusion_method,
             rrf_k,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
             zone_filter=zone_filter,
         )
         cached = self._get_cached_result(cache_key, start=start)
@@ -854,6 +890,9 @@ class FederatedSearchDispatcher:
                         alpha,
                         fusion_method,
                         rrf_k=rrf_k,
+                        recency=recency,
+                        recency_weight=recency_weight,
+                        recency_half_life_days=recency_half_life_days,
                         subject=subject,
                     ),
                     timeout=self._config.zone_timeout_seconds,
@@ -915,6 +954,9 @@ class FederatedSearchDispatcher:
                             alpha,
                             fusion_method,
                             rrf_k=rrf_k,
+                            recency=recency,
+                            recency_weight=recency_weight,
+                            recency_half_life_days=recency_half_life_days,
                             subject=subject,
                         ),
                         timeout=self._config.zone_timeout_seconds,
@@ -1133,11 +1175,12 @@ def _merge_by_raw_score(
 
 def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     """Match the non-federated router's omit-when-None contract for
-    ``context`` (Issue #3773, review Rounds 5-6) and ``tier_boost``
-    (Issue #4544): every federated emission path must route through this so
+    ``context`` (Issue #3773, review Rounds 5-6), ``tier_boost``
+    (Issue #4544), ``title_score`` (Issue #4545) and ``recency_boost``
+    (Issue #4543): every federated emission path must route through this so
     ``null`` never leaks onto the wire and the fusion strategies stay
     shape-consistent."""
-    for key in ("context", "tier_boost", "title_score"):
+    for key in ("context", "tier_boost", "title_score", "recency_boost"):
         if d.get(key) is None:
             d.pop(key, None)
     # Issue #4544: round surviving tier_boost to 4 places to match the

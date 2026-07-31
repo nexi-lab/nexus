@@ -28,6 +28,7 @@ from typing import Any
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.fusion import rrf_multi_fusion
+from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 
 logger = logging.getLogger(__name__)
@@ -740,7 +741,11 @@ class FederatedSearchDispatcher:
             fused_results = [_strip_none_context(d) for d in fused_results]
         else:
             # Raw score merge-sort: for homogeneous zones (default)
-            fused_results = _merge_by_raw_score(zone_result_lists, limit)
+            fused_results = _merge_by_raw_score(
+                zone_result_lists,
+                limit,
+                chunks_per_page=self._pooling_chunks_per_page(),
+            )
 
         resp = FederatedSearchResponse(
             results=fused_results,
@@ -752,6 +757,21 @@ class FederatedSearchDispatcher:
         )
         self._cache_result(cache_key, resp)
         return resp
+
+    def _pooling_chunks_per_page(self) -> int | None:
+        """Per-document pooling cap for the flat merge (Issue #4542).
+
+        Reads the default daemon's ``DaemonConfig`` — the single place where
+        NEXUS_SEARCH_PAGE_AGGREGATION / NEXUS_SEARCH_CHUNKS_PER_PAGE land —
+        so one env toggle governs both single-zone and federated pooling.
+        The strict ``is True`` / ``isinstance`` checks keep Mock daemons
+        (tests) from enabling pooling via auto-created attributes.
+        """
+        cfg = getattr(self._daemon, "config", None)
+        if getattr(cfg, "page_aggregation", None) is not True:
+            return None
+        cap = getattr(cfg, "chunks_per_page", None)
+        return cap if isinstance(cap, int) and cap > 0 else None
 
     def invalidate_zone_cache(self, subject: tuple[str, str] | None = None) -> None:
         """Invalidate zone discovery cache."""
@@ -769,6 +789,8 @@ class FederatedSearchDispatcher:
 def _merge_by_raw_score(
     zone_result_lists: list[tuple[str, list[Any]]],
     limit: int,
+    *,
+    chunks_per_page: int | None = None,
 ) -> list[dict[str, Any]]:
     """Merge results from multiple zones by the daemon's score (global sort).
 
@@ -786,8 +808,15 @@ def _merge_by_raw_score(
     """
     all_results: list[dict[str, Any]] = []
     for _zone_id, results in zone_result_lists:
-        for r in results:
-            all_results.append(_result_to_dict(r))
+        zone_dicts = [_result_to_dict(r) for r in results]
+        # Issue #4542: pool per zone (not on the concatenated list) so the
+        # same path in two zones stays two distinct documents. Local-zone
+        # results already collapse to one chunk per doc via the page-grain
+        # zone_qualified_path dedup below; this cap matters for remote-zone
+        # dicts whose dedup key falls back to chunk grain.
+        if chunks_per_page is not None:
+            zone_dicts = _aggregate_chunks_to_pages(zone_dicts, chunks_per_page=chunks_per_page)
+        all_results.extend(zone_dicts)
 
     # Dedup by zone_qualified_path, keeping highest score
     seen: dict[str, dict[str, Any]] = {}

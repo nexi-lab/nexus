@@ -239,7 +239,7 @@ async def test_keyword_backend_timing_records_keyword_and_total() -> None:
 
 @pytest.mark.asyncio
 async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
-    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
     from nexus.bricks.search.pg_fts_backend import PgFtsBackend
     from nexus.bricks.search.results import BaseSearchResult
 
@@ -298,6 +298,7 @@ async def test_pg_hybrid_backend_timing_records_each_leg() -> None:
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon.last_search_timing = {}
+    daemon.config = DaemonConfig()
     daemon._fts_backend = FakePgFtsBackend()
     daemon._vector_backend = FakeVectorBackend()
     daemon._embed_query = MethodType(_embed_query, daemon)

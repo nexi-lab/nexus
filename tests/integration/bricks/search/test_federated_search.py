@@ -1189,3 +1189,22 @@ class TestTierBoostTrustBoundary:
         )
         d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.123456})
         assert d["tier_boost"] == 0.1235
+
+    def test_huge_json_integer_dropped_not_crash(self) -> None:
+        # Codex review R8: float(10**400) raises OverflowError — must drop
+        # the field, never abort fusion.
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 10**400})
+        assert "tier_boost" not in d
+
+    def test_out_of_range_attribution_dropped(self) -> None:
+        # Mirrors the 0.1-10.0 API validation range.
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": 100.0}
+        )
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": 0.01}
+        )

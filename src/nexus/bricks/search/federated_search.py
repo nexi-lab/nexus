@@ -887,8 +887,23 @@ def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     # round() TypeError.
     tb = d.get("tier_boost")
     if tb is not None:
-        if isinstance(tb, (int, float)) and not isinstance(tb, bool) and math.isfinite(tb):
-            d["tier_boost"] = round(tb, 4)
+        keep = False
+        value = 0.0
+        if isinstance(tb, (int, float)) and not isinstance(tb, bool):
+            try:
+                # float() on an astronomically large JSON int raises
+                # OverflowError (Codex review R8) — that too must drop the
+                # field, never abort the fusion.
+                value = float(tb)
+            except OverflowError:
+                keep = False
+            else:
+                # Enforce the documented attribution range (mirrors the
+                # 0.1–10.0 API validation) — a value outside it cannot be a
+                # legitimately stamped weight.
+                keep = math.isfinite(value) and 0.1 <= value <= 10.0
+        if keep:
+            d["tier_boost"] = round(value, 4)
         else:
             d.pop("tier_boost", None)
     return d

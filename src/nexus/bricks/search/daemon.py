@@ -357,6 +357,13 @@ class DaemonConfig:
     page_bm25: bool = True
     page_bm25_rrf_k: int = 60
 
+    # Skeleton title arm in hybrid fusion (Issue #4545). Runs locate() —
+    # BM25-lite over path tokens + title (document_skeleton mirror) — as a
+    # third arm of the keyword sub-fusion so title-shaped queries rank docs
+    # whose body chunks are weak. Rank-based: contributes only where it has
+    # hits. Default on; set NEXUS_SEARCH_TITLE_ARM=false to disable.
+    title_arm: bool = True
+
     # Per-directory semantic index scoping (Issue #3698).
     # ``scope_refresh_seconds`` controls how often the daemon re-reads
     # ``zones.indexing_mode`` and ``indexed_directories`` from the DB

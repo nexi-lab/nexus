@@ -203,6 +203,9 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     "Invalid NEXUS_SEARCH_PAGE_BM25_RRF_K=%r — falling back to 60",
                     _page_bm25_rrf_k_env,
                 )
+        # Skeleton title arm in hybrid fusion (Issue #4545). Default on.
+        _title_arm_env = os.environ.get("NEXUS_SEARCH_TITLE_ARM", "true")
+        _title_arm = _title_arm_env.strip().lower() not in ("false", "0", "no")
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
@@ -223,6 +226,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             chunks_per_page=_chunks_per_page,
             page_bm25=_page_bm25,
             page_bm25_rrf_k=_page_bm25_rrf_k,
+            title_arm=_title_arm,
             index_preload_enabled=_index_preload,
         )
 

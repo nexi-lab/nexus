@@ -25,3 +25,10 @@ def test_coerce_preserves_title_score_from_dataclass() -> None:
     base = BaseSearchResult(path="/a.md", chunk_text="x", score=1.0, title_score=2.5)
     res = SearchDaemon._coerce_to_search_result(base, search_type="hybrid")
     assert res.title_score == 2.5
+
+
+def test_daemon_config_title_arm_defaults_on() -> None:
+    from nexus.bricks.search.daemon import DaemonConfig
+
+    assert DaemonConfig().title_arm is True
+    assert DaemonConfig(title_arm=False).title_arm is False

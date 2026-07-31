@@ -21,7 +21,7 @@ _BACKEND_TIMING_KEYS = {
 
 
 def _daemon_with_backend_result(search_type_seen: list[str]) -> Any:
-    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._initialized = True
@@ -29,6 +29,7 @@ def _daemon_with_backend_result(search_type_seen: list[str]) -> Any:
     daemon._vector_backend = object()
     daemon._permission_enforcer = None
     daemon.last_search_timing = {}
+    daemon.config = DaemonConfig()
 
     def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms
@@ -120,7 +121,7 @@ async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exis
 
 @pytest.mark.asyncio
 async def test_concurrent_searches_return_request_local_timing_snapshots() -> None:
-    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._initialized = True
@@ -128,6 +129,7 @@ async def test_concurrent_searches_return_request_local_timing_snapshots() -> No
     daemon._vector_backend = object()
     daemon._permission_enforcer = None
     daemon.last_search_timing = {}
+    daemon.config = DaemonConfig()
 
     first_recorded = asyncio.Event()
     second_recorded = asyncio.Event()

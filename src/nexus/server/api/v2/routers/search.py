@@ -327,8 +327,12 @@ async def search_query(
     start_time = time.perf_counter()
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
-    zone_set_raw = auth_result.get("zone_set") or [zone_id]
-    zone_set = tuple(zone_set_raw)
+    # Raw credential scope vs synthesized routing scope: an EMPTY zone_set is
+    # the auth contract for unconstrained credentials (admin/internal keys) —
+    # only the synthesized fallback below uses the active zone_id, and that
+    # must never be treated as a token allow-list (#4541 review round 5).
+    raw_zone_set = tuple(auth_result.get("zone_set") or ())
+    zone_set = raw_zone_set or (zone_id,)
     # #3785: auto-promote to federated when token grants multiple zones,
     # even if caller didn't pass federated=true. Single-zone tokens
     # (zone_set == (zone_id,)) hit the unchanged single-zone path.
@@ -364,14 +368,19 @@ async def search_query(
 
     target_zone = zone_id if zone_id != ROOT_ZONE_ID else None
 
-    # Token zone allow-list for the federated path (#3785). A singleton
-    # non-root zone_set must scope federation too: without it, a single-zone
-    # token requesting federated=true reached the dispatcher with no filter
-    # and searched every subject-accessible zone, bypassing the token's
-    # allow-list (#4541 review round 3). Root-scoped tokens stay unrestricted
-    # — the root zone grants cross-zone access by definition, and its zone id
-    # would never intersect with concrete zone names.
-    fed_zone_filter = frozenset(zone_set) if set(zone_set) != {ROOT_ZONE_ID} else None
+    # Token zone allow-list for the federated path (#3785). An EXPLICIT
+    # singleton non-root zone_set must scope federation too: without it, a
+    # single-zone token requesting federated=true reached the dispatcher with
+    # no filter and searched every subject-accessible zone, bypassing the
+    # token's allow-list (#4541 review round 3). Unrestricted stays None for:
+    # an empty raw scope (unconstrained/admin credentials — the synthesized
+    # zone_id fallback is routing metadata, not an allow-list) and a scope of
+    # exactly {root} (root grants cross-zone access and its id never
+    # intersects concrete zone names). A multi-zone scope that happens to
+    # include root keeps its pre-existing filtered behaviour.
+    fed_zone_filter = (
+        frozenset(raw_zone_set) if raw_zone_set and set(raw_zone_set) != {ROOT_ZONE_ID} else None
+    )
 
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---

@@ -137,6 +137,33 @@ class TestSearchZoneSet:
         assert resp.status_code == 200, resp.text
         assert captured["zone_filter"] == frozenset({"eng"})
 
+    def test_unconstrained_admin_federated_stays_unrestricted(self, monkeypatch):
+        """#4541 review round 5: an EMPTY zone_set is the auth contract for
+        unconstrained credentials — the synthesized active-zone fallback must
+        not become a hard allow-list under federated=true."""
+        from nexus.server.api.v2.routers import search as search_mod
+        from nexus.server.dependencies import require_auth
+
+        app = self._build_app(["eng"])
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "admin_user",
+            "zone_id": "eng",  # active routing zone, NOT a token allow-list
+            "zone_set": [],
+        }
+        client = TestClient(app)
+
+        captured = {}
+
+        async def fake_federated(*, zone_filter=None, **kwargs):
+            captured["zone_filter"] = zone_filter
+            return {"results": [], "federated": True}
+
+        monkeypatch.setattr(search_mod, "_handle_federated_search", fake_federated)
+        resp = client.get("/api/v2/search/query?q=alpha&federated=true")
+        assert resp.status_code == 200, resp.text
+        assert captured["zone_filter"] is None
+
     def test_root_token_federated_stays_unrestricted(self, monkeypatch):
         """Root-scoped tokens keep wildcard federation: the root zone grants
         cross-zone access and its id never matches concrete zone names."""

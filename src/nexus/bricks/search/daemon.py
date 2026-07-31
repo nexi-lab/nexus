@@ -156,7 +156,14 @@ class SearchResult(BaseSearchResult):
 
 
 class SearchResultList(list[SearchResult]):
-    """Search results plus a request-local timing snapshot."""
+    """Search results plus a request-local timing snapshot.
+
+    ``semantic_degraded`` carries request-level degradation (#3778 marker for
+    #4541 review R8): per-result stamping alone loses the signal when the
+    degraded response is EMPTY, so the daemon also flags the list itself.
+    """
+
+    semantic_degraded: bool = False
 
     def __init__(
         self,
@@ -459,7 +466,13 @@ class SearchDaemon:
         self._search_timing_var().set(dict(value))
 
     def _with_search_timing(self, results: Iterable[SearchResult]) -> SearchResultList:
-        return SearchResultList(results, search_timing=self.last_search_timing)
+        wrapped = SearchResultList(results, search_timing=self.last_search_timing)
+        # Preserve request-level degradation set by the degraded hybrid
+        # branches — it must survive re-wrapping even when the list is empty
+        # (#4541 review R8).
+        if getattr(results, "semantic_degraded", False):
+            wrapped.semantic_degraded = True
+        return wrapped
 
     def __init__(
         self,
@@ -2385,14 +2398,16 @@ class SearchDaemon:
                 )
                 timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
                 record_total()
-                coerced = [
+                coerced = SearchResultList(
                     self._coerce_to_search_result(item, search_type=search_type) for item in fused
-                ]
+                )
                 # The dense leg is missing entirely, so a semantic-weighted
                 # request may legitimately score everything 0.0 — stamp the
                 # #3778 degradation marker so callers can distinguish
                 # "semantic retrieval failed" from a genuine ranking
-                # (#4541 review round 6).
+                # (#4541 review round 6). The list-level flag survives even
+                # when the response is empty (round 8).
+                coerced.semantic_degraded = True
                 for coerced_result in coerced:
                     coerced_result.semantic_degraded = True
                 return coerced
@@ -2425,16 +2440,30 @@ class SearchDaemon:
                 timing["page_keyword_ms"] = (time.perf_counter() - page_start) * 1000
                 return keyword_candidates[:keyword_limit], page_results
 
-            (chunk_kw, page_kw), dense = await asyncio.gather(
+            kw_outcome, dense_outcome = await asyncio.gather(
                 timed_pg_keyword_legs(),
                 timed_leg(
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
                 ),
-                return_exceptions=False,
+                return_exceptions=True,
             )
+            # Keyword-leg failures propagate as before; only the dense leg is
+            # fail-soft — a pgvector/connection error degrades to keyword-only
+            # (empty dense leg, stamped below for non-default requests)
+            # instead of aborting the whole hybrid query (#4541 review R8).
+            if isinstance(kw_outcome, BaseException):
+                raise kw_outcome
+            chunk_kw, page_kw = kw_outcome
+            if isinstance(dense_outcome, BaseException):
+                logger.warning(
+                    "hybrid dense leg failed; continuing keyword-only: %s", dense_outcome
+                )
+                dense = []
+            else:
+                dense = dense_outcome
         else:
-            chunk_kw, dense = await asyncio.gather(
+            kw_outcome, dense_outcome = await asyncio.gather(
                 timed_leg(
                     "keyword_ms",
                     self._fts_backend.keyword_search(
@@ -2445,8 +2474,18 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
                 ),
-                return_exceptions=False,
+                return_exceptions=True,
             )
+            if isinstance(kw_outcome, BaseException):
+                raise kw_outcome
+            chunk_kw = kw_outcome
+            if isinstance(dense_outcome, BaseException):
+                logger.warning(
+                    "hybrid dense leg failed; continuing keyword-only: %s", dense_outcome
+                )
+                dense = []
+            else:
+                dense = dense_outcome
             page_kw = []
 
         # Fuse keyword legs first (chunk + page) with plain RRF, then fuse
@@ -2467,15 +2506,17 @@ class SearchDaemon:
             fused = _aggregate_chunks_to_pages(fused, chunks_per_page=self.config.chunks_per_page)
         timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
         record_total()
-        hybrid_results = [
+        hybrid_results = SearchResultList(
             self._coerce_to_search_result(item, search_type="hybrid") for item in fused
-        ]
-        # Embedding succeeded but the dense leg came back empty (empty or
-        # mismatched vector index): a non-default fusion request is ranking
-        # on keyword legs alone — stamp the #3778 marker like the qvec-None
-        # branch does. Default requests stay unstamped (byte-identical)
-        # (#4541 review round 7).
+        )
+        # Embedding succeeded but the dense leg came back empty or failed
+        # (fail-soft above): a non-default fusion request is ranking on
+        # keyword legs alone — stamp the #3778 marker like the qvec-None
+        # branch does, on the list too so empty responses keep the signal.
+        # Default requests stay unstamped (byte-identical) (#4541 review
+        # rounds 7-8).
         if not dense and (fusion_method != FusionMethod.RRF.value or rrf_k != 60):
+            hybrid_results.semantic_degraded = True
             for hybrid_result in hybrid_results:
                 hybrid_result.semantic_degraded = True
         return hybrid_results
@@ -3060,11 +3101,15 @@ class SearchDaemon:
         # default contract reconstructs the legacy shape below
         # (#4541 review round 6).
         if fusion_method != FusionMethod.RRF.value or rrf_k != 60:
-            coerced = [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+            coerced = SearchResultList(
+                self._coerce_to_search_result(item, search_type="hybrid") for item in fused
+            )
             # Semantic leg failed or returned nothing: the non-default fusion
-            # ranked on keyword results alone — stamp the #3778 marker so
-            # callers can tell (#4541 review round 7).
+            # ranked on keyword results alone — stamp the #3778 marker (list-
+            # level too, so empty responses keep the signal) (#4541 review
+            # rounds 7-8).
             if not sem_results:
+                coerced.semantic_degraded = True
                 for coerced_result in coerced:
                     coerced_result.semantic_degraded = True
             return coerced

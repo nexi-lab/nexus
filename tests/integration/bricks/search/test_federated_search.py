@@ -627,6 +627,30 @@ class TestResultCaching:
         assert {r["zone_id"] for r in narrow2.results} == {"zone_a"}
 
     @pytest.mark.asyncio
+    async def test_weighted_fusion_merges_by_rank_not_raw_score(self) -> None:
+        """#4541 review round 8: weighted fusion min-max normalizes scores
+        per zone, so cross-zone merge must be rank-based — a weak zone's 1.0
+        top hit must not displace a strong zone's runner-up wholesale."""
+        daemon = _make_daemon(
+            {
+                "zone_a": [_make_result("a1.txt", 1.0), _make_result("a2.txt", 0.2)],
+                "zone_b": [_make_result("b1.txt", 0.99), _make_result("b2.txt", 0.98)],
+            }
+        )
+        rebac = _make_rebac(["zone_a", "zone_b"])
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
+
+        resp = await dispatcher.search(
+            "test", subject=("user", "alice"), fusion_method="weighted", alpha=0.5
+        )
+
+        paths = [r["path"] for r in resp.results]
+        # Raw-score merge would order [a1, b1, b2, a2] (shard-local scores
+        # compared globally); rank-based fusion pairs equal ranks across
+        # zones: [a1, b1] (rank 1) then [a2, b2] (rank 2).
+        assert paths == ["a1.txt", "b1.txt", "a2.txt", "b2.txt"]
+
+    @pytest.mark.asyncio
     async def test_positional_zone_filter_signature_unchanged(self) -> None:
         """#4541 review round 3: rrf_k sits AFTER zone_filter so a legacy
         positional call ending in the allow-list set still binds it to

@@ -570,6 +570,14 @@ async def _handle_single_zone_search(
         backend_ms = daemon_timing.get("backend_ms", 0.0)
         rerank_ms = daemon_timing.get("rerank_ms", 0.0)
 
+        # Capture request-level degradation BEFORE the ReBAC filter — it
+        # returns a plain list, dropping the SearchResultList flag. The
+        # list-level flag matters for EMPTY degraded responses, where no
+        # per-result marker exists (#4541 review round 8).
+        semantic_degraded_flag = bool(getattr(results, "semantic_degraded", False)) or any(
+            getattr(r, "semantic_degraded", None) for r in results
+        )
+
         # ReBAC file-level filtering (Decision #17)
         pre_filter_count = len(results)
         results, filter_ms = _apply_rebac_filter(
@@ -603,6 +611,9 @@ async def _handle_single_zone_search(
             "latency_breakdown": latency_breakdown,
             **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
+        # Truthy-only so default responses stay byte-identical (#3778 shape).
+        if semantic_degraded_flag:
+            response["semantic_degraded"] = True
         if routing_info:
             response["routing"] = routing_info
         return response

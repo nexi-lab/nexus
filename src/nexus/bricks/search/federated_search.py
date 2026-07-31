@@ -788,8 +788,18 @@ class FederatedSearchDispatcher:
         elif len(zone_result_lists) == 1:
             _zone_id, results = zone_result_lists[0]
             fused_results = [_result_to_dict(r) for r in results[:limit]]
-        elif self._config.fusion_strategy == FederatedFusionStrategy.RRF:
-            # RRF: for heterogeneous zones with different scoring functions
+        elif (
+            self._config.fusion_strategy == FederatedFusionStrategy.RRF
+            or fusion_method == "weighted"
+        ):
+            # RRF: for heterogeneous zones with different scoring functions.
+            # ALSO forced for fusion_method=weighted (#4541 review round 8):
+            # weighted fusion min-max normalizes scores INSIDE each zone, so
+            # raw values are shard-local — the top hit of a weak zone scores
+            # 1.0 and would outrank materially stronger hits from another
+            # zone under a raw-score merge. Rank-based fusion is the only
+            # cross-zone-safe merge for that method; rrf/rrf_weighted scores
+            # share one reciprocal-rank formula and stay comparable.
             fused_results = rrf_multi_fusion(
                 result_lists=zone_result_lists,
                 k=60,

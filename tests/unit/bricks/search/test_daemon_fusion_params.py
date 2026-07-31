@@ -513,3 +513,50 @@ async def test_fallback_empty_semantic_leg_stamps_non_default_degraded() -> None
 
     default = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
     assert all(not r.semantic_degraded for r in default)
+
+
+@pytest.mark.asyncio
+async def test_dense_leg_exception_fails_soft() -> None:
+    """#4541 review round 8: a vector-backend exception degrades hybrid to
+    keyword-only instead of aborting the whole query."""
+    daemon = _make_daemon()
+
+    class RaisingVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            raise RuntimeError("pgvector connection lost")
+
+    daemon._vector_backend = RaisingVectorBackend()
+
+    default = await _hybrid(daemon)
+    assert [r.path for r in default] == ["/a.md", "/b.md", "/c.md"]
+    assert all(not r.semantic_degraded for r in default)
+
+    stamped = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+    assert stamped and all(r.semantic_degraded is True for r in stamped)
+
+
+@pytest.mark.asyncio
+async def test_empty_degraded_response_keeps_list_level_flag() -> None:
+    """#4541 review round 8: when the keyword leg is ALSO empty, the degraded
+    response is empty — the list-level flag is the only surviving signal."""
+    daemon = _make_no_embed_daemon()
+
+    class EmptyFtsBackend:
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[Any]:
+            return []
+
+    daemon._fts_backend = EmptyFtsBackend()
+
+    results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+    assert list(results) == []
+    assert getattr(results, "semantic_degraded", False) is True

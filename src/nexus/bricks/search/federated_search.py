@@ -296,6 +296,7 @@ class FederatedSearchDispatcher:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
+        rrf_k: int = 60,
         subject: tuple[str, str] | None = None,
     ) -> list[Any]:
         """Search a single zone with capability-aware routing."""
@@ -304,6 +305,10 @@ class FederatedSearchDispatcher:
 
         # Phase 2: Check if this zone has a remote transport in the registry.
         # If so, search via gRPC with a SearchDelegation credential.
+        # NOTE: rrf_k is intentionally NOT forwarded over the remote RPC —
+        # older remote nodes reject unknown search params, so remote zones
+        # fuse with their local default (60) until the RPC surface is
+        # versioned (#4541).
         if self._registry is not None and self._registry.is_remote(zone_id):
             return await self._search_remote_zone(
                 zone_id=zone_id,
@@ -325,6 +330,7 @@ class FederatedSearchDispatcher:
             path_filter=path_filter,
             alpha=effective_alpha,
             fusion_method=fusion_method,
+            rrf_k=rrf_k,
             zone_id=zone_id,
         )
 
@@ -428,9 +434,20 @@ class FederatedSearchDispatcher:
         search_type: str,
         limit: int,
         path_filter: str | None,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
     ) -> str:
-        """Phase 3: Create a cache key for result caching."""
-        raw = f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
+        """Phase 3: Create a cache key for result caching.
+
+        Fusion knobs are part of the key: they change result ordering now
+        that the daemon honours them (#4541), so requests differing only in
+        alpha / fusion_method / rrf_k must not share a cache entry.
+        """
+        raw = (
+            f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
+            f"|{alpha}|{fusion_method}|{rrf_k}"
+        )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
     def _get_cached_result(
@@ -489,6 +506,7 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        rrf_k: int = 60,
         zone_filter: frozenset[str] | None = None,  # NEW (#3785)
     ) -> FederatedSearchResponse:
         """Public federated search entry point with activity-event instrumentation (#3791).
@@ -509,6 +527,7 @@ class FederatedSearchDispatcher:
                 path_filter=path_filter,
                 alpha=alpha,
                 fusion_method=fusion_method,
+                rrf_k=rrf_k,
                 zone_filter=zone_filter,
             )
         except Exception:
@@ -542,6 +561,7 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        rrf_k: int = 60,
         zone_filter: frozenset[str] | None = None,  # NEW (#3785)
     ) -> FederatedSearchResponse:
         """Execute a federated search across all accessible zones.
@@ -554,6 +574,8 @@ class FederatedSearchDispatcher:
             path_filter: Optional path prefix filter.
             alpha: Semantic vs keyword weight.
             fusion_method: Fusion method for intra-zone hybrid search.
+            rrf_k: RRF rank constant for intra-zone hybrid fusion (#4541).
+                Applied to local zones only; remote zones use their default.
             zone_filter: Optional upper-bound zone allow-list. When set,
                 intersects with accessible_zones to enforce per-token zone
                 scoping (#3785).
@@ -564,7 +586,9 @@ class FederatedSearchDispatcher:
         start = time.perf_counter()
 
         # Phase 3: Check result cache
-        cache_key = self._make_cache_key(query, subject, search_type, limit, path_filter)
+        cache_key = self._make_cache_key(
+            query, subject, search_type, limit, path_filter, alpha, fusion_method, rrf_k
+        )
         cached = self._get_cached_result(cache_key, start=start)
         if cached is not None:
             return cached
@@ -615,6 +639,7 @@ class FederatedSearchDispatcher:
                         path_filter,
                         alpha,
                         fusion_method,
+                        rrf_k=rrf_k,
                         subject=subject,
                     ),
                     timeout=self._config.zone_timeout_seconds,
@@ -670,6 +695,7 @@ class FederatedSearchDispatcher:
                             path_filter,
                             alpha,
                             fusion_method,
+                            rrf_k=rrf_k,
                             subject=subject,
                         ),
                         timeout=self._config.zone_timeout_seconds,

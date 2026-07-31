@@ -301,9 +301,11 @@ async def search_query(
     path: str | None = Query(None, description="Optional path prefix filter"),
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
+    rrf_k: int = Query(60, description="RRF rank constant for hybrid fusion", ge=1, le=1000),
     expand: str = Query("none", description="Context expansion: none or macro"),
     rerank: bool | None = Query(  # noqa: ARG001
-        None, description="Override reranker (true/false, default: use config)"
+        None,
+        description="Inert: accepted for compatibility; no reranker stage exists (#4541)",
     ),
     graph_mode: str = Query(
         "none", description="Graph enhancement mode: none, low, high, dual, auto"
@@ -368,6 +370,7 @@ async def search_query(
                 path_filter=path,
                 alpha=alpha,
                 fusion_method=fusion,
+                rrf_k=rrf_k,
                 auth_result=auth_result,
                 search_daemon=search_daemon,
                 request=request,
@@ -382,6 +385,7 @@ async def search_query(
             path_filter=path,
             alpha=alpha,
             fusion_method=fusion,
+            rrf_k=rrf_k,
             graph_mode=graph_mode,
             expand=expand,
             auth_result=auth_result,
@@ -404,6 +408,7 @@ async def _handle_single_zone_search(
     path_filter: str | None,
     alpha: float,
     fusion_method: str,
+    rrf_k: int,
     graph_mode: str,
     expand: str,
     auth_result: dict[str, Any],
@@ -524,6 +529,7 @@ async def _handle_single_zone_search(
             path_filter=path_filter,
             alpha=alpha,
             fusion_method=fusion_method,
+            rrf_k=rrf_k,
             zone_id=zone_id,
             expand=expand,
         )
@@ -586,6 +592,7 @@ async def _handle_federated_search(
     path_filter: str | None,
     alpha: float,
     fusion_method: str,
+    rrf_k: int,
     auth_result: dict[str, Any],
     search_daemon: Any,
     request: Request,
@@ -644,6 +651,7 @@ async def _handle_federated_search(
         path_filter=path_filter,
         alpha=alpha,
         fusion_method=fusion_method,
+        rrf_k=rrf_k,
         zone_filter=zone_filter,
     )
 

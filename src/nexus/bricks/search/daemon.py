@@ -2635,6 +2635,7 @@ class SearchDaemon:
                 keyword_score=raw.keyword_score,
                 vector_score=raw.vector_score,
                 reranker_score=raw.reranker_score,
+                title_score=raw.title_score,
                 zone_id=raw.zone_id,
                 search_type=search_type,
             )
@@ -2651,6 +2652,7 @@ class SearchDaemon:
                 keyword_score=raw.get("keyword_score"),
                 vector_score=raw.get("vector_score"),
                 reranker_score=raw.get("reranker_score"),
+                title_score=raw.get("title_score"),
                 zone_id=raw.get("zone_id"),
                 search_type=search_type,
             )
@@ -2698,6 +2700,7 @@ class SearchDaemon:
                     vector_score=result.vector_score,
                     splade_score=result.splade_score,
                     reranker_score=result.reranker_score,
+                    title_score=result.title_score,
                     matched_field=result.matched_field,
                     attribute_boost=result.attribute_boost,
                     original_score=result.original_score,

@@ -173,6 +173,9 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     out["splade_score"] = round(splade, 4) if splade is not None else None
     reranker = getattr(result, "reranker_score", None)
     out["reranker_score"] = round(reranker, 4) if reranker is not None else None
+    title = getattr(result, "title_score", None)
+    if title is not None:
+        out["title_score"] = round(title, 4)
     context = getattr(result, "context", None)
     if context is not None:
         out["context"] = context

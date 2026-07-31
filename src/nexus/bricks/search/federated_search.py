@@ -29,7 +29,7 @@ from typing import Any
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.fusion import rrf_multi_fusion
-from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
+from nexus.bricks.search.result_builders import cap_chunks_per_page
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 
 logger = logging.getLogger(__name__)
@@ -923,22 +923,32 @@ def _merge_by_raw_score(
     all_results: list[dict[str, Any]] = []
     for _zone_id, results in zone_result_lists:
         zone_dicts = [_result_to_dict(r) for r in results]
-        # Issue #4542: pool per zone (not on the concatenated list) so the
-        # same path in two zones stays two distinct documents. Local-zone
-        # results already collapse to one chunk per doc via the page-grain
-        # zone_qualified_path dedup below; this cap matters for remote-zone
-        # dicts whose dedup key falls back to chunk grain.
+        # Issue #4542: cap per zone (not on the concatenated list) so the
+        # same path in two zones stays two distinct documents. The cap is
+        # order-preserving over the zone's daemon-sorted list.
         if chunks_per_page is not None:
-            zone_dicts = _aggregate_chunks_to_pages(zone_dicts, chunks_per_page=chunks_per_page)
+            zone_dicts = cap_chunks_per_page(zone_dicts, chunks_per_page=chunks_per_page)
         all_results.extend(zone_dicts)
 
-    # Dedup by zone_qualified_path, keeping highest score
+    # Dedup, keeping highest score. With pooling OFF this is the historical
+    # page-grain zone_qualified_path key (one chunk per doc per zone). With
+    # pooling ON the page-grain key would collapse every doc straight back
+    # to one chunk — ``zone_qualified_path`` carries no chunk index on
+    # either the local dataclass or the remote-dict shape — so dedup
+    # switches to chunk grain and lets ``chunks_per_page`` govern
+    # per-document emission (Issue #4542 review hardening).
     seen: dict[str, dict[str, Any]] = {}
     for r in all_results:
-        key = r.get(
-            "zone_qualified_path",
-            f"{r.get('zone_id', '')}:{r.get('path', '')}:{r.get('chunk_index', 0)}",
-        )
+        if chunks_per_page is None:
+            key = r.get(
+                "zone_qualified_path",
+                f"{r.get('zone_id', '')}:{r.get('path', '')}:{r.get('chunk_index', 0)}",
+            )
+        else:
+            page_key = r.get("zone_qualified_path") or (
+                f"{r.get('zone_id', '')}:{r.get('path', '')}"
+            )
+            key = f"{page_key}:{r.get('chunk_index', 0)}"
         existing = seen.get(key)
         if existing is None or r.get("score", 0.0) > existing.get("score", 0.0):
             seen[key] = r

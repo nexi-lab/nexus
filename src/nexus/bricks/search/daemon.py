@@ -2334,7 +2334,7 @@ class SearchDaemon:
             rrf_fusion,
         )
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
-        from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
+        from nexus.bricks.search.result_builders import cap_chunks_per_page
 
         path = path_filter or "/"
         timing = _empty_backend_timing()
@@ -2471,13 +2471,22 @@ class SearchDaemon:
             alpha=alpha,
             rrf_k=rrf_k,
         )
-        fused = fuse_results(kw_fused, dense, config=fusion_config, limit=limit, id_key=None)
-        # Issue #4542: pool the fused list per document so one long doc cannot
-        # occupy every hybrid slot. The route over-fetches (fetch_limit =
-        # limit × 3 for the ReBAC filter), so pooling at daemon-output size
-        # still leaves headroom before the caller's final trim.
+        # Issue #4542: cap the fused list per document so one long doc cannot
+        # occupy every hybrid slot. Fuse a wider candidate window first so the
+        # cap can BACKFILL from candidates below the requested-limit cutoff —
+        # trimming inside fusion before capping would let a long doc saturate
+        # the window and return an underfilled page instead of promoting other
+        # docs. The cap is order-preserving (unlike the page-grouped
+        # ``_aggregate_chunks_to_pages`` used by the raw BM25 leg), so the
+        # fused-score ordering survives for downstream over-fetch trims.
         if self.config.page_aggregation:
-            fused = _aggregate_chunks_to_pages(fused, chunks_per_page=self.config.chunks_per_page)
+            fused = fuse_results(
+                kw_fused, dense, config=fusion_config, limit=limit * 2, id_key=None
+            )
+            fused = cap_chunks_per_page(fused, chunks_per_page=self.config.chunks_per_page)
+            fused = fused[:limit]
+        else:
+            fused = fuse_results(kw_fused, dense, config=fusion_config, limit=limit, id_key=None)
         timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
         record_total()
         hybrid_results = SearchResultList(

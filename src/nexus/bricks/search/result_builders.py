@@ -150,3 +150,30 @@ def _aggregate_chunks_to_pages(
     for _page_score, page_chunks in ranked_pages:
         out.extend(page_chunks[:chunks_per_page])
     return out
+
+
+def cap_chunks_per_page(
+    chunks: list[dict[str, Any]],
+    *,
+    chunks_per_page: int,
+) -> list[dict[str, Any]]:
+    """Order-preserving per-page emission cap (Issue #4542 review hardening).
+
+    Unlike ``_aggregate_chunks_to_pages`` — which max-pools page scores,
+    re-ranks pages, and emits page-GROUPED output for the raw BM25 leg —
+    this keeps the caller's ordering intact and simply drops each page's
+    chunks beyond ``chunks_per_page``. For an input already sorted by fused
+    score this retains exactly the top-K chunks of every page in global
+    score order, so downstream trims never drop a higher-scored document
+    in favor of a lower-scored chunk of an earlier page.
+    """
+    counts: dict[str, int] = {}
+    out: list[dict[str, Any]] = []
+    for r in chunks:
+        path = r.get("path") or ""
+        key = path or str(r.get("id") or id(r))
+        emitted = counts.get(key, 0)
+        if emitted < chunks_per_page:
+            counts[key] = emitted + 1
+            out.append(r)
+    return out

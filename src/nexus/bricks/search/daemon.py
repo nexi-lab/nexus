@@ -1874,6 +1874,16 @@ class SearchDaemon:
         # context. top_score is the pre-boost max of this batch — the floor
         # gate must compare against the unweighted ranking.
         floor_ratio = self.config.tier_boost_floor_ratio
+        # top_score is the max of the daemon's candidate pool — computed
+        # BEFORE route-level ReBAC filtering, like every other ranking
+        # transform in this pipeline (RRF fusion ranks, attribute boost
+        # #1092, page pooling #4542 all run pre-filter). A denied hit can
+        # therefore influence the uplift gate, exactly as it already
+        # influences fused rank positions; relocating weight finalization
+        # post-ReBAC would contradict the #4544 attach-point design and
+        # break federated composition (remote zones weight server-side,
+        # before the local caller's filter). Documented trade-off — see
+        # spec §3 (Codex review R6 ruling).
         top_score = max((r.score for r in results), default=0.0)
         boosted_any = False
         suppressed = 0

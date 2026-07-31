@@ -101,6 +101,15 @@ Cost: the snapshot work is the same work attach pays later in the same
 request; the incremental cost is one cache-fingerprint check per search,
 and the wider fetch only occurs for zones that actually configured weights.
 
+Pre-filter stage (adversarial-review amendment): weights — including the
+floor gate's `top_score` — are computed over the daemon's candidate pool,
+BEFORE route-level ReBAC filtering, in the same pipeline stage as RRF
+fusion ranks, attribute boost (#1092), and page pooling (#4542), all of
+which already depend on later-filtered candidates. Relocating weight
+finalization post-ReBAC would contradict the attach-point placement and
+break federated composition (remote zones weight server-side, before the
+local caller's filter). Accepted trade-off.
+
 Bounded approximation (adversarial-review amendment): weights re-rank
 within the widened window of `limit × factor` raw candidates only — if
 more than `limit × factor` raw hits from a demoted prefix outscore an

@@ -426,3 +426,116 @@ async def test_backfill_survives_asymmetric_legs_saturated_by_one_doc() -> None:
     assert len(paths) == 6
     assert paths.count("/long.md") == 2
     assert len({p for p in paths if p != "/long.md"}) == 4
+
+
+# ---------------------------------------------------------------------------
+# Round-3 review: dispatcher-level cap behavior on both federated control paths
+# ---------------------------------------------------------------------------
+
+
+def _capture_daemon(
+    zone_results: dict[str, list[Any]],
+    config: DaemonConfig,
+    seen_limits: dict[str, int],
+) -> Any:
+    """Mock daemon that honors the requested limit (slices its fixture) and
+    records the limit each zone was asked for."""
+    daemon = SimpleNamespace(config=config, is_initialized=True)
+
+    async def search(
+        query: str,
+        search_type: str = "hybrid",
+        limit: int = 10,
+        path_filter: str | None = None,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        zone_id: str | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
+        seen_limits[zone_id or ""] = limit
+        return list(zone_results.get(zone_id or "", []))[:limit]
+
+    daemon.search = search
+    return daemon
+
+
+def _rebac_for(zones: list[str]) -> AsyncMock:
+    rebac = AsyncMock()
+    rebac.list_accessible_zones = AsyncMock(return_value=zones)
+    return rebac
+
+
+@pytest.mark.asyncio
+async def test_single_zone_federated_applies_cap_with_overfetch() -> None:
+    """Round-3 review: the single-zone fast path bypassed pooling entirely —
+    the cap must not depend on how many zones are accessible."""
+    seen: dict[str, int] = {}
+    daemon = _capture_daemon(
+        {
+            "z1": [
+                _local_result("z1", "/doc.md", 0, 0.9),
+                _local_result("z1", "/doc.md", 1, 0.8),
+                _local_result("z1", "/doc.md", 2, 0.7),
+                _local_result("z1", "/b.md", 0, 0.5),
+            ]
+        },
+        DaemonConfig(page_aggregation=True, chunks_per_page=1),
+        seen,
+    )
+    dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["z1"]))
+
+    resp = await dispatcher.search(query="q", subject=("user", "u1"), limit=2)
+
+    assert [r["path"] for r in resp.results] == ["/doc.md", "/b.md"]
+    # Over-fetched so the cap can backfill instead of shrinking the page.
+    assert seen["z1"] > 2
+
+
+@pytest.mark.asyncio
+async def test_single_zone_federated_flag_off_keeps_fast_path() -> None:
+    seen: dict[str, int] = {}
+    daemon = _capture_daemon(
+        {
+            "z1": [
+                _local_result("z1", "/doc.md", 0, 0.9),
+                _local_result("z1", "/doc.md", 1, 0.8),
+                _local_result("z1", "/b.md", 0, 0.5),
+            ]
+        },
+        DaemonConfig(page_aggregation=False, chunks_per_page=2),
+        seen,
+    )
+    dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["z1"]))
+
+    resp = await dispatcher.search(query="q", subject=("user", "u1"), limit=2)
+
+    # Historical behavior: exact-limit fetch, no cap, no dedup on this path.
+    assert seen["z1"] == 2
+    assert [r["path"] for r in resp.results] == ["/doc.md", "/doc.md"]
+
+
+@pytest.mark.asyncio
+async def test_multi_zone_saturated_window_backfills() -> None:
+    """Round-3 review repro: limit=3, cap=1, each zone's leading window is one
+    long doc with the next doc ranked just below it. The cap-aware wider
+    window must let other docs backfill instead of underfilling the page."""
+    config = DaemonConfig(page_aggregation=True, chunks_per_page=1)
+    seen: dict[str, int] = {}
+
+    def zone_rows(zone: str) -> list[Any]:
+        rows = [_local_result(zone, f"/{zone}-long.md", i, 1.0 - i * 0.01) for i in range(6)]
+        rows.append(_local_result(zone, f"/{zone}-next.md", 0, 0.9))
+        return rows
+
+    daemon = _capture_daemon(
+        {"za": zone_rows("za"), "zb": zone_rows("zb")}, config, seen
+    )
+    dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["za", "zb"]))
+
+    resp = await dispatcher.search(query="q", subject=("user", "u1"), limit=3)
+
+    paths = [r["path"] for r in resp.results]
+    assert len(paths) == 3
+    # One chunk per doc (cap=1) and the below-window docs backfilled.
+    assert len(set(paths)) == 3
+    assert any("next" in p for p in paths)

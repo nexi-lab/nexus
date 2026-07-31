@@ -697,16 +697,27 @@ class FederatedSearchDispatcher:
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
 
+        # Issue #4542 (round-3 review): the per-document cap applies on EVERY
+        # federated control path, so behavior does not depend on how many
+        # zones happen to be accessible. Resolved once here.
+        pooling_cap = self._pooling_chunks_per_page()
+
         # Single zone: skip fusion overhead
         if len(searchable_zones) == 1:
             zone_id = searchable_zones[0]
+            # With the cap active, over-fetch so capping can backfill other
+            # docs instead of shrinking the page; flag-off keeps the
+            # historical exact-limit fetch.
+            single_zone_fetch = (
+                limit if pooling_cap is None else limit * self._config.over_fetch_factor
+            )
             try:
                 results = await asyncio.wait_for(
                     self._search_zone(
                         zone_id,
                         query,
                         search_type,
-                        limit,
+                        single_zone_fetch,
                         path_filter,
                         alpha,
                         fusion_method,
@@ -728,7 +739,12 @@ class FederatedSearchDispatcher:
                         subject=subject,
                         rebac=self._rebac,
                     )
-                result_dicts = [_result_to_dict(r) for r in results[:limit]]
+                result_dicts = [_result_to_dict(r) for r in results]
+                if pooling_cap is not None:
+                    result_dicts = cap_chunks_per_page(
+                        result_dicts, chunks_per_page=pooling_cap
+                    )
+                result_dicts = result_dicts[:limit]
                 resp = FederatedSearchResponse(
                     results=result_dicts,
                     zones_searched=[zone_id],
@@ -752,6 +768,16 @@ class FederatedSearchDispatcher:
 
         # 2. Multi-zone fan-out with concurrency bound (decision 16A)
         per_zone_limit = limit * self._config.over_fetch_factor
+        if pooling_cap is not None:
+            # Cap-aware over-fetch (round-3 review): a zone window saturated
+            # by one long doc leaves nothing to backfill after the per-doc
+            # cap. Local hybrid zones already cap at the daemon (full-union
+            # backfill), so the widened window guards the semantic/keyword
+            # and version-skewed remote paths. A fixed window remains
+            # theoretically saturable — adaptive per-zone pagination is
+            # deliberately out of scope (remote re-dispatch + delegation
+            # cost); flag-off keeps the historical window exactly.
+            per_zone_limit = limit * self._config.over_fetch_factor * (pooling_cap + 1)
         semaphore = asyncio.Semaphore(self._config.max_concurrent_zones)
 
         async def _bounded_search(
@@ -857,7 +883,7 @@ class FederatedSearchDispatcher:
             fused_results = _merge_by_raw_score(
                 zone_result_lists,
                 limit,
-                chunks_per_page=self._pooling_chunks_per_page(),
+                chunks_per_page=pooling_cap,
             )
 
         resp = FederatedSearchResponse(

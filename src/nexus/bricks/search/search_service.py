@@ -4225,11 +4225,25 @@ class SearchService:
                         (getattr(context, "subject_type", None) or "user"),
                         (getattr(context, "user_id", None) or ""),
                     )
+                    # Issue #4542 round-7 review: propagate the context's
+                    # zone allow-list into the inner dispatch. Without it, a
+                    # scoped token whose allowed zone is unavailable could
+                    # receive results from any zone its SUBJECT can reach
+                    # (credential-scope breach). ``OperationContext.zone_set``
+                    # is the contract-level allow-list (#3785); admin/system
+                    # contexts keep the legacy unbounded federation.
+                    _ctx_zone_set = getattr(context, "zone_set", None) or ()
+                    _unbounded = bool(
+                        getattr(context, "is_admin", False)
+                        or getattr(context, "is_system", False)
+                        or not _ctx_zone_set
+                    )
                     return await dispatcher.search(
                         query=query,
                         subject=subject,
                         search_type="semantic",
                         limit=limit,
+                        zone_filter=None if _unbounded else frozenset(_ctx_zone_set),
                     )
                 except Exception as exc:
                     # Real dispatch failed — treat as all-peers-failed so the

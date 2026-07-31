@@ -2472,16 +2472,22 @@ class SearchDaemon:
             rrf_k=rrf_k,
         )
         # Issue #4542: cap the fused list per document so one long doc cannot
-        # occupy every hybrid slot. Fuse a wider candidate window first so the
-        # cap can BACKFILL from candidates below the requested-limit cutoff —
-        # trimming inside fusion before capping would let a long doc saturate
-        # the window and return an underfilled page instead of promoting other
-        # docs. The cap is order-preserving (unlike the page-grouped
+        # occupy every hybrid slot. Fuse the COMPLETE candidate union first so
+        # the cap can BACKFILL from candidates below the requested-limit
+        # cutoff — any fixed pre-cap window (limit×N) can still be saturated
+        # by a single long doc and return an underfilled page (round-2
+        # review). The union is already bounded by the legs' own limit×2
+        # fetches, so this adds no meaningful fusion cost. The cap is
+        # order-preserving (unlike the page-grouped
         # ``_aggregate_chunks_to_pages`` used by the raw BM25 leg), so the
         # fused-score ordering survives for downstream over-fetch trims.
         if self.config.page_aggregation:
             fused = fuse_results(
-                kw_fused, dense, config=fusion_config, limit=limit * 2, id_key=None
+                kw_fused,
+                dense,
+                config=fusion_config,
+                limit=len(kw_fused) + len(dense),
+                id_key=None,
             )
             fused = cap_chunks_per_page(fused, chunks_per_page=self.config.chunks_per_page)
             fused = fused[:limit]

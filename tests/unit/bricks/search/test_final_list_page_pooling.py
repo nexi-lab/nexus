@@ -394,3 +394,35 @@ def test_merge_flag_off_keeps_historical_page_grain_dedup() -> None:
     merged = _merge_by_raw_score(zone_lists, limit=10)
 
     assert [(r["path"], r["chunk_index"]) for r in merged] == [("/doc.md", 0), ("/b.md", 0)]
+
+
+@pytest.mark.asyncio
+async def test_backfill_survives_asymmetric_legs_saturated_by_one_doc() -> None:
+    """Round-2 review scenario: keyword leg is ENTIRELY one doc (12 chunks)
+    and the dense leg is half that doc — a fixed limit×2 fusion window kept
+    mostly long-doc chunks and returned an underfilled page. Fusing the full
+    candidate union must fill all requested slots."""
+    long_kw = [_chunk("/long.md", i, 12.0 - i) for i in range(12)]
+    dense = [_chunk("/long.md", i, 0.99 - i * 0.01) for i in range(6)] + [
+        _chunk(f"/other-{j}.md", 0, 0.5 - j * 0.01) for j in range(6)
+    ]
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon.config = DaemonConfig(page_aggregation=True, chunks_per_page=2)
+    daemon._fts_backend = _RowsFtsBackend(long_kw)
+    daemon._vector_backend = _RowsVectorBackend(dense)
+
+    async def _embed_query(self: Any, query: str) -> list[float]:
+        return [0.1, 0.2]
+
+    daemon._embed_query = MethodType(_embed_query, daemon)
+
+    results = await daemon._search_via_backends(
+        "query", search_type="hybrid", limit=6, path_filter=None, zone_id="root"
+    )
+
+    paths = [r.path for r in results]
+    assert len(paths) == 6
+    assert paths.count("/long.md") == 2
+    assert len({p for p in paths if p != "/long.md"}) == 4

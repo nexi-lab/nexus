@@ -542,12 +542,14 @@ class DaemonConfig:
     # Recency decay (Issue #4543). Post-fusion multiplicative boost
     # ``score *= 1 + w * H / (H + age_days)`` applied at the search()
     # chokepoint from a batch mtime hydration query — never in SQL ORDER BY.
-    # Modes: "off" (default), "on" (always), "auto" (only for queries with a
-    # RECENCY_WORDS intent word). Unrecognized env values behave as "off"
-    # (fail closed). Request params override these per call.
+    # Modes: "auto" (default — boost only queries with a RECENCY_WORDS intent
+    # word, e.g. "latest"/"recent"/"today"; neutral queries stay byte-identical),
+    # "on" (always), "off". Unrecognized env values behave as "off" (fail
+    # closed). Request params override these per call; set
+    # NEXUS_SEARCH_RECENCY=off to restore the pre-#4543 behavior.
     recency_mode: str = field(
-        default_factory=lambda: os.environ.get("NEXUS_SEARCH_RECENCY", "off").strip().lower()
-        or "off"
+        default_factory=lambda: os.environ.get("NEXUS_SEARCH_RECENCY", "auto").strip().lower()
+        or "auto"
     )
     recency_weight: float = field(
         default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_WEIGHT", 0.3)

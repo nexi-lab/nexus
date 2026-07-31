@@ -16,8 +16,11 @@ surface stale material.
 A multiplicative, post-fusion recency boost applied at a **single chokepoint in
 `SearchDaemon.search()`**, with mtimes obtained by **one batch hydration query**
 against `file_paths` (served index-only by the existing covering index
-`idx_file_paths_zone_path_covering`). Default **off**; enabled per-request or
-per-deployment, with an `auto` mode that fires only on recency-intent queries.
+`idx_file_paths_zone_path_covering`). Default **auto** (post-review revision;
+originally shipped default-off): zero-config deployments boost recency-intent
+queries ("latest", "recent", "today"…) while neutral queries stay
+byte-identical via the intent gate. Opt out per-deployment with
+`NEXUS_SEARCH_RECENCY=off` or per-request with `recency=off`.
 
 Two alternatives were considered and rejected:
 
@@ -115,17 +118,22 @@ daemon.py:297-305 (self-contained; no lifespan edit needed):
 
 | Field | Default | Env var |
 |---|---|---|
-| `recency_mode` | `"off"` | `NEXUS_SEARCH_RECENCY` (`off`/`on`/`auto`) |
+| `recency_mode` | `"auto"` | `NEXUS_SEARCH_RECENCY` (`off`/`on`/`auto`) |
 | `recency_weight` | `0.3` | `NEXUS_SEARCH_RECENCY_WEIGHT` |
 | `recency_half_life_days` | `30.0` | `NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS` |
 
 Requires a small `_get_env_float` helper next to the existing `_get_env_int` /
 `_get_env_bool`.
 
-Default-off comes from the **mode**, not `weight = 0`, so an operator flipping
-`NEXUS_SEARCH_RECENCY=auto` gets sensible behavior (×1.3 max boost, 30-day
-half-life) without also having to pick a weight. `recency_weight` defaults to
-0.3: a fresh document gets ×1.3, a half-life-old one ×1.15, decaying toward ×1.
+(Post-review revision: `recency_mode` originally defaulted to `"off"`; it now
+defaults to `"auto"` so deployments get recency handling with zero config.
+The intent gate preserves byte-identity for neutral queries; operators opt
+out with `NEXUS_SEARCH_RECENCY=off`.)
+
+Enable/disable is carried by the **mode**, not `weight = 0`, so the default
+gives sensible behavior (×1.3 max boost, 30-day half-life) without an operator
+having to pick a weight. `recency_weight` defaults to 0.3: a fresh document
+gets ×1.3, a half-life-old one ×1.15, decaying toward ×1.
 
 Note: `SearchConfig` (`bricks/search/config.py`) fusion fields are vestigial —
 nothing on the daemon path reads them. Recency config goes **only** on
@@ -144,8 +152,8 @@ Following the #4541 (`alpha`/`fusion`/`rrf_k`) and #4398 (`expand`) patterns:
 - Forwarded in both the single-zone branch (through
   `_handle_single_zone_search` → `daemon.search`) and the federated branch.
 - `_serialize_search_result` (search.py:156-188): emit `recency_boost` only
-  when non-`None` (the `macro_text` conditional-emit pattern) so default-off
-  responses stay **byte-identical**.
+  when non-`None` (the `macro_text` conditional-emit pattern) so responses
+  where the boost did not fire stay **byte-identical**.
 - `BaseSearchResult` (`bricks/search/results.py`) gains
   `recency_boost: float | None = None` — the only new dataclass field. No
   `mtime` field on results (YAGNI; attribution only, per acceptance criteria).
@@ -177,7 +185,9 @@ Following the #4541 (`alpha`/`fusion`/`rrf_k`) and #4398 (`expand`) patterns:
   `test_daemon_fusion_params.py`'s fake-backend harness):
   - boost math (fresh ×(1+w), half-life-old ×(1+w/2), ancient →×1);
   - near-duplicate fixture at different mtimes: recency-on ranks newer first,
-    **default-off request produces identical results** (acceptance);
+    **a neutral-query default request produces identical results**
+    (acceptance), and a zero-config recency-intent query boosts (default
+    auto);
   - `auto` + recency-word query fires; `auto` + neutral query does not;
   - missing mtime row → unboosted, `recency_boost is None`;
   - hydration DB failure → fail-soft, counter incremented, results returned;
@@ -224,12 +234,19 @@ Following the #4541 (`alpha`/`fusion`/`rrf_k`) and #4398 (`expand`) patterns:
   precedent); revisit with RPC surface versioning.
 - The graph branch (`graph_enhanced_search`) ignores the recency knobs —
   the same pre-existing gap as `alpha`/`fusion_method`.
+- With the default now `auto`, `RECENCY_WORDS`' inclusion of `"new"` can fire
+  on lexical false positives ("new user registration flow"). At weight 0.3
+  the distortion is a mild ×≤1.3 promote-only nudge; drop `"new"` from the
+  set if auto-mode surprises show up in practice.
 
 ## Acceptance criteria (from the issue)
 
 1. Fixture with near-duplicate content at different mtimes: temporal query
-   ranks newer first with recency on; default-off request byte-identical. ✔
-   covered by `test_daemon_recency.py`.
+   ranks newer first with recency on; a request where the boost does not
+   fire is byte-identical. ✔ covered by `test_daemon_recency.py`.
+   (The issue asked for default-off; revised post-review to default-auto so
+   deployments need no config — byte-identity is now scoped to neutral
+   queries and explicit `recency=off`.)
 2. Per-result attribution field (`recency_boost`) set only when the boost
    fired. ✔ covered by serializer + daemon tests.
 

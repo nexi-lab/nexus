@@ -104,14 +104,27 @@ def _old_new_mtimes() -> dict[str, datetime]:
 
 @pytest.mark.asyncio
 async def test_default_request_untouched_and_no_hydration() -> None:
-    """Byte-identity: with recency off (default config, no request params)
-    ordering matches #4541's pinned default and NO hydration query runs."""
+    """Byte-identity for neutral queries: under the default config (auto) a
+    query with no recency-intent word matches #4541's pinned ordering and
+    runs NO hydration query."""
     daemon = _make_daemon(_old_new_mtimes())
     results = await daemon.search("nexus core", search_type="hybrid", limit=4)
 
     assert [r.path for r in results] == ["/a.md", "/d.md", "/c.md", "/b.md"]
     assert all(r.recency_boost is None for r in results)
     assert daemon._recency_fetch_calls == []
+
+
+@pytest.mark.asyncio
+async def test_zero_config_default_is_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deploy-and-forget default: with NO env and NO request params, a
+    recency-intent query gets the boost (recency_mode defaults to auto)."""
+    monkeypatch.delenv("NEXUS_SEARCH_RECENCY", raising=False)
+    daemon = _make_daemon(_old_new_mtimes())
+    results = await daemon.search("latest nexus core", search_type="hybrid", limit=4)
+
+    assert len(daemon._recency_fetch_calls) == 1
+    assert any(r.recency_boost is not None for r in results)
 
 
 @pytest.mark.asyncio

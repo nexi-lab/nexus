@@ -592,6 +592,59 @@ class TestResultCaching:
 
         assert not resp.cached
 
+    @pytest.mark.asyncio
+    async def test_cache_scoped_by_zone_filter(self) -> None:
+        """A narrowly-scoped token must not read back a broadly-scoped cache
+        entry (#4541 review): cache lookup happens before zone_filter
+        intersection, so the filter must be part of the cache key."""
+        daemon = _make_daemon(
+            {
+                "zone_a": [_make_result("a.txt", 5.0)],
+                "zone_b": [_make_result("b.txt", 3.0)],
+            }
+        )
+        rebac = _make_rebac(["zone_a", "zone_b"])
+
+        config = FederatedSearchConfig(result_cache_enabled=True)
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
+
+        broad = await dispatcher.search(
+            "test", subject=("user", "alice"), zone_filter=frozenset({"zone_a", "zone_b"})
+        )
+        assert {r["zone_id"] for r in broad.results} == {"zone_a", "zone_b"}
+
+        narrow = await dispatcher.search(
+            "test", subject=("user", "alice"), zone_filter=frozenset({"zone_a"})
+        )
+        assert not narrow.cached
+        assert {r["zone_id"] for r in narrow.results} == {"zone_a"}
+
+        # Same scope again -> cache hit, still zone_a only.
+        narrow2 = await dispatcher.search(
+            "test", subject=("user", "alice"), zone_filter=frozenset({"zone_a"})
+        )
+        assert narrow2.cached
+        assert {r["zone_id"] for r in narrow2.results} == {"zone_a"}
+
+    @pytest.mark.asyncio
+    async def test_cache_scoped_by_fusion_knobs(self) -> None:
+        """Requests differing only in alpha/fusion_method/rrf_k must not
+        share a cache entry now that the daemon honours them (#4541)."""
+        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
+        rebac = _make_rebac(["zone_a"])
+
+        config = FederatedSearchConfig(result_cache_enabled=True)
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
+
+        await dispatcher.search("test", subject=("user", "alice"))
+        weighted = await dispatcher.search(
+            "test", subject=("user", "alice"), fusion_method="weighted", alpha=0.9
+        )
+        small_k = await dispatcher.search("test", subject=("user", "alice"), rrf_k=5)
+
+        assert not weighted.cached
+        assert not small_k.cached
+
 
 # =============================================================================
 # filter_federated_results (Issue #3147, gap item 5)

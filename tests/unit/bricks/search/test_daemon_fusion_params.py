@@ -184,3 +184,148 @@ async def test_search_threads_fusion_params_to_backends() -> None:
     assert seen["alpha"] == 0.9
     assert seen["fusion_method"] == "weighted"
     assert seen["rrf_k"] == 30
+
+
+# =============================================================================
+# Legacy fallback path (#4541 review): _hybrid_search must honour the same
+# fusion knobs as the primary indexed path, with byte-identical defaults.
+# =============================================================================
+
+
+def _make_fallback_daemon() -> Any:
+    """Bare daemon exercising the legacy `_hybrid_search` fallback.
+
+    Same divergent corpus as `_make_daemon` but served through the legacy
+    `_keyword_search` / `_semantic_search` stack (no indexed backends).
+    """
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    def _res(path: str, score: float, st: str) -> SearchResult:
+        return SearchResult(path=path, chunk_text=path, score=score, chunk_index=0, search_type=st)
+
+    async def _keyword_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        return [
+            _res("/a.md", 10.0, "keyword"),
+            _res("/b.md", 9.0, "keyword"),
+            _res("/c.md", 8.0, "keyword"),
+        ]
+
+    async def _semantic_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        return [
+            _res("/d.md", 0.99, "semantic"),
+            _res("/c.md", 0.9, "semantic"),
+            _res("/a.md", 0.5, "semantic"),
+        ]
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+    daemon._semantic_search = MethodType(_semantic_search, daemon)
+    return daemon
+
+
+@pytest.mark.asyncio
+async def test_fallback_default_matches_legacy_inline_rrf() -> None:
+    """Regression pin: default fallback fusion stays byte-identical to the
+    historical inline loop — plain reciprocal-rank sums, k=60, no top-rank
+    bonus."""
+    daemon = _make_fallback_daemon()
+    results = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
+
+    kw = [("/a.md", 1), ("/b.md", 2), ("/c.md", 3)]
+    sem = [("/d.md", 1), ("/c.md", 2), ("/a.md", 3)]
+    expected: dict[str, float] = {}
+    for path, rank in kw + sem:
+        expected[path] = expected.get(path, 0.0) + 1.0 / (60 + rank)
+    expected_order = sorted(expected, key=lambda p: expected[p], reverse=True)
+
+    assert [r.path for r in results] == expected_order == ["/a.md", "/c.md", "/d.md", "/b.md"]
+    for r in results:
+        assert r.score == pytest.approx(expected[r.path])
+
+
+@pytest.mark.asyncio
+async def test_fallback_weighted_alpha_changes_ordering() -> None:
+    daemon = _make_fallback_daemon()
+    low = await daemon._hybrid_search("nexus core", 4, None, 0.05, "weighted")
+    high = await daemon._hybrid_search("nexus core", 4, None, 0.95, "weighted")
+
+    assert [r.path for r in low] != [r.path for r in high]
+    assert [r.path for r in low][0] == "/a.md"
+    assert [r.path for r in high][0] == "/d.md"
+
+
+@pytest.mark.asyncio
+async def test_fallback_rrf_weighted_alpha_zero_ranks_keyword_only() -> None:
+    daemon = _make_fallback_daemon()
+    results = await daemon._hybrid_search("nexus core", 4, None, 0.0, "rrf_weighted")
+
+    assert [r.path for r in results[:3]] == ["/a.md", "/b.md", "/c.md"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_rrf_k_reaches_fusion() -> None:
+    daemon = _make_fallback_daemon()
+    default = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
+    small_k = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf", 1)
+
+    assert [r.score for r in small_k] != [r.score for r in default]
+
+
+@pytest.mark.asyncio
+async def test_search_threads_fusion_params_to_fallback() -> None:
+    """With no indexed backends, `search()` must forward the fusion knobs to
+    the legacy `_hybrid_search` fallback."""
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    seen: dict[str, Any] = {}
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._fts_backend = None
+    daemon._vector_backend = None
+    daemon._permission_enforcer = None
+    daemon.last_search_timing = {}
+
+    def _track_latency(self: Any, latency_ms: float) -> None:
+        self._last_latency_ms = latency_ms
+
+    async def _attach_path_contexts(self: Any, results: Any, *, zone_id: str) -> None:
+        self._last_context_zone = zone_id
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    async def _hybrid_search(
+        self: Any,
+        query: str,
+        limit: int,
+        path_filter: Any,
+        alpha: float,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
+        *,
+        zone_id: Any = None,
+    ) -> list[SearchResult]:
+        seen.update({"alpha": alpha, "fusion_method": fusion_method, "rrf_k": rrf_k})
+        return []
+
+    daemon._track_latency = MethodType(_track_latency, daemon)
+    daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+    daemon._hybrid_search = MethodType(_hybrid_search, daemon)
+
+    await daemon.search(
+        "nexus core",
+        search_type="hybrid",
+        limit=1,
+        alpha=0.9,
+        fusion_method="weighted",
+        rrf_k=30,
+    )
+
+    assert seen == {"alpha": 0.9, "fusion_method": "weighted", "rrf_k": 30}

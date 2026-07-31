@@ -306,10 +306,12 @@ class FederatedSearchDispatcher:
 
         # Phase 2: Check if this zone has a remote transport in the registry.
         # If so, search via gRPC with a SearchDelegation credential.
-        # NOTE: rrf_k is intentionally NOT forwarded over the remote RPC —
-        # older remote nodes reject unknown search params, so remote zones
-        # fuse with their local default (60) until the RPC surface is
-        # versioned (#4541).
+        # rrf_k travels on the wire like alpha/fusion_method. The remote
+        # ``handle_search`` RPC handler reads params selectively (hasattr) and
+        # currently honours none of the fusion knobs — a pre-existing gap that
+        # applies equally to alpha/fusion_method — so unknown params are
+        # ignored by old peers and the field is ready when the remote handler
+        # grows fusion support (#4541 review).
         if self._registry is not None and self._registry.is_remote(zone_id):
             return await self._search_remote_zone(
                 zone_id=zone_id,
@@ -319,6 +321,7 @@ class FederatedSearchDispatcher:
                 path_filter=path_filter,
                 alpha=effective_alpha,
                 fusion_method=fusion_method,
+                rrf_k=rrf_k,
                 subject=subject,
             )
 
@@ -356,6 +359,7 @@ class FederatedSearchDispatcher:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
+        rrf_k: int = 60,
         subject: tuple[str, str] | None = None,
     ) -> list[Any]:
         """Search a remote zone via gRPC with SearchDelegation auth.
@@ -390,6 +394,7 @@ class FederatedSearchDispatcher:
             "zone_id": zone_id,
             "alpha": alpha,
             "fusion_method": fusion_method,
+            "rrf_k": rrf_k,
         }
         if path_filter:
             params["path_filter"] = path_filter
@@ -445,16 +450,24 @@ class FederatedSearchDispatcher:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         rrf_k: int = 60,
+        zone_filter: frozenset[str] | None = None,
     ) -> str:
         """Phase 3: Create a cache key for result caching.
 
         Fusion knobs are part of the key: they change result ordering now
         that the daemon honours them (#4541), so requests differing only in
         alpha / fusion_method / rrf_k must not share a cache entry.
+
+        The token's zone allow-list (#3785) is also part of the key: cache
+        lookup happens before accessible zones are intersected with the
+        filter, so without it a broadly-scoped request could seed a cache
+        entry that a later narrowly-scoped token would read back — leaking
+        results from zones outside that token's scope (#4541 review).
         """
+        zone_scope = ",".join(sorted(zone_filter)) if zone_filter else "*"
         raw = (
             f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
-            f"|{alpha}|{fusion_method}|{rrf_k}"
+            f"|{alpha}|{fusion_method}|{rrf_k}|{zone_scope}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
@@ -595,7 +608,15 @@ class FederatedSearchDispatcher:
 
         # Phase 3: Check result cache
         cache_key = self._make_cache_key(
-            query, subject, search_type, limit, path_filter, alpha, fusion_method, rrf_k
+            query,
+            subject,
+            search_type,
+            limit,
+            path_filter,
+            alpha,
+            fusion_method,
+            rrf_k,
+            zone_filter=zone_filter,
         )
         cached = self._get_cached_result(cache_key, start=start)
         if cached is not None:

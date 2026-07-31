@@ -2252,6 +2252,7 @@ class SearchDaemon:
                     path_filter,
                     alpha,
                     fusion_method,
+                    rrf_k,
                     zone_id=zone_id,
                 )
             fallback_ms = (time.perf_counter() - fallback_start) * 1000
@@ -2962,15 +2963,24 @@ class SearchDaemon:
         query: str,
         limit: int,
         path_filter: str | None,
-        alpha: float,  # noqa: ARG002
-        fusion_method: str,  # noqa: ARG002
+        alpha: float,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
         *,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
-        """Hybrid search combining keyword and semantic results via RRF.
+        """Hybrid search combining keyword and semantic results (legacy fallback).
 
-        Pipeline: BM25/Zoekt + Dense -> RRF fusion -> results
+        Pipeline: BM25/Zoekt + Dense -> fusion -> results
+
+        Honours the request's fusion knobs via the shared fusion module so
+        the degraded/no-backend path keeps the same semantics as the primary
+        indexed path (#4541 review). ``top_rank_bonus`` stays off to preserve
+        this path's historical default scoring (plain reciprocal-rank sums,
+        k=60, no bonus).
         """
+        from nexus.bricks.search.fusion import FusionConfig, FusionMethod, fuse_results
+
         # Run keyword and semantic in parallel
         kw_task = asyncio.ensure_future(
             self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
@@ -2993,42 +3003,16 @@ class SearchDaemon:
         else:
             sem_results = raw_results[1]
 
-        # RRF fusion (k=60)
-        rrf_k = 60
-        scores: dict[str, float] = {}
-        best: dict[str, SearchResult] = {}
-
-        for rank, r in enumerate(kw_results):
-            key = f"{r.path}:{r.chunk_index}"
-            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            if key not in best:
-                best[key] = r
-
-        for rank, r in enumerate(sem_results):
-            key = f"{r.path}:{r.chunk_index}"
-            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            if key not in best:
-                best[key] = r
-
-        # Sort by fused score, take top limit
-        sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)[:limit]
-
-        return [
-            SearchResult(
-                path=best[k].path,
-                chunk_text=best[k].chunk_text,
-                score=scores[k],
-                chunk_index=best[k].chunk_index,
-                start_offset=best[k].start_offset,
-                end_offset=best[k].end_offset,
-                line_start=best[k].line_start,
-                line_end=best[k].line_end,
-                keyword_score=best[k].keyword_score,
-                vector_score=best[k].vector_score,
-                search_type="hybrid",
-            )
-            for k in sorted_keys
-        ]
+        fusion_config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=rrf_k,
+            top_rank_bonus=False,
+        )
+        fused = fuse_results(
+            kw_results, sem_results, config=fusion_config, limit=limit, id_key=None
+        )
+        return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
 
     async def _search_zoekt(
         self,

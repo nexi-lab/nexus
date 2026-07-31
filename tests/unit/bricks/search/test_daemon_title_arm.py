@@ -771,3 +771,63 @@ async def test_title_and_dense_votes_merge_on_dense_chunk() -> None:
     assert len(atlas_rows) == 1  # one fused identity, not dense+title duplicates
     assert atlas_rows[0].chunk_index == 7  # borrowed the dense representative
     assert atlas_rows[0].title_score == pytest.approx(7.0)
+
+
+@pytest.mark.asyncio
+async def test_stopword_query_does_not_match_stopword_title() -> None:
+    """Function-word overlap is not title evidence: 'how to configure
+    authentication' must not surface an unrelated 'How To Guide' title
+    (#4545 review round 6)."""
+    daemon = _bare_locate_daemon()
+    daemon.upsert_skeleton_doc(
+        path_id="pg", virtual_path="/help/misc.md", title="How To Guide", zone_id="root"
+    )
+    assert await daemon.locate("how to configure authentication", zone_id="root") == []
+    # Content-word overlap still works.
+    hits = await daemon.locate("guide", zone_id="root")
+    assert [h["path"] for h in hits] == ["/help/misc.md"]
+
+
+@pytest.mark.asyncio
+async def test_arm_gates_out_single_path_token_overlap() -> None:
+    """A lone incidental path-token overlap (locate score 1.0) earns no
+    fusion votes — TITLE_ARM_MIN_SCORE requires real title evidence
+    (#4545 review round 6, closes the parked rank-1-bonus follow-up)."""
+    from nexus.bricks.search.daemon import DaemonConfig
+
+    daemon = _bare_locate_daemon()
+    daemon.config = DaemonConfig()
+    daemon.upsert_skeleton_doc(
+        path_id="pd", virtual_path="/src/daemon/runner.py", title="Runner Notes", zone_id="root"
+    )
+    # locate itself still reports the weak path hit (endpoint semantics)...
+    locate_hits = await daemon.locate("daemon shutdown", zone_id="root")
+    assert [h["score"] for h in locate_hits] == [pytest.approx(1.0)]
+    # ...but the fusion arm filters it out.
+    timing: dict[str, float] = {}
+    hits = await daemon._gather_title_hits(
+        "daemon shutdown",
+        zone_id="root",
+        limit=5,
+        path_filter=None,
+        chunk_kw=[],
+        page_kw=[],
+        timing=timing,
+    )
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_locate_distinct_token_budget() -> None:
+    """At most TITLE_ARM_MAX_QUERY_TOKENS DISTINCT tokens expand, counted
+    per token rather than per field bucket (#4545 review round 6)."""
+    daemon = _bare_locate_daemon()
+    tokens = [f"tok{i:02}" for i in range(1, 14)]  # 13 distinct tokens
+    for t in tokens:
+        daemon.upsert_skeleton_doc(
+            path_id=f"p-{t}", virtual_path=f"/y/{t}.md", title=None, zone_id="root"
+        )
+    hits = await daemon.locate(" ".join(tokens), zone_id="root", limit=20)
+    # 12 most-selective (lexicographically first on DF ties) tokens expand.
+    assert len(hits) == 12
+    assert "/y/tok13.md" not in {h["path"] for h in hits}

@@ -4534,6 +4534,12 @@ class SearchService:
                 ctx = getattr(r, "context", None)
                 if ctx is not None:
                     entry["context"] = ctx
+                # Issue #4545: title-arm attribution rides every transport
+                # with the same omit-when-None + round-4 contract as the
+                # HTTP, batch, and federated surfaces.
+                title_score = getattr(r, "title_score", None)
+                if title_score is not None:
+                    entry["title_score"] = round(title_score, 4)
                 hits.append(entry)
 
             # Filter by read permission — only return files the caller can access

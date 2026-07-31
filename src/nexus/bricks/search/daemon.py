@@ -114,6 +114,71 @@ TITLE_ARM_MAX_HYDRATION_FETCH = 32
 # order (most selective first) until either budget is exhausted.
 TITLE_ARM_MAX_QUERY_TOKENS = 12
 TITLE_ARM_MAX_CANDIDATES = 4096
+# Evidence-quality gates (#4545 review round 6). Function-word query tokens
+# carry no title evidence: without this, "how to configure authentication"
+# scores 4.0 against an unrelated "How To Guide" title and rank-based RRF
+# promotes it over genuine BM25 hits. Stopwords are stripped from the QUERY
+# side only (doc token sets are untouched — overlap counts query tokens).
+_LOCATE_QUERY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "with",
+        "from",
+        "by",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "do",
+        "does",
+        "did",
+        "can",
+        "could",
+        "should",
+        "would",
+        "will",
+        "how",
+        "what",
+        "why",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "me",
+        "my",
+        "you",
+        "your",
+        "we",
+        "our",
+        "they",
+        "their",
+    }
+)
+# Minimum locate score for a hit to enter the fusion arm: one real title
+# token (2.0) qualifies; a single incidental path-token overlap (1.0) does
+# not — the parked "rank-1 bonus on low-signal hits" follow-up, closed.
+TITLE_ARM_MIN_SCORE = 2.0
 
 _BACKEND_LEG_TIMING_KEYS = (
     "backend_ms",
@@ -1841,7 +1906,7 @@ class SearchDaemon:
         if not q.strip():
             return []
 
-        query_tokens = set(tokenize_path(q).split())
+        query_tokens = set(tokenize_path(q).split()) - _LOCATE_QUERY_STOPWORDS
         if not query_tokens:
             return []
 
@@ -1858,24 +1923,38 @@ class SearchDaemon:
         # consume buckets most-selective-first under aggregate budgets so
         # neither token count nor bucket unions grow synchronous work
         # unboundedly on the owner loop.
-        buckets: list[tuple[int, str, int, set[tuple[str, str]]]] = []
+        token_buckets: dict[str, list[set[tuple[str, str]]]] = {}
+        token_min_df: dict[str, int] = {}
         for token in query_tokens:
-            for field_rank, index in enumerate(
-                (self._skeleton_title_index, self._skeleton_path_index)
-            ):
+            for index in (self._skeleton_title_index, self._skeleton_path_index):
                 bucket = index.get((zone_id, token))
                 if bucket is None or len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
                     continue
-                buckets.append((len(bucket), token, field_rank, bucket))
-        buckets.sort(key=lambda b: (b[0], b[1], b[2]))
+                token_buckets.setdefault(token, []).append(bucket)
+                prev = token_min_df.get(token)
+                if prev is None or len(bucket) < prev:
+                    token_min_df[token] = len(bucket)
+
+        # Strict budgets (#4545 review round 6): at most
+        # TITLE_ARM_MAX_QUERY_TOKENS DISTINCT tokens expand (most selective
+        # first, deterministic tie-break), and the candidate union never
+        # exceeds TITLE_ARM_MAX_CANDIDATES — the final bucket is truncated
+        # deterministically instead of overshooting.
+        selected_tokens = sorted(token_buckets, key=lambda t: (token_min_df[t], t))
+        selected_tokens = selected_tokens[:TITLE_ARM_MAX_QUERY_TOKENS]
 
         candidates: set[tuple[str, str]] = set()
-        for i, (_df, _token, _field_rank, bucket) in enumerate(buckets):
-            if i >= 2 * TITLE_ARM_MAX_QUERY_TOKENS:
-                break
+        for token in selected_tokens:
+            for bucket in token_buckets[token]:
+                remaining = TITLE_ARM_MAX_CANDIDATES - len(candidates)
+                if remaining <= 0:
+                    break
+                if len(bucket) > remaining:
+                    candidates |= set(sorted(bucket)[:remaining])
+                else:
+                    candidates |= bucket
             if len(candidates) >= TITLE_ARM_MAX_CANDIDATES:
                 break
-            candidates |= bucket
 
         scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
 
@@ -2018,6 +2097,10 @@ class SearchDaemon:
             locate_hits = await self.locate(
                 query, zone_id=zone_id, limit=limit * 2, path_prefix=path_filter
             )
+            # Evidence gate (#4545 review round 6): a lone incidental
+            # path-token overlap (score 1.0) must not earn rank-based RRF
+            # votes; require at least one real title-token match (2.0).
+            locate_hits = [h for h in locate_hits if h["score"] >= TITLE_ARM_MIN_SCORE]
             if locate_hits:
                 title_hits = await self._hydrate_title_hits(
                     locate_hits,

@@ -364,6 +364,15 @@ async def search_query(
 
     target_zone = zone_id if zone_id != ROOT_ZONE_ID else None
 
+    # Token zone allow-list for the federated path (#3785). A singleton
+    # non-root zone_set must scope federation too: without it, a single-zone
+    # token requesting federated=true reached the dispatcher with no filter
+    # and searched every subject-accessible zone, bypassing the token's
+    # allow-list (#4541 review round 3). Root-scoped tokens stay unrestricted
+    # — the root zone grants cross-zone access by definition, and its zone id
+    # would never intersect with concrete zone names.
+    fed_zone_filter = frozenset(zone_set) if set(zone_set) != {ROOT_ZONE_ID} else None
+
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---
         # NOTE: expand= is single-zone only; federated path does not support it.
@@ -379,7 +388,7 @@ async def search_query(
                 auth_result=auth_result,
                 search_daemon=search_daemon,
                 request=request,
-                zone_filter=frozenset(zone_set) if len(zone_set) > 1 else None,
+                zone_filter=fed_zone_filter,
             )
 
         return await _handle_single_zone_search(

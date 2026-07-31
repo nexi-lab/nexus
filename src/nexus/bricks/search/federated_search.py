@@ -297,8 +297,8 @@ class FederatedSearchDispatcher:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
-        rrf_k: int = 60,
         subject: tuple[str, str] | None = None,
+        rrf_k: int = 60,
     ) -> list[Any]:
         """Search a single zone with capability-aware routing."""
         effective_type, alpha_override = self._get_effective_search_type(zone_id, search_type)
@@ -361,8 +361,8 @@ class FederatedSearchDispatcher:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
-        rrf_k: int = 60,
         subject: tuple[str, str] | None = None,
+        rrf_k: int = 60,
     ) -> list[Any]:
         """Search a remote zone via gRPC with SearchDelegation auth.
 
@@ -534,8 +534,8 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
-        rrf_k: int = 60,
         zone_filter: frozenset[str] | None = None,  # NEW (#3785)
+        rrf_k: int = 60,
     ) -> FederatedSearchResponse:
         """Public federated search entry point with activity-event instrumentation (#3791).
 
@@ -589,8 +589,8 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
-        rrf_k: int = 60,
         zone_filter: frozenset[str] | None = None,  # NEW (#3785)
+        rrf_k: int = 60,
     ) -> FederatedSearchResponse:
         """Execute a federated search across all accessible zones.
 

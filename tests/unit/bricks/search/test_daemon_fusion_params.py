@@ -351,3 +351,46 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
     )
 
     assert seen == {"alpha": 0.9, "fusion_method": "weighted", "rrf_k": 30}
+
+
+@pytest.mark.asyncio
+async def test_search_positional_signature_unchanged() -> None:
+    """#4541 review round 3: rrf_k sits at the signature TAIL so pre-existing
+    positional callers keep binding zone_id in position 7."""
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    seen: dict[str, Any] = {}
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._fts_backend = object()
+    daemon._vector_backend = object()
+    daemon._permission_enforcer = None
+    daemon.last_search_timing = {}
+
+    def _track_latency(self: Any, latency_ms: float) -> None:
+        self._last_latency_ms = latency_ms
+
+    async def _attach_path_contexts(self: Any, results: Any, *, zone_id: str) -> None:
+        self._last_context_zone = zone_id
+
+    async def _search_via_backends(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
+        seen.update(kwargs)
+        return [
+            SearchResult(
+                path="/backend.md",
+                chunk_text="backend result",
+                score=1.0,
+                chunk_index=0,
+                search_type="keyword",
+            )
+        ]
+
+    daemon._track_latency = MethodType(_track_latency, daemon)
+    daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
+    daemon._search_via_backends = MethodType(_search_via_backends, daemon)
+
+    # Legacy positional call shape: 7th positional arg is zone_id.
+    await daemon.search("nexus core", "keyword", 10, None, 0.5, "rrf", "tenant-a")
+
+    assert seen["zone_id"] == "tenant-a"

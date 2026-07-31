@@ -627,6 +627,28 @@ class TestResultCaching:
         assert {r["zone_id"] for r in narrow2.results} == {"zone_a"}
 
     @pytest.mark.asyncio
+    async def test_positional_zone_filter_signature_unchanged(self) -> None:
+        """#4541 review round 3: rrf_k sits AFTER zone_filter so a legacy
+        positional call ending in the allow-list set still binds it to
+        zone_filter (not rrf_k, which would silently drop zone scoping)."""
+        daemon = _make_daemon(
+            {
+                "zone_a": [_make_result("a.txt", 5.0)],
+                "zone_b": [_make_result("b.txt", 3.0)],
+            }
+        )
+        rebac = _make_rebac(["zone_a", "zone_b"])
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
+
+        # Legacy positional shape: ..., alpha, fusion_method, zone_filter.
+        resp = await dispatcher.search(
+            "test", ("user", "alice"), "hybrid", 10, None, 0.5, "rrf", frozenset({"zone_a"})
+        )
+
+        assert resp.zones_searched == ["zone_a"]
+        assert {r["zone_id"] for r in resp.results} == {"zone_a"}
+
+    @pytest.mark.asyncio
     async def test_empty_zone_filter_does_not_read_wildcard_cache(self) -> None:
         """An EMPTY allow-list (access to zero zones) must not collide with
         the unrestricted (None) cache entry (#4541 review round 2)."""

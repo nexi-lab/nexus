@@ -66,6 +66,7 @@ def _make_daemon() -> Any:
     daemon._skeleton_docs = {}
     daemon._skeleton_title_index = {}
     daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon._embed_query = MethodType(_embed_query, daemon)
     # Disable #4542 final-list page pooling: these tests assert chunk-grain
     # fusion ordering, which pooling would re-group.

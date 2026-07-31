@@ -235,6 +235,7 @@ def _make_daemon(
     daemon._skeleton_docs = dict(skeleton or {})
     daemon._skeleton_title_index = {}
     daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon.config = DaemonConfig(page_aggregation=False, title_arm=title_arm)
     return daemon
 
@@ -367,6 +368,7 @@ def _bare_locate_daemon() -> Any:
     daemon._skeleton_docs = {}
     daemon._skeleton_title_index = {}
     daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon._skeleton_bootstrap_journal = None
     return daemon
 
@@ -441,6 +443,7 @@ async def test_bootstrap_replays_live_mutations() -> None:
     daemon._skeleton_docs = {}
     daemon._skeleton_title_index = {}
     daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon._skeleton_bootstrap_journal = None
     daemon._skeleton_bootstrapped = False
 
@@ -620,6 +623,7 @@ async def test_bootstrap_replay_matches_live_order_same_doc() -> None:
     daemon._skeleton_docs = {}
     daemon._skeleton_title_index = {}
     daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon._skeleton_bootstrap_journal = None
     daemon._skeleton_bootstrapped = False
 
@@ -761,6 +765,7 @@ async def test_title_and_dense_votes_merge_on_dense_chunk() -> None:
     daemon._skeleton_docs = dict(_ATLAS_SKELETON)
     daemon._skeleton_title_index = {}
     daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon._skeleton_bootstrap_journal = None
     daemon.config = DaemonConfig(page_aggregation=False, title_arm=True)
 
@@ -831,3 +836,91 @@ async def test_locate_distinct_token_budget() -> None:
     # 12 most-selective (lexicographically first on DF ties) tokens expand.
     assert len(hits) == 12
     assert "/y/tok13.md" not in {h["path"] for h in hits}
+
+
+@pytest.mark.asyncio
+async def test_stopword_only_exact_title_still_found() -> None:
+    """Stopword-only titles ("How To") stay reachable via the bounded
+    exact-normalized-title fallback (#4545 review round 7) — while
+    non-exact stopword queries still return nothing."""
+    daemon = _bare_locate_daemon()
+    daemon.upsert_skeleton_doc(
+        path_id="ph", virtual_path="/docs/howto.md", title="How To", zone_id="root"
+    )
+    hits = await daemon.locate("how to", zone_id="root")
+    assert [h["path"] for h in hits] == ["/docs/howto.md"]
+    assert hits[0]["score"] == pytest.approx(4.0)  # 2 title tokens x 2.0
+    # Non-exact stopword-only query: no evidence, no hits.
+    assert await daemon.locate("how to the", zone_id="root") == []
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_builds_no_index_and_scans_legacy() -> None:
+    """title_arm=False builds no postings/token structures (memory parity
+    with pre-#4545) and locate() serves via the legacy scan
+    (#4545 review round 7)."""
+    from nexus.bricks.search.daemon import DaemonConfig
+
+    daemon = _bare_locate_daemon()
+    daemon.config = DaemonConfig(title_arm=False)
+    daemon.upsert_skeleton_doc(
+        path_id="p1", virtual_path="/src/login.py", title="Login Module", zone_id="root"
+    )
+    assert daemon._skeleton_title_index == {}
+    assert daemon._skeleton_path_index == {}
+    assert daemon._skeleton_exact_title_index == {}
+    entry = daemon._skeleton_docs[("root", "/src/login.py")]
+    assert "title_token_set" not in entry and "path_token_set" not in entry
+    # Legacy scan still serves the endpoint.
+    hits = await daemon.locate("login", zone_id="root")
+    assert [h["path"] for h in hits] == ["/src/login.py"]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_hybrid_runs_title_arm() -> None:
+    """SANDBOX-profile hybrid folds the title arm into its own fusion and
+    preserves title_score in the shaped dicts (#4545 review round 7)."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
+    from nexus.bricks.search.search_service import SearchService
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._skeleton_docs = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
+    daemon._skeleton_exact_title_index = {}
+    daemon._skeleton_bootstrap_journal = None
+    daemon._vector_backend = None
+    daemon.config = DaemonConfig(title_arm=True)
+    daemon.upsert_skeleton_doc(
+        path_id="pa", virtual_path="/designs/atlas.md", title="Atlas Design Doc", zone_id="root"
+    )
+
+    async def _kw_search(self: Any, **kwargs: Any) -> list[SearchResult]:
+        return [
+            SearchResult(
+                path="/a.md", chunk_text="a", score=10.0, chunk_index=0, search_type="keyword"
+            )
+        ]
+
+    daemon.search = MethodType(lambda self, **kw: _kw_search(self, **kw), daemon)
+
+    class FakeVecBackend:
+        async def search(self, **kwargs: Any) -> list[Any]:
+            return []
+
+    svc: Any = SearchService.__new__(SearchService)
+    svc._sqlite_vec_backend = FakeVecBackend()
+    svc._search_daemon = daemon
+    svc._enforce_permissions = False
+    svc._permission_enforcer = None
+    svc._record_store = None
+    svc._sandbox_hybrid_no_vec_warned = False
+
+    fused = await svc._hybrid_search_sandbox(
+        query="atlas design doc", path="/", limit=5, context=None
+    )
+    assert fused is not None
+    atlas = [r for r in fused if r.get("path") == "/designs/atlas.md"]
+    assert atlas, f"title-only doc missing from sandbox hybrid: {fused}"
+    assert atlas[0].get("title_score") == pytest.approx(7.0)

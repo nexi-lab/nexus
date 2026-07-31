@@ -4095,6 +4095,37 @@ class SearchService:
         if not vec_results and not kw_results:
             return None
 
+        # Skeleton title arm (#4545 review round 7): SANDBOX composes its
+        # own hybrid, so fold the daemon's title arm in here too — same
+        # keyword-side sub-fusion shape as the FULL-profile daemon path.
+        title_daemon = getattr(self, "_search_daemon", None)
+        if title_daemon is not None and getattr(
+            getattr(title_daemon, "config", None), "title_arm", False
+        ):
+            try:
+                title_hits = await title_daemon._gather_title_hits(
+                    query,
+                    zone_id=zone_id,
+                    limit=limit,
+                    path_filter=db_path,
+                    chunk_kw=[],
+                    page_kw=[],
+                    timing={},
+                    dense=vec_results,
+                )
+            except Exception as exc:
+                logger.debug("[SearchService] SANDBOX title arm failed: %s", exc)
+                title_hits = []
+            if title_hits:
+                from nexus.bricks.search.fusion import rrf_multi_fusion
+
+                kw_results = rrf_multi_fusion(
+                    [("chunk", kw_results), ("title", title_hits)],
+                    k=60,
+                    limit=per_lane_limit,
+                    id_key=None,
+                )
+
         # Codex review R1 (high): track whether the vector lane
         # contributed anything at all so we can flag keyword-only
         # results. We must record the vec keys BEFORE fusion so the

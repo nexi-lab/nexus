@@ -715,6 +715,9 @@ class SearchDaemon:
         # whose TITLE carries that token.
         self._skeleton_title_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
         self._skeleton_path_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        # (zone_id, normalized title) -> keys: bounded exact-title fallback
+        # for stopword-only titles like "How To" (#4545 review round 7).
+        self._skeleton_exact_title_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
         # While bootstrap is building its side maps, live mutations are also
         # journaled and replayed onto the new maps before the atomic swap so
         # the snapshot can neither resurrect deletes nor roll back updates
@@ -1681,9 +1684,11 @@ class SearchDaemon:
                 )
                 rows = result.fetchall()
 
+            arm_on = self._title_arm_enabled()
             new_docs: dict[tuple[str, str], dict[str, Any]] = {}
             new_title_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
             new_path_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+            new_exact_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
             for row in rows:
                 path_id, zone_id, title, virtual_path = row
                 if not virtual_path:
@@ -1694,9 +1699,13 @@ class SearchDaemon:
                     zone_id=zone_id,
                     title=title,
                     virtual_path=virtual_path,
+                    with_tokens=arm_on,
                 )
                 new_docs[key] = entry
-                self._add_skeleton_postings(new_title_index, new_path_index, key, entry)
+                if arm_on:
+                    self._add_skeleton_postings(
+                        new_title_index, new_path_index, new_exact_index, key, entry
+                    )
 
             # Replay live mutations that raced the DB snapshot, then swap.
             # No await between here and the swap: single-loop atomicity.
@@ -1704,19 +1713,25 @@ class SearchDaemon:
             self._skeleton_bootstrap_journal = None
             for op, journal_key, journal_entry in journal:
                 old = new_docs.pop(journal_key, None)
-                if old is not None:
+                if old is not None and arm_on:
                     self._remove_skeleton_postings(
-                        new_title_index, new_path_index, journal_key, old
+                        new_title_index, new_path_index, new_exact_index, journal_key, old
                     )
                 if op == "upsert" and journal_entry is not None:
                     new_docs[journal_key] = journal_entry
-                    self._add_skeleton_postings(
-                        new_title_index, new_path_index, journal_key, journal_entry
-                    )
+                    if arm_on and "title_token_set" in journal_entry:
+                        self._add_skeleton_postings(
+                            new_title_index,
+                            new_path_index,
+                            new_exact_index,
+                            journal_key,
+                            journal_entry,
+                        )
 
             self._skeleton_docs = new_docs
             self._skeleton_title_index = new_title_index
             self._skeleton_path_index = new_path_index
+            self._skeleton_exact_title_index = new_exact_index
             self._skeleton_bootstrapped = True
             elapsed = (time.perf_counter() - start) * 1000
             logger.info("[SKELETON] bootstrap complete: %d docs in %.1fms", len(new_docs), elapsed)
@@ -1740,6 +1755,15 @@ class SearchDaemon:
             await self.locate("warmup", zone_id=ROOT_ZONE_ID, limit=1)
             logger.debug("[SKELETON] index warmed: %d docs", len(self._skeleton_docs))
 
+    def _title_arm_enabled(self) -> bool:
+        """True when title-arm index structures should be built/used.
+
+        The kill switch must recover memory too (#4545 review round 7):
+        with title_arm=False no postings or token tuples are built and
+        locate() falls back to the pre-#4545 on-demand scan.
+        """
+        return bool(getattr(getattr(self, "config", None), "title_arm", True))
+
     @staticmethod
     def _make_skeleton_entry(
         *,
@@ -1747,29 +1771,52 @@ class SearchDaemon:
         zone_id: str,
         title: str | None,
         virtual_path: str,
+        with_tokens: bool = True,
     ) -> dict[str, Any]:
-        """Build a skeleton entry with token sets precomputed at index time.
+        """Build a skeleton entry; token tuples precomputed at index time.
 
         Tokenizing per query cost O(corpus) regex work on the search hot
-        path once locate() joined hybrid fusion (#4545 review); doing it
-        once per upsert keeps locate() to cheap set intersections.
+        path once locate() joined hybrid fusion (#4545 review). Memory
+        (review round 7): tokens are stored as TUPLES of interned strings
+        (a frozenset per doc costs ~4x more RSS and token strings repeat
+        massively across docs), and the redundant pre-joined path-token
+        string is no longer retained. ``with_tokens=False`` (kill switch)
+        skips token storage entirely.
         """
+        import sys as _sys
+
         from nexus.bricks.search.text_utils import tokenize_path
 
-        path_tokens = tokenize_path(virtual_path)
-        return {
+        entry: dict[str, Any] = {
             "path_id": path_id,
             "zone_id": zone_id,
             "title": title,
-            "path_tokens": path_tokens,
-            "path_token_set": frozenset(path_tokens.split()),
-            "title_token_set": frozenset(tokenize_path(title or "").split()),
         }
+        if with_tokens:
+            entry["path_token_set"] = tuple(
+                _sys.intern(t) for t in tokenize_path(virtual_path).split()
+            )
+            entry["title_token_set"] = tuple(
+                _sys.intern(t) for t in tokenize_path(title or "").split()
+            )
+        return entry
 
     @staticmethod
+    def _normalized_title(title: str | None) -> str | None:
+        """Token-normalized title for the exact-title fallback index."""
+        from nexus.bricks.search.text_utils import tokenize_path
+
+        if not title:
+            return None
+        norm = " ".join(tokenize_path(title).split())
+        return norm or None
+
+    @classmethod
     def _add_skeleton_postings(
+        cls,
         title_index: dict[tuple[str, str], set[tuple[str, str]]],
         path_index: dict[tuple[str, str], set[tuple[str, str]]],
+        exact_index: dict[tuple[str, str], set[tuple[str, str]]],
         key: tuple[str, str],
         doc: dict[str, Any],
     ) -> None:
@@ -1779,11 +1826,16 @@ class SearchDaemon:
             title_index.setdefault((zone_id, token), set()).add(key)
         for token in doc["path_token_set"]:
             path_index.setdefault((zone_id, token), set()).add(key)
+        norm = cls._normalized_title(doc.get("title"))
+        if norm is not None:
+            exact_index.setdefault((zone_id, norm), set()).add(key)
 
-    @staticmethod
+    @classmethod
     def _remove_skeleton_postings(
+        cls,
         title_index: dict[tuple[str, str], set[tuple[str, str]]],
         path_index: dict[tuple[str, str], set[tuple[str, str]]],
+        exact_index: dict[tuple[str, str], set[tuple[str, str]]],
         key: tuple[str, str],
         doc: dict[str, Any],
     ) -> None:
@@ -1793,12 +1845,19 @@ class SearchDaemon:
             (title_index, "title_token_set"),
             (path_index, "path_token_set"),
         ):
-            for token in doc.get(token_field, frozenset()):
+            for token in doc.get(token_field, ()):
                 bucket = index.get((zone_id, token))
                 if bucket is not None:
                     bucket.discard(key)
                     if not bucket:
                         del index[(zone_id, token)]
+        norm = cls._normalized_title(doc.get("title"))
+        if norm is not None:
+            bucket = exact_index.get((zone_id, norm))
+            if bucket is not None:
+                bucket.discard(key)
+                if not bucket:
+                    del exact_index[(zone_id, norm)]
 
     def _rebuild_skeleton_token_index(self) -> None:
         """Recompute keys, token sets, and postings for every doc.
@@ -1818,19 +1877,24 @@ class SearchDaemon:
                 virtual_path = raw_key
                 key = (doc.get("zone_id") or ROOT_ZONE_ID, virtual_path)
             if "path_token_set" not in doc:
-                doc["path_token_set"] = frozenset(
+                doc["path_token_set"] = tuple(
                     (doc.get("path_tokens") or tokenize_path(virtual_path)).split()
                 )
             if "title_token_set" not in doc:
-                doc["title_token_set"] = frozenset(tokenize_path(doc.get("title") or "").split())
+                doc["title_token_set"] = tuple(tokenize_path(doc.get("title") or "").split())
             normalized[key] = doc
 
         self._skeleton_docs = normalized
         self._skeleton_title_index = {}
         self._skeleton_path_index = {}
+        self._skeleton_exact_title_index = {}
         for key, doc in normalized.items():
             self._add_skeleton_postings(
-                self._skeleton_title_index, self._skeleton_path_index, key, doc
+                self._skeleton_title_index,
+                self._skeleton_path_index,
+                self._skeleton_exact_title_index,
+                key,
+                doc,
             )
 
     def upsert_skeleton_doc(
@@ -1843,21 +1907,32 @@ class SearchDaemon:
     ) -> None:
         """Upsert a skeleton document into the in-memory index (sync, called by SkeletonIndexer)."""
         key = (zone_id, virtual_path)
+        arm_on = self._title_arm_enabled()
         old = self._skeleton_docs.get(key)
-        if old is not None:
+        if old is not None and arm_on:
             self._remove_skeleton_postings(
-                self._skeleton_title_index, self._skeleton_path_index, key, old
+                self._skeleton_title_index,
+                self._skeleton_path_index,
+                self._skeleton_exact_title_index,
+                key,
+                old,
             )
         entry = self._make_skeleton_entry(
             path_id=path_id,
             zone_id=zone_id,
             title=title,
             virtual_path=virtual_path,
+            with_tokens=arm_on,
         )
         self._skeleton_docs[key] = entry
-        self._add_skeleton_postings(
-            self._skeleton_title_index, self._skeleton_path_index, key, entry
-        )
+        if arm_on:
+            self._add_skeleton_postings(
+                self._skeleton_title_index,
+                self._skeleton_path_index,
+                self._skeleton_exact_title_index,
+                key,
+                entry,
+            )
         if self._skeleton_bootstrap_journal is not None:
             self._skeleton_bootstrap_journal.append(("upsert", key, entry))
 
@@ -1870,12 +1945,58 @@ class SearchDaemon:
         """
         key = (zone_id, virtual_path)
         old = self._skeleton_docs.pop(key, None)
-        if old is not None:
+        if old is not None and self._title_arm_enabled():
             self._remove_skeleton_postings(
-                self._skeleton_title_index, self._skeleton_path_index, key, old
+                self._skeleton_title_index,
+                self._skeleton_path_index,
+                self._skeleton_exact_title_index,
+                key,
+                old,
             )
         if self._skeleton_bootstrap_journal is not None:
             self._skeleton_bootstrap_journal.append(("delete", key, None))
+
+    def _locate_scan_legacy(
+        self,
+        q: str,
+        *,
+        zone_id: str,
+        limit: int,
+        path_prefix: str | None,
+    ) -> list[dict[str, Any]]:
+        """Pre-#4545 locate: on-demand tokenize + full scan (no index).
+
+        Used only when title_arm=False so the kill switch restores the
+        original memory footprint and endpoint behavior exactly.
+        """
+        from nexus.bricks.search.text_utils import tokenize_path
+
+        query_tokens = set(tokenize_path(q).split())
+        if not query_tokens:
+            return []
+
+        scored: list[tuple[float, str, str | None]] = []
+        for key, doc in self._skeleton_docs.items():
+            virtual_path = key[1] if isinstance(key, tuple) else key
+            if doc.get("zone_id") != zone_id:
+                continue
+            if path_prefix and not virtual_path.startswith(path_prefix):
+                continue
+            path_tokens = doc.get("path_token_set") or tokenize_path(virtual_path).split()
+            title_tokens = doc.get("title_token_set")
+            if title_tokens is None:
+                title_tokens = tokenize_path(doc.get("title") or "").split()
+            title_overlap = sum(1 for t in title_tokens if t in query_tokens)
+            path_overlap = sum(1 for t in path_tokens if t in query_tokens)
+            score = title_overlap * 2.0 + path_overlap * 1.0
+            if score > 0:
+                scored.append((score, virtual_path, doc.get("title")))
+
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        return [
+            {"path": path, "score": round(score, 4), "title": title}
+            for score, path, title in scored[:limit]
+        ]
 
     async def locate(
         self,
@@ -1906,16 +2027,49 @@ class SearchDaemon:
         if not q.strip():
             return []
 
-        query_tokens = set(tokenize_path(q).split()) - _LOCATE_QUERY_STOPWORDS
-        if not query_tokens:
+        # Kill switch (#4545 review round 7): with the arm off, no index
+        # structures exist — serve /locate with the pre-#4545 on-demand
+        # scan so the flag also recovers all index memory.
+        if not self._title_arm_enabled():
+            return self._locate_scan_legacy(
+                q, zone_id=zone_id, limit=limit, path_prefix=path_prefix
+            )
+
+        raw_tokens = set(tokenize_path(q).split())
+        query_tokens = raw_tokens - _LOCATE_QUERY_STOPWORDS
+        if not raw_tokens:
             return []
 
         # Inverted-index candidate selection (#4545 review): only docs
         # sharing at least one token with the query can score > 0, so a
         # no-hit query costs O(query tokens) instead of O(corpus). Rebuild
         # lazily when docs were inserted without postings (test fixtures).
-        if self._skeleton_docs and not (self._skeleton_title_index or self._skeleton_path_index):
+        if self._skeleton_docs and not (
+            self._skeleton_title_index
+            or self._skeleton_path_index
+            or self._skeleton_exact_title_index
+        ):
             self._rebuild_skeleton_token_index()
+
+        if not query_tokens:
+            # Stopword-only query ("How To", "The Who") — content-token
+            # selection is impossible, but an EXACT normalized title match
+            # is still unambiguous evidence (#4545 review round 7).
+            norm_q = " ".join(tokenize_path(q).split())
+            exact_keys = self._skeleton_exact_title_index.get((zone_id, norm_q), set())
+            exact_hits = []
+            for key in sorted(exact_keys):
+                virtual_path = key[1]
+                if path_prefix and not virtual_path.startswith(path_prefix):
+                    continue
+                doc = self._skeleton_docs.get(key)
+                if doc is None:
+                    continue
+                score = 2.0 * len(doc.get("title_token_set", ()))
+                exact_hits.append(
+                    {"path": virtual_path, "score": round(score, 4), "title": doc.get("title")}
+                )
+            return exact_hits[:limit]
 
         # Zone-partitioned per-field buckets (#4545 review rounds 3-5): read
         # only this zone's postings; apply the DF cap per FIELD so a token
@@ -1967,8 +2121,8 @@ class SearchDaemon:
                 continue
 
             # Title match weighted higher than path match (review decision 6A)
-            title_overlap = len(query_tokens & doc["title_token_set"])
-            path_overlap = len(query_tokens & doc["path_token_set"])
+            title_overlap = sum(1 for t in doc["title_token_set"] if t in query_tokens)
+            path_overlap = sum(1 for t in doc["path_token_set"] if t in query_tokens)
             score = title_overlap * 2.0 + path_overlap * 1.0
 
             if score > 0:

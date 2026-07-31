@@ -34,6 +34,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -189,6 +190,35 @@ def _merge_backend_timing(total_ms: float, recorded: dict[str, float]) -> dict[s
     return timing
 
 
+# Codex review R7: env-sourced ranking knobs are untrusted input. The
+# widening factor is capped (route limit <= 100 × ReBAC over-fetch 3 ×
+# cap 10 keeps backend work bounded) and the floor ratio falls back to its
+# documented default when not a finite non-negative number — a NaN or
+# negative ratio would otherwise silently disable the uplift guard.
+_TIER_BOOST_OVERFETCH_CAP = 10
+_TIER_BOOST_FLOOR_DEFAULT = 0.25
+
+
+def _sane_overfetch_factor(raw: Any) -> int:
+    """Clamp the tier-boost over-fetch factor to [1, cap]."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(value, _TIER_BOOST_OVERFETCH_CAP))
+
+
+def _sane_floor_ratio(raw: Any) -> float:
+    """Return a finite non-negative floor ratio, else the default."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _TIER_BOOST_FLOOR_DEFAULT
+    if not math.isfinite(value) or value < 0.0:
+        return _TIER_BOOST_FLOOR_DEFAULT
+    return value
+
+
 def _apply_tier_weight(
     result: Any,
     weight: float | None,
@@ -208,7 +238,10 @@ def _apply_tier_weight(
     range includes negatives. A plain multiply would let a demotion weight
     *raise* a negative score (-0.2 × 0.5 = -0.1), inverting tier semantics.
     Negative scores divide by the weight instead, so w < 1 always worsens
-    rank and w > 1 always improves it.
+    rank and w > 1 always improves it. ``tier_boost`` stamps the CONFIGURED
+    weight (the policy that applied), so the inverse transform is
+    ``score / tier_boost`` for non-negative scores and
+    ``score * tier_boost`` for negative ones (Codex review R7).
 
     Floor gate (uplifts only, active when ``floor_ratio > 0``): with a
     positive top the ratio comparison applies as documented. With a
@@ -1873,7 +1906,7 @@ class SearchDaemon:
         # Issue #4544: apply per-prefix ranking weights while attaching
         # context. top_score is the pre-boost max of this batch — the floor
         # gate must compare against the unweighted ranking.
-        floor_ratio = self.config.tier_boost_floor_ratio
+        floor_ratio = _sane_floor_ratio(self.config.tier_boost_floor_ratio)
         # top_score is the max of the daemon's candidate pool — computed
         # BEFORE route-level ReBAC filtering, like every other ranking
         # transform in this pipeline (RRF fusion ranks, attribute boost
@@ -2038,7 +2071,9 @@ class SearchDaemon:
         # misconfigured env override can never zero-out the fetch.
         has_tier_weights, tier_snapshot = await self._tier_weight_probe(effective_zone_id)
         internal_limit = (
-            limit * max(1, self.config.tier_boost_overfetch_factor) if has_tier_weights else limit
+            limit * _sane_overfetch_factor(self.config.tier_boost_overfetch_factor)
+            if has_tier_weights
+            else limit
         )
         # Pin the probe's snapshot so attach weights against the same rows
         # the over-fetch decision saw. Weights apply ONLY when the pool was

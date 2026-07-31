@@ -45,7 +45,11 @@ class BaseSearchResult:
     macro_text: str | None = None
     macro_line_start: int | None = None
     macro_line_end: int | None = None
-    # Issue #4544: per-prefix source-tier weight applied to score (None = unboosted)
+    # Issue #4544: configured per-prefix source-tier weight whose policy was
+    # applied to score (None = unboosted). The transform is signed-safe:
+    # non-negative scores multiplied by the weight, negative scores divided
+    # by it — so the pre-boost score is score/tier_boost when score >= 0
+    # and score*tier_boost when score < 0.
     tier_boost: float | None = None
 
     @property

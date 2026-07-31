@@ -1159,3 +1159,33 @@ class TestRemoteSearchEnvelope:
             fusion_method="rrf",
         )
         assert len(results) == 1 and results[0]["zone_qualified_path"] == "zr:/a.md"
+
+
+class TestTierBoostTrustBoundary:
+    """Codex review R7: remote dicts cross a trust boundary — malformed
+    tier_boost must lose the field, never abort fusion via round()."""
+
+    def test_string_tier_boost_dropped(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": "0.5"})
+        assert "tier_boost" not in d
+
+    def test_nan_and_inf_dropped(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": float("nan")}
+        )
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": float("inf")}
+        )
+
+    def test_bool_dropped_and_valid_rounded(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": True}
+        )
+        d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.123456})
+        assert d["tier_boost"] == 0.1235

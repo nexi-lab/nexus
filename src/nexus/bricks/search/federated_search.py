@@ -21,6 +21,7 @@ Design decisions (from review):
 import asyncio
 import hashlib
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -880,8 +881,16 @@ def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
             d.pop(key, None)
     # Issue #4544: round surviving tier_boost to 4 places to match the
     # non-federated router's serialization (_serialize_search_result).
-    if d.get("tier_boost") is not None:
-        d["tier_boost"] = round(d["tier_boost"], 4)
+    # Remote dicts cross a trust boundary (Codex review R7): a malformed or
+    # version-skewed peer sending a string/NaN/inf here must lose the
+    # attribution field, not abort the whole federated fusion via
+    # round() TypeError.
+    tb = d.get("tier_boost")
+    if tb is not None:
+        if isinstance(tb, (int, float)) and not isinstance(tb, bool) and math.isfinite(tb):
+            d["tier_boost"] = round(tb, 4)
+        else:
+            d.pop("tier_boost", None)
     return d
 
 

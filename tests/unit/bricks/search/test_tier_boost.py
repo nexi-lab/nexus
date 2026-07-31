@@ -178,3 +178,46 @@ class TestSignedScoreWeighting:
         r = _result(score=0.8)
         assert _apply_tier_weight(r, 0.5, top_score=1.0, floor_ratio=0.25) is True
         assert r.score == 0.4
+
+
+class TestKnobSanitizers:
+    """Codex review R7: env-sourced knobs are untrusted — NaN/negative
+    floor ratios must not silently disable the uplift guard, and the
+    over-fetch factor must be bounded above."""
+
+    def test_overfetch_factor_capped(self) -> None:
+        from nexus.bricks.search.daemon import _sane_overfetch_factor
+
+        assert _sane_overfetch_factor(10**9) == 10
+        assert _sane_overfetch_factor(0) == 1
+        assert _sane_overfetch_factor(-5) == 1
+        assert _sane_overfetch_factor(3) == 3
+        assert _sane_overfetch_factor("bogus") == 1
+
+    def test_floor_ratio_falls_back_on_invalid(self) -> None:
+        from nexus.bricks.search.daemon import _sane_floor_ratio
+
+        assert _sane_floor_ratio(float("nan")) == 0.25
+        assert _sane_floor_ratio(float("inf")) == 0.25
+        assert _sane_floor_ratio(-0.5) == 0.25
+        assert _sane_floor_ratio(None) == 0.25
+        assert _sane_floor_ratio(0.0) == 0.0  # explicit opt-out preserved
+        assert _sane_floor_ratio(0.4) == 0.4
+
+    def test_nan_floor_ratio_keeps_gate_active_end_to_end(self) -> None:
+        # A NaN ratio previously made `floor_ratio > 0` false and silently
+        # disabled the guard; the sanitizer restores the default gate.
+        from nexus.bricks.search.daemon import _sane_floor_ratio
+
+        ratio = _sane_floor_ratio(float("nan"))
+        r = _result(score=0.2)
+        assert _apply_tier_weight(r, 10.0, top_score=1.0, floor_ratio=ratio) is False
+        assert r.score == 0.2
+
+    def test_negative_score_inverse_transform_documented(self) -> None:
+        # tier_boost stamps the CONFIGURED weight; inverse for negative
+        # scores is score * tier_boost (divide was applied).
+        r = _result(score=-0.2)
+        assert _apply_tier_weight(r, 0.5, top_score=-0.1, floor_ratio=0.25) is True
+        assert r.score == -0.4 and r.tier_boost == 0.5
+        assert r.score * r.tier_boost == -0.2  # pre-boost recovered

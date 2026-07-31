@@ -61,8 +61,11 @@ as today, then apply the weight `w = record.weight or 1.0`:
 - **Attribution field:** new `tier_boost: float | None = None` on
   `BaseSearchResult`, alongside the existing `attribute_boost` /
   `original_score` precedent (#1092). `original_score` is NOT touched
-  (already owned by attribute boosting); the pre-boost score is recoverable
-  as `score / tier_boost`.
+  (already owned by attribute boosting). `tier_boost` stamps the CONFIGURED
+  weight; the transform is signed-safe (non-negative scores multiply,
+  negative cosine scores divide), so the pre-boost score is recoverable as
+  `score / tier_boost` when `score >= 0` and `score * tier_boost` when
+  `score < 0`.
 - **Idempotency:** results with `tier_boost` already set are skipped.
   `batch_search` re-runs the context lookup on results whose inner
   `search()` already attached — without this guard the weight would apply

@@ -54,6 +54,9 @@ class BaseSearchResult:
     # Issue #4545: skeleton title-arm attribution — locate() score when the
     # title arm voted for this result in hybrid fusion, else None.
     title_score: float | None = None
+    # Issue #4543: recency-decay attribution — the multiplier applied to
+    # ``score`` when the post-fusion recency boost fired; None otherwise.
+    recency_boost: float | None = None
 
     @property
     def zone_qualified_path(self) -> str | None:

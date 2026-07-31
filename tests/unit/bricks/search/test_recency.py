@@ -139,3 +139,29 @@ class TestIntent:
     )
     def test_neutral_and_temporal_queries_do_not_fire(self, query: str) -> None:
         assert not has_recency_intent(query)
+
+
+class TestConfig:
+    def test_daemon_config_recency_defaults(self) -> None:
+        from nexus.bricks.search.daemon import DaemonConfig
+
+        cfg = DaemonConfig()
+        assert cfg.recency_mode == "off"
+        assert cfg.recency_weight == pytest.approx(0.3)
+        assert cfg.recency_half_life_days == pytest.approx(30.0)
+
+    def test_daemon_config_recency_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from nexus.bricks.search.daemon import DaemonConfig
+
+        monkeypatch.setenv("NEXUS_SEARCH_RECENCY", "AUTO")
+        monkeypatch.setenv("NEXUS_SEARCH_RECENCY_WEIGHT", "0.5")
+        monkeypatch.setenv("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", "7")
+        cfg = DaemonConfig()
+        assert cfg.recency_mode == "auto"  # normalized lowercase
+        assert cfg.recency_weight == pytest.approx(0.5)
+        assert cfg.recency_half_life_days == pytest.approx(7.0)
+
+    def test_daemon_stats_has_recency_failure_counter(self) -> None:
+        from nexus.bricks.search.daemon import DaemonStats
+
+        assert DaemonStats().recency_attach_failures == 0

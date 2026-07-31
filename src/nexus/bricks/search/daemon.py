@@ -250,6 +250,10 @@ class DaemonStats:
     # weights — operators need a production signal, not a debug log.
     tier_boost_probe_failures: int = 0
     tier_boost_suppressed_searches: int = 0
+    # Fail-soft counter for the recency boost (Issue #4543): hydration or
+    # boost errors must never fail a search, but persistent failures should
+    # be visible via /search/stats rather than only in log lines.
+    recency_attach_failures: int = 0
 
 
 @dataclass
@@ -533,6 +537,23 @@ class DaemonConfig:
     )
     tier_boost_floor_ratio: float = field(
         default_factory=lambda: _get_env_float("NEXUS_SEARCH_TIER_BOOST_FLOOR_RATIO", 0.25)
+    )
+
+    # Recency decay (Issue #4543). Post-fusion multiplicative boost
+    # ``score *= 1 + w * H / (H + age_days)`` applied at the search()
+    # chokepoint from a batch mtime hydration query — never in SQL ORDER BY.
+    # Modes: "off" (default), "on" (always), "auto" (only for queries with a
+    # RECENCY_WORDS intent word). Unrecognized env values behave as "off"
+    # (fail closed). Request params override these per call.
+    recency_mode: str = field(
+        default_factory=lambda: os.environ.get("NEXUS_SEARCH_RECENCY", "off").strip().lower()
+        or "off"
+    )
+    recency_weight: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_WEIGHT", 0.3)
+    )
+    recency_half_life_days: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", 30.0)
     )
 
 

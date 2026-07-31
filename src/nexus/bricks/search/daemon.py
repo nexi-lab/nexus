@@ -108,6 +108,12 @@ LEGACY_REFRESH_CONSUMER = "legacy-refresh"
 # the fetch cap are emitted unhydrated and stay retrievable.
 TITLE_ARM_MAX_TOKEN_DF = 1024
 TITLE_ARM_MAX_HYDRATION_FETCH = 32
+# Aggregate selection budgets (#4545 review round 5): per-token DF caps do
+# not bound the UNION across tokens (100 tokens x 1024 docs = 102k scored
+# candidates, ~280ms synchronous). Buckets are consumed in increasing-DF
+# order (most selective first) until either budget is exhausted.
+TITLE_ARM_MAX_QUERY_TOKENS = 12
+TITLE_ARM_MAX_CANDIDATES = 4096
 
 _BACKEND_LEG_TIMING_KEYS = (
     "backend_ms",
@@ -634,12 +640,16 @@ class SearchDaemon:
         # the same virtual_path, and a path-only key let one zone's upsert
         # or delete clobber another's entry (#4545 review round 2).
         self._skeleton_docs: dict[tuple[str, str], dict[str, Any]] = {}
-        # Inverted (zone_id, token) -> {(zone_id, virtual_path)} postings over
-        # path+title tokens so locate() scores only candidate docs instead of
-        # scanning the corpus (#4545 review: the full scan cost ~350ms at 100k
-        # docs). Zone-partitioned buckets (review round 3) keep one tenant's
-        # common-token query from expanding another tenant's postings.
-        self._skeleton_token_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        # Inverted (zone_id, token) -> {(zone_id, virtual_path)} postings so
+        # locate() scores only candidate docs instead of scanning the corpus
+        # (#4545 review: the full scan cost ~350ms at 100k docs).
+        # Zone-partitioned buckets (round 3) keep one tenant's common-token
+        # query from expanding another tenant's postings. Title and path
+        # postings are SEPARATE (round 5) so DF pruning of a path-flooded
+        # token ("atlas" in 1000 paths) cannot silently drop the one doc
+        # whose TITLE carries that token.
+        self._skeleton_title_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        self._skeleton_path_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
         # While bootstrap is building its side maps, live mutations are also
         # journaled and replayed onto the new maps before the atomic swap so
         # the snapshot can neither resurrect deletes nor roll back updates
@@ -1607,7 +1617,8 @@ class SearchDaemon:
                 rows = result.fetchall()
 
             new_docs: dict[tuple[str, str], dict[str, Any]] = {}
-            new_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+            new_title_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+            new_path_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
             for row in rows:
                 path_id, zone_id, title, virtual_path = row
                 if not virtual_path:
@@ -1620,7 +1631,7 @@ class SearchDaemon:
                     virtual_path=virtual_path,
                 )
                 new_docs[key] = entry
-                self._add_skeleton_postings(new_index, key, entry)
+                self._add_skeleton_postings(new_title_index, new_path_index, key, entry)
 
             # Replay live mutations that raced the DB snapshot, then swap.
             # No await between here and the swap: single-loop atomicity.
@@ -1629,13 +1640,18 @@ class SearchDaemon:
             for op, journal_key, journal_entry in journal:
                 old = new_docs.pop(journal_key, None)
                 if old is not None:
-                    self._remove_skeleton_postings(new_index, journal_key, old)
+                    self._remove_skeleton_postings(
+                        new_title_index, new_path_index, journal_key, old
+                    )
                 if op == "upsert" and journal_entry is not None:
                     new_docs[journal_key] = journal_entry
-                    self._add_skeleton_postings(new_index, journal_key, journal_entry)
+                    self._add_skeleton_postings(
+                        new_title_index, new_path_index, journal_key, journal_entry
+                    )
 
             self._skeleton_docs = new_docs
-            self._skeleton_token_index = new_index
+            self._skeleton_title_index = new_title_index
+            self._skeleton_path_index = new_path_index
             self._skeleton_bootstrapped = True
             elapsed = (time.perf_counter() - start) * 1000
             logger.info("[SKELETON] bootstrap complete: %d docs in %.1fms", len(new_docs), elapsed)
@@ -1687,30 +1703,37 @@ class SearchDaemon:
 
     @staticmethod
     def _add_skeleton_postings(
-        index: dict[tuple[str, str], set[tuple[str, str]]],
+        title_index: dict[tuple[str, str], set[tuple[str, str]]],
+        path_index: dict[tuple[str, str], set[tuple[str, str]]],
         key: tuple[str, str],
         doc: dict[str, Any],
     ) -> None:
-        """Add a doc's path+title tokens to zone-partitioned postings."""
+        """Add a doc's tokens to the zone-partitioned per-field postings."""
         zone_id = key[0]
-        for token in doc["path_token_set"] | doc["title_token_set"]:
-            index.setdefault((zone_id, token), set()).add(key)
+        for token in doc["title_token_set"]:
+            title_index.setdefault((zone_id, token), set()).add(key)
+        for token in doc["path_token_set"]:
+            path_index.setdefault((zone_id, token), set()).add(key)
 
     @staticmethod
     def _remove_skeleton_postings(
-        index: dict[tuple[str, str], set[tuple[str, str]]],
+        title_index: dict[tuple[str, str], set[tuple[str, str]]],
+        path_index: dict[tuple[str, str], set[tuple[str, str]]],
         key: tuple[str, str],
         doc: dict[str, Any],
     ) -> None:
         """Remove a doc's postings; prune empty token buckets."""
         zone_id = key[0]
-        tokens = doc.get("path_token_set", frozenset()) | doc.get("title_token_set", frozenset())
-        for token in tokens:
-            bucket = index.get((zone_id, token))
-            if bucket is not None:
-                bucket.discard(key)
-                if not bucket:
-                    del index[(zone_id, token)]
+        for index, token_field in (
+            (title_index, "title_token_set"),
+            (path_index, "path_token_set"),
+        ):
+            for token in doc.get(token_field, frozenset()):
+                bucket = index.get((zone_id, token))
+                if bucket is not None:
+                    bucket.discard(key)
+                    if not bucket:
+                        del index[(zone_id, token)]
 
     def _rebuild_skeleton_token_index(self) -> None:
         """Recompute keys, token sets, and postings for every doc.
@@ -1738,9 +1761,12 @@ class SearchDaemon:
             normalized[key] = doc
 
         self._skeleton_docs = normalized
-        self._skeleton_token_index = {}
+        self._skeleton_title_index = {}
+        self._skeleton_path_index = {}
         for key, doc in normalized.items():
-            self._add_skeleton_postings(self._skeleton_token_index, key, doc)
+            self._add_skeleton_postings(
+                self._skeleton_title_index, self._skeleton_path_index, key, doc
+            )
 
     def upsert_skeleton_doc(
         self,
@@ -1754,7 +1780,9 @@ class SearchDaemon:
         key = (zone_id, virtual_path)
         old = self._skeleton_docs.get(key)
         if old is not None:
-            self._remove_skeleton_postings(self._skeleton_token_index, key, old)
+            self._remove_skeleton_postings(
+                self._skeleton_title_index, self._skeleton_path_index, key, old
+            )
         entry = self._make_skeleton_entry(
             path_id=path_id,
             zone_id=zone_id,
@@ -1762,7 +1790,9 @@ class SearchDaemon:
             virtual_path=virtual_path,
         )
         self._skeleton_docs[key] = entry
-        self._add_skeleton_postings(self._skeleton_token_index, key, entry)
+        self._add_skeleton_postings(
+            self._skeleton_title_index, self._skeleton_path_index, key, entry
+        )
         if self._skeleton_bootstrap_journal is not None:
             self._skeleton_bootstrap_journal.append(("upsert", key, entry))
 
@@ -1776,7 +1806,9 @@ class SearchDaemon:
         key = (zone_id, virtual_path)
         old = self._skeleton_docs.pop(key, None)
         if old is not None:
-            self._remove_skeleton_postings(self._skeleton_token_index, key, old)
+            self._remove_skeleton_postings(
+                self._skeleton_title_index, self._skeleton_path_index, key, old
+            )
         if self._skeleton_bootstrap_journal is not None:
             self._skeleton_bootstrap_journal.append(("delete", key, None))
 
@@ -1817,19 +1849,32 @@ class SearchDaemon:
         # sharing at least one token with the query can score > 0, so a
         # no-hit query costs O(query tokens) instead of O(corpus). Rebuild
         # lazily when docs were inserted without postings (test fixtures).
-        if self._skeleton_docs and not self._skeleton_token_index:
+        if self._skeleton_docs and not (self._skeleton_title_index or self._skeleton_path_index):
             self._rebuild_skeleton_token_index()
 
-        # Zone-partitioned buckets (#4545 review round 3): read only this
-        # zone's postings so query cost never scales with other tenants.
-        # High-DF buckets are skipped for selection (#4545 review round 4):
-        # they are non-discriminative and would reintroduce an O(zone-corpus)
-        # synchronous scan for common tokens like "md".
-        candidates: set[tuple[str, str]] = set()
+        # Zone-partitioned per-field buckets (#4545 review rounds 3-5): read
+        # only this zone's postings; apply the DF cap per FIELD so a token
+        # flooded across paths cannot drop the one doc titled with it; and
+        # consume buckets most-selective-first under aggregate budgets so
+        # neither token count nor bucket unions grow synchronous work
+        # unboundedly on the owner loop.
+        buckets: list[tuple[int, str, int, set[tuple[str, str]]]] = []
         for token in query_tokens:
-            bucket = self._skeleton_token_index.get((zone_id, token))
-            if bucket is None or len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
-                continue
+            for field_rank, index in enumerate(
+                (self._skeleton_title_index, self._skeleton_path_index)
+            ):
+                bucket = index.get((zone_id, token))
+                if bucket is None or len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
+                    continue
+                buckets.append((len(bucket), token, field_rank, bucket))
+        buckets.sort(key=lambda b: (b[0], b[1], b[2]))
+
+        candidates: set[tuple[str, str]] = set()
+        for i, (_df, _token, _field_rank, bucket) in enumerate(buckets):
+            if i >= 2 * TITLE_ARM_MAX_QUERY_TOKENS:
+                break
+            if len(candidates) >= TITLE_ARM_MAX_CANDIDATES:
+                break
             candidates |= bucket
 
         scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
@@ -1867,6 +1912,7 @@ class SearchDaemon:
         chunk_kw: Sequence[Any],
         page_kw: Sequence[Any],
         zone_id: str,
+        dense: Sequence[Any] = (),
     ) -> list[BaseSearchResult]:
         """Hydrate locate() hits to page granularity for fusion (Issue #4545).
 
@@ -1886,6 +1932,18 @@ class SearchDaemon:
         for r in page_kw:
             # Page leg rows are already best-of-page — prefer over chunk pick.
             best_by_path[r.path] = r
+        # Dense rows are the LOWEST-priority borrow source (#4545 review
+        # round 5): when a title-matched path is absent from every keyword
+        # leg but dense retrieved a chunk of it, aligning on the dense row's
+        # chunk_index merges the title and dense votes into one fused
+        # identity instead of splitting the doc into duplicate results.
+        best_dense: dict[str, Any] = {}
+        for r in dense:
+            cur = best_dense.get(r.path)
+            if cur is None or r.score > cur.score:
+                best_dense[r.path] = r
+        for path, r in best_dense.items():
+            best_by_path.setdefault(path, r)
 
         uncovered = [h["path"] for h in locate_hits if h["path"] not in best_by_path]
         # Bound the batched fetch (#4545 review round 3): hits beyond the cap
@@ -1942,6 +2000,7 @@ class SearchDaemon:
         chunk_kw: Sequence[Any],
         page_kw: Sequence[Any],
         timing: dict[str, float],
+        dense: Sequence[Any] = (),
     ) -> list[BaseSearchResult]:
         """Run the gated, fail-soft title arm: locate + hydrate + timing.
 
@@ -1961,7 +2020,11 @@ class SearchDaemon:
             )
             if locate_hits:
                 title_hits = await self._hydrate_title_hits(
-                    locate_hits, chunk_kw=chunk_kw, page_kw=page_kw, zone_id=zone_id
+                    locate_hits,
+                    chunk_kw=chunk_kw,
+                    page_kw=page_kw,
+                    zone_id=zone_id,
+                    dense=dense,
                 )
         except Exception as exc:
             title_hits = []
@@ -2847,6 +2910,7 @@ class SearchDaemon:
             chunk_kw=chunk_kw,
             page_kw=page_kw,
             timing=timing,
+            dense=dense,
         )
 
         # Fuse the keyword-side arms first (chunk + page + title) with plain

@@ -233,7 +233,8 @@ def _make_daemon(
     daemon._vector_backend = FakeVectorBackend()
     daemon._embed_query = MethodType(_embed_query, daemon)
     daemon._skeleton_docs = dict(skeleton or {})
-    daemon._skeleton_token_index = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
     daemon.config = DaemonConfig(page_aggregation=False, title_arm=title_arm)
     return daemon
 
@@ -364,7 +365,8 @@ def _bare_locate_daemon() -> Any:
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._skeleton_docs = {}
-    daemon._skeleton_token_index = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
     daemon._skeleton_bootstrap_journal = None
     return daemon
 
@@ -437,7 +439,8 @@ async def test_bootstrap_replays_live_mutations() -> None:
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._skeleton_docs = {}
-    daemon._skeleton_token_index = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
     daemon._skeleton_bootstrap_journal = None
     daemon._skeleton_bootstrapped = False
 
@@ -510,8 +513,9 @@ def test_postings_are_zone_partitioned() -> None:
     daemon.upsert_skeleton_doc(
         path_id="pb", virtual_path="/guide.md", title="Guide", zone_id="zone-b"
     )
-    assert daemon._skeleton_token_index[("zone-a", "guide")] == {("zone-a", "/guide.md")}
-    assert daemon._skeleton_token_index[("zone-b", "guide")] == {("zone-b", "/guide.md")}
+    assert daemon._skeleton_title_index[("zone-a", "guide")] == {("zone-a", "/guide.md")}
+    assert daemon._skeleton_title_index[("zone-b", "guide")] == {("zone-b", "/guide.md")}
+    assert daemon._skeleton_path_index[("zone-a", "guide")] == {("zone-a", "/guide.md")}
 
 
 @pytest.mark.asyncio
@@ -614,7 +618,8 @@ async def test_bootstrap_replay_matches_live_order_same_doc() -> None:
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon._skeleton_docs = {}
-    daemon._skeleton_token_index = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
     daemon._skeleton_bootstrap_journal = None
     daemon._skeleton_bootstrapped = False
 
@@ -651,3 +656,118 @@ async def test_bootstrap_replay_matches_live_order_same_doc() -> None:
 
     assert daemon._skeleton_docs[("root", "/doc.md")]["title"] == "Live Title"
     assert daemon._skeleton_docs.keys() == live_state.keys()
+
+
+@pytest.mark.asyncio
+async def test_title_token_survives_path_flooding() -> None:
+    """A token flooded past the DF cap in PATHS must still surface the one
+    doc whose TITLE carries it — DF pruning is per-field (#4545 review
+    round 5)."""
+    from nexus.bricks.search.daemon import TITLE_ARM_MAX_TOKEN_DF
+
+    daemon = _bare_locate_daemon()
+    for i in range(TITLE_ARM_MAX_TOKEN_DF + 1):
+        daemon.upsert_skeleton_doc(
+            path_id=f"p{i}", virtual_path=f"/atlas/f{i:05}.md", title=None, zone_id="root"
+        )
+    daemon.upsert_skeleton_doc(
+        path_id="pt", virtual_path="/docs/overview.md", title="Atlas", zone_id="root"
+    )
+    hits = await daemon.locate("atlas", zone_id="root", limit=5)
+    assert [h["path"] for h in hits] == ["/docs/overview.md"]
+    assert hits[0]["score"] == pytest.approx(2.0)  # title-only overlap
+
+
+@pytest.mark.asyncio
+async def test_locate_aggregate_candidate_budget(monkeypatch: Any) -> None:
+    """Bucket unions are consumed most-selective-first and stop at the
+    aggregate candidate budget (#4545 review round 5)."""
+    import nexus.bricks.search.daemon as daemon_mod
+
+    daemon = _bare_locate_daemon()
+    # token "aaa": 2 docs; token "bbb": 3 docs; token "ccc": 4 docs.
+    for i in range(2):
+        daemon.upsert_skeleton_doc(
+            path_id=f"a{i}", virtual_path=f"/x/aaa-{i}.md", title=None, zone_id="root"
+        )
+    for i in range(3):
+        daemon.upsert_skeleton_doc(
+            path_id=f"b{i}", virtual_path=f"/x/bbb-{i}.md", title=None, zone_id="root"
+        )
+    for i in range(4):
+        daemon.upsert_skeleton_doc(
+            path_id=f"c{i}", virtual_path=f"/x/ccc-{i}.md", title=None, zone_id="root"
+        )
+    monkeypatch.setattr(daemon_mod, "TITLE_ARM_MAX_CANDIDATES", 4)
+    hits = await daemon.locate("aaa bbb ccc", zone_id="root", limit=20)
+    # Most selective buckets first: aaa (2) fully selected, bbb (3) pushes
+    # past the budget of 4, ccc (4) never selected. Every candidate scores
+    # 2.0 (path overlap incl. shared /x token... aaa docs: tokens {x, aaa, i, md}).
+    paths = {h["path"] for h in hits}
+    assert all("aaa" in p or "bbb" in p for p in paths)
+    assert not any("ccc" in p for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_title_and_dense_votes_merge_on_dense_chunk() -> None:
+    """A title-matched doc absent from keyword legs but present in dense
+    borrows the dense row's chunk_index, so title + dense votes fuse into
+    ONE result identity instead of duplicate rows (#4545 review round 5)."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
+
+    def _kw(path: str, score: float) -> SearchResult:
+        return SearchResult(
+            path=path, chunk_text=path, score=score, chunk_index=0, search_type="keyword"
+        )
+
+    def _dense(path: str, score: float, chunk_index: int = 0) -> SearchResult:
+        return SearchResult(
+            path=path,
+            chunk_text=f"{path}#{chunk_index}",
+            score=score,
+            chunk_index=chunk_index,
+            search_type="semantic",
+        )
+
+    class FakeFtsBackend:
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[Any]:
+            return [_kw("/a.md", 10.0), _kw("/b.md", 9.0)]
+
+    class FakeVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            return [_dense("/designs/atlas.md", 0.95, chunk_index=7), _dense("/a.md", 0.5)]
+
+        async def fetch_ranges(self, spans: Any, zone_id: Any) -> list[Any]:
+            raise AssertionError("dense borrow should make the DB fetch unnecessary")
+
+    async def _embed_query(self: Any, query: str) -> list[float]:
+        return [0.1, 0.2]
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon._fts_backend = FakeFtsBackend()
+    daemon._vector_backend = FakeVectorBackend()
+    daemon._embed_query = MethodType(_embed_query, daemon)
+    daemon._skeleton_docs = dict(_ATLAS_SKELETON)
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
+    daemon._skeleton_bootstrap_journal = None
+    daemon.config = DaemonConfig(page_aggregation=False, title_arm=True)
+
+    results = await daemon._search_via_backends(
+        "atlas design doc", search_type="hybrid", limit=5, path_filter=None, zone_id="root"
+    )
+    atlas_rows = [r for r in results if r.path == "/designs/atlas.md"]
+    assert len(atlas_rows) == 1  # one fused identity, not dense+title duplicates
+    assert atlas_rows[0].chunk_index == 7  # borrowed the dense representative
+    assert atlas_rows[0].title_score == pytest.approx(7.0)

@@ -394,3 +394,52 @@ async def test_search_positional_signature_unchanged() -> None:
     await daemon.search("nexus core", "keyword", 10, None, 0.5, "rrf", "tenant-a")
 
     assert seen["zone_id"] == "tenant-a"
+
+
+# =============================================================================
+# Embedding-unavailable hybrid branch (#4541 review round 4): the keyword-only
+# degradation must still honour non-default fusion knobs.
+# =============================================================================
+
+
+def _make_no_embed_daemon() -> Any:
+    daemon = _make_daemon()
+
+    async def _embed_query(self: Any, query: str) -> None:
+        return None
+
+    daemon._embed_query = MethodType(_embed_query, daemon)
+    return daemon
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_default_keeps_raw_keyword_shortcut() -> None:
+    """Byte-identical default: embedding loss + default knobs returns the raw
+    keyword results exactly as before (BM25 scores untouched)."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon)
+
+    assert [r.path for r in results] == ["/a.md", "/b.md", "/c.md"]
+    assert [r.score for r in results] == [10.0, 9.0, 8.0]
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_honours_rrf_k() -> None:
+    """Non-default rrf_k re-scores the keyword leg through the fusion module
+    instead of silently returning raw BM25 scores."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon, rrf_k=5)
+
+    assert [r.path for r in results] == ["/a.md", "/b.md", "/c.md"]
+    assert [r.score for r in results] != [10.0, 9.0, 8.0]
+    assert results[0].score == pytest.approx(1.0 / 6 + 0.05)  # rank-1 RRF + top bonus
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_honours_weighted_alpha() -> None:
+    """weighted&alpha=1.0 assigns zero weight to the only (keyword) leg —
+    scores must reflect the requested fusion, not raw BM25."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+
+    assert all(r.score == 0.0 for r in results)

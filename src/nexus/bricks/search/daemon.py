@@ -2366,6 +2366,28 @@ class SearchDaemon:
                 "keyword_ms",
                 self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
             )
+            # Non-default fusion requests still flow through the configured
+            # fusion (keyword leg only, empty dense leg) so the advertised
+            # knobs are honoured even when the embedding dependency is down
+            # (#4541 review round 4). Alpha alone doesn't count: it has no
+            # effect under plain RRF, and the exact default request keeps the
+            # historical raw-keyword shortcut byte-identical.
+            if fusion_method != FusionMethod.RRF.value or rrf_k != 60:
+                fusion_start = time.perf_counter()
+                fused = fuse_results(
+                    results,
+                    [],
+                    config=FusionConfig(
+                        method=FusionMethod(fusion_method), alpha=alpha, rrf_k=rrf_k
+                    ),
+                    limit=limit,
+                    id_key=None,
+                )
+                timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+                record_total()
+                return [
+                    self._coerce_to_search_result(item, search_type=search_type) for item in fused
+                ]
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 

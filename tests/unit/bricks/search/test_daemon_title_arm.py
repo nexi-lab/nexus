@@ -924,3 +924,92 @@ async def test_sandbox_hybrid_runs_title_arm() -> None:
     atlas = [r for r in fused if r.get("path") == "/designs/atlas.md"]
     assert atlas, f"title-only doc missing from sandbox hybrid: {fused}"
     assert atlas[0].get("title_score") == pytest.approx(7.0)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_title_only_when_both_lanes_empty() -> None:
+    """A chunkless title-only doc surfaces in SANDBOX hybrid even when the
+    keyword AND vector lanes are both empty (#4545 review round 8)."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+    from nexus.bricks.search.search_service import SearchService
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._skeleton_docs = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
+    daemon._skeleton_bootstrap_journal = None
+    daemon._vector_backend = None
+    daemon.config = DaemonConfig(title_arm=True)
+    daemon.upsert_skeleton_doc(
+        path_id="pa", virtual_path="/designs/atlas.md", title="Atlas Design Doc", zone_id="root"
+    )
+
+    async def _kw_search(self: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(lambda self, **kw: _kw_search(self, **kw), daemon)
+
+    class FakeVecBackend:
+        async def search(self, **kwargs: Any) -> list[Any]:
+            return []
+
+    svc: Any = SearchService.__new__(SearchService)
+    svc._sqlite_vec_backend = FakeVecBackend()
+    svc._search_daemon = daemon
+    svc._enforce_permissions = False
+    svc._permission_enforcer = None
+    svc._record_store = None
+    svc._sandbox_hybrid_no_vec_warned = False
+
+    fused = await svc._hybrid_search_sandbox(
+        query="atlas design doc", path="/", limit=5, context=None
+    )
+    assert fused is not None
+    assert [r.get("path") for r in fused] == ["/designs/atlas.md"]
+    assert fused[0].get("title_score") == pytest.approx(7.0)
+    assert fused[0].get("semantic_degraded") is True  # vec lane was empty
+
+
+@pytest.mark.asyncio
+async def test_prefix_scoped_locate_survives_zone_wide_df() -> None:
+    """A title token flooded past the DF cap zone-wide must still be
+    selectable under a path_prefix that isolates one in-scope hit
+    (#4545 review round 8)."""
+    from nexus.bricks.search.daemon import TITLE_ARM_MAX_TOKEN_DF
+
+    daemon = _bare_locate_daemon()
+    for i in range(TITLE_ARM_MAX_TOKEN_DF + 1):
+        daemon.upsert_skeleton_doc(
+            path_id=f"p{i}",
+            virtual_path=f"/elsewhere/d{i:05}/x.md",
+            title="Readme",
+            zone_id="root",
+        )
+    daemon.upsert_skeleton_doc(
+        path_id="ps", virtual_path="/scope/overview.md", title="Readme", zone_id="root"
+    )
+
+    # Unscoped: bucket over DF cap, skipped (non-discriminative) — unchanged.
+    assert await daemon.locate("readme", zone_id="root", limit=5) == []
+    # Prefix-scoped: in-prefix filter rescues the single in-scope hit.
+    hits = await daemon.locate("readme", zone_id="root", limit=5, path_prefix="/scope/")
+    assert [h["path"] for h in hits] == ["/scope/overview.md"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_tokens_score_distinct_overlap() -> None:
+    """Duplicate tokens in titles/paths count once: exact 'Foo Bar'
+    outranks 'Foo Foo Foo' for query 'foo bar' (#4545 review round 8)."""
+    daemon = _bare_locate_daemon()
+    daemon.upsert_skeleton_doc(
+        path_id="p1", virtual_path="/a/spam.md", title="Foo Foo Foo", zone_id="root"
+    )
+    daemon.upsert_skeleton_doc(
+        path_id="p2", virtual_path="/a/real.md", title="Foo Bar", zone_id="root"
+    )
+    hits = await daemon.locate("foo bar", zone_id="root", limit=5)
+    assert [h["path"] for h in hits][0] == "/a/real.md"
+    by_path = {h["path"]: h["score"] for h in hits}
+    assert by_path["/a/real.md"] == pytest.approx(4.0)
+    assert by_path["/a/spam.md"] == pytest.approx(2.0)  # one distinct match

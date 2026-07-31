@@ -4092,12 +4092,13 @@ class SearchService:
             return []
 
         vec_results, kw_results = await asyncio.gather(_vec_lane(), _kw_lane())
-        if not vec_results and not kw_results:
-            return None
 
-        # Skeleton title arm (#4545 review round 7): SANDBOX composes its
+        # Skeleton title arm (#4545 review rounds 7-8): SANDBOX composes its
         # own hybrid, so fold the daemon's title arm in here too — same
         # keyword-side sub-fusion shape as the FULL-profile daemon path.
+        # Gathered BEFORE the emptiness exit: a chunkless title-only doc is
+        # exactly the case where both body lanes come back empty.
+        title_hits: builtins.list[Any] = []
         title_daemon = getattr(self, "_search_daemon", None)
         if title_daemon is not None and getattr(
             getattr(title_daemon, "config", None), "title_arm", False
@@ -4116,15 +4117,19 @@ class SearchService:
             except Exception as exc:
                 logger.debug("[SearchService] SANDBOX title arm failed: %s", exc)
                 title_hits = []
-            if title_hits:
-                from nexus.bricks.search.fusion import rrf_multi_fusion
 
-                kw_results = rrf_multi_fusion(
-                    [("chunk", kw_results), ("title", title_hits)],
-                    k=60,
-                    limit=per_lane_limit,
-                    id_key=None,
-                )
+        if not vec_results and not kw_results and not title_hits:
+            return None
+
+        if title_hits:
+            from nexus.bricks.search.fusion import rrf_multi_fusion
+
+            kw_results = rrf_multi_fusion(
+                [("chunk", kw_results), ("title", title_hits)],
+                k=60,
+                limit=per_lane_limit,
+                id_key=None,
+            )
 
         # Codex review R1 (high): track whether the vector lane
         # contributed anything at all so we can flag keyword-only

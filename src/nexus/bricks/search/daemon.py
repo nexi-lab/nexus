@@ -32,6 +32,7 @@ Issue: #951
 
 import asyncio
 import contextlib
+import itertools
 import json
 import logging
 import math
@@ -114,6 +115,11 @@ TITLE_ARM_MAX_HYDRATION_FETCH = 32
 # order (most selective first) until either budget is exhausted.
 TITLE_ARM_MAX_QUERY_TOKENS = 12
 TITLE_ARM_MAX_CANDIDATES = 4096
+# Prefix-scoped selection scan budget (#4545 review round 8): when a
+# path_prefix is given, oversized buckets get a second chance via an
+# in-prefix filter so zone-wide DF cannot suppress an in-scope title hit —
+# but the filter examines at most this many posting keys per query.
+TITLE_ARM_MAX_PREFIX_SCAN = 50_000
 # Evidence-quality gates (#4545 review round 6). Function-word query tokens
 # carry no title evidence: without this, "how to configure authentication"
 # scores 4.0 against an unrelated "How To Guide" title and rank-based RRF
@@ -1793,11 +1799,14 @@ class SearchDaemon:
             "title": title,
         }
         if with_tokens:
+            # dict.fromkeys: DISTINCT tokens, insertion-ordered — duplicate
+            # tokens in a title/path must not inflate overlap scores
+            # (#4545 review round 8: "Foo Foo Foo" is one distinct match).
             entry["path_token_set"] = tuple(
-                _sys.intern(t) for t in tokenize_path(virtual_path).split()
+                _sys.intern(t) for t in dict.fromkeys(tokenize_path(virtual_path).split())
             )
             entry["title_token_set"] = tuple(
-                _sys.intern(t) for t in tokenize_path(title or "").split()
+                _sys.intern(t) for t in dict.fromkeys(tokenize_path(title or "").split())
             )
         return entry
 
@@ -1878,10 +1887,12 @@ class SearchDaemon:
                 key = (doc.get("zone_id") or ROOT_ZONE_ID, virtual_path)
             if "path_token_set" not in doc:
                 doc["path_token_set"] = tuple(
-                    (doc.get("path_tokens") or tokenize_path(virtual_path)).split()
+                    dict.fromkeys((doc.get("path_tokens") or tokenize_path(virtual_path)).split())
                 )
             if "title_token_set" not in doc:
-                doc["title_token_set"] = tuple(tokenize_path(doc.get("title") or "").split())
+                doc["title_token_set"] = tuple(
+                    dict.fromkeys(tokenize_path(doc.get("title") or "").split())
+                )
             normalized[key] = doc
 
         self._skeleton_docs = normalized
@@ -1982,12 +1993,12 @@ class SearchDaemon:
                 continue
             if path_prefix and not virtual_path.startswith(path_prefix):
                 continue
-            path_tokens = doc.get("path_token_set") or tokenize_path(virtual_path).split()
+            path_tokens = set(doc.get("path_token_set") or tokenize_path(virtual_path).split())
             title_tokens = doc.get("title_token_set")
             if title_tokens is None:
                 title_tokens = tokenize_path(doc.get("title") or "").split()
-            title_overlap = sum(1 for t in title_tokens if t in query_tokens)
-            path_overlap = sum(1 for t in path_tokens if t in query_tokens)
+            title_overlap = len(set(title_tokens) & query_tokens)
+            path_overlap = len(path_tokens & query_tokens)
             score = title_overlap * 2.0 + path_overlap * 1.0
             if score > 0:
                 scored.append((score, virtual_path, doc.get("title")))
@@ -2077,13 +2088,33 @@ class SearchDaemon:
         # consume buckets most-selective-first under aggregate budgets so
         # neither token count nor bucket unions grow synchronous work
         # unboundedly on the owner loop.
-        token_buckets: dict[str, list[set[tuple[str, str]]]] = {}
+        token_buckets: dict[str, list[set[tuple[str, str]] | frozenset[tuple[str, str]]]] = {}
         token_min_df: dict[str, int] = {}
+        prefix_scan_budget = TITLE_ARM_MAX_PREFIX_SCAN
         for token in query_tokens:
             for index in (self._skeleton_title_index, self._skeleton_path_index):
+                bucket: set[tuple[str, str]] | frozenset[tuple[str, str]] | None
                 bucket = index.get((zone_id, token))
-                if bucket is None or len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
+                if bucket is None:
                     continue
+                if len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
+                    # Prefix-scoped queries get a second chance (#4545 review
+                    # round 8): zone-wide DF must not suppress an in-prefix
+                    # hit. The filter cost is bounded by a per-query scan
+                    # budget; without a prefix the oversized bucket stays
+                    # skipped (non-discriminative).
+                    if not path_prefix or prefix_scan_budget <= 0:
+                        continue
+                    scan = min(len(bucket), prefix_scan_budget)
+                    prefix_scan_budget -= scan
+                    filtered = frozenset(
+                        key
+                        for key in itertools.islice(iter(bucket), scan)
+                        if key[1].startswith(path_prefix)
+                    )
+                    if not filtered or len(filtered) > TITLE_ARM_MAX_TOKEN_DF:
+                        continue
+                    bucket = filtered
                 token_buckets.setdefault(token, []).append(bucket)
                 prev = token_min_df.get(token)
                 if prev is None or len(bucket) < prev:

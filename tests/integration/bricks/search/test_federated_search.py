@@ -1064,3 +1064,147 @@ class TestFederatedRRFContextShape:
         assert any(d.get("context") is None for d in raw)
         stripped = [_strip_none_context(d) for d in raw]
         assert all("context" not in d for d in stripped)
+
+
+# =============================================================================
+# Issue #4544: tier_boost federated wire hygiene
+# =============================================================================
+
+
+class TestTierBoostFederated:
+    """Issue #4544: owning-zone weights flow through the federated merge."""
+
+    def test_strip_removes_null_tier_boost_and_keeps_value(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": None}
+        )
+        assert (
+            _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.5})["tier_boost"] == 0.5
+        )
+
+    def test_result_to_dict_omits_unset_tier_boost(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+        from nexus.bricks.search.results import BaseSearchResult
+
+        plain = BaseSearchResult(path="a", chunk_text="", score=1.0, zone_id="z1")
+        boosted = BaseSearchResult(path="b", chunk_text="", score=0.5, zone_id="z1", tier_boost=0.5)
+        assert "tier_boost" not in _result_to_dict(plain)
+        assert _result_to_dict(boosted)["tier_boost"] == 0.5
+
+    def test_merge_by_raw_score_orders_on_boosted_scores(self) -> None:
+        from nexus.bricks.search.federated_search import _merge_by_raw_score
+        from nexus.bricks.search.results import BaseSearchResult
+
+        # zone-a demoted its chat hit (1.0 -> 0.4) before returning; zone-b's
+        # unweighted 0.6 must now outrank it in the merged list.
+        za = BaseSearchResult(
+            path="chat/a.md", chunk_text="", score=0.4, zone_id="za", tier_boost=0.4
+        )
+        zb = BaseSearchResult(path="docs/b.md", chunk_text="", score=0.6, zone_id="zb")
+        merged = _merge_by_raw_score([("za", [za]), ("zb", [zb])], limit=2)
+        assert [m["path"] for m in merged] == ["docs/b.md", "chat/a.md"]
+        assert merged[1]["tier_boost"] == 0.4
+
+
+class TestRemoteSearchEnvelope:
+    """Codex review R1: the server-side RPC search handler returns a
+    ``{"results": [...]}`` envelope; the bare-list check discarded it and
+    real remote zones contributed zero results."""
+
+    def _dispatcher_with_remote(self, raw_result):
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+
+        registry = MagicMock()
+        registry.is_remote.return_value = True
+        transport = MagicMock()
+        transport.call_rpc.return_value = raw_result
+        registry.get_transport.return_value = transport
+        dispatcher = FederatedSearchDispatcher.__new__(FederatedSearchDispatcher)
+        dispatcher._registry = registry
+        dispatcher._mint_search_delegation = MagicMock(return_value=MagicMock(delegation_id="d-1"))
+        return dispatcher
+
+    @pytest.mark.asyncio
+    async def test_dict_envelope_unwrapped(self) -> None:
+        dispatcher = self._dispatcher_with_remote(
+            {"results": [{"path": "/a.md", "score": 0.9, "tier_boost": 0.5}]}
+        )
+        results = await dispatcher._search_remote_zone(
+            zone_id="zr",
+            query="q",
+            search_type="hybrid",
+            limit=5,
+            path_filter=None,
+            alpha=0.5,
+            fusion_method="rrf",
+        )
+        assert len(results) == 1
+        assert results[0]["zone_id"] == "zr"
+        assert results[0]["tier_boost"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_bare_list_still_accepted(self) -> None:
+        dispatcher = self._dispatcher_with_remote([{"path": "/a.md", "score": 0.9}])
+        results = await dispatcher._search_remote_zone(
+            zone_id="zr",
+            query="q",
+            search_type="hybrid",
+            limit=5,
+            path_filter=None,
+            alpha=0.5,
+            fusion_method="rrf",
+        )
+        assert len(results) == 1 and results[0]["zone_qualified_path"] == "zr:/a.md"
+
+
+class TestTierBoostTrustBoundary:
+    """Codex review R7: remote dicts cross a trust boundary — malformed
+    tier_boost must lose the field, never abort fusion via round()."""
+
+    def test_string_tier_boost_dropped(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": "0.5"})
+        assert "tier_boost" not in d
+
+    def test_nan_and_inf_dropped(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": float("nan")}
+        )
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": float("inf")}
+        )
+
+    def test_bool_dropped_and_valid_rounded(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": True}
+        )
+        d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.123456})
+        assert d["tier_boost"] == 0.1235
+
+    def test_huge_json_integer_dropped_not_crash(self) -> None:
+        # Codex review R8: float(10**400) raises OverflowError — must drop
+        # the field, never abort fusion.
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        d = _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 10**400})
+        assert "tier_boost" not in d
+
+    def test_out_of_range_attribution_dropped(self) -> None:
+        # Mirrors the 0.1-10.0 API validation range.
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": 100.0}
+        )
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": 0.01}
+        )

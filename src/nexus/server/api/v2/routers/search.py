@@ -180,6 +180,11 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     context = getattr(result, "context", None)
     if context is not None:
         out["context"] = context
+    # Issue #4544: attribute the per-prefix tier weight applied to the score
+    # (omitted when unboosted to keep responses compact).
+    tier_boost = getattr(result, "tier_boost", None)
+    if tier_boost is not None:
+        out["tier_boost"] = round(tier_boost, 4)
     macro_text = getattr(result, "macro_text", None)
     if macro_text is not None:
         out["macro_text"] = macro_text
@@ -834,6 +839,12 @@ async def search_query_batch(
             ctx = getattr(r, "context", None)
             if ctx is not None:
                 entry["context"] = ctx
+            # Issue #4544 (Codex review R1): batch hits must carry the same
+            # omit-when-None tier_boost attribution as single-query results,
+            # or batch consumers see multiplied scores they cannot explain.
+            tier_boost = getattr(r, "tier_boost", None)
+            if tier_boost is not None:
+                entry["tier_boost"] = round(tier_boost, 4)
             formatted.append(entry)
         response_queries.append(
             {

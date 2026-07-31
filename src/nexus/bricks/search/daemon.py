@@ -34,6 +34,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -48,6 +49,7 @@ from sqlalchemy import text as sa_text
 from nexus.bricks.search import consumer_metrics
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
 from nexus.bricks.search.config import get_env_bool as _get_env_bool
+from nexus.bricks.search.config import get_env_float as _get_env_float
 from nexus.bricks.search.config import get_env_int as _get_env_int
 from nexus.bricks.search.mutation_events import (
     SearchMutationEvent,
@@ -136,6 +138,11 @@ class DaemonStats:
     # visible via /search/stats rather than only in log lines.
     path_context_attach_failures: int = 0
     path_context_resolve_failures: int = 0
+    # Issue #4544 (Codex review R3): tier-weight observability. A probe
+    # failure or un-widened pool silently bypasses configured ranking
+    # weights — operators need a production signal, not a debug log.
+    tier_boost_probe_failures: int = 0
+    tier_boost_suppressed_searches: int = 0
 
 
 @dataclass
@@ -181,6 +188,83 @@ def _merge_backend_timing(total_ms: float, recorded: dict[str, float]) -> dict[s
         if key in recorded:
             timing[key] = recorded[key]
     return timing
+
+
+# Codex review R7: env-sourced ranking knobs are untrusted input. The
+# widening factor is capped (route limit <= 100 × ReBAC over-fetch 3 ×
+# cap 10 keeps backend work bounded) and the floor ratio falls back to its
+# documented default when not a finite non-negative number — a NaN or
+# negative ratio would otherwise silently disable the uplift guard.
+_TIER_BOOST_OVERFETCH_CAP = 10
+_TIER_BOOST_FLOOR_DEFAULT = 0.25
+
+
+def _sane_overfetch_factor(raw: Any) -> int:
+    """Clamp the tier-boost over-fetch factor to [1, cap]."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(value, _TIER_BOOST_OVERFETCH_CAP))
+
+
+def _sane_floor_ratio(raw: Any) -> float:
+    """Return a finite non-negative floor ratio, else the default."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _TIER_BOOST_FLOOR_DEFAULT
+    if not math.isfinite(value) or value < 0.0:
+        return _TIER_BOOST_FLOOR_DEFAULT
+    return value
+
+
+def _apply_tier_weight(
+    result: Any,
+    weight: float | None,
+    top_score: float,
+    floor_ratio: float,
+) -> bool:
+    """Multiply ``result.score`` by a path-prefix weight (Issue #4544).
+
+    Returns True when the weight was applied. Skips: no/neutral weight,
+    already-stamped results (``batch_search`` re-runs attach on results whose
+    inner search already applied weights — without this guard the score would
+    compound to weight²), and uplifts on results scoring below
+    ``floor_ratio * top_score`` (metadata may reorder near-peers but must not
+    lift weak matches past strong ones). Demotions always apply.
+
+    Signed-safe: pgvector semantic scores are raw cosine similarity, whose
+    range includes negatives. A plain multiply would let a demotion weight
+    *raise* a negative score (-0.2 × 0.5 = -0.1), inverting tier semantics.
+    Negative scores divide by the weight instead, so w < 1 always worsens
+    rank and w > 1 always improves it. ``tier_boost`` stamps the CONFIGURED
+    weight (the policy that applied), so the inverse transform is
+    ``score / tier_boost`` for non-negative scores and
+    ``score * tier_boost`` for negative ones (Codex review R7).
+
+    Floor gate (uplifts only, active when ``floor_ratio > 0``): with a
+    positive top the ratio comparison applies as documented. With a
+    non-positive top (all-negative semantic sets) uplifts are suppressed
+    outright — dividing a deeply negative score by a large weight would
+    move it toward zero and leapfrog the entire set (-0.9/10 = -0.09
+    outranks a -0.1 top), exactly the weak-past-strong promotion the gate
+    exists to prevent (Codex review R5). ``floor_ratio == 0`` disables the
+    gate entirely, including this suppression.
+    """
+    if weight is None or weight == 1.0:
+        return False
+    if getattr(result, "tier_boost", None) is not None:
+        return False
+    if (
+        weight > 1.0
+        and floor_ratio > 0.0
+        and (top_score <= 0.0 or result.score < floor_ratio * top_score)
+    ):
+        return False
+    result.score = result.score * weight if result.score >= 0.0 else result.score / weight
+    result.tier_boost = weight
+    return True
 
 
 @dataclass
@@ -302,6 +386,31 @@ class DaemonConfig:
     )
     macro_chunk_code_forward_bias: bool = field(
         default_factory=lambda: _get_env_bool("NEXUS_SEARCH_MACRO_CHUNK_FORWARD_BIAS", True)
+    )
+
+    # Per-prefix ranking weight (Issue #4544). When the effective zone has any
+    # path_contexts row with weight != 1.0, the daemon widens its candidate
+    # fetch by ``tier_boost_overfetch_factor`` so a boost can promote a
+    # below-cutoff hit, then trims back to the requested limit after the
+    # weights are applied. ``tier_boost_floor_ratio`` gates uplifts only:
+    # a result scoring below ratio*top cannot be boosted past strong matches
+    # (0 disables the gate). Demotions always apply.
+    #
+    # BOUNDED APPROXIMATION (design-accepted, Codex review R4): weights
+    # re-rank within the widened window of ``limit × factor`` raw candidates
+    # only. If more than ``limit × factor`` raw hits from a demoted prefix
+    # outscore an unweighted hit, that hit stays outside the window and
+    # cannot be promoted — exact weighted top-K would require pushing
+    # weights into every backend query (or threshold-style iterative
+    # fetch), which the #4544 design explicitly traded away for the
+    # attach-point approach. Operators with extremely noisy high-volume
+    # prefixes should raise the factor (or fence the prefix with
+    # path-scoped search) rather than expect global re-ranking.
+    tier_boost_overfetch_factor: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_TIER_BOOST_OVERFETCH", 3)
+    )
+    tier_boost_floor_ratio: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_TIER_BOOST_FLOOR_RATIO", 0.25)
     )
 
 
@@ -1644,11 +1753,54 @@ class SearchDaemon:
         self._path_context_engines_by_loop[loop] = engine
         return cache
 
+    async def _tier_weight_probe(self, zone_id: str) -> tuple[bool, list[Any] | None]:
+        """Return ``(has_weights, snapshot)`` for a zone (Issue #4544).
+
+        ``has_weights`` decides whether _search_on_current_loop widens its
+        candidate fetch; ``snapshot`` is the records list that decision was
+        made from, so the caller can pin it through to
+        ``_attach_path_contexts`` — over-fetch sizing and weight application
+        must read the SAME rows, otherwise a weight added between the probe
+        and attach would boost against an un-widened candidate pool (Codex
+        review R1). Fail-soft: any error returns ``(False, None)`` — the
+        search itself must never break on a weight probe, and attach falls
+        back to its own refresh when no snapshot is pinned. The refresh here
+        costs one zone-fingerprint query (COUNT + MAX(updated_at)) per
+        search when no snapshot is pinned downstream.
+        """
+        try:
+            cache = await self._resolve_path_context_cache()
+            if cache is None:
+                return (False, None)
+            await cache.refresh_if_stale(zone_id)
+            snapshot = cache.snapshot_zone(zone_id)
+        except Exception as exc:
+            # Defensive stats access: the probe's fail-soft contract must
+            # hold even for partially-constructed daemons (test doubles via
+            # ``__new__`` have no ``stats``) — the counter update itself may
+            # never re-raise.
+            stats = getattr(self, "stats", None)
+            if stats is not None:
+                stats.tier_boost_probe_failures += 1
+            logger.warning(
+                "tier-weight probe failed for zone=%r (total=%d): %s",
+                zone_id,
+                getattr(stats, "tier_boost_probe_failures", 0),
+                exc,
+            )
+            return (False, None)
+        if not snapshot:
+            return (False, snapshot)
+        has_weights = any(rec.weight is not None and rec.weight != 1.0 for rec in snapshot)
+        return (has_weights, snapshot)
+
     async def _attach_path_contexts(
         self,
         results: list[SearchResult],
         *,
         zone_id: str | None = None,
+        pinned_snapshots: dict[str, list[Any]] | None = None,
+        apply_weights: bool = True,
     ) -> None:
         """Attach admin-configured path context descriptions to search results.
 
@@ -1668,6 +1820,18 @@ class SearchDaemon:
         Fails soft: if the cache lookup raises (e.g. asyncpg loop mismatch),
         logs a warning and leaves ``context`` unset rather than breaking
         the whole search.
+
+        ``pinned_snapshots`` (Issue #4544, Codex review R1): zones present in
+        this mapping use the given records list verbatim instead of
+        refreshing — the caller pins the exact snapshot its over-fetch
+        decision was made from, so sizing and weighting can never disagree
+        within one request.
+
+        ``apply_weights=False`` (Codex review R2): when the caller's
+        tier-weight probe failed, the candidate pool was NOT widened, so
+        applying weights here could demote/promote against a pool already
+        cut to ``limit``. Context still attaches (stale context beats no
+        context, #3773); only the ranking mutation is suppressed.
         """
         if not results:
             return
@@ -1700,8 +1864,10 @@ class SearchDaemon:
         # snapshot_zone is sync so the grab happens before the next refresh's
         # await point. Isolate per-zone failures: one zone raising shouldn't
         # drop context for every other zone in the same batch (Round-4 review).
-        snapshots: dict[str, list[Any]] = {}
+        snapshots: dict[str, list[Any]] = dict(pinned_snapshots or {})
         for zone in zones:
+            if zone in snapshots:
+                continue
             try:
                 await cache.refresh_if_stale(zone)
             except Exception as exc:
@@ -1735,15 +1901,46 @@ class SearchDaemon:
             if snap is not None:
                 snapshots[zone] = snap
 
-        from nexus.bricks.search.path_context import lookup_in_records
+        from nexus.bricks.search.path_context import lookup_record_in_records
 
+        # Issue #4544: apply per-prefix ranking weights while attaching
+        # context. top_score is the pre-boost max of this batch — the floor
+        # gate must compare against the unweighted ranking.
+        floor_ratio = _sane_floor_ratio(self.config.tier_boost_floor_ratio)
+        # top_score is the max of the daemon's candidate pool — computed
+        # BEFORE route-level ReBAC filtering, like every other ranking
+        # transform in this pipeline (RRF fusion ranks, attribute boost
+        # #1092, page pooling #4542 all run pre-filter). A denied hit can
+        # therefore influence the uplift gate, exactly as it already
+        # influences fused rank positions; relocating weight finalization
+        # post-ReBAC would contradict the #4544 attach-point design and
+        # break federated composition (remote zones weight server-side,
+        # before the local caller's filter). Documented trade-off — see
+        # spec §3 (Codex review R6 ruling).
+        top_score = max((r.score for r in results), default=0.0)
+        boosted_any = False
+        suppressed = 0
+        suppressed_zone: str | None = None
         for r in results:
             zone = _zone_for(r)
             records = snapshots.get(zone)
             if records is None:
                 continue
             try:
-                r.context = lookup_in_records(records, r.path)
+                record = lookup_record_in_records(records, r.path)
+                r.context = record.description if record is not None else None
+                if record is not None and record.weight is not None and record.weight != 1.0:
+                    if apply_weights:
+                        if _apply_tier_weight(r, record.weight, top_score, floor_ratio):
+                            boosted_any = True
+                    elif pinned_snapshots is None and getattr(r, "tier_boost", None) is None:
+                        # A configured weight was bypassed after a FAILED
+                        # probe (no pin) — count it so operators can see
+                        # ranking policy being skipped (Codex review R3).
+                        # Pinned callers already counted the bypass at their
+                        # widening decision (R4), so don't double-count.
+                        suppressed += 1
+                        suppressed_zone = zone
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
@@ -1752,6 +1949,18 @@ class SearchDaemon:
                     self.stats.path_context_attach_failures,
                     exc,
                 )
+        if suppressed:
+            self.stats.tier_boost_suppressed_searches += 1
+            logger.warning(
+                "tier weights suppressed for %d result(s) in zone=%r "
+                "(probe failed or pool not widened; suppressed searches total=%d)",
+                suppressed,
+                suppressed_zone,
+                self.stats.tier_boost_suppressed_searches,
+            )
+        if boosted_any:
+            # Stable sort: equal scores keep their pre-boost relative order.
+            results.sort(key=lambda r: r.score, reverse=True)
 
     async def _apply_macro_expansion(
         self,
@@ -1854,6 +2063,41 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
+        # Issue #4544: when the zone carries tier weights, widen every
+        # candidate fetch so a boost can promote a below-cutoff hit, then trim
+        # back to ``limit`` after _attach_path_contexts applies the weights.
+        # Zones without weights keep internal_limit == limit and take the
+        # byte-identical legacy path. The factor is clamped to >= 1 so a
+        # misconfigured env override can never zero-out the fetch.
+        has_tier_weights, tier_snapshot = await self._tier_weight_probe(effective_zone_id)
+        internal_limit = (
+            limit * _sane_overfetch_factor(self.config.tier_boost_overfetch_factor)
+            if has_tier_weights
+            else limit
+        )
+        # Pin the probe's snapshot so attach weights against the same rows
+        # the over-fetch decision saw. Weights apply ONLY when the pool was
+        # actually widened (Codex review R2/R3): a failed probe (snapshot
+        # None) or a factor clamped down to 1 both leave internal_limit ==
+        # limit, and mutating ranks against an un-widened pool means a
+        # demoted top-N hit can never be displaced by rank N+1. Context
+        # attach still runs its own fail-soft refresh either way.
+        tier_pin: dict[str, list[Any]] | None = (
+            {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
+        )
+        tier_weights_ok = tier_snapshot is not None and internal_limit > limit
+        if has_tier_weights and not tier_weights_ok:
+            # Codex review R4: count suppression at the DECISION point, not
+            # only at attach — with factor <= 1 an affected candidate below
+            # the un-widened cutoff never appears in `results`, so attach
+            # alone cannot observe the bypass.
+            self.stats.tier_boost_suppressed_searches += 1
+            logger.warning(
+                "tier weights configured for zone=%r but pool not widened "
+                "(factor<=1) — ranking weights suppressed (total=%d)",
+                effective_zone_id,
+                self.stats.tier_boost_suppressed_searches,
+            )
         start = time.perf_counter()
         self.last_search_timing = {}
         hybrid_keyword_results: list[SearchResult] = []
@@ -1868,7 +2112,7 @@ class SearchDaemon:
                     backend_results = await self._search_via_backends(
                         query,
                         search_type=search_type,
-                        limit=limit,
+                        limit=internal_limit,
                         path_filter=path_filter,
                         zone_id=effective_zone_id,
                     )
@@ -1880,7 +2124,14 @@ class SearchDaemon:
                     if backend_results:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
-                        await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
+                        await self._attach_path_contexts(
+                            backend_results,
+                            zone_id=effective_zone_id,
+                            pinned_snapshots=tier_pin,
+                            apply_weights=tier_weights_ok,
+                        )
+                        if internal_limit != limit:
+                            backend_results = backend_results[:limit]
                         return self._with_search_timing(backend_results)
 
                 # Keyword mode should use the daemon's keyword stack first.
@@ -1894,7 +2145,7 @@ class SearchDaemon:
                 keyword_start = time.perf_counter()
                 keyword_results = await self._keyword_search(
                     query,
-                    limit,
+                    internal_limit,
                     path_filter,
                     zone_id=effective_zone_id,
                 )
@@ -1920,7 +2171,14 @@ class SearchDaemon:
                     )
                 latency_ms = (time.perf_counter() - start) * 1000
                 self._track_latency(latency_ms)
-                await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
+                await self._attach_path_contexts(
+                    keyword_results,
+                    zone_id=effective_zone_id,
+                    pinned_snapshots=tier_pin,
+                    apply_weights=tier_weights_ok,
+                )
+                if internal_limit != limit:
+                    keyword_results = keyword_results[:limit]
                 return self._with_search_timing(keyword_results)
             elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
@@ -1930,7 +2188,7 @@ class SearchDaemon:
                 keyword_start = time.perf_counter()
                 hybrid_keyword_results = await self._keyword_search(
                     query,
-                    limit * 3,
+                    internal_limit * 3,
                     path_filter,
                     zone_id=effective_zone_id,
                 )
@@ -1944,7 +2202,7 @@ class SearchDaemon:
                 backend_results = await self._search_via_backends(
                     query,
                     search_type=search_type,
-                    limit=limit,
+                    limit=internal_limit,
                     path_filter=path_filter,
                     alpha=alpha,
                     fusion_method=fusion_method,
@@ -1962,12 +2220,19 @@ class SearchDaemon:
                         results = self._fuse_ranked_results(
                             hybrid_keyword_results,
                             results,
-                            limit,
+                            internal_limit,
                         )
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
-                    await self._attach_path_contexts(results, zone_id=effective_zone_id)
+                    await self._attach_path_contexts(
+                        results,
+                        zone_id=effective_zone_id,
+                        pinned_snapshots=tier_pin,
+                        apply_weights=tier_weights_ok,
+                    )
+                    if internal_limit != limit:
+                        results = results[:limit]
                     return self._with_search_timing(results)
                 # Backend returned empty — fall through to the legacy stack
                 # so Zoekt / BM25S / inline FTS can still serve the query.
@@ -1977,11 +2242,13 @@ class SearchDaemon:
             # legacy keyword call — so only semantic and hybrid reach here.
             fallback_start = time.perf_counter()
             if search_type == "semantic":
-                results = await self._semantic_search(query, limit, path_filter, zone_id=zone_id)
+                results = await self._semantic_search(
+                    query, internal_limit, path_filter, zone_id=zone_id
+                )
             else:  # hybrid
                 results = await self._hybrid_search(
                     query,
-                    limit,
+                    internal_limit,
                     path_filter,
                     alpha,
                     fusion_method,
@@ -2010,7 +2277,14 @@ class SearchDaemon:
                     self.last_search_timing.get("backend_ms", 0.0) + fallback_ms
                 )
 
-            await self._attach_path_contexts(results, zone_id=effective_zone_id)
+            await self._attach_path_contexts(
+                results,
+                zone_id=effective_zone_id,
+                pinned_snapshots=tier_pin,
+                apply_weights=tier_weights_ok,
+            )
+            if internal_limit != limit:
+                results = results[:limit]
             return self._with_search_timing(results)
 
         except TimeoutError:
@@ -2373,12 +2647,19 @@ class SearchDaemon:
                 )
                 records = None
             if records is not None:
-                from nexus.bricks.search.path_context import lookup_in_records
+                from nexus.bricks.search.path_context import lookup_record_in_records
 
+                # Issue #4544 note: weights are NOT applied here. Each inner
+                # self.search() already ran _attach_path_contexts (multiply +
+                # tier_boost stamp); re-applying against post-boost scores
+                # would re-evaluate the floor gate against a shifted top and
+                # boost previously-gated results. This block only backfills
+                # ``context`` for legacy/mocked daemons.
                 for inner in results:
                     for r in inner:
                         try:
-                            r.context = lookup_in_records(records, r.path)
+                            record = lookup_record_in_records(records, r.path)
+                            r.context = record.description if record is not None else None
                         except Exception as exc:
                             self.stats.path_context_attach_failures += 1
                             logger.warning(
@@ -4364,6 +4645,10 @@ class SearchDaemon:
             # operators can spot persistent failures via /search/stats.
             "path_context_attach_failures": self.stats.path_context_attach_failures,
             "path_context_resolve_failures": self.stats.path_context_resolve_failures,
+            # Issue #4544 (Codex review R3): configured tier weights being
+            # bypassed (probe failure / un-widened pool) must be visible.
+            "tier_boost_probe_failures": self.stats.tier_boost_probe_failures,
+            "tier_boost_suppressed_searches": self.stats.tier_boost_suppressed_searches,
         }
 
     def get_health(self) -> dict[str, Any]:

@@ -8,7 +8,7 @@ matching the Alembic-managed production schema.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -29,6 +29,8 @@ class PathContextModel(Base):
     )
     path_prefix: Mapped[str] = mapped_column(String(1024), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    # Issue #4544: per-prefix ranking weight; NULL ≡ 1.0 (no boost).
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
         nullable=False,

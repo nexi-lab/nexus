@@ -21,6 +21,7 @@ Design decisions (from review):
 import asyncio
 import hashlib
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -403,7 +404,14 @@ class FederatedSearchDispatcher:
             delegation.delegation_id,  # auth_token override
         )
 
-        # Convert remote response to result dicts with zone tagging
+        # Convert remote response to result dicts with zone tagging.
+        # Issue #4544 (Codex review R1): the server-side RPC search handler
+        # returns a ``{"results": [...]}`` envelope (handle_search in
+        # src/nexus/server/rpc/handlers/filesystem.py), which the bare-list
+        # check silently discarded — real remote zones contributed zero
+        # results. Accept both shapes.
+        if isinstance(raw_result, dict):
+            raw_result = raw_result.get("results", [])
         results = raw_result if isinstance(raw_result, list) else []
         for r in results:
             if isinstance(r, dict):
@@ -864,11 +872,40 @@ def _merge_by_raw_score(
 
 def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     """Match the non-federated router's omit-when-None contract for
-    ``context``. Issue #3773 review (Rounds 5-6): every federated emission
-    path must route through this to avoid ``context: null`` leaking onto
-    the wire and creating a shape-drift between fusion strategies."""
-    if d.get("context") is None:
-        d.pop("context", None)
+    ``context`` (Issue #3773, review Rounds 5-6) and ``tier_boost``
+    (Issue #4544): every federated emission path must route through this so
+    ``null`` never leaks onto the wire and the fusion strategies stay
+    shape-consistent."""
+    for key in ("context", "tier_boost"):
+        if d.get(key) is None:
+            d.pop(key, None)
+    # Issue #4544: round surviving tier_boost to 4 places to match the
+    # non-federated router's serialization (_serialize_search_result).
+    # Remote dicts cross a trust boundary (Codex review R7): a malformed or
+    # version-skewed peer sending a string/NaN/inf here must lose the
+    # attribution field, not abort the whole federated fusion via
+    # round() TypeError.
+    tb = d.get("tier_boost")
+    if tb is not None:
+        keep = False
+        value = 0.0
+        if isinstance(tb, (int, float)) and not isinstance(tb, bool):
+            try:
+                # float() on an astronomically large JSON int raises
+                # OverflowError (Codex review R8) — that too must drop the
+                # field, never abort the fusion.
+                value = float(tb)
+            except OverflowError:
+                keep = False
+            else:
+                # Enforce the documented attribution range (mirrors the
+                # 0.1–10.0 API validation) — a value outside it cannot be a
+                # legitimately stamped weight.
+                keep = math.isfinite(value) and 0.1 <= value <= 10.0
+        if keep:
+            d["tier_boost"] = round(value, 4)
+        else:
+            d.pop("tier_boost", None)
     return d
 
 

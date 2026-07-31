@@ -443,3 +443,34 @@ async def test_no_embedding_honours_weighted_alpha() -> None:
     results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
 
     assert all(r.score == 0.0 for r in results)
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_non_default_results_stamped_degraded() -> None:
+    """#4541 review round 6: the dense leg is missing, so non-default fusion
+    results carry the #3778 semantic_degraded marker."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+
+    assert results and all(r.semantic_degraded is True for r in results)
+
+    # The byte-identical default shortcut stays unstamped.
+    default = await _hybrid(daemon)
+    assert all(not r.semantic_degraded for r in default)
+
+
+@pytest.mark.asyncio
+async def test_fallback_non_default_keeps_fusion_provenance() -> None:
+    """#4541 review round 6: non-default fallback fusion reports the leg
+    scores that actually produced the fused score (shared hits carry BOTH
+    keyword_score and vector_score), unlike the legacy default shape."""
+    daemon = _make_fallback_daemon()
+    results = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf_weighted")
+
+    by_path = {r.path: r for r in results}
+    # /a.md is in both legs: fusion provenance keeps both modality scores.
+    assert by_path["/a.md"].keyword_score == 10.0
+    assert by_path["/a.md"].vector_score == 0.5
+    # /d.md is dense-only.
+    assert by_path["/d.md"].keyword_score is None
+    assert by_path["/d.md"].vector_score == 0.99

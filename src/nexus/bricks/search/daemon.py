@@ -2385,9 +2385,17 @@ class SearchDaemon:
                 )
                 timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
                 record_total()
-                return [
+                coerced = [
                     self._coerce_to_search_result(item, search_type=search_type) for item in fused
                 ]
+                # The dense leg is missing entirely, so a semantic-weighted
+                # request may legitimately score everything 0.0 — stamp the
+                # #3778 degradation marker so callers can distinguish
+                # "semantic retrieval failed" from a genuine ranking
+                # (#4541 review round 6).
+                for coerced_result in coerced:
+                    coerced_result.semantic_degraded = True
+                return coerced
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
@@ -3034,6 +3042,14 @@ class SearchDaemon:
         fused = fuse_results(
             kw_results, sem_results, config=fusion_config, limit=limit, id_key=None
         )
+
+        # Non-default fusion keeps the fusion module's provenance fields:
+        # keyword_score / vector_score reflect the legs that actually produced
+        # the fused score (matching the primary indexed path). Only the exact
+        # default contract reconstructs the legacy shape below
+        # (#4541 review round 6).
+        if fusion_method != FusionMethod.RRF.value or rrf_k != 60:
+            return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
 
         # Rebuild results in the legacy fallback shape: every field comes from
         # the first-seen leg result (keyword leg wins ties) and only ``score``

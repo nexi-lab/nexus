@@ -185,6 +185,11 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     tier_boost = getattr(result, "tier_boost", None)
     if tier_boost is not None:
         out["tier_boost"] = round(tier_boost, 4)
+    # #3778 marker, stamped by the daemon when the dense leg was unavailable
+    # for a semantic-weighted fusion request (#4541 review round 6). Emitted
+    # only when set so default responses stay byte-identical.
+    if getattr(result, "semantic_degraded", None):
+        out["semantic_degraded"] = True
     macro_text = getattr(result, "macro_text", None)
     if macro_text is not None:
         out["macro_text"] = macro_text

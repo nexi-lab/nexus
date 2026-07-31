@@ -86,7 +86,7 @@ dense ────────────────────────�
 | File | Change |
 |---|---|
 | `src/nexus/bricks/search/results.py` | `BaseSearchResult.title_score: float \| None = None` |
-| `src/nexus/bricks/search/daemon.py` | `SearchDaemonConfig.title_arm: bool = True`; hybrid title-arm block + sub-fusion swap; `title_score` passthrough in `_coerce_to_search_result` (dataclass and dict branches) and `_fuse_ranked_results` copy list; `title_ms` in `_empty_backend_timing` |
+| `src/nexus/bricks/search/daemon.py` | `DaemonConfig.title_arm: bool = True`; hybrid title-arm block + sub-fusion swap; `title_score` passthrough in `_coerce_to_search_result` (dataclass and dict branches) and `_fuse_ranked_results` copy list; `title_ms` in `_empty_backend_timing` |
 | `src/nexus/server/lifespan/search.py` | `NEXUS_SEARCH_TITLE_ARM` env parse (same pattern as `NEXUS_SEARCH_PAGE_AGGREGATION`) |
 | `src/nexus/server/api/v2/routers/search.py` | `_serialize_search_result`: emit `title_score` rounded to 4 places, omitted when None (compact pattern like `context` / `macro_text`) |
 | `docs/surface-coverage/api-rpc-surface-coverage.yaml` | regen after router edit |

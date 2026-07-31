@@ -2375,9 +2375,15 @@ class SearchDaemon:
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
+            # Issue #4542 (round-4 review): the per-doc cap must survive the
+            # degraded path too — over-fetch so capping can backfill, then
+            # cap and trim exactly like the fused path.
+            pooled = self.config.page_aggregation
             results = await timed_leg(
                 "keyword_ms",
-                self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
+                self._fts_backend.keyword_search(
+                    query, path, limit * 2 if pooled else limit, zone_id, timing=timing
+                ),
             )
             # Non-default fusion requests still flow through the configured
             # fusion (keyword leg only, empty dense leg) so the advertised
@@ -2393,9 +2399,15 @@ class SearchDaemon:
                     config=FusionConfig(
                         method=FusionMethod(fusion_method), alpha=alpha, rrf_k=rrf_k
                     ),
-                    limit=limit,
+                    # Issue #4542: with the cap active, fuse the full keyword
+                    # list so the per-doc cap can backfill before the trim.
+                    limit=len(results) if pooled else limit,
                     id_key=None,
                 )
+                if pooled:
+                    fused = cap_chunks_per_page(
+                        fused, chunks_per_page=self.config.chunks_per_page
+                    )[:limit]
                 timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
                 record_total()
                 coerced = SearchResultList(
@@ -2411,6 +2423,10 @@ class SearchDaemon:
                 for coerced_result in coerced:
                     coerced_result.semantic_degraded = True
                 return coerced
+            if pooled:
+                results = cap_chunks_per_page(
+                    results, chunks_per_page=self.config.chunks_per_page
+                )[:limit]
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 

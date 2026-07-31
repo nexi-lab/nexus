@@ -153,10 +153,10 @@ def _aggregate_chunks_to_pages(
 
 
 def cap_chunks_per_page(
-    chunks: list[dict[str, Any]],
+    chunks: list[Any],
     *,
     chunks_per_page: int,
-) -> list[dict[str, Any]]:
+) -> list[Any]:
     """Order-preserving per-page emission cap (Issue #4542 review hardening).
 
     Unlike ``_aggregate_chunks_to_pages`` — which max-pools page scores,
@@ -166,12 +166,18 @@ def cap_chunks_per_page(
     score this retains exactly the top-K chunks of every page in global
     score order, so downstream trims never drop a higher-scored document
     in favor of a lower-scored chunk of an earlier page.
+
+    Accepts result dicts or dataclass rows (the degraded hybrid keyword
+    fallback caps raw ``BaseSearchResult`` objects); rows without a path
+    each count as their own page.
     """
     counts: dict[str, int] = {}
-    out: list[dict[str, Any]] = []
+    out: list[Any] = []
     for r in chunks:
-        path = r.get("path") or ""
-        key = path or str(r.get("id") or id(r))
+        if isinstance(r, dict):
+            key = (r.get("path") or "") or str(r.get("id") or id(r))
+        else:
+            key = getattr(r, "path", "") or str(id(r))
         emitted = counts.get(key, 0)
         if emitted < chunks_per_page:
             counts[key] = emitted + 1

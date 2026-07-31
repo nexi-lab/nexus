@@ -539,3 +539,145 @@ async def test_multi_zone_saturated_window_backfills() -> None:
     # One chunk per doc (cap=1) and the below-window docs backfilled.
     assert len(set(paths)) == 3
     assert any("next" in p for p in paths)
+
+
+# ---------------------------------------------------------------------------
+# Round-4 review: degraded/alternate paths and cache zone scoping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_hybrid_embed_failure_fallback_still_caps() -> None:
+    """Round-4 review: an embedding-provider outage sent hybrid down the
+    keyword-only fallback which bypassed the cap and fetched exact-limit
+    (no backfill headroom)."""
+
+    class _SlicingFtsBackend:
+        def __init__(self, rows: list[SearchResult]) -> None:
+            self._rows = rows
+            self.seen_limits: list[int] = []
+
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[SearchResult]:
+            self.seen_limits.append(limit)
+            return list(self._rows)[:limit]
+
+    rows = [_chunk("/long.md", i, 10.0 - i) for i in range(4)] + [
+        _chunk("/other-a.md", 0, 5.0),
+        _chunk("/other-b.md", 0, 4.0),
+    ]
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon.config = DaemonConfig(page_aggregation=True, chunks_per_page=1)
+    daemon._fts_backend = _SlicingFtsBackend(rows)
+    daemon._vector_backend = _RowsVectorBackend([])
+
+    async def _embed_query(self: Any, query: str) -> None:
+        return None
+
+    daemon._embed_query = MethodType(_embed_query, daemon)
+
+    results = await daemon._search_via_backends(
+        "query", search_type="hybrid", limit=4, path_filter=None, zone_id="root"
+    )
+
+    paths = [r.path for r in results]
+    assert paths == ["/long.md", "/other-a.md", "/other-b.md"]
+    # Over-fetched beyond the requested limit so the cap could backfill.
+    assert daemon._fts_backend.seen_limits[0] > 4
+
+
+@pytest.mark.asyncio
+async def test_survivor_branch_applies_cap_when_other_zone_empty() -> None:
+    """Round-4 review: with one zone empty, the one-surviving-list branch
+    sliced without capping — zone failures must not change flag semantics."""
+    seen: dict[str, int] = {}
+    daemon = _capture_daemon(
+        {
+            "za": [
+                _local_result("za", "/doc.md", 0, 0.9),
+                _local_result("za", "/doc.md", 1, 0.8),
+                _local_result("za", "/b.md", 0, 0.5),
+            ],
+            "zb": [],
+        },
+        DaemonConfig(page_aggregation=True, chunks_per_page=1),
+        seen,
+    )
+    dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["za", "zb"]))
+
+    resp = await dispatcher.search(query="q", subject=("user", "u1"), limit=2)
+
+    assert [r["path"] for r in resp.results] == ["/doc.md", "/b.md"]
+
+
+@pytest.mark.asyncio
+async def test_rrf_strategy_honors_cap_at_chunk_grain() -> None:
+    """Round-4 review: RRF fusion deduped at page grain, returning one chunk
+    per doc regardless of chunks_per_page and underfilling the request."""
+    from nexus.bricks.search.federated_search import FederatedSearchConfig
+
+    seen: dict[str, int] = {}
+    daemon = _capture_daemon(
+        {
+            "za": [
+                _local_result("za", "/doc.md", 0, 0.9),
+                _local_result("za", "/doc.md", 1, 0.8),
+                _local_result("za", "/doc.md", 2, 0.7),
+                _local_result("za", "/b.md", 0, 0.5),
+            ],
+            "zb": [_local_result("zb", "/c.md", 0, 0.6)],
+        },
+        DaemonConfig(page_aggregation=True, chunks_per_page=2),
+        seen,
+    )
+    dispatcher = FederatedSearchDispatcher(
+        daemon=daemon,
+        rebac=_rebac_for(["za", "zb"]),
+        config=FederatedSearchConfig(fusion_strategy="rrf"),
+    )
+
+    resp = await dispatcher.search(query="q", subject=("user", "u1"), limit=4)
+
+    paths = [r["path"] for r in resp.results]
+    assert paths.count("/doc.md") == 2
+    assert set(paths) == {"/doc.md", "/b.md", "/c.md"}
+    assert all("_zq_chunk" not in r for r in resp.results)
+
+
+@pytest.mark.asyncio
+async def test_result_cache_scoped_by_zone_filter() -> None:
+    """Round-4 review (tenant isolation): a broad-scope and a narrow-scope
+    token for the same subject must not share a cache entry."""
+    from nexus.bricks.search.federated_search import FederatedSearchConfig
+
+    seen: dict[str, int] = {}
+    daemon = _capture_daemon(
+        {
+            "za": [_local_result("za", "/a.md", 0, 0.9)],
+            "zb": [_local_result("zb", "/b.md", 0, 0.8)],
+        },
+        DaemonConfig(page_aggregation=True, chunks_per_page=2),
+        seen,
+    )
+    dispatcher = FederatedSearchDispatcher(
+        daemon=daemon,
+        rebac=_rebac_for(["za", "zb"]),
+        config=FederatedSearchConfig(result_cache_enabled=True),
+    )
+
+    broad = await dispatcher.search(query="q", subject=("user", "u1"), limit=10)
+    narrow = await dispatcher.search(
+        query="q", subject=("user", "u1"), limit=10, zone_filter=frozenset({"za"})
+    )
+
+    assert {r["zone_id"] for r in broad.results} == {"za", "zb"}
+    assert not narrow.cached
+    assert {r["zone_id"] for r in narrow.results} == {"za"}

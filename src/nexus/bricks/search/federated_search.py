@@ -852,8 +852,14 @@ class FederatedSearchDispatcher:
         if not zone_result_lists:
             fused_results: list[dict[str, Any]] = []
         elif len(zone_result_lists) == 1:
+            # Issue #4542 (round-4 review): the one-surviving-zone branch must
+            # honor the cap too — zone failures or empty zones must not
+            # silently change the flag semantics.
             _zone_id, results = zone_result_lists[0]
-            fused_results = [_result_to_dict(r) for r in results[:limit]]
+            fused_results = [_result_to_dict(r) for r in results]
+            if pooling_cap is not None:
+                fused_results = cap_chunks_per_page(fused_results, chunks_per_page=pooling_cap)
+            fused_results = fused_results[:limit]
         elif self._config.fusion_strategy == FederatedFusionStrategy.RRF or (
             fusion_method == "weighted" and search_type == "hybrid"
         ):
@@ -867,12 +873,35 @@ class FederatedSearchDispatcher:
             # raw scores stay comparable and keep the default merge;
             # rrf/rrf_weighted scores share one reciprocal-rank formula and
             # stay comparable too.
+            # Issue #4542 (round-4 review): with the cap active, cap each zone
+            # list first (zone-scoped budgets) and fuse at CHUNK grain — the
+            # page-grain zone_qualified_path key would collapse every doc back
+            # to one chunk, silently overriding chunks_per_page > 1 and
+            # underfilling the page. Flag-off keeps the historical page-grain
+            # fusion identity exactly.
+            rrf_lists: list[tuple[str, list[Any]]] = zone_result_lists
+            rrf_id_key = "zone_qualified_path"
+            if pooling_cap is not None:
+                capped_lists: list[tuple[str, list[Any]]] = []
+                for zid, zresults in zone_result_lists:
+                    zdicts = [_result_to_dict(r) for r in zresults]
+                    zdicts = cap_chunks_per_page(zdicts, chunks_per_page=pooling_cap)
+                    for d in zdicts:
+                        page_key = d.get("zone_qualified_path") or (
+                            f"{d.get('zone_id', '')}:{d.get('path', '')}"
+                        )
+                        d["_zq_chunk"] = f"{page_key}:{d.get('chunk_index', 0)}"
+                    capped_lists.append((zid, zdicts))
+                rrf_lists = capped_lists
+                rrf_id_key = "_zq_chunk"
             fused_results = rrf_multi_fusion(
-                result_lists=zone_result_lists,
+                result_lists=rrf_lists,
                 k=60,
                 limit=limit,
-                id_key="zone_qualified_path",
+                id_key=rrf_id_key,
             )
+            for d in fused_results:
+                d.pop("_zq_chunk", None)
             # Issue #3773 (Round-6 review): rrf_multi_fusion emits dicts built
             # from __dataclass_fields__ verbatim, so ``context: None`` leaks
             # into the wire. Normalize here so every federated code path

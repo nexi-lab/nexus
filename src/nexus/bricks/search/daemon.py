@@ -186,6 +186,7 @@ def _empty_backend_timing() -> dict[str, float]:
         "embed_ms": 0.0,
         "keyword_ms": 0.0,
         "page_keyword_ms": 0.0,
+        "title_ms": 0.0,
         "vector_ms": 0.0,
         "fusion_ms": 0.0,
         "rerank_ms": 0.0,
@@ -2419,19 +2420,20 @@ class SearchDaemon:
     ) -> list[SearchResult]:
         """Run keyword / semantic / hybrid via the new search backends.
 
-        Hybrid mode fuses two stages: the keyword legs first (3-way on
-        Postgres: chunk-BM25 + page-BM25; 2-way on SQLite — no page-level
-        BM25 leg yet on the FTS5 vtable), then keyword × dense. The
-        keyword sub-fusion is always plain RRF; the final stage honours
-        the request's ``fusion_method`` / ``alpha`` / ``rrf_k`` (Issue
-        #4541). Defaults reproduce the historical hardcoded behaviour
+        Hybrid mode fuses two stages: the keyword-side arms first (chunk-BM25
+        + page-BM25 + skeleton title arm on Postgres; SQLite has no page leg),
+        then keyword × dense. The keyword sub-fusion is always plain RRF; the
+        final stage honours the request's ``fusion_method`` / ``alpha`` /
+        ``rrf_k`` (Issue #4541). The title arm (Issue #4545) runs locate()
+        over the in-memory skeleton index and is gated by config.title_arm.
+        Defaults reproduce the historical hardcoded behaviour
         (plain RRF, k=60) exactly.
         """
         from nexus.bricks.search.fusion import (
             FusionConfig,
             FusionMethod,
             fuse_results,
-            rrf_fusion,
+            rrf_multi_fusion,
         )
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
         from nexus.bricks.search.result_builders import cap_chunks_per_page
@@ -2592,14 +2594,45 @@ class SearchDaemon:
             )
             page_kw = []
 
-        # Fuse keyword legs first (chunk + page) with plain RRF, then fuse
-        # that with dense using the request's method / alpha / k.
+        # Skeleton title arm (Issue #4545): locate() over the in-memory
+        # path+title index, hydrated to page granularity so its fusion key
+        # (path:chunk_index) lines up with the keyword legs.
+        title_hits: list[Any] = []
+        if self.config.title_arm:
+            title_start = time.perf_counter()
+            try:
+                locate_hits = await self.locate(
+                    query, zone_id=zone_id, limit=limit * 2, path_prefix=path_filter
+                )
+                if locate_hits:
+                    title_hits = await self._hydrate_title_hits(
+                        locate_hits, chunk_kw=chunk_kw, page_kw=page_kw, zone_id=zone_id
+                    )
+            except Exception as exc:
+                # Best-effort arm: a locate/hydration bug must never fail the
+                # search — degrade to the plain chunk+page sub-fusion.
+                title_hits = []
+                logger.debug("[TITLE-ARM] arm failed, degrading to 2-arm: %s", exc)
+            timing["title_ms"] = (time.perf_counter() - title_start) * 1000
+
+        # Fuse the keyword-side arms first (chunk + page + title) with plain
+        # RRF, then fuse that with dense using the request's method / alpha /
+        # k (#4541). The title arm is listed last so leg rows win the
+        # first-seen base copy (richer line/offset fields).
         fusion_start = time.perf_counter()
         # With the cap active, keep the FULL keyword union — truncating the
         # keyword sub-fusion would re-introduce a fixed window upstream of
-        # the cap's backfill.
-        kw_fused_limit = len(chunk_kw) + len(page_kw) if pooled else limit * 2
-        kw_fused = rrf_fusion(chunk_kw, page_kw, k=rrf_k, limit=kw_fused_limit, id_key=None)
+        # the cap's backfill (#4542). The title arm (#4545) joins as a third
+        # rrf_multi_fusion arm either way.
+        kw_fused_limit = (
+            len(chunk_kw) + len(page_kw) + len(title_hits) if pooled else limit * 2
+        )
+        kw_fused = rrf_multi_fusion(
+            [("chunk", chunk_kw), ("page", page_kw), ("title", title_hits)],
+            k=rrf_k,
+            limit=kw_fused_limit,
+            id_key=None,
+        )
         fusion_config = FusionConfig(
             method=FusionMethod(fusion_method),
             alpha=alpha,

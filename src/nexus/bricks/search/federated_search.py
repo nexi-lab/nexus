@@ -403,7 +403,14 @@ class FederatedSearchDispatcher:
             delegation.delegation_id,  # auth_token override
         )
 
-        # Convert remote response to result dicts with zone tagging
+        # Convert remote response to result dicts with zone tagging.
+        # Issue #4544 (Codex review R1): the server-side RPC search handler
+        # returns a ``{"results": [...]}`` envelope (handle_search in
+        # src/nexus/server/rpc/handlers/filesystem.py), which the bare-list
+        # check silently discarded — real remote zones contributed zero
+        # results. Accept both shapes.
+        if isinstance(raw_result, dict):
+            raw_result = raw_result.get("results", [])
         results = raw_result if isinstance(raw_result, list) else []
         for r in results:
             if isinstance(r, dict):

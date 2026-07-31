@@ -839,6 +839,12 @@ async def search_query_batch(
             ctx = getattr(r, "context", None)
             if ctx is not None:
                 entry["context"] = ctx
+            # Issue #4544 (Codex review R1): batch hits must carry the same
+            # omit-when-None tier_boost attribution as single-query results,
+            # or batch consumers see multiplied scores they cannot explain.
+            tier_boost = getattr(r, "tier_boost", None)
+            if tier_boost is not None:
+                entry["tier_boost"] = round(tier_boost, 4)
             formatted.append(entry)
         response_queries.append(
             {

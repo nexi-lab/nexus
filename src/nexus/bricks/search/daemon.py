@@ -198,14 +198,27 @@ def _apply_tier_weight(
     compound to weight²), and uplifts on results scoring below
     ``floor_ratio * top_score`` (metadata may reorder near-peers but must not
     lift weak matches past strong ones). Demotions always apply.
+
+    Signed-safe: pgvector semantic scores are raw cosine similarity, whose
+    range includes negatives. A plain multiply would let a demotion weight
+    *raise* a negative score (-0.2 × 0.5 = -0.1), inverting tier semantics.
+    Negative scores divide by the weight instead, so w < 1 always worsens
+    rank and w > 1 always improves it. The floor gate only fires when
+    ``top_score`` is positive — a non-positive top means every result is a
+    weak match and the ratio comparison is meaningless.
     """
     if weight is None or weight == 1.0:
         return False
     if getattr(result, "tier_boost", None) is not None:
         return False
-    if weight > 1.0 and floor_ratio > 0.0 and result.score < floor_ratio * top_score:
+    if (
+        weight > 1.0
+        and floor_ratio > 0.0
+        and top_score > 0.0
+        and result.score < floor_ratio * top_score
+    ):
         return False
-    result.score *= weight
+    result.score = result.score * weight if result.score >= 0.0 else result.score / weight
     result.tier_boost = weight
     return True
 
@@ -1685,32 +1698,41 @@ class SearchDaemon:
         self._path_context_engines_by_loop[loop] = engine
         return cache
 
-    async def _zone_has_tier_weights(self, zone_id: str) -> bool:
-        """True when the zone has any path-context weight != 1.0 (Issue #4544).
+    async def _tier_weight_probe(self, zone_id: str) -> tuple[bool, list[Any] | None]:
+        """Return ``(has_weights, snapshot)`` for a zone (Issue #4544).
 
-        Decides whether _search_on_current_loop widens its candidate fetch.
-        Fail-soft: any error means "no over-fetch" — the search itself must
-        never break on a weight probe, and _attach_path_contexts still runs
-        its own fail-soft pass later in the same request. The refresh here costs one zone-fingerprint query (COUNT + MAX(updated_at)) per search, in addition to the identical check attach performs later in the same request.
+        ``has_weights`` decides whether _search_on_current_loop widens its
+        candidate fetch; ``snapshot`` is the records list that decision was
+        made from, so the caller can pin it through to
+        ``_attach_path_contexts`` — over-fetch sizing and weight application
+        must read the SAME rows, otherwise a weight added between the probe
+        and attach would boost against an un-widened candidate pool (Codex
+        review R1). Fail-soft: any error returns ``(False, None)`` — the
+        search itself must never break on a weight probe, and attach falls
+        back to its own refresh when no snapshot is pinned. The refresh here
+        costs one zone-fingerprint query (COUNT + MAX(updated_at)) per
+        search when no snapshot is pinned downstream.
         """
         try:
             cache = await self._resolve_path_context_cache()
             if cache is None:
-                return False
+                return (False, None)
             await cache.refresh_if_stale(zone_id)
             snapshot = cache.snapshot_zone(zone_id)
         except Exception as exc:
             logger.debug("tier-weight probe failed for zone=%r: %s", zone_id, exc)
-            return False
+            return (False, None)
         if not snapshot:
-            return False
-        return any(rec.weight is not None and rec.weight != 1.0 for rec in snapshot)
+            return (False, snapshot)
+        has_weights = any(rec.weight is not None and rec.weight != 1.0 for rec in snapshot)
+        return (has_weights, snapshot)
 
     async def _attach_path_contexts(
         self,
         results: list[SearchResult],
         *,
         zone_id: str | None = None,
+        pinned_snapshots: dict[str, list[Any]] | None = None,
     ) -> None:
         """Attach admin-configured path context descriptions to search results.
 
@@ -1730,6 +1752,12 @@ class SearchDaemon:
         Fails soft: if the cache lookup raises (e.g. asyncpg loop mismatch),
         logs a warning and leaves ``context`` unset rather than breaking
         the whole search.
+
+        ``pinned_snapshots`` (Issue #4544, Codex review R1): zones present in
+        this mapping use the given records list verbatim instead of
+        refreshing — the caller pins the exact snapshot its over-fetch
+        decision was made from, so sizing and weighting can never disagree
+        within one request.
         """
         if not results:
             return
@@ -1762,8 +1790,10 @@ class SearchDaemon:
         # snapshot_zone is sync so the grab happens before the next refresh's
         # await point. Isolate per-zone failures: one zone raising shouldn't
         # drop context for every other zone in the same batch (Round-4 review).
-        snapshots: dict[str, list[Any]] = {}
+        snapshots: dict[str, list[Any]] = dict(pinned_snapshots or {})
         for zone in zones:
+            if zone in snapshots:
+                continue
             try:
                 await cache.refresh_if_stale(zone)
             except Exception as exc:
@@ -1936,9 +1966,14 @@ class SearchDaemon:
         # Zones without weights keep internal_limit == limit and take the
         # byte-identical legacy path. The factor is clamped to >= 1 so a
         # misconfigured env override can never zero-out the fetch.
-        has_tier_weights = await self._zone_has_tier_weights(effective_zone_id)
+        has_tier_weights, tier_snapshot = await self._tier_weight_probe(effective_zone_id)
         internal_limit = (
             limit * max(1, self.config.tier_boost_overfetch_factor) if has_tier_weights else limit
+        )
+        # Pin the probe's snapshot so attach weights against the same rows
+        # the over-fetch decision saw (None → attach refreshes as before).
+        tier_pin: dict[str, list[Any]] | None = (
+            {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
         )
         start = time.perf_counter()
         self.last_search_timing = {}
@@ -1966,7 +2001,9 @@ class SearchDaemon:
                     if backend_results:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
-                        await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
+                        await self._attach_path_contexts(
+                            backend_results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                        )
                         if internal_limit != limit:
                             backend_results = backend_results[:limit]
                         return self._with_search_timing(backend_results)
@@ -2008,7 +2045,9 @@ class SearchDaemon:
                     )
                 latency_ms = (time.perf_counter() - start) * 1000
                 self._track_latency(latency_ms)
-                await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
+                await self._attach_path_contexts(
+                    keyword_results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                )
                 if internal_limit != limit:
                     keyword_results = keyword_results[:limit]
                 return self._with_search_timing(keyword_results)
@@ -2057,7 +2096,9 @@ class SearchDaemon:
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
-                    await self._attach_path_contexts(results, zone_id=effective_zone_id)
+                    await self._attach_path_contexts(
+                        results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                    )
                     if internal_limit != limit:
                         results = results[:limit]
                     return self._with_search_timing(results)
@@ -2104,7 +2145,9 @@ class SearchDaemon:
                     self.last_search_timing.get("backend_ms", 0.0) + fallback_ms
                 )
 
-            await self._attach_path_contexts(results, zone_id=effective_zone_id)
+            await self._attach_path_contexts(
+                results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+            )
             if internal_limit != limit:
                 results = results[:limit]
             return self._with_search_timing(results)

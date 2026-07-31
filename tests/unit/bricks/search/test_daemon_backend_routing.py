@@ -34,7 +34,7 @@ def _daemon_with_backend_result(search_type_seen: list[str]) -> Any:
         self._last_latency_ms = latency_ms
 
     async def _attach_path_contexts(
-        self: Any, results: list[SearchResult], *, zone_id: str
+        self: Any, results: list[SearchResult], *, zone_id: str, pinned_snapshots: Any = None
     ) -> None:
         self._last_context_zone = zone_id
 
@@ -136,7 +136,7 @@ async def test_concurrent_searches_return_request_local_timing_snapshots() -> No
         self._last_latency_ms = latency_ms
 
     async def _attach_path_contexts(
-        self: Any, results: list[SearchResult], *, zone_id: str
+        self: Any, results: list[SearchResult], *, zone_id: str, pinned_snapshots: Any = None
     ) -> None:
         self._last_context_zone = zone_id
 

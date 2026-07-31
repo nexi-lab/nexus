@@ -134,3 +134,37 @@ class TestSlashNormalizedLookup:
     def test_description_wrapper_matches_slashed_path(self) -> None:
         records = [_rec("docs")]
         assert lookup_in_records(records, "/docs/a.md") == "desc:docs"
+
+
+class TestSignedScoreWeighting:
+    """Codex review R1: pgvector semantic scores are raw cosine similarity
+    and can be negative. A plain multiply would let a demotion RAISE a
+    negative score (-0.2 × 0.5 = -0.1), inverting tier semantics; negative
+    scores divide by the weight instead."""
+
+    def test_demotion_worsens_negative_score(self) -> None:
+        r = _result(score=-0.2)
+        assert _apply_tier_weight(r, 0.5, top_score=-0.1, floor_ratio=0.25) is True
+        assert r.score == -0.4  # more negative = worse rank
+
+    def test_uplift_improves_negative_score(self) -> None:
+        r = _result(score=-0.2)
+        assert _apply_tier_weight(r, 2.0, top_score=-0.1, floor_ratio=0.25) is True
+        assert r.score == -0.1  # toward zero = better rank
+
+    def test_floor_gate_disabled_when_top_score_non_positive(self) -> None:
+        # All-negative result sets: the ratio comparison is meaningless, so
+        # uplifts must not be blanket-blocked.
+        r = _result(score=-0.9)
+        assert _apply_tier_weight(r, 2.0, top_score=-0.1, floor_ratio=0.25) is True
+
+    def test_floor_gate_still_blocks_negative_score_under_positive_top(self) -> None:
+        # A negative score is by definition below ratio*top when top > 0.
+        r = _result(score=-0.2)
+        assert _apply_tier_weight(r, 2.0, top_score=1.0, floor_ratio=0.25) is False
+        assert r.score == -0.2
+
+    def test_positive_scores_unchanged_semantics(self) -> None:
+        r = _result(score=0.8)
+        assert _apply_tier_weight(r, 0.5, top_score=1.0, floor_ratio=0.25) is True
+        assert r.score == 0.4

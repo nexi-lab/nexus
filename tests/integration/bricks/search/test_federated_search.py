@@ -1106,3 +1106,56 @@ class TestTierBoostFederated:
         merged = _merge_by_raw_score([("za", [za]), ("zb", [zb])], limit=2)
         assert [m["path"] for m in merged] == ["docs/b.md", "chat/a.md"]
         assert merged[1]["tier_boost"] == 0.4
+
+
+class TestRemoteSearchEnvelope:
+    """Codex review R1: the server-side RPC search handler returns a
+    ``{"results": [...]}`` envelope; the bare-list check discarded it and
+    real remote zones contributed zero results."""
+
+    def _dispatcher_with_remote(self, raw_result):
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+
+        registry = MagicMock()
+        registry.is_remote.return_value = True
+        transport = MagicMock()
+        transport.call_rpc.return_value = raw_result
+        registry.get_transport.return_value = transport
+        dispatcher = FederatedSearchDispatcher.__new__(FederatedSearchDispatcher)
+        dispatcher._registry = registry
+        dispatcher._mint_search_delegation = MagicMock(return_value=MagicMock(delegation_id="d-1"))
+        return dispatcher
+
+    @pytest.mark.asyncio
+    async def test_dict_envelope_unwrapped(self) -> None:
+        dispatcher = self._dispatcher_with_remote(
+            {"results": [{"path": "/a.md", "score": 0.9, "tier_boost": 0.5}]}
+        )
+        results = await dispatcher._search_remote_zone(
+            zone_id="zr",
+            query="q",
+            search_type="hybrid",
+            limit=5,
+            path_filter=None,
+            alpha=0.5,
+            fusion_method="rrf",
+        )
+        assert len(results) == 1
+        assert results[0]["zone_id"] == "zr"
+        assert results[0]["tier_boost"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_bare_list_still_accepted(self) -> None:
+        dispatcher = self._dispatcher_with_remote([{"path": "/a.md", "score": 0.9}])
+        results = await dispatcher._search_remote_zone(
+            zone_id="zr",
+            query="q",
+            search_type="hybrid",
+            limit=5,
+            path_filter=None,
+            alpha=0.5,
+            fusion_method="rrf",
+        )
+        assert len(results) == 1 and results[0]["zone_qualified_path"] == "zr:/a.md"

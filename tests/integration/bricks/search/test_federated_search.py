@@ -1064,3 +1064,45 @@ class TestFederatedRRFContextShape:
         assert any(d.get("context") is None for d in raw)
         stripped = [_strip_none_context(d) for d in raw]
         assert all("context" not in d for d in stripped)
+
+
+# =============================================================================
+# Issue #4544: tier_boost federated wire hygiene
+# =============================================================================
+
+
+class TestTierBoostFederated:
+    """Issue #4544: owning-zone weights flow through the federated merge."""
+
+    def test_strip_removes_null_tier_boost_and_keeps_value(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert "tier_boost" not in _strip_none_context(
+            {"path": "a", "score": 1.0, "tier_boost": None}
+        )
+        assert (
+            _strip_none_context({"path": "a", "score": 1.0, "tier_boost": 0.5})["tier_boost"] == 0.5
+        )
+
+    def test_result_to_dict_omits_unset_tier_boost(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+        from nexus.bricks.search.results import BaseSearchResult
+
+        plain = BaseSearchResult(path="a", chunk_text="", score=1.0, zone_id="z1")
+        boosted = BaseSearchResult(path="b", chunk_text="", score=0.5, zone_id="z1", tier_boost=0.5)
+        assert "tier_boost" not in _result_to_dict(plain)
+        assert _result_to_dict(boosted)["tier_boost"] == 0.5
+
+    def test_merge_by_raw_score_orders_on_boosted_scores(self) -> None:
+        from nexus.bricks.search.federated_search import _merge_by_raw_score
+        from nexus.bricks.search.results import BaseSearchResult
+
+        # zone-a demoted its chat hit (1.0 -> 0.4) before returning; zone-b's
+        # unweighted 0.6 must now outrank it in the merged list.
+        za = BaseSearchResult(
+            path="chat/a.md", chunk_text="", score=0.4, zone_id="za", tier_boost=0.4
+        )
+        zb = BaseSearchResult(path="docs/b.md", chunk_text="", score=0.6, zone_id="zb")
+        merged = _merge_by_raw_score([("za", [za]), ("zb", [zb])], limit=2)
+        assert [m["path"] for m in merged] == ["docs/b.md", "chat/a.md"]
+        assert merged[1]["tier_boost"] == 0.4

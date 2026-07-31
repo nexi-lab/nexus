@@ -864,11 +864,13 @@ def _merge_by_raw_score(
 
 def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     """Match the non-federated router's omit-when-None contract for
-    ``context``. Issue #3773 review (Rounds 5-6): every federated emission
-    path must route through this to avoid ``context: null`` leaking onto
-    the wire and creating a shape-drift between fusion strategies."""
-    if d.get("context") is None:
-        d.pop("context", None)
+    ``context`` (Issue #3773, review Rounds 5-6) and ``tier_boost``
+    (Issue #4544): every federated emission path must route through this so
+    ``null`` never leaks onto the wire and the fusion strategies stay
+    shape-consistent."""
+    for key in ("context", "tier_boost"):
+        if d.get(key) is None:
+            d.pop(key, None)
     return d
 
 

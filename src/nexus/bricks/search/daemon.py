@@ -79,6 +79,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Issue #4542 round-10 review: upper bound on the cap-aware retrieval-window
+# widening factor. chunks_per_page itself stays unbounded (emission cap), but
+# retrieval amplification saturates here.
+_MAX_CAP_WIDEN = 4
+
 # Durable mutation consumer names (#4337): single source for the refresh
 # loop, startup reconciliation, parked-event re-drive, and admin skip-to.
 MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
@@ -2267,9 +2272,7 @@ class SearchDaemon:
                 # to the shared post-attach boundary so tier weights can
                 # still re-rank the over-fetched window.
                 pooled_legacy = bool(getattr(self.config, "page_aggregation", False))
-                legacy_limit = (
-                    max(internal_limit, limit * 2) if pooled_legacy else internal_limit
-                )
+                legacy_limit = max(internal_limit, limit * 2) if pooled_legacy else internal_limit
                 results = await self._hybrid_search(
                     query,
                     legacy_limit,
@@ -2398,7 +2401,13 @@ class SearchDaemon:
         # deliberately out of scope — so this is a documented bound, matching
         # the federated dispatcher's cap-aware window.
         pooled = self.config.page_aggregation
-        leg_limit = limit * 2 * (self.config.chunks_per_page + 1) if pooled else limit * 2
+        # The widening factor is BOUNDED (round-10 review): chunks_per_page is
+        # an emission cap with no configured maximum, and multiplying raw
+        # retrieval windows by an operator-supplied value lets a large cap
+        # amplify every leg into massive scans. Backfill benefit plateaus
+        # quickly, so widening saturates at ×(_MAX_CAP_WIDEN + 1).
+        widen = min(self.config.chunks_per_page, _MAX_CAP_WIDEN) + 1
+        leg_limit = limit * 2 * widen if pooled else limit * 2
 
         qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
@@ -2452,9 +2461,9 @@ class SearchDaemon:
                     coerced_result.semantic_degraded = True
                 return coerced
             if pooled:
-                results = cap_chunks_per_page(
-                    results, chunks_per_page=self.config.chunks_per_page
-                )[:limit]
+                results = cap_chunks_per_page(results, chunks_per_page=self.config.chunks_per_page)[
+                    :limit
+                ]
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 

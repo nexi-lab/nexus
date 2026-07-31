@@ -763,7 +763,9 @@ class FederatedSearchDispatcher:
             is_remote = self._registry is not None and self._registry.is_remote(zone_id)
             if effective_type == "hybrid" and not is_remote:
                 return base
-            return base * (pooling_cap + 1)
+            # Bounded widening (round-10 review): the emission cap has no
+            # configured maximum, so amplification saturates at ×5.
+            return base * (min(pooling_cap, 4) + 1)
 
         # Single zone: skip fusion overhead
         if len(searchable_zones) == 1:
@@ -799,9 +801,7 @@ class FederatedSearchDispatcher:
                     )
                 result_dicts = [_result_to_dict(r) for r in results]
                 if pooling_cap is not None:
-                    result_dicts = cap_chunks_per_page(
-                        result_dicts, chunks_per_page=pooling_cap
-                    )
+                    result_dicts = cap_chunks_per_page(result_dicts, chunks_per_page=pooling_cap)
                 result_dicts = result_dicts[:limit]
                 resp = FederatedSearchResponse(
                     results=result_dicts,
@@ -838,9 +838,7 @@ class FederatedSearchDispatcher:
                             zone_id,
                             query,
                             search_type,
-                            _zone_fetch_limit(
-                                zone_id, limit * self._config.over_fetch_factor
-                            ),
+                            _zone_fetch_limit(zone_id, limit * self._config.over_fetch_factor),
                             path_filter,
                             alpha,
                             fusion_method,

@@ -529,9 +529,7 @@ async def test_multi_zone_saturated_window_backfills() -> None:
         rows.append(_local_result(zone, f"/{zone}-next.md", 0, 0.9))
         return rows
 
-    daemon = _capture_daemon(
-        {"za": zone_rows("za"), "zb": zone_rows("zb")}, config, seen
-    )
+    daemon = _capture_daemon({"za": zone_rows("za"), "zb": zone_rows("zb")}, config, seen)
     dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["za", "zb"]))
 
     resp = await dispatcher.search(
@@ -842,3 +840,52 @@ async def test_local_hybrid_zones_keep_historical_fetch_window() -> None:
     await dispatcher.search(query="q", subject=("user", "u1"), search_type="semantic", limit=5)
     # Semantic zones are only capped dispatcher-side → widened by (cap+1).
     assert seen == {"za": 30, "zb": 30}
+
+
+@pytest.mark.asyncio
+async def test_retrieval_widening_is_bounded_for_huge_caps() -> None:
+    """Round-10 review: chunks_per_page is an unbounded emission cap — the
+    retrieval-window widening it drives must saturate, or cap=1000 turns a
+    limit=100 request into ~600k-row leg scans."""
+
+    class _LimitCaptureBackend:
+        def __init__(self) -> None:
+            self.limits: list[int] = []
+
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[SearchResult]:
+            self.limits.append(limit)
+            return []
+
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[SearchResult]:
+            self.limits.append(limit)
+            return []
+
+    backend = _LimitCaptureBackend()
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon.config = DaemonConfig(page_aggregation=True, chunks_per_page=1000)
+    daemon._fts_backend = backend
+    daemon._vector_backend = backend
+
+    async def _embed_query(self: Any, query: str) -> list[float]:
+        return [0.1, 0.2]
+
+    daemon._embed_query = MethodType(_embed_query, daemon)
+
+    await daemon._search_via_backends(
+        "query", search_type="hybrid", limit=100, path_filter=None, zone_id="root"
+    )
+
+    # Widening saturates: limit * 2 * (min(cap, 4) + 1) = 1000, not 200_200.
+    assert backend.limits
+    assert max(backend.limits) <= 1000

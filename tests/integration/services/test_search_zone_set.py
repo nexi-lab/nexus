@@ -341,13 +341,23 @@ class TestSandboxFallbackPooling:
         async def fake_semantic_search(**kwargs):
             captured["limit"] = kwargs.get("limit")
             rows = [
-                {"path": "/long.md", "chunk_index": i, "score": 0.9 - i * 0.1,
-                 "chunk_text": f"c{i}", "semantic_degraded": True}
+                {
+                    "path": "/long.md",
+                    "chunk_index": i,
+                    "score": 0.9 - i * 0.1,
+                    "chunk_text": f"c{i}",
+                    "semantic_degraded": True,
+                }
                 for i in range(3)
             ]
             rows.append(
-                {"path": "/other.md", "chunk_index": 0, "score": 0.5,
-                 "chunk_text": "o", "semantic_degraded": True}
+                {
+                    "path": "/other.md",
+                    "chunk_index": 0,
+                    "score": 0.5,
+                    "chunk_text": "o",
+                    "semantic_degraded": True,
+                }
             )
             return rows[: kwargs.get("limit", 10)]
 
@@ -439,3 +449,55 @@ class TestWriteOnlyTokenSingleZoneRoute:
         client = self._client([["eng", "r"]])
         resp = client.get("/api/v2/search/query?q=alpha")
         assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestAdminBypassesReadAttenuation:
+    """Issue #4542 round-10 review: admin credentials bypass zone permission
+    checks repo-wide — scoped/write-only admin keys must not be 403'd or
+    attenuated."""
+
+    def test_write_only_scoped_admin_key_still_searches(self, monkeypatch):
+        builder = TestSearchZoneSet()
+        app = builder._build_app(["eng"])
+        from nexus.server.dependencies import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "root",
+            "zone_id": "eng",
+            "zone_set": ["eng"],
+            "zone_perms": [["eng", "w"]],
+            "is_admin": True,
+        }
+        client = TestClient(app)
+        resp = client.get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 200, resp.text
+
+    def test_admin_federated_stays_unbounded(self, monkeypatch):
+        builder = TestSearchZoneSet()
+        app = builder._build_app(["eng"])
+        from nexus.server.dependencies import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "root",
+            "zone_id": "eng",
+            "zone_set": ["eng"],
+            "zone_perms": [["eng", "rw"]],
+            "is_admin": True,
+        }
+        client = TestClient(app)
+
+        from nexus.server.api.v2.routers import search as search_mod
+
+        captured = {}
+
+        async def fake_federated(*, zone_filter=None, **kwargs):
+            captured["zone_filter"] = zone_filter
+            return {"results": [], "federated": True}
+
+        monkeypatch.setattr(search_mod, "_handle_federated_search", fake_federated)
+        resp = client.get("/api/v2/search/query?q=alpha&federated=true")
+        assert resp.status_code == 200, resp.text
+        assert captured["zone_filter"] is None

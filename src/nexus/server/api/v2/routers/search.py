@@ -343,13 +343,18 @@ async def search_query(
     # grants fail closed). Legacy tokens without perms info keep the full
     # explicit zone_set; root-scoped and unconstrained credentials stay
     # unbounded (mirrors the #4541 fed_zone_filter exemption).
+    # Round-10 review: admin credentials bypass zone permission checks
+    # repo-wide — do not attenuate or 403 them here. Root-scoped and
+    # unconstrained credentials likewise stay unbounded (#4541 exemption).
     token_zone_filter = None
-    if raw_zone_set and set(raw_zone_set) != {ROOT_ZONE_ID}:
+    if (
+        raw_zone_set
+        and set(raw_zone_set) != {ROOT_ZONE_ID}
+        and not auth_result.get("is_admin", False)
+    ):
         from nexus.bricks.search.federated_search import readable_zone_filter
 
-        token_zone_filter = readable_zone_filter(
-            raw_zone_set, auth_result.get("zone_perms")
-        )
+        token_zone_filter = readable_zone_filter(raw_zone_set, auth_result.get("zone_perms"))
     # #3785: auto-promote to federated when token grants multiple zones,
     # even if caller didn't pass federated=true. Single-zone tokens
     # (zone_set == (zone_id,)) hit the unchanged single-zone path.
@@ -764,9 +769,9 @@ async def _handle_federated_search(
             if _fb_cap is not None:
                 from nexus.bricks.search.result_builders import cap_chunks_per_page
 
-                bm25s_results = cap_chunks_per_page(
-                    list(bm25s_results), chunks_per_page=_fb_cap
-                )[:limit]
+                bm25s_results = cap_chunks_per_page(list(bm25s_results), chunks_per_page=_fb_cap)[
+                    :limit
+                ]
             # Record the degraded-path BM25S fallback work so the bound
             # total_ms / fallback_ms reflect it (Codex R3).
             fed_fallback_ms = (time.perf_counter() - fallback_start) * 1000

@@ -55,4 +55,9 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
         out["macro_text"] = macro_text
         out["macro_line_start"] = getattr(result, "macro_line_start", None)
         out["macro_line_end"] = getattr(result, "macro_line_end", None)
+    # Issue #4543: attribute the recency multiplier applied to the score
+    # (omitted when the boost did not fire to keep responses compact).
+    recency_boost = getattr(result, "recency_boost", None)
+    if recency_boost is not None:
+        out["recency_boost"] = round(recency_boost, 4)
     return out

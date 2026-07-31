@@ -267,6 +267,21 @@ async def search_query(
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
     rrf_k: int = Query(60, description="RRF rank constant for hybrid fusion", ge=1, le=1000),
     expand: str = Query("none", description="Context expansion: none or macro"),
+    recency: str | None = Query(
+        None, description="Recency boost mode: off, on, or auto (default: server config, #4543)"
+    ),
+    recency_weight: float | None = Query(
+        None,
+        description="Recency boost weight w in score*=1+w*H/(H+age_days) (default: server config)",
+        ge=0.0,
+        le=5.0,
+    ),
+    recency_half_life_days: float | None = Query(
+        None,
+        description="Recency half-life H in days (default: server config)",
+        gt=0.0,
+        le=3650.0,
+    ),
     rerank: bool | None = Query(  # noqa: ARG001
         None,
         description="Inert: accepted for compatibility; no reranker stage exists (#4541)",
@@ -331,6 +346,12 @@ async def search_query(
             detail=f"Invalid expand: {expand}. Must be 'none' or 'macro'",
         )
 
+    if recency is not None and recency not in ("off", "on", "auto"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid recency: {recency}. Must be 'off', 'on', or 'auto'",
+        )
+
     if graph_mode not in ("none", "low", "high", "dual", "auto"):
         raise HTTPException(
             status_code=400,
@@ -378,6 +399,9 @@ async def search_query(
             rrf_k=rrf_k,
             graph_mode=graph_mode,
             expand=expand,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
             auth_result=auth_result,
             search_daemon=search_daemon,
             async_session_factory=async_session_factory,
@@ -399,6 +423,9 @@ async def _handle_single_zone_search(
     alpha: float,
     fusion_method: str,
     rrf_k: int,
+    recency: str | None = None,
+    recency_weight: float | None = None,
+    recency_half_life_days: float | None = None,
     graph_mode: str,
     expand: str,
     auth_result: dict[str, Any],
@@ -522,6 +549,9 @@ async def _handle_single_zone_search(
             rrf_k=rrf_k,
             zone_id=zone_id,
             expand=expand,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
         )
 
         # Prefer the request-local snapshot carried by SearchDaemon results.

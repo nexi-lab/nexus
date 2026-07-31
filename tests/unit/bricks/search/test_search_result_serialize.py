@@ -36,3 +36,17 @@ def test_serialize_includes_title_score_when_present():
     r.title_score = 7.00004
     out = _serialize_search_result(r)
     assert out["title_score"] == 7.0
+
+
+def test_serialize_omits_recency_boost_when_absent():
+    """Default response unchanged when the boost did not fire (#4543)."""
+    r = BaseSearchResult(path="/a", chunk_text="x", score=1.0, chunk_index=0)
+    out = _serialize_search_result(r)
+    assert "recency_boost" not in out
+
+
+def test_serialize_includes_recency_boost_when_present():
+    r = BaseSearchResult(path="/a", chunk_text="x", score=1.0, chunk_index=0)
+    r.recency_boost = 1.234567
+    out = _serialize_search_result(r)
+    assert out["recency_boost"] == 1.2346  # rounded to 4dp like other scores

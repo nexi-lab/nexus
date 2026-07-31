@@ -474,3 +474,42 @@ async def test_fallback_non_default_keeps_fusion_provenance() -> None:
     # /d.md is dense-only.
     assert by_path["/d.md"].keyword_score is None
     assert by_path["/d.md"].vector_score == 0.99
+
+
+@pytest.mark.asyncio
+async def test_empty_dense_leg_stamps_non_default_results_degraded() -> None:
+    """#4541 review round 7: embedding OK but vector index empty — non-default
+    fusion is ranking on keyword legs alone and must carry the marker."""
+    daemon = _make_daemon()
+
+    class EmptyVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            return []
+
+    daemon._vector_backend = EmptyVectorBackend()
+
+    stamped = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+    assert stamped and all(r.semantic_degraded is True for r in stamped)
+
+    default = await _hybrid(daemon)
+    assert all(not r.semantic_degraded for r in default)
+
+
+@pytest.mark.asyncio
+async def test_fallback_empty_semantic_leg_stamps_non_default_degraded() -> None:
+    daemon = _make_fallback_daemon()
+
+    async def _semantic_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        return []
+
+    daemon._semantic_search = MethodType(_semantic_search, daemon)
+
+    stamped = await daemon._hybrid_search("nexus core", 4, None, 0.0, "rrf_weighted")
+    assert stamped and all(r.semantic_degraded is True for r in stamped)
+
+    default = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
+    assert all(not r.semantic_degraded for r in default)

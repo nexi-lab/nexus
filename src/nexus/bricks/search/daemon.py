@@ -2467,7 +2467,18 @@ class SearchDaemon:
             fused = _aggregate_chunks_to_pages(fused, chunks_per_page=self.config.chunks_per_page)
         timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
         record_total()
-        return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+        hybrid_results = [
+            self._coerce_to_search_result(item, search_type="hybrid") for item in fused
+        ]
+        # Embedding succeeded but the dense leg came back empty (empty or
+        # mismatched vector index): a non-default fusion request is ranking
+        # on keyword legs alone — stamp the #3778 marker like the qvec-None
+        # branch does. Default requests stay unstamped (byte-identical)
+        # (#4541 review round 7).
+        if not dense and (fusion_method != FusionMethod.RRF.value or rrf_k != 60):
+            for hybrid_result in hybrid_results:
+                hybrid_result.semantic_degraded = True
+        return hybrid_results
 
     async def _embed_query(self, query: str) -> list[float] | None:
         """Embed a query string for the new vector backends.
@@ -3049,7 +3060,14 @@ class SearchDaemon:
         # default contract reconstructs the legacy shape below
         # (#4541 review round 6).
         if fusion_method != FusionMethod.RRF.value or rrf_k != 60:
-            return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+            coerced = [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+            # Semantic leg failed or returned nothing: the non-default fusion
+            # ranked on keyword results alone — stamp the #3778 marker so
+            # callers can tell (#4541 review round 7).
+            if not sem_results:
+                for coerced_result in coerced:
+                    coerced_result.semantic_degraded = True
+            return coerced
 
         # Rebuild results in the legacy fallback shape: every field comes from
         # the first-seen leg result (keyword leg wins ties) and only ``score``

@@ -260,10 +260,19 @@ async def test_title_match_doc_enters_hybrid_top_n() -> None:
     # locate score: 3 title-token overlaps * 2.0 + 1 path-token overlap ("atlas")
     assert atlas.title_score == pytest.approx(7.0)
     assert atlas.chunk_text == "body of /designs/atlas.md"  # hydrated chunk 0
-    assert "title_ms" in on.last_search_timing
+    assert on.last_search_timing["title_ms"] >= 0.0
 
     off = _make_daemon(title_arm=False, skeleton=_ATLAS_SKELETON)
     assert "/designs/atlas.md" not in [r.path for r in await _hybrid(off, "atlas design doc")]
+
+
+def test_merge_backend_timing_preserves_title_ms() -> None:
+    """title_ms must survive the public search() timing filter: search() sets
+    last_search_timing via _merge_backend_timing, which drops any key missing
+    from _BACKEND_LEG_TIMING_KEYS (#4545)."""
+    from nexus.bricks.search.daemon import _merge_backend_timing
+
+    assert _merge_backend_timing(1.0, {"title_ms": 2.0})["title_ms"] == 2.0
 
 
 @pytest.mark.asyncio

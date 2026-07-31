@@ -94,6 +94,9 @@ _BACKEND_LEG_TIMING_KEYS = (
     "embed_ms",
     "keyword_ms",
     "page_keyword_ms",
+    # Issue #4545: skeleton title arm — locate() + representative-chunk
+    # hydration folded into the hybrid keyword sub-fusion.
+    "title_ms",
     "vector_ms",
     "fusion_ms",
     "rerank_ms",

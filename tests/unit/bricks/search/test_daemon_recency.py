@@ -181,6 +181,32 @@ async def test_hydration_failure_is_fail_soft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mtime_hydration_routes_through_owner_loop() -> None:
+    """Zoned searches run the search body on the daemon owner loop, and
+    asyncpg pools are loop-affine — so the chokepoint must route the mtime
+    hydration (and ONLY the hydration) through _run_on_owner_loop: exactly
+    one call when recency is active, zero on the default (off) path."""
+    daemon = _make_daemon(_old_new_mtimes())
+    calls: list[int] = []
+
+    async def _spy(self: Any, work: Any) -> Any:
+        calls.append(1)
+        return await work()
+
+    daemon._run_on_owner_loop = MethodType(_spy, daemon)
+
+    await daemon.search("nexus core", search_type="hybrid", limit=4)
+    assert calls == []
+
+    boosted = await daemon.search(
+        "nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+    )
+    assert len(calls) == 1
+    assert len(daemon._recency_fetch_calls) == 1
+    assert any(r.recency_boost is not None for r in boosted)
+
+
+@pytest.mark.asyncio
 async def test_keyword_and_semantic_paths_also_boost() -> None:
     """The chokepoint lives in search(), so non-hybrid types get the boost
     too (hydration-approach coverage win over per-SELECT carrying)."""

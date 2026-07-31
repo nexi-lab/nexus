@@ -2704,8 +2704,12 @@ class SearchDaemon:
         pattern) so every source is covered — all three search types, both DB
         backends including sqlite_vec dense-only rows, and the legacy
         fallback stack — and no backend SELECT or SQL ORDER BY changes.
-        Request params override DaemonConfig; ``None`` defers. Fail-soft:
-        errors log + count, never fail the search.
+        Request params override DaemonConfig; ``None`` defers. The mtime
+        hydration routes through ``_run_on_owner_loop`` so its asyncpg
+        session runs on the loop that owns the pool (zoned searches execute
+        the search body on the owner loop; asyncpg pools are loop-affine);
+        the pure boost math stays on the caller loop. Fail-soft: errors
+        log + count, never fail the search.
         """
         from nexus.bricks.search.recency import apply_recency_boost, has_recency_intent
 
@@ -2725,7 +2729,10 @@ class SearchDaemon:
             return  # "off" and unrecognized modes fail closed
 
         try:
-            mtimes = await self._fetch_recency_mtimes([r.path for r in results], zone_id=zone_id)
+            paths = [r.path for r in results]
+            mtimes = await self._run_on_owner_loop(
+                lambda: self._fetch_recency_mtimes(paths, zone_id=zone_id)
+            )
             apply_recency_boost(results, mtimes, weight=weight, half_life_days=half_life)
         except Exception as exc:
             self.stats.recency_attach_failures += 1

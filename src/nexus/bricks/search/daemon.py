@@ -1685,6 +1685,29 @@ class SearchDaemon:
         self._path_context_engines_by_loop[loop] = engine
         return cache
 
+    async def _zone_has_tier_weights(self, zone_id: str) -> bool:
+        """True when the zone has any path-context weight != 1.0 (Issue #4544).
+
+        Decides whether _search_on_current_loop widens its candidate fetch.
+        Fail-soft: any error means "no over-fetch" — the search itself must
+        never break on a weight probe, and _attach_path_contexts still runs
+        its own fail-soft pass later in the same request. The refresh here is
+        the same fingerprint check attach pays, so the steady-state cost is
+        one cache hit.
+        """
+        try:
+            cache = await self._resolve_path_context_cache()
+            if cache is None:
+                return False
+            await cache.refresh_if_stale(zone_id)
+            snapshot = cache.snapshot_zone(zone_id)
+        except Exception as exc:
+            logger.debug("tier-weight probe failed for zone=%r: %s", zone_id, exc)
+            return False
+        if not snapshot:
+            return False
+        return any(rec.weight is not None and rec.weight != 1.0 for rec in snapshot)
+
     async def _attach_path_contexts(
         self,
         results: list[SearchResult],
@@ -1909,6 +1932,15 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
+        # Issue #4544: when the zone carries tier weights, widen every
+        # candidate fetch so a boost can promote a below-cutoff hit, then trim
+        # back to ``limit`` after _attach_path_contexts applies the weights.
+        # Zones without weights keep internal_limit == limit and take the
+        # byte-identical legacy path.
+        has_tier_weights = await self._zone_has_tier_weights(effective_zone_id)
+        internal_limit = (
+            limit * self.config.tier_boost_overfetch_factor if has_tier_weights else limit
+        )
         start = time.perf_counter()
         self.last_search_timing = {}
         hybrid_keyword_results: list[SearchResult] = []
@@ -1923,7 +1955,7 @@ class SearchDaemon:
                     backend_results = await self._search_via_backends(
                         query,
                         search_type=search_type,
-                        limit=limit,
+                        limit=internal_limit,
                         path_filter=path_filter,
                         zone_id=effective_zone_id,
                     )
@@ -1936,6 +1968,8 @@ class SearchDaemon:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
                         await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
+                        if internal_limit != limit:
+                            backend_results = backend_results[:limit]
                         return self._with_search_timing(backend_results)
 
                 # Keyword mode should use the daemon's keyword stack first.
@@ -1949,7 +1983,7 @@ class SearchDaemon:
                 keyword_start = time.perf_counter()
                 keyword_results = await self._keyword_search(
                     query,
-                    limit,
+                    internal_limit,
                     path_filter,
                     zone_id=effective_zone_id,
                 )
@@ -1976,6 +2010,8 @@ class SearchDaemon:
                 latency_ms = (time.perf_counter() - start) * 1000
                 self._track_latency(latency_ms)
                 await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
+                if internal_limit != limit:
+                    keyword_results = keyword_results[:limit]
                 return self._with_search_timing(keyword_results)
             elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
@@ -1985,7 +2021,7 @@ class SearchDaemon:
                 keyword_start = time.perf_counter()
                 hybrid_keyword_results = await self._keyword_search(
                     query,
-                    limit * 3,
+                    internal_limit * 3,
                     path_filter,
                     zone_id=effective_zone_id,
                 )
@@ -1999,7 +2035,7 @@ class SearchDaemon:
                 backend_results = await self._search_via_backends(
                     query,
                     search_type=search_type,
-                    limit=limit,
+                    limit=internal_limit,
                     path_filter=path_filter,
                     alpha=alpha,
                     fusion_method=fusion_method,
@@ -2017,12 +2053,14 @@ class SearchDaemon:
                         results = self._fuse_ranked_results(
                             hybrid_keyword_results,
                             results,
-                            limit,
+                            internal_limit,
                         )
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(results, zone_id=effective_zone_id)
+                    if internal_limit != limit:
+                        results = results[:limit]
                     return self._with_search_timing(results)
                 # Backend returned empty — fall through to the legacy stack
                 # so Zoekt / BM25S / inline FTS can still serve the query.
@@ -2032,11 +2070,13 @@ class SearchDaemon:
             # legacy keyword call — so only semantic and hybrid reach here.
             fallback_start = time.perf_counter()
             if search_type == "semantic":
-                results = await self._semantic_search(query, limit, path_filter, zone_id=zone_id)
+                results = await self._semantic_search(
+                    query, internal_limit, path_filter, zone_id=zone_id
+                )
             else:  # hybrid
                 results = await self._hybrid_search(
                     query,
-                    limit,
+                    internal_limit,
                     path_filter,
                     alpha,
                     fusion_method,
@@ -2066,6 +2106,8 @@ class SearchDaemon:
                 )
 
             await self._attach_path_contexts(results, zone_id=effective_zone_id)
+            if internal_limit != limit:
+                results = results[:limit]
             return self._with_search_timing(results)
 
         except TimeoutError:

@@ -137,6 +137,11 @@ class DaemonStats:
     # visible via /search/stats rather than only in log lines.
     path_context_attach_failures: int = 0
     path_context_resolve_failures: int = 0
+    # Issue #4544 (Codex review R3): tier-weight observability. A probe
+    # failure or un-widened pool silently bypasses configured ranking
+    # weights — operators need a production signal, not a debug log.
+    tier_boost_probe_failures: int = 0
+    tier_boost_suppressed_searches: int = 0
 
 
 @dataclass
@@ -1720,7 +1725,19 @@ class SearchDaemon:
             await cache.refresh_if_stale(zone_id)
             snapshot = cache.snapshot_zone(zone_id)
         except Exception as exc:
-            logger.debug("tier-weight probe failed for zone=%r: %s", zone_id, exc)
+            # Defensive stats access: the probe's fail-soft contract must
+            # hold even for partially-constructed daemons (test doubles via
+            # ``__new__`` have no ``stats``) — the counter update itself may
+            # never re-raise.
+            stats = getattr(self, "stats", None)
+            if stats is not None:
+                stats.tier_boost_probe_failures += 1
+            logger.warning(
+                "tier-weight probe failed for zone=%r (total=%d): %s",
+                zone_id,
+                getattr(stats, "tier_boost_probe_failures", 0),
+                exc,
+            )
             return (False, None)
         if not snapshot:
             return (False, snapshot)
@@ -1842,6 +1859,8 @@ class SearchDaemon:
         floor_ratio = self.config.tier_boost_floor_ratio
         top_score = max((r.score for r in results), default=0.0)
         boosted_any = False
+        suppressed = 0
+        suppressed_zone: str | None = None
         for r in results:
             zone = _zone_for(r)
             records = snapshots.get(zone)
@@ -1850,12 +1869,16 @@ class SearchDaemon:
             try:
                 record = lookup_record_in_records(records, r.path)
                 r.context = record.description if record is not None else None
-                if (
-                    apply_weights
-                    and record is not None
-                    and _apply_tier_weight(r, record.weight, top_score, floor_ratio)
-                ):
-                    boosted_any = True
+                if record is not None and record.weight is not None and record.weight != 1.0:
+                    if apply_weights:
+                        if _apply_tier_weight(r, record.weight, top_score, floor_ratio):
+                            boosted_any = True
+                    elif getattr(r, "tier_boost", None) is None:
+                        # A configured weight was bypassed (probe failure or
+                        # un-widened pool) — count it so operators can see
+                        # ranking policy being skipped (Codex review R3).
+                        suppressed += 1
+                        suppressed_zone = zone
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
@@ -1864,6 +1887,15 @@ class SearchDaemon:
                     self.stats.path_context_attach_failures,
                     exc,
                 )
+        if suppressed:
+            self.stats.tier_boost_suppressed_searches += 1
+            logger.warning(
+                "tier weights suppressed for %d result(s) in zone=%r "
+                "(probe failed or pool not widened; suppressed searches total=%d)",
+                suppressed,
+                suppressed_zone,
+                self.stats.tier_boost_suppressed_searches,
+            )
         if boosted_any:
             # Stable sort: equal scores keep their pre-boost relative order.
             results.sort(key=lambda r: r.score, reverse=True)
@@ -1980,14 +2012,16 @@ class SearchDaemon:
             limit * max(1, self.config.tier_boost_overfetch_factor) if has_tier_weights else limit
         )
         # Pin the probe's snapshot so attach weights against the same rows
-        # the over-fetch decision saw. A failed probe (snapshot None) means
-        # the pool was NOT widened — weights are suppressed for this request
-        # (Codex review R2) so ranking can never mutate against an un-widened
-        # pool; context attach still runs its own fail-soft refresh.
+        # the over-fetch decision saw. Weights apply ONLY when the pool was
+        # actually widened (Codex review R2/R3): a failed probe (snapshot
+        # None) or a factor clamped down to 1 both leave internal_limit ==
+        # limit, and mutating ranks against an un-widened pool means a
+        # demoted top-N hit can never be displaced by rank N+1. Context
+        # attach still runs its own fail-soft refresh either way.
         tier_pin: dict[str, list[Any]] | None = (
             {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
         )
-        tier_weights_ok = tier_snapshot is not None
+        tier_weights_ok = tier_snapshot is not None and internal_limit > limit
         start = time.perf_counter()
         self.last_search_timing = {}
         hybrid_keyword_results: list[SearchResult] = []
@@ -4535,6 +4569,10 @@ class SearchDaemon:
             # operators can spot persistent failures via /search/stats.
             "path_context_attach_failures": self.stats.path_context_attach_failures,
             "path_context_resolve_failures": self.stats.path_context_resolve_failures,
+            # Issue #4544 (Codex review R3): configured tier weights being
+            # bypassed (probe failure / un-widened pool) must be visible.
+            "tier_boost_probe_failures": self.stats.tier_boost_probe_failures,
+            "tier_boost_suppressed_searches": self.stats.tier_boost_suppressed_searches,
         }
 
     def get_health(self) -> dict[str, Any]:

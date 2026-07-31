@@ -88,6 +88,8 @@ def _make_daemon(cache: PathContextCache) -> Any:
     class _Stats:
         path_context_attach_failures = 0
         path_context_resolve_failures = 0
+        tier_boost_probe_failures = 0
+        tier_boost_suppressed_searches = 0
 
     daemon: Any = SearchDaemon.__new__(SearchDaemon)
     daemon.last_search_timing = {}
@@ -161,6 +163,26 @@ class TestOverfetchAndTrim:
         )
         assert daemon._fts_backend.requested_limits == [2]  # clamped, not zeroed
         assert len(results) == 2
+        # Codex review R3: an un-widened pool must stay UNWEIGHTED — a
+        # demoted top-N hit could never be displaced by rank N+1, so the
+        # weight is suppressed (and counted) rather than applied.
+        assert all(r.tier_boost is None for r in results)
+        assert results[0].score == 10.0
+        assert daemon.stats.tier_boost_suppressed_searches == 1
+
+    @pytest.mark.asyncio
+    async def test_factor_one_suppresses_weights_and_counts(self, cache) -> None:
+        from nexus.bricks.search.daemon import SearchResult  # noqa: F401
+
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _make_daemon(cache)
+        daemon.config.tier_boost_overfetch_factor = 1
+        results = await daemon._search_on_current_loop(
+            "q", search_type="keyword", limit=2, zone_id="root"
+        )
+        assert daemon._fts_backend.requested_limits == [2]
+        assert all(r.tier_boost is None for r in results)
+        assert daemon.stats.tier_boost_suppressed_searches == 1
 
 
 class TestProbeFailureSuppressesWeights:
@@ -206,6 +228,9 @@ class TestProbeFailureSuppressesWeights:
         assert daemon._fts_backend.requested_limits == [2]  # not widened
         assert all(r.tier_boost is None for r in results)  # not weighted
         assert results[0].score == 10.0  # pristine score
+        # Codex review R3: the bypass must be observable.
+        assert daemon.stats.tier_boost_probe_failures == 1
+        assert daemon.stats.tier_boost_suppressed_searches == 1
 
 
 class TestGraphPathOverfetch:

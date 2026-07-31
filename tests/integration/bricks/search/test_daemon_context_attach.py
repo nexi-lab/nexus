@@ -32,6 +32,8 @@ def _bare_daemon(cache) -> "SearchDaemon":
     class _Stats:
         path_context_attach_failures = 0
         path_context_resolve_failures = 0
+        tier_boost_probe_failures = 0
+        tier_boost_suppressed_searches = 0
 
     daemon.stats = _Stats()
     return daemon
@@ -141,6 +143,8 @@ class TestRealDaemonAttach:
         class _Stats:
             path_context_attach_failures = 0
             path_context_resolve_failures = 0
+            tier_boost_probe_failures = 0
+            tier_boost_suppressed_searches = 0
 
         daemon.stats = _Stats()
 
@@ -188,6 +192,8 @@ class TestAttachStaleFallbackOnRefreshError:
         class _Stats:
             path_context_attach_failures = 0
             path_context_resolve_failures = 0
+            tier_boost_probe_failures = 0
+            tier_boost_suppressed_searches = 0
 
         daemon.stats = _Stats()
 

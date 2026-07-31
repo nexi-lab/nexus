@@ -135,7 +135,9 @@ async def graph_enhanced_search(
             pinned_snapshots=(
                 {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
             ),
-            apply_weights=tier_snapshot is not None,
+            # Same gate as the daemon paths (Codex review R3): weights may
+            # only mutate ranking when the pool was actually widened.
+            apply_weights=tier_snapshot is not None and fetch_limit > limit,
         )
     if fetch_limit != limit:
         results = results[:limit]

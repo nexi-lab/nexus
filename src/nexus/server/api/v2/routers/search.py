@@ -716,14 +716,33 @@ async def _handle_federated_search(
             from nexus.server.dependencies import get_operation_context
 
             op_context = get_operation_context(auth_result)
+            # Issue #4542 round-6 review: this all-peers-failed fallback
+            # replaces the dispatcher's capped results wholesale, so it must
+            # honor the per-document cap itself — fetch wider so the cap can
+            # backfill, cap, then trim. Config read uses the same strict
+            # guards as the dispatcher (Mock-safe).
+            _fb_cfg = getattr(search_daemon, "config", None)
+            _fb_cap = (
+                getattr(_fb_cfg, "chunks_per_page", None)
+                if getattr(_fb_cfg, "page_aggregation", None) is True
+                else None
+            )
+            if not isinstance(_fb_cap, int) or _fb_cap <= 0:
+                _fb_cap = None
             fallback_start = time.perf_counter()
             bm25s_results = await search_service.semantic_search(
                 query=q,
                 path=path_filter or "/",
-                limit=limit,
+                limit=limit if _fb_cap is None else limit * 2,
                 search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
                 context=op_context,
             )
+            if _fb_cap is not None:
+                from nexus.bricks.search.result_builders import cap_chunks_per_page
+
+                bm25s_results = cap_chunks_per_page(
+                    list(bm25s_results), chunks_per_page=_fb_cap
+                )[:limit]
             # Record the degraded-path BM25S fallback work so the bound
             # total_ms / fallback_ms reflect it (Codex R3).
             fed_fallback_ms = (time.perf_counter() - fallback_start) * 1000

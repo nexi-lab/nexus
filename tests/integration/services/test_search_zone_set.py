@@ -240,3 +240,139 @@ class TestFederatedDispatcherZoneFilter:
         # The dispatcher should have only searched eng (intersection of
         # accessible {eng,legal,ops} and zone_filter {eng}).
         assert resp.zones_searched == ["eng"], f"expected only eng, got {resp.zones_searched}"
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestSingleZoneTokenFederatedEscape:
+    """Issue #4542 round-6 review: a single-zone token requesting
+    federated=true must still be confined to its zone — the router used to
+    forward zone_filter=None for one-element zone_sets, letting the query
+    fan out to every zone the SUBJECT can reach (credential-scope escape)."""
+
+    def test_single_zone_token_federated_true_forwards_zone_filter(self, monkeypatch):
+        builder = TestSearchZoneSet()
+        app = builder._build_app(["eng"])
+        client = TestClient(app)
+
+        from nexus.server.api.v2.routers import search as search_mod
+
+        captured = {}
+
+        async def fake_federated(*, zone_filter=None, **kwargs):
+            captured["zone_filter"] = zone_filter
+            return {"results": [], "federated": True}
+
+        monkeypatch.setattr(search_mod, "_handle_federated_search", fake_federated)
+        resp = client.get("/api/v2/search/query?q=alpha&federated=true")
+        assert resp.status_code == 200, resp.text
+        assert captured["zone_filter"] == frozenset({"eng"})
+
+    def test_no_explicit_zone_set_keeps_unbounded_federation(self, monkeypatch):
+        """Credentials WITHOUT an explicit zone allow-list keep the legacy
+        subject-wide federation (zone_filter=None)."""
+        from nexus.server.api.v2.routers.search import router
+
+        app = FastAPI()
+        app.include_router(router)
+        mock_daemon = MagicMock()
+        mock_daemon.is_initialized = True
+
+        async def mock_search(**kwargs):
+            return []
+
+        mock_daemon.search = mock_search
+        app.state.search_daemon = mock_daemon
+        app.state.search_daemon_enabled = True
+        app.state.record_store = MagicMock()
+        app.state.async_read_session_factory = MagicMock()
+
+        from nexus.server.dependencies import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "test_user",
+            "zone_id": "eng",
+            # no zone_set key: synthesized fallback, not a token grant
+        }
+        client = TestClient(app)
+
+        from nexus.server.api.v2.routers import search as search_mod
+
+        captured = {}
+
+        async def fake_federated(*, zone_filter=None, **kwargs):
+            captured["zone_filter"] = zone_filter
+            return {"results": [], "federated": True}
+
+        monkeypatch.setattr(search_mod, "_handle_federated_search", fake_federated)
+        resp = client.get("/api/v2/search/query?q=alpha&federated=true")
+        assert resp.status_code == 200, resp.text
+        assert captured["zone_filter"] is None
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestSandboxFallbackPooling:
+    """Issue #4542 round-6 review: the SANDBOX all-peers-failed fallback
+    replaces the dispatcher's capped results wholesale, so it must apply the
+    per-document cap itself (fetch wider, cap, trim)."""
+
+    def test_all_peers_failed_fallback_caps(self, monkeypatch):
+        from nexus.bricks.search.daemon import DaemonConfig
+        from nexus.server.api.v2.routers.search import router
+
+        app = FastAPI()
+        app.include_router(router)
+
+        mock_daemon = MagicMock()
+        mock_daemon.is_initialized = True
+        mock_daemon.config = DaemonConfig(page_aggregation=True, chunks_per_page=1)
+        app.state.search_daemon = mock_daemon
+        app.state.search_daemon_enabled = True
+        app.state.record_store = MagicMock()
+        app.state.async_read_session_factory = MagicMock()
+        app.state.deployment_profile = "sandbox"
+
+        rebac = MagicMock()
+        rebac.list_accessible_zones = AsyncMock(return_value=[])
+        app.state.rebac_service = rebac
+
+        captured = {}
+
+        async def fake_semantic_search(**kwargs):
+            captured["limit"] = kwargs.get("limit")
+            rows = [
+                {"path": "/long.md", "chunk_index": i, "score": 0.9 - i * 0.1,
+                 "chunk_text": f"c{i}", "semantic_degraded": True}
+                for i in range(3)
+            ]
+            rows.append(
+                {"path": "/other.md", "chunk_index": 0, "score": 0.5,
+                 "chunk_text": "o", "semantic_degraded": True}
+            )
+            return rows[: kwargs.get("limit", 10)]
+
+        search_service = MagicMock()
+        search_service.semantic_search = fake_semantic_search
+        nexus_fs = MagicMock()
+        nexus_fs.service.return_value = search_service
+        app.state.nexus_fs = nexus_fs
+
+        from nexus.server.dependencies import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "test_user",
+            "subject_type": "user",
+            "subject_id": "test_user",
+            "zone_id": "eng",
+            "zone_set": ["eng"],
+        }
+        client = TestClient(app)
+
+        resp = client.get("/api/v2/search/query?q=alpha&federated=true&limit=3")
+        assert resp.status_code == 200, resp.text
+
+        paths = [r["path"] for r in resp.json()["results"]]
+        assert paths == ["/long.md", "/other.md"]
+        # Fetched wider than the requested limit so the cap could backfill.
+        assert captured["limit"] > 3

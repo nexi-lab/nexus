@@ -717,15 +717,32 @@ class FederatedSearchDispatcher:
         # zones happen to be accessible. Resolved once here.
         pooling_cap = self._pooling_chunks_per_page()
 
+        def _zone_fetch_limit(zone_id: str, base: int) -> int:
+            """Cap-aware per-zone fetch window (rounds 3+6 review).
+
+            A zone window saturated by one long doc leaves nothing to
+            backfill after the per-doc cap. Local HYBRID zones already cap
+            internally at the daemon (full-union backfill) — widening them
+            again would compound multipliers into pathological retrieval
+            windows (round-6 review), so they keep the base window. The
+            wider window applies only where dispatcher-side capping is the
+            only protection: semantic/keyword effective types and remote
+            zones. A fixed window remains theoretically saturable —
+            adaptive pagination is deliberately out of scope; flag-off
+            keeps the historical window everywhere.
+            """
+            if pooling_cap is None:
+                return base
+            effective_type, _ = self._get_effective_search_type(zone_id, search_type)
+            is_remote = self._registry is not None and self._registry.is_remote(zone_id)
+            if effective_type == "hybrid" and not is_remote:
+                return base
+            return base * (pooling_cap + 1)
+
         # Single zone: skip fusion overhead
         if len(searchable_zones) == 1:
             zone_id = searchable_zones[0]
-            # With the cap active, over-fetch so capping can backfill other
-            # docs instead of shrinking the page; flag-off keeps the
-            # historical exact-limit fetch.
-            single_zone_fetch = (
-                limit if pooling_cap is None else limit * self._config.over_fetch_factor
-            )
+            single_zone_fetch = _zone_fetch_limit(zone_id, limit)
             try:
                 results = await asyncio.wait_for(
                     self._search_zone(
@@ -781,18 +798,8 @@ class FederatedSearchDispatcher:
                     latency_ms=(time.perf_counter() - start) * 1000,
                 )
 
-        # 2. Multi-zone fan-out with concurrency bound (decision 16A)
-        per_zone_limit = limit * self._config.over_fetch_factor
-        if pooling_cap is not None:
-            # Cap-aware over-fetch (round-3 review): a zone window saturated
-            # by one long doc leaves nothing to backfill after the per-doc
-            # cap. Local hybrid zones already cap at the daemon (full-union
-            # backfill), so the widened window guards the semantic/keyword
-            # and version-skewed remote paths. A fixed window remains
-            # theoretically saturable — adaptive per-zone pagination is
-            # deliberately out of scope (remote re-dispatch + delegation
-            # cost); flag-off keeps the historical window exactly.
-            per_zone_limit = limit * self._config.over_fetch_factor * (pooling_cap + 1)
+        # 2. Multi-zone fan-out with concurrency bound (decision 16A).
+        # Per-zone fetch windows are cap-aware via _zone_fetch_limit.
         semaphore = asyncio.Semaphore(self._config.max_concurrent_zones)
 
         async def _bounded_search(
@@ -805,7 +812,9 @@ class FederatedSearchDispatcher:
                             zone_id,
                             query,
                             search_type,
-                            per_zone_limit,
+                            _zone_fetch_limit(
+                                zone_id, limit * self._config.over_fetch_factor
+                            ),
                             path_filter,
                             alpha,
                             fusion_method,

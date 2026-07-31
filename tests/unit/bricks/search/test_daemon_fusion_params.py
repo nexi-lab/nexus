@@ -201,7 +201,17 @@ def _make_fallback_daemon() -> Any:
     from nexus.bricks.search.daemon import SearchDaemon, SearchResult
 
     def _res(path: str, score: float, st: str) -> SearchResult:
-        return SearchResult(path=path, chunk_text=path, score=score, chunk_index=0, search_type=st)
+        # Legs carry distinguishable per-modality fields so tests can pin
+        # the legacy first-seen field-preservation contract.
+        return SearchResult(
+            path=path,
+            chunk_text=path,
+            score=score,
+            chunk_index=0,
+            search_type=st,
+            keyword_score=score if st == "keyword" else None,
+            vector_score=score if st == "semantic" else None,
+        )
 
     async def _keyword_search(
         self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
@@ -246,6 +256,18 @@ async def test_fallback_default_matches_legacy_inline_rrf() -> None:
     assert [r.path for r in results] == expected_order == ["/a.md", "/c.md", "/d.md", "/b.md"]
     for r in results:
         assert r.score == pytest.approx(expected[r.path])
+
+    # Byte-identical includes serialized field values, not just ordering:
+    # the legacy loop copied every field from the FIRST-seen leg result
+    # (keyword leg wins) and never rewrote per-leg modality scores.
+    by_path = {r.path: r for r in results}
+    assert by_path["/a.md"].keyword_score == 10.0
+    assert by_path["/a.md"].vector_score is None  # kw-first, despite dense hit
+    assert by_path["/c.md"].keyword_score == 8.0
+    assert by_path["/c.md"].vector_score is None
+    assert by_path["/d.md"].keyword_score is None  # dense-only
+    assert by_path["/d.md"].vector_score == 0.99
+    assert all(r.search_type == "hybrid" for r in results)
 
 
 @pytest.mark.asyncio

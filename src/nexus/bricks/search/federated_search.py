@@ -306,12 +306,14 @@ class FederatedSearchDispatcher:
 
         # Phase 2: Check if this zone has a remote transport in the registry.
         # If so, search via gRPC with a SearchDelegation credential.
-        # rrf_k travels on the wire like alpha/fusion_method. The remote
-        # ``handle_search`` RPC handler reads params selectively (hasattr) and
-        # currently honours none of the fusion knobs — a pre-existing gap that
-        # applies equally to alpha/fusion_method — so unknown params are
-        # ignored by old peers and the field is ready when the remote handler
-        # grows fusion support (#4541 review).
+        # rrf_k travels on the wire like alpha/fusion_method so the payload is
+        # complete whenever the remote side can serve it. KNOWN GAP (pre-#4541,
+        # applies to every field including query): the remote ``search`` RPC is
+        # rejected by ``parse_method_params`` as an unknown method — it has no
+        # METHOD_PARAMS schema and is not @rpc_expose'd — so registry-remote
+        # zones currently land in ``zones_failed`` and no fusion knob (or any
+        # param) reaches them. Tracked as #4556; fixing the RPC
+        # surface is out of scope for the fusion-param plumbing.
         if self._registry is not None and self._registry.is_remote(zone_id):
             return await self._search_remote_zone(
                 zone_id=zone_id,
@@ -410,11 +412,12 @@ class FederatedSearchDispatcher:
         )
 
         # Convert remote response to result dicts with zone tagging.
-        # Issue #4544 (Codex review R1): the server-side RPC search handler
-        # returns a ``{"results": [...]}`` envelope (handle_search in
-        # src/nexus/server/rpc/handlers/filesystem.py), which the bare-list
-        # check silently discarded — real remote zones contributed zero
-        # results. Accept both shapes.
+        # Issue #4544 (Codex review R1) / #4541 review: the server-side RPC
+        # search handler returns a ``{"results": [...]}`` envelope
+        # (handle_search in src/nexus/server/rpc/handlers/filesystem.py),
+        # which the bare-list check silently discarded — real remote zones
+        # contributed zero results. Older transports may hand back a bare
+        # list — accept both shapes.
         if isinstance(raw_result, dict):
             raw_result = raw_result.get("results", [])
         results = raw_result if isinstance(raw_result, list) else []
@@ -464,7 +467,11 @@ class FederatedSearchDispatcher:
         entry that a later narrowly-scoped token would read back — leaking
         results from zones outside that token's scope (#4541 review).
         """
-        zone_scope = ",".join(sorted(zone_filter)) if zone_filter else "*"
+        # None means "no allow-list" (wildcard); an EMPTY set means "access
+        # to zero zones" and must not collide with the wildcard entry, or an
+        # unrestricted request could seed a cache entry that an empty-scoped
+        # token reads back (#4541 review).
+        zone_scope = "*" if zone_filter is None else "zf:" + ",".join(sorted(zone_filter))
         raw = (
             f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
             f"|{alpha}|{fusion_method}|{rrf_k}|{zone_scope}"

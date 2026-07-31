@@ -3012,7 +3012,40 @@ class SearchDaemon:
         fused = fuse_results(
             kw_results, sem_results, config=fusion_config, limit=limit, id_key=None
         )
-        return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+
+        # Rebuild results in the legacy fallback shape: every field comes from
+        # the first-seen leg result (keyword leg wins ties) and only ``score``
+        # carries the fused value. The historical inline loop never rewrote
+        # per-leg modality fields (keyword_score / vector_score), so default
+        # responses must not start doing so now (#4541 review — byte-identical
+        # defaults includes serialized field values, not just ordering).
+        best: dict[str, SearchResult] = {}
+        for r in [*kw_results, *sem_results]:
+            best.setdefault(f"{r.path}:{r.chunk_index}", r)
+
+        out: list[SearchResult] = []
+        for item in fused:
+            key = f"{item.get('path', '')}:{item.get('chunk_index', 0)}"
+            src = best.get(key)
+            if src is None:
+                out.append(self._coerce_to_search_result(item, search_type="hybrid"))
+                continue
+            out.append(
+                SearchResult(
+                    path=src.path,
+                    chunk_text=src.chunk_text,
+                    score=float(item.get("score", 0.0)),
+                    chunk_index=src.chunk_index,
+                    start_offset=src.start_offset,
+                    end_offset=src.end_offset,
+                    line_start=src.line_start,
+                    line_end=src.line_end,
+                    keyword_score=src.keyword_score,
+                    vector_score=src.vector_score,
+                    search_type="hybrid",
+                )
+            )
+        return out
 
     async def _search_zoekt(
         self,

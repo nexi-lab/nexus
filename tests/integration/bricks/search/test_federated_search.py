@@ -627,6 +627,26 @@ class TestResultCaching:
         assert {r["zone_id"] for r in narrow2.results} == {"zone_a"}
 
     @pytest.mark.asyncio
+    async def test_empty_zone_filter_does_not_read_wildcard_cache(self) -> None:
+        """An EMPTY allow-list (access to zero zones) must not collide with
+        the unrestricted (None) cache entry (#4541 review round 2)."""
+        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
+        rebac = _make_rebac(["zone_a"])
+
+        config = FederatedSearchConfig(result_cache_enabled=True)
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
+
+        unrestricted = await dispatcher.search("test", subject=("user", "alice"))
+        assert len(unrestricted.results) == 1
+
+        empty_scope = await dispatcher.search(
+            "test", subject=("user", "alice"), zone_filter=frozenset()
+        )
+        assert not empty_scope.cached
+        assert empty_scope.results == []
+        assert empty_scope.zones_searched == []
+
+    @pytest.mark.asyncio
     async def test_cache_scoped_by_fusion_knobs(self) -> None:
         """Requests differing only in alpha/fusion_method/rrf_k must not
         share a cache entry now that the daemon honours them (#4541)."""

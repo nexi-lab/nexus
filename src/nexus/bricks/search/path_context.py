@@ -207,21 +207,27 @@ class PathContextStore:
         return await self.list(zone_id=zone_id)
 
 
-def lookup_in_records(records: builtins.list[PathContextRecord], path: str) -> str | None:
-    """Longest-prefix lookup against a pre-sorted records list.
+def lookup_record_in_records(
+    records: builtins.list[PathContextRecord], path: str
+) -> PathContextRecord | None:
+    """Longest-prefix lookup returning the full record (Issue #4544).
 
     Records must be sorted by ``len(path_prefix)`` DESC so the first
-    slash-boundary match is the longest prefix. Shared by
-    :meth:`PathContextCache.lookup_cached` and daemon snapshot paths so
-    both code paths use the same matching logic.
+    slash-boundary match is the longest prefix.
     """
     for record in records:
         prefix = record.path_prefix
         if prefix == "":
-            return record.description
+            return record
         if path == prefix or path.startswith(prefix + "/"):
-            return record.description
+            return record
     return None
+
+
+def lookup_in_records(records: builtins.list[PathContextRecord], path: str) -> str | None:
+    """Longest-prefix lookup returning only the description (Issue #3773 contract)."""
+    record = lookup_record_in_records(records, path)
+    return record.description if record is not None else None
 
 
 def _coerce_datetime(value: Any) -> datetime:

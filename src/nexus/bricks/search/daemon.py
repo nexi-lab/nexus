@@ -48,6 +48,7 @@ from sqlalchemy import text as sa_text
 from nexus.bricks.search import consumer_metrics
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
 from nexus.bricks.search.config import get_env_bool as _get_env_bool
+from nexus.bricks.search.config import get_env_float as _get_env_float
 from nexus.bricks.search.config import get_env_int as _get_env_int
 from nexus.bricks.search.mutation_events import (
     SearchMutationEvent,
@@ -183,6 +184,32 @@ def _merge_backend_timing(total_ms: float, recorded: dict[str, float]) -> dict[s
     return timing
 
 
+def _apply_tier_weight(
+    result: Any,
+    weight: float | None,
+    top_score: float,
+    floor_ratio: float,
+) -> bool:
+    """Multiply ``result.score`` by a path-prefix weight (Issue #4544).
+
+    Returns True when the weight was applied. Skips: no/neutral weight,
+    already-stamped results (``batch_search`` re-runs attach on results whose
+    inner search already applied weights — without this guard the score would
+    compound to weight²), and uplifts on results scoring below
+    ``floor_ratio * top_score`` (metadata may reorder near-peers but must not
+    lift weak matches past strong ones). Demotions always apply.
+    """
+    if weight is None or weight == 1.0:
+        return False
+    if getattr(result, "tier_boost", None) is not None:
+        return False
+    if weight > 1.0 and floor_ratio > 0.0 and result.score < floor_ratio * top_score:
+        return False
+    result.score *= weight
+    result.tier_boost = weight
+    return True
+
+
 @dataclass
 class DaemonConfig:
     """Configuration for the search daemon."""
@@ -302,6 +329,20 @@ class DaemonConfig:
     )
     macro_chunk_code_forward_bias: bool = field(
         default_factory=lambda: _get_env_bool("NEXUS_SEARCH_MACRO_CHUNK_FORWARD_BIAS", True)
+    )
+
+    # Per-prefix ranking weight (Issue #4544). When the effective zone has any
+    # path_contexts row with weight != 1.0, the daemon widens its candidate
+    # fetch by ``tier_boost_overfetch_factor`` so a boost can promote a
+    # below-cutoff hit, then trims back to the requested limit after the
+    # weights are applied. ``tier_boost_floor_ratio`` gates uplifts only:
+    # a result scoring below ratio*top cannot be boosted past strong matches
+    # (0 disables the gate). Demotions always apply.
+    tier_boost_overfetch_factor: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_TIER_BOOST_OVERFETCH", 3)
+    )
+    tier_boost_floor_ratio: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_TIER_BOOST_FLOOR_RATIO", 0.25)
     )
 
 

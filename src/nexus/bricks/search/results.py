@@ -45,6 +45,8 @@ class BaseSearchResult:
     macro_text: str | None = None
     macro_line_start: int | None = None
     macro_line_end: int | None = None
+    # Issue #4544: per-prefix source-tier weight applied to score (None = unboosted)
+    tier_boost: float | None = None
 
     @property
     def zone_qualified_path(self) -> str | None:

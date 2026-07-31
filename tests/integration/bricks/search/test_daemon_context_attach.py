@@ -96,7 +96,7 @@ class TestAttachUsesCallerZone:
             ),
         ]
 
-        async def _attach(items, *, zone_id):
+        async def _attach(items, *, zone_id, **_kw):
             effective = zone_id or "root"
             zone = items[0].zone_id or effective
             await cache.refresh_if_stale(zone)
@@ -463,7 +463,7 @@ class TestGraphSearchContextAttachment:
         # to a local SearchDaemon-style helper powered by the cache.
         backend = SimpleNamespace(graph_search=_fake_graph_search)
 
-        async def _attach(results, *, zone_id=None):
+        async def _attach(results, *, zone_id=None, **_kw):
             zones = {(r.zone_id or zone_id or "root") for r in results}
             for zone in zones:
                 await cache.refresh_if_stale(zone)

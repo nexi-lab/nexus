@@ -1733,6 +1733,7 @@ class SearchDaemon:
         *,
         zone_id: str | None = None,
         pinned_snapshots: dict[str, list[Any]] | None = None,
+        apply_weights: bool = True,
     ) -> None:
         """Attach admin-configured path context descriptions to search results.
 
@@ -1758,6 +1759,12 @@ class SearchDaemon:
         refreshing — the caller pins the exact snapshot its over-fetch
         decision was made from, so sizing and weighting can never disagree
         within one request.
+
+        ``apply_weights=False`` (Codex review R2): when the caller's
+        tier-weight probe failed, the candidate pool was NOT widened, so
+        applying weights here could demote/promote against a pool already
+        cut to ``limit``. Context still attaches (stale context beats no
+        context, #3773); only the ranking mutation is suppressed.
         """
         if not results:
             return
@@ -1843,8 +1850,10 @@ class SearchDaemon:
             try:
                 record = lookup_record_in_records(records, r.path)
                 r.context = record.description if record is not None else None
-                if record is not None and _apply_tier_weight(
-                    r, record.weight, top_score, floor_ratio
+                if (
+                    apply_weights
+                    and record is not None
+                    and _apply_tier_weight(r, record.weight, top_score, floor_ratio)
                 ):
                     boosted_any = True
             except Exception as exc:
@@ -1971,10 +1980,14 @@ class SearchDaemon:
             limit * max(1, self.config.tier_boost_overfetch_factor) if has_tier_weights else limit
         )
         # Pin the probe's snapshot so attach weights against the same rows
-        # the over-fetch decision saw (None → attach refreshes as before).
+        # the over-fetch decision saw. A failed probe (snapshot None) means
+        # the pool was NOT widened — weights are suppressed for this request
+        # (Codex review R2) so ranking can never mutate against an un-widened
+        # pool; context attach still runs its own fail-soft refresh.
         tier_pin: dict[str, list[Any]] | None = (
             {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
         )
+        tier_weights_ok = tier_snapshot is not None
         start = time.perf_counter()
         self.last_search_timing = {}
         hybrid_keyword_results: list[SearchResult] = []
@@ -2002,7 +2015,10 @@ class SearchDaemon:
                         latency_ms = (time.perf_counter() - start) * 1000
                         self._track_latency(latency_ms)
                         await self._attach_path_contexts(
-                            backend_results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                            backend_results,
+                            zone_id=effective_zone_id,
+                            pinned_snapshots=tier_pin,
+                            apply_weights=tier_weights_ok,
                         )
                         if internal_limit != limit:
                             backend_results = backend_results[:limit]
@@ -2046,7 +2062,10 @@ class SearchDaemon:
                 latency_ms = (time.perf_counter() - start) * 1000
                 self._track_latency(latency_ms)
                 await self._attach_path_contexts(
-                    keyword_results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                    keyword_results,
+                    zone_id=effective_zone_id,
+                    pinned_snapshots=tier_pin,
+                    apply_weights=tier_weights_ok,
                 )
                 if internal_limit != limit:
                     keyword_results = keyword_results[:limit]
@@ -2097,7 +2116,10 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(
-                        results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                        results,
+                        zone_id=effective_zone_id,
+                        pinned_snapshots=tier_pin,
+                        apply_weights=tier_weights_ok,
                     )
                     if internal_limit != limit:
                         results = results[:limit]
@@ -2146,7 +2168,10 @@ class SearchDaemon:
                 )
 
             await self._attach_path_contexts(
-                results, zone_id=effective_zone_id, pinned_snapshots=tier_pin
+                results,
+                zone_id=effective_zone_id,
+                pinned_snapshots=tier_pin,
+                apply_weights=tier_weights_ok,
             )
             if internal_limit != limit:
                 results = results[:limit]

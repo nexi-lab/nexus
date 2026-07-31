@@ -161,3 +161,95 @@ class TestOverfetchAndTrim:
         )
         assert daemon._fts_backend.requested_limits == [2]  # clamped, not zeroed
         assert len(results) == 2
+
+
+class TestProbeFailureSuppressesWeights:
+    """Codex review R2: a failed probe means the pool was NOT widened, so
+    attach must not apply ranking weights for that request — otherwise a
+    recovered cache would weight against a pool already cut to limit."""
+
+    @pytest.mark.asyncio
+    async def test_attach_apply_weights_false_keeps_scores_but_attaches_context(
+        self, cache
+    ) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _make_daemon(cache)
+        r = SearchResult(path="chat/a.md", chunk_text="", score=1.0)
+        await daemon._attach_path_contexts([r], zone_id="root", apply_weights=False)
+        assert r.score == 1.0 and r.tier_boost is None  # ranking untouched
+        assert r.context == "Chat transcripts"  # context still attached
+
+    @pytest.mark.asyncio
+    async def test_probe_failure_search_never_weights(self, cache) -> None:
+        # Weighted zone + probe that raises: results must come back with
+        # legacy fetch size, unweighted scores, and no tier_boost stamps —
+        # even though attach's own refresh CAN see the weight row.
+        from types import MethodType
+
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _make_daemon(cache)
+        real_resolve = daemon._resolve_path_context_cache
+        calls = {"n": 0}
+
+        async def _flaky_resolve(self):
+            calls["n"] += 1
+            if calls["n"] == 1:  # probe's call fails, attach's succeeds
+                raise RuntimeError("transient")
+            return await real_resolve()
+
+        daemon._resolve_path_context_cache = MethodType(_flaky_resolve, daemon)
+        results = await daemon._search_on_current_loop(
+            "q", search_type="keyword", limit=2, zone_id="root"
+        )
+        assert daemon._fts_backend.requested_limits == [2]  # not widened
+        assert all(r.tier_boost is None for r in results)  # not weighted
+        assert results[0].score == 10.0  # pristine score
+
+
+class TestGraphPathOverfetch:
+    """Codex review R2: graph search must widen, weight, and trim like the
+    daemon paths — a demoted top-N hit must be displaceable by rank N+1."""
+
+    @pytest.mark.asyncio
+    async def test_graph_demotion_promotes_next_candidate(self, cache) -> None:
+        from nexus.bricks.search.daemon import SearchResult
+        from nexus.bricks.search.graph_search_service import graph_enhanced_search
+
+        await cache._store.upsert("root", "chat", "Chat transcripts", weight=0.5)
+        daemon = _make_daemon(cache)
+
+        corpus = [
+            SearchResult(path="chat/a.md", chunk_text="", score=10.0),
+            SearchResult(path="chat/b.md", chunk_text="", score=9.0),
+            SearchResult(path="docs/x.md", chunk_text="", score=8.0),
+        ]
+        seen_limits: list[int] = []
+
+        class _Backend:
+            async def graph_search(self, query, *, zone_id, limit, path_filter=None):
+                seen_limits.append(limit)
+                return [
+                    SearchResult(path=r.path, chunk_text=r.chunk_text, score=r.score)
+                    for r in corpus[:limit]
+                ]
+
+        daemon._backend = _Backend()
+        results = await graph_enhanced_search(
+            "q",
+            "hybrid",
+            2,
+            None,
+            0.5,
+            "low",
+            record_store=None,
+            async_session_factory=None,
+            search_daemon=daemon,
+            zone_id="root",
+        )
+        assert seen_limits == [2 * 3]  # widened graph fetch
+        assert len(results) == 2  # trimmed back
+        assert results[0].path == "docs/x.md"  # 8.0 beats 10.0*0.5
+        assert results[0].tier_boost is None
+        assert results[1].tier_boost == 0.5

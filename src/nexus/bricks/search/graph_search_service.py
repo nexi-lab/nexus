@@ -102,8 +102,25 @@ async def graph_enhanced_search(
         logger.warning("graph_enhanced_search: backend does not support graph_search")
         return []
 
+    # Issue #4544 (Codex review R2): the graph path must honour the same
+    # probe → over-fetch → pinned-attach → trim workflow as daemon searches,
+    # otherwise a demoted top-N hit cannot be displaced by the backend's
+    # rank-N+1 candidate (it was never fetched). getattr guards keep mocked
+    # daemons (tests) working; a missing probe means no weights are applied.
+    has_weights = False
+    tier_snapshot: Any = None
+    probe = getattr(search_daemon, "_tier_weight_probe", None)
+    if probe is not None:
+        has_weights, tier_snapshot = await probe(effective_zone_id)
+    fetch_limit = limit
+    if has_weights:
+        factor = max(
+            1, getattr(getattr(search_daemon, "config", None), "tier_boost_overfetch_factor", 1)
+        )
+        fetch_limit = limit * factor
+
     results: list[BaseSearchResult] = await graph_search_fn(
-        query, zone_id=effective_zone_id, limit=limit, path_filter=path_filter
+        query, zone_id=effective_zone_id, limit=fetch_limit, path_filter=path_filter
     )
     # Issue #3773: attach admin-configured path contexts. Pass the caller's
     # effective zone so the daemon can fall back to it when the backend
@@ -112,5 +129,14 @@ async def graph_enhanced_search(
     # attach the wrong (or no) descriptions (Round-4 review).
     attach = getattr(search_daemon, "_attach_path_contexts", None)
     if attach is not None:
-        await attach(results, zone_id=effective_zone_id)
+        await attach(
+            results,
+            zone_id=effective_zone_id,
+            pinned_snapshots=(
+                {effective_zone_id: tier_snapshot} if tier_snapshot is not None else None
+            ),
+            apply_weights=tier_snapshot is not None,
+        )
+    if fetch_limit != limit:
+        results = results[:limit]
     return results

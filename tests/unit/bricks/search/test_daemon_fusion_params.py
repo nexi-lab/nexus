@@ -152,7 +152,7 @@ async def test_search_threads_fusion_params_to_backends() -> None:
         self._last_latency_ms = latency_ms
 
     async def _attach_path_contexts(
-        self: Any, results: Any, *, zone_id: str, pinned_snapshots: Any = None
+        self: Any, results: Any, *, zone_id: str, **_attach_kwargs: Any
     ) -> None:
         self._last_context_zone = zone_id
 

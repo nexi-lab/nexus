@@ -126,18 +126,29 @@ def readable_zone_filter(
 
     Search is a READ — write-only zone grants must not be searchable
     (Issue #4542 round-8 review). When per-zone perms are known, only
-    zones granting ``r`` or ``x`` pass; an explicit grant list with no
-    readable zones fails CLOSED (empty frozenset → zero searchable
-    zones). Credentials with a zone list but no perms info keep the
-    whole list (legacy tokens predate per-zone perms). Returns ``None``
-    (unbounded) only when the credential carries no explicit zone grant
-    at all.
+    WELL-FORMED entries are consulted — ``isinstance(zp, (list, tuple))
+    and len(zp) == 2 and isinstance(zp[0], str) and isinstance(zp[1],
+    str)`` (Issue #4557: a malformed entry, e.g. ``None`` or a truthy
+    non-str member, must neither crash ``len()`` nor stringify into a
+    false positive, e.g. ``str(True)`` containing "r") — and only zones
+    granting ``r`` or ``x`` pass. An explicit grant list where every
+    entry is malformed, or none is readable, fails CLOSED (empty
+    frozenset → zero searchable zones) — this includes the case where
+    ``zone_perms`` is present but entirely malformed, which must NOT
+    fall back to the raw ``zone_set``. Credentials with a zone list but
+    no perms info at all keep the whole list (legacy tokens predate
+    per-zone perms). Returns ``None`` (unbounded) only when the
+    credential carries no explicit zone grant at all.
     """
     if zone_perms:
         return frozenset(
-            str(zp[0])
+            zp[0]
             for zp in zone_perms
-            if len(zp) == 2 and ("r" in str(zp[1]) or "x" in str(zp[1]))
+            if isinstance(zp, (list, tuple))
+            and len(zp) == 2
+            and isinstance(zp[0], str)
+            and isinstance(zp[1], str)
+            and ("r" in zp[1] or "x" in zp[1])
         )
     if zone_set:
         return frozenset(str(z) for z in zone_set)
@@ -151,19 +162,44 @@ def token_zone_filter_from_auth(
 ) -> frozenset[str] | None:
     """Derive the search-readable token allow-list from an auth result.
 
-    Issue #4542 rounds 8-10: search is a READ. Admin, root-scoped, and
-    unconstrained credentials return ``None`` (unbounded — #4541
+    Issue #4542 rounds 8-10: search is a READ. Admin and unconstrained
+    (empty-scope) credentials return ``None`` (unbounded — #4541
     exemption); otherwise only zones granting ``r``/``x`` pass, and an
     explicit grant list with no readable zone yields the empty set
     (callers fail closed on it).
+
+    Issue #4557 (gap 3): a root-only ``zone_set`` is normally treated as
+    unbounded too (root grants cross-zone access and its id never
+    intersects concrete zone names), but an EXPLICIT non-read root grant
+    must not be unbounded — a ``root:"w"`` credential must not be able to
+    search everything. When ``zone_set == {root_zone_id}``, every
+    WELL-FORMED root entry in ``zone_perms`` (same parsing discipline as
+    ``readable_zone_filter``) is aggregated by UNION — not first-match —
+    so the outcome is order-independent across duplicate entries: if no
+    well-formed root entry exists at all (legacy tokens / absent perms),
+    the exemption stands unchanged (``None``); if any entry grants ``r``
+    or ``x``, it stands (``None``); otherwise every root entry is
+    write-only and the credential fails CLOSED (empty frozenset — the
+    router's existing empty-filter 403 fires from there).
     """
-    raw_zone_set = tuple(auth_result.get("zone_set") or ())
-    if (
-        not raw_zone_set
-        or set(raw_zone_set) == {root_zone_id}
-        or auth_result.get("is_admin", False)
-    ):
+    if auth_result.get("is_admin", False):
         return None
+    raw_zone_set = tuple(auth_result.get("zone_set") or ())
+    if not raw_zone_set:
+        return None
+    if set(raw_zone_set) == {root_zone_id}:
+        root_letters = "".join(
+            zp[1]
+            for zp in (auth_result.get("zone_perms") or ())
+            if isinstance(zp, (list, tuple))
+            and len(zp) == 2
+            and isinstance(zp[0], str)
+            and isinstance(zp[1], str)
+            and zp[0] == root_zone_id
+        )
+        if not root_letters:
+            return None  # No explicit root entry: legacy exemption stands.
+        return None if ("r" in root_letters or "x" in root_letters) else frozenset()
     return readable_zone_filter(raw_zone_set, auth_result.get("zone_perms"))
 
 

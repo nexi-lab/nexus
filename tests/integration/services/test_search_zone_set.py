@@ -342,6 +342,62 @@ class TestBatchReadGate:
 
 
 @pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestExplicitRootGrantLetters:
+    """Issue #4557 (gap 3): an explicit non-read root grant (root:"w") must
+    not be unbounded -- token_zone_filter_from_auth must fail closed and the
+    router's existing empty-filter 403 must fire on /query."""
+
+    def test_root_write_only_key_query_rejected(self):
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "root",
+                "zone_set": ["root"],
+                "zone_perms": [["root", "w"]],
+            }
+        )
+        resp = TestClient(app).get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 403, resp.text
+        assert "Token has no zone with read permission for search" in resp.json()["detail"]
+
+    def test_root_read_key_query_ok(self):
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "root",
+                "zone_set": ["root"],
+                "zone_perms": [["root", "r"]],
+            }
+        )
+        resp = TestClient(app).get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 200, resp.text
+
+    def test_duplicate_root_entries_aggregate_order_independently(self):
+        for zone_perms in ([["root", "w"], ["root", "rx"]], [["root", "rx"], ["root", "w"]]):
+            app = _build_app_with_auth(
+                {
+                    "user_id": "u",
+                    "zone_id": "root",
+                    "zone_set": ["root"],
+                    "zone_perms": zone_perms,
+                }
+            )
+            resp = TestClient(app).get("/api/v2/search/query?q=alpha")
+            assert resp.status_code == 200, resp.text
+
+    def test_root_zone_set_no_zone_perms_query_ok_legacy(self):
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "root",
+                "zone_set": ["root"],
+            }
+        )
+        resp = TestClient(app).get("/api/v2/search/query?q=alpha")
+        assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
 class TestSingleZoneTokenFederatedEscape:
     """Issue #4542 round-6 review: a single-zone token requesting
     federated=true must still be confined to its zone — the router used to

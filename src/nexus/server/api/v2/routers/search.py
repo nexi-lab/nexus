@@ -793,6 +793,19 @@ async def search_query_batch(
     if not raw_queries:
         raise HTTPException(status_code=400, detail="No queries provided")
 
+    # #4557 (gap 1): batch had no read gate at all -- a write-only token
+    # could read via /query/batch even though /query fails it closed.
+    # Batch takes no ``federated`` param (single-zone-only), so both of
+    # /query's single-zone checks apply unconditionally here.
+    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
+
+    token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
+    if token_zone_filter is not None:
+        if not token_zone_filter:
+            raise HTTPException(403, "Token has no zone with read permission for search")
+        if zone_id not in token_zone_filter:
+            raise HTTPException(403, f"Token has no read permission for zone {zone_id}")
+
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
 

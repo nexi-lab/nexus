@@ -559,11 +559,19 @@ jobs:
           print('GCS backend import OK')
           "
 
-      - name: Cold import time gate (budget 240ms, median of 3 runs)
+      - name: Cold import time gate (budget 240ms, min of 5 runs)
         run: |
-          # Run 3 times and take the median to eliminate CI runner jitter
+          # Run 5 times and take the MINIMUM. The median still carries shared-
+          # runner noise into the verdict: on develop the median measured 202ms
+          # (fd87d84b7) -> 221ms (a783c08fe) -> 261ms/FAIL (466a60b37) across
+          # commits whose import path differed by ~23 lines of pydantic fields —
+          # a ±30ms runner lottery against a 240ms budget. The minimum is the
+          # cost floor the code actually mandates: noisy neighbors can only
+          # inflate a sample, never deflate it, so the floor rises ONLY when a
+          # real import-cost regression lands (which is what this gate exists
+          # to catch).
           measurements=()
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             /tmp/nexus-fs-test/bin/python -X importtime -c "import nexus.fs" 2> /tmp/importtime_${i}.log
             cumulative_us=$(/tmp/nexus-fs-test/bin/python -c "
           import re
@@ -577,14 +585,13 @@ jobs:
             measurements+=($ms)
             echo "  Run ${i}: ${ms}ms"
           done
-          # Sort and take the median (second of three values)
           IFS=$'\n' sorted=($(sort -n <<<"${measurements[*]}")); unset IFS
-          actual_ms=${sorted[1]}
-          echo "Median import time: ${actual_ms}ms (budget: 240ms)"
+          actual_ms=${sorted[0]}
+          echo "Min import time: ${actual_ms}ms (budget: 240ms)"
           echo "### nexus-fs import time" >> $GITHUB_STEP_SUMMARY
-          echo "**${actual_ms}ms** median of [${measurements[0]}, ${measurements[1]}, ${measurements[2]}]ms (budget: 240ms)" >> $GITHUB_STEP_SUMMARY
+          echo "**${actual_ms}ms** min of [${measurements[0]}, ${measurements[1]}, ${measurements[2]}, ${measurements[3]}, ${measurements[4]}]ms (budget: 240ms)" >> $GITHUB_STEP_SUMMARY
           if [ "$actual_ms" -gt 240 ]; then
-            echo "::error::Median import time ${actual_ms}ms exceeds 240ms budget"
+            echo "::error::Min import time ${actual_ms}ms exceeds 240ms budget"
             exit 1
           fi
 

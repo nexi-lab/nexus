@@ -338,44 +338,23 @@ async def search_query(
     # must never be treated as a token allow-list (#4541 review round 5).
     raw_zone_set = tuple(auth_result.get("zone_set") or ())
     zone_set = raw_zone_set or (zone_id,)
-    # Issue #4542 round-8 review: search is a READ — when the token carries
-    # per-zone perms, only zones granting r/x are searchable (write-only
-    # grants fail closed). Legacy tokens without perms info keep the full
-    # explicit zone_set; root-scoped and unconstrained credentials stay
-    # unbounded (mirrors the #4541 fed_zone_filter exemption).
-    # Round-10 review: admin credentials bypass zone permission checks
-    # repo-wide — do not attenuate or 403 them here. Root-scoped and
-    # unconstrained credentials likewise stay unbounded (#4541 exemption).
-    token_zone_filter = None
-    if (
-        raw_zone_set
-        and set(raw_zone_set) != {ROOT_ZONE_ID}
-        and not auth_result.get("is_admin", False)
-    ):
-        from nexus.bricks.search.federated_search import readable_zone_filter
+    # #4542 rounds 8-10: readable allow-list (None = admin/root/unbounded).
+    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
 
-        token_zone_filter = readable_zone_filter(raw_zone_set, auth_result.get("zone_perms"))
+    token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
     # #3785: auto-promote to federated when token grants multiple zones,
     # even if caller didn't pass federated=true. Single-zone tokens
     # (zone_set == (zone_id,)) hit the unchanged single-zone path.
     if len(zone_set) > 1:
         federated = True
 
-    # Issue #4542 round-9 review: enforce the token's read attenuation on
-    # BOTH routes. The federated route gets it via zone_filter; the
-    # single-zone route must check it here, and an explicitly scoped token
-    # with no readable zone fails closed regardless of route.
+    # Issue #4542 round-9: read attenuation on BOTH routes — federated via
+    # zone_filter, single-zone checked here; no-readable-zone fails closed.
     if token_zone_filter is not None:
         if not token_zone_filter:
-            raise HTTPException(
-                status_code=403,
-                detail="Token has no zone with read permission; search requires read access",
-            )
+            raise HTTPException(403, "Token has no zone with read permission for search")
         if not federated and zone_id not in token_zone_filter:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Token has no read permission for zone {zone_id}",
-            )
+            raise HTTPException(403, f"Token has no read permission for zone {zone_id}")
 
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
@@ -745,19 +724,12 @@ async def _handle_federated_search(
             from nexus.server.dependencies import get_operation_context
 
             op_context = get_operation_context(auth_result)
-            # Issue #4542 round-6 review: this all-peers-failed fallback
-            # replaces the dispatcher's capped results wholesale, so it must
-            # honor the per-document cap itself — fetch wider so the cap can
-            # backfill, cap, then trim. Config read uses the same strict
-            # guards as the dispatcher (Mock-safe).
-            _fb_cfg = getattr(search_daemon, "config", None)
-            _fb_cap = (
-                getattr(_fb_cfg, "chunks_per_page", None)
-                if getattr(_fb_cfg, "page_aggregation", None) is True
-                else None
-            )
-            if not isinstance(_fb_cap, int) or _fb_cap <= 0:
-                _fb_cap = None
+            # Issue #4542 round-6: this all-peers-failed fallback replaces the
+            # dispatcher's capped results wholesale, so it must honor the
+            # per-document cap itself — fetch wider, cap, trim.
+            from nexus.bricks.search.federated_search import daemon_pooling_cap
+
+            _fb_cap = daemon_pooling_cap(search_daemon)
             fallback_start = time.perf_counter()
             bm25s_results = await search_service.semantic_search(
                 query=q,

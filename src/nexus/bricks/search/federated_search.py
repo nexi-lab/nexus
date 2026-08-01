@@ -144,6 +144,42 @@ def readable_zone_filter(
     return None
 
 
+def token_zone_filter_from_auth(
+    auth_result: dict[str, Any],
+    *,
+    root_zone_id: str,
+) -> frozenset[str] | None:
+    """Derive the search-readable token allow-list from an auth result.
+
+    Issue #4542 rounds 8-10: search is a READ. Admin, root-scoped, and
+    unconstrained credentials return ``None`` (unbounded — #4541
+    exemption); otherwise only zones granting ``r``/``x`` pass, and an
+    explicit grant list with no readable zone yields the empty set
+    (callers fail closed on it).
+    """
+    raw_zone_set = tuple(auth_result.get("zone_set") or ())
+    if (
+        not raw_zone_set
+        or set(raw_zone_set) == {root_zone_id}
+        or auth_result.get("is_admin", False)
+    ):
+        return None
+    return readable_zone_filter(raw_zone_set, auth_result.get("zone_perms"))
+
+
+def daemon_pooling_cap(daemon: Any) -> int | None:
+    """Resolve the per-document pooling cap from a daemon's DaemonConfig.
+
+    Strict ``is True`` / ``isinstance`` guards keep Mock daemons (tests)
+    from enabling pooling via auto-created attributes (Issue #4542).
+    """
+    cfg = getattr(daemon, "config", None)
+    if getattr(cfg, "page_aggregation", None) is not True:
+        return None
+    cap = getattr(cfg, "chunks_per_page", None)
+    return cap if isinstance(cap, int) and cap > 0 else None
+
+
 def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
     """Return True when the response reflects zero reachable peers.
 
@@ -984,11 +1020,7 @@ class FederatedSearchDispatcher:
         The strict ``is True`` / ``isinstance`` checks keep Mock daemons
         (tests) from enabling pooling via auto-created attributes.
         """
-        cfg = getattr(self._daemon, "config", None)
-        if getattr(cfg, "page_aggregation", None) is not True:
-            return None
-        cap = getattr(cfg, "chunks_per_page", None)
-        return cap if isinstance(cap, int) and cap > 0 else None
+        return daemon_pooling_cap(self._daemon)
 
     def invalidate_zone_cache(self, subject: tuple[str, str] | None = None) -> None:
         """Invalidate zone discovery cache."""

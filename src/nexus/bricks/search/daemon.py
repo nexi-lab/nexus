@@ -2271,7 +2271,8 @@ class SearchDaemon:
                 # backfill, cap order-preservingly, and leave the final trim
                 # to the shared post-attach boundary so tier weights can
                 # still re-rank the over-fetched window.
-                pooled_legacy = bool(getattr(self.config, "page_aggregation", False))
+                _legacy_cfg = getattr(self, "config", None)
+                pooled_legacy = bool(getattr(_legacy_cfg, "page_aggregation", False))
                 legacy_limit = max(internal_limit, limit * 2) if pooled_legacy else internal_limit
                 results = await self._hybrid_search(
                     query,
@@ -2286,7 +2287,7 @@ class SearchDaemon:
                     from nexus.bricks.search.result_builders import cap_chunks_per_page
 
                     results = cap_chunks_per_page(
-                        results, chunks_per_page=self.config.chunks_per_page
+                        results, chunks_per_page=getattr(_legacy_cfg, "chunks_per_page", 2)
                     )
             fallback_ms = (time.perf_counter() - fallback_start) * 1000
 
@@ -2442,9 +2443,9 @@ class SearchDaemon:
                     id_key=None,
                 )
                 if pooled:
-                    fused = cap_chunks_per_page(
-                        fused, chunks_per_page=self.config.chunks_per_page
-                    )[:limit]
+                    fused = cap_chunks_per_page(fused, chunks_per_page=self.config.chunks_per_page)[
+                        :limit
+                    ]
                 timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
                 record_total()
                 coerced = SearchResultList(

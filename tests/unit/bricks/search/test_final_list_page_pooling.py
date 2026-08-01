@@ -733,6 +733,7 @@ async def test_legacy_hybrid_fallback_caps_at_shared_boundary() -> None:
         path_filter: str | None,
         alpha: float,
         fusion_method: str,
+        rrf_k: int = 60,
         *,
         zone_id: str | None = None,
     ) -> list[SearchResult]:

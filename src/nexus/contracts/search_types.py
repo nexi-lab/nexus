@@ -32,6 +32,7 @@ __all__ = [
     # Query analysis patterns
     "COMPARISON_WORDS",
     "TEMPORAL_WORDS",
+    "RECENCY_WORDS",
     "AGGREGATION_WORDS",
     "MULTIHOP_PATTERNS",
     "COMPLEX_PATTERNS",
@@ -99,6 +100,25 @@ COMPARISON_WORDS: frozenset[str] = frozenset(
 
 TEMPORAL_WORDS: frozenset[str] = frozenset(
     {"when", "before", "after", "history", "timeline", "since", "until"}
+)
+
+# Recency-intent words (Issue #4543). Deliberately distinct from
+# TEMPORAL_WORDS: that set signals temporal *complexity* for query routing
+# ("history", "before", "until" often want OLD documents), while these words
+# signal the caller wants NEW material — used to gate the recency=auto boost.
+RECENCY_WORDS: frozenset[str] = frozenset(
+    {
+        "latest",
+        "newest",
+        "recent",
+        "recently",
+        "current",
+        "currently",
+        "today",
+        "yesterday",
+        "now",
+        "new",
+    }
 )
 
 AGGREGATION_WORDS: frozenset[str] = frozenset(

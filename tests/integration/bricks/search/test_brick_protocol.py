@@ -82,6 +82,9 @@ class MockSearchBrick:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         adaptive_k: bool = False,
+        recency: str | None = None,
+        recency_weight: float | None = None,
+        recency_half_life_days: float | None = None,
     ) -> list[Any]:
         return [{"path": "/test.py", "score": 0.9, "chunk_text": "match"}]
 
@@ -179,6 +182,9 @@ class TestAsyncMockProtocol:
             alpha=0.7,
             fusion_method="rrf",
             adaptive_k=True,
+            recency="auto",
+            recency_weight=0.3,
+            recency_half_life_days=30.0,
         )
         assert isinstance(results, list)
 

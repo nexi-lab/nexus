@@ -52,10 +52,11 @@ async def test_scope_crud_mutation_stays_on_current_loop(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_search_with_zone_stays_on_daemon_owner_loop() -> None:
-    from nexus.bricks.search.daemon import SearchDaemon
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
     from nexus.runtime.zone_runner import ZoneRegistry
 
     daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon.config = DaemonConfig()
     daemon._owner_loop = asyncio.get_running_loop()
     daemon._zone_registry = ZoneRegistry()
     seen: list[tuple[asyncio.AbstractEventLoop, int, str | None]] = []

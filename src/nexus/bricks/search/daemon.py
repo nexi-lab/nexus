@@ -250,6 +250,10 @@ class DaemonStats:
     # weights — operators need a production signal, not a debug log.
     tier_boost_probe_failures: int = 0
     tier_boost_suppressed_searches: int = 0
+    # Fail-soft counter for the recency boost (Issue #4543): hydration or
+    # boost errors must never fail a search, but persistent failures should
+    # be visible via /search/stats rather than only in log lines.
+    recency_attach_failures: int = 0
 
 
 @dataclass
@@ -533,6 +537,26 @@ class DaemonConfig:
     )
     tier_boost_floor_ratio: float = field(
         default_factory=lambda: _get_env_float("NEXUS_SEARCH_TIER_BOOST_FLOOR_RATIO", 0.25)
+    )
+
+    # Recency decay (Issue #4543). Post-fusion multiplicative boost
+    # ``score *= 1 + w * H / (H + age_days)`` applied at the search()
+    # chokepoint from a batch mtime hydration query — never in SQL ORDER BY.
+    # Modes: "auto" (default — boost only queries with a RECENCY_WORDS intent
+    # word, e.g. "latest"/"recent"/"today"; neutral queries stay byte-identical),
+    # "on" (always), "off". Unrecognized env values behave as "off" (fail
+    # closed). Request params override these per call; set
+    # NEXUS_SEARCH_RECENCY=off to restore the pre-#4543 behavior.
+    recency_mode: str = field(
+        default_factory=lambda: (
+            os.environ.get("NEXUS_SEARCH_RECENCY", "auto").strip().lower() or "auto"
+        )
+    )
+    recency_weight: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_WEIGHT", 0.3)
+    )
+    recency_half_life_days: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", 30.0)
     )
 
 
@@ -2667,6 +2691,85 @@ class SearchDaemon:
         )
         self.last_search_timing = timing
 
+    async def _apply_recency_boost_post_search(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        recency: str | None,
+        recency_weight: float | None,
+        recency_half_life_days: float | None,
+        zone_id: str,
+    ) -> None:
+        """Post-fusion recency decay at the search() chokepoint (Issue #4543).
+
+        Runs AFTER fusion/coercion on typed results (the #4398 macro_text
+        pattern) so every source is covered — all three search types, both DB
+        backends including sqlite_vec dense-only rows, and the legacy
+        fallback stack — and no backend SELECT or SQL ORDER BY changes.
+        Request params override DaemonConfig; ``None`` defers. The mtime
+        hydration routes through ``_run_on_owner_loop`` so its asyncpg
+        session runs on the loop that owns the pool (zoned searches execute
+        the search body on the owner loop; asyncpg pools are loop-affine);
+        the pure boost math stays on the caller loop. Fail-soft: errors
+        log + count, never fail the search.
+        """
+        from nexus.bricks.search.recency import apply_recency_boost, has_recency_intent
+
+        mode = recency if recency is not None else self.config.recency_mode
+        weight = recency_weight if recency_weight is not None else self.config.recency_weight
+        half_life = (
+            recency_half_life_days
+            if recency_half_life_days is not None
+            else self.config.recency_half_life_days
+        )
+        if not results or weight <= 0 or half_life <= 0:
+            return
+        if mode == "auto":
+            if not has_recency_intent(query):
+                return
+        elif mode != "on":
+            return  # "off" and unrecognized modes fail closed
+
+        try:
+            paths = [r.path for r in results]
+            mtimes = await self._run_on_owner_loop(
+                lambda: self._fetch_recency_mtimes(paths, zone_id=zone_id)
+            )
+            apply_recency_boost(results, mtimes, weight=weight, half_life_days=half_life)
+        except Exception as exc:
+            self.stats.recency_attach_failures += 1
+            logger.warning("Recency boost failed (fail-soft, results unboosted): %s", exc)
+
+    async def _fetch_recency_mtimes(
+        self,
+        paths: Sequence[str],
+        *,
+        zone_id: str,
+    ) -> dict[str, datetime]:
+        """Batch-hydrate ``file_paths.updated_at`` for ``paths`` (Issue #4543).
+
+        One SELECT served index-only by ``idx_file_paths_zone_path_covering``
+        (zone_id, virtual_path → INCLUDE updated_at). Returns {} when no
+        session factory is wired (legacy embedded deployments) — the boost
+        then no-ops rather than failing.
+        """
+        if self._async_session is None or not paths:
+            return {}
+        from sqlalchemy import select
+
+        from nexus.storage.models import FilePathModel
+
+        unique_paths = list({p for p in paths if p})
+        stmt = select(FilePathModel.virtual_path, FilePathModel.updated_at).where(
+            FilePathModel.zone_id == zone_id,
+            FilePathModel.virtual_path.in_(unique_paths),
+            FilePathModel.deleted_at.is_(None),
+        )
+        async with self._async_session() as session:
+            rows = (await session.execute(stmt)).all()
+        return {row[0]: row[1] for row in rows if row[1] is not None}
+
     async def search(
         self,
         query: str,
@@ -2678,6 +2781,9 @@ class SearchDaemon:
         zone_id: str | None = None,
         expand: str = "none",
         rrf_k: int = 60,
+        recency: str | None = None,
+        recency_weight: float | None = None,
+        recency_half_life_days: float | None = None,
     ) -> list[SearchResult]:
         if zone_id is None:
             results = await self._search_on_current_loop(
@@ -2706,6 +2812,14 @@ class SearchDaemon:
 
             results = await self._run_on_owner_loop(_work)
 
+        await self._apply_recency_boost_post_search(
+            results,
+            query=query,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
+            zone_id=zone_id or ROOT_ZONE_ID,
+        )
         await self._apply_macro_expansion(results, expand=expand, zone_id=zone_id or ROOT_ZONE_ID)
         return results
 
@@ -5540,6 +5654,9 @@ class SearchDaemon:
             # bypassed (probe failure / un-widened pool) must be visible.
             "tier_boost_probe_failures": self.stats.tier_boost_probe_failures,
             "tier_boost_suppressed_searches": self.stats.tier_boost_suppressed_searches,
+            # Issue #4543: recency-boost hydration may fail, tracked fail-soft
+            # like path-context above.
+            "recency_attach_failures": self.stats.recency_attach_failures,
         }
 
     def get_health(self) -> dict[str, Any]:

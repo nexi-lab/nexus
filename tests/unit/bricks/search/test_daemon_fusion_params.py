@@ -143,7 +143,7 @@ async def test_rrf_k_reaches_fusion() -> None:
 async def test_search_threads_fusion_params_to_backends() -> None:
     """`SearchDaemon.search()` must forward alpha / fusion_method / rrf_k to
     `_search_via_backends` (previously dropped on the floor)."""
-    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
 
     seen: dict[str, Any] = {}
 
@@ -153,6 +153,7 @@ async def test_search_threads_fusion_params_to_backends() -> None:
     daemon._vector_backend = object()
     daemon._permission_enforcer = None
     daemon.last_search_timing = {}
+    daemon.config = DaemonConfig(page_aggregation=False)
 
     def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms
@@ -308,7 +309,7 @@ async def test_fallback_rrf_k_reaches_fusion() -> None:
 async def test_search_threads_fusion_params_to_fallback() -> None:
     """With no indexed backends, `search()` must forward the fusion knobs to
     the legacy `_hybrid_search` fallback."""
-    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
 
     seen: dict[str, Any] = {}
 
@@ -318,6 +319,8 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
     daemon._vector_backend = None
     daemon._permission_enforcer = None
     daemon.last_search_timing = {}
+    # #4543: search() resolves recency knobs from config at the chokepoint.
+    daemon.config = DaemonConfig(page_aggregation=False)
 
     def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms
@@ -365,7 +368,7 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
 async def test_search_positional_signature_unchanged() -> None:
     """#4541 review round 3: rrf_k sits at the signature TAIL so pre-existing
     positional callers keep binding zone_id in position 7."""
-    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
 
     seen: dict[str, Any] = {}
 
@@ -375,6 +378,8 @@ async def test_search_positional_signature_unchanged() -> None:
     daemon._vector_backend = object()
     daemon._permission_enforcer = None
     daemon.last_search_timing = {}
+    # #4543: search() resolves recency knobs from config at the chokepoint.
+    daemon.config = DaemonConfig(page_aggregation=False)
 
     def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms

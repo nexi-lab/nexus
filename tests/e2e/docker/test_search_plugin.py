@@ -143,6 +143,39 @@ class TestSearchGlob:
         )
         assert len(r["result"]["paths"]) == 3
 
+    def test_glob_sort_recency_ranks_newest_first(self, api_key: str) -> None:
+        """Seed 3 files with a spacing wide enough for the metastore
+        mtime tick to advance, then glob with ``sort_recency=True`` and
+        assert paths come back newest-first.
+
+        Uses vfs_write's inherent write ordering + a small sleep between
+        writes to guarantee mtime monotonicity — the plugin's sort key
+        is the containing-file mtime returned by the kernel's ``sys_stat``
+        callback (which now exposes ``modified_at_ms``).
+        """
+        import time as _time
+
+        u = uid()
+        base = f"/search-recency-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+
+        # Seed oldest first, sleep between writes, newest last.
+        for name in ("oldest.txt", "middle.txt", "newest.txt"):
+            r = vfs_write(NODE_GRPC, f"{base}/{name}", b"seed\n", api_key=api_key)
+            assert "error" not in r, f"seed write failed for {name}: {r}"
+            _time.sleep(1.1)
+
+        r = search_glob(NODE_GRPC, base, "*.txt", sort_recency=True, api_key=api_key)
+        assert "error" not in r, f"glob returned error: {r}"
+        paths = r["result"]["paths"]
+        assert len(paths) == 3, f"expected 3 paths, got {paths}"
+        # Newest-first — reverse of write order.
+        assert paths == [
+            f"{base}/newest.txt",
+            f"{base}/middle.txt",
+            f"{base}/oldest.txt",
+        ], f"recency sort violated newest-first order: {paths}"
+
 
 # ===========================================================================
 # TestSearchGrep

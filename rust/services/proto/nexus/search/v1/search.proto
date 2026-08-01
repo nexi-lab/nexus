@@ -48,6 +48,14 @@ message GlobRequest {
   // Auth token per the same convention as vfs.proto; server-side
   // permission gate reads this via OperationContext.
   string auth_token = 4;
+  // Sort results by containing-file mtime descending (newest first)
+  // BEFORE the `max_results` cap. Requires one `sys_stat` per matched
+  // path — for a bounded cap this is sub-ms. Files with unknown mtime
+  // (kernel returns `null`) sort last, preserving walk order among
+  // themselves. Freshness-aware equivalent of the Python
+  // SearchDaemon `recency=on` mode (nexi-lab/nexus#4553) — no
+  // fusion-score multiplier applies because Glob has no score.
+  bool sort_recency = 5;
 }
 
 message GlobResponse {
@@ -86,6 +94,12 @@ message GrepRequest {
   // Invert: return lines that DO NOT match the pattern.
   bool invert_match = 8;
   string auth_token = 9;
+  // Sort matches by containing-file mtime descending (newest file
+  // first). Matches from the same file keep line-order among
+  // themselves — files are the sort unit, so all hits inside one
+  // file stay contiguous. See `GlobRequest.sort_recency` for the
+  // Python-SearchDaemon mirror context (nexi-lab/nexus#4553).
+  bool sort_recency = 10;
 }
 
 message GrepMatch {

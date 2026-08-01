@@ -254,6 +254,14 @@ class DaemonStats:
     # boost errors must never fail a search, but persistent failures should
     # be visible via /search/stats rather than only in log lines.
     recency_attach_failures: int = 0
+    # Explicit-index projection wait (Issue #4566): docs that needed at least
+    # one wait round before their file_paths row landed, and docs dropped
+    # because the row never landed within the bounded wait. A growing skip
+    # counter means callers are indexing paths that are not (yet) backed by
+    # NexusFS — either a projection-lag budget that is too small or a client
+    # submitting genuinely synthetic paths.
+    explicit_index_path_waits: int = 0
+    explicit_index_skipped_no_path: int = 0
 
 
 @dataclass
@@ -558,6 +566,39 @@ class DaemonConfig:
     recency_half_life_days: float = field(
         default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", 30.0)
     )
+
+    # Bounded wait for the file_paths projection row on explicit indexing
+    # (Issue #4566). ``POST /search/index`` right after ``files.write`` lands
+    # inside the operation-log consumer's projection lag (~5-10s observed),
+    # so the path_id lookup finds no row yet. Instead of silently dropping
+    # the document, the daemon re-polls the projection up to
+    # ``index_path_wait_attempts`` times, sleeping ``index_path_wait_seconds``
+    # between rounds (defaults cover the observed lag: 5 × 2s = 10s worst
+    # case). Documents whose row never lands are reported as skipped so the
+    # HTTP boundary can fail closed instead of returning a silent count=0.
+    # Set attempts to 0 to disable the wait (pre-#4566 lookup behavior,
+    # but skips are still surfaced).
+    index_path_wait_attempts: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_INDEX_PATH_WAIT_ATTEMPTS", 5)
+    )
+    index_path_wait_seconds: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_INDEX_PATH_WAIT_SECONDS", 2.0)
+    )
+
+
+@dataclass(slots=True)
+class ExplicitIndexResult:
+    """Outcome of an explicit ``index_documents`` call (Issue #4566).
+
+    ``indexed`` is the number of documents persisted through the indexing
+    pipeline. ``skipped`` lists the zone-stripped virtual paths that had no
+    live ``file_paths`` row even after the bounded projection wait — their
+    text was NOT indexed and the caller must retry (or accept the loss for
+    genuinely synthetic paths that will never be backed by NexusFS).
+    """
+
+    indexed: int = 0
+    skipped: list[str] = field(default_factory=list)
 
 
 class SearchDaemon:
@@ -3656,11 +3697,11 @@ class SearchDaemon:
         documents: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> int:
+    ) -> ExplicitIndexResult:
         if zone_id is None:
             return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
 
-        async def _work() -> int:
+        async def _work() -> ExplicitIndexResult:
             return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
 
         return await self._run_on_owner_loop(_work)
@@ -3687,12 +3728,37 @@ class SearchDaemon:
             submitted.cancel()
             raise
 
+    async def _resolve_index_path_id(self, vp_clean: str, zone_id: str) -> str | None:
+        """Look up the live ``file_paths`` row for a zone-stripped path.
+
+        The search daemon is a READER of filesystem metadata — it must not
+        create or modify ``file_paths`` rows (that ownership belongs to the
+        kernel/metastore), so a missing row can only be waited out or
+        surfaced, never healed here.
+        """
+        if self._async_session is None:
+            return None
+        async with self._async_session() as session:
+            row = (
+                await session.execute(
+                    sa_text(
+                        "SELECT path_id FROM file_paths "
+                        "WHERE virtual_path = :vp "
+                        "  AND zone_id = :zid "
+                        "  AND deleted_at IS NULL "
+                        "LIMIT 1"
+                    ),
+                    {"vp": vp_clean, "zid": zone_id},
+                )
+            ).first()
+        return str(row[0]) if row is not None else None
+
     async def _index_documents_on_current_loop(
         self,
         documents: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> int:
+    ) -> ExplicitIndexResult:
         """Explicitly upsert documents into the active search backend.
 
         This powers ``POST /api/v2/search/index`` for synthetic or externally
@@ -3702,17 +3768,28 @@ class SearchDaemon:
         via the indexing pipeline. Each document is treated as ``(path,
         text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch to
         ``IndexingPipeline.index_document`` which chunks, embeds, and
-        bulk-inserts into ``document_chunks``. Failures bubble up so the
-        HTTP boundary returns 500 (Decision #18) instead of silently returning
-        count=0.
+        bulk-inserts into ``document_chunks``. Pipeline failures bubble up so
+        the HTTP boundary returns 500 (Decision #18) instead of silently
+        returning count=0.
+
+        Issue #4566: the ``file_paths`` projection is populated asynchronously
+        by the operation-log consumer, so write-then-index callers always race
+        it. Documents whose row is missing get a bounded wait
+        (``index_path_wait_attempts`` × ``index_path_wait_seconds``, shared by
+        the whole batch); anything still unresolved is returned in
+        ``skipped`` — never silently dropped from the count. Documents with
+        no usable ``text``/``path`` fields are ignored as before (malformed
+        input, not a projection race).
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
 
+        result = ExplicitIndexResult()
         if not documents:
-            return 0
+            return result
 
-        if self._indexing_pipeline is None:
+        pipeline = self._indexing_pipeline
+        if pipeline is None:
             raise RuntimeError(
                 "index_documents: indexing pipeline is not initialised. "
                 "Daemon must complete startup() before serving writes."
@@ -3723,7 +3800,22 @@ class SearchDaemon:
         def _scrub(value: str) -> str:
             return value.replace("\x00", "") if "\x00" in value else value
 
-        indexed = 0
+        async def _index_one(vp_clean: str, text_clean: str, path_id: str) -> None:
+            # Drive the canonical write path. Pass the zone-scoped form
+            # so the pipeline's scope filter sees the same shape mutation
+            # consumers use.
+            scoped_path = (
+                f"/zone/{target_zone}{vp_clean}" if target_zone != ROOT_ZONE_ID else vp_clean
+            )
+            pipeline_result = await pipeline.index_document(scoped_path, text_clean, path_id)
+            if pipeline_result.error:
+                # Surface pipeline errors so the router returns 500.
+                raise RuntimeError(
+                    f"index_documents: pipeline failed for {vp_clean!r}: {pipeline_result.error}"
+                )
+            result.indexed += 1
+
+        pending: list[tuple[str, str]] = []  # (vp_clean, text_clean) awaiting a row
         for doc in documents:
             if not isinstance(doc, dict):
                 continue
@@ -3737,57 +3829,52 @@ class SearchDaemon:
             text_clean = _scrub(text_field)
             vp_clean = strip_zone_prefix(virtual_path)
 
-            # Resolve path_id from file_paths so the indexing pipeline can
-            # write document_chunks. Without a path_id we cannot persist —
-            # skip rather than fail so best-effort callers in mount/connector
-            # wiring don't error out. The search daemon is a READER of
-            # filesystem metadata — it must not create or modify file_paths
-            # rows (that ownership belongs to the kernel/metastore).
-            path_id: str | None = None
-            if self._async_session is not None:
-                async with self._async_session() as session:
-                    row = (
-                        await session.execute(
-                            sa_text(
-                                "SELECT path_id FROM file_paths "
-                                "WHERE virtual_path = :vp "
-                                "  AND zone_id = :zid "
-                                "  AND deleted_at IS NULL "
-                                "LIMIT 1"
-                            ),
-                            {"vp": vp_clean, "zid": target_zone},
-                        )
-                    ).first()
-                    if row is not None:
-                        path_id = str(row[0])
-
+            path_id = await self._resolve_index_path_id(vp_clean, target_zone)
             if path_id is None:
-                # No file_paths row — this happens for synthetic docs
-                # (skill READMEs, connector schemas) that aren't backed
-                # by NexusFS. Skip rather than fail so best-effort callers
-                # in mount/connector wiring don't error out.
-                logger.debug(
-                    "index_documents: no file_paths row for %s in zone %s; skipping",
-                    vp_clean,
-                    target_zone,
-                )
+                pending.append((vp_clean, text_clean))
                 continue
+            await _index_one(vp_clean, text_clean, path_id)
 
-            # Drive the canonical write path. Pass the zone-scoped form
-            # so the pipeline's scope filter sees the same shape mutation
-            # consumers use.
-            scoped_path = (
-                f"/zone/{target_zone}{vp_clean}" if target_zone != ROOT_ZONE_ID else vp_clean
+        # Issue #4566: bounded wait for the projection row. The wait budget is
+        # per BATCH, not per document — each round re-polls every unresolved
+        # path once, so the worst-case added latency is attempts × delay
+        # regardless of batch size. Without a session the lookup can never
+        # succeed, so skip the wait entirely instead of sleeping for nothing.
+        wait_rounds = max(0, self.config.index_path_wait_attempts)
+        wait_seconds = max(0.0, self.config.index_path_wait_seconds)
+        if pending and wait_rounds > 0 and self._async_session is not None:
+            for _round in range(wait_rounds):
+                await asyncio.sleep(wait_seconds)
+                still_pending: list[tuple[str, str]] = []
+                for vp_clean, text_clean in pending:
+                    path_id = await self._resolve_index_path_id(vp_clean, target_zone)
+                    if path_id is None:
+                        still_pending.append((vp_clean, text_clean))
+                        continue
+                    self.stats.explicit_index_path_waits += 1
+                    await _index_one(vp_clean, text_clean, path_id)
+                pending = still_pending
+                if not pending:
+                    break
+
+        if pending:
+            # No file_paths row even after the bounded wait — synthetic docs
+            # (connector-backed mount content) or a projection lag beyond the
+            # configured budget. Surface the paths instead of silently
+            # shrinking the count: the HTTP route fails closed on these and
+            # best-effort callers (mount/connector wiring) just log.
+            result.skipped = [vp for vp, _ in pending]
+            self.stats.explicit_index_skipped_no_path += len(pending)
+            logger.warning(
+                "index_documents: %d document(s) had no file_paths row after %d wait "
+                "round(s) in zone %s — text NOT indexed: %s",
+                len(pending),
+                wait_rounds if self._async_session is not None else 0,
+                target_zone,
+                result.skipped[:10],
             )
-            result = await self._indexing_pipeline.index_document(scoped_path, text_clean, path_id)
-            if result.error:
-                # Surface pipeline errors so the router returns 500.
-                raise RuntimeError(
-                    f"index_documents: pipeline failed for {vp_clean!r}: {result.error}"
-                )
-            indexed += 1
 
-        return indexed
+        return result
 
     async def delete_documents(
         self,

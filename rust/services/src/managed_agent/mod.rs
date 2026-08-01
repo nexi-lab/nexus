@@ -53,6 +53,14 @@ use kernel::core::agents::registry::{
 use kernel::kernel::syscall::KernelSyscall;
 use kernel::service_registry::{RustCallError, RustService};
 
+// The raw ACP-subprocess control-plane spawner (spawn + memory-DT_STREAM
+// byte tunnel). Kernel-concrete (drives Kernel-inherent stream ops), so
+// it's injected at install and reached through `dyn RawSpawn`; unix +
+// `subprocess-host` only. Slim / non-unix builds leave `raw_spawn = None`
+// and reject `spawn_spec` at runtime with InvalidArgument.
+#[cfg(all(unix, feature = "subprocess-host"))]
+pub(crate) mod raw_spawn;
+
 pub(crate) mod proc_entry;
 pub(crate) mod session;
 pub(crate) mod workspace_boundary_hook;
@@ -112,6 +120,27 @@ pub(crate) struct StartSessionRequest {
     pub owner_id: String,
     #[serde(default)]
     pub zone_id: String,
+    /// Embedder-computed raw spawn spec (ACP control-plane contract, 2026-08-01). When
+    /// set, `start_session` spawns THIS subprocess (stdio surfaced as DT_PIPEs at
+    /// `/{zone}/proc/{pid}/fd/{0,1,2}`) instead of resolving the `agent_id` profile — the
+    /// caller (sudowork/hydra) owns ALL launch logic (auth-mode/env/args/token/model);
+    /// nexus only executes + supervises + exposes the fd pipes for the client's ACP tunnel.
+    #[serde(default)]
+    pub spawn_spec: Option<SpawnSpec>,
+}
+
+/// Raw subprocess spec computed by the embedder. The launch-logic SSOT stays client-side
+/// (e.g. sudowork's `acpConnectors.ts`); nexus executes `cmd`+`args` with `env` in `cwd`,
+/// supervises the child, and surfaces its stdio as fd DT_PIPEs. nexus never parses ACP.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct SpawnSpec {
+    pub cmd: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub cwd: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120,6 +149,15 @@ pub(crate) struct StartSessionResponse {
     /// get_session take this back.
     pub session_id: String,
     pub workspace_path: String,
+    /// Real OS pid of the spawned subprocess — set ONLY on the raw ACP
+    /// control-plane path (`spawn_spec` supplied); `None` for the
+    /// runtime-body / procfs-only paths. Surfaced SEPARATELY from
+    /// `session_id` (which stays the synthetic AgentRegistry pid) per
+    /// the frozen contract ④: the embedder (sudowork) keys its
+    /// pid-bound auth-proxy on the OS pid, but the durable session
+    /// handle for cancel / get_session is `session_id`.
+    #[serde(default)]
+    pub os_pid: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -254,6 +292,27 @@ pub trait SpawnTask<K: KernelSyscall>: Send + Sync + 'static {
     ) -> Box<dyn SpawnHandle>;
 }
 
+/// Raw ACP-subprocess control-plane spawner — the DI seam for the
+/// `spawn_spec` path (frozen contract 2026-08-01). Distinct from
+/// [`SpawnTask`] (the in-process LLM runtime body): this launches an
+/// external subprocess and exposes its stdio as a byte tunnel that the
+/// CLIENT drives, whereas `SpawnTask` runs the agent loop in-process.
+///
+/// The concrete impl ([`raw_spawn::KernelRawSpawn`]) drives Kernel-inherent
+/// stream ops that aren't on the `KernelSyscall` trait, so it's Kernel-
+/// concrete and injected at install (Kernel-specific); this trait erases
+/// `K` so the generic `start_session` can call it. `None` in slim /
+/// non-unix builds ⇒ `spawn_spec` is rejected with InvalidArgument.
+pub(crate) trait RawSpawn: Send + Sync {
+    /// Launch `spec`, wire its stdio to node-local memory DT_STREAMs at
+    /// `/proc/{pid}/fd/{0,1,2}`, start the pumps + supervisor, and store
+    /// an abort handle in the shared `spawn_handles` (keyed by `pid`, so
+    /// the `on_terminate` observer tears it down). Returns the real OS pid
+    /// (contract ④). `Err` on bad spec / launch failure — the impl rolls
+    /// back the half-planted session.
+    fn spawn(&self, pid: &str, spec: SpawnSpec) -> Result<Option<u32>, String>;
+}
+
 // ── Service ─────────────────────────────────────────────────────────────
 
 pub(crate) struct ManagedAgentService<K: KernelSyscall> {
@@ -271,11 +330,17 @@ pub(crate) struct ManagedAgentService<K: KernelSyscall> {
     /// `provider.spawn(...)` after `register_proc_entry` and stores
     /// the returned handle in [`Self::spawn_handles`].
     spawn_provider: Option<Arc<dyn SpawnTask<K>>>,
-    /// Per-pid spawn handles populated by `start_session` when a
-    /// provider is wired. The on_terminate observer (registered in
-    /// `install_returning`) removes and aborts the handle on session
-    /// termination so the worker thread leaves cleanly.
+    /// Per-pid spawn handles populated by `start_session` (both the
+    /// `SpawnTask` runtime path and the `RawSpawn` tunnel path). The
+    /// on_terminate observer (registered in `install_returning`) removes
+    /// and aborts the handle on session termination so the worker /
+    /// supervisor leaves cleanly.
     spawn_handles: Arc<dashmap::DashMap<String, Box<dyn SpawnHandle>>>,
+    /// Optional raw-subprocess control-plane spawner for the `spawn_spec`
+    /// path. `Some` only when `install_returning` wired the Kernel-concrete
+    /// [`raw_spawn::KernelRawSpawn`] (unix + `subprocess-host`); `None`
+    /// elsewhere, in which case a `spawn_spec` request is rejected.
+    raw_spawn: Option<Arc<dyn RawSpawn>>,
 }
 
 impl<K: KernelSyscall> ManagedAgentService<K> {
@@ -292,6 +357,7 @@ impl<K: KernelSyscall> ManagedAgentService<K> {
             agent_registry,
             spawn_provider: None,
             spawn_handles: Arc::new(dashmap::DashMap::new()),
+            raw_spawn: None,
         }
     }
 
@@ -311,6 +377,7 @@ impl<K: KernelSyscall> ManagedAgentService<K> {
             agent_registry,
             spawn_provider: Some(spawn_provider),
             spawn_handles: Arc::new(dashmap::DashMap::new()),
+            raw_spawn: None,
         }
     }
 
@@ -328,13 +395,17 @@ impl<K: KernelSyscall> ManagedAgentService<K> {
     /// surface `Internal` so the caller sees a hard error.
     pub(crate) fn start_session(
         &self,
-        req: StartSessionRequest,
+        mut req: StartSessionRequest,
     ) -> Result<StartSessionResponse, ManagedAgentError> {
         if req.agent_id.is_empty() {
             return Err(ManagedAgentError::InvalidArgument(
                 "'agent_id' is required".into(),
             ));
         }
+        // Take the raw spawn spec out early — it selects the spawn
+        // strategy below (raw ACP subprocess vs. runtime body) and the
+        // rest of the descriptor build doesn't touch it.
+        let spawn_spec = req.spawn_spec.take();
         let owner_id = if req.owner_id.is_empty() {
             "system".to_string()
         } else {
@@ -401,24 +472,51 @@ impl<K: KernelSyscall> ManagedAgentService<K> {
         // failed stamp is logged but doesn't abort the session — the
         // AgentRegistry record is already planted and a future
         // re-stamp closes the gap.
+        // Two mutually-exclusive spawn strategies select on the request
+        // shape (a session is one or the other), both fired right after
+        // procfs is stamped so the first sys_read on
+        // `/proc/{pid}/chat-with-me` (or `/proc/{pid}/fd/*`) routes:
+        //
+        //   * `spawn_spec` present → the RAW ACP subprocess control-plane
+        //     path (frozen contract 2026-08-01). The injected `raw_spawn`
+        //     spawner launches the embedder-computed subprocess and pumps
+        //     its stdio through node-local memory DT_STREAMs at
+        //     `/proc/{pid}/fd/{0,1,2}`; the CLIENT (sudowork) drives it
+        //     over that raw-byte tunnel — nexus never frames or parses
+        //     ACP. Returns the real OS pid (contract ④).
+        //
+        //   * else + `spawn_provider` → the managed LLM runtime body
+        //     (sudocode today) nexus runs IN-PROCESS, driven by the
+        //     mailbox. The DI trait `SpawnTask<K>` keeps services rlib
+        //     free of a hard dep on the runtime crate; the concrete
+        //     adapter lives at the binary edge (`profiles/cluster`) and
+        //     monomorphises `spawn_task::<K>` internally — no
+        //     per-`sys_read` vtable cost.
+        //
+        // Slim builds with neither run procfs-only.
+        let mut os_pid: Option<u32> = None;
         if let Some(desc) = self.agent_registry.get(&pid) {
             if let Err(e) = register_proc_entry(self.kernel.as_ref(), &desc) {
                 tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
             }
-            // Spawn the per-pid runtime body right after procfs is
-            // ready so the worker sees a routable
-            // `/proc/{pid}/chat-with-me` on its first sys_read.
-            //
-            // The DI trait `SpawnTask<K>` (defined above) keeps
-            // services rlib free of a hard dep on any specific
-            // runtime crate (sudocode today, future runtimes
-            // tomorrow); the concrete adapter lives at the binary
-            // edge (`profiles/cluster`) and
-            // monomorphises `spawn_task::<K>` internally — no
-            // per-`sys_read` vtable cost. Slim builds without a
-            // provider (`spawn_provider: None`) skip the spawn and
-            // run procfs-only.
-            if let Some(provider) = self.spawn_provider.as_ref() {
+            if let Some(spec) = spawn_spec {
+                match self.raw_spawn.as_ref() {
+                    Some(rs) => {
+                        os_pid = rs.spawn(&pid, spec).map_err(ManagedAgentError::Internal)?;
+                    }
+                    None => {
+                        // No raw spawner wired (slim / non-unix). Roll back
+                        // the half-planted session so the caller sees a
+                        // clean failure rather than a zombie record.
+                        let _ = self.agent_registry.kill(&pid, 127);
+                        return Err(ManagedAgentError::InvalidArgument(
+                            "spawn_spec (raw subprocess host) requires a unix build with the \
+                             subprocess-host feature"
+                                .into(),
+                        ));
+                    }
+                }
+            } else if let Some(provider) = self.spawn_provider.as_ref() {
                 // Construct the SSOT state observer. AgentRegistry is
                 // the single writer of AgentState in the runtime path
                 // (see kernel::core::agents::registry::update_state +
@@ -454,6 +552,7 @@ impl<K: KernelSyscall> ManagedAgentService<K> {
         Ok(StartSessionResponse {
             session_id: pid,
             workspace_path,
+            os_pid,
         })
     }
 
@@ -591,13 +690,33 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
         // lifetime — same convention AcpService follows. The procfs
         // dirent stamp in `start_session` and the on_terminate
         // teardown both need the owned Arc.
-        let svc = Arc::new(match spawn_provider {
-            Some(provider) => Self::with_spawn(
-                Arc::clone(kernel),
-                Arc::clone(kernel.agent_registry()),
-                provider,
-            ),
-            None => Self::new(Arc::clone(kernel), Arc::clone(kernel.agent_registry())),
+        //
+        // Built as a struct literal (not `new`/`with_spawn`) so the raw
+        // control-plane spawner can share the SAME `agent_registry` +
+        // `spawn_handles` the service and its on_terminate observer use.
+        let agent_registry = Arc::clone(kernel.agent_registry());
+        let spawn_handles: Arc<dashmap::DashMap<String, Box<dyn SpawnHandle>>> =
+            Arc::new(dashmap::DashMap::new());
+
+        // Raw ACP subprocess control-plane spawner (memory-DT_STREAM byte
+        // tunnel). Kernel-concrete — built here because it drives
+        // Kernel-inherent stream ops off the service surface. Unix +
+        // `subprocess-host` only; `None` elsewhere ⇒ `spawn_spec` rejected.
+        #[cfg(all(unix, feature = "subprocess-host"))]
+        let raw_spawn: Option<Arc<dyn RawSpawn>> = Some(Arc::new(raw_spawn::KernelRawSpawn::new(
+            Arc::clone(kernel),
+            Arc::clone(&agent_registry),
+            Arc::clone(&spawn_handles),
+        )));
+        #[cfg(not(all(unix, feature = "subprocess-host")))]
+        let raw_spawn: Option<Arc<dyn RawSpawn>> = None;
+
+        let svc = Arc::new(ManagedAgentService {
+            kernel: Arc::clone(kernel),
+            agent_registry,
+            spawn_provider,
+            spawn_handles,
+            raw_spawn,
         });
 
         // Tear down the per-pid procfs subtree on out-of-band
@@ -742,6 +861,7 @@ mod tests {
             model: "claude-sonnet-4-6".to_string(),
             owner_id: "ethan".to_string(),
             zone_id: "root".to_string(),
+            spawn_spec: None,
         }
     }
 
@@ -1079,7 +1199,7 @@ mod tests {
             let resp = svc.start_session(req("scode-standard")).unwrap();
 
             assert!(dir_exists(&kernel, &resp.workspace_path));
-            let cwm = format!("{}chat-with-me", &resp.workspace_path);
+            let cwm = format!("{}chat-with-me", resp.workspace_path);
             assert_eq!(
                 link_target_at(&kernel, &cwm).as_deref(),
                 Some(format!("/proc/{}/chat-with-me", resp.session_id).as_str()),
@@ -1111,7 +1231,7 @@ mod tests {
                 ("myrepo", "/host/repos/myrepo"),
                 ("another", "/host/repos/another"),
             ] {
-                let alias_path = format!("{}{}", &resp.workspace_path, alias);
+                let alias_path = format!("{}{alias}", resp.workspace_path);
                 assert_eq!(
                     link_target_at(&kernel, &alias_path).as_deref(),
                     Some(expected),
@@ -1153,7 +1273,7 @@ mod tests {
             let resp = svc.start_session(req("scode-standard")).unwrap();
             svc.cancel(&resp.session_id, CancelMode::Turn).unwrap();
             assert!(dir_exists(&kernel, &resp.workspace_path));
-            let cwm = format!("{}chat-with-me", &resp.workspace_path);
+            let cwm = format!("{}chat-with-me", resp.workspace_path);
             assert!(
                 link_target_at(&kernel, &cwm).is_some(),
                 "chat-with-me DT_LINK should survive turn cancel",
@@ -1171,7 +1291,7 @@ mod tests {
             }];
             let resp = svc.start_session(r).unwrap();
             assert!(dir_exists(&kernel, &resp.workspace_path));
-            let alias_path = format!("{}core", &resp.workspace_path);
+            let alias_path = format!("{}core", resp.workspace_path);
             assert!(entry_exists(&kernel, &alias_path));
 
             kernel
@@ -1201,7 +1321,7 @@ mod tests {
                 .signal(&resp.session_id, AgentSignal::Sigterm, None)
                 .expect("SIGTERM");
             assert!(!dir_exists(&kernel, &resp.workspace_path));
-            let cwm = format!("{}chat-with-me", &resp.workspace_path);
+            let cwm = format!("{}chat-with-me", resp.workspace_path);
             assert!(!entry_exists(&kernel, &cwm));
         }
 
@@ -1235,7 +1355,7 @@ mod tests {
             let svc = install_managed_agent(&kernel);
             let resp = svc.start_session(req("scode-standard")).unwrap();
 
-            let shortcut = format!("{}chat-with-me", &resp.workspace_path);
+            let shortcut = format!("{}chat-with-me", resp.workspace_path);
             let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
             // Pre-stamp the envelope's `from` field with the caller's
             // agent_id so MailboxStampingHook's rewrite is a no-op for
@@ -1304,7 +1424,7 @@ mod tests {
             kernel.register_service_hook(&a2a_handle, Box::new(a2a::MailboxStampingHook::new()));
             let resp = svc.start_session(req("scode-standard")).unwrap();
 
-            let shortcut = format!("{}chat-with-me", &resp.workspace_path);
+            let shortcut = format!("{}chat-with-me", resp.workspace_path);
             let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
             // LLM-authored envelope claims to be from "scode-standard"
             // but the real caller is human-ethan; the hook should
@@ -1350,7 +1470,7 @@ mod tests {
         fn workspace_shortcut_link_targets_canonical_chat_with_me_stream() {
             let (kernel, svc) = svc_with_kernel();
             let resp = svc.start_session(req("scode-standard")).unwrap();
-            let shortcut = format!("{}chat-with-me", &resp.workspace_path);
+            let shortcut = format!("{}chat-with-me", resp.workspace_path);
             let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
 
             // Workspace shortcut is a DT_LINK whose target is the
@@ -1387,11 +1507,367 @@ mod tests {
             let resp = svc.start_session(r).unwrap();
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
             assert!(!dir_exists(&kernel, &resp.workspace_path));
-            let alias_path = format!("{}core", &resp.workspace_path);
+            let alias_path = format!("{}core", resp.workspace_path);
             assert!(!entry_exists(&kernel, &alias_path));
             assert!(kernel.agent_registry().get(&resp.session_id).is_none());
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
+        }
+    }
+
+    /// Raw ACP-subprocess control-plane path (#36 slice 1, frozen
+    /// contract 2026-08-01). Proves the raw-byte tunnel end-to-end and
+    /// the ③ exit / reap semantics. Unix + subprocess-host only, because
+    /// `HostedSubprocess` is unix-only.
+    #[cfg(all(unix, feature = "subprocess-host"))]
+    mod raw_spawn {
+        use super::*;
+        use kernel::kernel::{Kernel, OperationContext};
+        use std::time::Duration;
+
+        fn cat_on_path() -> bool {
+            std::process::Command::new("cat")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+
+        fn sys_ctx() -> OperationContext {
+            OperationContext::new("system", "root", true, None, true)
+        }
+
+        /// A spawn spec that inherits the runner's PATH so a bare command
+        /// name (`cat`, `sh`) resolves. The raw path runs `spec.env`
+        /// VERBATIM under `env_clear()` (the client owns ALL launch
+        /// logic — contract SSOT), so PATH must be supplied explicitly:
+        /// with an empty env the exec would fail ENOENT. This mirrors
+        /// what sudowork's `acpConnectors.ts` must include per interface
+        /// spec.
+        fn spec(cmd: &str, args: &[&str]) -> SpawnSpec {
+            SpawnSpec {
+                cmd: cmd.to_string(),
+                args: args.iter().map(|s| s.to_string()).collect(),
+                env: std::collections::HashMap::from([(
+                    "PATH".to_string(),
+                    std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+                )]),
+                cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+            }
+        }
+
+        /// LIVE tunnel smoke: `start_session(spawn_spec=cat)` spawns
+        /// `cat` and wires its stdio as fd DT_PIPEs; we drive the
+        /// RAW-BYTE tunnel over VFS — write `/proc/{pid}/fd/0`, read the
+        /// echo back from `/proc/{pid}/fd/1` — then `cancel(Session)` and
+        /// assert the supervisor reaped the session. Confirms nexus is a
+        /// pure process host + byte pipe (it never parses ACP).
+        ///
+        /// `#[ignore]`: needs `cat` on PATH + a live multi-thread
+        /// runtime. Run on a unix box:
+        ///   cargo test -p services \
+        ///     --features "service-managed-agent service-acp" \
+        ///     managed_agent::tests::raw_spawn -- --ignored --nocapture
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[ignore]
+        async fn cat_tunnel_roundtrip_through_start_session() {
+            if !cat_on_path() {
+                eprintln!("cat not on PATH — skipping raw_spawn tunnel smoke");
+                return;
+            }
+            let kernel = Arc::new(Kernel::new());
+            let svc = ManagedAgentService::install_returning(&kernel, None)
+                .expect("install ManagedAgentService");
+
+            let start_req = StartSessionRequest {
+                agent_id: "acp-cat".to_string(),
+                spawn_spec: Some(spec("cat", &[])),
+                ..Default::default()
+            };
+
+            // start_session block_on's the async spawn internally, so it
+            // must run on a blocking thread — the gRPC handler does the
+            // same via spawn_blocking.
+            let svc_for_start = Arc::clone(&svc);
+            let resp = tokio::task::spawn_blocking(move || svc_for_start.start_session(start_req))
+                .await
+                .expect("join start_session")
+                .expect("start_session ok");
+
+            assert!(
+                resp.os_pid.is_some(),
+                "raw spawn must surface the real OS pid (contract ④)",
+            );
+            let pid = resp.session_id.clone();
+            let fd0 = format!("/proc/{pid}/fd/0");
+            let fd1 = format!("/proc/{pid}/fd/1");
+
+            // Write into the subprocess stdin over the tunnel — exactly as
+            // the client does: append to the stdin stream.
+            kernel
+                .stream_write_nowait(&fd0, b"hello tunnel\n", &sys_ctx())
+                .expect("append to stdin stream");
+
+            // Read the echo back over the tunnel exactly as the client
+            // does: stream_read_at_blocking(offset) → (data, next_offset);
+            // Err (WouldBlock) = timeout, keep polling. Accumulate until the
+            // line shows up.
+            let read_kernel = Arc::clone(&kernel);
+            let fd1_for_read = fd1.clone();
+            let echoed = tokio::task::spawn_blocking(move || {
+                let mut acc = Vec::new();
+                let mut offset = 0usize;
+                for _ in 0..50 {
+                    // Err = timeout with no new bytes — keep polling.
+                    if let Ok((data, next)) =
+                        read_kernel.stream_read_at_blocking(&fd1_for_read, offset, 200)
+                    {
+                        acc.extend_from_slice(&data);
+                        offset = next;
+                        if acc
+                            .windows(b"hello tunnel".len())
+                            .any(|w| w == b"hello tunnel")
+                        {
+                            break;
+                        }
+                    }
+                }
+                acc
+            })
+            .await
+            .expect("join tunnel read");
+
+            let text = String::from_utf8_lossy(&echoed);
+            assert!(
+                text.contains("hello tunnel"),
+                "tunnel should echo the bytes written to fd/0; got {text:?}",
+            );
+
+            // Terminate the session — the supervisor kills cat, collapses
+            // the tunnel, and reaps the descriptor.
+            let svc_for_cancel = Arc::clone(&svc);
+            let pid_for_cancel = pid.clone();
+            tokio::task::spawn_blocking(move || {
+                svc_for_cancel.cancel(&pid_for_cancel, CancelMode::Session)
+            })
+            .await
+            .expect("join cancel")
+            .expect("cancel ok");
+
+            // Give the detached supervisor a beat to finish teardown.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(
+                kernel.agent_registry().get(&pid).is_none(),
+                "session must be reaped after cancel(Session)",
+            );
+        }
+
+        /// ③ exit-event path: a subprocess that exits ON ITS OWN (no
+        /// cancel) drives the supervisor's `wait()` arm, which reaps the
+        /// session. Proves nexus notices process death and tears the
+        /// session down without a client cancel.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[ignore]
+        async fn self_exit_reaps_session() {
+            if !cat_on_path() {
+                eprintln!("shell not available — skipping self_exit smoke");
+                return;
+            }
+            let kernel = Arc::new(Kernel::new());
+            let svc = ManagedAgentService::install_returning(&kernel, None)
+                .expect("install ManagedAgentService");
+
+            // `sh -c 'exit 7'` terminates immediately with code 7.
+            let start_req = StartSessionRequest {
+                agent_id: "acp-selfexit".to_string(),
+                spawn_spec: Some(spec("sh", &["-c", "exit 7"])),
+                ..Default::default()
+            };
+            let svc_for_start = Arc::clone(&svc);
+            let resp = tokio::task::spawn_blocking(move || svc_for_start.start_session(start_req))
+                .await
+                .expect("join start_session")
+                .expect("start_session ok");
+            let pid = resp.session_id.clone();
+
+            // Poll for the supervisor to observe exit + reap (bounded).
+            let mut reaped = false;
+            for _ in 0..50 {
+                if kernel.agent_registry().get(&pid).is_none() {
+                    reaped = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            assert!(
+                reaped,
+                "supervisor must reap the session when the subprocess self-exits",
+            );
+        }
+
+        /// Spawn-failure path: an un-resolvable command fails the launch;
+        /// `start_session` surfaces a hard error and the half-planted
+        /// session is rolled back (registry.kill on the error path), so
+        /// no zombie descriptor leaks.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[ignore]
+        async fn spawn_failure_surfaces_error_and_reaps() {
+            let kernel = Arc::new(Kernel::new());
+            let svc = ManagedAgentService::install_returning(&kernel, None)
+                .expect("install ManagedAgentService");
+
+            let before = kernel.agent_registry().count();
+            let start_req = StartSessionRequest {
+                agent_id: "acp-nope".to_string(),
+                spawn_spec: Some(spec("nexus-no-such-binary-xyz", &[])),
+                ..Default::default()
+            };
+            let svc_for_start = Arc::clone(&svc);
+            let err = tokio::task::spawn_blocking(move || svc_for_start.start_session(start_req))
+                .await
+                .expect("join start_session")
+                .expect_err("spawn of a missing binary must fail");
+            assert!(
+                matches!(err, ManagedAgentError::Internal(_)),
+                "expected Internal spawn error, got {err:?}",
+            );
+            // No net descriptor growth — the error path reaped the pid.
+            let after = kernel.agent_registry().count();
+            assert_eq!(before, after, "spawn-failure must not leak a descriptor");
+        }
+
+        /// Tunnel READ contract + regression guard for the fd-DT_PIPE cut
+        /// this replaced (whose non-blocking read treated "no data yet" as
+        /// EOF and permanently killed the tunnel on the first idle poll):
+        ///   * `Ok((data, next))` → RAW bytes (no framing, no newline
+        ///     injection) → feed the reader, advance `offset`.
+        ///   * `Err` (WouldBlock timeout) → no bytes yet → keep polling;
+        ///     the stream STAYS OPEN across idle polls.
+        ///   * after reap → the stdout stream is closed + drained → read
+        ///     errors = disconnect (the eof signal sudowork keys on).
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[ignore]
+        async fn tunnel_is_raw_byte_and_survives_idle_polls() {
+            if !cat_on_path() {
+                eprintln!("cat not on PATH — skipping tunnel raw-byte smoke");
+                return;
+            }
+            let kernel = Arc::new(Kernel::new());
+            let svc = ManagedAgentService::install_returning(&kernel, None)
+                .expect("install ManagedAgentService");
+            let start_req = StartSessionRequest {
+                agent_id: "acp-frame".to_string(),
+                spawn_spec: Some(spec("cat", &[])),
+                ..Default::default()
+            };
+            let svc_for_start = Arc::clone(&svc);
+            let resp = tokio::task::spawn_blocking(move || svc_for_start.start_session(start_req))
+                .await
+                .expect("join")
+                .expect("start_session ok");
+            let pid = resp.session_id.clone();
+            let fd0 = format!("/proc/{pid}/fd/0");
+            let fd1 = format!("/proc/{pid}/fd/1");
+
+            // Read raw bytes from fd/1 starting at `offset`, accumulating
+            // across timeouts until at least `want` bytes arrive.
+            async fn read_until(
+                k: Arc<Kernel>,
+                path: String,
+                start: usize,
+                want: usize,
+            ) -> (Vec<u8>, usize) {
+                tokio::task::spawn_blocking(move || {
+                    let mut acc = Vec::new();
+                    let mut offset = start;
+                    for _ in 0..40 {
+                        if let Ok((data, next)) = k.stream_read_at_blocking(&path, offset, 200) {
+                            acc.extend_from_slice(&data);
+                            offset = next;
+                            if acc.len() >= want {
+                                break;
+                            }
+                        }
+                    }
+                    (acc, offset)
+                })
+                .await
+                .unwrap()
+            }
+
+            // 1. A payload written WITHOUT a trailing newline comes back
+            //    byte-identical — no line-framing, no `\n` injection.
+            kernel
+                .stream_write_nowait(&fd0, b"chunk-a", &sys_ctx())
+                .expect("append chunk-a");
+            let (got_a, mut offset) =
+                read_until(Arc::clone(&kernel), fd1.clone(), 0, b"chunk-a".len()).await;
+            assert_eq!(
+                got_a,
+                b"chunk-a".to_vec(),
+                "raw passthrough — no framing / no newline injection",
+            );
+
+            // 2. Idle polls while cat is alive with no pending data. Each
+            //    returns Err(WouldBlock); the stream MUST stay open (the
+            //    fd-pipe cut permanently closed here — regression guard).
+            for _ in 0..3 {
+                let k = Arc::clone(&kernel);
+                let p = fd1.clone();
+                let o = offset;
+                let r = tokio::task::spawn_blocking(move || k.stream_read_at_blocking(&p, o, 100))
+                    .await
+                    .unwrap();
+                assert!(
+                    r.is_err(),
+                    "idle poll must return Err(WouldBlock), got data"
+                );
+            }
+
+            // 3. A fresh write STILL flows — proving the stream survived the
+            //    idle polls (the fd-pipe bug would have killed it here).
+            kernel
+                .stream_write_nowait(&fd0, b"chunk-b", &sys_ctx())
+                .expect("append chunk-b");
+            let (got_b, off_b) =
+                read_until(Arc::clone(&kernel), fd1.clone(), offset, b"chunk-b".len()).await;
+            offset = off_b;
+            assert_eq!(
+                got_b,
+                b"chunk-b".to_vec(),
+                "stream must survive idle polls and keep delivering",
+            );
+
+            // 4. Terminate → the supervisor closes the tunnel then reaps.
+            //    Once reaped, the drained+closed stdout stream reads as an
+            //    error — the disconnect signal.
+            let svc_c = Arc::clone(&svc);
+            let pid_c = pid.clone();
+            tokio::task::spawn_blocking(move || svc_c.cancel(&pid_c, CancelMode::Session))
+                .await
+                .unwrap()
+                .unwrap();
+            let mut reaped = false;
+            for _ in 0..60 {
+                if kernel.agent_registry().get(&pid).is_none() {
+                    reaped = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            assert!(reaped, "session must be reaped after cancel(Session)");
+            let k = Arc::clone(&kernel);
+            let p = fd1.clone();
+            let o = offset;
+            let post = tokio::task::spawn_blocking(move || k.stream_read_at_blocking(&p, o, 100))
+                .await
+                .unwrap();
+            assert!(
+                post.is_err(),
+                "reaped session's stdout stream must read as eof/closed (disconnect)",
+            );
         }
     }
 }

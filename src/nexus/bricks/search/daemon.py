@@ -32,7 +32,6 @@ Issue: #951
 
 import asyncio
 import contextlib
-import itertools
 import json
 import logging
 import math
@@ -115,11 +114,14 @@ TITLE_ARM_MAX_HYDRATION_FETCH = 32
 # order (most selective first) until either budget is exhausted.
 TITLE_ARM_MAX_QUERY_TOKENS = 12
 TITLE_ARM_MAX_CANDIDATES = 4096
-# Prefix-scoped selection scan budget (#4545 review round 8): when a
+# Prefix-scoped selection scan budget (#4545 review rounds 8-9): when a
 # path_prefix is given, oversized buckets get a second chance via an
-# in-prefix filter so zone-wide DF cannot suppress an in-scope title hit —
-# but the filter examines at most this many posting keys per query.
-TITLE_ARM_MAX_PREFIX_SCAN = 50_000
+# in-prefix filter so zone-wide DF cannot suppress an in-scope title hit.
+# A bucket is either scanned IN FULL (deterministic — no partial sampling
+# of unordered sets) or skipped when it would exceed the remaining
+# per-query budget; ~200k startswith checks bound the worst case at a few
+# tens of ms.
+TITLE_ARM_MAX_PREFIX_SCAN = 200_000
 # Evidence-quality gates (#4545 review round 6). Function-word query tokens
 # carry no title evidence: without this, "how to configure authentication"
 # scores 4.0 against an unrelated "How To Guide" title and rank-based RRF
@@ -2068,6 +2070,11 @@ class SearchDaemon:
             # is still unambiguous evidence (#4545 review round 7).
             norm_q = " ".join(tokenize_path(q).split())
             exact_keys = self._skeleton_exact_title_index.get((zone_id, norm_q), set())
+            # DF-equivalent safeguard (#4545 review round 9): an exact title
+            # shared by thousands of docs is non-discriminative, and sorting
+            # a huge bucket would be unbounded owner-loop work.
+            if len(exact_keys) > TITLE_ARM_MAX_TOKEN_DF:
+                return []
             exact_hits = []
             for key in sorted(exact_keys):
                 virtual_path = key[1]
@@ -2090,35 +2097,48 @@ class SearchDaemon:
         # unboundedly on the owner loop.
         token_buckets: dict[str, list[set[tuple[str, str]] | frozenset[tuple[str, str]]]] = {}
         token_min_df: dict[str, int] = {}
-        prefix_scan_budget = TITLE_ARM_MAX_PREFIX_SCAN
-        for token in query_tokens:
-            for index in (self._skeleton_title_index, self._skeleton_path_index):
+        oversized: list[tuple[int, str, int, set[tuple[str, str]]]] = []
+        for token in sorted(query_tokens):
+            for field_rank, index in enumerate(
+                (self._skeleton_title_index, self._skeleton_path_index)
+            ):
                 bucket: set[tuple[str, str]] | frozenset[tuple[str, str]] | None
                 bucket = index.get((zone_id, token))
                 if bucket is None:
                     continue
                 if len(bucket) > TITLE_ARM_MAX_TOKEN_DF:
                     # Prefix-scoped queries get a second chance (#4545 review
-                    # round 8): zone-wide DF must not suppress an in-prefix
-                    # hit. The filter cost is bounded by a per-query scan
-                    # budget; without a prefix the oversized bucket stays
-                    # skipped (non-discriminative).
-                    if not path_prefix or prefix_scan_budget <= 0:
-                        continue
-                    scan = min(len(bucket), prefix_scan_budget)
-                    prefix_scan_budget -= scan
-                    filtered = frozenset(
-                        key
-                        for key in itertools.islice(iter(bucket), scan)
-                        if key[1].startswith(path_prefix)
-                    )
-                    if not filtered or len(filtered) > TITLE_ARM_MAX_TOKEN_DF:
-                        continue
-                    bucket = filtered
+                    # rounds 8-10): zone-wide DF must not suppress an
+                    # in-prefix hit. Oversized buckets are collected and
+                    # processed below in a STABLE (size, token, field) order
+                    # so the shared scan budget cannot be consumed in
+                    # hash-seed-dependent set-iteration order.
+                    if path_prefix:
+                        oversized.append((len(bucket), token, field_rank, bucket))
+                    continue
                 token_buckets.setdefault(token, []).append(bucket)
                 prev = token_min_df.get(token)
                 if prev is None or len(bucket) < prev:
                     token_min_df[token] = len(bucket)
+
+        prefix_scan_budget = TITLE_ARM_MAX_PREFIX_SCAN
+        for size, token, _field_rank, big_bucket in sorted(
+            oversized, key=lambda b: (b[0], b[1], b[2])
+        ):
+            # Buckets are scanned in FULL or not at all — partial scans of
+            # unordered sets would make recall nondeterministic.
+            if size > prefix_scan_budget:
+                continue
+            prefix_scan_budget -= size
+            filtered = frozenset(
+                key for key in big_bucket if path_prefix and key[1].startswith(path_prefix)
+            )
+            if not filtered or len(filtered) > TITLE_ARM_MAX_TOKEN_DF:
+                continue
+            token_buckets.setdefault(token, []).append(filtered)
+            prev = token_min_df.get(token)
+            if prev is None or len(filtered) < prev:
+                token_min_df[token] = len(filtered)
 
         # Strict budgets (#4545 review round 6): at most
         # TITLE_ARM_MAX_QUERY_TOKENS DISTINCT tokens expand (most selective
@@ -2188,14 +2208,24 @@ class SearchDaemon:
         NeighborFetcher. Chunkless docs stay retrievable with empty text.
         Best-effort: hydration failures degrade to empty text, never raise.
         """
+
+        def _row(r: Any, name: str, default: Any = None) -> Any:
+            # Borrow sources arrive as dataclass rows (daemon legs) or
+            # shaped dicts (SANDBOX keyword lane) — accept both (#4545
+            # review round 10).
+            if isinstance(r, dict):
+                return r.get(name, default)
+            return getattr(r, name, default)
+
         best_by_path: dict[str, Any] = {}
         for r in chunk_kw:
-            cur = best_by_path.get(r.path)
-            if cur is None or r.score > cur.score:
-                best_by_path[r.path] = r
+            path = _row(r, "path")
+            cur = best_by_path.get(path)
+            if cur is None or (_row(r, "score", 0.0) or 0.0) > (_row(cur, "score", 0.0) or 0.0):
+                best_by_path[path] = r
         for r in page_kw:
             # Page leg rows are already best-of-page — prefer over chunk pick.
-            best_by_path[r.path] = r
+            best_by_path[_row(r, "path")] = r
         # Dense rows are the LOWEST-priority borrow source (#4545 review
         # round 5): when a title-matched path is absent from every keyword
         # leg but dense retrieved a chunk of it, aligning on the dense row's
@@ -2203,9 +2233,10 @@ class SearchDaemon:
         # identity instead of splitting the doc into duplicate results.
         best_dense: dict[str, Any] = {}
         for r in dense:
-            cur = best_dense.get(r.path)
-            if cur is None or r.score > cur.score:
-                best_dense[r.path] = r
+            path = _row(r, "path")
+            cur = best_dense.get(path)
+            if cur is None or (_row(r, "score", 0.0) or 0.0) > (_row(cur, "score", 0.0) or 0.0):
+                best_dense[path] = r
         for path, r in best_dense.items():
             best_by_path.setdefault(path, r)
 
@@ -2231,11 +2262,11 @@ class SearchDaemon:
                 hits.append(
                     BaseSearchResult(
                         path=path,
-                        chunk_text=leg.chunk_text,
+                        chunk_text=_row(leg, "chunk_text", "") or "",
                         score=h["score"],
-                        chunk_index=leg.chunk_index,
-                        line_start=leg.line_start,
-                        line_end=leg.line_end,
+                        chunk_index=int(_row(leg, "chunk_index", 0) or 0),
+                        line_start=_row(leg, "line_start"),
+                        line_end=_row(leg, "line_end"),
                         zone_id=zone_id,
                     )
                 )

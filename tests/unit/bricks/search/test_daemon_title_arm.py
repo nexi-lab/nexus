@@ -1013,3 +1013,194 @@ async def test_duplicate_tokens_score_distinct_overlap() -> None:
     by_path = {h["path"]: h["score"] for h in hits}
     assert by_path["/a/real.md"] == pytest.approx(4.0)
     assert by_path["/a/spam.md"] == pytest.approx(2.0)  # one distinct match
+
+
+@pytest.mark.asyncio
+async def test_exact_title_fallback_is_df_capped() -> None:
+    """A stopword-only exact title shared by more docs than the DF cap is
+    non-discriminative and returns nothing instead of sorting a huge
+    bucket on the owner loop (#4545 review round 9)."""
+    import nexus.bricks.search.daemon as daemon_mod
+
+    daemon = _bare_locate_daemon()
+    cap = 8
+    orig = daemon_mod.TITLE_ARM_MAX_TOKEN_DF
+    daemon_mod.TITLE_ARM_MAX_TOKEN_DF = cap
+    try:
+        for i in range(cap + 1):
+            daemon.upsert_skeleton_doc(
+                path_id=f"p{i}", virtual_path=f"/n/{i:03}.md", title="How To", zone_id="root"
+            )
+        assert await daemon.locate("how to", zone_id="root", limit=5) == []
+        # Under the cap the fallback works.
+        daemon2 = _bare_locate_daemon()
+        daemon2.upsert_skeleton_doc(
+            path_id="p1", virtual_path="/n/one.md", title="How To", zone_id="root"
+        )
+        hits = await daemon2.locate("how to", zone_id="root", limit=5)
+        assert [h["path"] for h in hits] == ["/n/one.md"]
+    finally:
+        daemon_mod.TITLE_ARM_MAX_TOKEN_DF = orig
+
+
+@pytest.mark.asyncio
+async def test_prefix_rescue_is_all_or_nothing(monkeypatch: Any) -> None:
+    """Oversized buckets are prefix-scanned in FULL or skipped entirely —
+    never partially sampled from unordered sets (#4545 review round 9)."""
+    import nexus.bricks.search.daemon as daemon_mod
+
+    daemon = _bare_locate_daemon()
+    monkeypatch.setattr(daemon_mod, "TITLE_ARM_MAX_TOKEN_DF", 4)
+    for i in range(5):
+        daemon.upsert_skeleton_doc(
+            path_id=f"p{i}", virtual_path=f"/elsewhere/{i}.md", title="Readme", zone_id="root"
+        )
+    daemon.upsert_skeleton_doc(
+        path_id="ps", virtual_path="/scope/overview.md", title="Readme", zone_id="root"
+    )
+    # Bucket (6) over DF cap (4): with sufficient budget, full-scan rescue.
+    hits = await daemon.locate("readme", zone_id="root", limit=5, path_prefix="/scope/")
+    assert [h["path"] for h in hits] == ["/scope/overview.md"]
+    # With a budget smaller than the bucket, the bucket is skipped whole.
+    monkeypatch.setattr(daemon_mod, "TITLE_ARM_MAX_PREFIX_SCAN", 3)
+    assert await daemon.locate("readme", zone_id="root", limit=5, path_prefix="/scope/") == []
+
+
+@pytest.mark.asyncio
+async def test_sandbox_no_vec_backend_still_serves_title_only() -> None:
+    """SANDBOX with no vector backend (NEXUS_DISABLE_VECTOR_SEARCH) still
+    surfaces a title-only doc; without title evidence the legacy None
+    contract is preserved (#4545 review round 9)."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+    from nexus.bricks.search.search_service import SearchService
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._skeleton_docs = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
+    daemon._skeleton_bootstrap_journal = None
+    daemon._vector_backend = None
+    daemon.config = DaemonConfig(title_arm=True)
+    daemon.upsert_skeleton_doc(
+        path_id="pa", virtual_path="/designs/atlas.md", title="Atlas Design Doc", zone_id="root"
+    )
+
+    async def _kw_search(self: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(lambda self, **kw: _kw_search(self, **kw), daemon)
+
+    svc: Any = SearchService.__new__(SearchService)
+    svc._sqlite_vec_backend = None
+    svc._search_daemon = daemon
+    svc._enforce_permissions = False
+    svc._permission_enforcer = None
+    svc._record_store = None
+    svc._sandbox_hybrid_no_vec_warned = True
+
+    fused = await svc._hybrid_search_sandbox(
+        query="atlas design doc", path="/", limit=5, context=None
+    )
+    assert fused is not None
+    assert [r.get("path") for r in fused] == ["/designs/atlas.md"]
+    assert fused[0].get("semantic_degraded") is True
+
+    # No title evidence -> legacy None contract preserved.
+    fused2 = await svc._hybrid_search_sandbox(
+        query="unrelated nonsense", path="/", limit=5, context=None
+    )
+    assert fused2 is None
+
+
+@pytest.mark.asyncio
+async def test_hydrate_borrows_from_dict_shaped_rows() -> None:
+    """SANDBOX keyword-lane rows are shaped dicts — hydration borrows from
+    them and aligns the title vote on the BM25 chunk identity
+    (#4545 review round 10)."""
+    daemon, calls = _hydration_daemon()
+    kw_dicts = [
+        {"path": "/t.md", "chunk_text": "body chunk", "score": 9.0, "chunk_index": 3},
+    ]
+    hits = await daemon._hydrate_title_hits(
+        [{"path": "/t.md", "score": 6.0, "title": "T"}],
+        chunk_kw=kw_dicts,
+        page_kw=[],
+        zone_id="root",
+    )
+    assert calls == []
+    assert hits[0].chunk_index == 3
+    assert hits[0].chunk_text == "body chunk"
+
+
+@pytest.mark.asyncio
+async def test_prefix_rescue_budget_stable_order(monkeypatch: Any) -> None:
+    """When multiple oversized buckets compete for the scan budget, the
+    SMALLEST bucket wins deterministically regardless of token hash order
+    (#4545 review round 10)."""
+    import nexus.bricks.search.daemon as daemon_mod
+
+    daemon = _bare_locate_daemon()
+    monkeypatch.setattr(daemon_mod, "TITLE_ARM_MAX_TOKEN_DF", 2)
+    # Token "zzz" bucket: 3 docs (one in-prefix). Token "aaa" bucket: 4 docs
+    # (one in-prefix). Budget fits only one bucket: the smaller ("zzz")
+    # must win even though "aaa" sorts first alphabetically.
+    for i in range(2):
+        daemon.upsert_skeleton_doc(
+            path_id=f"z{i}", virtual_path=f"/other/zzz-{i}.md", title=None, zone_id="root"
+        )
+    daemon.upsert_skeleton_doc(
+        path_id="zs", virtual_path="/scope/zzz-target.md", title=None, zone_id="root"
+    )
+    for i in range(3):
+        daemon.upsert_skeleton_doc(
+            path_id=f"a{i}", virtual_path=f"/other/aaa-{i}.md", title=None, zone_id="root"
+        )
+    daemon.upsert_skeleton_doc(
+        path_id="as", virtual_path="/scope/aaa-target.md", title=None, zone_id="root"
+    )
+    monkeypatch.setattr(daemon_mod, "TITLE_ARM_MAX_PREFIX_SCAN", 3)
+    hits = await daemon.locate("aaa zzz", zone_id="root", limit=5, path_prefix="/scope/")
+    assert [h["path"] for h in hits] == ["/scope/zzz-target.md"]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_title_arm_uses_overfetch_depth() -> None:
+    """With permission enforcement active, the SANDBOX title arm receives
+    the per-lane over-fetch limit, not the caller limit (#4545 review
+    round 10)."""
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+    from nexus.bricks.search.search_service import SearchService
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.config = DaemonConfig(title_arm=True)
+    seen: dict[str, Any] = {}
+
+    async def _gather(self: Any, query: str, **kwargs: Any) -> list[Any]:
+        seen.update(kwargs)
+        return []
+
+    daemon._gather_title_hits = MethodType(_gather, daemon)
+
+    async def _kw_search(self: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(lambda self, **kw: _kw_search(self, **kw), daemon)
+
+    class FakeVecBackend:
+        async def search(self, **kwargs: Any) -> list[Any]:
+            return []
+
+    class FakeEnforcer:
+        pass
+
+    svc: Any = SearchService.__new__(SearchService)
+    svc._sqlite_vec_backend = FakeVecBackend()
+    svc._search_daemon = daemon
+    svc._enforce_permissions = True
+    svc._permission_enforcer = FakeEnforcer()
+    svc._record_store = None
+    svc._sandbox_hybrid_no_vec_warned = True
+
+    await svc._hybrid_search_sandbox(query="anything", path="/", limit=2, context=None)
+    assert seen["limit"] == 10  # limit * 5 under enforcement

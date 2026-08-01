@@ -548,8 +548,9 @@ class DaemonConfig:
     # closed). Request params override these per call; set
     # NEXUS_SEARCH_RECENCY=off to restore the pre-#4543 behavior.
     recency_mode: str = field(
-        default_factory=lambda: os.environ.get("NEXUS_SEARCH_RECENCY", "auto").strip().lower()
-        or "auto"
+        default_factory=lambda: (
+            os.environ.get("NEXUS_SEARCH_RECENCY", "auto").strip().lower() or "auto"
+        )
     )
     recency_weight: float = field(
         default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_WEIGHT", 0.3)

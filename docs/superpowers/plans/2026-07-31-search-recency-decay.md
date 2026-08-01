@@ -394,22 +394,21 @@ from nexus.bricks.search.config import get_env_int as _get_env_int
 (c) In `DaemonConfig`, after the `macro_chunk_*` block (~line 305):
 
 ```python
-    # Recency decay (Issue #4543). Post-fusion multiplicative boost
-    # ``score *= 1 + w * H / (H + age_days)`` applied at the search()
-    # chokepoint from a batch mtime hydration query — never in SQL ORDER BY.
-    # Modes: "off" (default), "on" (always), "auto" (only for queries with a
-    # RECENCY_WORDS intent word). Unrecognized env values behave as "off"
-    # (fail closed). Request params override these per call.
-    recency_mode: str = field(
-        default_factory=lambda: os.environ.get("NEXUS_SEARCH_RECENCY", "off").strip().lower()
-        or "off"
-    )
-    recency_weight: float = field(
-        default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_WEIGHT", 0.3)
-    )
-    recency_half_life_days: float = field(
-        default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", 30.0)
-    )
+# Recency decay (Issue #4543). Post-fusion multiplicative boost
+# ``score *= 1 + w * H / (H + age_days)`` applied at the search()
+# chokepoint from a batch mtime hydration query — never in SQL ORDER BY.
+# Modes: "off" (default), "on" (always), "auto" (only for queries with a
+# RECENCY_WORDS intent word). Unrecognized env values behave as "off"
+# (fail closed). Request params override these per call.
+recency_mode: str = field(
+    default_factory=lambda: os.environ.get("NEXUS_SEARCH_RECENCY", "off").strip().lower() or "off"
+)
+recency_weight: float = field(
+    default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_WEIGHT", 0.3)
+)
+recency_half_life_days: float = field(
+    default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", 30.0)
+)
 ```
 
 (`os` is already imported at the top of daemon.py, line 37 — no new import needed.)
@@ -517,9 +516,7 @@ def _make_daemon(mtimes: dict[str, datetime] | None = None, **config_kwargs: Any
 
     fetch_calls: list[tuple[tuple[str, ...], str]] = []
 
-    async def _fetch_recency_mtimes(
-        self: Any, paths: Any, *, zone_id: str
-    ) -> dict[str, datetime]:
+    async def _fetch_recency_mtimes(self: Any, paths: Any, *, zone_id: str) -> dict[str, datetime]:
         fetch_calls.append((tuple(paths), zone_id))
         return dict(mtimes or {})
 
@@ -652,9 +649,9 @@ Expected: FAIL — `TypeError: search() got an unexpected keyword argument 'rece
 (a) Extend `search()` signature (~line 1784) — add after `expand: str = "none"`:
 
 ```python
-        recency: str | None = None,
-        recency_weight: float | None = None,
-        recency_half_life_days: float | None = None,
+recency: str | None = (None,)
+recency_weight: float | None = (None,)
+recency_half_life_days: float | None = (None,)
 ```
 
 (b) In `search()`'s body, insert the boost call after `results` is assigned
@@ -680,79 +677,78 @@ line ~1854) or reuse if already imported at module level.
 `_apply_macro_expansion`, ~line 1783):
 
 ```python
-    async def _apply_recency_boost_post_search(
-        self,
-        results: list[SearchResult],
-        *,
-        query: str,
-        recency: str | None,
-        recency_weight: float | None,
-        recency_half_life_days: float | None,
-        zone_id: str,
-    ) -> None:
-        """Post-fusion recency decay at the search() chokepoint (Issue #4543).
+async def _apply_recency_boost_post_search(
+    self,
+    results: list[SearchResult],
+    *,
+    query: str,
+    recency: str | None,
+    recency_weight: float | None,
+    recency_half_life_days: float | None,
+    zone_id: str,
+) -> None:
+    """Post-fusion recency decay at the search() chokepoint (Issue #4543).
 
-        Runs AFTER fusion/coercion on typed results (the #4398 macro_text
-        pattern) so every source is covered — all three search types, both DB
-        backends including sqlite_vec dense-only rows, and the legacy
-        fallback stack — and no backend SELECT or SQL ORDER BY changes.
-        Request params override DaemonConfig; ``None`` defers. Fail-soft:
-        errors log + count, never fail the search.
-        """
-        from nexus.bricks.search.recency import apply_recency_boost, has_recency_intent
+    Runs AFTER fusion/coercion on typed results (the #4398 macro_text
+    pattern) so every source is covered — all three search types, both DB
+    backends including sqlite_vec dense-only rows, and the legacy
+    fallback stack — and no backend SELECT or SQL ORDER BY changes.
+    Request params override DaemonConfig; ``None`` defers. Fail-soft:
+    errors log + count, never fail the search.
+    """
+    from nexus.bricks.search.recency import apply_recency_boost, has_recency_intent
 
-        mode = recency if recency is not None else self.config.recency_mode
-        weight = recency_weight if recency_weight is not None else self.config.recency_weight
-        half_life = (
-            recency_half_life_days
-            if recency_half_life_days is not None
-            else self.config.recency_half_life_days
-        )
-        if not results or weight <= 0 or half_life <= 0:
+    mode = recency if recency is not None else self.config.recency_mode
+    weight = recency_weight if recency_weight is not None else self.config.recency_weight
+    half_life = (
+        recency_half_life_days
+        if recency_half_life_days is not None
+        else self.config.recency_half_life_days
+    )
+    if not results or weight <= 0 or half_life <= 0:
+        return
+    if mode == "auto":
+        if not has_recency_intent(query):
             return
-        if mode == "auto":
-            if not has_recency_intent(query):
-                return
-        elif mode != "on":
-            return  # "off" and unrecognized modes fail closed
+    elif mode != "on":
+        return  # "off" and unrecognized modes fail closed
 
-        try:
-            mtimes = await self._fetch_recency_mtimes(
-                [r.path for r in results], zone_id=zone_id
-            )
-            apply_recency_boost(results, mtimes, weight=weight, half_life_days=half_life)
-        except Exception as exc:
-            self.stats.recency_attach_failures += 1
-            logger.warning("Recency boost failed (fail-soft, results unboosted): %s", exc)
+    try:
+        mtimes = await self._fetch_recency_mtimes([r.path for r in results], zone_id=zone_id)
+        apply_recency_boost(results, mtimes, weight=weight, half_life_days=half_life)
+    except Exception as exc:
+        self.stats.recency_attach_failures += 1
+        logger.warning("Recency boost failed (fail-soft, results unboosted): %s", exc)
 
-    async def _fetch_recency_mtimes(
-        self,
-        paths: Sequence[str],
-        *,
-        zone_id: str,
-    ) -> dict[str, datetime]:
-        """Batch-hydrate ``file_paths.updated_at`` for ``paths`` (Issue #4543).
 
-        One SELECT served index-only by ``idx_file_paths_zone_path_covering``
-        (zone_id, virtual_path → INCLUDE updated_at). Returns {} when no
-        session factory is wired (legacy embedded deployments) — the boost
-        then no-ops rather than failing.
-        """
-        if self._async_session is None or not paths:
-            return {}
-        from sqlalchemy import select
+async def _fetch_recency_mtimes(
+    self,
+    paths: Sequence[str],
+    *,
+    zone_id: str,
+) -> dict[str, datetime]:
+    """Batch-hydrate ``file_paths.updated_at`` for ``paths`` (Issue #4543).
 
-        from nexus.storage.models import FilePathModel
+    One SELECT served index-only by ``idx_file_paths_zone_path_covering``
+    (zone_id, virtual_path → INCLUDE updated_at). Returns {} when no
+    session factory is wired (legacy embedded deployments) — the boost
+    then no-ops rather than failing.
+    """
+    if self._async_session is None or not paths:
+        return {}
+    from sqlalchemy import select
 
-        unique_paths = list({p for p in paths if p})
-        stmt = select(FilePathModel.virtual_path, FilePathModel.updated_at).where(
-            FilePathModel.zone_id == zone_id,
-            FilePathModel.virtual_path.in_(unique_paths),
-            FilePathModel.deleted_at.is_(None),
-        )
-        async with self._async_session() as session:
-            rows = (await session.execute(stmt)).all()
-        return {row[0]: row[1] for row in rows if row[1] is not None}
+    from nexus.storage.models import FilePathModel
+
+    unique_paths = list({p for p in paths if p})
+    stmt = select(FilePathModel.virtual_path, FilePathModel.updated_at).where(
+        FilePathModel.zone_id == zone_id,
+        FilePathModel.virtual_path.in_(unique_paths),
+        FilePathModel.deleted_at.is_(None),
+    )
+    async with self._async_session() as session:
+        rows = (await session.execute(stmt)).all()
+    return {row[0]: row[1] for row in rows if row[1] is not None}
 ```
 
 Imports: `datetime` is already imported at daemon.py line 42
@@ -950,21 +946,25 @@ Expected: recency-param tests FAIL (bogus value passes through as no param exist
 (a) `search_query` params — after `expand: str = Query(...)` (~line 305):
 
 ```python
-    recency: str | None = Query(
-        None, description="Recency boost mode: off, on, or auto (default: server config, #4543)"
-    ),
-    recency_weight: float | None = Query(
+recency: str | None = (
+    Query(None, description="Recency boost mode: off, on, or auto (default: server config, #4543)"),
+)
+recency_weight: float | None = (
+    Query(
         None,
         description="Recency boost weight w in score*=1+w*H/(H+age_days) (default: server config)",
         ge=0.0,
         le=5.0,
     ),
-    recency_half_life_days: float | None = Query(
+)
+recency_half_life_days: float | None = (
+    Query(
         None,
         description="Recency half-life H in days (default: server config)",
         gt=0.0,
         le=3650.0,
     ),
+)
 ```
 
 (b) Validation — after the `expand` check (~line 352), same pattern:
@@ -981,9 +981,9 @@ Expected: recency-param tests FAIL (bogus value passes through as no param exist
 `_handle_single_zone_search(...)` call:
 
 ```python
-            recency=recency,
-            recency_weight=recency_weight,
-            recency_half_life_days=recency_half_life_days,
+recency = (recency,)
+recency_weight = (recency_weight,)
+recency_half_life_days = (recency_half_life_days,)
 ```
 
 (Federated branch forwarding is Task 5 — leave `_handle_federated_search`
@@ -993,17 +993,17 @@ untouched in this task so it stays green.)
 (~line 411):
 
 ```python
-    recency: str | None = None,
-    recency_weight: float | None = None,
-    recency_half_life_days: float | None = None,
+recency: str | None = (None,)
+recency_weight: float | None = (None,)
+recency_half_life_days: float | None = (None,)
 ```
 
 and add to the `search_daemon.search(...)` call (~line 525):
 
 ```python
-            recency=recency,
-            recency_weight=recency_weight,
-            recency_half_life_days=recency_half_life_days,
+recency = (recency,)
+recency_weight = (recency_weight,)
+recency_half_life_days = (recency_half_life_days,)
 ```
 
 (The graph branch `graph_enhanced_search` does not take the knobs — same
@@ -1070,8 +1070,16 @@ class TestRecencyKnobs:
             "q", ("user", "u"), "hybrid", 10, None, 0.5, "rrf", 60, recency="on"
         )
         with_weight = d._make_cache_key(
-            "q", ("user", "u"), "hybrid", 10, None, 0.5, "rrf", 60,
-            recency="on", recency_weight=1.0,
+            "q",
+            ("user", "u"),
+            "hybrid",
+            10,
+            None,
+            0.5,
+            "rrf",
+            60,
+            recency="on",
+            recency_weight=1.0,
         )
         assert base != with_mode
         assert with_mode != with_weight
@@ -1086,8 +1094,17 @@ class TestRecencyKnobs:
         d._get_daemon_for_zone = MagicMock(return_value=daemon)
 
         await d._search_zone(
-            "zone-a", "q", "hybrid", 10, None, 0.5, "rrf",
-            rrf_k=60, recency="auto", recency_weight=0.4, recency_half_life_days=14.0,
+            "zone-a",
+            "q",
+            "hybrid",
+            10,
+            None,
+            0.5,
+            "rrf",
+            rrf_k=60,
+            recency="auto",
+            recency_weight=0.4,
+            recency_half_life_days=14.0,
         )
         kwargs = daemon.search.call_args.kwargs
         assert kwargs["recency"] == "auto"
@@ -1170,9 +1187,9 @@ Pass them to `self._make_cache_key(...)` (~line 589) and to BOTH
 (d) `_search_zone()` (~line 290): add after `rrf_k: int = 60`:
 
 ```python
-        recency: str | None = None,
-        recency_weight: float | None = None,
-        recency_half_life_days: float | None = None,
+recency: str | None = (None,)
+recency_weight: float | None = (None,)
+recency_half_life_days: float | None = (None,)
 ```
 
 Forward them in the LOCAL `daemon.search(...)` call (~line 326). Do NOT add
@@ -1233,9 +1250,9 @@ In `src/nexus/contracts/protocols/search.py`, add to the `search` signature
 after `rrf_k: int = 60,`:
 
 ```python
-        recency: str | None = None,
-        recency_weight: float | None = None,
-        recency_half_life_days: float | None = None,
+recency: str | None = (None,)
+recency_weight: float | None = (None,)
+recency_half_life_days: float | None = (None,)
 ```
 
 - [ ] **Step 2: Extend the protocol test**
@@ -1246,9 +1263,9 @@ three `= None` params to `MockSearchBrick.search` (~line 84, after
 (~line 181) with:
 
 ```python
-            recency="auto",
-            recency_weight=0.3,
-            recency_half_life_days=30.0,
+recency = ("auto",)
+recency_weight = (0.3,)
+recency_half_life_days = (30.0,)
 ```
 
 - [ ] **Step 3: Run the targeted suites**

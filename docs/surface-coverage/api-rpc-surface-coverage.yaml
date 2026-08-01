@@ -252,7 +252,7 @@ modules:
 operations:
 - id: _search_indexed_dirs.index_directory
   module: search
-  summary: ''
+  summary: Register or unregister a directory as indexed for a zone-scoped search daemon.
   transports:
     http:
       name: POST /index-directory
@@ -261,15 +261,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/index-directory {"path":"/workspace/docs","action":"add"}
+  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: _search_indexed_dirs.indexed_dirs
   module: search
-  summary: ''
+  summary: List zone-scoped directories currently registered for search indexing.
   transports:
     http:
       name: GET /indexed-dirs
@@ -278,15 +278,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: GET /api/v2/search/indexed-dirs?zone_id=root
+  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_policy3_overlapping_directories_coexist; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: _search_indexed_dirs.indexing_mode
   module: search
-  summary: ''
+  summary: Switch a zone between all-files and scoped-directory search indexing modes.
   transports:
     http:
       name: POST /indexing-mode
@@ -295,15 +295,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/indexing-mode {"zone_id":"root","mode":"scoped"}
+  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_set_zone_indexing_mode_toggle; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: _search_indexed_dirs.purge_unscoped
   module: search
-  summary: ''
+  summary: Remove unscoped vector chunks after switching a zone to scoped indexing.
   transports:
     http:
       name: POST /purge-unscoped
@@ -312,15 +312,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/purge-unscoped {"zone_id":"root"}
+  correctness_test: tests/unit/bricks/search/test_daemon_sqlite_vec_wiring.py; tests/unit/bricks/search/test_indexing_sqlite_vec_sidewrite.py;
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: _search_locate.locate
   module: search
-  summary: ''
+  summary: Locate likely files or skeleton candidates by query while preserving permission filtering.
   transports:
     http:
       name: POST /locate
@@ -329,12 +329,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/locate {"q":"authentication"}
+  correctness_test: tests/integration/bricks/search/test_skeleton_rebac.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: access.share_link
   module: share_link
   summary: ''
@@ -7843,74 +7843,6 @@ operations:
   perf_link: tests/benchmarks/test_indexing_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: 4135
-- id: search.index_directory
-  module: search
-  summary: Register or unregister a directory as indexed for a zone-scoped search daemon.
-  transports:
-    http:
-      name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/search.py:1767
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/index-directory {"path":"/workspace/docs","action":"add"}
-  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
-- id: search.indexed_dirs
-  module: search
-  summary: List zone-scoped directories currently registered for search indexing.
-  transports:
-    http:
-      name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/search.py:1985
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: GET /api/v2/search/indexed-dirs?zone_id=root
-  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_policy3_overlapping_directories_coexist; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
-- id: search.indexing_mode
-  module: search
-  summary: Switch a zone between all-files and scoped-directory search indexing modes.
-  transports:
-    http:
-      name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/search.py:2022
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/indexing-mode {"zone_id":"root","mode":"scoped"}
-  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_set_zone_indexing_mode_toggle; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
-- id: search.locate
-  module: search
-  summary: Locate likely files or skeleton candidates by query while preserving permission filtering.
-  transports:
-    http:
-      name: POST /api/v2/search/locate
-      source: src/nexus/server/api/v2/routers/search.py:2203
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/locate {"q":"authentication"}
-  correctness_test: tests/integration/bricks/search/test_skeleton_rebac.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  gap_issue: null
-  owning_issue: 4135
 - id: search.parked
   module: search
   summary: Lists parked (poison) search mutation events per consumer with kind/attempts/detail for admin triage (#4337).
@@ -7963,24 +7895,6 @@ operations:
   perf_link: rare admin operation; bounded by parked entries (cap 200/consumer), idempotent index upserts
   gap_issue: null
   owning_issue: 4337
-- id: search.purge_unscoped
-  module: search
-  summary: Remove unscoped vector chunks after switching a zone to scoped indexing.
-  transports:
-    http:
-      name: POST /api/v2/search/purge-unscoped
-      source: src/nexus/server/api/v2/routers/search.py:2149
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/purge-unscoped {"zone_id":"root"}
-  correctness_test: tests/unit/bricks/search/test_daemon_sqlite_vec_wiring.py; tests/unit/bricks/search/test_indexing_sqlite_vec_sidewrite.py;
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
 - id: search.query
   module: search
   summary: HTTP query endpoint for keyword, semantic, hybrid, graph, and federated retrieval.
@@ -13270,13 +13184,13 @@ parity_warnings:
   - sdk
 unmapped_surfaces: []
 stale_rows:
-- operation_id: search.index_directory
+- operation_id: _search_indexed_dirs.index_directory
   reason: present in committed YAML but not detected by extractor
-- operation_id: search.indexed_dirs
+- operation_id: _search_indexed_dirs.indexed_dirs
   reason: present in committed YAML but not detected by extractor
-- operation_id: search.indexing_mode
+- operation_id: _search_indexed_dirs.indexing_mode
   reason: present in committed YAML but not detected by extractor
-- operation_id: search.locate
+- operation_id: _search_locate.locate
   reason: present in committed YAML but not detected by extractor
-- operation_id: search.purge_unscoped
+- operation_id: _search_indexed_dirs.purge_unscoped
   reason: present in committed YAML but not detected by extractor

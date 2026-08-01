@@ -367,7 +367,9 @@ fn sort_paths_by_mtime_desc(handle: &KernelHandle, paths: &mut [String]) {
 /// their encounter (line) order.
 fn sort_matches_by_mtime_desc(handle: &KernelHandle, matches: &mut [GrepMatch]) {
     let mtimes = fetch_mtimes(handle, matches.iter().map(|m| m.path.as_str()));
-    matches.sort_by_key(|m| std::cmp::Reverse(mtimes.get(m.path.as_str()).copied().unwrap_or(i64::MIN)));
+    matches.sort_by_key(|m| {
+        std::cmp::Reverse(mtimes.get(m.path.as_str()).copied().unwrap_or(i64::MIN))
+    });
 }
 
 /// Batch-fetch `modified_at_ms` for a set of paths.  Deduplicates via

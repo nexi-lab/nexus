@@ -13183,14 +13183,4 @@ parity_warnings:
   - mcp
   - sdk
 unmapped_surfaces: []
-stale_rows:
-- operation_id: _search_indexed_dirs.index_directory
-  reason: present in committed YAML but not detected by extractor
-- operation_id: _search_indexed_dirs.indexed_dirs
-  reason: present in committed YAML but not detected by extractor
-- operation_id: _search_indexed_dirs.indexing_mode
-  reason: present in committed YAML but not detected by extractor
-- operation_id: _search_locate.locate
-  reason: present in committed YAML but not detected by extractor
-- operation_id: _search_indexed_dirs.purge_unscoped
-  reason: present in committed YAML but not detected by extractor
+stale_rows: []

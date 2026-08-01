@@ -3985,8 +3985,12 @@ class SearchService:
             # SANDBOX hybrid was requested but vector search is not wired
             # (likely missing sqlite-vec / fastembed, or the user opted
             # out via NEXUS_DISABLE_VECTOR_SEARCH). Warn once so users
-            # understand they're on the keyword-only fallback, then let
-            # the caller's semantic-only chain handle the degradation.
+            # understand they're on the keyword-only fallback. The TITLE
+            # arm is keyword-side (#4545 review round 9), so instead of
+            # bailing straight to the caller's degradation chain we fall
+            # through with an inert vec lane — title-only docs stay
+            # reachable; when the title arm finds nothing the fused
+            # result is keyword-only and degraded-stamped as before.
             if not self._sandbox_hybrid_no_vec_warned:
                 logger.warning(
                     "[SearchService] SANDBOX hybrid requested but no local "
@@ -3999,7 +4003,6 @@ class SearchService:
                 self._sandbox_hybrid_no_vec_warned = True
             else:
                 logger.debug("[SearchService] SANDBOX hybrid: no vec backend; keyword-only")
-            return None
 
         zone_id = getattr(context, "zone_id", None) if context else None
         if not zone_id:
@@ -4016,6 +4019,8 @@ class SearchService:
             per_lane_limit = max(per_lane_limit, limit * 5)
 
         async def _vec_lane() -> builtins.list[Any]:
+            if backend is None:
+                return []
             try:
                 return list(
                     await backend.search(
@@ -4092,8 +4097,54 @@ class SearchService:
             return []
 
         vec_results, kw_results = await asyncio.gather(_vec_lane(), _kw_lane())
-        if not vec_results and not kw_results:
+
+        # Skeleton title arm (#4545 review rounds 7-8): SANDBOX composes its
+        # own hybrid, so fold the daemon's title arm in here too — same
+        # keyword-side sub-fusion shape as the FULL-profile daemon path.
+        # Gathered BEFORE the emptiness exit: a chunkless title-only doc is
+        # exactly the case where both body lanes come back empty.
+        title_hits: builtins.list[Any] = []
+        title_daemon = getattr(self, "_search_daemon", None)
+        if title_daemon is not None and getattr(
+            getattr(title_daemon, "config", None), "title_arm", False
+        ):
+            try:
+                # per_lane_limit (#4545 review round 10): ACL filtering
+                # happens after fusion, so the title arm must over-fetch
+                # like the body lanes or denied hits exhaust its pool.
+                # kw_results as borrow source aligns title votes with the
+                # BM25 chunk identity instead of duplicating the doc.
+                title_hits = await title_daemon._gather_title_hits(
+                    query,
+                    zone_id=zone_id,
+                    limit=per_lane_limit,
+                    path_filter=db_path,
+                    chunk_kw=kw_results,
+                    page_kw=[],
+                    timing={},
+                    dense=vec_results,
+                )
+            except Exception as exc:
+                logger.debug("[SearchService] SANDBOX title arm failed: %s", exc)
+                title_hits = []
+
+        if backend is None and not title_hits:
+            # No vec backend and no title evidence: preserve the original
+            # contract — the caller's semantic-only chain owns degradation.
             return None
+
+        if not vec_results and not kw_results and not title_hits:
+            return None
+
+        if title_hits:
+            from nexus.bricks.search.fusion import rrf_multi_fusion
+
+            kw_results = rrf_multi_fusion(
+                [("chunk", kw_results), ("title", title_hits)],
+                k=60,
+                limit=per_lane_limit,
+                id_key=None,
+            )
 
         # Codex review R1 (high): track whether the vector lane
         # contributed anything at all so we can flag keyword-only
@@ -4534,6 +4585,12 @@ class SearchService:
                 ctx = getattr(r, "context", None)
                 if ctx is not None:
                     entry["context"] = ctx
+                # Issue #4545: title-arm attribution rides every transport
+                # with the same omit-when-None + round-4 contract as the
+                # HTTP, batch, and federated surfaces.
+                title_score = getattr(r, "title_score", None)
+                if title_score is not None:
+                    entry["title_score"] = round(title_score, 4)
                 hits.append(entry)
 
             # Filter by read permission — only return files the caller can access

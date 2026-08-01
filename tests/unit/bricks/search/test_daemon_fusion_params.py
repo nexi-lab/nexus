@@ -61,6 +61,12 @@ def _make_daemon() -> Any:
     daemon.last_search_timing = {}
     daemon._fts_backend = FakeFtsBackend()
     daemon._vector_backend = FakeVectorBackend()
+    # Title arm (#4545) is on by default; bare __new__ skips __init__, so
+    # give locate() an empty skeleton index (no hits → fusion unchanged).
+    daemon._skeleton_docs = {}
+    daemon._skeleton_title_index = {}
+    daemon._skeleton_path_index = {}
+    daemon._skeleton_exact_title_index = {}
     daemon._embed_query = MethodType(_embed_query, daemon)
     # Disable #4542 final-list page pooling: these tests assert chunk-grain
     # fusion ordering, which pooling would re-group.

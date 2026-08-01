@@ -1101,7 +1101,7 @@ def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     (Issue #4544): every federated emission path must route through this so
     ``null`` never leaks onto the wire and the fusion strategies stay
     shape-consistent."""
-    for key in ("context", "tier_boost"):
+    for key in ("context", "tier_boost", "title_score"):
         if d.get(key) is None:
             d.pop(key, None)
     # Issue #4544: round surviving tier_boost to 4 places to match the
@@ -1131,6 +1131,26 @@ def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
             d["tier_boost"] = round(value, 4)
         else:
             d.pop("tier_boost", None)
+
+    # Issue #4545 review round 2: ``title_score`` carries the same contract —
+    # a participation marker, omitted when None (clients check key presence)
+    # and rounded to 4 places when set, matching _serialize_search_result on
+    # the single-zone router. Same remote trust boundary as tier_boost: a
+    # malformed peer value drops the field, never aborts the fusion.
+    ts = d.get("title_score")
+    if ts is not None:
+        if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+            try:
+                ts_value = float(ts)
+            except OverflowError:
+                d.pop("title_score", None)
+            else:
+                if math.isfinite(ts_value) and ts_value >= 0.0:
+                    d["title_score"] = round(ts_value, 4)
+                else:
+                    d.pop("title_score", None)
+        else:
+            d.pop("title_score", None)
     return d
 
 

@@ -51,6 +51,9 @@ class BaseSearchResult:
     # by it — so the pre-boost score is score/tier_boost when score >= 0
     # and score*tier_boost when score < 0.
     tier_boost: float | None = None
+    # Issue #4545: skeleton title-arm attribution — locate() score when the
+    # title arm voted for this result in hybrid fusion, else None.
+    title_score: float | None = None
 
     @property
     def zone_qualified_path(self) -> str | None:

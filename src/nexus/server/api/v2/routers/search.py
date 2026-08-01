@@ -144,55 +144,13 @@ def _auth_target_zone(auth_result: dict[str, Any]) -> str | None:
 
 # ReBAC filtering helpers are in nexus.lib.rebac_filter (#3731).
 
-# =============================================================================
-# Response shaping helpers (#3701 review — Issue 5A)
-# =============================================================================
-
-
-def _serialize_search_result(result: Any) -> dict[str, Any]:
-    """Serialize a single search result into the canonical response dict.
-
-    Collapses the 25-line dict comprehension previously duplicated across
-    the graph and non-graph branches of ``search_query``. Preserves the
-    pre-refactor field ordering, rounding, and None semantics.
-
-    Issue #3773: emits ``context`` when the result carries a non-None value
-    (omits the key otherwise to keep responses compact).
-    """
-    out: dict[str, Any] = {
-        "path": result.path,
-        "chunk_text": result.chunk_text,
-        "score": round(result.score, 4),
-        "chunk_index": result.chunk_index,
-        "line_start": result.line_start,
-        "line_end": result.line_end,
-        "keyword_score": (round(result.keyword_score, 4) if result.keyword_score else None),
-        "vector_score": (round(result.vector_score, 4) if result.vector_score else None),
-    }
-    splade = getattr(result, "splade_score", None)
-    out["splade_score"] = round(splade, 4) if splade is not None else None
-    reranker = getattr(result, "reranker_score", None)
-    out["reranker_score"] = round(reranker, 4) if reranker is not None else None
-    context = getattr(result, "context", None)
-    if context is not None:
-        out["context"] = context
-    # Issue #4544: attribute the per-prefix tier weight applied to the score
-    # (omitted when unboosted to keep responses compact).
-    tier_boost = getattr(result, "tier_boost", None)
-    if tier_boost is not None:
-        out["tier_boost"] = round(tier_boost, 4)
-    # #3778 marker, stamped by the daemon when the dense leg was unavailable
-    # for a semantic-weighted fusion request (#4541 review round 6). Emitted
-    # only when set so default responses stay byte-identical.
-    if getattr(result, "semantic_degraded", None):
-        out["semantic_degraded"] = True
-    macro_text = getattr(result, "macro_text", None)
-    if macro_text is not None:
-        out["macro_text"] = macro_text
-        out["macro_line_start"] = getattr(result, "macro_line_start", None)
-        out["macro_line_end"] = getattr(result, "macro_line_end", None)
-    return out
-
+# Response shaping lives in ``_search_serialize`` (#3701 Issue 5A; extracted
+# at the 2000-line router cap during the #4545 rebase). Re-exported here so
+# existing ``from ...routers.search import _serialize_search_result`` imports
+# keep working.
+from nexus.server.api.v2.routers._search_serialize import (  # noqa: E402
+    _serialize_search_result,
+)
 
 # =============================================================================
 # Endpoints
@@ -888,6 +846,9 @@ async def search_query_batch(
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
                 "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
             }
+            title = getattr(r, "title_score", None)
+            if title is not None:
+                entry["title_score"] = round(title, 4)
             ctx = getattr(r, "context", None)
             if ctx is not None:
                 entry["context"] = ctx

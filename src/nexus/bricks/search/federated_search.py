@@ -699,11 +699,11 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        zone_filter: frozenset[str] | None = None,  # NEW (#3785)
+        rrf_k: int = 60,
         recency: str | None = None,
         recency_weight: float | None = None,
         recency_half_life_days: float | None = None,
-        zone_filter: frozenset[str] | None = None,  # NEW (#3785)
-        rrf_k: int = 60,
     ) -> FederatedSearchResponse:
         """Public federated search entry point with activity-event instrumentation (#3791).
 
@@ -760,11 +760,11 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        zone_filter: frozenset[str] | None = None,  # NEW (#3785)
+        rrf_k: int = 60,
         recency: str | None = None,
         recency_weight: float | None = None,
         recency_half_life_days: float | None = None,
-        zone_filter: frozenset[str] | None = None,  # NEW (#3785)
-        rrf_k: int = 60,
     ) -> FederatedSearchResponse:
         """Execute a federated search across all accessible zones.
 

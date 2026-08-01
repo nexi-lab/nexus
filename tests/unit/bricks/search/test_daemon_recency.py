@@ -62,7 +62,14 @@ def _make_daemon(mtimes: dict[str, datetime] | None = None, **config_kwargs: Any
     async def _embed_query(self: Any, query: str) -> list[float]:
         return [0.1, 0.2]
 
-    async def _attach_path_contexts(self: Any, results: Any, *, zone_id: str) -> None:
+    async def _attach_path_contexts(
+        self: Any,
+        results: Any,
+        *,
+        zone_id: str,
+        pinned_snapshots: Any = None,
+        apply_weights: bool = True,
+    ) -> None:
         return None
 
     def _track_latency(self: Any, latency_ms: float) -> None:

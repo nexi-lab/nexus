@@ -3221,9 +3221,7 @@ class SearchDaemon:
         # keyword sub-fusion would re-introduce a fixed window upstream of
         # the cap's backfill (#4542). The title arm (#4545) joins as a third
         # rrf_multi_fusion arm either way.
-        kw_fused_limit = (
-            len(chunk_kw) + len(page_kw) + len(title_hits) if pooled else limit * 2
-        )
+        kw_fused_limit = len(chunk_kw) + len(page_kw) + len(title_hits) if pooled else limit * 2
         kw_fused = rrf_multi_fusion(
             [("chunk", chunk_kw), ("page", page_kw), ("title", title_hits)],
             k=rrf_k,

@@ -338,11 +338,23 @@ async def search_query(
     # must never be treated as a token allow-list (#4541 review round 5).
     raw_zone_set = tuple(auth_result.get("zone_set") or ())
     zone_set = raw_zone_set or (zone_id,)
+    # #4542 rounds 8-10: readable allow-list (None = admin/root/unbounded).
+    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
+
+    token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
     # #3785: auto-promote to federated when token grants multiple zones,
     # even if caller didn't pass federated=true. Single-zone tokens
     # (zone_set == (zone_id,)) hit the unchanged single-zone path.
     if len(zone_set) > 1:
         federated = True
+
+    # Issue #4542 round-9: read attenuation on BOTH routes — federated via
+    # zone_filter, single-zone checked here; no-readable-zone fails closed.
+    if token_zone_filter is not None:
+        if not token_zone_filter:
+            raise HTTPException(403, "Token has no zone with read permission for search")
+        if not federated and zone_id not in token_zone_filter:
+            raise HTTPException(403, f"Token has no read permission for zone {zone_id}")
 
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
@@ -383,10 +395,6 @@ async def search_query(
     # exactly {root} (root grants cross-zone access and its id never
     # intersects concrete zone names). A multi-zone scope that happens to
     # include root keeps its pre-existing filtered behaviour.
-    fed_zone_filter = (
-        frozenset(raw_zone_set) if raw_zone_set and set(raw_zone_set) != {ROOT_ZONE_ID} else None
-    )
-
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---
         # NOTE: expand= is single-zone only; federated path does not support it.
@@ -402,7 +410,7 @@ async def search_query(
                 auth_result=auth_result,
                 search_daemon=search_daemon,
                 request=request,
-                zone_filter=fed_zone_filter,
+                zone_filter=token_zone_filter,
             )
 
         return await _handle_single_zone_search(
@@ -716,14 +724,26 @@ async def _handle_federated_search(
             from nexus.server.dependencies import get_operation_context
 
             op_context = get_operation_context(auth_result)
+            # Issue #4542 round-6: this all-peers-failed fallback replaces the
+            # dispatcher's capped results wholesale, so it must honor the
+            # per-document cap itself — fetch wider, cap, trim.
+            from nexus.bricks.search.federated_search import daemon_pooling_cap
+
+            _fb_cap = daemon_pooling_cap(search_daemon)
             fallback_start = time.perf_counter()
             bm25s_results = await search_service.semantic_search(
                 query=q,
                 path=path_filter or "/",
-                limit=limit,
+                limit=limit if _fb_cap is None else limit * 2,
                 search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
                 context=op_context,
             )
+            if _fb_cap is not None:
+                from nexus.bricks.search.result_builders import cap_chunks_per_page
+
+                bm25s_results = cap_chunks_per_page(list(bm25s_results), chunks_per_page=_fb_cap)[
+                    :limit
+                ]
             # Record the degraded-path BM25S fallback work so the bound
             # total_ms / fallback_ms reflect it (Codex R3).
             fed_fallback_ms = (time.perf_counter() - fallback_start) * 1000

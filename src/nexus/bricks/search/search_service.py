@@ -4183,6 +4183,24 @@ class SearchService:
         # fallback actually fires.
         LAST_SEMANTIC_DEGRADED.set(False)
 
+        # Issue #4542 round-9 review: an explicitly scoped credential with no
+        # READABLE zone fails closed BEFORE any retrieval work. An empty
+        # readable scope is an authorization outcome, not a peer outage — it
+        # must not reach the local hybrid/vector paths, and it must not be
+        # laundered through is_all_peers_failed into the un-scoped BM25S/SQL
+        # fallback.
+        if context is not None and not (
+            getattr(context, "is_admin", False) or getattr(context, "is_system", False)
+        ):
+            from nexus.bricks.search.federated_search import readable_zone_filter
+
+            _readable_scope = readable_zone_filter(
+                getattr(context, "zone_set", None) or (),
+                getattr(context, "zone_perms", None) or (),
+            )
+            if _readable_scope is not None and not _readable_scope:
+                return []
+
         # Step 1 — real RRF hybrid when requested. We always invoke the
         # helper (even with no vec backend) so the one-shot "no-vec"
         # warning fires for users who asked for hybrid explicitly via
@@ -4225,11 +4243,36 @@ class SearchService:
                         (getattr(context, "subject_type", None) or "user"),
                         (getattr(context, "user_id", None) or ""),
                     )
+                    # Issue #4542 round-7 review: propagate the context's
+                    # zone allow-list into the inner dispatch. Without it, a
+                    # scoped token whose allowed zone is unavailable could
+                    # receive results from any zone its SUBJECT can reach
+                    # (credential-scope breach). ``OperationContext.zone_set``
+                    # is the contract-level allow-list (#3785); admin/system
+                    # contexts keep the legacy unbounded federation.
+                    _ctx_zone_set = getattr(context, "zone_set", None) or ()
+                    _unbounded = bool(
+                        getattr(context, "is_admin", False)
+                        or getattr(context, "is_system", False)
+                        or not _ctx_zone_set
+                    )
+                    # Round-8 review: search is a READ — write-only zone
+                    # grants must not be searchable, so derive the filter
+                    # from zone_perms (r/x only) when present.
+                    from nexus.bricks.search.federated_search import (
+                        readable_zone_filter,
+                    )
+
                     return await dispatcher.search(
                         query=query,
                         subject=subject,
                         search_type="semantic",
                         limit=limit,
+                        zone_filter=None
+                        if _unbounded
+                        else readable_zone_filter(
+                            _ctx_zone_set, getattr(context, "zone_perms", None)
+                        ),
                     )
                 except Exception as exc:
                     # Real dispatch failed — treat as all-peers-failed so the

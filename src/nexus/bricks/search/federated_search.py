@@ -20,6 +20,7 @@ Design decisions (from review):
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import time
@@ -29,7 +30,7 @@ from typing import Any
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.fusion import rrf_multi_fusion
-from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
+from nexus.bricks.search.result_builders import cap_chunks_per_page
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,68 @@ class FederationUnreachableError(Exception):
     Issue #3778: SANDBOX profile treats this as a signal to fall back to
     local BM25S and stamp results with ``semantic_degraded=True``.
     """
+
+
+def readable_zone_filter(
+    zone_set: Any,
+    zone_perms: Any,
+) -> frozenset[str] | None:
+    """Derive a federated zone allow-list from a credential's grants.
+
+    Search is a READ — write-only zone grants must not be searchable
+    (Issue #4542 round-8 review). When per-zone perms are known, only
+    zones granting ``r`` or ``x`` pass; an explicit grant list with no
+    readable zones fails CLOSED (empty frozenset → zero searchable
+    zones). Credentials with a zone list but no perms info keep the
+    whole list (legacy tokens predate per-zone perms). Returns ``None``
+    (unbounded) only when the credential carries no explicit zone grant
+    at all.
+    """
+    if zone_perms:
+        return frozenset(
+            str(zp[0])
+            for zp in zone_perms
+            if len(zp) == 2 and ("r" in str(zp[1]) or "x" in str(zp[1]))
+        )
+    if zone_set:
+        return frozenset(str(z) for z in zone_set)
+    return None
+
+
+def token_zone_filter_from_auth(
+    auth_result: dict[str, Any],
+    *,
+    root_zone_id: str,
+) -> frozenset[str] | None:
+    """Derive the search-readable token allow-list from an auth result.
+
+    Issue #4542 rounds 8-10: search is a READ. Admin, root-scoped, and
+    unconstrained credentials return ``None`` (unbounded — #4541
+    exemption); otherwise only zones granting ``r``/``x`` pass, and an
+    explicit grant list with no readable zone yields the empty set
+    (callers fail closed on it).
+    """
+    raw_zone_set = tuple(auth_result.get("zone_set") or ())
+    if (
+        not raw_zone_set
+        or set(raw_zone_set) == {root_zone_id}
+        or auth_result.get("is_admin", False)
+    ):
+        return None
+    return readable_zone_filter(raw_zone_set, auth_result.get("zone_perms"))
+
+
+def daemon_pooling_cap(daemon: Any) -> int | None:
+    """Resolve the per-document pooling cap from a daemon's DaemonConfig.
+
+    Strict ``is True`` / ``isinstance`` guards keep Mock daemons (tests)
+    from enabling pooling via auto-created attributes (Issue #4542).
+    """
+    cfg = getattr(daemon, "config", None)
+    if getattr(cfg, "page_aggregation", None) is not True:
+        return None
+    cap = getattr(cfg, "chunks_per_page", None)
+    return cap if isinstance(cap, int) and cap > 0 else None
 
 
 def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
@@ -497,15 +560,29 @@ class FederatedSearchDispatcher:
         filter, so without it a broadly-scoped request could seed a cache
         entry that a later narrowly-scoped token would read back — leaking
         results from zones outside that token's scope (#4541 review).
+
+        Canonical-JSON serialization (round-5 review): delimiter
+        concatenation allowed cross-field collisions — subject_id
+        ``alice|foo`` + query ``bar`` hashed identically to ``alice`` +
+        ``foo|bar`` — and cache lookup precedes ReBAC, so a collision would
+        leak another subject's results. JSON escaping makes field
+        boundaries unambiguous, and the empty allow-list (``[]``, zero
+        zones) stays distinct from the wildcard (``null``).
         """
-        # None means "no allow-list" (wildcard); an EMPTY set means "access
-        # to zero zones" and must not collide with the wildcard entry, or an
-        # unrestricted request could seed a cache entry that an empty-scoped
-        # token reads back (#4541 review).
-        zone_scope = "*" if zone_filter is None else "zf:" + ",".join(sorted(zone_filter))
-        raw = (
-            f"{subject[0]}:{subject[1]}|{query}|{search_type}|{limit}|{path_filter}"
-            f"|{alpha}|{fusion_method}|{rrf_k}|{zone_scope}"
+        raw = json.dumps(
+            [
+                subject[0],
+                subject[1],
+                query,
+                search_type,
+                limit,
+                path_filter,
+                alpha,
+                fusion_method,
+                rrf_k,
+                sorted(zone_filter) if zone_filter is not None else None,
+            ],
+            separators=(",", ":"),
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
@@ -697,16 +774,46 @@ class FederatedSearchDispatcher:
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
 
+        # Issue #4542 (round-3 review): the per-document cap applies on EVERY
+        # federated control path, so behavior does not depend on how many
+        # zones happen to be accessible. Resolved once here.
+        pooling_cap = self._pooling_chunks_per_page()
+
+        def _zone_fetch_limit(zone_id: str, base: int) -> int:
+            """Cap-aware per-zone fetch window (rounds 3+6 review).
+
+            A zone window saturated by one long doc leaves nothing to
+            backfill after the per-doc cap. Local HYBRID zones already cap
+            internally at the daemon (full-union backfill) — widening them
+            again would compound multipliers into pathological retrieval
+            windows (round-6 review), so they keep the base window. The
+            wider window applies only where dispatcher-side capping is the
+            only protection: semantic/keyword effective types and remote
+            zones. A fixed window remains theoretically saturable —
+            adaptive pagination is deliberately out of scope; flag-off
+            keeps the historical window everywhere.
+            """
+            if pooling_cap is None:
+                return base
+            effective_type, _ = self._get_effective_search_type(zone_id, search_type)
+            is_remote = self._registry is not None and self._registry.is_remote(zone_id)
+            if effective_type == "hybrid" and not is_remote:
+                return base
+            # Bounded widening (round-10 review): the emission cap has no
+            # configured maximum, so amplification saturates at ×5.
+            return base * (min(pooling_cap, 4) + 1)
+
         # Single zone: skip fusion overhead
         if len(searchable_zones) == 1:
             zone_id = searchable_zones[0]
+            single_zone_fetch = _zone_fetch_limit(zone_id, limit)
             try:
                 results = await asyncio.wait_for(
                     self._search_zone(
                         zone_id,
                         query,
                         search_type,
-                        limit,
+                        single_zone_fetch,
                         path_filter,
                         alpha,
                         fusion_method,
@@ -728,7 +835,10 @@ class FederatedSearchDispatcher:
                         subject=subject,
                         rebac=self._rebac,
                     )
-                result_dicts = [_result_to_dict(r) for r in results[:limit]]
+                result_dicts = [_result_to_dict(r) for r in results]
+                if pooling_cap is not None:
+                    result_dicts = cap_chunks_per_page(result_dicts, chunks_per_page=pooling_cap)
+                result_dicts = result_dicts[:limit]
                 resp = FederatedSearchResponse(
                     results=result_dicts,
                     zones_searched=[zone_id],
@@ -750,8 +860,8 @@ class FederatedSearchDispatcher:
                     latency_ms=(time.perf_counter() - start) * 1000,
                 )
 
-        # 2. Multi-zone fan-out with concurrency bound (decision 16A)
-        per_zone_limit = limit * self._config.over_fetch_factor
+        # 2. Multi-zone fan-out with concurrency bound (decision 16A).
+        # Per-zone fetch windows are cap-aware via _zone_fetch_limit.
         semaphore = asyncio.Semaphore(self._config.max_concurrent_zones)
 
         async def _bounded_search(
@@ -764,7 +874,7 @@ class FederatedSearchDispatcher:
                             zone_id,
                             query,
                             search_type,
-                            per_zone_limit,
+                            _zone_fetch_limit(zone_id, limit * self._config.over_fetch_factor),
                             path_filter,
                             alpha,
                             fusion_method,
@@ -826,8 +936,14 @@ class FederatedSearchDispatcher:
         if not zone_result_lists:
             fused_results: list[dict[str, Any]] = []
         elif len(zone_result_lists) == 1:
+            # Issue #4542 (round-4 review): the one-surviving-zone branch must
+            # honor the cap too — zone failures or empty zones must not
+            # silently change the flag semantics.
             _zone_id, results = zone_result_lists[0]
-            fused_results = [_result_to_dict(r) for r in results[:limit]]
+            fused_results = [_result_to_dict(r) for r in results]
+            if pooling_cap is not None:
+                fused_results = cap_chunks_per_page(fused_results, chunks_per_page=pooling_cap)
+            fused_results = fused_results[:limit]
         elif self._config.fusion_strategy == FederatedFusionStrategy.RRF or (
             fusion_method == "weighted" and search_type == "hybrid"
         ):
@@ -841,12 +957,35 @@ class FederatedSearchDispatcher:
             # raw scores stay comparable and keep the default merge;
             # rrf/rrf_weighted scores share one reciprocal-rank formula and
             # stay comparable too.
+            # Issue #4542 (round-4 review): with the cap active, cap each zone
+            # list first (zone-scoped budgets) and fuse at CHUNK grain — the
+            # page-grain zone_qualified_path key would collapse every doc back
+            # to one chunk, silently overriding chunks_per_page > 1 and
+            # underfilling the page. Flag-off keeps the historical page-grain
+            # fusion identity exactly.
+            rrf_lists: list[tuple[str, list[Any]]] = zone_result_lists
+            rrf_id_key = "zone_qualified_path"
+            if pooling_cap is not None:
+                capped_lists: list[tuple[str, list[Any]]] = []
+                for zid, zresults in zone_result_lists:
+                    zdicts = [_result_to_dict(r) for r in zresults]
+                    zdicts = cap_chunks_per_page(zdicts, chunks_per_page=pooling_cap)
+                    for d in zdicts:
+                        page_key = d.get("zone_qualified_path") or (
+                            f"{d.get('zone_id', '')}:{d.get('path', '')}"
+                        )
+                        d["_zq_chunk"] = f"{page_key}:{d.get('chunk_index', 0)}"
+                    capped_lists.append((zid, zdicts))
+                rrf_lists = capped_lists
+                rrf_id_key = "_zq_chunk"
             fused_results = rrf_multi_fusion(
-                result_lists=zone_result_lists,
+                result_lists=rrf_lists,
                 k=60,
                 limit=limit,
-                id_key="zone_qualified_path",
+                id_key=rrf_id_key,
             )
+            for d in fused_results:
+                d.pop("_zq_chunk", None)
             # Issue #3773 (Round-6 review): rrf_multi_fusion emits dicts built
             # from __dataclass_fields__ verbatim, so ``context: None`` leaks
             # into the wire. Normalize here so every federated code path
@@ -857,7 +996,7 @@ class FederatedSearchDispatcher:
             fused_results = _merge_by_raw_score(
                 zone_result_lists,
                 limit,
-                chunks_per_page=self._pooling_chunks_per_page(),
+                chunks_per_page=pooling_cap,
             )
 
         resp = FederatedSearchResponse(
@@ -881,11 +1020,7 @@ class FederatedSearchDispatcher:
         The strict ``is True`` / ``isinstance`` checks keep Mock daemons
         (tests) from enabling pooling via auto-created attributes.
         """
-        cfg = getattr(self._daemon, "config", None)
-        if getattr(cfg, "page_aggregation", None) is not True:
-            return None
-        cap = getattr(cfg, "chunks_per_page", None)
-        return cap if isinstance(cap, int) and cap > 0 else None
+        return daemon_pooling_cap(self._daemon)
 
     def invalidate_zone_cache(self, subject: tuple[str, str] | None = None) -> None:
         """Invalidate zone discovery cache."""
@@ -923,22 +1058,32 @@ def _merge_by_raw_score(
     all_results: list[dict[str, Any]] = []
     for _zone_id, results in zone_result_lists:
         zone_dicts = [_result_to_dict(r) for r in results]
-        # Issue #4542: pool per zone (not on the concatenated list) so the
-        # same path in two zones stays two distinct documents. Local-zone
-        # results already collapse to one chunk per doc via the page-grain
-        # zone_qualified_path dedup below; this cap matters for remote-zone
-        # dicts whose dedup key falls back to chunk grain.
+        # Issue #4542: cap per zone (not on the concatenated list) so the
+        # same path in two zones stays two distinct documents. The cap is
+        # order-preserving over the zone's daemon-sorted list.
         if chunks_per_page is not None:
-            zone_dicts = _aggregate_chunks_to_pages(zone_dicts, chunks_per_page=chunks_per_page)
+            zone_dicts = cap_chunks_per_page(zone_dicts, chunks_per_page=chunks_per_page)
         all_results.extend(zone_dicts)
 
-    # Dedup by zone_qualified_path, keeping highest score
+    # Dedup, keeping highest score. With pooling OFF this is the historical
+    # page-grain zone_qualified_path key (one chunk per doc per zone). With
+    # pooling ON the page-grain key would collapse every doc straight back
+    # to one chunk — ``zone_qualified_path`` carries no chunk index on
+    # either the local dataclass or the remote-dict shape — so dedup
+    # switches to chunk grain and lets ``chunks_per_page`` govern
+    # per-document emission (Issue #4542 review hardening).
     seen: dict[str, dict[str, Any]] = {}
     for r in all_results:
-        key = r.get(
-            "zone_qualified_path",
-            f"{r.get('zone_id', '')}:{r.get('path', '')}:{r.get('chunk_index', 0)}",
-        )
+        if chunks_per_page is None:
+            key = r.get(
+                "zone_qualified_path",
+                f"{r.get('zone_id', '')}:{r.get('path', '')}:{r.get('chunk_index', 0)}",
+            )
+        else:
+            page_key = r.get("zone_qualified_path") or (
+                f"{r.get('zone_id', '')}:{r.get('path', '')}"
+            )
+            key = f"{page_key}:{r.get('chunk_index', 0)}"
         existing = seen.get(key)
         if existing is None or r.get("score", 0.0) > existing.get("score", 0.0):
             seen[key] = r

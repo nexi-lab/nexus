@@ -195,3 +195,148 @@ class TestSearchServiceSandboxFallback:
         b = _make_sandbox_service()
         a._sandbox_fallback_warned = True
         assert b._sandbox_fallback_warned is False
+
+
+class TestSandboxInnerFederationZoneScope:
+    """Issue #4542 round-7 review: the SANDBOX semantic fallback re-enters the
+    federation dispatcher — it must carry the context's zone allow-list, or a
+    scoped token whose allowed zone is down could receive results from any
+    zone its subject can reach."""
+
+    def _svc_with_dispatcher(self, captured: dict) -> SearchService:
+        svc = _make_sandbox_service()
+
+        async def disp_search(**kwargs):
+            captured.update(kwargs)
+            return FederatedSearchResponse(
+                results=[
+                    {
+                        "path": "/doc.md",
+                        "zone_id": "eng",
+                        "score": 0.9,
+                        "chunk_text": "x",
+                        "chunk_index": 0,
+                    }
+                ],
+                zones_searched=["eng"],
+                zones_failed=[],
+            )
+
+        dispatcher = MagicMock()
+        dispatcher.search = disp_search
+        svc._federation_dispatcher = dispatcher
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_scoped_context_forwards_zone_filter(self) -> None:
+        from nexus.contracts.types import OperationContext
+
+        captured: dict = {}
+        svc = self._svc_with_dispatcher(captured)
+        ctx = OperationContext(user_id="alice", groups=[], zone_id="eng")
+
+        await svc._semantic_search_sandbox(
+            query="q", path="/", limit=5, context=ctx, search_mode="semantic"
+        )
+
+        assert captured["zone_filter"] == frozenset({"eng"})
+
+    @pytest.mark.asyncio
+    async def test_admin_context_keeps_unbounded_federation(self) -> None:
+        from nexus.contracts.types import OperationContext
+
+        captured: dict = {}
+        svc = self._svc_with_dispatcher(captured)
+        ctx = OperationContext(user_id="root", groups=[], zone_id="eng", is_admin=True)
+
+        await svc._semantic_search_sandbox(
+            query="q", path="/", limit=5, context=ctx, search_mode="semantic"
+        )
+
+        assert captured["zone_filter"] is None
+
+
+class TestReadableZoneFilter:
+    """Issue #4542 round-8 review: write-only zone grants are not searchable."""
+
+    def test_write_only_grant_fails_closed(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        assert readable_zone_filter(("eng",), (("eng", "w"),)) == frozenset()
+
+    def test_mixed_grants_keep_readable_only(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        out = readable_zone_filter(
+            ("eng", "legal", "ops"),
+            (("eng", "r"), ("legal", "w"), ("ops", "rwx")),
+        )
+        assert out == frozenset({"eng", "ops"})
+
+    def test_zone_set_without_perms_kept_whole(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        assert readable_zone_filter(["eng", "legal"], None) == frozenset({"eng", "legal"})
+
+    def test_no_grants_means_unbounded(self) -> None:
+        from nexus.bricks.search.federated_search import readable_zone_filter
+
+        assert readable_zone_filter((), ()) is None
+
+    @pytest.mark.asyncio
+    async def test_write_only_context_fails_closed_in_sandbox_dispatch(self) -> None:
+        """Round-9 strengthened round-8: a write-only context now fails
+        closed at SANDBOX entry — the dispatcher is never reached."""
+        from nexus.contracts.types import OperationContext
+
+        captured: dict = {}
+        svc = TestSandboxInnerFederationZoneScope()._svc_with_dispatcher(captured)
+        ctx = OperationContext(
+            user_id="alice", groups=[], zone_id="eng", zone_perms=(("eng", "w"),)
+        )
+
+        out = await svc._semantic_search_sandbox(
+            query="q", path="/", limit=5, context=ctx, search_mode="semantic"
+        )
+
+        assert out == []
+        assert "zone_filter" not in captured  # dispatch never happened
+
+
+class TestWriteOnlyContextFailsClosedEverywhere:
+    """Issue #4542 round-9 review: an empty readable scope is an
+    authorization outcome — SANDBOX local/vector/BM25S paths must not run."""
+
+    @pytest.mark.asyncio
+    async def test_write_only_context_gets_no_results_and_no_fallback(self) -> None:
+        from nexus.contracts.types import OperationContext
+
+        svc = _make_sandbox_service()
+        # Any retrieval work reaching these would be a leak.
+        svc._hybrid_search_sandbox = None  # type: ignore[assignment]
+        svc._try_sqlite_vec_sandbox = None  # type: ignore[assignment]
+
+        dispatched = {"called": False}
+
+        async def disp_search(**kwargs):
+            dispatched["called"] = True
+            return FederatedSearchResponse(
+                results=[{"path": "/secret.md", "score": 0.9}],
+                zones_searched=["eng"],
+                zones_failed=[],
+            )
+
+        dispatcher = MagicMock()
+        dispatcher.search = disp_search
+        svc._federation_dispatcher = dispatcher
+
+        ctx = OperationContext(
+            user_id="alice", groups=[], zone_id="eng", zone_perms=(("eng", "w"),)
+        )
+
+        out = await svc._semantic_search_sandbox(
+            query="q", path="/", limit=5, context=ctx, search_mode="semantic"
+        )
+
+        assert out == []
+        assert dispatched["called"] is False

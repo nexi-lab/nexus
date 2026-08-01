@@ -79,6 +79,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Issue #4542 round-10 review: upper bound on the cap-aware retrieval-window
+# widening factor. chunks_per_page itself stays unbounded (emission cap), but
+# retrieval amplification saturates here.
+_MAX_CAP_WIDEN = 4
+
 # Durable mutation consumer names (#4337): single source for the refresh
 # loop, startup reconciliation, parked-event re-drive, and admin skip-to.
 MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
@@ -2259,15 +2264,31 @@ class SearchDaemon:
                     query, internal_limit, path_filter, zone_id=zone_id
                 )
             else:  # hybrid
+                # Issue #4542 (round-5 review): the legacy hybrid stack must
+                # honor the per-doc cap too — backend degradation must not
+                # change flag semantics. Fetch wide enough for BOTH the
+                # tier-boost over-fetch (#4544 internal_limit) and the cap's
+                # backfill, cap order-preservingly, and leave the final trim
+                # to the shared post-attach boundary so tier weights can
+                # still re-rank the over-fetched window.
+                _legacy_cfg = getattr(self, "config", None)
+                pooled_legacy = bool(getattr(_legacy_cfg, "page_aggregation", False))
+                legacy_limit = max(internal_limit, limit * 2) if pooled_legacy else internal_limit
                 results = await self._hybrid_search(
                     query,
-                    internal_limit,
+                    legacy_limit,
                     path_filter,
                     alpha,
                     fusion_method,
                     rrf_k,
                     zone_id=zone_id,
                 )
+                if pooled_legacy:
+                    from nexus.bricks.search.result_builders import cap_chunks_per_page
+
+                    results = cap_chunks_per_page(
+                        results, chunks_per_page=getattr(_legacy_cfg, "chunks_per_page", 2)
+                    )
             fallback_ms = (time.perf_counter() - fallback_start) * 1000
 
             # Track latency
@@ -2297,7 +2318,10 @@ class SearchDaemon:
                 pinned_snapshots=tier_pin,
                 apply_weights=tier_weights_ok,
             )
-            if internal_limit != limit:
+            # Trim covers both the #4544 tier-boost over-fetch and the #4542
+            # pooled legacy fetch (which can exceed limit even when
+            # internal_limit == limit).
+            if internal_limit != limit or len(results) > limit:
                 results = results[:limit]
             return self._with_search_timing(results)
 
@@ -2334,7 +2358,7 @@ class SearchDaemon:
             rrf_fusion,
         )
         from nexus.bricks.search.pg_fts_backend import PgFtsBackend
-        from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
+        from nexus.bricks.search.result_builders import cap_chunks_per_page
 
         path = path_filter or "/"
         timing = _empty_backend_timing()
@@ -2371,13 +2395,33 @@ class SearchDaemon:
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         # Hybrid: 3-way RRF on PG, 2-way on SQLite.
+        # Issue #4542 (round-5 review): with the per-doc cap active, widen the
+        # retrieval legs so candidates just beyond a one-doc-saturated window
+        # can backfill after capping. Any finite window remains theoretically
+        # saturable — page-diversified retrieval is a backend-level change
+        # deliberately out of scope — so this is a documented bound, matching
+        # the federated dispatcher's cap-aware window.
+        pooled = self.config.page_aggregation
+        # The widening factor is BOUNDED (round-10 review): chunks_per_page is
+        # an emission cap with no configured maximum, and multiplying raw
+        # retrieval windows by an operator-supplied value lets a large cap
+        # amplify every leg into massive scans. Backfill benefit plateaus
+        # quickly, so widening saturates at ×(_MAX_CAP_WIDEN + 1).
+        widen = min(self.config.chunks_per_page, _MAX_CAP_WIDEN) + 1
+        leg_limit = limit * 2 * widen if pooled else limit * 2
+
         qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
+            # Issue #4542 (round-4 review): the per-doc cap must survive the
+            # degraded path too — over-fetch so capping can backfill, then
+            # cap and trim exactly like the fused path.
             results = await timed_leg(
                 "keyword_ms",
-                self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
+                self._fts_backend.keyword_search(
+                    query, path, leg_limit if pooled else limit, zone_id, timing=timing
+                ),
             )
             # Non-default fusion requests still flow through the configured
             # fusion (keyword leg only, empty dense leg) so the advertised
@@ -2393,9 +2437,15 @@ class SearchDaemon:
                     config=FusionConfig(
                         method=FusionMethod(fusion_method), alpha=alpha, rrf_k=rrf_k
                     ),
-                    limit=limit,
+                    # Issue #4542: with the cap active, fuse the full keyword
+                    # list so the per-doc cap can backfill before the trim.
+                    limit=len(results) if pooled else limit,
                     id_key=None,
                 )
+                if pooled:
+                    fused = cap_chunks_per_page(fused, chunks_per_page=self.config.chunks_per_page)[
+                        :limit
+                    ]
                 timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
                 record_total()
                 coerced = SearchResultList(
@@ -2411,6 +2461,10 @@ class SearchDaemon:
                 for coerced_result in coerced:
                     coerced_result.semantic_degraded = True
                 return coerced
+            if pooled:
+                results = cap_chunks_per_page(results, chunks_per_page=self.config.chunks_per_page)[
+                    :limit
+                ]
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
@@ -2420,7 +2474,7 @@ class SearchDaemon:
             assert isinstance(pg_fts_backend, PgFtsBackend)
 
             async def timed_pg_keyword_legs() -> tuple[list[Any], list[Any]]:
-                keyword_limit = limit * 2
+                keyword_limit = leg_limit
                 keyword_start = time.perf_counter()
                 keyword_candidates = await pg_fts_backend.keyword_search(
                     query,
@@ -2444,7 +2498,7 @@ class SearchDaemon:
                 timed_pg_keyword_legs(),
                 timed_leg(
                     "vector_ms",
-                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                    self._vector_backend.semantic_search(qvec, path, leg_limit, zone_id),
                 ),
             )
         else:
@@ -2452,12 +2506,12 @@ class SearchDaemon:
                 timed_leg(
                     "keyword_ms",
                     self._fts_backend.keyword_search(
-                        query, path, limit * 2, zone_id, timing=timing
+                        query, path, leg_limit, zone_id, timing=timing
                     ),
                 ),
                 timed_leg(
                     "vector_ms",
-                    self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                    self._vector_backend.semantic_search(qvec, path, leg_limit, zone_id),
                 ),
             )
             page_kw = []
@@ -2465,19 +2519,38 @@ class SearchDaemon:
         # Fuse keyword legs first (chunk + page) with plain RRF, then fuse
         # that with dense using the request's method / alpha / k.
         fusion_start = time.perf_counter()
-        kw_fused = rrf_fusion(chunk_kw, page_kw, k=rrf_k, limit=limit * 2, id_key=None)
+        # With the cap active, keep the FULL keyword union — truncating the
+        # keyword sub-fusion would re-introduce a fixed window upstream of
+        # the cap's backfill.
+        kw_fused_limit = len(chunk_kw) + len(page_kw) if pooled else limit * 2
+        kw_fused = rrf_fusion(chunk_kw, page_kw, k=rrf_k, limit=kw_fused_limit, id_key=None)
         fusion_config = FusionConfig(
             method=FusionMethod(fusion_method),
             alpha=alpha,
             rrf_k=rrf_k,
         )
-        fused = fuse_results(kw_fused, dense, config=fusion_config, limit=limit, id_key=None)
-        # Issue #4542: pool the fused list per document so one long doc cannot
-        # occupy every hybrid slot. The route over-fetches (fetch_limit =
-        # limit × 3 for the ReBAC filter), so pooling at daemon-output size
-        # still leaves headroom before the caller's final trim.
+        # Issue #4542: cap the fused list per document so one long doc cannot
+        # occupy every hybrid slot. Fuse the COMPLETE candidate union first so
+        # the cap can BACKFILL from candidates below the requested-limit
+        # cutoff — any fixed pre-cap window (limit×N) can still be saturated
+        # by a single long doc and return an underfilled page (round-2
+        # review). The union is already bounded by the legs' own limit×2
+        # fetches, so this adds no meaningful fusion cost. The cap is
+        # order-preserving (unlike the page-grouped
+        # ``_aggregate_chunks_to_pages`` used by the raw BM25 leg), so the
+        # fused-score ordering survives for downstream over-fetch trims.
         if self.config.page_aggregation:
-            fused = _aggregate_chunks_to_pages(fused, chunks_per_page=self.config.chunks_per_page)
+            fused = fuse_results(
+                kw_fused,
+                dense,
+                config=fusion_config,
+                limit=len(kw_fused) + len(dense),
+                id_key=None,
+            )
+            fused = cap_chunks_per_page(fused, chunks_per_page=self.config.chunks_per_page)
+            fused = fused[:limit]
+        else:
+            fused = fuse_results(kw_fused, dense, config=fusion_config, limit=limit, id_key=None)
         timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
         record_total()
         hybrid_results = SearchResultList(

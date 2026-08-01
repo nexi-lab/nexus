@@ -250,6 +250,91 @@ modules:
   layer: deployment
   depends_on: []
 operations:
+- id: _search_indexed_dirs.index_directory
+  module: search
+  summary: ''
+  transports:
+    http:
+      name: POST /index-directory
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:78
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: _search_indexed_dirs.indexed_dirs
+  module: search
+  summary: ''
+  transports:
+    http:
+      name: GET /indexed-dirs
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:296
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: _search_indexed_dirs.indexing_mode
+  module: search
+  summary: ''
+  transports:
+    http:
+      name: POST /indexing-mode
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:333
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: _search_indexed_dirs.purge_unscoped
+  module: search
+  summary: ''
+  transports:
+    http:
+      name: POST /purge-unscoped
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:460
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: _search_locate.locate
+  module: search
+  summary: ''
+  transports:
+    http:
+      name: POST /locate
+      source: src/nexus/server/api/v2/routers/_search_locate.py:43
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: access.share_link
   module: share_link
   summary: ''
@@ -7625,7 +7710,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/consumers/{consumer_name}/skip-to
-      source: src/nexus/server/api/v2/routers/search.py:287
+      source: src/nexus/server/api/v2/routers/search.py:283
   profiles:
     lite: supported
     sandbox: supported
@@ -7642,7 +7727,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1625
+      source: src/nexus/server/api/v2/routers/search.py:1621
   profiles:
     lite: supported
     sandbox: supported
@@ -7666,7 +7751,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1791
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1506
+      source: src/nexus/server/api/v2/routers/search.py:1502
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7693,7 +7778,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2101
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1383
+      source: src/nexus/server/api/v2/routers/search.py:1379
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7729,7 +7814,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:206
+      source: src/nexus/server/api/v2/routers/search.py:202
   profiles:
     lite: supported
     sandbox: supported
@@ -7746,7 +7831,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1568
+      source: src/nexus/server/api/v2/routers/search.py:1564
   profiles:
     lite: supported
     sandbox: supported
@@ -7832,7 +7917,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/parked
-      source: src/nexus/server/api/v2/routers/search.py:244
+      source: src/nexus/server/api/v2/routers/search.py:240
   profiles:
     lite: supported
     sandbox: supported
@@ -7849,7 +7934,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/parked/discard
-      source: src/nexus/server/api/v2/routers/search.py:270
+      source: src/nexus/server/api/v2/routers/search.py:266
   profiles:
     lite: supported
     sandbox: supported
@@ -7867,7 +7952,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/parked/retry
-      source: src/nexus/server/api/v2/routers/search.py:253
+      source: src/nexus/server/api/v2/routers/search.py:249
   profiles:
     lite: supported
     sandbox: supported
@@ -7902,7 +7987,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:305
+      source: src/nexus/server/api/v2/routers/search.py:301
   profiles:
     lite: supported
     sandbox: supported
@@ -7920,7 +8005,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:807
+      source: src/nexus/server/api/v2/routers/search.py:803
   profiles:
     lite: supported
     sandbox: supported
@@ -7937,7 +8022,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1604
+      source: src/nexus/server/api/v2/routers/search.py:1600
   profiles:
     lite: supported
     sandbox: supported
@@ -7972,7 +8057,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:221
+      source: src/nexus/server/api/v2/routers/search.py:217
   profiles:
     lite: supported
     sandbox: supported
@@ -9911,6 +9996,46 @@ operations:
   gap_issue: null
   owning_issue: 4138
 parity_warnings:
+- operation_id: _search_indexed_dirs.index_directory
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: _search_indexed_dirs.indexed_dirs
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: _search_indexed_dirs.indexing_mode
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: _search_indexed_dirs.purge_unscoped
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: _search_locate.locate
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: access_manifests.api_v2
   has:
   - http
@@ -12327,38 +12452,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: search.index_directory
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.indexed_dirs
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.indexing_mode
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.locate
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: search.parked
   has:
   - http
@@ -12376,14 +12469,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: search.parked_retry
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.purge_unscoped
   has:
   - http
   missing:
@@ -13184,4 +13269,14 @@ parity_warnings:
   - mcp
   - sdk
 unmapped_surfaces: []
-stale_rows: []
+stale_rows:
+- operation_id: search.index_directory
+  reason: present in committed YAML but not detected by extractor
+- operation_id: search.indexed_dirs
+  reason: present in committed YAML but not detected by extractor
+- operation_id: search.indexing_mode
+  reason: present in committed YAML but not detected by extractor
+- operation_id: search.locate
+  reason: present in committed YAML but not detected by extractor
+- operation_id: search.purge_unscoped
+  reason: present in committed YAML but not detected by extractor

@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from nexus.server.api.v2.routers.search import _get_search_daemon
+from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)

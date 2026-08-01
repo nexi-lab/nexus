@@ -67,15 +67,11 @@ router = APIRouter(prefix="/api/v2/search", tags=["search"])
 # =============================================================================
 
 
-def _get_search_daemon(request: Request) -> Any:
-    """Get SearchDaemon from app.state, raising 503 if not enabled."""
-    daemon = getattr(request.app.state, "search_daemon", None)
-    if daemon is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
-        )
-    return daemon
+# _get_search_daemon lives in _search_deps.py so the split sub-routers
+# (_search_indexed_dirs, _search_locate) can import it without forming
+# a cycle back through search.py.  Re-export here for the many callers
+# / tests / monkeypatches that already reach it via `search._get_search_daemon`.
+from nexus.server.api.v2.routers._search_deps import _get_search_daemon  # noqa: E402
 
 
 def _get_record_store(request: Request) -> Any:

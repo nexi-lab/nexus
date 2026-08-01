@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
-from nexus.server.api.v2.routers.search import _get_search_daemon
+from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)

@@ -134,7 +134,7 @@ A2A messaging, audit trace, cross-instance transport.</p>
 <div class="callout">
   <strong>Cross-references:</strong>
   <ul style="margin:8px 0 0">
-    <li><strong><a href="https://s.shareone.vip/s/agent-context-storage-matrix">Agent Context / Image / Profile &mdash; Storage Matrix</a></strong> (<code>sudoprivacy/sudocode : docs/design/agent-context-storage-matrix.html</code>) &mdash; 1:1 maps Claude Code's on-disk context model onto &sect;2's <code>/agents/{name}/</code> + <code>/proc/{pid}/</code> layers; tracks sudocode/sudowork dedup and carries the open reconcile questions (e.g. session path <code>&lt;workspace_hash&gt;</code> vs <code>/sessions/{agent-name}/</code>). WIP &mdash; to be folded into this doc.</li>
+    <li><strong><a href="https://s.shareone.vip/s/agent-context-storage-matrix">Agent Context / Image / Profile &mdash; Storage Matrix</a></strong> (<code>sudoprivacy/sudocode : docs/design/agent-context-storage-matrix.html</code>) &mdash; 1:1 maps Claude Code's on-disk context model onto &sect;2's <code>/agents/{name}/</code> + <code>/proc/{pid}/</code> layers; tracks sudocode/sudowork dedup. The session identity/path reconcile (Q1) is resolved here in &sect;2.1/&sect;2.3: transcripts live flat at <code>/sessions/&lt;session-id&gt;</code> (session-id &ne; pid; no <code>&lt;workspace_hash&gt;</code> partition). Remaining rows WIP &mdash; to be folded into this doc.</li>
     <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT &mdash; interface taxonomy, syscall surface, HAL contracts, dispatch model, plugin ABI. Includes the write-path dispatch appendix (formerly Appendix A here).</li>
     <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/docs/federation-architecture.md">federation-architecture</a> (peer doc): Raft, zone topology, gRPC transport</li>
     <li>sudowork repo (<code>sudoprivacy/sudowork</code>) &mdash; <code>OPEN-ITEMS.md</code>: items not yet implemented</li>
@@ -224,29 +224,35 @@ graph TD
 <!-- ================================================================ -->
 <h2 id="agent-identity">2. Agent Identity &amp; Runtime</h2>
 
-<p>Two namespaces, the same Linux distinction between an executable on disk and a running process:</p>
+<p>Three namespaces along the same Linux distinction between what lives on disk and a running process &mdash; the agent <em>profile</em> and its <em>sessions</em> are persistent, the <em>process</em> is ephemeral:</p>
 
 <table>
   <thead><tr><th>Namespace</th><th>Lifetime</th><th>Content</th><th>Backing store</th></tr></thead>
   <tbody>
-    <tr><td><code>/agents/{name}/</code></td><td>Persistent</td><td>Profile + history: <code>config.toml</code>, <code>prompts/</code>, <code>skills/</code>, <code>memory/</code>, <code>sessions/</code></td><td>Metastore (DT_FILE / DT_DIR)</td></tr>
+    <tr><td><code>/agents/{name}/</code></td><td>Persistent</td><td>Profile: <code>config.toml</code>, <code>prompts/</code>, <code>skills/</code>, <code>memory/</code>, <code>sessions/</code> (DT_LINK index into <code>/sessions/</code>)</td><td>Metastore (DT_FILE / DT_DIR)</td></tr>
+    <tr><td><code>/sessions/{session-id}/</code></td><td>Persistent</td><td>Transcript SSOT (jsonl) + <code>owner</code> attribute + repo DT_LINKs &mdash; flat, session-id the only structural key</td><td>Metastore (DT_FILE / DT_LINK)</td></tr>
     <tr><td><code>/proc/{pid}/</code></td><td>Ephemeral</td><td>Runtime presence: <code>status</code>, <code>agent</code> link, <code>chat-with-me</code>, <code>workspace/</code></td><td>In-memory + WAL while pid alive</td></tr>
   </tbody>
 </table>
 
 <p><code>/agents/{name}/</code> is the stable identity an outsider addresses (other agents, humans on Element). One agent name can spawn many <code>pid</code>s &mdash; different worktrees, parallel work &mdash; and all of them share the same profile.</p>
 
-<h3>2.1 Agent-name namespace</h3>
+<h3>2.1 Agent-name &amp; session namespaces</h3>
 
 <pre><code>/agents/scode-standard/          &larr; profile + history (DT_DIR)
    config.toml                   &larr; model selection, MCP endpoints, default workspace recipe
    prompts/                      &larr; system-prompt overrides, per-skill prompts
    skills/                       &larr; loadable tool sets
    memory/                       &larr; long-lived agent memory
-   sessions/                     &larr; per-session jsonl transcripts (DT_DIR)
-      &lt;session-id&gt;.jsonl</code></pre>
+   sessions/                     &larr; per-agent DT_LINK index (DT_DIR) &mdash; not the SSOT
+      &lt;session-id&gt;            &larr; DT_LINK &rarr; /sessions/&lt;session-id&gt;/</code></pre>
 
-<p><code>/agents/{name}/</code> is the persistent SSOT for everything an agent needs to boot: config, prompts, skills, memory, and session history. A worker boots by reading its profile and the requested <code>--session-id</code> transcript from here, works, and exits; resuming re-reads the same session-id.</p>
+<pre><code>/sessions/&lt;session-id&gt;/           &larr; session zone (DT_DIR) &mdash; flat, session-id is the only structural key
+   transcript.jsonl              &larr; the conversation transcript (DT_FILE) &mdash; byte SSOT
+   owner                         &larr; owning agent-name (attribute) &mdash; drives default visibility policy
+   repos/&lt;alias&gt;                  &larr; DT_LINK &rarr; /repos/&lt;repo&gt;   (0..N; the repos this session touched)</code></pre>
+
+<p><code>/agents/{name}/</code> is the persistent SSOT for an agent's <em>profile</em> &mdash; config, prompts, skills, memory. Session transcripts are <strong>not</strong> nested under the agent: each lives flat at <code>/sessions/&lt;session-id&gt;/</code>, where the session-id (a durable UUID, not the pid &mdash; &sect;2.3) is the only structural key. Isolation is therefore a <em>policy</em>, not a <em>path</em>. <code>/agents/{name}/sessions/</code> holds DT_LINKs into <code>/sessions/</code> as a per-agent enumeration index (a <code>list(prefix)</code> readdir, since the metastore has no by-attribute index), and an <code>owner</code> attribute on each session records the owning agent and drives default visibility. Cross-agent search is never structurally foreclosed &mdash; a pid may scan <code>/sessions/</code> or be granted a DT_LINK into its own index, subject to policy; because a DT_LINK follow re-authorizes against the target's own permission gate (the same auth every read passes), a link is not a capability and visibility stays policy-controlled. A worker boots by reading its profile from <code>/agents/{name}/</code> and the requested <code>--session-id</code> transcript from <code>/sessions/&lt;session-id&gt;/</code>, works, and exits; resuming re-reads the same session-id (durable, spanning many pids).</p>
 
 <h3>2.2 Runtime namespace</h3>
 
@@ -279,7 +285,7 @@ sequenceDiagram
     Worker->>Registry: state_cb(WARMING_UP)
     Worker->>Worker: read profile + session from /agents/{name}/
     Worker->>Registry: state_cb(READY)
-    MAS-->>Orchestrator: {session_id=pid, workspace_path}
+    MAS-->>Orchestrator: {session_id, pid, workspace_path}
 
     Note over Worker: conversation loop...
 
@@ -289,21 +295,21 @@ sequenceDiagram
 
 <p>A managed agent runs as one in-process tokio task inside <code>sudocode-host</code>, reaching the kernel through direct Rust syscalls (<code>kernel.sys_read</code>, <code>sys_write</code>, <code>sys_watch</code>) and the dispatch hooks through the same in-process channel every kernel observer uses. External ACP agents (claude / codex / codebuddy / nanobot) run as subprocesses over stdio, because JSON-RPC over stdio is the only protocol those binaries speak; that path lives in <code>AcpService</code> (&sect;1).</p>
 
-<p>The session identifier IS the AgentRegistry pid. <code>ManagedAgentService</code> plants the per-pid <code>AgentDescriptor</code> &mdash; the spawn-time SSOT (<code>agent_id</code> &rarr; <code>desc.name</code>, <code>model</code> &rarr; <code>desc.labels["model"]</code>, workspace list &rarr; <code>desc.repos</code>) &mdash; stamps the <code>/proc/{pid}/</code> entries (&sect;2.2), and returns <code>{session_id=pid, workspace_path}</code> to the caller.</p>
+<p>Three identity layers, durable vs ephemeral: <code>agent-name</code> (durable principal), <code>session-id</code> (durable UUID &mdash; the transcript key you <code>--resume</code>, spanning many pids), and <code>pid</code> (ephemeral &mdash; one boot/run of a worker, the AgentRegistry handle). <strong>session-id &ne; pid</strong>: a session outlives any single process, so the two cannot be the same value. On <code>start_session</code>, <code>ManagedAgentService</code> mints a new session-id (or echoes the resumed one), registers a pid, plants the per-pid <code>AgentDescriptor</code> &mdash; the spawn-time SSOT (<code>agent_id</code> &rarr; <code>desc.name</code>, <code>model</code> &rarr; <code>desc.labels["model"]</code>, workspace list &rarr; <code>desc.repos</code>) &mdash; stamps the <code>/proc/{pid}/</code> entries (&sect;2.2), and returns <code>{session_id, pid, workspace_path}</code> to the caller.</p>
 
 <p><code>ManagedAgentService</code> hands off to the runtime through the <code>SpawnTask&lt;K: KernelAbi&gt;</code> DI seam &mdash; one indirect call per session start. The binary edge, <code>sudocode-host</code> in the sudocode repo, constructs a concrete <code>SpawnTask&lt;Kernel&gt;</code> adapter wrapping <code>sudocode_runtime::spawn_task</code> and registers it via <code>install_managed_agent_with_spawn(kernel, adapter)</code>. <code>start_session</code> calls <code>provider.spawn(kernel, desc, observer)</code> through <code>Arc&lt;dyn SpawnTask&lt;K&gt;&gt;</code>: exactly one vtable dispatch per session, and the returned <code>Box&lt;dyn SpawnHandle&gt;</code> lands in the service's <code>spawn_handles</code> sidecar. Inside the spawn body the surface is plain monomorphic Rust: <code>spawn_task::&lt;Kernel&gt;</code> and its inner <code>run_loop</code> are generic over <code>K: KernelAbi</code>, specialised against the concrete <code>Kernel</code> at the binary edge, so every <code>sys_read</code> / <code>sys_write</code> / <code>sys_watch</code> in the mailbox loop is an inline direct call. The services rlib depends on the <code>SpawnTask</code> trait only; pure-Rust slim builds call <code>install_managed_agent</code> (no spawn provider, no per-pid task).</p>
 
 <p><code>sudocode-host</code> is the single binary-edge where the nexus and sudocode source trees link: it consumes <code>sudocode_runtime</code> as a library and the nexus <code>kernel</code> / <code>services</code> crates as git deps pinned to one nexus rev (so <code>SpawnTask&lt;Kernel&gt;</code> monomorphises), and the dependency edge stays <code>sudocode &rarr; nexus</code> (&sect;8).</p>
 
-<p>A worker boots by reading its profile + <code>--session-id</code> transcript from <code>/agents/{name}/</code> (&sect;2.1), works (appending to the session jsonl and the mailbox), and exits; the <code>/proc/{pid}/</code> subtree is reaped. Resuming re-reads the same session-id &mdash; persistent state lives in <code>/agents/{name}/</code>, not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through <code>AgentRegistry::on_terminate</code>, which reaps <code>/proc/{pid}/</code> and aborts the worker via its <code>SpawnHandle</code>; <code>cancel(session)</code> calls <code>AgentRegistry::kill(pid, 0)</code> for the same outcome.</p>
+<p>A worker boots by reading its profile from <code>/agents/{name}/</code> and the requested <code>--session-id</code> transcript from <code>/sessions/&lt;session-id&gt;/</code> (&sect;2.1), works (appending to the transcript and the mailbox), and exits; the <code>/proc/{pid}/</code> subtree is reaped. Resuming re-reads the same session-id under a fresh pid &mdash; persistent state lives in <code>/agents/{name}/</code> and <code>/sessions/</code>, not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through <code>AgentRegistry::on_terminate</code>, which reaps <code>/proc/{pid}/</code> and aborts the worker via its <code>SpawnHandle</code>; <code>cancel(pid)</code> calls <code>AgentRegistry::kill(pid, 0)</code> for the same outcome.</p>
 
 <p>After spawn, prompts and responses flow over the chat-with-me VFS surface &mdash; the same A2A primitive every agent uses (&sect;3). sudowork writes prompts to <code>/proc/{pid}/chat-with-me</code>; the worker <code>sys_watch</code>es it and writes responses to <code>/agents/{user}/chat-with-me</code>, which sudowork's UI watches in turn.</p>
 
 <p><strong>ManagedAgentService surface</strong> (over <code>NexusVFSService.Call</code>):</p>
 <ul>
-  <li><code>start_session_v1</code> &mdash; <code>{agent_id, repos, model, owner_id, zone_id}</code> &rarr; <code>{session_id, workspace_path}</code>. <code>agent_id</code> names the profile (<code>/agents/{agent_id}/</code>); <code>session_id</code> is the runtime pid.</li>
-  <li><code>cancel_v1</code> &mdash; <code>{session_id, mode}</code> &rarr; <code>{cancelled}</code>; <code>mode &isin; {turn, session}</code> (turn aborts the current generation, session reaps the pid).</li>
-  <li><code>get_session_v1</code> &mdash; <code>{session_id}</code> &rarr; <code>{session_id, agent_id, workspace_path, model, state}</code>.</li>
+  <li><code>start_session_v1</code> &mdash; <code>{agent_id, repos, model, owner_id, zone_id, session_id?}</code> &rarr; <code>{session_id, pid, workspace_path}</code>. <code>agent_id</code> names the profile (<code>/agents/{agent_id}/</code>); the optional input <code>session_id</code> resumes an existing durable session (a fresh call mints a new one); <code>pid</code> is the ephemeral runtime handle.</li>
+  <li><code>cancel_v1</code> &mdash; <code>{pid, mode}</code> &rarr; <code>{cancelled}</code>; <code>mode &isin; {turn, session}</code> (turn aborts the current generation, session reaps the pid). Addressed by the runtime <code>pid</code>, not the durable session-id.</li>
+  <li><code>get_session_v1</code> &mdash; <code>{pid}</code> &rarr; <code>{session_id, pid, agent_id, workspace_path, model, state}</code>. Queries a live run by <code>pid</code>; <code>state</code> is the runtime FSM state, <code>session_id</code> the durable transcript it is attached to.</li>
 </ul>
 
 <p>Prompt / event flow reuses <code>sys_write</code> / <code>sys_watch</code> / <code>sys_read</code> over the chat-with-me paths; the A2A surface carries it without a bespoke SendPrompt or SubscribeEvents gRPC.</p>
@@ -325,12 +331,12 @@ sequenceDiagram
 
 <p>Inside <code>sudocode-host</code> the agent task runs on <code>KernelFsBackend&lt;Kernel&gt;</code>, so <code>SessionStore</code>, <code>ConfigLoader</code>, and the workspace-bounded <code>file_ops</code> helpers all issue kernel syscalls against nexus VFS paths:</p>
 
-<p><code>workspace_hash</code> is sudo-code's FNV-1a 64-bit fingerprint (16-char hex) of the canonical workspace path, so one profile talking to multiple repos partitions sessions per-repo. Static prompt sections embed as <code>&amp;'static str</code> and need no IO.</p>
+<p>Sessions are <strong>not</strong> partitioned by a workspace hash: a session lives flat at <code>/sessions/&lt;session-id&gt;/</code> and records the repos it touched as DT_LINKs under <code>repos/</code> (&sect;2.1), so one profile talking to multiple repos needs no per-repo path partition. Static prompt sections embed as <code>&amp;'static str</code> and need no IO.</p>
 
 <table>
   <thead><tr><th>sudo-code surface</th><th>nexus VFS path</th></tr></thead>
   <tbody>
-    <tr><td>session jsonl transcripts</td><td><code>/agents/{name}/sessions/&lt;workspace_hash&gt;/&lt;session-id&gt;.jsonl</code></td></tr>
+    <tr><td>session jsonl transcripts</td><td><code>/sessions/&lt;session-id&gt;/transcript.jsonl</code> (flat SSOT; <code>/agents/{name}/sessions/&lt;session-id&gt;</code> is a DT_LINK index, <code>owner</code> attr names the agent)</td></tr>
     <tr><td>user-level config</td><td><code>/agents/{name}/config.toml</code> (ConfigLoader user slot)</td></tr>
     <tr><td>project-level config</td><td><code>/proc/{pid}/workspace/{repo}/.nexus/sudocode/settings.json</code></td></tr>
     <tr><td>AGENTS.md scan</td><td>walks the repo mount under <code>/proc/{pid}/workspace/{repo}/</code> (cwd)</td></tr>

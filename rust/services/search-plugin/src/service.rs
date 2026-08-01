@@ -45,6 +45,7 @@ fn do_glob(
     root_path: &str,
     pattern: &str,
     max_results: usize,
+    sort_recency: bool,
 ) -> Result<(Vec<String>, bool), String> {
     // Empty pattern ⇒ match everything (walk-and-list mode).  Callers
     // that literally want no matches send an obviously-unmatchable
@@ -91,6 +92,10 @@ fn do_glob(
     })
     .map_err(walk_err_to_string)?;
 
+    if sort_recency {
+        sort_paths_by_mtime_desc(handle, &mut out);
+    }
+
     Ok((out, truncated))
 }
 
@@ -110,6 +115,7 @@ fn do_grep(
     before_context: usize,
     after_context: usize,
     invert_match: bool,
+    sort_recency: bool,
 ) -> Result<(Vec<GrepMatch>, bool), String> {
     if pattern.is_empty() {
         return Err("grep pattern must not be empty".into());
@@ -197,6 +203,10 @@ fn do_grep(
         }
     })
     .map_err(walk_err_to_string)?;
+
+    if sort_recency {
+        sort_matches_by_mtime_desc(handle, &mut matches);
+    }
 
     Ok((matches, truncated))
 }
@@ -334,6 +344,66 @@ fn walk_err_to_string(e: KernelIoError) -> String {
     }
 }
 
+// ── Recency sort (Issue #4553 mirror — the SPIRIT of the Python
+// SearchDaemon's recency=on mode adapted to a scoreless enumeration
+// API).  Glob has no fusion score to multiplicatively boost, so
+// "freshness" here means "newer files sort first".  One sys_stat per
+// UNIQUE path (grep may return many matches per file); paths with
+// unknown mtime sort last so they never leapfrog dated results.
+// Stable Timsort inside `sort_by` preserves encounter order among
+// same-mtime items — matches from one file stay contiguous under
+// grep even after the sort. ──────────────────────────────────────
+
+/// Sort file paths by containing-file mtime descending (newest first).
+/// Unknown-mtime paths sort last.
+fn sort_paths_by_mtime_desc(handle: &KernelHandle, paths: &mut [String]) {
+    let mtimes = fetch_mtimes(handle, paths.iter().map(|p| p.as_str()));
+    // i64::MIN sinks unknown-mtime items to the end when sorting DESC.
+    paths.sort_by_key(|p| std::cmp::Reverse(mtimes.get(p.as_str()).copied().unwrap_or(i64::MIN)));
+}
+
+/// Sort grep matches by containing-file mtime descending.  Matches
+/// from the same file share an mtime key; stable sort preserves
+/// their encounter (line) order.
+fn sort_matches_by_mtime_desc(handle: &KernelHandle, matches: &mut [GrepMatch]) {
+    let mtimes = fetch_mtimes(handle, matches.iter().map(|m| m.path.as_str()));
+    matches.sort_by_key(|m| {
+        std::cmp::Reverse(mtimes.get(m.path.as_str()).copied().unwrap_or(i64::MIN))
+    });
+}
+
+/// Batch-fetch `modified_at_ms` for a set of paths.  Deduplicates via
+/// the returned HashMap.  Failures (NotFound, kernel error, JSON
+/// parse error, null mtime) silently drop the path — the sort then
+/// bins it into the unknown-mtime tail rather than aborting.
+fn fetch_mtimes<'a>(
+    handle: &KernelHandle,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> std::collections::HashMap<String, i64> {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut out: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for path in paths {
+        if !seen.insert(path) {
+            continue;
+        }
+        match kernel_io::sys_stat(handle, path) {
+            Ok(info) => {
+                if let Some(ms) = info.modified_at_ms {
+                    out.insert(path.to_string(), ms);
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    path = %path,
+                    err = ?e,
+                    "recency sort: sys_stat failed — treating as unknown mtime",
+                );
+            }
+        }
+    }
+    out
+}
+
 // ── tonic trait impl ──────────────────────────────────────────────
 
 #[async_trait]
@@ -355,10 +425,13 @@ impl SearchService for SearchServiceImpl {
         // Send + Sync per the plugin ABI's unsafe impl; the Arc
         // keeps the underlying callback table alive for as long as
         // any request is in flight.
+        let sort_recency = req.sort_recency;
         let handle = Arc::clone(&self.handle);
-        let outcome = tokio::task::spawn_blocking(move || do_glob(&handle, &root, &pattern, cap))
-            .await
-            .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_glob(&handle, &root, &pattern, cap, sort_recency)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
 
         match outcome {
             Ok((paths, truncated)) => Ok(Response::new(GlobResponse {
@@ -398,6 +471,7 @@ impl SearchService for SearchServiceImpl {
                 req.before_context as usize,
                 req.after_context as usize,
                 req.invert_match,
+                req.sort_recency,
             )
         })
         .await

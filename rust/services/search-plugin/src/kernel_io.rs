@@ -128,6 +128,49 @@ pub fn sys_read(handle: &KernelHandle, path: &str) -> Result<Vec<u8>, KernelIoEr
     }
 }
 
+/// Subset of `StatResult`'s JSON shape that the plugin walker cares
+/// about.  Serde ignores unknown fields (`entry_type`, `size`,
+/// `zone_id`, `path`, …) so this stays additive-compatible with any
+/// future schema growth on the kernel side.  `modified_at_ms` is
+/// `null`-safe: older kernels that predate the field return it as
+/// `null` and the walker degrades to "unknown mtime, sort last".
+#[derive(Debug, Deserialize)]
+pub struct StatInfo {
+    pub modified_at_ms: Option<i64>,
+}
+
+/// Wrap `handle.sys_stat(path)`.
+///
+/// Returns just the field(s) the search walker uses today
+/// (`modified_at_ms`).  Anything else in the JSON is left to serde's
+/// default field-drop behavior so extending the kernel-side schema
+/// stays wire-compatible.
+pub fn sys_stat(handle: &KernelHandle, path: &str) -> Result<StatInfo, KernelIoError> {
+    let c_path = CString::new(path)?;
+    let mut out_ptr: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    // SAFETY: same shape as `sys_read` / `sys_readdir` above — kernel-side
+    // callback owns the alloc; we take a snapshot then free.
+    let rc = unsafe {
+        (handle.sys_stat)(
+            handle.kernel_ptr,
+            c_path.as_ptr(),
+            &mut out_ptr as *mut *mut u8,
+            &mut out_len as *mut usize,
+        )
+    };
+    match rc {
+        0 => {
+            let bytes = unsafe { slice::from_raw_parts(out_ptr, out_len) };
+            let parsed: Result<StatInfo, _> = serde_json::from_slice(bytes);
+            unsafe { nexus_free(out_ptr, out_len) };
+            parsed.map_err(KernelIoError::JsonParse)
+        }
+        -1 => Err(KernelIoError::NotFound),
+        other => Err(KernelIoError::Kernel(other)),
+    }
+}
+
 /// Concatenate a parent VFS path and a child entry name into a
 /// canonical child path.  Handles the root special case (`/` +
 /// `foo` = `/foo`) and strips a redundant trailing `/` on the

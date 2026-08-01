@@ -38,6 +38,7 @@ def search_glob(
     pattern: str,
     *,
     max_results: int = 0,
+    sort_recency: bool = False,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 30,
 ) -> dict:
@@ -57,6 +58,7 @@ def search_glob(
             pattern=pattern,
             max_results=max_results,
             auth_token=api_key,
+            sort_recency=sort_recency,
         )
         resp = stub.Glob(req, timeout=timeout)
         if resp.HasField("error"):
@@ -82,6 +84,7 @@ def search_grep(
     before_context: int = 0,
     after_context: int = 0,
     invert_match: bool = False,
+    sort_recency: bool = False,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 60,
 ) -> dict:
@@ -106,6 +109,7 @@ def search_grep(
             after_context=after_context,
             invert_match=invert_match,
             auth_token=api_key,
+            sort_recency=sort_recency,
         )
         resp = stub.Grep(req, timeout=timeout)
         if resp.HasField("error"):

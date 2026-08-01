@@ -242,6 +242,105 @@ class TestFederatedDispatcherZoneFilter:
         assert resp.zones_searched == ["eng"], f"expected only eng, got {resp.zones_searched}"
 
 
+def _build_app_with_auth(auth: dict):
+    """App builder for #4557 tests -- takes the full auth dict, unlike
+    ``TestSearchZoneSet._build_app`` which only parameterizes zone_set."""
+    from nexus.server.api.v2.routers.search import router
+
+    app = FastAPI()
+    app.include_router(router)
+
+    mock_daemon = MagicMock()
+    mock_daemon.is_initialized = True
+    mock_daemon.get_health.return_value = {"status": "ok"}
+
+    async def mock_search(**kwargs):
+        return [_MockResult(path="result.txt", chunk_text="found", score=0.9)]
+
+    mock_daemon.search = mock_search
+    mock_daemon.batch_search = AsyncMock(return_value=[[]])
+    app.state.search_daemon = mock_daemon
+    app.state.search_daemon_enabled = True
+    app.state.record_store = MagicMock()
+    app.state.async_session_factory = MagicMock()
+    app.state.async_read_session_factory = MagicMock()
+
+    from nexus.server.dependencies import require_auth
+
+    app.dependency_overrides[require_auth] = lambda: {"authenticated": True, **auth}
+    return app
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestBatchReadGate:
+    """Issue #4557 (gap 1): /query/batch had no read gate at all -- a
+    write-only token could read via batch even though /query fails it
+    closed. Batch takes no ``federated`` param, so both of /query's
+    single-zone checks (empty-filter and not-a-member) apply unconditionally."""
+
+    def test_write_only_token_batch_rejected(self):
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "eng",
+                "zone_set": ["eng"],
+                "zone_perms": [["eng", "w"]],
+            }
+        )
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch", json={"queries": [{"q": "alpha"}]}
+        )
+        assert resp.status_code == 403, resp.text
+        assert "read permission" in resp.json()["detail"]
+
+    def test_readable_token_batch_ok(self):
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "eng",
+                "zone_set": ["eng"],
+                "zone_perms": [["eng", "r"]],
+            }
+        )
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch", json={"queries": [{"q": "alpha"}]}
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_no_readable_zone_at_all_batch_rejected(self):
+        """Multi-zone, all-write-only grant -> readable_zone_filter yields
+        the empty frozenset -> the empty-filter branch fires (distinct from
+        the not-a-member branch above)."""
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "eng",
+                "zone_set": ["eng", "legal"],
+                "zone_perms": [["eng", "w"], ["legal", "w"]],
+            }
+        )
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch", json={"queries": [{"q": "alpha"}]}
+        )
+        assert resp.status_code == 403, resp.text
+        assert "Token has no zone with read permission for search" in resp.json()["detail"]
+
+    def test_legacy_token_without_zone_perms_batch_ok(self):
+        """Credential with a zone list but no perms info at all keeps the
+        legacy behaviour (whole list readable)."""
+        app = _build_app_with_auth(
+            {
+                "user_id": "u",
+                "zone_id": "eng",
+                "zone_set": ["eng"],
+            }
+        )
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch", json={"queries": [{"q": "alpha"}]}
+        )
+        assert resp.status_code == 200, resp.text
+
+
 @pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
 class TestSingleZoneTokenFederatedEscape:
     """Issue #4542 round-6 review: a single-zone token requesting

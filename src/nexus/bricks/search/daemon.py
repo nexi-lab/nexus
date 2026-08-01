@@ -156,7 +156,14 @@ class SearchResult(BaseSearchResult):
 
 
 class SearchResultList(list[SearchResult]):
-    """Search results plus a request-local timing snapshot."""
+    """Search results plus a request-local timing snapshot.
+
+    ``semantic_degraded`` carries request-level degradation (#3778 marker for
+    #4541 review R8): per-result stamping alone loses the signal when the
+    degraded response is EMPTY, so the daemon also flags the list itself.
+    """
+
+    semantic_degraded: bool = False
 
     def __init__(
         self,
@@ -459,7 +466,13 @@ class SearchDaemon:
         self._search_timing_var().set(dict(value))
 
     def _with_search_timing(self, results: Iterable[SearchResult]) -> SearchResultList:
-        return SearchResultList(results, search_timing=self.last_search_timing)
+        wrapped = SearchResultList(results, search_timing=self.last_search_timing)
+        # Preserve request-level degradation set by the degraded hybrid
+        # branches — it must survive re-wrapping even when the list is empty
+        # (#4541 review R8).
+        if getattr(results, "semantic_degraded", False):
+            wrapped.semantic_degraded = True
+        return wrapped
 
     def __init__(
         self,
@@ -1998,9 +2011,9 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
-        rrf_k: int = 60,
         zone_id: str | None = None,
         expand: str = "none",
+        rrf_k: int = 60,
     ) -> list[SearchResult]:
         if zone_id is None:
             results = await self._search_on_current_loop(
@@ -2040,8 +2053,8 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
-        rrf_k: int = 60,
         zone_id: str | None = None,
+        rrf_k: int = 60,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
@@ -2252,6 +2265,7 @@ class SearchDaemon:
                     path_filter,
                     alpha,
                     fusion_method,
+                    rrf_k,
                     zone_id=zone_id,
                 )
             fallback_ms = (time.perf_counter() - fallback_start) * 1000
@@ -2365,6 +2379,38 @@ class SearchDaemon:
                 "keyword_ms",
                 self._fts_backend.keyword_search(query, path, limit, zone_id, timing=timing),
             )
+            # Non-default fusion requests still flow through the configured
+            # fusion (keyword leg only, empty dense leg) so the advertised
+            # knobs are honoured even when the embedding dependency is down
+            # (#4541 review round 4). Alpha alone doesn't count: it has no
+            # effect under plain RRF, and the exact default request keeps the
+            # historical raw-keyword shortcut byte-identical.
+            if fusion_method != FusionMethod.RRF.value or rrf_k != 60:
+                fusion_start = time.perf_counter()
+                fused = fuse_results(
+                    results,
+                    [],
+                    config=FusionConfig(
+                        method=FusionMethod(fusion_method), alpha=alpha, rrf_k=rrf_k
+                    ),
+                    limit=limit,
+                    id_key=None,
+                )
+                timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
+                record_total()
+                coerced = SearchResultList(
+                    self._coerce_to_search_result(item, search_type=search_type) for item in fused
+                )
+                # The dense leg is missing entirely, so a semantic-weighted
+                # request may legitimately score everything 0.0 — stamp the
+                # #3778 degradation marker so callers can distinguish
+                # "semantic retrieval failed" from a genuine ranking
+                # (#4541 review round 6). The list-level flag survives even
+                # when the response is empty (round 8).
+                coerced.semantic_degraded = True
+                for coerced_result in coerced:
+                    coerced_result.semantic_degraded = True
+                return coerced
             record_total()
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
@@ -2394,16 +2440,15 @@ class SearchDaemon:
                 timing["page_keyword_ms"] = (time.perf_counter() - page_start) * 1000
                 return keyword_candidates[:keyword_limit], page_results
 
-            (chunk_kw, page_kw), dense = await asyncio.gather(
+            (chunk_kw, page_kw), dense = await self._gather_legs_fail_soft_dense(
                 timed_pg_keyword_legs(),
                 timed_leg(
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
                 ),
-                return_exceptions=False,
             )
         else:
-            chunk_kw, dense = await asyncio.gather(
+            chunk_kw, dense = await self._gather_legs_fail_soft_dense(
                 timed_leg(
                     "keyword_ms",
                     self._fts_backend.keyword_search(
@@ -2414,7 +2459,6 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
                 ),
-                return_exceptions=False,
             )
             page_kw = []
 
@@ -2436,7 +2480,50 @@ class SearchDaemon:
             fused = _aggregate_chunks_to_pages(fused, chunks_per_page=self.config.chunks_per_page)
         timing["fusion_ms"] = (time.perf_counter() - fusion_start) * 1000
         record_total()
-        return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+        hybrid_results = SearchResultList(
+            self._coerce_to_search_result(item, search_type="hybrid") for item in fused
+        )
+        # Embedding succeeded but the dense leg came back empty or failed
+        # (fail-soft above): a non-default fusion request is ranking on
+        # keyword legs alone — stamp the #3778 marker like the qvec-None
+        # branch does, on the list too so empty responses keep the signal.
+        # Default requests stay unstamped (byte-identical) (#4541 review
+        # rounds 7-8).
+        if not dense and (fusion_method != FusionMethod.RRF.value or rrf_k != 60):
+            hybrid_results.semantic_degraded = True
+            for hybrid_result in hybrid_results:
+                hybrid_result.semantic_degraded = True
+        return hybrid_results
+
+    @staticmethod
+    async def _gather_legs_fail_soft_dense(
+        kw_awaitable: Awaitable[T],
+        dense_awaitable: Awaitable[list[Any]],
+    ) -> tuple[T, list[Any]]:
+        """Run the keyword and dense legs concurrently with asymmetric failure
+        handling (#4541 review R8/R9).
+
+        Keyword failures propagate PROMPTLY — the dense task is cancelled and
+        drained first, so a hung vector backend cannot pin the request while
+        the keyword error waits. Dense failures degrade to an empty leg (the
+        caller stamps ``semantic_degraded`` for non-default fusion requests)
+        instead of aborting the whole hybrid query.
+        """
+        kw_task = asyncio.ensure_future(kw_awaitable)
+        dense_task = asyncio.ensure_future(dense_awaitable)
+        try:
+            kw_result = await kw_task
+        except BaseException:
+            dense_task.cancel()
+            with contextlib.suppress(BaseException):
+                await dense_task
+            raise
+        try:
+            dense_result: list[Any] = await dense_task
+        except Exception as exc:
+            logger.warning("hybrid dense leg failed; continuing keyword-only: %s", exc)
+            dense_result = []
+        return kw_result, dense_result
 
     async def _embed_query(self, query: str) -> list[float] | None:
         """Embed a query string for the new vector backends.
@@ -2962,73 +3049,97 @@ class SearchDaemon:
         query: str,
         limit: int,
         path_filter: str | None,
-        alpha: float,  # noqa: ARG002
-        fusion_method: str,  # noqa: ARG002
+        alpha: float,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
         *,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
-        """Hybrid search combining keyword and semantic results via RRF.
+        """Hybrid search combining keyword and semantic results (legacy fallback).
 
-        Pipeline: BM25/Zoekt + Dense -> RRF fusion -> results
+        Pipeline: BM25/Zoekt + Dense -> fusion -> results
+
+        Honours the request's fusion knobs via the shared fusion module so
+        the degraded/no-backend path keeps the same semantics as the primary
+        indexed path (#4541 review). ``top_rank_bonus`` stays off to preserve
+        this path's historical default scoring (plain reciprocal-rank sums,
+        k=60, no bonus).
         """
+        from nexus.bricks.search.fusion import FusionConfig, FusionMethod, fuse_results
+
         # Run keyword and semantic in parallel
-        kw_task = asyncio.ensure_future(
-            self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
+        # Same asymmetric contract as the primary indexed path (#4541 review
+        # round 10): keyword failures cancel the semantic task and propagate
+        # promptly (no dense-only "hybrid" responses, no waiting behind a
+        # hung semantic leg); semantic failures degrade to an empty leg and
+        # are stamped below for non-default fusion requests.
+        kw_results, sem_results = await self._gather_legs_fail_soft_dense(
+            self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id),
+            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id),
         )
-        sem_task = asyncio.ensure_future(
-            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id)
+
+        fusion_config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=rrf_k,
+            top_rank_bonus=False,
+        )
+        fused = fuse_results(
+            kw_results, sem_results, config=fusion_config, limit=limit, id_key=None
         )
 
-        raw_results = await asyncio.gather(kw_task, sem_task, return_exceptions=True)
-
-        kw_results: list[SearchResult] = []
-        sem_results: list[SearchResult] = []
-
-        if isinstance(raw_results[0], BaseException):
-            logger.warning("Keyword search failed: %s", raw_results[0])
-        else:
-            kw_results = raw_results[0]
-        if isinstance(raw_results[1], BaseException):
-            logger.warning("Semantic search failed: %s", raw_results[1])
-        else:
-            sem_results = raw_results[1]
-
-        # RRF fusion (k=60)
-        rrf_k = 60
-        scores: dict[str, float] = {}
-        best: dict[str, SearchResult] = {}
-
-        for rank, r in enumerate(kw_results):
-            key = f"{r.path}:{r.chunk_index}"
-            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            if key not in best:
-                best[key] = r
-
-        for rank, r in enumerate(sem_results):
-            key = f"{r.path}:{r.chunk_index}"
-            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            if key not in best:
-                best[key] = r
-
-        # Sort by fused score, take top limit
-        sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)[:limit]
-
-        return [
-            SearchResult(
-                path=best[k].path,
-                chunk_text=best[k].chunk_text,
-                score=scores[k],
-                chunk_index=best[k].chunk_index,
-                start_offset=best[k].start_offset,
-                end_offset=best[k].end_offset,
-                line_start=best[k].line_start,
-                line_end=best[k].line_end,
-                keyword_score=best[k].keyword_score,
-                vector_score=best[k].vector_score,
-                search_type="hybrid",
+        # Non-default fusion keeps the fusion module's provenance fields:
+        # keyword_score / vector_score reflect the legs that actually produced
+        # the fused score (matching the primary indexed path). Only the exact
+        # default contract reconstructs the legacy shape below
+        # (#4541 review round 6).
+        if fusion_method != FusionMethod.RRF.value or rrf_k != 60:
+            coerced = SearchResultList(
+                self._coerce_to_search_result(item, search_type="hybrid") for item in fused
             )
-            for k in sorted_keys
-        ]
+            # Semantic leg failed or returned nothing: the non-default fusion
+            # ranked on keyword results alone — stamp the #3778 marker (list-
+            # level too, so empty responses keep the signal) (#4541 review
+            # rounds 7-8).
+            if not sem_results:
+                coerced.semantic_degraded = True
+                for coerced_result in coerced:
+                    coerced_result.semantic_degraded = True
+            return coerced
+
+        # Rebuild results in the legacy fallback shape: every field comes from
+        # the first-seen leg result (keyword leg wins ties) and only ``score``
+        # carries the fused value. The historical inline loop never rewrote
+        # per-leg modality fields (keyword_score / vector_score), so default
+        # responses must not start doing so now (#4541 review — byte-identical
+        # defaults includes serialized field values, not just ordering).
+        best: dict[str, SearchResult] = {}
+        for r in [*kw_results, *sem_results]:
+            best.setdefault(f"{r.path}:{r.chunk_index}", r)
+
+        out: list[SearchResult] = []
+        for item in fused:
+            key = f"{item.get('path', '')}:{item.get('chunk_index', 0)}"
+            src = best.get(key)
+            if src is None:
+                out.append(self._coerce_to_search_result(item, search_type="hybrid"))
+                continue
+            out.append(
+                SearchResult(
+                    path=src.path,
+                    chunk_text=src.chunk_text,
+                    score=float(item.get("score", 0.0)),
+                    chunk_index=src.chunk_index,
+                    start_offset=src.start_offset,
+                    end_offset=src.end_offset,
+                    line_start=src.line_start,
+                    line_end=src.line_end,
+                    keyword_score=src.keyword_score,
+                    vector_score=src.vector_score,
+                    search_type="hybrid",
+                )
+            )
+        return out
 
     async def _search_zoekt(
         self,

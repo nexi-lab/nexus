@@ -145,6 +145,30 @@ class TestSearchQueryEndpoint:
         assert seen["alpha"] == 0.5
         assert seen["rrf_k"] == 60
 
+    def test_semantic_degraded_flag_survives_empty_results(self, client: "TestClient") -> None:
+        """#4541 review round 8: request-level degradation reaches the
+        response even when the degraded result list is empty."""
+        from nexus.bricks.search.daemon import SearchResultList
+
+        app: Any = client.app
+
+        async def mock_search(**kwargs: Any) -> SearchResultList:
+            degraded = SearchResultList([])
+            degraded.semantic_degraded = True
+            return degraded
+
+        app.state.search_daemon.search = mock_search
+        resp = client.get("/api/v2/search/query?q=hello&fusion=weighted&alpha=1.0")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["semantic_degraded"] is True
+
+    def test_semantic_degraded_absent_by_default(self, client: "TestClient") -> None:
+        resp = client.get("/api/v2/search/query?q=hello")
+        assert resp.status_code == 200
+        assert "semantic_degraded" not in resp.json()
+
     def test_health_endpoint(self, client: "TestClient") -> None:
         resp = client.get("/api/v2/search/health")
         assert resp.status_code == 200

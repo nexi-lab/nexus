@@ -184,3 +184,442 @@ async def test_search_threads_fusion_params_to_backends() -> None:
     assert seen["alpha"] == 0.9
     assert seen["fusion_method"] == "weighted"
     assert seen["rrf_k"] == 30
+
+
+# =============================================================================
+# Legacy fallback path (#4541 review): _hybrid_search must honour the same
+# fusion knobs as the primary indexed path, with byte-identical defaults.
+# =============================================================================
+
+
+def _make_fallback_daemon() -> Any:
+    """Bare daemon exercising the legacy `_hybrid_search` fallback.
+
+    Same divergent corpus as `_make_daemon` but served through the legacy
+    `_keyword_search` / `_semantic_search` stack (no indexed backends).
+    """
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    def _res(path: str, score: float, st: str) -> SearchResult:
+        # Legs carry distinguishable per-modality fields so tests can pin
+        # the legacy first-seen field-preservation contract.
+        return SearchResult(
+            path=path,
+            chunk_text=path,
+            score=score,
+            chunk_index=0,
+            search_type=st,
+            keyword_score=score if st == "keyword" else None,
+            vector_score=score if st == "semantic" else None,
+        )
+
+    async def _keyword_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        return [
+            _res("/a.md", 10.0, "keyword"),
+            _res("/b.md", 9.0, "keyword"),
+            _res("/c.md", 8.0, "keyword"),
+        ]
+
+    async def _semantic_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        return [
+            _res("/d.md", 0.99, "semantic"),
+            _res("/c.md", 0.9, "semantic"),
+            _res("/a.md", 0.5, "semantic"),
+        ]
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon.last_search_timing = {}
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+    daemon._semantic_search = MethodType(_semantic_search, daemon)
+    return daemon
+
+
+@pytest.mark.asyncio
+async def test_fallback_default_matches_legacy_inline_rrf() -> None:
+    """Regression pin: default fallback fusion stays byte-identical to the
+    historical inline loop — plain reciprocal-rank sums, k=60, no top-rank
+    bonus."""
+    daemon = _make_fallback_daemon()
+    results = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
+
+    kw = [("/a.md", 1), ("/b.md", 2), ("/c.md", 3)]
+    sem = [("/d.md", 1), ("/c.md", 2), ("/a.md", 3)]
+    expected: dict[str, float] = {}
+    for path, rank in kw + sem:
+        expected[path] = expected.get(path, 0.0) + 1.0 / (60 + rank)
+    expected_order = sorted(expected, key=lambda p: expected[p], reverse=True)
+
+    assert [r.path for r in results] == expected_order == ["/a.md", "/c.md", "/d.md", "/b.md"]
+    for r in results:
+        assert r.score == pytest.approx(expected[r.path])
+
+    # Byte-identical includes serialized field values, not just ordering:
+    # the legacy loop copied every field from the FIRST-seen leg result
+    # (keyword leg wins) and never rewrote per-leg modality scores.
+    by_path = {r.path: r for r in results}
+    assert by_path["/a.md"].keyword_score == 10.0
+    assert by_path["/a.md"].vector_score is None  # kw-first, despite dense hit
+    assert by_path["/c.md"].keyword_score == 8.0
+    assert by_path["/c.md"].vector_score is None
+    assert by_path["/d.md"].keyword_score is None  # dense-only
+    assert by_path["/d.md"].vector_score == 0.99
+    assert all(r.search_type == "hybrid" for r in results)
+
+
+@pytest.mark.asyncio
+async def test_fallback_weighted_alpha_changes_ordering() -> None:
+    daemon = _make_fallback_daemon()
+    low = await daemon._hybrid_search("nexus core", 4, None, 0.05, "weighted")
+    high = await daemon._hybrid_search("nexus core", 4, None, 0.95, "weighted")
+
+    assert [r.path for r in low] != [r.path for r in high]
+    assert [r.path for r in low][0] == "/a.md"
+    assert [r.path for r in high][0] == "/d.md"
+
+
+@pytest.mark.asyncio
+async def test_fallback_rrf_weighted_alpha_zero_ranks_keyword_only() -> None:
+    daemon = _make_fallback_daemon()
+    results = await daemon._hybrid_search("nexus core", 4, None, 0.0, "rrf_weighted")
+
+    assert [r.path for r in results[:3]] == ["/a.md", "/b.md", "/c.md"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_rrf_k_reaches_fusion() -> None:
+    daemon = _make_fallback_daemon()
+    default = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
+    small_k = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf", 1)
+
+    assert [r.score for r in small_k] != [r.score for r in default]
+
+
+@pytest.mark.asyncio
+async def test_search_threads_fusion_params_to_fallback() -> None:
+    """With no indexed backends, `search()` must forward the fusion knobs to
+    the legacy `_hybrid_search` fallback."""
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    seen: dict[str, Any] = {}
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._fts_backend = None
+    daemon._vector_backend = None
+    daemon._permission_enforcer = None
+    daemon.last_search_timing = {}
+
+    def _track_latency(self: Any, latency_ms: float) -> None:
+        self._last_latency_ms = latency_ms
+
+    async def _attach_path_contexts(
+        self: Any, results: Any, *, zone_id: str, **kwargs: Any
+    ) -> None:
+        self._last_context_zone = zone_id
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    async def _hybrid_search(
+        self: Any,
+        query: str,
+        limit: int,
+        path_filter: Any,
+        alpha: float,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
+        *,
+        zone_id: Any = None,
+    ) -> list[SearchResult]:
+        seen.update({"alpha": alpha, "fusion_method": fusion_method, "rrf_k": rrf_k})
+        return []
+
+    daemon._track_latency = MethodType(_track_latency, daemon)
+    daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+    daemon._hybrid_search = MethodType(_hybrid_search, daemon)
+
+    await daemon.search(
+        "nexus core",
+        search_type="hybrid",
+        limit=1,
+        alpha=0.9,
+        fusion_method="weighted",
+        rrf_k=30,
+    )
+
+    assert seen == {"alpha": 0.9, "fusion_method": "weighted", "rrf_k": 30}
+
+
+@pytest.mark.asyncio
+async def test_search_positional_signature_unchanged() -> None:
+    """#4541 review round 3: rrf_k sits at the signature TAIL so pre-existing
+    positional callers keep binding zone_id in position 7."""
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    seen: dict[str, Any] = {}
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._fts_backend = object()
+    daemon._vector_backend = object()
+    daemon._permission_enforcer = None
+    daemon.last_search_timing = {}
+
+    def _track_latency(self: Any, latency_ms: float) -> None:
+        self._last_latency_ms = latency_ms
+
+    async def _attach_path_contexts(
+        self: Any, results: Any, *, zone_id: str, **kwargs: Any
+    ) -> None:
+        self._last_context_zone = zone_id
+
+    async def _search_via_backends(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
+        seen.update(kwargs)
+        return [
+            SearchResult(
+                path="/backend.md",
+                chunk_text="backend result",
+                score=1.0,
+                chunk_index=0,
+                search_type="keyword",
+            )
+        ]
+
+    daemon._track_latency = MethodType(_track_latency, daemon)
+    daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
+    daemon._search_via_backends = MethodType(_search_via_backends, daemon)
+
+    # Legacy positional call shape: 7th positional arg is zone_id.
+    await daemon.search("nexus core", "keyword", 10, None, 0.5, "rrf", "tenant-a")
+
+    assert seen["zone_id"] == "tenant-a"
+
+
+# =============================================================================
+# Embedding-unavailable hybrid branch (#4541 review round 4): the keyword-only
+# degradation must still honour non-default fusion knobs.
+# =============================================================================
+
+
+def _make_no_embed_daemon() -> Any:
+    daemon = _make_daemon()
+
+    async def _embed_query(self: Any, query: str) -> None:
+        return None
+
+    daemon._embed_query = MethodType(_embed_query, daemon)
+    return daemon
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_default_keeps_raw_keyword_shortcut() -> None:
+    """Byte-identical default: embedding loss + default knobs returns the raw
+    keyword results exactly as before (BM25 scores untouched)."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon)
+
+    assert [r.path for r in results] == ["/a.md", "/b.md", "/c.md"]
+    assert [r.score for r in results] == [10.0, 9.0, 8.0]
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_honours_rrf_k() -> None:
+    """Non-default rrf_k re-scores the keyword leg through the fusion module
+    instead of silently returning raw BM25 scores."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon, rrf_k=5)
+
+    assert [r.path for r in results] == ["/a.md", "/b.md", "/c.md"]
+    assert [r.score for r in results] != [10.0, 9.0, 8.0]
+    assert results[0].score == pytest.approx(1.0 / 6 + 0.05)  # rank-1 RRF + top bonus
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_honours_weighted_alpha() -> None:
+    """weighted&alpha=1.0 assigns zero weight to the only (keyword) leg —
+    scores must reflect the requested fusion, not raw BM25."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+
+    assert all(r.score == 0.0 for r in results)
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_non_default_results_stamped_degraded() -> None:
+    """#4541 review round 6: the dense leg is missing, so non-default fusion
+    results carry the #3778 semantic_degraded marker."""
+    daemon = _make_no_embed_daemon()
+    results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+
+    assert results and all(r.semantic_degraded is True for r in results)
+
+    # The byte-identical default shortcut stays unstamped.
+    default = await _hybrid(daemon)
+    assert all(not r.semantic_degraded for r in default)
+
+
+@pytest.mark.asyncio
+async def test_fallback_non_default_keeps_fusion_provenance() -> None:
+    """#4541 review round 6: non-default fallback fusion reports the leg
+    scores that actually produced the fused score (shared hits carry BOTH
+    keyword_score and vector_score), unlike the legacy default shape."""
+    daemon = _make_fallback_daemon()
+    results = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf_weighted")
+
+    by_path = {r.path: r for r in results}
+    # /a.md is in both legs: fusion provenance keeps both modality scores.
+    assert by_path["/a.md"].keyword_score == 10.0
+    assert by_path["/a.md"].vector_score == 0.5
+    # /d.md is dense-only.
+    assert by_path["/d.md"].keyword_score is None
+    assert by_path["/d.md"].vector_score == 0.99
+
+
+@pytest.mark.asyncio
+async def test_empty_dense_leg_stamps_non_default_results_degraded() -> None:
+    """#4541 review round 7: embedding OK but vector index empty — non-default
+    fusion is ranking on keyword legs alone and must carry the marker."""
+    daemon = _make_daemon()
+
+    class EmptyVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            return []
+
+    daemon._vector_backend = EmptyVectorBackend()
+
+    stamped = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+    assert stamped and all(r.semantic_degraded is True for r in stamped)
+
+    default = await _hybrid(daemon)
+    assert all(not r.semantic_degraded for r in default)
+
+
+@pytest.mark.asyncio
+async def test_fallback_empty_semantic_leg_stamps_non_default_degraded() -> None:
+    daemon = _make_fallback_daemon()
+
+    async def _semantic_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        return []
+
+    daemon._semantic_search = MethodType(_semantic_search, daemon)
+
+    stamped = await daemon._hybrid_search("nexus core", 4, None, 0.0, "rrf_weighted")
+    assert stamped and all(r.semantic_degraded is True for r in stamped)
+
+    default = await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")
+    assert all(not r.semantic_degraded for r in default)
+
+
+@pytest.mark.asyncio
+async def test_dense_leg_exception_fails_soft() -> None:
+    """#4541 review round 8: a vector-backend exception degrades hybrid to
+    keyword-only instead of aborting the whole query."""
+    daemon = _make_daemon()
+
+    class RaisingVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            raise RuntimeError("pgvector connection lost")
+
+    daemon._vector_backend = RaisingVectorBackend()
+
+    default = await _hybrid(daemon)
+    assert [r.path for r in default] == ["/a.md", "/b.md", "/c.md"]
+    assert all(not r.semantic_degraded for r in default)
+
+    stamped = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+    assert stamped and all(r.semantic_degraded is True for r in stamped)
+
+
+@pytest.mark.asyncio
+async def test_empty_degraded_response_keeps_list_level_flag() -> None:
+    """#4541 review round 8: when the keyword leg is ALSO empty, the degraded
+    response is empty — the list-level flag is the only surviving signal."""
+    daemon = _make_no_embed_daemon()
+
+    class EmptyFtsBackend:
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[Any]:
+            return []
+
+    daemon._fts_backend = EmptyFtsBackend()
+
+    results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
+    assert list(results) == []
+    assert getattr(results, "semantic_degraded", False) is True
+
+
+@pytest.mark.asyncio
+async def test_keyword_failure_propagates_promptly_despite_hung_dense_leg() -> None:
+    """#4541 review round 9: a keyword-leg failure must not wait on (or be
+    masked by) a hung vector backend — the dense task is cancelled and the
+    keyword error re-raised promptly."""
+    import asyncio
+
+    daemon = _make_daemon()
+    dense_cancelled = asyncio.Event()
+
+    class FailingFtsBackend:
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[Any]:
+            raise RuntimeError("fts down")
+
+    class HangingVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                dense_cancelled.set()
+                raise
+            return []
+
+    daemon._fts_backend = FailingFtsBackend()
+    daemon._vector_backend = HangingVectorBackend()
+
+    with pytest.raises(RuntimeError, match="fts down"):
+        await asyncio.wait_for(_hybrid(daemon), timeout=5)
+    assert dense_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_fallback_keyword_failure_propagates() -> None:
+    """#4541 review round 10: the legacy fallback holds the same asymmetric
+    contract as the primary path — keyword failures propagate (no dense-only
+    'hybrid' response), only the semantic leg is fail-soft."""
+    daemon = _make_fallback_daemon()
+
+    async def _keyword_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        raise RuntimeError("keyword stack down")
+
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    with pytest.raises(RuntimeError, match="keyword stack down"):
+        await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")

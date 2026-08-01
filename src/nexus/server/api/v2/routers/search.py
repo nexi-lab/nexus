@@ -185,6 +185,11 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     tier_boost = getattr(result, "tier_boost", None)
     if tier_boost is not None:
         out["tier_boost"] = round(tier_boost, 4)
+    # #3778 marker, stamped by the daemon when the dense leg was unavailable
+    # for a semantic-weighted fusion request (#4541 review round 6). Emitted
+    # only when set so default responses stay byte-identical.
+    if getattr(result, "semantic_degraded", None):
+        out["semantic_degraded"] = True
     macro_text = getattr(result, "macro_text", None)
     if macro_text is not None:
         out["macro_text"] = macro_text
@@ -327,8 +332,12 @@ async def search_query(
     start_time = time.perf_counter()
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
-    zone_set_raw = auth_result.get("zone_set") or [zone_id]
-    zone_set = tuple(zone_set_raw)
+    # Raw credential scope vs synthesized routing scope: an EMPTY zone_set is
+    # the auth contract for unconstrained credentials (admin/internal keys) —
+    # only the synthesized fallback below uses the active zone_id, and that
+    # must never be treated as a token allow-list (#4541 review round 5).
+    raw_zone_set = tuple(auth_result.get("zone_set") or ())
+    zone_set = raw_zone_set or (zone_id,)
     # #3785: auto-promote to federated when token grants multiple zones,
     # even if caller didn't pass federated=true. Single-zone tokens
     # (zone_set == (zone_id,)) hit the unchanged single-zone path.
@@ -364,6 +373,20 @@ async def search_query(
 
     target_zone = zone_id if zone_id != ROOT_ZONE_ID else None
 
+    # Token zone allow-list for the federated path (#3785). An EXPLICIT
+    # singleton non-root zone_set must scope federation too: without it, a
+    # single-zone token requesting federated=true reached the dispatcher with
+    # no filter and searched every subject-accessible zone, bypassing the
+    # token's allow-list (#4541 review round 3). Unrestricted stays None for:
+    # an empty raw scope (unconstrained/admin credentials — the synthesized
+    # zone_id fallback is routing metadata, not an allow-list) and a scope of
+    # exactly {root} (root grants cross-zone access and its id never
+    # intersects concrete zone names). A multi-zone scope that happens to
+    # include root keeps its pre-existing filtered behaviour.
+    fed_zone_filter = (
+        frozenset(raw_zone_set) if raw_zone_set and set(raw_zone_set) != {ROOT_ZONE_ID} else None
+    )
+
     async def _work() -> dict[str, Any]:
         # --- Federated search path (Issue #3147) ---
         # NOTE: expand= is single-zone only; federated path does not support it.
@@ -379,7 +402,7 @@ async def search_query(
                 auth_result=auth_result,
                 search_daemon=search_daemon,
                 request=request,
-                zone_filter=frozenset(zone_set) if len(zone_set) > 1 else None,
+                zone_filter=fed_zone_filter,
             )
 
         return await _handle_single_zone_search(
@@ -547,6 +570,14 @@ async def _handle_single_zone_search(
         backend_ms = daemon_timing.get("backend_ms", 0.0)
         rerank_ms = daemon_timing.get("rerank_ms", 0.0)
 
+        # Capture request-level degradation BEFORE the ReBAC filter — it
+        # returns a plain list, dropping the SearchResultList flag. The
+        # list-level flag matters for EMPTY degraded responses, where no
+        # per-result marker exists (#4541 review round 8).
+        semantic_degraded_flag = bool(getattr(results, "semantic_degraded", False)) or any(
+            getattr(r, "semantic_degraded", None) for r in results
+        )
+
         # ReBAC file-level filtering (Decision #17)
         pre_filter_count = len(results)
         results, filter_ms = _apply_rebac_filter(
@@ -580,6 +611,9 @@ async def _handle_single_zone_search(
             "latency_breakdown": latency_breakdown,
             **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
+        # Truthy-only so default responses stay byte-identical (#3778 shape).
+        if semantic_degraded_flag:
+            response["semantic_degraded"] = True
         if routing_info:
             response["routing"] = routing_info
         return response
@@ -743,7 +777,9 @@ async def _handle_federated_search(
         response_dict["zones_skipped"] = fed_response.zones_skipped
     if fed_response.cached:
         response_dict["cached"] = True
-    if semantic_degraded:
+    # Either the #3778 sandbox BM25S fallback (local flag) or a zone-level
+    # degraded dense leg reported by the dispatcher (#4541 review round 9).
+    if semantic_degraded or getattr(fed_response, "semantic_degraded", False):
         response_dict["semantic_degraded"] = True
     return response_dict
 

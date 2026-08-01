@@ -1101,7 +1101,7 @@ def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
     (Issue #4544): every federated emission path must route through this so
     ``null`` never leaks onto the wire and the fusion strategies stay
     shape-consistent."""
-    for key in ("context", "tier_boost"):
+    for key in ("context", "tier_boost", "title_score"):
         if d.get(key) is None:
             d.pop(key, None)
     # Issue #4544: round surviving tier_boost to 4 places to match the

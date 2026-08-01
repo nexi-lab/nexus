@@ -1700,7 +1700,6 @@ async def search_expand(
     return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 
 
-
 # =============================================================================
 # Sub-router registrations (#4553 follow-up — 2000-line gate split)
 # =============================================================================

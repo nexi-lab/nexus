@@ -496,5 +496,3 @@ async def purge_unscoped_embeddings(
         "zone_id": zone_id,
         "purged": counts,
     }
-
-

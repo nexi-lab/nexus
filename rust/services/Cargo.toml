@@ -16,7 +16,13 @@ default = []
 service-audit = []
 service-agents = []
 service-managed-agent = []
-service-acp = []
+# Generic hosted-subprocess primitive (`crate::subprocess`): launch an
+# argv + surface its stdio as VFS DT_PIPEs. Unix-only at the mod gate.
+# `service-acp` pulls it (its one-shot path spawns agents); a
+# managed-agent build that wants the raw ACP control-plane spawn enables
+# it alongside `service-managed-agent`.
+subprocess-host = []
+service-acp = ["subprocess-host"]
 service-tasks = []
 # AuditNode — consumer-side audit collect/gather service for an
 # audit-only federation node. Pulls `service-audit` to reuse

@@ -2440,30 +2440,15 @@ class SearchDaemon:
                 timing["page_keyword_ms"] = (time.perf_counter() - page_start) * 1000
                 return keyword_candidates[:keyword_limit], page_results
 
-            kw_outcome, dense_outcome = await asyncio.gather(
+            (chunk_kw, page_kw), dense = await self._gather_legs_fail_soft_dense(
                 timed_pg_keyword_legs(),
                 timed_leg(
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
                 ),
-                return_exceptions=True,
             )
-            # Keyword-leg failures propagate as before; only the dense leg is
-            # fail-soft — a pgvector/connection error degrades to keyword-only
-            # (empty dense leg, stamped below for non-default requests)
-            # instead of aborting the whole hybrid query (#4541 review R8).
-            if isinstance(kw_outcome, BaseException):
-                raise kw_outcome
-            chunk_kw, page_kw = kw_outcome
-            if isinstance(dense_outcome, BaseException):
-                logger.warning(
-                    "hybrid dense leg failed; continuing keyword-only: %s", dense_outcome
-                )
-                dense = []
-            else:
-                dense = dense_outcome
         else:
-            kw_outcome, dense_outcome = await asyncio.gather(
+            chunk_kw, dense = await self._gather_legs_fail_soft_dense(
                 timed_leg(
                     "keyword_ms",
                     self._fts_backend.keyword_search(
@@ -2474,18 +2459,7 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
                 ),
-                return_exceptions=True,
             )
-            if isinstance(kw_outcome, BaseException):
-                raise kw_outcome
-            chunk_kw = kw_outcome
-            if isinstance(dense_outcome, BaseException):
-                logger.warning(
-                    "hybrid dense leg failed; continuing keyword-only: %s", dense_outcome
-                )
-                dense = []
-            else:
-                dense = dense_outcome
             page_kw = []
 
         # Fuse keyword legs first (chunk + page) with plain RRF, then fuse
@@ -2520,6 +2494,36 @@ class SearchDaemon:
             for hybrid_result in hybrid_results:
                 hybrid_result.semantic_degraded = True
         return hybrid_results
+
+    @staticmethod
+    async def _gather_legs_fail_soft_dense(
+        kw_awaitable: Awaitable[T],
+        dense_awaitable: Awaitable[list[Any]],
+    ) -> tuple[T, list[Any]]:
+        """Run the keyword and dense legs concurrently with asymmetric failure
+        handling (#4541 review R8/R9).
+
+        Keyword failures propagate PROMPTLY — the dense task is cancelled and
+        drained first, so a hung vector backend cannot pin the request while
+        the keyword error waits. Dense failures degrade to an empty leg (the
+        caller stamps ``semantic_degraded`` for non-default fusion requests)
+        instead of aborting the whole hybrid query.
+        """
+        kw_task = asyncio.ensure_future(kw_awaitable)
+        dense_task = asyncio.ensure_future(dense_awaitable)
+        try:
+            kw_result = await kw_task
+        except BaseException:
+            dense_task.cancel()
+            with contextlib.suppress(BaseException):
+                await dense_task
+            raise
+        try:
+            dense_result: list[Any] = await dense_task
+        except Exception as exc:
+            logger.warning("hybrid dense leg failed; continuing keyword-only: %s", exc)
+            dense_result = []
+        return kw_result, dense_result
 
     async def _embed_query(self, query: str) -> list[float] | None:
         """Embed a query string for the new vector backends.

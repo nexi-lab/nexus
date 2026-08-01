@@ -102,6 +102,11 @@ class FederatedSearchResponse:
     # phase split as a single-zone one. Remote zones (gRPC peers) do not return
     # per-leg timing through the delegation path, so they don't contribute here.
     search_timing: dict[str, float] = field(default_factory=dict)
+    # #3778 marker (#4541 review round 9): True when any zone served this
+    # query with a degraded dense leg — captured BEFORE ReBAC filtering so
+    # the signal survives empty and fully-filtered responses (and cache hits,
+    # since the cached object carries it).
+    semantic_degraded: bool = False
 
 
 class FederationUnreachableError(Exception):
@@ -123,6 +128,23 @@ def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
     if not response.zones_searched and not response.zones_failed:
         return True
     return bool(not response.results and len(response.zones_failed) >= len(response.zones_searched))
+
+
+def _zone_results_degraded(results: Any) -> bool:
+    """True when a zone's results carry the #3778 degradation marker — either
+    list-level (``SearchResultList.semantic_degraded``, which survives empty
+    responses) or per-result (local result objects / remote result dicts).
+    Checked BEFORE ReBAC filtering so a fully-filtered response keeps the
+    signal (#4541 review round 9)."""
+    if getattr(results, "semantic_degraded", False):
+        return True
+    for r in results:
+        if isinstance(r, dict):
+            if r.get("semantic_degraded"):
+                return True
+        elif getattr(r, "semantic_degraded", None):
+            return True
+    return False
 
 
 def _aggregate_zone_timing(timings: list[dict[str, float]]) -> dict[str, float]:
@@ -685,6 +707,7 @@ class FederatedSearchDispatcher:
                 zone_timing = _aggregate_zone_timing(
                     [dict(getattr(results, "search_timing", {}) or {})]
                 )
+                zone_degraded = _zone_results_degraded(results)
                 # Per-file ReBAC post-filter (Phase 2+)
                 if self._enable_per_file_rebac:
                     results = await filter_federated_results(
@@ -700,6 +723,7 @@ class FederatedSearchDispatcher:
                     zones_skipped=zones_skipped,
                     latency_ms=(time.perf_counter() - start) * 1000,
                     search_timing=zone_timing,
+                    semantic_degraded=zone_degraded,
                 )
                 self._cache_result(cache_key, resp)
                 return resp
@@ -753,6 +777,7 @@ class FederatedSearchDispatcher:
         # split survives fan-out, even for zones that returned no results.
         zone_timings: list[dict[str, float]] = []
 
+        any_zone_degraded = False
         for zone_id, outcome in zone_outcomes:
             if isinstance(outcome, BaseException):
                 logger.warning("[FEDERATED] Zone %s failed: %s", zone_id, outcome)
@@ -762,6 +787,8 @@ class FederatedSearchDispatcher:
                 timing = getattr(outcome, "search_timing", None)
                 if isinstance(timing, dict):
                     zone_timings.append(timing)
+                if not any_zone_degraded and _zone_results_degraded(outcome):
+                    any_zone_degraded = True
                 if outcome:  # non-empty results
                     zone_result_lists.append((zone_id, outcome))
 
@@ -788,18 +815,19 @@ class FederatedSearchDispatcher:
         elif len(zone_result_lists) == 1:
             _zone_id, results = zone_result_lists[0]
             fused_results = [_result_to_dict(r) for r in results[:limit]]
-        elif (
-            self._config.fusion_strategy == FederatedFusionStrategy.RRF
-            or fusion_method == "weighted"
+        elif self._config.fusion_strategy == FederatedFusionStrategy.RRF or (
+            fusion_method == "weighted" and search_type == "hybrid"
         ):
             # RRF: for heterogeneous zones with different scoring functions.
-            # ALSO forced for fusion_method=weighted (#4541 review round 8):
-            # weighted fusion min-max normalizes scores INSIDE each zone, so
-            # raw values are shard-local — the top hit of a weak zone scores
-            # 1.0 and would outrank materially stronger hits from another
-            # zone under a raw-score merge. Rank-based fusion is the only
-            # cross-zone-safe merge for that method; rrf/rrf_weighted scores
-            # share one reciprocal-rank formula and stay comparable.
+            # ALSO forced for weighted HYBRID fusion (#4541 review rounds
+            # 8-9): weighted fusion min-max normalizes scores INSIDE each
+            # zone, so raw values are shard-local — the top hit of a weak
+            # zone scores 1.0 and would outrank materially stronger hits from
+            # another zone under a raw-score merge. Keyword/semantic requests
+            # never run weighted fusion (the knob is hybrid-only), so their
+            # raw scores stay comparable and keep the default merge;
+            # rrf/rrf_weighted scores share one reciprocal-rank formula and
+            # stay comparable too.
             fused_results = rrf_multi_fusion(
                 result_lists=zone_result_lists,
                 k=60,
@@ -826,6 +854,7 @@ class FederatedSearchDispatcher:
             zones_skipped=zones_skipped,
             latency_ms=(time.perf_counter() - start) * 1000,
             search_timing=_aggregate_zone_timing(zone_timings),
+            semantic_degraded=any_zone_degraded,
         )
         self._cache_result(cache_key, resp)
         return resp

@@ -651,6 +651,57 @@ class TestResultCaching:
         assert paths == ["a1.txt", "b1.txt", "a2.txt", "b2.txt"]
 
     @pytest.mark.asyncio
+    async def test_weighted_merge_not_forced_for_keyword_search(self) -> None:
+        """#4541 review round 9: keyword/semantic requests never run weighted
+        fusion, so their comparable raw scores keep the default merge."""
+        daemon = _make_daemon(
+            {
+                "zone_a": [_make_result("a1.txt", 1.0), _make_result("a2.txt", 0.2)],
+                "zone_b": [_make_result("b1.txt", 0.99), _make_result("b2.txt", 0.98)],
+            }
+        )
+        rebac = _make_rebac(["zone_a", "zone_b"])
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
+
+        resp = await dispatcher.search(
+            "test",
+            subject=("user", "alice"),
+            search_type="keyword",
+            fusion_method="weighted",
+        )
+
+        paths = [r["path"] for r in resp.results]
+        assert paths == ["a1.txt", "b1.txt", "b2.txt", "a2.txt"]  # raw-score merge
+
+    @pytest.mark.asyncio
+    async def test_federated_response_carries_degradation_flag(self) -> None:
+        """#4541 review round 9: zone-level degradation (even with an empty
+        result list) surfaces on the FederatedSearchResponse."""
+        from nexus.bricks.search.daemon import SearchResultList
+
+        degraded_empty = SearchResultList([])
+        degraded_empty.semantic_degraded = True
+
+        daemon = AsyncMock()
+        daemon.is_initialized = True
+
+        async def mock_search(**kwargs):
+            return degraded_empty
+
+        daemon.search = mock_search
+        rebac = _make_rebac(["zone_a"])
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
+
+        resp = await dispatcher.search("test", subject=("user", "alice"))
+        assert resp.results == []
+        assert resp.semantic_degraded is True
+
+        healthy = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
+        dispatcher2 = FederatedSearchDispatcher(daemon=healthy, rebac=_make_rebac(["zone_a"]))
+        resp2 = await dispatcher2.search("test", subject=("user", "alice"))
+        assert resp2.semantic_degraded is False
+
+    @pytest.mark.asyncio
     async def test_positional_zone_filter_signature_unchanged(self) -> None:
         """#4541 review round 3: rrf_k sits AFTER zone_filter so a legacy
         positional call ending in the allow-list set still binds it to

@@ -560,3 +560,44 @@ async def test_empty_degraded_response_keeps_list_level_flag() -> None:
     results = await _hybrid(daemon, alpha=1.0, fusion_method="weighted")
     assert list(results) == []
     assert getattr(results, "semantic_degraded", False) is True
+
+
+@pytest.mark.asyncio
+async def test_keyword_failure_propagates_promptly_despite_hung_dense_leg() -> None:
+    """#4541 review round 9: a keyword-leg failure must not wait on (or be
+    masked by) a hung vector backend — the dense task is cancelled and the
+    keyword error re-raised promptly."""
+    import asyncio
+
+    daemon = _make_daemon()
+    dense_cancelled = asyncio.Event()
+
+    class FailingFtsBackend:
+        async def keyword_search(
+            self,
+            query: str,
+            path: str,
+            limit: int,
+            zone_id: str,
+            *,
+            timing: dict[str, float] | None = None,
+        ) -> list[Any]:
+            raise RuntimeError("fts down")
+
+    class HangingVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                dense_cancelled.set()
+                raise
+            return []
+
+    daemon._fts_backend = FailingFtsBackend()
+    daemon._vector_backend = HangingVectorBackend()
+
+    with pytest.raises(RuntimeError, match="fts down"):
+        await asyncio.wait_for(_hybrid(daemon), timeout=5)
+    assert dense_cancelled.is_set()

@@ -777,7 +777,9 @@ async def _handle_federated_search(
         response_dict["zones_skipped"] = fed_response.zones_skipped
     if fed_response.cached:
         response_dict["cached"] = True
-    if semantic_degraded:
+    # Either the #3778 sandbox BM25S fallback (local flag) or a zone-level
+    # degraded dense leg reported by the dispatcher (#4541 review round 9).
+    if semantic_degraded or getattr(fed_response, "semantic_degraded", False):
         response_dict["semantic_degraded"] = True
     return response_dict
 

@@ -12,6 +12,7 @@ Tests each responsibility in isolation with mocks:
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -1378,3 +1379,65 @@ class TestTierBoostTrustBoundary:
         assert "tier_boost" not in _strip_none_context(
             {"path": "a", "score": 1.0, "tier_boost": 0.01}
         )
+
+
+class TestRound10Hardening:
+    @pytest.mark.asyncio
+    async def test_cache_hit_preserves_degradation_marker(self) -> None:
+        """#4541 review round 10: a cache hit serves the same degraded
+        payload, so semantic_degraded must survive the cache-hit clone."""
+        from nexus.bricks.search.daemon import SearchResultList
+        from nexus.bricks.search.federated_search import FederatedSearchConfig
+
+        degraded_empty = SearchResultList([])
+        degraded_empty.semantic_degraded = True
+
+        daemon = AsyncMock()
+        daemon.is_initialized = True
+
+        async def mock_search(**kwargs):
+            return degraded_empty
+
+        daemon.search = mock_search
+        config = FederatedSearchConfig(result_cache_enabled=True)
+        dispatcher = FederatedSearchDispatcher(
+            daemon=daemon, rebac=_make_rebac(["zone_a"]), config=config
+        )
+
+        miss = await dispatcher.search("test", subject=("user", "alice"))
+        assert miss.semantic_degraded is True and not miss.cached
+
+        hit = await dispatcher.search("test", subject=("user", "alice"))
+        assert hit.cached is True
+        assert hit.semantic_degraded is True
+
+    @pytest.mark.asyncio
+    async def test_leaky_keyword_promotion_avoids_weighted_fusion(self) -> None:
+        """#4541 review round 10: the 13B keyword->hybrid safety promotion
+        must not run weighted fusion (shard-local normalized scores would be
+        raw-merged); it substitutes rrf_weighted, which honours the alpha=1.0
+        override with cross-zone-comparable scores."""
+        seen: dict[str, Any] = {}
+
+        daemon = AsyncMock()
+        daemon.is_initialized = True
+        daemon.get_stats = lambda: {"bm25_documents": 5, "zoekt_available": False}
+
+        async def mock_search(**kwargs):
+            seen.update(kwargs)
+            return [_make_result("a.txt", 5.0)]
+
+        daemon.search = mock_search
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_make_rebac(["zone_a"]))
+
+        await dispatcher.search(
+            "test",
+            subject=("user", "alice"),
+            search_type="keyword",
+            fusion_method="weighted",
+            alpha=0.3,
+        )
+
+        assert seen["search_type"] == "hybrid"  # 13B promotion happened
+        assert seen["alpha"] == 1.0
+        assert seen["fusion_method"] == "rrf_weighted"  # not weighted

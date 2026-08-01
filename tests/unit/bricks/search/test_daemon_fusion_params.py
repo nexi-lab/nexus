@@ -316,7 +316,9 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
     def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms
 
-    async def _attach_path_contexts(self: Any, results: Any, *, zone_id: str) -> None:
+    async def _attach_path_contexts(
+        self: Any, results: Any, *, zone_id: str, **kwargs: Any
+    ) -> None:
         self._last_context_zone = zone_id
 
     async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
@@ -371,7 +373,9 @@ async def test_search_positional_signature_unchanged() -> None:
     def _track_latency(self: Any, latency_ms: float) -> None:
         self._last_latency_ms = latency_ms
 
-    async def _attach_path_contexts(self: Any, results: Any, *, zone_id: str) -> None:
+    async def _attach_path_contexts(
+        self: Any, results: Any, *, zone_id: str, **kwargs: Any
+    ) -> None:
         self._last_context_zone = zone_id
 
     async def _search_via_backends(self: Any, *args: Any, **kwargs: Any) -> list[SearchResult]:
@@ -601,3 +605,21 @@ async def test_keyword_failure_propagates_promptly_despite_hung_dense_leg() -> N
     with pytest.raises(RuntimeError, match="fts down"):
         await asyncio.wait_for(_hybrid(daemon), timeout=5)
     assert dense_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_fallback_keyword_failure_propagates() -> None:
+    """#4541 review round 10: the legacy fallback holds the same asymmetric
+    contract as the primary path — keyword failures propagate (no dense-only
+    'hybrid' response), only the semantic leg is fail-soft."""
+    daemon = _make_fallback_daemon()
+
+    async def _keyword_search(
+        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+    ) -> list[Any]:
+        raise RuntimeError("keyword stack down")
+
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    with pytest.raises(RuntimeError, match="keyword stack down"):
+        await daemon._hybrid_search("nexus core", 4, None, 0.5, "rrf")

@@ -325,6 +325,15 @@ class FederatedSearchDispatcher:
         """Search a single zone with capability-aware routing."""
         effective_type, alpha_override = self._get_effective_search_type(zone_id, search_type)
         effective_alpha = alpha_override if alpha_override is not None else alpha
+        # 13B safety promotion (keyword -> hybrid alpha=1.0 under leaky BM25S/
+        # Zoekt) must not run WEIGHTED fusion: the cross-zone merge guard only
+        # sees the original request type, and weighted scores are shard-local
+        # min-max normalized. rrf_weighted honours the alpha=1.0 override
+        # (semantic-only, preserving 13B) while producing reciprocal-rank
+        # scores that stay comparable across zones (#4541 review round 10).
+        effective_fusion = fusion_method
+        if effective_type != search_type and fusion_method == "weighted":
+            effective_fusion = "rrf_weighted"
 
         # Phase 2: Check if this zone has a remote transport in the registry.
         # If so, search via gRPC with a SearchDelegation credential.
@@ -344,7 +353,7 @@ class FederatedSearchDispatcher:
                 limit=limit,
                 path_filter=path_filter,
                 alpha=effective_alpha,
-                fusion_method=fusion_method,
+                fusion_method=effective_fusion,
                 rrf_k=rrf_k,
                 subject=subject,
             )
@@ -357,7 +366,7 @@ class FederatedSearchDispatcher:
             limit=limit,
             path_filter=path_filter,
             alpha=effective_alpha,
-            fusion_method=fusion_method,
+            fusion_method=effective_fusion,
             rrf_k=rrf_k,
             zone_id=zone_id,
         )
@@ -532,6 +541,10 @@ class FederatedSearchDispatcher:
             # report backend work that did not happen (Codex R8). Leave empty;
             # the ``cached=True`` flag marks the response.
             search_timing={},
+            # Degradation IS a property of the cached payload — a hit serves
+            # the same (possibly empty) degraded results, so the marker must
+            # survive the clone (#4541 review round 10).
+            semantic_degraded=response.semantic_degraded,
         )
 
     def _cache_result(self, cache_key: str, response: FederatedSearchResponse) -> None:

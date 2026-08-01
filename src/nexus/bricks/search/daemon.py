@@ -3068,26 +3068,15 @@ class SearchDaemon:
         from nexus.bricks.search.fusion import FusionConfig, FusionMethod, fuse_results
 
         # Run keyword and semantic in parallel
-        kw_task = asyncio.ensure_future(
-            self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
+        # Same asymmetric contract as the primary indexed path (#4541 review
+        # round 10): keyword failures cancel the semantic task and propagate
+        # promptly (no dense-only "hybrid" responses, no waiting behind a
+        # hung semantic leg); semantic failures degrade to an empty leg and
+        # are stamped below for non-default fusion requests.
+        kw_results, sem_results = await self._gather_legs_fail_soft_dense(
+            self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id),
+            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id),
         )
-        sem_task = asyncio.ensure_future(
-            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id)
-        )
-
-        raw_results = await asyncio.gather(kw_task, sem_task, return_exceptions=True)
-
-        kw_results: list[SearchResult] = []
-        sem_results: list[SearchResult] = []
-
-        if isinstance(raw_results[0], BaseException):
-            logger.warning("Keyword search failed: %s", raw_results[0])
-        else:
-            kw_results = raw_results[0]
-        if isinstance(raw_results[1], BaseException):
-            logger.warning("Semantic search failed: %s", raw_results[1])
-        else:
-            sem_results = raw_results[1]
 
         fusion_config = FusionConfig(
             method=FusionMethod(fusion_method),

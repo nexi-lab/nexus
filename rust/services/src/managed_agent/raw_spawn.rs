@@ -12,6 +12,11 @@
 //!   * `fd/0` (stdin) — the client appends bytes; a nexus pump reads the
 //!     stream and writes the child's stdin.
 //!
+//! Plus a fourth stream `/proc/{pid}/exit` carrying the frozen-contract ③
+//! exit event: on child exit the supervisor writes `{"code":…,"signal":…}`
+//! and closes it, so a client that saw `fd/1` close can read WHY the agent
+//! exited (clean vs signal death) to drive reconnect/resume.
+//!
 //! nexus NEVER frames or parses ACP — NDJSON/LSP framing + all protocol
 //! logic stay client-side. The stream primitive is the same offset-based,
 //! non-destructive log the A2A mailboxes use, so `read_at(offset)` cleanly
@@ -153,7 +158,20 @@ impl RawSpawn for KernelRawSpawn {
         let stdin_path = fd_path(pid, 0); // client → agent
         let stdout_path = fd_path(pid, 1); // agent → client
         let stderr_path = fd_path(pid, 2); // agent → client
-        let paths = [stdin_path.clone(), stdout_path.clone(), stderr_path.clone()];
+                                           // Frozen-contract ③: a node-local stream the supervisor writes the
+                                           // child's exit `{code, signal}` to (then closes) so a client that
+                                           // saw fd/1 close can read WHY the agent exited (clean vs signal
+                                           // death) to drive reconnect/resume. Same memory-DT_STREAM lifecycle
+                                           // as the fd tunnels — registered here, destroyed after the drain
+                                           // grace — so the reap teardown (which removes only the stamped
+                                           // procfs dirents, not these streams) leaves it readable meanwhile.
+        let exit_path = format!("/proc/{pid}/exit");
+        let paths = [
+            stdin_path.clone(),
+            stdout_path.clone(),
+            stderr_path.clone(),
+            exit_path.clone(),
+        ];
         let kernel = self.kernel.as_ref();
         let registry = self.agent_registry.as_ref();
 
@@ -215,18 +233,19 @@ impl RawSpawn for KernelRawSpawn {
         let kernel = Arc::clone(&self.kernel);
         let registry = Arc::clone(&self.agent_registry);
         let pid_owned = pid.to_string();
+        let exit_path_owned = exit_path.clone();
         rt.spawn(async move {
             let mut sub = sub;
             let self_exit = {
                 let waited = sub.wait();
                 tokio::pin!(waited);
                 tokio::select! {
-                    code = &mut waited => Some(code),
+                    st = &mut waited => Some(st),
                     _ = cancel_rx => None,
                 }
             };
-            let exit_code = match self_exit {
-                Some(code) => code,
+            let exit = match self_exit {
+                Some(st) => st,
                 None => {
                     sub.kill().await;
                     sub.wait().await
@@ -239,7 +258,24 @@ impl RawSpawn for KernelRawSpawn {
             // response). Stop the stdin pump and reap the session
             // (Terminated → on_terminate tears down the procfs subtree).
             let _ = stdin_stop_tx.send(());
-            let _ = registry.kill(&pid_owned, exit_code);
+            // ③ Surface the exit event on the handle: write `{code,signal}`
+            // to the exit stream + close it, so a client that saw fd/1
+            // close can read WHY the agent exited (clean vs signal death)
+            // to drive reconnect/resume. Best-effort — a destroyed stream
+            // just means the client already disconnected.
+            let exit_json = format!(
+                "{{\"code\":{},\"signal\":{}}}",
+                exit.code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
+                exit.signal
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
+            );
+            let _ =
+                kernel.stream_write_nowait(&exit_path_owned, exit_json.as_bytes(), &system_ctx());
+            let _ = kernel.close_stream(&exit_path_owned);
+            let _ = registry.kill(&pid_owned, exit.as_reap_code());
             // Give the client a bounded window to drain the closed streams,
             // then remove them so they don't leak in the registry. (This
             // also unwedges a pump if a grandchild kept a write-end open,
@@ -248,7 +284,7 @@ impl RawSpawn for KernelRawSpawn {
             for p in &paths {
                 let _ = kernel.destroy_stream(p);
             }
-            tracing::info!(pid = %pid_owned, exit_code, "raw ACP stream tunnel closed");
+            tracing::info!(pid = %pid_owned, code = ?exit.code, signal = ?exit.signal, "raw ACP stream tunnel closed");
         });
 
         self.spawn_handles.insert(

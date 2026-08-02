@@ -43,6 +43,7 @@
 
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
+use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -248,13 +249,40 @@ impl HostedSubprocess {
         let _ = self.child.kill().await;
     }
 
-    /// Wait for the child to exit. Returns the exit code (or 0 on
-    /// signal / unknown status, matching the Python service's "no code"
-    /// fallback).
-    pub(crate) async fn wait(&mut self) -> i32 {
+    /// Wait for the child to exit. Returns the full terminal status —
+    /// exit `code` for a normal exit, or the terminating `signal` (unix)
+    /// if it was killed by a signal. The frozen-contract ③ exit event
+    /// needs BOTH: a signal death (`code == None`) must not be flattened
+    /// to a fake `0`, or the client can't tell a clean exit from a crash.
+    pub(crate) async fn wait(&mut self) -> ProcessExit {
         match self.child.wait().await {
-            Ok(status) => status.code().unwrap_or(0),
-            Err(_) => -1,
+            Ok(status) => ProcessExit {
+                code: status.code(),
+                signal: status.signal(),
+            },
+            Err(_) => ProcessExit::default(),
+        }
+    }
+}
+
+/// Terminal status of a hosted child (frozen-contract ③). Exactly one of
+/// `code` / `signal` is `Some` for a real exit; both `None` means the
+/// wait itself failed (status indeterminable).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProcessExit {
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
+impl ProcessExit {
+    /// Collapse to the shell single-integer convention for the callers
+    /// that need one `i32` (AgentRegistry reap code, logs): the exit code,
+    /// else `128 + signal` for a signal death, else `-1` when unknown.
+    pub(crate) fn as_reap_code(&self) -> i32 {
+        match (self.code, self.signal) {
+            (Some(c), _) => c,
+            (None, Some(s)) => 128 + s,
+            (None, None) => -1,
         }
     }
 }
@@ -467,7 +495,7 @@ mod tests {
         let exit = tokio::time::timeout(Duration::from_secs(5), sub.wait())
             .await
             .expect("wait timed out");
-        assert_eq!(exit, 0, "cat should exit 0 on EOF");
+        assert_eq!(exit.code, Some(0), "cat should exit 0 on EOF");
     }
 
     /// Stress the spawn / register / write / read / kill path 10x to

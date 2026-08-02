@@ -15,12 +15,14 @@ default = []
 # slim Rust binaries (nexus-cluster) link only the services they want.
 service-audit = []
 service-agents = []
-service-managed-agent = []
+service-managed-agent = ["subprocess-host"]
 # Generic hosted-subprocess primitive (`crate::subprocess`): launch an
-# argv + surface its stdio as VFS DT_PIPEs. Unix-only at the mod gate.
-# `service-acp` pulls it (its one-shot path spawns agents); a
-# managed-agent build that wants the raw ACP control-plane spawn enables
-# it alongside `service-managed-agent`.
+# argv + surface its stdio to the VFS. Unix-only at the mod gate, so
+# enabling it on a non-unix target is a harmless no-op (the mods are
+# `cfg(unix)`-gated). BOTH spawning services pull it directly so each is
+# self-contained: `service-acp` (one-shot ACP) and `service-managed-agent`
+# (the raw ACP control-plane tunnel — its DEFINING capability, so it must
+# not silently depend on `service-acp` being co-enabled to get spawn).
 subprocess-host = []
 service-acp = ["subprocess-host"]
 service-tasks = []

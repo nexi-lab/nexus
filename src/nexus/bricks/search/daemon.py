@@ -2878,7 +2878,7 @@ class SearchDaemon:
     async def _search_on_current_loop(
         self,
         query: str,
-        search_type: Literal["keyword", "semantic", "hybrid"] = "hybrid",
+        search_type: str = "hybrid",
         limit: int = 10,
         path_filter: str | None = None,
         alpha: float = 0.5,

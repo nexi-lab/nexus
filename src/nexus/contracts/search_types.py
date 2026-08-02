@@ -16,7 +16,6 @@ Issue #1499: Shared query analysis patterns for query routing and expansion.
 import contextvars
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
 
 __all__ = [
     # Strategy enums
@@ -66,7 +65,10 @@ class SearchRequest:
     """Bundled parameters for ``SearchBrickProtocol.search``."""
 
     query: str
-    search_type: Literal["keyword", "semantic", "hybrid"] = "hybrid"
+    # Kept as ``str`` (not ``Literal``) so callers passing an HTTP-validated
+    # string variable don't have to cast — runtime validation lives at the
+    # HTTP boundary in ``routers/search.py``.
+    search_type: str = "hybrid"
     limit: int = 10
     path_filter: str | None = None
     alpha: float = 0.5

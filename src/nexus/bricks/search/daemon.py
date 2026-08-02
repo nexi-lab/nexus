@@ -3624,11 +3624,13 @@ class SearchDaemon:
                 continue
             try:
                 hits = await self.search(
-                    str(q.get("query", "")),
-                    search_type=q.get("search_type", "hybrid"),
-                    limit=int(q.get("limit", 10)),
-                    path_filter=q.get("path_filter"),
-                    zone_id=effective_zone_id,
+                    SearchRequest(
+                        query=str(q.get("query", "")),
+                        search_type=q.get("search_type", "hybrid"),
+                        limit=int(q.get("limit", 10)),
+                        path_filter=q.get("path_filter"),
+                        zone_id=effective_zone_id,
+                    )
                 )
             except Exception as exc:
                 logger.warning("batch_search inner search failed: %s", exc)

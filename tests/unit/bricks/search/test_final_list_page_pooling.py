@@ -443,18 +443,9 @@ def _capture_daemon(
     records the limit each zone was asked for."""
     daemon = SimpleNamespace(config=config, is_initialized=True)
 
-    async def search(
-        query: str,
-        search_type: str = "hybrid",
-        limit: int = 10,
-        path_filter: str | None = None,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        zone_id: str | None = None,
-        **kwargs: Any,
-    ) -> list[Any]:
-        seen_limits[zone_id or ""] = limit
-        return list(zone_results.get(zone_id or "", []))[:limit]
+    async def search(request: SearchRequest) -> list[Any]:
+        seen_limits[request.zone_id or ""] = request.limit
+        return list(zone_results.get(request.zone_id or "", []))[: request.limit]
 
     daemon.search = search
     return daemon

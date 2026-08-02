@@ -63,36 +63,19 @@ def _open_kernel(data_dir: Path) -> KernelClient:
     return client
 
 
-def _start_session_when_ready(client: KernelClient, spec: dict, timeout_s: float = 25.0):
-    """Call start_session, tolerating the daemon boot window.
-
-    ``KernelClient._wait_ready`` returns as soon as the gRPC server answers
-    ``Ping`` — but that server binds (for raft consensus) BEFORE
-    ``bring_up_services`` registers managed_agent, so an immediate call can
-    land in a ~1–2s window where the service isn't registered yet and the
-    dot-notation ``Call`` returns a terminal "service not found". A client
-    that spawns the daemon must wait for it to finish booting; poll until
-    the control plane resolves.
-    """
-    deadline = time.monotonic() + timeout_s
-    last_err: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            return client._call("managed_agent.start_session_v1", spec)
-        except Exception as exc:  # noqa: BLE001 — boot-window miss ⇒ retry
-            if "service not found" not in str(exc):
-                raise
-            last_err = exc
-            time.sleep(0.25)
-    raise AssertionError(f"managed_agent never became ready within {timeout_s}s: {last_err}")
-
-
 def test_managed_agent_tunnel_roundtrip(tmp_path: Path) -> None:
-    """spawn_spec → real subprocess → bidi raw-byte tunnel round-trips."""
+    """spawn_spec → real subprocess → bidi raw-byte tunnel round-trips.
+
+    Calls start_session directly with no client-side boot-window retry: the
+    daemon holds a service ``Call`` that arrives before ``bring_up_services``
+    has enlisted the services (nexus-vfs `Call` readiness gate), so a
+    spawn-then-immediately-connect client no longer needs to poll for the
+    control plane to appear.
+    """
     client = _open_kernel(tmp_path)
     try:
-        resp = _start_session_when_ready(
-            client,
+        resp = client._call(
+            "managed_agent.start_session_v1",
             {
                 "agent_id": "e2e-tunnel",
                 # Line-buffered self-terminating echo: reads one line from the

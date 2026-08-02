@@ -27,7 +27,7 @@ class RecordingRegistry:
 class FakeSearchDaemon:
     is_initialized = True
 
-    async def search(self, **kwargs: Any) -> list[Any]:
+    async def search(self, *args: Any, **kwargs: Any) -> list[Any]:
         return []
 
     def get_health(self) -> dict[str, Any]:

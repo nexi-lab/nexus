@@ -20,6 +20,7 @@ import builtins
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from nexus.contracts.search_types import SearchRequest  # noqa: F401
     from nexus.contracts.types import OperationContext
 
 # =============================================================================
@@ -45,21 +46,7 @@ class SearchBrickProtocol(Protocol):
 
     async def shutdown(self) -> None: ...
 
-    async def search(
-        self,
-        query: str,
-        search_type: str = "hybrid",
-        limit: int = 10,
-        path_filter: str | None = None,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        recency: str | None = None,
-        recency_weight: float | None = None,
-        recency_half_life_days: float | None = None,
-        adaptive_k: bool = False,
-        zone_id: str | None = None,
-        rrf_k: int = 60,
-    ) -> builtins.list[Any]: ...
+    async def search(self, request: "SearchRequest") -> builtins.list[Any]: ...
 
     def get_stats(self) -> dict[str, Any]: ...
 

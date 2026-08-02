@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 from nexus.bricks.search.pg_fts_backend import PgFtsBackend
 from nexus.bricks.search.pg_vector_backend import PgVectorBackend
+from nexus.contracts.search_types import SearchRequest
 
 
 def _get_pg_url() -> str | None:
@@ -165,6 +166,8 @@ async def test_daemon_hybrid_mode_calls_fusion(
 
     monkeypatch.setattr(daemon._embedding_client, "embed_query", fake_embed_query)
 
-    await daemon.search("alpha", path_filter="/z/", limit=5, search_type="hybrid", zone_id="z")
+    await daemon.search(
+        SearchRequest(query="alpha", path_filter="/z/", limit=5, search_type="hybrid", zone_id="z")
+    )
     # 3-way RRF can be implemented as one call OR two nested rrf_fusion calls.
     assert seen["calls"] >= 1

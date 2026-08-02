@@ -38,11 +38,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
+from nexus.contracts.search_types import SearchRequest
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
+from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_operation_context, require_admin, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
@@ -65,13 +67,6 @@ router = APIRouter(prefix="/api/v2/search", tags=["search"])
 # =============================================================================
 # Dependencies
 # =============================================================================
-
-
-# _get_search_daemon lives in _search_deps.py so the split sub-routers
-# (_search_indexed_dirs, _search_locate) can import it without forming
-# a cycle back through search.py.  Re-export here for the many callers
-# / tests / monkeypatches that already reach it via `search._get_search_daemon`.
-from nexus.server.api.v2.routers._search_deps import _get_search_daemon  # noqa: E402
 
 
 def _get_record_store(request: Request) -> Any:
@@ -544,18 +539,20 @@ async def _handle_single_zone_search(
             return response
 
         results = await search_daemon.search(
-            query=q,
-            search_type=search_type,
-            limit=fetch_limit,
-            path_filter=path_filter,
-            alpha=alpha,
-            fusion_method=fusion_method,
-            rrf_k=rrf_k,
-            zone_id=zone_id,
-            expand=expand,
-            recency=recency,
-            recency_weight=recency_weight,
-            recency_half_life_days=recency_half_life_days,
+            SearchRequest(
+                query=q,
+                search_type=search_type,
+                limit=fetch_limit,
+                path_filter=path_filter,
+                alpha=alpha,
+                fusion_method=fusion_method,
+                rrf_k=rrf_k,
+                zone_id=zone_id,
+                expand=expand,
+                recency=recency,
+                recency_weight=recency_weight,
+                recency_half_life_days=recency_half_life_days,
+            )
         )
 
         # Prefer the request-local snapshot carried by SearchDaemon results.

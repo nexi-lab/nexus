@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nexus.bricks.search.results import BaseSearchResult
+from nexus.contracts.search_types import SearchRequest
 
 daemon_mod = pytest.importorskip(
     "nexus.bricks.search.daemon",
@@ -70,9 +71,9 @@ class TestZoneLevelIsolation:
 
     @pytest.mark.asyncio
     async def test_search_passes_zone_id_to_backend(self) -> None:
-        """zone_id should be forwarded to backend.search()."""
+        """zone_id should be forwarded to backend.search(SearchRequest(query=))."""
         daemon, mock_backend = await _make_daemon_with_mock()
-        await daemon.search("test query", zone_id="corp")
+        await daemon.search(SearchRequest(query="test query", zone_id="corp"))
         call_kwargs = mock_backend.search.call_args[1]
         assert call_kwargs["zone_id"] == "corp"
         await daemon.shutdown()
@@ -84,11 +85,11 @@ class TestZoneLevelIsolation:
 
         # Zone A returns files from zone A
         mock_backend.search.return_value = _make_backend_results(["/a1.py", "/a2.py"], "zone-a")
-        results_a = await daemon.search("test", zone_id="zone-a")
+        results_a = await daemon.search(SearchRequest(query="test", zone_id="zone-a"))
 
         # Zone B returns files from zone B
         mock_backend.search.return_value = _make_backend_results(["/b1.py", "/b2.py"], "zone-b")
-        results_b = await daemon.search("test", zone_id="zone-b")
+        results_b = await daemon.search(SearchRequest(query="test", zone_id="zone-b"))
 
         # Verify different zone_ids were passed to backend
         calls = mock_backend.search.call_args_list
@@ -104,7 +105,7 @@ class TestZoneLevelIsolation:
     async def test_search_zone_none_uses_root_zone(self) -> None:
         """When zone_id is None, ROOT_ZONE_ID should be used."""
         daemon, mock_backend = await _make_daemon_with_mock()
-        await daemon.search("test")
+        await daemon.search(SearchRequest(query="test"))
 
         call_kwargs = mock_backend.search.call_args[1]
         from nexus.contracts.constants import ROOT_ZONE_ID
@@ -266,7 +267,7 @@ class TestReBACFileFiltering:
         mock_backend.search.return_value = zone_results
 
         # Daemon search (zone-level isolation)
-        results = await daemon.search("test", zone_id="corp", limit=10)
+        results = await daemon.search(SearchRequest(query="test", zone_id="corp", limit=10))
         assert len(results) == 10
 
         # Router-layer ReBAC filtering (user can only read 4 files)

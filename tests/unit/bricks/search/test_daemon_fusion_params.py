@@ -15,6 +15,8 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.search_types import SearchRequest
+
 
 def _make_daemon() -> Any:
     """Bare SearchDaemon with fake (non-PG) fts + vector backends.
@@ -141,7 +143,7 @@ async def test_rrf_k_reaches_fusion() -> None:
 
 @pytest.mark.asyncio
 async def test_search_threads_fusion_params_to_backends() -> None:
-    """`SearchDaemon.search()` must forward alpha / fusion_method / rrf_k to
+    """`SearchDaemon.search(SearchRequest(query=))` must forward alpha / fusion_method / rrf_k to
     `_search_via_backends` (previously dropped on the floor)."""
     from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
 
@@ -180,12 +182,14 @@ async def test_search_threads_fusion_params_to_backends() -> None:
     daemon._search_via_backends = MethodType(_search_via_backends, daemon)
 
     await daemon.search(
-        "nexus core",
-        search_type="hybrid",
-        limit=1,
-        alpha=0.9,
-        fusion_method="weighted",
-        rrf_k=30,
+        SearchRequest(
+            query="nexus core",
+            search_type="hybrid",
+            limit=1,
+            alpha=0.9,
+            fusion_method="weighted",
+            rrf_k=30,
+        )
     )
 
     assert seen["alpha"] == 0.9
@@ -353,12 +357,14 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
     daemon._hybrid_search = MethodType(_hybrid_search, daemon)
 
     await daemon.search(
-        "nexus core",
-        search_type="hybrid",
-        limit=1,
-        alpha=0.9,
-        fusion_method="weighted",
-        rrf_k=30,
+        SearchRequest(
+            query="nexus core",
+            search_type="hybrid",
+            limit=1,
+            alpha=0.9,
+            fusion_method="weighted",
+            rrf_k=30,
+        )
     )
 
     assert seen == {"alpha": 0.9, "fusion_method": "weighted", "rrf_k": 30}
@@ -405,8 +411,18 @@ async def test_search_positional_signature_unchanged() -> None:
     daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
     daemon._search_via_backends = MethodType(_search_via_backends, daemon)
 
-    # Legacy positional call shape: 7th positional arg is zone_id.
-    await daemon.search("nexus core", "keyword", 10, None, 0.5, "rrf", "tenant-a")
+    # SearchRequest bundles all knobs — zone_id is a plain field now.
+    await daemon.search(
+        SearchRequest(
+            query="nexus core",
+            search_type="keyword",
+            limit=10,
+            path_filter=None,
+            alpha=0.5,
+            fusion_method="rrf",
+            zone_id="tenant-a",
+        )
+    )
 
     assert seen["zone_id"] == "tenant-a"
 

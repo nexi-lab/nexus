@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.search_types import SearchRequest
+
 
 class _RuntimeStub(types.ModuleType):
     def __getattr__(self, name: str) -> Any:
@@ -78,7 +80,7 @@ async def test_search_with_zone_stays_on_daemon_owner_loop() -> None:
     daemon._search_on_current_loop = fake_search_on_current_loop
 
     try:
-        result = await daemon.search("sku", zone_id="default")
+        result = await daemon.search(SearchRequest(query="sku", zone_id="default"))
     finally:
         daemon._zone_registry.stop_all()
 

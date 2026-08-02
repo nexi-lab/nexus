@@ -1,4 +1,4 @@
-"""Recency boost wiring through SearchDaemon.search() (Issue #4543).
+"""Recency boost wiring through SearchDaemon.search(SearchRequest(query=)) (Issue #4543).
 
 Mirrors the #4541 fake-backend harness (test_daemon_fusion_params.py):
 keyword and dense orderings disagree so any score change is visible.
@@ -12,6 +12,8 @@ from types import MethodType
 from typing import Any
 
 import pytest
+
+from nexus.contracts.search_types import SearchRequest
 
 # The daemon boosts against real datetime.now(UTC) (no injectable clock on the
 # request path), so fixtures must be built relative to the real now — a fixed
@@ -115,7 +117,7 @@ async def test_default_request_untouched_and_no_hydration() -> None:
     query with no recency-intent word matches #4541's pinned ordering and
     runs NO hydration query."""
     daemon = _make_daemon(_old_new_mtimes())
-    results = await daemon.search("nexus core", search_type="hybrid", limit=4)
+    results = await daemon.search(SearchRequest(query="nexus core", search_type="hybrid", limit=4))
 
     assert [r.path for r in results] == ["/a.md", "/d.md", "/c.md", "/b.md"]
     assert all(r.recency_boost is None for r in results)
@@ -128,7 +130,9 @@ async def test_zero_config_default_is_auto(monkeypatch: pytest.MonkeyPatch) -> N
     recency-intent query gets the boost (recency_mode defaults to auto)."""
     monkeypatch.delenv("NEXUS_SEARCH_RECENCY", raising=False)
     daemon = _make_daemon(_old_new_mtimes())
-    results = await daemon.search("latest nexus core", search_type="hybrid", limit=4)
+    results = await daemon.search(
+        SearchRequest(query="latest nexus core", search_type="hybrid", limit=4)
+    )
 
     assert len(daemon._recency_fetch_calls) == 1
     assert any(r.recency_boost is not None for r in results)
@@ -141,7 +145,9 @@ async def test_recency_on_boosts_and_reorders() -> None:
     See _old_new_mtimes docstring for the RRF arithmetic."""
     daemon = _make_daemon(_old_new_mtimes())
     results = await daemon.search(
-        "nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+        SearchRequest(
+            query="nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+        )
     )
 
     assert len(daemon._recency_fetch_calls) == 1
@@ -157,11 +163,13 @@ async def test_recency_on_boosts_and_reorders() -> None:
 async def test_recency_auto_fires_only_on_intent_queries() -> None:
     daemon = _make_daemon(_old_new_mtimes(), recency_mode="auto")
 
-    neutral = await daemon.search("nexus core", search_type="hybrid", limit=4)
+    neutral = await daemon.search(SearchRequest(query="nexus core", search_type="hybrid", limit=4))
     assert daemon._recency_fetch_calls == []
     assert all(r.recency_boost is None for r in neutral)
 
-    boosted = await daemon.search("latest nexus core", search_type="hybrid", limit=4)
+    boosted = await daemon.search(
+        SearchRequest(query="latest nexus core", search_type="hybrid", limit=4)
+    )
     assert len(daemon._recency_fetch_calls) == 1
     assert any(r.recency_boost is not None for r in boosted)
 
@@ -171,13 +179,17 @@ async def test_request_params_override_config() -> None:
     """Explicit request knobs beat config: recency='off' suppresses a
     config-on daemon; explicit weight reaches the boost math."""
     daemon = _make_daemon(_old_new_mtimes(), recency_mode="on")
-    off = await daemon.search("nexus core", search_type="hybrid", limit=4, recency="off")
+    off = await daemon.search(
+        SearchRequest(query="nexus core", search_type="hybrid", limit=4, recency="off")
+    )
     assert all(r.recency_boost is None for r in off)
     assert daemon._recency_fetch_calls == []
 
     daemon2 = _make_daemon(_old_new_mtimes())
     on = await daemon2.search(
-        "nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+        SearchRequest(
+            query="nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+        )
     )
     b = next(r for r in on if r.path == "/b.md")
     assert b.recency_boost == pytest.approx(2.0, rel=0.01)  # 1 + 1.0 * H/(H+~0)
@@ -193,7 +205,9 @@ async def test_hydration_failure_is_fail_soft() -> None:
         raise RuntimeError("db down")
 
     daemon._fetch_recency_mtimes = MethodType(_boom, daemon)
-    results = await daemon.search("nexus core", search_type="hybrid", limit=4, recency="on")
+    results = await daemon.search(
+        SearchRequest(query="nexus core", search_type="hybrid", limit=4, recency="on")
+    )
 
     assert [r.path for r in results] == ["/a.md", "/d.md", "/c.md", "/b.md"]
     assert all(r.recency_boost is None for r in results)
@@ -215,11 +229,13 @@ async def test_mtime_hydration_routes_through_owner_loop() -> None:
 
     daemon._run_on_owner_loop = MethodType(_spy, daemon)
 
-    await daemon.search("nexus core", search_type="hybrid", limit=4)
+    await daemon.search(SearchRequest(query="nexus core", search_type="hybrid", limit=4))
     assert calls == []
 
     boosted = await daemon.search(
-        "nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+        SearchRequest(
+            query="nexus core", search_type="hybrid", limit=4, recency="on", recency_weight=1.0
+        )
     )
     assert len(calls) == 1
     assert len(daemon._recency_fetch_calls) == 1
@@ -231,9 +247,13 @@ async def test_keyword_and_semantic_paths_also_boost() -> None:
     """The chokepoint lives in search(), so non-hybrid types get the boost
     too (hydration-approach coverage win over per-SELECT carrying)."""
     daemon = _make_daemon(_old_new_mtimes())
-    kw = await daemon.search("nexus core", search_type="keyword", limit=3, recency="on")
+    kw = await daemon.search(
+        SearchRequest(query="nexus core", search_type="keyword", limit=3, recency="on")
+    )
     assert any(r.recency_boost is not None for r in kw)
 
     daemon2 = _make_daemon(_old_new_mtimes())
-    sem = await daemon2.search("nexus core", search_type="semantic", limit=3, recency="on")
+    sem = await daemon2.search(
+        SearchRequest(query="nexus core", search_type="semantic", limit=3, recency="on")
+    )
     assert any(r.recency_boost is not None for r in sem)

@@ -75,7 +75,7 @@ def _make_daemon() -> MagicMock:
     daemon.config = MagicMock()
     daemon.config.txtai_graph = False
 
-    async def fake_search(**kwargs: Any) -> list[Any]:
+    async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
         return []
 
     daemon.search = AsyncMock(side_effect=fake_search)
@@ -120,12 +120,10 @@ def test_expand_macro_accepted_and_threaded() -> None:
     assert response.status_code != 400, response.text
     assert response.status_code != 422, response.text
 
-    # daemon.search must have been called with expand="macro"
+    # daemon.search must have been called with a SearchRequest carrying expand="macro"
     daemon.search.assert_called_once()
-    call_kwargs = daemon.search.call_args.kwargs
-    assert call_kwargs.get("expand") == "macro", (
-        f"Expected expand='macro' in daemon.search kwargs, got: {call_kwargs!r}"
-    )
+    req = daemon.search.call_args.args[0]
+    assert req.expand == "macro", f"Expected expand='macro' on SearchRequest, got: {req!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +143,5 @@ def test_expand_default_none_threaded() -> None:
     assert response.status_code not in (400, 422), response.text
 
     daemon.search.assert_called_once()
-    call_kwargs = daemon.search.call_args.kwargs
-    assert call_kwargs.get("expand") == "none", (
-        f"Expected expand='none' in daemon.search kwargs, got: {call_kwargs!r}"
-    )
+    req = daemon.search.call_args.args[0]
+    assert req.expand == "none", f"Expected expand='none' on SearchRequest, got: {req!r}"

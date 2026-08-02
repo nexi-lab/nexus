@@ -32,6 +32,7 @@ from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_K
 from nexus.bricks.search.fusion import rrf_multi_fusion
 from nexus.bricks.search.result_builders import cap_chunks_per_page
 from nexus.contracts.protocols.activity import EventKind, Result, emit
+from nexus.contracts.search_types import SearchRequest
 
 logger = logging.getLogger(__name__)
 
@@ -467,17 +468,19 @@ class FederatedSearchDispatcher:
         # Local zone: call daemon.search() directly
         daemon = self._get_daemon_for_zone(zone_id)
         results = await daemon.search(
-            query=query,
-            search_type=effective_type,
-            limit=limit,
-            path_filter=path_filter,
-            alpha=effective_alpha,
-            fusion_method=effective_fusion,
-            rrf_k=rrf_k,
-            recency=recency,
-            recency_weight=recency_weight,
-            recency_half_life_days=recency_half_life_days,
-            zone_id=zone_id,
+            SearchRequest(
+                query=query,
+                search_type=effective_type,
+                limit=limit,
+                path_filter=path_filter,
+                alpha=effective_alpha,
+                fusion_method=effective_fusion,
+                rrf_k=rrf_k,
+                recency=recency,
+                recency_weight=recency_weight,
+                recency_half_life_days=recency_half_life_days,
+                zone_id=zone_id,
+            )
         )
 
         # Tag results with zone provenance. Return the SearchResultList as-is

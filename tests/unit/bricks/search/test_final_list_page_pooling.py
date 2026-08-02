@@ -485,7 +485,9 @@ async def test_single_zone_federated_applies_cap_with_overfetch() -> None:
     )
     dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["z1"]))
 
-    resp = await dispatcher.search(SearchRequest(query="q", subject=("user", "u1"), search_type="semantic", limit=2))
+    resp = await dispatcher.search(
+        SearchRequest(query="q", subject=("user", "u1"), search_type="semantic", limit=2)
+    )
 
     assert [r["path"] for r in resp.results] == ["/doc.md", "/b.md"]
     # Over-fetched so the cap can backfill instead of shrinking the page.
@@ -531,7 +533,9 @@ async def test_multi_zone_saturated_window_backfills() -> None:
     daemon = _capture_daemon({"za": zone_rows("za"), "zb": zone_rows("zb")}, config, seen)
     dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["za", "zb"]))
 
-    resp = await dispatcher.search(SearchRequest(query="q", subject=("user", "u1"), search_type="semantic", limit=3))
+    resp = await dispatcher.search(
+        SearchRequest(query="q", subject=("user", "u1"), search_type="semantic", limit=3)
+    )
 
     paths = [r["path"] for r in resp.results]
     assert len(paths) == 3
@@ -673,7 +677,9 @@ async def test_result_cache_scoped_by_zone_filter() -> None:
     )
 
     broad = await dispatcher.search(SearchRequest(query="q", subject=("user", "u1"), limit=10))
-    narrow = await dispatcher.search(SearchRequest(query="q", subject=("user", "u1"), limit=10, zone_filter=frozenset({"za"})))
+    narrow = await dispatcher.search(
+        SearchRequest(query="q", subject=("user", "u1"), limit=10, zone_filter=frozenset({"za"}))
+    )
 
     assert {r["zone_id"] for r in broad.results} == {"za", "zb"}
     assert not narrow.cached
@@ -747,7 +753,9 @@ async def test_legacy_hybrid_fallback_caps_at_shared_boundary() -> None:
     daemon._hybrid_search = MethodType(_hybrid_search, daemon)
     daemon._keyword_search = MethodType(_keyword_search, daemon)
 
-    results = await daemon.search(SearchRequest(query="q", search_type="hybrid", limit=3, zone_id="root"))
+    results = await daemon.search(
+        SearchRequest(query="q", search_type="hybrid", limit=3, zone_id="root")
+    )
 
     paths = [r.path for r in results]
     assert paths == ["/long.md", "/other-a.md", "/other-b.md"]
@@ -826,14 +834,18 @@ async def test_local_hybrid_zones_keep_historical_fetch_window() -> None:
 
     daemon = _capture_daemon(rows, config, seen)
     dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["za", "zb"]))
-    await dispatcher.search(SearchRequest(query="q", subject=("user", "u1"), search_type="hybrid", limit=5))
+    await dispatcher.search(
+        SearchRequest(query="q", subject=("user", "u1"), search_type="hybrid", limit=5)
+    )
     # over_fetch_factor default = 2 → historical window 10, no (cap+1) stacking.
     assert seen == {"za": 10, "zb": 10}
 
     seen.clear()
     daemon = _capture_daemon(rows, config, seen)
     dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_rebac_for(["za", "zb"]))
-    await dispatcher.search(SearchRequest(query="q", subject=("user", "u1"), search_type="semantic", limit=5))
+    await dispatcher.search(
+        SearchRequest(query="q", subject=("user", "u1"), search_type="semantic", limit=5)
+    )
     # Semantic zones are only capped dispatcher-side → widened by (cap+1).
     assert seen == {"za": 30, "zb": 30}
 

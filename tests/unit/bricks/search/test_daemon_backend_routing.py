@@ -1,4 +1,3 @@
-from nexus.contracts.search_types import SearchRequest
 """SearchDaemon routing regressions for post-#3699 backends."""
 
 from __future__ import annotations
@@ -8,6 +7,8 @@ from types import MethodType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+
+from nexus.contracts.search_types import SearchRequest
 
 _BACKEND_TIMING_KEYS = {
     "backend_ms",
@@ -99,7 +100,9 @@ async def test_keyword_search_prefers_new_fts_backend_before_legacy_keyword_stac
     seen: list[str] = []
     daemon = _daemon_with_backend_result(seen)
 
-    results = await daemon.search(SearchRequest(query="Nexus Core", search_type="keyword", limit=1, zone_id="root"))
+    results = await daemon.search(
+        SearchRequest(query="Nexus Core", search_type="keyword", limit=1, zone_id="root")
+    )
 
     assert seen == ["keyword"]
     assert [result.path for result in results] == ["/backend.md"]
@@ -113,7 +116,9 @@ async def test_hybrid_search_does_not_prefetch_legacy_keyword_when_backends_exis
     seen: list[str] = []
     daemon = _daemon_with_backend_result(seen)
 
-    results = await daemon.search(SearchRequest(query="Nexus Core", search_type="hybrid", limit=1, zone_id="root"))
+    results = await daemon.search(
+        SearchRequest(query="Nexus Core", search_type="hybrid", limit=1, zone_id="root")
+    )
 
     assert seen == ["hybrid"]
     assert [result.path for result in results] == ["/backend.md"]
@@ -182,7 +187,9 @@ async def test_concurrent_searches_return_request_local_timing_snapshots() -> No
 
     first_results, second_results = await asyncio.gather(
         daemon.search(SearchRequest(query="first", search_type="keyword", limit=1, zone_id="root")),
-        daemon.search(SearchRequest(query="second", search_type="keyword", limit=1, zone_id="root")),
+        daemon.search(
+            SearchRequest(query="second", search_type="keyword", limit=1, zone_id="root")
+        ),
     )
 
     assert [result.path for result in first_results] == ["/first.md"]

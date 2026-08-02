@@ -1,4 +1,3 @@
-from nexus.contracts.search_types import SearchRequest
 from __future__ import annotations
 
 import asyncio
@@ -8,6 +7,8 @@ import types
 from typing import Any
 
 import pytest
+
+from nexus.contracts.search_types import SearchRequest
 
 
 class _RuntimeStub(types.ModuleType):

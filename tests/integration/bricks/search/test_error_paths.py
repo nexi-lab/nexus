@@ -1,4 +1,3 @@
-from nexus.contracts.search_types import SearchRequest
 """Tests for search brick error paths (Issue #1520, #2663).
 
 Validates error handling at brick boundaries:
@@ -8,6 +7,8 @@ Validates error handling at brick boundaries:
 """
 
 import pytest
+
+from nexus.contracts.search_types import SearchRequest
 
 # =============================================================================
 # SearchDaemon error paths

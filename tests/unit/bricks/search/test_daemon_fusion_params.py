@@ -1,4 +1,3 @@
-from nexus.contracts.search_types import SearchRequest
 """Fusion request params must reach the backend hybrid path (Issue #4541).
 
 `GET /api/v2/search/query` validates `alpha` / `fusion` (and now `rrf_k`),
@@ -15,6 +14,8 @@ from types import MethodType
 from typing import Any
 
 import pytest
+
+from nexus.contracts.search_types import SearchRequest
 
 
 def _make_daemon() -> Any:
@@ -180,11 +181,16 @@ async def test_search_threads_fusion_params_to_backends() -> None:
     daemon._attach_path_contexts = MethodType(_attach_path_contexts, daemon)
     daemon._search_via_backends = MethodType(_search_via_backends, daemon)
 
-    await daemon.search(SearchRequest(query="nexus core", search_type="hybrid",
-        limit=1,
-        alpha=0.9,
-        fusion_method="weighted",
-        rrf_k=30))
+    await daemon.search(
+        SearchRequest(
+            query="nexus core",
+            search_type="hybrid",
+            limit=1,
+            alpha=0.9,
+            fusion_method="weighted",
+            rrf_k=30,
+        )
+    )
 
     assert seen["alpha"] == 0.9
     assert seen["fusion_method"] == "weighted"
@@ -350,11 +356,16 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
     daemon._keyword_search = MethodType(_keyword_search, daemon)
     daemon._hybrid_search = MethodType(_hybrid_search, daemon)
 
-    await daemon.search(SearchRequest(query="nexus core", search_type="hybrid",
-        limit=1,
-        alpha=0.9,
-        fusion_method="weighted",
-        rrf_k=30))
+    await daemon.search(
+        SearchRequest(
+            query="nexus core",
+            search_type="hybrid",
+            limit=1,
+            alpha=0.9,
+            fusion_method="weighted",
+            rrf_k=30,
+        )
+    )
 
     assert seen == {"alpha": 0.9, "fusion_method": "weighted", "rrf_k": 30}
 

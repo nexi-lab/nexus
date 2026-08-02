@@ -79,6 +79,7 @@ class SearchRequest:
     recency_weight: float | None = None
     recency_half_life_days: float | None = None
 
+
 # Per-task flag recording whether the last SANDBOX semantic_search call
 # degraded to BM25S (Issue #3778 R2 review). Response-envelope builders
 # (MCP, HTTP routers) can read this after awaiting semantic_search so the

@@ -166,6 +166,8 @@ async def test_daemon_hybrid_mode_calls_fusion(
 
     monkeypatch.setattr(daemon._embedding_client, "embed_query", fake_embed_query)
 
-    await daemon.search(SearchRequest(query="alpha", path_filter="/z/", limit=5, search_type="hybrid", zone_id="z"))
+    await daemon.search(
+        SearchRequest(query="alpha", path_filter="/z/", limit=5, search_type="hybrid", zone_id="z")
+    )
     # 3-way RRF can be implemented as one call OR two nested rrf_fusion calls.
     assert seen["calls"] >= 1

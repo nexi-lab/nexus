@@ -1588,6 +1588,13 @@ async def search_index_documents(
     Fails closed with HTTP 500 if the underlying backend cannot persist
     (e.g., config path unwritable, PostgreSQL commit failed), so clients
     can retry instead of silently losing data.
+
+    Issue #4566: documents whose ``file_paths`` projection row hasn't landed
+    yet (write-then-index races the operation-log consumer) get a bounded
+    server-side wait; anything still unresolved fails closed with HTTP 409
+    and ``detail.skipped`` listing the affected paths. Indexing is
+    idempotent, so retrying the whole batch after a 409 is safe — documents
+    indexed before the 409 stay indexed.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -1599,13 +1606,29 @@ async def search_index_documents(
 
     async def _work() -> dict[str, Any]:
         try:
-            count = await search_daemon.index_documents(documents, zone_id=zone_id)
+            result = await search_daemon.index_documents(documents, zone_id=zone_id)
         except Exception as exc:
             logger.error("index_documents failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
             ) from exc
+        # ``getattr`` fallbacks keep int-returning test doubles working.
+        count = getattr(result, "indexed", result)
+        skipped = list(getattr(result, "skipped", []) or [])
+        if skipped:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": (
+                        "documents skipped: no live file_paths row after the bounded "
+                        "projection wait — retry once the write is visible"
+                    ),
+                    "count": count,
+                    "skipped": skipped,
+                    "zone_id": zone_id,
+                },
+            )
         return {"status": "indexed", "count": count, "zone_id": zone_id}
 
     return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)

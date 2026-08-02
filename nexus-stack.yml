@@ -168,6 +168,10 @@ services:
       NEXUS_SEARCH_PAGE_BM25_RRF_K: ${NEXUS_SEARCH_PAGE_BM25_RRF_K:-60}
       NEXUS_SEARCH_INDEX_PRELOAD: ${NEXUS_SEARCH_INDEX_PRELOAD:-false}
       NEXUS_SEARCH_TITLE_ARM: ${NEXUS_SEARCH_TITLE_ARM:-true}
+      # Explicit-index projection wait (#4566): bounded re-poll of file_paths
+      # before a write-then-index doc is surfaced as skipped (409).
+      NEXUS_SEARCH_INDEX_PATH_WAIT_ATTEMPTS: ${NEXUS_SEARCH_INDEX_PATH_WAIT_ATTEMPTS:-5}
+      NEXUS_SEARCH_INDEX_PATH_WAIT_SECONDS: ${NEXUS_SEARCH_INDEX_PATH_WAIT_SECONDS:-2.0}
       # Recency decay (#4543): auto = boost recency-intent queries only
       NEXUS_SEARCH_RECENCY: ${NEXUS_SEARCH_RECENCY:-auto}
       NEXUS_SEARCH_RECENCY_WEIGHT: ${NEXUS_SEARCH_RECENCY_WEIGHT:-0.3}

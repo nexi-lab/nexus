@@ -254,6 +254,24 @@ class DaemonStats:
     # boost errors must never fail a search, but persistent failures should
     # be visible via /search/stats rather than only in log lines.
     recency_attach_failures: int = 0
+    # Explicit-index projection wait (Issue #4566): docs that needed at least
+    # one wait round before their file_paths row landed, and docs dropped
+    # because the row never landed within the bounded wait. A growing skip
+    # counter means callers are indexing paths that are not (yet) backed by
+    # NexusFS — either a projection-lag budget that is too small or a client
+    # submitting genuinely synthetic paths.
+    explicit_index_path_waits: int = 0
+    explicit_index_skipped_no_path: int = 0
+    # #4566 follow-up: repairs performed by the post-index guard — a
+    # concurrent consumer/refresh write raced the explicit call inside the
+    # covered-gate window and was re-replaced with the caller's text.
+    explicit_index_repairs: int = 0
+    # #4566 follow-up: consumer UPSERTs skipped because the row's current
+    # content version was already covered (indexed_content_id ==
+    # content_id, stamped by an explicit index call or IndexingService).
+    # These skips are what keeps caller-provided text (PDF/OCR extraction,
+    # sidecar markdown) from being clobbered by raw blob bytes.
+    mutation_upserts_skipped_covered: int = 0
 
 
 @dataclass
@@ -559,6 +577,39 @@ class DaemonConfig:
         default_factory=lambda: _get_env_float("NEXUS_SEARCH_RECENCY_HALF_LIFE_DAYS", 30.0)
     )
 
+    # Bounded wait for the file_paths projection row on explicit indexing
+    # (Issue #4566). ``POST /search/index`` right after ``files.write`` lands
+    # inside the operation-log consumer's projection lag (~5-10s observed),
+    # so the path_id lookup finds no row yet. Instead of silently dropping
+    # the document, the daemon re-polls the projection up to
+    # ``index_path_wait_attempts`` times, sleeping ``index_path_wait_seconds``
+    # between rounds (defaults cover the observed lag: 5 × 2s = 10s worst
+    # case). Documents whose row never lands are reported as skipped so the
+    # HTTP boundary can fail closed instead of returning a silent count=0.
+    # Set attempts to 0 to disable the wait (pre-#4566 lookup behavior,
+    # but skips are still surfaced).
+    index_path_wait_attempts: int = field(
+        default_factory=lambda: _get_env_int("NEXUS_SEARCH_INDEX_PATH_WAIT_ATTEMPTS", 5)
+    )
+    index_path_wait_seconds: float = field(
+        default_factory=lambda: _get_env_float("NEXUS_SEARCH_INDEX_PATH_WAIT_SECONDS", 2.0)
+    )
+
+
+@dataclass(slots=True)
+class ExplicitIndexResult:
+    """Outcome of an explicit ``index_documents`` call (Issue #4566).
+
+    ``indexed`` is the number of documents persisted through the indexing
+    pipeline. ``skipped`` lists the zone-stripped virtual paths that had no
+    live ``file_paths`` row even after the bounded projection wait — their
+    text was NOT indexed and the caller must retry (or accept the loss for
+    genuinely synthetic paths that will never be backed by NexusFS).
+    """
+
+    indexed: int = 0
+    skipped: list[str] = field(default_factory=list)
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -684,6 +735,9 @@ class SearchDaemon:
         # Index refresh task
         self._refresh_task: asyncio.Task | None = None
         self._legacy_refresh_task: asyncio.Task | None = None
+        # #4566: post-explicit-index guard tasks (strong refs so they
+        # aren't garbage-collected mid-flight).
+        self._explicit_guard_tasks: set[asyncio.Task[None]] = set()
         self._mutation_wakeup = asyncio.Event()
         self._pending_refresh_paths: set[str] = set()
         self._pending_delete_paths: set[str] = set()
@@ -3656,11 +3710,11 @@ class SearchDaemon:
         documents: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> int:
+    ) -> ExplicitIndexResult:
         if zone_id is None:
             return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
 
-        async def _work() -> int:
+        async def _work() -> ExplicitIndexResult:
             return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
 
         return await self._run_on_owner_loop(_work)
@@ -3687,12 +3741,266 @@ class SearchDaemon:
             submitted.cancel()
             raise
 
+    async def _resolve_index_path_row(
+        self, vp_clean: str, zone_id: str
+    ) -> tuple[str, str | None, Any] | None:
+        """Look up the live ``file_paths`` row for a zone-stripped path.
+
+        Returns ``(path_id, content_id, updated_at)`` or ``None`` when no
+        live row exists. The daemon must not CREATE ``file_paths`` rows
+        (structural ownership belongs to the kernel/metastore), so a missing
+        row can only be waited out or surfaced, never healed here. The
+        search-owned tracking columns (``indexed_content_id``,
+        ``last_indexed_at``) are a different matter — see
+        ``_stamp_indexed_content``.
+        """
+        if self._async_session is None:
+            return None
+        async with self._async_session() as session:
+            row = (
+                await session.execute(
+                    sa_text(
+                        "SELECT path_id, content_id, updated_at FROM file_paths "
+                        "WHERE virtual_path = :vp "
+                        "  AND zone_id = :zid "
+                        "  AND deleted_at IS NULL "
+                        "LIMIT 1"
+                    ),
+                    {"vp": vp_clean, "zid": zone_id},
+                )
+            ).first()
+        if row is None:
+            return None
+        return str(row[0]), (str(row[1]) if row[1] is not None else None), row[2]
+
+    async def _stamp_indexed_content(
+        self, path_id: str, content_id: str | None, observed_updated_at: Any
+    ) -> None:
+        """Mark the current content version as covered for ``path_id`` (#4566).
+
+        After an explicit index call persists caller-provided text, advance
+        the search-owned tracking columns on ``file_paths`` — the same
+        columns ``IndexingService.index_document`` maintains — so mutation
+        consumers and the legacy refresh loop know this content version is
+        already covered and don't clobber the explicit text with raw blob
+        bytes (see ``_upsert_covered_by_index``).
+
+        CAS on ``content_id`` AND ``updated_at``: ``content_id`` alone is
+        NOT a version discriminator on every backend — the local backend
+        stores an identity-style content_id (the path) that never changes
+        across rewrites — so a rewrite that lands between our resolution
+        read and this update must void the stamp via the ``updated_at``
+        guard, letting consumers index the newer bytes. Fail-soft: the text
+        IS indexed at this point, so a stamp failure must not fail the
+        request — worst case the consumers re-index blob bytes
+        (pre-#4566 behavior).
+        """
+        if content_id is None or self._async_session is None:
+            return
+        try:
+            async with self._async_session() as session:
+                await session.execute(
+                    sa_text(
+                        "UPDATE file_paths "
+                        "SET indexed_content_id = :cid, last_indexed_at = :now "
+                        "WHERE path_id = :pid "
+                        "  AND deleted_at IS NULL "
+                        "  AND content_id = :cid "
+                        "  AND updated_at = :observed_updated_at"
+                    ),
+                    {
+                        "cid": content_id,
+                        "pid": path_id,
+                        "now": datetime.now(UTC).replace(tzinfo=None),
+                        "observed_updated_at": observed_updated_at,
+                    },
+                )
+                await session.commit()
+        except Exception as exc:
+            logger.warning(
+                "index_documents: failed to stamp indexed_content_id for path_id=%s: %s",
+                path_id,
+                exc,
+            )
+
+    async def _upsert_covered_by_index(self, path_id: str) -> bool:
+        """Whether ``path_id``'s CURRENT content version is already indexed.
+
+        Issue #4566 follow-up: the mutation consumers and the legacy refresh
+        loop used to index blob bytes unconditionally, clobbering text
+        supplied via ``POST /search/index`` (extracted text for PDFs, OCR
+        output, sidecar markdown). Covered means BOTH:
+
+        - ``indexed_content_id == content_id`` (the marker stamped by the
+          explicit index call or by ``IndexingService``), AND
+        - ``last_indexed_at >= updated_at`` — the freshness guard. On
+          backends whose ``content_id`` is identity-style (the local
+          backend stores the path, unchanged across rewrites) marker
+          equality alone would latch coverage forever and edits would stop
+          being re-indexed; ``updated_at`` bumps on every write, so a real
+          edit always un-covers the row.
+
+        Fail-open: any lookup/comparison error returns ``False`` so
+        indexing proceeds exactly as before this gate existed.
+        """
+        if self._async_session is None:
+            return False
+        try:
+            async with self._async_session() as session:
+                row = (
+                    await session.execute(
+                        sa_text(
+                            "SELECT content_id, indexed_content_id, updated_at, "
+                            "       last_indexed_at "
+                            "FROM file_paths "
+                            "WHERE path_id = :pid AND deleted_at IS NULL "
+                            "LIMIT 1"
+                        ),
+                        {"pid": path_id},
+                    )
+                ).first()
+            return (
+                row is not None
+                and row[0] is not None
+                and row[1] is not None
+                and str(row[0]) == str(row[1])
+                and row[2] is not None
+                and row[3] is not None
+                and row[3] >= row[2]
+            )
+        except Exception as exc:
+            logger.warning(
+                "search indexer: covered-version check failed for path_id=%s: %s",
+                path_id,
+                exc,
+            )
+            return False
+
+    async def _chunk_write_watermark(self, path_id: str) -> tuple[int, Any] | None:
+        """Cheap fingerprint of the chunk rows currently stored for a path.
+
+        Fail-soft: the watermark only powers the post-index guard, so a
+        lookup error degrades to ``None`` (guard sees no change) instead of
+        failing the explicit index request that already persisted its text.
+        """
+        if self._async_session is None:
+            return None
+        try:
+            async with self._async_session() as session:
+                row = (
+                    await session.execute(
+                        sa_text(
+                            "SELECT COUNT(*), MAX(created_at) FROM document_chunks "
+                            "WHERE path_id = :pid"
+                        ),
+                        {"pid": path_id},
+                    )
+                ).first()
+            if row is None:
+                return None
+            return int(row[0]), row[1]
+        except Exception as exc:
+            logger.warning("chunk watermark lookup failed for path_id=%s: %s", path_id, exc)
+            return None
+
+    async def _explicit_index_guard(
+        self,
+        scoped_path: str,
+        text_clean: str,
+        path_row: tuple[str, str | None, Any],
+        baseline: tuple[int, Any] | None,
+    ) -> None:
+        """Bounded verify-repair watch after an explicit index write (#4566).
+
+        The covered gate stops writers that CHECK after the stamp lands, but
+        a consumer/refresh pass already past its gate check when the stamp
+        commits can still interleave its blob-bytes replace with ours —
+        observed live as two chunk writes 3ms apart leaving a mixed set.
+        Each such actor processes the triggering write event exactly once,
+        so a bounded watch is deterministic: poll the chunk watermark on the
+        explicit-index wait cadence; if a foreign write dirtied it, replace
+        with the caller's text once more and re-stamp.
+
+        A REAL new write must win, never the guard: before repairing we
+        re-read the row and stand down unless it still holds exactly the
+        (content_id, updated_at) version this call indexed.
+        """
+        path_id, content_id, observed_updated_at = path_row
+        attempts = max(0, self.config.index_path_wait_attempts)
+        delay = max(0.0, self.config.index_path_wait_seconds)
+        try:
+            for _ in range(attempts):
+                await asyncio.sleep(delay)
+                watermark = await self._chunk_write_watermark(path_id)
+                if watermark == baseline:
+                    continue
+                if self._async_session is None or self._indexing_pipeline is None:
+                    return
+                async with self._async_session() as session:
+                    row = (
+                        await session.execute(
+                            sa_text(
+                                "SELECT content_id, updated_at FROM file_paths "
+                                "WHERE path_id = :pid AND deleted_at IS NULL "
+                                "LIMIT 1"
+                            ),
+                            {"pid": path_id},
+                        )
+                    ).first()
+                if (
+                    row is None
+                    or (str(row[0]) if row[0] is not None else None) != content_id
+                    or row[1] != observed_updated_at
+                ):
+                    # The file moved on to a newer version — its indexing
+                    # belongs to the consumers now.
+                    return
+                repair = await self._indexing_pipeline.index_document(
+                    scoped_path, text_clean, path_id
+                )
+                if repair.error:
+                    logger.warning(
+                        "explicit index guard: repair failed for %s: %s",
+                        scoped_path,
+                        repair.error,
+                    )
+                    return
+                await self._stamp_indexed_content(path_id, content_id, observed_updated_at)
+                self.stats.explicit_index_repairs += 1
+                logger.info(
+                    "explicit index guard: re-replaced raced chunk write for %s",
+                    scoped_path,
+                )
+                baseline = await self._chunk_write_watermark(path_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "explicit index guard failed for %s: %s — caller text may have "
+                "been overwritten by a concurrent blob index",
+                scoped_path,
+                exc,
+            )
+
+    def _spawn_explicit_index_guard(
+        self,
+        scoped_path: str,
+        text_clean: str,
+        path_row: tuple[str, str | None, Any],
+        baseline: tuple[int, Any] | None,
+    ) -> None:
+        task = asyncio.create_task(
+            self._explicit_index_guard(scoped_path, text_clean, path_row, baseline)
+        )
+        self._explicit_guard_tasks.add(task)
+        task.add_done_callback(self._explicit_guard_tasks.discard)
+
     async def _index_documents_on_current_loop(
         self,
         documents: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> int:
+    ) -> ExplicitIndexResult:
         """Explicitly upsert documents into the active search backend.
 
         This powers ``POST /api/v2/search/index`` for synthetic or externally
@@ -3702,17 +4010,33 @@ class SearchDaemon:
         via the indexing pipeline. Each document is treated as ``(path,
         text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch to
         ``IndexingPipeline.index_document`` which chunks, embeds, and
-        bulk-inserts into ``document_chunks``. Failures bubble up so the
-        HTTP boundary returns 500 (Decision #18) instead of silently returning
-        count=0.
+        bulk-inserts into ``document_chunks``. Pipeline failures bubble up so
+        the HTTP boundary returns 500 (Decision #18) instead of silently
+        returning count=0.
+
+        Issue #4566: the ``file_paths`` projection is populated asynchronously
+        by the operation-log consumer, so write-then-index callers always race
+        it. Documents whose row is missing get a bounded wait
+        (``index_path_wait_attempts`` × ``index_path_wait_seconds``, shared by
+        the whole batch); anything still unresolved is returned in
+        ``skipped`` — never silently dropped from the count. Documents with
+        no usable ``text``/``path`` fields are ignored as before (malformed
+        input, not a projection race).
+
+        After a successful write the row's ``indexed_content_id`` is stamped
+        to the current ``content_id`` (see ``_stamp_indexed_content``) so
+        mutation consumers treat this content version as covered and the
+        caller-provided text survives the consumer's own blob indexing.
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
 
+        result = ExplicitIndexResult()
         if not documents:
-            return 0
+            return result
 
-        if self._indexing_pipeline is None:
+        pipeline = self._indexing_pipeline
+        if pipeline is None:
             raise RuntimeError(
                 "index_documents: indexing pipeline is not initialised. "
                 "Daemon must complete startup() before serving writes."
@@ -3723,7 +4047,43 @@ class SearchDaemon:
         def _scrub(value: str) -> str:
             return value.replace("\x00", "") if "\x00" in value else value
 
-        indexed = 0
+        async def _index_one(
+            vp_clean: str, text_clean: str, path_row: tuple[str, str | None, Any]
+        ) -> None:
+            path_id, content_id, observed_updated_at = path_row
+            # Drive the canonical write path. Pass the zone-scoped form
+            # so the pipeline's scope filter sees the same shape mutation
+            # consumers use.
+            scoped_path = (
+                f"/zone/{target_zone}{vp_clean}" if target_zone != ROOT_ZONE_ID else vp_clean
+            )
+            pipeline_result = await pipeline.index_document(scoped_path, text_clean, path_id)
+            if pipeline_result.error:
+                # Surface pipeline errors so the router returns 500.
+                raise RuntimeError(
+                    f"index_documents: pipeline failed for {vp_clean!r}: {pipeline_result.error}"
+                )
+            result.indexed += 1
+            # #4566 follow-up: mark this content version as covered so the
+            # mutation consumers / refresh loop don't clobber caller-provided
+            # text with raw blob bytes. Only when chunks actually landed —
+            # the pipeline's scope gate returns chunks_indexed=0 without
+            # error for out-of-scope paths, and stamping those would wrongly
+            # block the FTS consumer's naive-chunk fallback. The guard task
+            # then watches for writers that were already past their gate
+            # check when the stamp landed and re-replaces their raced write.
+            if pipeline_result.chunks_indexed > 0:
+                await self._stamp_indexed_content(path_id, content_id, observed_updated_at)
+                if self.config.index_path_wait_attempts > 0 and self._async_session is not None:
+                    baseline = await self._chunk_write_watermark(path_id)
+                    self._spawn_explicit_index_guard(
+                        scoped_path,
+                        text_clean,
+                        (path_id, content_id, observed_updated_at),
+                        baseline,
+                    )
+
+        pending: list[tuple[str, str]] = []  # (vp_clean, text_clean) awaiting a row
         for doc in documents:
             if not isinstance(doc, dict):
                 continue
@@ -3737,57 +4097,52 @@ class SearchDaemon:
             text_clean = _scrub(text_field)
             vp_clean = strip_zone_prefix(virtual_path)
 
-            # Resolve path_id from file_paths so the indexing pipeline can
-            # write document_chunks. Without a path_id we cannot persist —
-            # skip rather than fail so best-effort callers in mount/connector
-            # wiring don't error out. The search daemon is a READER of
-            # filesystem metadata — it must not create or modify file_paths
-            # rows (that ownership belongs to the kernel/metastore).
-            path_id: str | None = None
-            if self._async_session is not None:
-                async with self._async_session() as session:
-                    row = (
-                        await session.execute(
-                            sa_text(
-                                "SELECT path_id FROM file_paths "
-                                "WHERE virtual_path = :vp "
-                                "  AND zone_id = :zid "
-                                "  AND deleted_at IS NULL "
-                                "LIMIT 1"
-                            ),
-                            {"vp": vp_clean, "zid": target_zone},
-                        )
-                    ).first()
-                    if row is not None:
-                        path_id = str(row[0])
-
-            if path_id is None:
-                # No file_paths row — this happens for synthetic docs
-                # (skill READMEs, connector schemas) that aren't backed
-                # by NexusFS. Skip rather than fail so best-effort callers
-                # in mount/connector wiring don't error out.
-                logger.debug(
-                    "index_documents: no file_paths row for %s in zone %s; skipping",
-                    vp_clean,
-                    target_zone,
-                )
+            path_row = await self._resolve_index_path_row(vp_clean, target_zone)
+            if path_row is None:
+                pending.append((vp_clean, text_clean))
                 continue
+            await _index_one(vp_clean, text_clean, path_row)
 
-            # Drive the canonical write path. Pass the zone-scoped form
-            # so the pipeline's scope filter sees the same shape mutation
-            # consumers use.
-            scoped_path = (
-                f"/zone/{target_zone}{vp_clean}" if target_zone != ROOT_ZONE_ID else vp_clean
+        # Issue #4566: bounded wait for the projection row. The wait budget is
+        # per BATCH, not per document — each round re-polls every unresolved
+        # path once, so the worst-case added latency is attempts × delay
+        # regardless of batch size. Without a session the lookup can never
+        # succeed, so skip the wait entirely instead of sleeping for nothing.
+        wait_rounds = max(0, self.config.index_path_wait_attempts)
+        wait_seconds = max(0.0, self.config.index_path_wait_seconds)
+        if pending and wait_rounds > 0 and self._async_session is not None:
+            for _round in range(wait_rounds):
+                await asyncio.sleep(wait_seconds)
+                still_pending: list[tuple[str, str]] = []
+                for vp_clean, text_clean in pending:
+                    path_row = await self._resolve_index_path_row(vp_clean, target_zone)
+                    if path_row is None:
+                        still_pending.append((vp_clean, text_clean))
+                        continue
+                    self.stats.explicit_index_path_waits += 1
+                    await _index_one(vp_clean, text_clean, path_row)
+                pending = still_pending
+                if not pending:
+                    break
+
+        if pending:
+            # No file_paths row even after the bounded wait — synthetic docs
+            # (connector-backed mount content) or a projection lag beyond the
+            # configured budget. Surface the paths instead of silently
+            # shrinking the count: the HTTP route fails closed on these and
+            # best-effort callers (mount/connector wiring) just log.
+            result.skipped = [vp for vp, _ in pending]
+            self.stats.explicit_index_skipped_no_path += len(pending)
+            logger.warning(
+                "index_documents: %d document(s) had no file_paths row after %d wait "
+                "round(s) in zone %s — text NOT indexed: %s",
+                len(pending),
+                wait_rounds if self._async_session is not None else 0,
+                target_zone,
+                result.skipped[:10],
             )
-            result = await self._indexing_pipeline.index_document(scoped_path, text_clean, path_id)
-            if result.error:
-                # Surface pipeline errors so the router returns 500.
-                raise RuntimeError(
-                    f"index_documents: pipeline failed for {vp_clean!r}: {result.error}"
-                )
-            indexed += 1
 
-        return indexed
+        return result
 
     async def delete_documents(
         self,
@@ -5326,6 +5681,17 @@ class SearchDaemon:
                 # scope-generation token would close this gap if needed.
                 if embedding_active and self._is_path_in_scope(mutation.event.path):
                     continue
+                # #4566 follow-up: don't overwrite chunks for a content
+                # version that is already covered in the index (explicit
+                # /search/index text or an IndexingService pass) — raw
+                # blob bytes must not clobber richer caller-provided text.
+                if await self._upsert_covered_by_index(mutation.path_id):
+                    self.stats.mutation_upserts_skipped_covered += 1
+                    logger.debug(
+                        "fts consumer: skipping %s — current content version already indexed",
+                        mutation.event.path,
+                    )
+                    continue
                 await self._index_to_document_chunks(
                     mutation.path_id,
                     mutation.event.path,
@@ -5369,6 +5735,22 @@ class SearchDaemon:
             # gate in IndexingPipeline.index_documents would also catch
             # this, but filtering here avoids the pipeline overhead.
             if not self._is_path_in_scope(mutation.event.path):
+                continue
+            # #4566 follow-up: skip when this exact content version is
+            # already covered in the index (indexed_content_id ==
+            # content_id) — an explicit /search/index call supplied text
+            # for this version (e.g. PDF extraction) and re-indexing the
+            # raw bytes here would clobber it. A real content change
+            # advances content_id and indexes normally. NOTE: a consumer
+            # pass that started before the explicit stamp landed can still
+            # win the write race — the gate shrinks the clobber window to
+            # the pipeline's own duration, it does not eliminate it.
+            if await self._upsert_covered_by_index(mutation.path_id):
+                self.stats.mutation_upserts_skipped_covered += 1
+                logger.debug(
+                    "embedding consumer: skipping %s — current content version already indexed",
+                    mutation.event.path,
+                )
                 continue
             # The pipeline can fail via IndexResult.error OR by raising
             # (e.g. provider/network failures). In both cases, fall back to
@@ -5509,6 +5891,22 @@ class SearchDaemon:
                                 path_id_resolved = True
                     except Exception as e:
                         logger.debug("path_id lookup failed for %s: %s", virtual_path, e)
+
+                # #4566 follow-up: the legacy refresh loop fires on EVERY
+                # VFS write (the post-write hook enqueues unconditionally),
+                # so it was the live clobberer of explicit /search/index
+                # text — the debounced tick re-read the blob bytes and
+                # overwrote the caller-provided chunks ~5-10s later. Same
+                # covered-version gate as the mutation consumers: skip when
+                # the row's current version is already indexed; a real edit
+                # bumps updated_at and un-covers the row.
+                if path_id_resolved and await self._upsert_covered_by_index(str(path_id)):
+                    self.stats.mutation_upserts_skipped_covered += 1
+                    logger.debug(
+                        "refresh: skipping %s — current content version already indexed",
+                        path,
+                    )
+                    continue
 
                 # Single-writer policy for document_chunks (Issue #3708):
                 # when embedding pipeline is active AND the path is in

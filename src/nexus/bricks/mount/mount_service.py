@@ -251,12 +251,13 @@ class MountService:
 
                 index_zone = zone_id or ROOT_ZONE_ID
 
-                count = await search_daemon.index_documents(documents, zone_id=index_zone)
+                index_result = await search_daemon.index_documents(documents, zone_id=index_zone)
                 logger.info(
-                    "Indexed %d connector files from %s into search (zone=%s)",
-                    count,
+                    "Indexed %d connector files from %s into search (zone=%s, skipped=%d)",
+                    index_result.indexed,
                     mount_point,
                     index_zone,
+                    len(index_result.skipped),
                 )
 
         except Exception:

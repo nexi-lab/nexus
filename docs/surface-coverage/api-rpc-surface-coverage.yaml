@@ -443,7 +443,7 @@ operations:
   transports:
     grpc_expose:
       name: add_mount
-      source: src/nexus/bricks/mount/mount_service.py:873
+      source: src/nexus/bricks/mount/mount_service.py:874
   profiles:
     lite: supported
     sandbox: supported
@@ -2542,7 +2542,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_connector
-      source: src/nexus/bricks/mount/mount_service.py:945
+      source: src/nexus/bricks/mount/mount_service.py:946
   profiles:
     lite: supported
     sandbox: supported
@@ -2578,7 +2578,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_saved_mount
-      source: src/nexus/bricks/mount/mount_service.py:1403
+      source: src/nexus/bricks/mount/mount_service.py:1404
   profiles:
     lite: supported
     sandbox: supported
@@ -4392,7 +4392,7 @@ operations:
   transports:
     grpc_expose:
       name: get_mount
-      source: src/nexus/bricks/mount/mount_service.py:1203
+      source: src/nexus/bricks/mount/mount_service.py:1204
   profiles:
     lite: supported
     sandbox: supported
@@ -4771,7 +4771,7 @@ operations:
   transports:
     grpc_expose:
       name: has_mount
-      source: src/nexus/bricks/mount/mount_service.py:1220
+      source: src/nexus/bricks/mount/mount_service.py:1221
   profiles:
     lite: supported
     sandbox: supported
@@ -5186,7 +5186,7 @@ operations:
   transports:
     grpc_expose:
       name: list_connectors
-      source: src/nexus/bricks/mount/mount_service.py:1003
+      source: src/nexus/bricks/mount/mount_service.py:1004
   profiles:
     lite: supported
     sandbox: supported
@@ -5276,7 +5276,7 @@ operations:
   transports:
     grpc_expose:
       name: list_mounts
-      source: src/nexus/bricks/mount/mount_service.py:1187
+      source: src/nexus/bricks/mount/mount_service.py:1188
     sdk:
       name: MCPClient.list_mounts
       source: src/nexus/remote/domain/mcp.py:43
@@ -5348,7 +5348,7 @@ operations:
   transports:
     grpc_expose:
       name: list_saved_mounts
-      source: src/nexus/bricks/mount/mount_service.py:1307
+      source: src/nexus/bricks/mount/mount_service.py:1308
   profiles:
     lite: supported
     sandbox: supported
@@ -5435,7 +5435,7 @@ operations:
   transports:
     grpc_expose:
       name: load_mount
-      source: src/nexus/bricks/mount/mount_service.py:1355
+      source: src/nexus/bricks/mount/mount_service.py:1356
   profiles:
     lite: supported
     sandbox: supported
@@ -7008,7 +7008,7 @@ operations:
   transports:
     grpc_expose:
       name: reauth_mount
-      source: src/nexus/bricks/mount/mount_service.py:1099
+      source: src/nexus/bricks/mount/mount_service.py:1100
   profiles:
     lite: supported
     sandbox: supported
@@ -7317,7 +7317,7 @@ operations:
   transports:
     grpc_expose:
       name: remove_mount
-      source: src/nexus/bricks/mount/mount_service.py:917
+      source: src/nexus/bricks/mount/mount_service.py:918
   profiles:
     lite: supported
     sandbox: supported
@@ -7589,7 +7589,7 @@ operations:
   transports:
     grpc_expose:
       name: save_mount
-      source: src/nexus/bricks/mount/mount_service.py:1236
+      source: src/nexus/bricks/mount/mount_service.py:1237
   profiles:
     lite: supported
     sandbox: supported
@@ -7727,7 +7727,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1635
+      source: src/nexus/server/api/v2/routers/search.py:1658
   profiles:
     lite: supported
     sandbox: supported
@@ -7936,7 +7936,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1614
+      source: src/nexus/server/api/v2/routers/search.py:1637
   profiles:
     lite: supported
     sandbox: supported
@@ -9518,7 +9518,7 @@ operations:
   transports:
     grpc_expose:
       name: update_mount
-      source: src/nexus/bricks/mount/mount_service.py:1020
+      source: src/nexus/bricks/mount/mount_service.py:1021
   profiles:
     lite: supported
     sandbox: supported

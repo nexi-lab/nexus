@@ -1,0 +1,26 @@
+[package]
+name = "nexusd"
+version = "0.1.0"
+edition = "2021"
+description = "Nexus full daemon assembly — nexus-vfs cluster/federation boot composed with the nexus service set (managed_agent, acp) via the ServiceRegistry bring-up seam. Supersedes the pure nexus-vfs nexusd-full as the production daemon."
+authors = ["Nexus Team"]
+publish = false
+
+[[bin]]
+name = "nexusd-full"
+path = "src/main.rs"
+
+[dependencies]
+# Cluster library entry — `nexus_cluster::run_with_services` owns clap
+# parsing, the tokio runtime, and the whole kernel + raft + federation
+# boot. The `driver-s3` feature is opted in via `backends` unification
+# below (matches the nexus-vfs `full` profile) so this binary is a strict
+# superset of the old nexusd-full — plus the nexus services.
+nexus-cluster = { workspace = true }
+backends = { workspace = true, default-features = false, features = ["driver-s3"] }
+# a2a from-stamp hook (its `service_decl`); default-features keeps it
+# raft-free (the stream-wakeup observer is armed in cluster boot, not here).
+a2a = { workspace = true }
+# The nexus service set composed into the daemon at boot.
+services = { workspace = true, features = ["service-managed-agent", "service-acp"] }
+anyhow = "1"

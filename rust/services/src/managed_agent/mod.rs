@@ -90,6 +90,19 @@ pub fn install_managed_agent(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(),
     ManagedAgentService::<kernel::kernel::Kernel>::install(kernel)
 }
 
+/// The managed-agent service as a boot declaration for
+/// [`kernel::kernel::Kernel::bring_up_services`] — the uniform path by
+/// which the assembly hands services to the kernel. Wraps
+/// [`install_managed_agent`], which wires the session lifecycle, the
+/// workspace/procfs hooks, and (on unix + `subprocess-host`) the raw ACP
+/// control-plane stream-tunnel spawner via `install_returning`.
+pub fn service_decl() -> kernel::kernel::ServiceDecl {
+    kernel::kernel::ServiceDecl {
+        name: "managed_agent".to_string(),
+        install: Box::new(install_managed_agent),
+    }
+}
+
 /// Label key used to stash the LLM model id on the descriptor so
 /// `get_session` can echo it back without a sidecar table.  Read by
 /// `GetSessionResponse.model`; the runtime crate may also read it

@@ -8,7 +8,8 @@
 //! Layered on top of:
 //!   * [`super::agent_config::AgentConfig`] -- VFS-persisted CLI config
 //!   * [`super::paths`]                     -- /{zone}/agents + /{zone}/proc layout
-//!   * [`super::subprocess::AcpSubprocess`] -- tokio Command + DT_PIPE wiring (unix only)
+//!   * [`super::subprocess::spawn_acp`]     -- AgentConfig → argv bridge over
+//!     the generic [`crate::subprocess::HostedSubprocess`] host (unix only)
 //!   * [`super::connection::AcpConnection`] -- ACP JSON-RPC adapter
 //!   * [`super::observer::AgentObserver`]   -- session/update accumulator
 //!
@@ -44,7 +45,9 @@ use super::connection::{AcpConnection, FsRead, FsWrite};
 #[cfg(unix)]
 use super::observer::AgentTurnResult;
 #[cfg(unix)]
-use super::subprocess::AcpSubprocess;
+use super::subprocess::spawn_acp;
+#[cfg(unix)]
+use crate::subprocess::HostedSubprocess;
 #[cfg(unix)]
 use futures::future::BoxFuture;
 #[cfg(unix)]
@@ -446,7 +449,7 @@ impl<K: KernelSyscall> AcpService<K> {
     }
 }
 
-// ── call_agent (unix only — depends on AcpSubprocess) ──────────────────
+// ── call_agent (unix only — depends on HostedSubprocess) ───────────────
 
 #[cfg(unix)]
 impl<K: KernelSyscall> AcpService<K> {
@@ -524,9 +527,7 @@ impl<K: KernelSyscall> AcpService<K> {
 
         // Spawn the agent CLI + register DT_PIPEs.
         let mut subproc =
-            match AcpSubprocess::spawn(&cfg, &host_cwd, self.kernel.as_ref(), &req.zone_id, &pid)
-                .await
-            {
+            match spawn_acp(&cfg, &host_cwd, self.kernel.as_ref(), &req.zone_id, &pid).await {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = reg.kill(&pid, 127);
@@ -666,7 +667,7 @@ impl<K: KernelSyscall> AcpService<K> {
     #[allow(clippy::too_many_arguments)]
     async fn run_session(
         &self,
-        subproc: &mut AcpSubprocess,
+        subproc: &mut HostedSubprocess,
         _cfg: &AgentConfig,
         fs_read: FsRead,
         fs_write: FsWrite,
@@ -838,9 +839,6 @@ fn build_metadata(
     }
     meta
 }
-
-// AcpSubprocess gains take_stdio_for_connection() in this commit too —
-// see subprocess.rs.
 
 // ── RustService dispatch ────────────────────────────────────────────────
 

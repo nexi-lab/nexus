@@ -22,8 +22,9 @@ ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- 系统依赖 ----------
-# protobuf-compiler is required by raft-proto's protobuf-build step
-# when building nexusd-cluster from nexus-vfs via cargo install.
+# protobuf-compiler is required by raft-proto's protobuf-build step,
+# reached transitively when building the nexus-local nexusd crate
+# (its nexus-vfs raft git-dep compiles the protos).
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -77,39 +78,41 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Install nexusd-full binary from nexus-vfs (Issue #3125, #4259) ----------
-# Kernel-tier Rust (including the cluster binary) migrated to the nexus-vfs
-# repo. Install the pre-built binary via `cargo install` from the git repo.
+# ---------- Build nexusd-full from nexus-local sources (Issue #3125, #4259, #36) ----------
+# The production daemon is `nexusd-full`. Historically this was the nexus-vfs
+# `full` profile (kernel/raft/federation + S3/R2 driver) `cargo install`ed from
+# the git repo. As of the ServiceRegistry bring-up refactor (#36) it is the
+# nexus-local `nexusd` crate (rust/nexusd): the SAME nexus-vfs cluster boot
+# (`nexus_cluster::run_with_services`) PLUS the nexus service set (managed_agent
+# raw-spawn control plane + acp one-shot) composed in at boot via
+# `Kernel::bring_up_services`, PLUS the S3/R2 driver (`backends` `driver-s3`
+# feature — matches the old full profile via feature unification). It is a
+# strict superset of the old binary. The kernel repo can't depend on the nexus
+# service crates, so the composition root lives HERE, next to those crates.
 #
-# We install `nexusd-full` — the `full` profile = `nexusd-cluster` (Raft + IPC +
-# federation) PLUS the S3/R2 object-store driver. Per the nexus-vfs#27 kernel-team
-# review, `driver-s3` is NOT a feature on `nexusd-cluster` (that binary stays pure
-# local+remote and under its size gate); the S3-serving binary is this separate
-# profile. It is symlinked to `nexus-cluster` below so the Python runtime spawns
-# it unchanged.
+# The slim `nexusd-cluster` and the raft server/witness binaries still come from
+# nexus-vfs (dockerfiles/Dockerfile.{minimal,raft-server,raft-witness}) — those
+# deployment tiers legitimately carry no nexus services.
 #
-# REV is a build-arg, NOT a hardcoded edge. `cargo install --locked --git` lives in a
-# Docker RUN layer that caches by command string, so a bare `--branch main`
-# would FREEZE at the first-built binary forever — exactly how the stale,
-# pre-bridge-2 (#4262) cluster shipped (acked DT_MOUNT but never installed it,
-# created=false → edge E2E mount-setup failure). Putting the resolved rev in
-# the command both busts that cache and makes the build reproducible.
-#   - Default below = a known-good rev for reproducible local builds.
-#   - Edge: CI passes `--build-arg NEXUS_VFS_REV=$(git ls-remote …main | sha)`.
-#   - Downstream pins the *image*, not this file.
-# Default = nexus-vfs main rev matching the Cargo.toml pins (keep in sync —
-# this ARG is what the shipped kernel binary is built from; the Cargo.toml
-# pins only sync the plugin/services crates). Includes the durable-metastore
-# boot wiring (#4343) — older revs lose the VFS namespace on every restart.
+# The nexus-vfs pin is no longer a build-arg here: `nexusd` resolves nexus-vfs
+# through its Cargo.toml git-dep `rev` + Cargo.lock (the SSOT). `--locked` builds
+# exactly that resolution. Bump the pin in Cargo.toml/Cargo.lock — the test.yml
+# "Kernel pin consistency preflight" still enforces Cargo == Cargo.lock == the
+# remaining Dockerfile ARGs, and CI's nexusd-full smoke now builds this same
+# nexus-local crate (so the gate tests the exact binary the image ships).
+# nexusd-full is symlinked to nexus-cluster/nexusd-cluster below so the Python
+# runtime spawns it unchanged.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-# Override for edge/CI or a different pin: --build-arg NEXUS_VFS_REV=<sha|tag>
-ARG NEXUS_VFS_REV=1a7fc31c807877879338306d30954b371b92a9ff
+# The nexus Rust workspace sources (the service crates + the nexusd assembly).
+# Copied AFTER the Python-deps cache layer so a Rust edit doesn't invalidate it;
+# the build below re-runs only when rust/ or the workspace manifests change.
+COPY rust/ ./rust/
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,id=cargo-install-${TARGETARCH},target=/root/.cargo/target \
-    cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexusd-full nexus-full && \
-    cp /root/.cargo/bin/nexusd-full /build/nexusd-full
+    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
+    cargo build --locked --release -p nexusd --bin nexusd-full && \
+    cp /build/target/release/nexusd-full /build/nexusd-full
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/

@@ -27,6 +27,12 @@ members = [
     # walk over `sys_readdir` + `sys_read` in v1, trigram / streaming
     # / adaptive-strategy variants land in v2.
     "rust/services/search-plugin",
+    # nexusd — the nexus full daemon assembly binary (`nexusd-full`).
+    # Composes the nexus-vfs cluster boot (`nexus_cluster::run_with_services`)
+    # with the nexus service set (managed_agent, acp) via the
+    # ServiceRegistry bring-up seam. Supersedes the pure nexus-vfs
+    # `nexusd-full` (no nexus services) as the production daemon.
+    "rust/nexusd",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 # from the workspace.  Distinct from nexus-fuse-plugin (the new
@@ -217,19 +223,24 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e" }
+# The cluster daemon library entry (`nexus_cluster::run_with_services`),
+# consumed by the nexus-side assembly binary (`rust/nexusd`) that composes
+# the kernel/federation boot with the nexus service set via the
+# ServiceRegistry bring-up seam.
+nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e" }
 # a2a messaging substrate. `default-features = false` leaves the
 # `install` feature (which pulls raft to arm the stream-wakeup observer)
 # OFF, so nexus-side consumers link only the stamp hook and stay
 # raft-free — they reach raft through kernel.sys_* (§6.1). The substrate
 # is armed in production at cluster boot in nexus-vfs, not here.
-a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "1a7fc31c807877879338306d30954b371b92a9ff", default-features = false }
+a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f9613915b00108e01d2b6e2fb346bdc1ae04481e", default-features = false }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

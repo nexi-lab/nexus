@@ -7,7 +7,7 @@
 //! feed every session/update notification into an [`AgentObserver`].
 //!
 //! Owns no subprocess: the kernel-side DT_PIPEs registered by
-//! [`super::subprocess::AcpSubprocess`] hand a generic AsyncRead /
+//! [`crate::subprocess::HostedSubprocess`] hand a generic AsyncRead /
 //! AsyncWrite pair; AcpConnection only sees those.
 //!
 //! Timing-sensitive: `session_load` sleeps **200ms** after the load

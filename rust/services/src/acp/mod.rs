@@ -16,8 +16,8 @@
 //!     `nexus.contracts.vfs_paths`. The Rust port keeps the same
 //!     conventions so a Python and Rust caller addressing the same
 //!     agent see the same files.
-//!   * [`subprocess`] (unix) — `AcpSubprocess` owns the agent CLI +
-//!     three stdio DT_PIPE registrations.
+//!   * [`subprocess`] (unix) — `spawn_acp` bridge: `AgentConfig` → argv
+//!     over the generic [`crate::subprocess::HostedSubprocess`] host.
 //!   * [`jsonrpc`] — newline-delimited JSON-RPC 2.0 client.
 //!   * [`observer`] — accumulator for `session/update` notifications.
 //!   * [`connection`] — ACP-specific request / notification routing.
@@ -42,3 +42,15 @@ pub(crate) mod subprocess;
 
 #[allow(unused_imports)] // commit 21 wires AcpService into the boot path
 pub(crate) use service::{AcpService, AgentRegistry};
+
+/// The ACP one-shot service as a boot declaration for
+/// [`kernel::kernel::Kernel::bring_up_services`] — the uniform path the
+/// assembly uses to hand services to the kernel. Wraps
+/// [`service::AcpService::install`]; `default_zone` is the deployment's
+/// default zone (the assembly passes `"root"` for the node-local daemon).
+pub fn service_decl(default_zone: String) -> kernel::kernel::ServiceDecl {
+    kernel::kernel::ServiceDecl {
+        name: "acp".to_string(),
+        install: Box::new(move |kernel| service::AcpService::install(kernel, &default_zone)),
+    }
+}

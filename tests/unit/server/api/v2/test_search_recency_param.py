@@ -65,7 +65,7 @@ def _make_daemon() -> MagicMock:
     daemon.config = MagicMock()
     daemon.config.txtai_graph = False
 
-    async def fake_search(**kwargs: Any) -> list[Any]:
+    async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
         return []
 
     daemon.search = AsyncMock(side_effect=fake_search)
@@ -95,10 +95,10 @@ def test_recency_mode_accepted_and_threaded(mode: str) -> None:
             },
         )
     assert response.status_code not in (400, 422), response.text
-    kwargs = daemon.search.call_args.kwargs
-    assert kwargs.get("recency") == mode
-    assert kwargs.get("recency_weight") == 0.5
-    assert kwargs.get("recency_half_life_days") == 7.0
+    req = daemon.search.call_args.args[0]
+    assert req.recency == mode
+    assert req.recency_weight == 0.5
+    assert req.recency_half_life_days == 7.0
 
 
 def test_recency_omitted_forwards_none() -> None:
@@ -107,10 +107,10 @@ def test_recency_omitted_forwards_none() -> None:
     with TestClient(_build_app(daemon)) as client:
         response = client.get("/api/v2/search/query", params={"q": "x"})
     assert response.status_code not in (400, 422), response.text
-    kwargs = daemon.search.call_args.kwargs
-    assert kwargs.get("recency") is None
-    assert kwargs.get("recency_weight") is None
-    assert kwargs.get("recency_half_life_days") is None
+    req = daemon.search.call_args.args[0]
+    assert req.recency is None
+    assert req.recency_weight is None
+    assert req.recency_half_life_days is None
 
 
 @pytest.mark.parametrize(

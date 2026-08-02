@@ -43,6 +43,7 @@ from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
+from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_operation_context, require_admin, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
@@ -65,13 +66,6 @@ router = APIRouter(prefix="/api/v2/search", tags=["search"])
 # =============================================================================
 # Dependencies
 # =============================================================================
-
-
-# _get_search_daemon lives in _search_deps.py so the split sub-routers
-# (_search_indexed_dirs, _search_locate) can import it without forming
-# a cycle back through search.py.  Re-export here for the many callers
-# / tests / monkeypatches that already reach it via `search._get_search_daemon`.
-from nexus.server.api.v2.routers._search_deps import _get_search_daemon  # noqa: E402
 
 
 def _get_record_store(request: Request) -> Any:

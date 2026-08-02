@@ -2,25 +2,38 @@
 name = "nexusd"
 version = "0.1.0"
 edition = "2021"
-description = "Nexus full daemon assembly — nexus-vfs cluster/federation boot composed with the nexus service set (managed_agent, acp) via the ServiceRegistry bring-up seam. Supersedes the pure nexus-vfs nexusd-full as the production daemon."
+description = "Nexus cluster-profile daemon assembly — nexus-vfs cluster/federation boot composed with the nexus managed_agent control plane via the ServiceRegistry bring-up seam. This IS the `cluster` deployment profile (KERNEL-ARCHITECTURE §7) plus the agent control plane: the slim, size-gated production binary. driver-s3 / the full superset is an opt-in feature, never the default."
 authors = ["Nexus Team"]
 publish = false
 
 [[bin]]
-name = "nexusd-full"
+name = "nexusd-cluster"
 path = "src/main.rs"
+
+[features]
+default = []
+# Opt UP to the full/S3 superset (KERNEL-ARCHITECTURE §7: cluster ⊂ … ⊂ full):
+# adds the S3 / R2 object-store driver via `backends` feature unification.
+# Default builds stay the slim `cluster` profile (path-local + remote only)
+# so the shipped binary keeps the sudowork/edge size budget; only an
+# S3-serving tier builds `--features driver-s3`.
+driver-s3 = ["dep:backends", "backends/driver-s3"]
 
 [dependencies]
 # Cluster library entry — `nexus_cluster::run_with_services` owns clap
-# parsing, the tokio runtime, and the whole kernel + raft + federation
-# boot. The `driver-s3` feature is opted in via `backends` unification
-# below (matches the nexus-vfs `full` profile) so this binary is a strict
-# superset of the old nexusd-full — plus the nexus services.
+# parsing, the tokio runtime, and the whole kernel + raft + federation boot.
+# It already pulls the slim `cluster` backends slice (path-local + remote);
+# this crate adds NO extra drivers by default (profile purity — §7).
 nexus-cluster = { workspace = true }
-backends = { workspace = true, default-features = false, features = ["driver-s3"] }
 # a2a from-stamp hook (its `service_decl`); default-features keeps it
 # raft-free (the stream-wakeup observer is armed in cluster boot, not here).
 a2a = { workspace = true }
-# The nexus service set composed into the daemon at boot.
-services = { workspace = true, features = ["service-managed-agent", "service-acp"] }
+# The nexus control plane composed into the daemon at boot. ONLY
+# managed_agent — the `cluster` profile's agent control plane (§7); `acp`
+# (nexus-drives-ACP one-shot) is NOT a cluster service.
+services = { workspace = true, features = ["service-managed-agent"] }
+# Present ONLY to thread the optional `driver-s3` feature into the shared
+# `backends` compilation for the full superset; nexusd calls no backends API,
+# so it is not pulled at all in the default (slim cluster) build.
+backends = { workspace = true, default-features = false, optional = true }
 anyhow = "1"

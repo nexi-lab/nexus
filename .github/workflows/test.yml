@@ -596,14 +596,15 @@ jobs:
           fi
 
   # ── nexusd-cluster boot smoke test ──────────────────────────────────
-  # Kernel-tier Rust (including nexusd-cluster) migrated to nexus-vfs (#4259).
-  # Install from nexus-vfs git and smoke-test the binary.
+  # Builds the nexus-local `nexusd-cluster` (the shipped production binary:
+  # nexus-vfs cluster profile + the managed_agent control plane, #36) and
+  # gates it — boot smoke, restart-survival, and the raw ACP tunnel E2E.
   nexusd-cluster-smoke:
     name: nexusd-cluster Smoke Test
     needs: detect-changes
     runs-on: ubuntu-latest
-    # Two pinned cargo installs (slim + full profile) plus the Python
-    # restart-survival gate; rust-cache keeps warm runs well under this.
+    # One `--path` cargo install plus the Python restart-survival +
+    # tunnel gates; rust-cache keeps warm runs well under this.
     timeout-minutes: 30
     steps:
       - name: Skip notice (no code changes)
@@ -629,7 +630,7 @@ jobs:
         # Every nexus-vfs pin in the repo must agree: the Cargo.toml
         # crate pins, the Cargo.lock resolution, and the remaining image
         # ARGs (dockerfiles/Dockerfile.{minimal,raft-server,raft-witness}).
-        # The main image's nexusd-full now pins nexus-vfs THROUGH
+        # The main image's nexusd-cluster now pins nexus-vfs THROUGH
         # Cargo.lock (it builds the nexus-local `nexusd` crate, #36), not
         # an ARG. A partial bump ships a kernel the gate below never
         # tested — the exact drift class behind #4343.
@@ -695,34 +696,40 @@ jobs:
             exit 1
           fi
 
-      - name: Install cluster kernels (nexusd-cluster from nexus-vfs, nexusd-full nexus-local)
+      - name: Install nexusd-cluster (the shipped production binary)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Two binaries, two sources — both gated because both ship:
-        #   * nexusd-cluster = the slim federation kernel, still built
-        #     straight from nexus-vfs at the Cargo.toml-pinned rev. The
-        #     preflight above guarantees Cargo.toml == Cargo.lock == every
-        #     remaining Dockerfile ARG, so extracting from Cargo.toml IS
-        #     the shipping rev.
-        #   * nexusd-full = the binary the Docker image actually ships
-        #     (symlinked to nexus-cluster). As of #36 it is the
-        #     nexus-local `nexusd` crate (nexus-vfs cluster boot PLUS the
-        #     managed_agent/acp service set), NOT the nexus-vfs
-        #     `nexus-full` profile, so it must be built from THIS tree
-        #     (`--path rust/nexusd`) or the gate would test a binary the
-        #     image no longer ships.
-        # --locked honors the source tree's Cargo.lock (fresh dep
-        # resolution drifts on upstream releases); an unpinned install
-        # tracks nexus-vfs HEAD.
+        # Production ships the nexus-local `nexusd` crate as `nexusd-cluster`
+        # — the KERNEL-ARCHITECTURE §7 `cluster` profile PLUS the
+        # managed_agent control plane. It composes nexus-vfs cluster boot +
+        # managed_agent, so it must be built from THIS tree (`--path
+        # rust/nexusd`) — the gate then tests the EXACT binary the image
+        # ships. The pure nexus-vfs `nexusd-cluster` (no services) is gated
+        # in nexus-vfs CI (cluster-binary-build.yml, incl. its ≤15.5 MiB size
+        # budget), so it is not re-installed here. `--locked` honors the
+        # source tree's Cargo.lock (the nexus-vfs pin the preflight validated).
         run: |
-          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
-          if [ -z "$REV" ]; then
-            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
+          echo "Installing nexusd-cluster from the nexus-local crate rust/nexusd"
+          cargo install --locked --path rust/nexusd --bin nexusd-cluster
+
+      - name: nexusd-cluster size budget (cluster profile purity)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # The production cluster binary is size-gated (KERNEL-ARCHITECTURE §7;
+        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). The
+        # nexus-vfs gate only covers the PURE cluster binary; production ships
+        # this nexus-local one (cluster profile + managed_agent), so it needs
+        # its own guard. managed_agent is a small control-plane addition
+        # (~14.9 MiB release/stripped); driver-s3 / connectors must NOT leak
+        # into the default (slim) build — that leak is the #36 regression this
+        # gate exists to catch.
+        run: |
+          BIN="$HOME/.cargo/bin/nexusd-cluster"
+          MAX=16252928  # 15.5 MiB — matches the nexus-vfs linux cluster budget
+          actual=$(stat -c%s "$BIN")
+          echo "nexusd-cluster size: $actual bytes (max: $MAX)"
+          if [ "$actual" -gt "$MAX" ]; then
+            echo "::error::nexusd-cluster ($actual bytes) exceeds the cluster size budget ($MAX). A driver/connector likely leaked into the default slim build — keep driver-s3 & connectors behind opt-in features (KERNEL-ARCHITECTURE §7)."
             exit 1
           fi
-          echo "Installing nexusd-cluster (slim) at pinned nexus-vfs rev $REV"
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
-          echo "Installing nexusd-full from the nexus-local crate rust/nexusd (the shipped binary)"
-          cargo install --locked --path rust/nexusd --bin nexusd-full
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'
@@ -783,34 +790,30 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
-      - name: Restart-survival regression test (pinned kernels, both profiles)
+      - name: Restart-survival regression test (#4343)
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 15
         run: |
-          # nexusd-cluster = slim federation binary; nexusd-full = the
-          # binary the Docker image ships (symlinked to nexus-cluster).
-          # Both reuse cluster/src/main.rs — gate both so neither a
-          # slim- nor a full-profile regression ships untested.
-          for BIN in nexusd-cluster nexusd-full; do
-            export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/$BIN"
-            test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::pinned kernel binary missing at $NEXUS_KERNEL_BINARY"; exit 1; }
-            echo "Restart-survival against $BIN"
-            uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
-          done
+          # The VFS namespace must outlive a kernel restart. Runs against the
+          # exact production binary installed above (NEXUS_KERNEL_BINARY
+          # bypasses PATH lookup), so a rev bump that loses durable-metastore
+          # wiring fails this job.
+          export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/nexusd-cluster"
+          test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-cluster missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+          uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
 
-      - name: Managed-agent raw ACP tunnel E2E (nexusd-full, #36)
+      - name: Managed-agent raw ACP tunnel E2E (#36)
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 10
-        # The raw ACP control-plane spawn + DT_STREAM stdio tunnel live only
-        # in nexusd-full (it brings up the managed_agent service). Boot it via
-        # the same KernelClient spawn harness and drive
-        # start_session(spawn_spec) + StreamWriteNowait/StreamReadAt end to
-        # end over gRPC — the exact wire path an embedder (sudowork grpc-js)
-        # uses. Guards the daemon-level tunnel the in-process raw_spawn unit
-        # tests can't reach.
+        # The raw ACP control-plane spawn + DT_STREAM stdio tunnel live in
+        # nexusd-cluster (it brings up the managed_agent service). Boot it via
+        # the KernelClient spawn harness and drive start_session(spawn_spec) +
+        # StreamWriteNowait/StreamReadAt end to end over gRPC — the exact wire
+        # path an embedder (sudowork grpc-js) uses. Guards the daemon-level
+        # tunnel the in-process raw_spawn unit tests can't reach.
         run: |
-          export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/nexusd-full"
-          test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-full missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+          export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/nexusd-cluster"
+          test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-cluster missing at $NEXUS_KERNEL_BINARY"; exit 1; }
           uv run --no-sync python -m pytest tests/integration/test_managed_agent_tunnel_e2e.py -v -o "addopts="
 
   migration-test:

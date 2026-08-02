@@ -1,8 +1,8 @@
 """E2E: managed_agent raw ACP control-plane tunnel over gRPC (task #36).
 
-Boots a real ``nexusd-full`` daemon (same ``KernelClient`` spawn harness as
-the restart-survival smoke) and drives the raw-byte stdio tunnel end to end
-over the *actual* wire path an embedder (sudowork's grpc-js client) uses:
+Boots a real ``nexusd-cluster`` daemon (same ``KernelClient`` spawn harness
+as the restart-survival smoke) and drives the raw-byte stdio tunnel end to
+end over the *actual* wire path an embedder (sudowork's grpc-js client) uses:
 
   1. ``ManagedAgentService.start_session(spawn_spec)`` via the ``Call`` RPC
      (``managed_agent.start_session_v1``, JSON payload) — spawns a subprocess
@@ -20,8 +20,8 @@ exits on its own, exercising the supervisor reap path too.
 This is the gap the in-process ``raw_spawn`` unit tests don't cover: the
 gRPC ``Call`` routing to the Rust service + the ``StreamReadAt`` /
 ``StreamWriteNowait`` typed RPCs, through a booted daemon. Requires the
-``nexusd-full`` binary (which brings up ``managed_agent``); a slim
-``nexusd-cluster`` has no such service, so the test skips there.
+nexus-local ``nexusd-cluster`` (which brings up ``managed_agent``); the
+pure nexus-vfs cluster binary has no such service, so the test skips there.
 """
 
 from __future__ import annotations
@@ -39,9 +39,9 @@ pytestmark = pytest.mark.skipif(
     reason="raw ACP subprocess host is unix-only (subprocess-host feature)",
 )
 
-# The tunnel + managed_agent service only exist in nexusd-full. Point the
-# spawn harness at it explicitly; if it (or any cluster binary) is missing,
-# skip rather than fail — matches the restart-survival smoke's contract.
+# The tunnel + managed_agent service live in the nexus-local nexusd-cluster.
+# Point the spawn harness at it explicitly; if it (or any cluster binary) is
+# missing, skip rather than fail — matches the restart-survival smoke.
 _KERNEL_BIN = os.environ.get("NEXUS_KERNEL_BINARY")
 
 _PROBE = b"hello-nexus-tunnel\n"
@@ -57,8 +57,9 @@ def _open_kernel(data_dir: Path) -> KernelClient:
         if _KERNEL_BIN:
             raise
         pytest.skip(
-            "nexusd-full binary unavailable; set NEXUS_KERNEL_BINARY to the "
-            "full daemon (it hosts managed_agent) to run this E2E."
+            "nexusd-cluster binary unavailable; set NEXUS_KERNEL_BINARY to "
+            "the nexus-local nexusd-cluster (it hosts managed_agent) to run "
+            "this E2E."
         )
     return client
 

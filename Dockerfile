@@ -78,29 +78,30 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Build nexusd-full from nexus-local sources (Issue #3125, #4259, #36) ----------
-# The production daemon is `nexusd-full`. Historically this was the nexus-vfs
-# `full` profile (kernel/raft/federation + S3/R2 driver) `cargo install`ed from
-# the git repo. As of the ServiceRegistry bring-up refactor (#36) it is the
-# nexus-local `nexusd` crate (rust/nexusd): the SAME nexus-vfs cluster boot
-# (`nexus_cluster::run_with_services`) PLUS the nexus service set (managed_agent
-# raw-spawn control plane + acp one-shot) composed in at boot via
-# `Kernel::bring_up_services`, PLUS the S3/R2 driver (`backends` `driver-s3`
-# feature — matches the old full profile via feature unification). It is a
-# strict superset of the old binary. The kernel repo can't depend on the nexus
-# service crates, so the composition root lives HERE, next to those crates.
+# ---------- Build nexusd-cluster from nexus-local sources (Issue #3125, #4259, #36) ----------
+# The production daemon is `nexusd-cluster` — the `cluster` deployment
+# profile (KERNEL-ARCHITECTURE §7: slim ⊂ cluster ⊂ … ⊂ full) PLUS the
+# agent control plane. As of the ServiceRegistry bring-up refactor (#36)
+# it is the nexus-local `nexusd` crate (rust/nexusd): the SAME nexus-vfs
+# cluster boot (`nexus_cluster::run_with_services`) plus managed_agent
+# composed in at boot via `Kernel::bring_up_services`. The kernel repo
+# can't depend on the nexus service crates, so the composition root lives
+# HERE, next to them.
 #
-# The slim `nexusd-cluster` and the raft server/witness binaries still come from
-# nexus-vfs (dockerfiles/Dockerfile.{minimal,raft-server,raft-witness}) — those
-# deployment tiers legitimately carry no nexus services.
+# PROFILE PURITY (§7): this is the SLIM cluster — backends = path-local +
+# remote only (via `nexus-cluster`); NO S3, no connectors — so it holds
+# the size gate (nexus-vfs cluster-binary-build.yml: linux ≤ 15.5 MiB;
+# cluster + managed_agent measures ~14.9 MiB). The full/S3 superset is the
+# OPT-IN `driver-s3` feature (~+4 MiB AWS SDK), never the default — an
+# S3-serving tier builds `-p nexusd --features driver-s3`.
 #
-# The nexus-vfs pin is no longer a build-arg here: `nexusd` resolves nexus-vfs
-# through its Cargo.toml git-dep `rev` + Cargo.lock (the SSOT). `--locked` builds
-# exactly that resolution. Bump the pin in Cargo.toml/Cargo.lock — the test.yml
-# "Kernel pin consistency preflight" still enforces Cargo == Cargo.lock == the
-# remaining Dockerfile ARGs, and CI's nexusd-full smoke now builds this same
-# nexus-local crate (so the gate tests the exact binary the image ships).
-# nexusd-full is symlinked to nexus-cluster/nexusd-cluster below so the Python
+# The nexus-vfs pin is not a build-arg here: `nexusd` resolves nexus-vfs
+# through its Cargo.toml git-dep `rev` + Cargo.lock (the SSOT). `--locked`
+# builds exactly that resolution. Bump the pin in Cargo.toml/Cargo.lock —
+# the test.yml "Kernel pin consistency preflight" enforces Cargo ==
+# Cargo.lock == the remaining Dockerfile ARGs, and CI's nexusd-cluster
+# smoke builds this same nexus-local crate (so the gate tests the exact
+# binary the image ships). Symlinked to nexus-cluster below so the Python
 # runtime spawns it unchanged.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
@@ -111,8 +112,8 @@ COPY rust/ ./rust/
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
-    cargo build --locked --release -p nexusd --bin nexusd-full && \
-    cp /build/target/release/nexusd-full /build/nexusd-full
+    cargo build --locked --release -p nexusd --bin nexusd-cluster && \
+    cp /build/target/release/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -199,23 +200,18 @@ COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
-COPY --from=builder /build/nexusd-full /usr/local/bin/nexusd-full
-# Python factory boot spawns "nexus-cluster" (without d) via subprocess; point
-# that name at the full binary (cluster + S3/R2 driver) so usage is unchanged.
-RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexus-cluster
-# Back-compat: preserve the historic `nexusd-cluster` name. Repo consumers still
-# exec it directly (e.g. the federation E2E joiner entrypoint), and nexusd-full
-# is a strict superset of the old slim cluster binary, so the alias is
-# behaviorally identical.
-RUN ln -s /usr/local/bin/nexusd-full /usr/local/bin/nexusd-cluster
+COPY --from=builder /build/nexusd-cluster /usr/local/bin/nexusd-cluster
+# Python factory boot spawns "nexus-cluster" (without the d) via subprocess;
+# point that name at the cluster binary so the runtime spawns it unchanged.
+RUN ln -s /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------
-# Fail the build if any expected cluster binary name is missing or not on PATH
-# (don't mask failures with `|| echo`), then verify the binary actually runs.
-RUN for b in nexusd-full nexus-cluster nexusd-cluster; do \
+# Fail the build if the cluster binary (or its spawn alias) is missing or not
+# on PATH (don't mask failures with `|| echo`), then verify it actually runs.
+RUN for b in nexusd-cluster nexus-cluster; do \
         command -v "$b" >/dev/null 2>&1 || { echo "missing cluster binary: $b" >&2; exit 1; }; \
-    done && nexusd-full --version
+    done && nexusd-cluster --version
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \

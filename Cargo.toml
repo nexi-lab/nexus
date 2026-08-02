@@ -27,11 +27,12 @@ members = [
     # walk over `sys_readdir` + `sys_read` in v1, trigram / streaming
     # / adaptive-strategy variants land in v2.
     "rust/services/search-plugin",
-    # nexusd — the nexus full daemon assembly binary (`nexusd-full`).
-    # Composes the nexus-vfs cluster boot (`nexus_cluster::run_with_services`)
-    # with the nexus service set (managed_agent, acp) via the
-    # ServiceRegistry bring-up seam. Supersedes the pure nexus-vfs
-    # `nexusd-full` (no nexus services) as the production daemon.
+    # nexusd — the nexus cluster-profile daemon assembly binary
+    # (`nexusd-cluster`). Composes the nexus-vfs cluster boot
+    # (`nexus_cluster::run_with_services`) with the managed_agent control
+    # plane via the ServiceRegistry bring-up seam. This IS the production
+    # `cluster` profile (KERNEL-ARCHITECTURE §7) plus the agent control
+    # plane; the full/S3 superset is the opt-in `driver-s3` feature.
     "rust/nexusd",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions

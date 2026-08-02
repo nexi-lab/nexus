@@ -58,6 +58,15 @@ class DaemonSemanticSearchWrapper:
         ]
 
 
+class GraphBackendUnavailable(Exception):
+    """Raised when no graph-capable backend is available on the daemon.
+
+    Callers (e.g. the search router) should catch this and fall back to
+    normal search — the graph feature was removed in #3699 and the
+    ``NEXUS_TXTAI_GRAPH`` knob is vestigial.
+    """
+
+
 async def graph_enhanced_search(
     query: str,
     search_type: str,  # noqa: ARG001
@@ -90,17 +99,31 @@ async def graph_enhanced_search(
 
     Returns:
         List of BaseSearchResult
+
+    Raises:
+        GraphBackendUnavailable: When the daemon has no graph-capable backend.
+            Callers should catch this and fall back to normal search.
     """
     effective_zone_id = zone_id or ROOT_ZONE_ID
-    backend = getattr(search_daemon, "_backend", None)
+
+    # After #3699, SearchDaemon owns ``_fts_backend`` / ``_vector_backend``
+    # — the old ``_backend`` attribute no longer exists.  Check the new
+    # attributes and look for a ``graph_search`` method on either.
+    backend = getattr(search_daemon, "_fts_backend", None) or getattr(
+        search_daemon, "_vector_backend", None
+    )
     if backend is None:
-        logger.warning("graph_enhanced_search: no backend available on daemon")
-        return []
+        raise GraphBackendUnavailable(
+            "graph_enhanced_search: daemon has no fts/vector backend; "
+            "txtai graph was removed in #3699 — falling back to normal search"
+        )
 
     graph_search_fn = getattr(backend, "graph_search", None)
     if graph_search_fn is None:
-        logger.warning("graph_enhanced_search: backend does not support graph_search")
-        return []
+        raise GraphBackendUnavailable(
+            f"graph_enhanced_search: backend {type(backend).__name__} "
+            f"does not expose graph_search — falling back to normal search"
+        )
 
     # Issue #4544 (Codex review R2): the graph path must honour the same
     # probe → over-fetch → pinned-attach → trim workflow as daemon searches,

@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
+from nexus.bricks.search.graph_search_service import GraphBackendUnavailable
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
@@ -496,52 +497,68 @@ async def _handle_single_zone_search(
         if effective_graph_mode != "none":
             from nexus.bricks.search.graph_search_service import graph_enhanced_search
 
-            results = await graph_enhanced_search(
-                query=q,
-                search_type=search_type,
-                limit=fetch_limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                graph_mode=effective_graph_mode,
-                record_store=record_store,
-                async_session_factory=async_session_factory,
-                search_daemon=search_daemon,
-                zone_id=zone_id,
-            )
+            graph_fell_back = False
+            results: list[Any] = []
+            try:
+                results = await graph_enhanced_search(
+                    query=q,
+                    search_type=search_type,
+                    limit=fetch_limit,
+                    path_filter=path_filter,
+                    alpha=alpha,
+                    graph_mode=effective_graph_mode,
+                    record_store=record_store,
+                    async_session_factory=async_session_factory,
+                    search_daemon=search_daemon,
+                    zone_id=zone_id,
+                )
+            except GraphBackendUnavailable:
+                # Fail-open: graph backend was removed in #3699 and the
+                # NEXUS_TXTAI_GRAPH knob is vestigial.  Fall through to
+                # normal search instead of returning zero results.
+                logger.warning(
+                    "graph_mode=%s requested but graph backend unavailable; "
+                    "falling back to normal search (txtai graph removed in #3699)",
+                    effective_graph_mode,
+                )
+                effective_graph_mode = "none"
+                graph_fell_back = True
 
-            # ReBAC file-level filtering (Decision #17)
-            pre_filter_count = len(results)
-            results, filter_ms = _apply_rebac_filter(
-                results,
-                permission_enforcer,
-                auth_result,
-                zone_id,
-                operation_context=op_context,
-            )
-            post_filter_count = len(results)
-            results = results[:effective_limit]
+            if not graph_fell_back:
+                # ReBAC file-level filtering (Decision #17)
+                pre_filter_count = len(results)
+                results, filter_ms = _apply_rebac_filter(
+                    results,
+                    permission_enforcer,
+                    auth_result,
+                    zone_id,
+                    operation_context=op_context,
+                )
+                post_filter_count = len(results)
+                results = results[:effective_limit]
 
-            latency_ms = (time.perf_counter() - start_time) * 1000
+                latency_ms = (time.perf_counter() - start_time) * 1000
 
-            graph_latency_breakdown = {
-                "total_ms": round(latency_ms, 2),
-                "permission_filter_ms": round(filter_ms, 2),
-            }
-            _bind_search_phase_timings(graph_latency_breakdown)
+                graph_latency_breakdown = {
+                    "total_ms": round(latency_ms, 2),
+                    "permission_filter_ms": round(filter_ms, 2),
+                }
+                _bind_search_phase_timings(graph_latency_breakdown)
 
-            response: dict[str, Any] = {
-                "query": q,
-                "search_type": search_type,
-                "graph_mode": effective_graph_mode,
-                "results": [_serialize_search_result(r) for r in results],
-                "total": len(results),
-                "latency_ms": round(latency_ms, 2),
-                "latency_breakdown": graph_latency_breakdown,
-                **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
-            }
-            if routing_info:
-                response["routing"] = routing_info
-            return response
+                response: dict[str, Any] = {
+                    "query": q,
+                    "search_type": search_type,
+                    "graph_mode": effective_graph_mode,
+                    "results": [_serialize_search_result(r) for r in results],
+                    "total": len(results),
+                    "latency_ms": round(latency_ms, 2),
+                    "latency_breakdown": graph_latency_breakdown,
+                    **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
+                }
+                if routing_info:
+                    response["routing"] = routing_info
+                return response
+            # else: graph fell back to normal search — fall through below
 
         results = await search_daemon.search(
             query=q,

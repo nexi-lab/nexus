@@ -798,6 +798,21 @@ jobs:
             uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
           done
 
+      - name: Managed-agent raw ACP tunnel E2E (nexusd-full, #36)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        timeout-minutes: 10
+        # The raw ACP control-plane spawn + DT_STREAM stdio tunnel live only
+        # in nexusd-full (it brings up the managed_agent service). Boot it via
+        # the same KernelClient spawn harness and drive
+        # start_session(spawn_spec) + StreamWriteNowait/StreamReadAt end to
+        # end over gRPC — the exact wire path an embedder (sudowork grpc-js)
+        # uses. Guards the daemon-level tunnel the in-process raw_spawn unit
+        # tests can't reach.
+        run: |
+          export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/nexusd-full"
+          test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-full missing at $NEXUS_KERNEL_BINARY"; exit 1; }
+          uv run --no-sync python -m pytest tests/integration/test_managed_agent_tunnel_e2e.py -v -o "addopts="
+
   migration-test:
     name: Migration Tests (SQLite)
     needs: [detect-changes]

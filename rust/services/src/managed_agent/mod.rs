@@ -134,17 +134,20 @@ pub(crate) struct StartSessionRequest {
     #[serde(default)]
     pub zone_id: String,
     /// Embedder-computed raw spawn spec (ACP control-plane contract, 2026-08-01). When
-    /// set, `start_session` spawns THIS subprocess (stdio surfaced as DT_PIPEs at
-    /// `/{zone}/proc/{pid}/fd/{0,1,2}`) instead of resolving the `agent_id` profile — the
-    /// caller (sudowork/hydra) owns ALL launch logic (auth-mode/env/args/token/model);
-    /// nexus only executes + supervises + exposes the fd pipes for the client's ACP tunnel.
+    /// set, `start_session` spawns THIS subprocess (stdio surfaced as node-local
+    /// `io_profile="memory"` `DT_STREAM`s at `/proc/{session_id}/fd/{0,1,2}`, where
+    /// `session_id` is the returned AgentRegistry pid — see [`raw_spawn`]) instead of
+    /// resolving the `agent_id` profile — the caller (sudowork/hydra) owns ALL launch
+    /// logic (auth-mode/env/args/token/model); nexus only executes + supervises + pumps
+    /// the child's stdio through those streams for the client's raw-byte ACP tunnel.
     #[serde(default)]
     pub spawn_spec: Option<SpawnSpec>,
 }
 
 /// Raw subprocess spec computed by the embedder. The launch-logic SSOT stays client-side
 /// (e.g. sudowork's `acpConnectors.ts`); nexus executes `cmd`+`args` with `env` in `cwd`,
-/// supervises the child, and surfaces its stdio as fd DT_PIPEs. nexus never parses ACP.
+/// supervises the child, and pumps its stdio through node-local memory `DT_STREAM`s
+/// (`/proc/{session_id}/fd/{0,1,2}`). nexus never frames or parses ACP.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct SpawnSpec {
     pub cmd: String,

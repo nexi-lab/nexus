@@ -1,12 +1,16 @@
-"""Unit tests for the covered-version consumer gate (Issue #4566 follow-up).
+"""Unit tests for the covered-version indexer gate (Issue #4566 follow-up).
 
 Explicit ``POST /search/index`` calls stamp ``file_paths.indexed_content_id``
-after a successful write. The mutation consumers must skip an UPSERT whose
-row's CURRENT ``content_id`` already matches that marker — otherwise the
-consumer's blob-bytes indexing clobbers the richer caller-provided text
-(PDF extraction, OCR output, sidecar markdown). A real content change
-advances ``content_id``, the marker stops matching, and consumers index the
-new version normally.
+and ``last_indexed_at`` after a successful write. The mutation consumers AND
+the legacy refresh loop must skip an UPSERT whose row is covered — otherwise
+their blob-bytes indexing clobbers the richer caller-provided text (PDF
+extraction, OCR output, sidecar markdown). Covered means BOTH:
+
+- ``indexed_content_id == content_id`` (the marker), AND
+- ``last_indexed_at >= updated_at`` (freshness) — required because some
+  backends store an identity-style ``content_id`` (the local backend uses
+  the path, unchanged across rewrites), where marker equality alone would
+  latch coverage forever and edits would silently stop being re-indexed.
 """
 
 from __future__ import annotations
@@ -104,17 +108,23 @@ def _stub_resolution(daemon: SearchDaemon, mutations: list[Any]) -> None:
 class TestUpsertCoveredByIndex:
     @pytest.mark.asyncio
     async def test_covered_when_marker_matches_current_content(self) -> None:
-        daemon = _covered_daemon(("cid-1", "cid-1"))
+        daemon = _covered_daemon(("cid-1", "cid-1", 100, 150))
         assert await daemon._upsert_covered_by_index("pid-1") is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "row",
         [
-            ("cid-2", "cid-1"),  # content advanced past the marker
-            ("cid-1", None),  # never stamped
-            (None, None),  # no content at all
-            (None, "cid-1"),  # marker without content (defensive)
+            ("cid-2", "cid-1", 100, 150),  # content advanced past the marker
+            ("cid-1", None, 100, 150),  # never stamped
+            (None, None, 100, 150),  # no content at all
+            (None, "cid-1", 100, 150),  # marker without content (defensive)
+            # THE EDIT CASE: marker still equals content_id (identity-style
+            # content_id backends never change it) but the row was written
+            # AFTER the last index pass — must re-index, not skip.
+            ("cid-1", "cid-1", 200, 150),
+            ("cid-1", "cid-1", 100, None),  # marker set but never time-stamped
+            ("cid-1", "cid-1", None, 150),  # no updated_at (defensive)
             None,  # row deleted under us
         ],
     )
@@ -132,7 +142,7 @@ class TestUpsertCoveredByIndex:
     @pytest.mark.asyncio
     async def test_lookup_error_fails_open(self) -> None:
         """DB errors must not block consumer indexing (pre-gate behavior)."""
-        daemon = _covered_daemon(("cid-1", "cid-1"), raise_on_execute=True)
+        daemon = _covered_daemon(("cid-1", "cid-1", 100, 150), raise_on_execute=True)
         assert await daemon._upsert_covered_by_index("pid-1") is False
 
 
@@ -144,7 +154,7 @@ class TestUpsertCoveredByIndex:
 class TestEmbeddingConsumerGate:
     @pytest.mark.asyncio
     async def test_covered_upsert_skips_pipeline(self) -> None:
-        daemon = _covered_daemon(("cid-1", "cid-1"))
+        daemon = _covered_daemon(("cid-1", "cid-1", 100, 150))
         daemon._indexing_pipeline = MagicMock(index_document=AsyncMock())
         daemon._embedding_provider = MagicMock()
         daemon._chunk_store = MagicMock(replace_document_chunks=AsyncMock())
@@ -159,7 +169,7 @@ class TestEmbeddingConsumerGate:
 
     @pytest.mark.asyncio
     async def test_uncovered_upsert_reaches_pipeline(self) -> None:
-        daemon = _covered_daemon(("cid-2", "cid-1"))
+        daemon = _covered_daemon(("cid-2", "cid-1", 100, 150))
         pipeline_result = MagicMock(error=None, chunks_indexed=1)
         daemon._indexing_pipeline = MagicMock(
             index_document=AsyncMock(return_value=pipeline_result)
@@ -194,14 +204,75 @@ class TestFtsConsumerGate:
 
     @pytest.mark.asyncio
     async def test_covered_upsert_skips_chunk_write(self) -> None:
-        daemon, chunk_writes = self._fts_daemon(("cid-1", "cid-1"))
+        daemon, chunk_writes = self._fts_daemon(("cid-1", "cid-1", 100, 150))
         await daemon._consume_fts_mutations([MagicMock()])
         assert chunk_writes == []
         assert daemon.stats.mutation_upserts_skipped_covered == 1
 
     @pytest.mark.asyncio
     async def test_uncovered_upsert_writes_chunks(self) -> None:
-        daemon, chunk_writes = self._fts_daemon(("cid-2", "cid-1"))
+        daemon, chunk_writes = self._fts_daemon(("cid-2", "cid-1", 100, 150))
         await daemon._consume_fts_mutations([MagicMock()])
         assert chunk_writes == [("pid-1", "/zone/z1/doc.pdf", "raw blob bytes")]
+        assert daemon.stats.mutation_upserts_skipped_covered == 0
+
+
+class _DispatchSession:
+    """Session for _refresh_indexes: routes each query shape to its row."""
+
+    def __init__(self, covered_row: tuple[Any, ...] | None) -> None:
+        self._covered_row = covered_row
+
+    async def __aenter__(self) -> "_DispatchSession":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        return None
+
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
+        sql = str(stmt)
+        if "indexed_content_id" in sql:
+            return _Result(self._covered_row)
+        if "SELECT fp.path_id" in sql:
+            return _Result(("pid-1",))
+        return _Result(None)
+
+
+class _FakeFileReader:
+    async def read_text(self, path: str) -> str:
+        return "raw blob bytes from refresh"
+
+
+class TestLegacyRefreshGate:
+    """The legacy refresh loop fires on EVERY VFS write (post-write hook),
+    so it was the live clobberer of explicit /search/index text — it must
+    honor the same covered gate as the consumers."""
+
+    def _refresh_daemon(self, covered_row: tuple[Any, ...] | None) -> SearchDaemon:
+        daemon = SearchDaemon.__new__(SearchDaemon)
+        daemon.stats = DaemonStats()
+        daemon._async_session = lambda: _DispatchSession(covered_row)
+        daemon._file_reader = _FakeFileReader()
+        pipeline_result = MagicMock(error=None, chunks_indexed=1)
+        daemon._indexing_pipeline = MagicMock(
+            index_document=AsyncMock(return_value=pipeline_result)
+        )
+        daemon._embedding_provider = MagicMock()
+        setattr(daemon, "_is_path_in_scope", lambda p: True)  # noqa: B010
+        return daemon
+
+    @pytest.mark.asyncio
+    async def test_covered_path_skips_refresh_reindex(self) -> None:
+        daemon = self._refresh_daemon(("cid-1", "cid-1", 100, 150))
+        await daemon._refresh_indexes(["/doc.pdf"])
+        daemon._indexing_pipeline.index_document.assert_not_called()
+        assert daemon.stats.mutation_upserts_skipped_covered == 1
+
+    @pytest.mark.asyncio
+    async def test_edited_path_still_reindexed(self) -> None:
+        """updated_at newer than last_indexed_at (a real edit) → refresh
+        must re-index even though the identity-style marker still matches."""
+        daemon = self._refresh_daemon(("cid-1", "cid-1", 200, 150))
+        await daemon._refresh_indexes(["/doc.pdf"])
+        daemon._indexing_pipeline.index_document.assert_awaited_once()
         assert daemon.stats.mutation_upserts_skipped_covered == 0

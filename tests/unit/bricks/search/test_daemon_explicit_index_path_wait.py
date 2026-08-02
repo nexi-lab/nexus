@@ -51,9 +51,13 @@ class _Session:
         return None
 
     async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
-        if str(stmt).lstrip().upper().startswith("UPDATE"):
+        sql = str(stmt)
+        if sql.lstrip().upper().startswith("UPDATE"):
             self.update_calls.append(dict(params or {}))
             return _Result(None)
+        if "document_chunks" in sql:
+            # Post-index guard watermark: stable so the guard never repairs.
+            return _Result((1, "t1"))
         self.select_calls.append(dict(params or {}))
         idx = min(len(self.select_calls) - 1, len(self._rows_by_call) - 1)
         return _Result(self._rows_by_call[idx])
@@ -130,7 +134,7 @@ class TestExplicitIndexPathWait:
         self, sleep_recorder: list[float]
     ) -> None:
         """Write-then-index: row missing on first lookup, lands on the second."""
-        daemon, pipeline, factory = _make_daemon([None, ("pid-1", "cid-1")], attempts=3)
+        daemon, pipeline, factory = _make_daemon([None, ("pid-1", "cid-1", 100)], attempts=3)
 
         result = await daemon.index_documents(
             [{"id": "1", "text": "zuluxx probe", "path": "/probe.md"}], zone_id="root"
@@ -165,7 +169,7 @@ class TestExplicitIndexPathWait:
     ) -> None:
         daemon, pipeline, _ = _make_daemon(
             # /ok.md resolves immediately; /ghost.md never does.
-            [("pid-ok", "cid-ok"), None, None, None],
+            [("pid-ok", "cid-ok", 100), None, None, None],
             attempts=2,
         )
 
@@ -210,7 +214,7 @@ class TestExplicitIndexPathWait:
 
     @pytest.mark.asyncio
     async def test_stats_counters_track_waits_and_skips(self, sleep_recorder: list[float]) -> None:
-        daemon, _, _ = _make_daemon([None, ("pid-1", "cid-1")], attempts=1)
+        daemon, _, _ = _make_daemon([None, ("pid-1", "cid-1", 100)], attempts=1)
 
         await daemon.index_documents(
             [{"id": "1", "text": "late row", "path": "/late.md"}], zone_id="root"
@@ -243,7 +247,7 @@ class TestExplicitIndexStampsCoveredVersion:
 
     @pytest.mark.asyncio
     async def test_successful_index_stamps_indexed_content_id(self) -> None:
-        daemon, _, factory = _make_daemon([("pid-1", "cid-1")], attempts=0)
+        daemon, _, factory = _make_daemon([("pid-1", "cid-1", 100)], attempts=0)
 
         await daemon.index_documents(
             [{"id": "1", "text": "extracted pdf text", "path": "/doc.pdf"}], zone_id="root"
@@ -254,11 +258,14 @@ class TestExplicitIndexStampsCoveredVersion:
         stamp = factory.session.update_calls[0]
         assert stamp["pid"] == "pid-1"
         assert stamp["cid"] == "cid-1"
+        # CAS must carry the updated_at observed at resolution time so a
+        # mid-flight rewrite (which bumps updated_at) voids the stamp.
+        assert stamp["observed_updated_at"] == 100
         assert factory.session.commits == 1
 
     @pytest.mark.asyncio
     async def test_no_stamp_when_row_has_no_content_id(self) -> None:
-        daemon, _, factory = _make_daemon([("pid-1", None)], attempts=0)
+        daemon, _, factory = _make_daemon([("pid-1", None, 100)], attempts=0)
 
         result = await daemon.index_documents(
             [{"id": "1", "text": "text", "path": "/a.md"}], zone_id="root"
@@ -273,7 +280,9 @@ class TestExplicitIndexStampsCoveredVersion:
         """Scope-gated no-op (chunks_indexed=0, no error) must NOT stamp —
         stamping would wrongly block the FTS consumer's naive-chunk
         fallback for out-of-scope paths."""
-        daemon, pipeline, factory = _make_daemon([("pid-1", "cid-1")], attempts=0, chunks_indexed=0)
+        daemon, pipeline, factory = _make_daemon(
+            [("pid-1", "cid-1", 100)], attempts=0, chunks_indexed=0
+        )
 
         result = await daemon.index_documents(
             [{"id": "1", "text": "text", "path": "/outside-scope.md"}], zone_id="root"
@@ -287,7 +296,7 @@ class TestExplicitIndexStampsCoveredVersion:
     @pytest.mark.asyncio
     async def test_stamp_failure_is_fail_soft(self) -> None:
         """A stamp error must not fail the request — the text IS indexed."""
-        daemon, _, factory = _make_daemon([("pid-1", "cid-1")], attempts=0)
+        daemon, _, factory = _make_daemon([("pid-1", "cid-1", 100)], attempts=0)
         assert factory is not None
 
         original_execute = factory.session.execute
@@ -305,3 +314,106 @@ class TestExplicitIndexStampsCoveredVersion:
         )
         assert result.indexed == 1
         assert result.skipped == []
+
+
+class _GuardSession:
+    """Session for the guard: routes each query shape to scripted answers."""
+
+    def __init__(
+        self,
+        watermarks: list[tuple[int, Any] | None],
+        row_version: tuple[Any, Any] | None,
+    ) -> None:
+        self._watermarks = watermarks
+        self._wm_idx = 0
+        self._row_version = row_version
+        self.update_calls: list[dict[str, Any]] = []
+
+    async def __aenter__(self) -> "_GuardSession":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        return None
+
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
+        sql = str(stmt)
+        if sql.lstrip().upper().startswith("UPDATE"):
+            self.update_calls.append(dict(params or {}))
+            return _Result(None)
+        if "document_chunks" in sql:
+            idx = min(self._wm_idx, len(self._watermarks) - 1)
+            self._wm_idx += 1
+            return _Result(self._watermarks[idx])
+        return _Result(self._row_version)
+
+    async def commit(self) -> None:
+        return None
+
+
+class TestExplicitIndexGuard:
+    """#4566: a writer already past its covered-gate check when the stamp
+    lands can interleave its blob replace with ours (observed live: two
+    chunk writes 3ms apart, mixed set). The guard watches the chunk
+    watermark and re-replaces the raced write with the caller's text."""
+
+    def _guard_daemon(
+        self,
+        watermarks: list[tuple[int, Any] | None],
+        row_version: tuple[Any, Any] | None,
+    ) -> tuple[SearchDaemon, _Pipeline, _GuardSession]:
+        config = DaemonConfig(index_path_wait_attempts=2, index_path_wait_seconds=0.001)
+        session = _GuardSession(watermarks, row_version)
+        daemon = SearchDaemon(config, async_session_factory=lambda: session)
+        pipeline = _Pipeline()
+        daemon._indexing_pipeline = cast(Any, pipeline)
+        daemon._initialized = True
+        return daemon, pipeline, session
+
+    @pytest.mark.asyncio
+    async def test_guard_repairs_raced_chunk_write(self, sleep_recorder: list[float]) -> None:
+        # Watermark moves off the baseline (a foreign write landed), and the
+        # row still holds the version we indexed -> repair + re-stamp.
+        daemon, pipeline, session = self._guard_daemon(
+            watermarks=[(3, "t2"), (2, "t3")],
+            row_version=("cid-1", 100),
+        )
+
+        await daemon._explicit_index_guard(
+            "/doc.pdf", "explicit text", ("pid-1", "cid-1", 100), baseline=(1, "t1")
+        )
+
+        assert pipeline.calls == [("/doc.pdf", "explicit text", "pid-1")]
+        assert len(session.update_calls) == 1  # re-stamp
+        assert daemon.stats.explicit_index_repairs == 1
+
+    @pytest.mark.asyncio
+    async def test_guard_noop_when_watermark_stable(self, sleep_recorder: list[float]) -> None:
+        daemon, pipeline, session = self._guard_daemon(
+            watermarks=[(1, "t1")],
+            row_version=("cid-1", 100),
+        )
+
+        await daemon._explicit_index_guard(
+            "/doc.pdf", "explicit text", ("pid-1", "cid-1", 100), baseline=(1, "t1")
+        )
+
+        assert pipeline.calls == []
+        assert session.update_calls == []
+        assert daemon.stats.explicit_index_repairs == 0
+
+    @pytest.mark.asyncio
+    async def test_guard_stands_down_when_file_moved_on(self, sleep_recorder: list[float]) -> None:
+        """A REAL new write owns the index — the guard must never clobber
+        the newer version with stale explicit text."""
+        daemon, pipeline, session = self._guard_daemon(
+            watermarks=[(5, "t9")],
+            row_version=("cid-1", 999),  # updated_at advanced past what we indexed
+        )
+
+        await daemon._explicit_index_guard(
+            "/doc.pdf", "explicit text", ("pid-1", "cid-1", 100), baseline=(1, "t1")
+        )
+
+        assert pipeline.calls == []
+        assert session.update_calls == []
+        assert daemon.stats.explicit_index_repairs == 0

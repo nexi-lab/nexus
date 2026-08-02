@@ -65,6 +65,7 @@ from nexus.bricks.search.mutation_parking import (
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.search_types import SearchRequest
 from nexus.lib.env import get_database_url
 
 T = TypeVar("T")
@@ -2824,57 +2825,54 @@ class SearchDaemon:
             rows = (await session.execute(stmt)).all()
         return {row[0]: row[1] for row in rows if row[1] is not None}
 
-    async def search(
-        self,
-        query: str,
-        search_type: Literal["keyword", "semantic", "hybrid"] = "hybrid",
-        limit: int = 10,
-        path_filter: str | None = None,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        zone_id: str | None = None,
-        expand: str = "none",
-        rrf_k: int = 60,
-        recency: str | None = None,
-        recency_weight: float | None = None,
-        recency_half_life_days: float | None = None,
-    ) -> list[SearchResult]:
-        if zone_id is None:
+    async def search(self, request: SearchRequest) -> list[SearchResult]:
+        """Execute a hybrid/keyword/semantic search (public entry point).
+
+        Accepts a single :class:`SearchRequest` bundling all knobs
+        (query, search_type, limit, alpha, fusion_method, rrf_k,
+        recency*, expand, zone_id, &c.).  Internal helpers below
+        (``_search_on_current_loop``, ``_apply_recency_boost_post_search``,
+        ``_apply_macro_expansion``) keep individual kwargs — the
+        SearchRequest boundary is drawn at the public contract.
+        """
+        req = request
+        effective_zone = req.zone_id or ROOT_ZONE_ID
+        if req.zone_id is None:
             results = await self._search_on_current_loop(
-                query,
-                search_type=search_type,
-                limit=limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                fusion_method=fusion_method,
-                rrf_k=rrf_k,
-                zone_id=zone_id,
+                req.query,
+                search_type=req.search_type,
+                limit=req.limit,
+                path_filter=req.path_filter,
+                alpha=req.alpha,
+                fusion_method=req.fusion_method,
+                rrf_k=req.rrf_k,
+                zone_id=req.zone_id,
             )
         else:
 
             async def _work() -> list[SearchResult]:
                 return await self._search_on_current_loop(
-                    query,
-                    search_type=search_type,
-                    limit=limit,
-                    path_filter=path_filter,
-                    alpha=alpha,
-                    fusion_method=fusion_method,
-                    rrf_k=rrf_k,
-                    zone_id=zone_id,
+                    req.query,
+                    search_type=req.search_type,
+                    limit=req.limit,
+                    path_filter=req.path_filter,
+                    alpha=req.alpha,
+                    fusion_method=req.fusion_method,
+                    rrf_k=req.rrf_k,
+                    zone_id=req.zone_id,
                 )
 
             results = await self._run_on_owner_loop(_work)
 
         await self._apply_recency_boost_post_search(
             results,
-            query=query,
-            recency=recency,
-            recency_weight=recency_weight,
-            recency_half_life_days=recency_half_life_days,
-            zone_id=zone_id or ROOT_ZONE_ID,
+            query=req.query,
+            recency=req.recency,
+            recency_weight=req.recency_weight,
+            recency_half_life_days=req.recency_half_life_days,
+            zone_id=effective_zone,
         )
-        await self._apply_macro_expansion(results, expand=expand, zone_id=zone_id or ROOT_ZONE_ID)
+        await self._apply_macro_expansion(results, expand=req.expand, zone_id=effective_zone)
         return results
 
     async def _search_on_current_loop(

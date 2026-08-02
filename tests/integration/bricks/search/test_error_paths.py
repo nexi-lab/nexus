@@ -1,3 +1,4 @@
+from nexus.contracts.search_types import SearchRequest
 """Tests for search brick error paths (Issue #1520, #2663).
 
 Validates error handling at brick boundaries:
@@ -25,7 +26,7 @@ class TestSearchDaemonErrors:
         assert not daemon.is_initialized
 
         with pytest.raises(RuntimeError, match="SearchDaemon not initialized"):
-            await daemon.search("test query")
+            await daemon.search(SearchRequest(query="test query"))
 
     @pytest.mark.asyncio
     async def test_shutdown_idempotent(self) -> None:

@@ -14,7 +14,9 @@ Issue #1499: Shared query analysis patterns for query routing and expansion.
 """
 
 import contextvars
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 __all__ = [
     # Strategy enums
@@ -38,7 +40,44 @@ __all__ = [
     "COMPLEX_PATTERNS",
     # Per-task semantic-degradation flag (Issue #3778 R2)
     "LAST_SEMANTIC_DEGRADED",
+    # SearchBrickProtocol.search bundled request (#4553 follow-up B)
+    "SearchRequest",
 ]
+
+
+# =============================================================================
+# SearchRequest — bundled call shape for SearchBrickProtocol.search
+# =============================================================================
+#
+# ``search()`` had grown to 13 keyword arguments (query, search_type, limit,
+# path_filter, alpha, fusion_method, rrf_k, zone_id, expand, adaptive_k,
+# recency, recency_weight, recency_half_life_days) with the request-param
+# feature set steadily growing (#4541 fusion, #4553 recency, #4545 title
+# arm).  Every new knob shipped as another keyword and mock stubs sprouted
+# matching kwargs.  Bundling into one frozen dataclass stops the accretion —
+# new fields are pure data additions that don't churn signatures.
+#
+# The public ``search`` method takes exactly one argument: a
+# ``SearchRequest``.  Private internal-to-daemon methods
+# (``_search_on_current_loop`` etc.) keep individual kwargs — the boundary
+# is drawn at the public contract, not repeated inside the module.
+@dataclass(frozen=True, kw_only=True)
+class SearchRequest:
+    """Bundled parameters for ``SearchBrickProtocol.search``."""
+
+    query: str
+    search_type: Literal["keyword", "semantic", "hybrid"] = "hybrid"
+    limit: int = 10
+    path_filter: str | None = None
+    alpha: float = 0.5
+    fusion_method: str = "rrf"
+    rrf_k: int = 60
+    zone_id: str | None = None
+    expand: str = "none"
+    adaptive_k: bool = False
+    recency: str | None = None
+    recency_weight: float | None = None
+    recency_half_life_days: float | None = None
 
 # Per-task flag recording whether the last SANDBOX semantic_search call
 # degraded to BM25S (Issue #3778 R2 review). Response-envelope builders

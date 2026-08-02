@@ -620,10 +620,12 @@ jobs:
       - name: Kernel pin consistency preflight
         if: needs.detect-changes.outputs.code_changed == 'true'
         # Every nexus-vfs pin in the repo must agree: the Cargo.toml
-        # crate pins, the Cargo.lock resolution, the shipping image ARG
-        # (Dockerfile), and the federation test/witness image ARGs.
-        # A partial bump ships a kernel the gate below never tested —
-        # the exact drift class behind #4343.
+        # crate pins, the Cargo.lock resolution, and the remaining image
+        # ARGs (dockerfiles/Dockerfile.{minimal,raft-server,raft-witness}).
+        # The main image's nexusd-full now pins nexus-vfs THROUGH
+        # Cargo.lock (it builds the nexus-local `nexusd` crate, #36), not
+        # an ARG. A partial bump ships a kernel the gate below never
+        # tested — the exact drift class behind #4343.
         run: |
           set -euo pipefail
           # Every nexus-vfs install — in Dockerfiles AND workflow
@@ -686,31 +688,34 @@ jobs:
             exit 1
           fi
 
-      - name: Install nexusd-cluster from nexus-vfs (pinned rev)
+      - name: Install cluster kernels (nexusd-cluster from nexus-vfs, nexusd-full nexus-local)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Pin to the rev shipped by this checkout. The preflight above
-        # guarantees Cargo.toml == Cargo.lock == every Dockerfile ARG,
-        # so extracting from Cargo.toml IS the shipping rev. An
-        # unpinned install tracks nexus-vfs HEAD and can silently
-        # drift from what the Docker image ships — exactly how a
-        # durable-metastore regression (#4343) could pass smoke while
-        # the pinned kernel is broken. --locked honors the source
-        # tree's Cargo.lock (fresh dep resolution drifts on upstream
-        # releases).
+        # Two binaries, two sources — both gated because both ship:
+        #   * nexusd-cluster = the slim federation kernel, still built
+        #     straight from nexus-vfs at the Cargo.toml-pinned rev. The
+        #     preflight above guarantees Cargo.toml == Cargo.lock == every
+        #     remaining Dockerfile ARG, so extracting from Cargo.toml IS
+        #     the shipping rev.
+        #   * nexusd-full = the binary the Docker image actually ships
+        #     (symlinked to nexus-cluster). As of #36 it is the
+        #     nexus-local `nexusd` crate (nexus-vfs cluster boot PLUS the
+        #     managed_agent/acp service set), NOT the nexus-vfs
+        #     `nexus-full` profile, so it must be built from THIS tree
+        #     (`--path rust/nexusd`) or the gate would test a binary the
+        #     image no longer ships.
+        # --locked honors the source tree's Cargo.lock (fresh dep
+        # resolution drifts on upstream releases); an unpinned install
+        # tracks nexus-vfs HEAD.
         run: |
           REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
           if [ -z "$REV" ]; then
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1
           fi
-          echo "Installing nexusd-cluster at pinned nexus-vfs rev $REV"
+          echo "Installing nexusd-cluster (slim) at pinned nexus-vfs rev $REV"
           cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
-          # Also install the full profile — the binary the Docker image
-          # actually ships (nexusd-full, symlinked to nexus-cluster).
-          # Same main.rs, but a full-profile-only build/feature
-          # regression must not slip past the gate on the slim binary.
-          echo "Installing nexusd-full at pinned nexus-vfs rev $REV"
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-full nexus-full
+          echo "Installing nexusd-full from the nexus-local crate rust/nexusd (the shipped binary)"
+          cargo install --locked --path rust/nexusd --bin nexusd-full
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'

@@ -26,6 +26,7 @@ pure nexus-vfs cluster binary has no such service, so the test skips there.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -119,5 +120,27 @@ def test_managed_agent_tunnel_roundtrip(tmp_path: Path) -> None:
             f"tunnel round-trip mismatch: wrote {_PROBE!r}, read back {got!r} "
             f"(session_id={session_id})"
         )
+
+        # Frozen-contract ③: after the child echoes and exits, its exit
+        # event (code + signal) is surfaced on the handle at
+        # /proc/{session_id}/exit. Poll it — the supervisor writes
+        # {"code":…,"signal":…} then closes the stream, concurrently with
+        # fd/1's close, so it may land just after the roundtrip read.
+        exit_path = f"/proc/{session_id}/exit"
+        exit_raw = b""
+        offset = 0
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not exit_raw:
+            chunk = client.stream_read_at(exit_path, offset)
+            if chunk and chunk["data"]:
+                exit_raw += bytes(chunk["data"])
+            else:
+                time.sleep(0.05)
+        assert exit_raw, f"no ③ exit event written to {exit_path}"
+        exit_info = json.loads(exit_raw)
+        # `sh -c 'read line; printf …'` echoes one line then exits 0 — a
+        # clean exit, so code=0 and no terminating signal.
+        assert exit_info["code"] == 0, f"expected clean exit 0, got {exit_info!r}"
+        assert exit_info["signal"] is None, f"clean exit has no signal: {exit_info!r}"
     finally:
         client.close()

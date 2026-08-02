@@ -1,337 +1,245 @@
-"""Integration test: connector sync → search indexing → semantic search.
+"""Integration test: connector sync → search indexing submission.
 
-Validates the full e2e flow from Issue #3148:
-  mount connector → sync → _index_mount_content → search_daemon.index_documents → search
+Validates the mount-side half of the Issue #3148 flow:
+  mount connector → _index_mount_content → SearchDaemon.index_documents
 
-Uses mock connector backend + real SearchDaemon with mock txtai backend.
+Rewritten for the post-#3699/#4566 architecture (was asserting the old
+txtai ``_backend.upsert`` daemon shape and a MountService constructor that
+no longer exists):
+
+- files are enumerated via the Rust kernel's ``sys_readdir`` BFS, read via
+  the SYNC ``nx.sys_read``, and submitted to ``SearchDaemon.index_documents``;
+- the daemon returns ``ExplicitIndexResult {indexed, skipped}`` (#4566) —
+  connector-backed paths with no ``file_paths`` row come back in ``skipped``
+  and the mount hook logs them instead of failing (best-effort contract);
+- what happens INSIDE the daemon (path_id resolution, bounded projection
+  wait, pipeline write) is covered by
+  ``tests/unit/bricks/search/test_daemon_explicit_index_path_wait.py``.
 """
 
+from __future__ import annotations
+
+import logging
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.bricks.search.daemon import SearchDaemon
+from nexus.bricks.search.daemon import ExplicitIndexResult
 from nexus.contracts.constants import ROOT_ZONE_ID
+
+DT_DIR = 1  # kernel entry_type constant mirrored in mount_service BFS
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _make_search_daemon(search_results=None):
-    """Create a SearchDaemon with a mock txtai backend."""
-    daemon = SearchDaemon()
-    daemon._initialized = True
-    daemon._backend = AsyncMock()
-    daemon._backend.upsert.return_value = 3
-    daemon._backend.last_rerank_ms = 0.0
-
-    if search_results is not None:
-        daemon._backend.search.return_value = search_results
-    else:
-        from nexus.bricks.search.results import BaseSearchResult
-
-        daemon._backend.search.return_value = [
-            BaseSearchResult(
-                path="/mnt/gmail/INBOX/tid1-mid1.yaml",
-                chunk_text="subject: Project Update\nfrom: alice@example.com\nsnippet: Q1 results",
-                score=0.92,
-            ),
-        ]
+def _make_daemon(result: ExplicitIndexResult | None = None) -> MagicMock:
+    daemon = MagicMock()
+    daemon.index_documents = AsyncMock(
+        return_value=result if result is not None else ExplicitIndexResult(indexed=0, skipped=[])
+    )
     return daemon
 
 
-def _make_mock_backend(dir_tree: dict[str, list[str]]):
-    """Create a mock connector backend with list_dir returning the given tree.
+def _make_search_service(daemon: Any) -> MagicMock:
+    search_svc = MagicMock()
+    search_svc._search_daemon = daemon
+    return search_svc
+
+
+def _make_nexus_fs(
+    dir_tree: dict[str, list[tuple[str, int]]],
+    file_contents: dict[str, str],
+) -> MagicMock:
+    """Mock NexusFS with a kernel readdir BFS and a SYNC sys_read.
 
     Args:
-        dir_tree: Mapping of backend_path → list of entries.
-            Directories end with '/'. Root is ''.
-            Example: {'': ['INBOX/', 'SENT/'], 'INBOX': ['msg1.yaml', 'msg2.yaml']}
+        dir_tree: Mapping of directory path → [(child_path, entry_type)].
+        file_contents: Mapping of file path → text content.
     """
-    backend = MagicMock()
+    nx = MagicMock()
 
-    def list_dir(path="", context=None):
-        return dir_tree.get(path.strip("/") if path else "", [])
+    def _sys_readdir(prefix: str, zone_id: str) -> list[tuple[str, int]]:
+        if prefix not in dir_tree:
+            raise FileNotFoundError(prefix)
+        return dir_tree[prefix]
 
-    backend.list_dir = list_dir
-    return backend
+    nx._kernel.sys_readdir = MagicMock(side_effect=_sys_readdir)
 
+    def _sys_read(path: str, context: Any = None) -> bytes:
+        return file_contents.get(path, "").encode("utf-8")
 
-def _make_mock_router(backend):
-    """Create a mock router that returns the given backend for any path."""
-    route = MagicMock()
-    route.backend = backend
-
-    router = MagicMock()
-    router.route.return_value = route
-    return router
-
-
-def _make_mock_nexus_fs(file_contents):
-    """Create a mock NexusFS that returns content for sys_read."""
-
-    async def mock_sys_read(path, context=None):
-        content = file_contents.get(path, "")
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-        return content
-
-    nx = AsyncMock()
-    nx.sys_read = mock_sys_read
+    nx.sys_read = MagicMock(side_effect=_sys_read)
     return nx
 
+
+def _make_mount_service(nx: Any, search_svc: Any) -> Any:
+    from nexus.bricks.mount.mount_service import MountService
+
+    return MountService(
+        mount_manager=MagicMock(),
+        nexus_fs=nx,
+        search_service=search_svc,
+    )
+
+
+_GMAIL_TREE: dict[str, list[tuple[str, int]]] = {
+    "/mnt/gmail": [("/mnt/gmail/INBOX", DT_DIR), ("/mnt/gmail/SENT", DT_DIR)],
+    "/mnt/gmail/INBOX": [
+        ("/mnt/gmail/INBOX/tid1-mid1.yaml", 0),
+        ("/mnt/gmail/INBOX/tid2-mid2.yaml", 0),
+    ],
+    "/mnt/gmail/SENT": [("/mnt/gmail/SENT/tid3-mid3.yaml", 0)],
+}
+
+_GMAIL_CONTENTS = {
+    "/mnt/gmail/INBOX/tid1-mid1.yaml": (
+        "subject: Project Update\nfrom: alice@example.com\nsnippet: Q1 results are in"
+    ),
+    "/mnt/gmail/INBOX/tid2-mid2.yaml": (
+        "subject: Meeting Notes\nfrom: bob@example.com\nsnippet: Action items from standup"
+    ),
+    "/mnt/gmail/SENT/tid3-mid3.yaml": (
+        "subject: Re: Budget\nto: carol@example.com\nsnippet: Approved the budget request"
+    ),
+}
 
 # ── Tests ────────────────────────────────────────────────────────────
 
 
 class TestConnectorSearchIndexing:
-    """Test connector content gets indexed and is searchable."""
+    """Mount-content indexing submits the right documents to the daemon."""
 
     @pytest.mark.asyncio
-    async def test_index_mount_content_indexes_connector_files(self):
-        """_index_mount_content uses list_dir BFS and indexes via search daemon."""
-        from nexus.bricks.mount.mount_service import MountService
+    async def test_index_mount_content_indexes_connector_files(self) -> None:
+        """BFS enumeration + content read → one index_documents call."""
+        daemon = _make_daemon(ExplicitIndexResult(indexed=3, skipped=[]))
+        nx = _make_nexus_fs(_GMAIL_TREE, _GMAIL_CONTENTS)
+        mount_svc = _make_mount_service(nx, _make_search_service(daemon))
 
-        file_contents = {
-            "/mnt/gmail/INBOX/tid1-mid1.yaml": (
-                "subject: Project Update\nfrom: alice@example.com\nsnippet: Q1 results are in"
-            ),
-            "/mnt/gmail/INBOX/tid2-mid2.yaml": (
-                "subject: Meeting Notes\nfrom: bob@example.com\nsnippet: Action items from standup"
-            ),
-            "/mnt/gmail/SENT/tid3-mid3.yaml": (
-                "subject: Re: Budget\nto: carol@example.com\nsnippet: Approved the budget request"
-            ),
-        }
+        await mount_svc._index_mount_content("/mnt/gmail")
 
-        backend = _make_mock_backend(
-            {
-                "": ["INBOX/", "SENT/"],
-                "INBOX": ["tid1-mid1.yaml", "tid2-mid2.yaml"],
-                "SENT": ["tid3-mid3.yaml"],
-            }
-        )
-        router = _make_mock_router(backend)
-        nx = _make_mock_nexus_fs(file_contents)
-        daemon = _make_search_daemon()
-
-        search_svc = MagicMock()
-        search_svc._search_daemon = daemon
-
-        mount_svc = MountService(
-            router=router,
-            mount_manager=MagicMock(),
-            nexus_fs=nx,
-            gateway=MagicMock(),
-            sync_service=MagicMock(),
-            search_service=search_svc,
-        )
-
-        await mount_svc._index_mount_content(
-            "/mnt/gmail",
-        )
-
-        # Assert: search daemon received 3 documents in correct format
-        daemon._backend.upsert.assert_awaited_once()
-        call_args = daemon._backend.upsert.call_args
-        documents = call_args[0][0]
-
-        assert len(documents) == 3
-        for doc in documents:
-            assert "id" in doc
-            assert "text" in doc
-            assert "path" in doc
-            assert doc["id"] == doc["path"]
-            assert doc["id"].startswith("/mnt/gmail/")
-            assert len(doc["text"]) > 10
-
+        daemon.index_documents.assert_awaited_once()
+        documents = daemon.index_documents.call_args[0][0]
+        assert daemon.index_documents.call_args.kwargs["zone_id"] == ROOT_ZONE_ID
+        assert {d["id"] for d in documents} == set(_GMAIL_CONTENTS)
+        assert all(d["path"] == d["id"] for d in documents)
         inbox_docs = [d for d in documents if "INBOX" in d["id"]]
-        assert len(inbox_docs) == 2
-        assert any("Project Update" in d["text"] for d in inbox_docs)
         assert any("Meeting Notes" in d["text"] for d in inbox_docs)
 
     @pytest.mark.asyncio
-    async def test_index_mount_content_skips_non_text_files(self):
-        """Only .yaml/.json/.md/.txt files should be indexed."""
-        from nexus.bricks.mount.mount_service import MountService
-
-        file_contents = {
+    async def test_index_mount_content_skips_non_text_files(self) -> None:
+        """Only .yaml/.json/.md/.txt files should be submitted."""
+        tree = {
+            "/mnt/gmail": [("/mnt/gmail/INBOX", DT_DIR)],
+            "/mnt/gmail/INBOX": [
+                ("/mnt/gmail/INBOX/msg1.yaml", 0),
+                ("/mnt/gmail/INBOX/msg2.png", 0),
+                ("/mnt/gmail/INBOX/msg3.bin", 0),
+                ("/mnt/gmail/INBOX/notes.md", 0),
+            ],
+        }
+        contents = {
             "/mnt/gmail/INBOX/msg1.yaml": "subject: Test email\nsnippet: Hello world",
             "/mnt/gmail/INBOX/notes.md": "# Meeting notes\nDiscussed project timeline",
         }
-
-        backend = _make_mock_backend(
-            {
-                "": ["INBOX/"],
-                "INBOX": ["msg1.yaml", "msg2.png", "msg3.bin", "notes.md"],
-            }
-        )
-        router = _make_mock_router(backend)
-        nx = _make_mock_nexus_fs(file_contents)
-        daemon = _make_search_daemon()
-
-        search_svc = MagicMock()
-        search_svc._search_daemon = daemon
-
-        mount_svc = MountService(
-            router=router,
-            mount_manager=MagicMock(),
-            nexus_fs=nx,
-            gateway=MagicMock(),
-            sync_service=MagicMock(),
-            search_service=search_svc,
+        daemon = _make_daemon(ExplicitIndexResult(indexed=2, skipped=[]))
+        mount_svc = _make_mount_service(
+            _make_nexus_fs(tree, contents), _make_search_service(daemon)
         )
 
-        await mount_svc._index_mount_content(
-            "/mnt/gmail",
-        )
+        await mount_svc._index_mount_content("/mnt/gmail")
 
-        call_args = daemon._backend.upsert.call_args
-        documents = call_args[0][0]
-        assert len(documents) == 2
-        paths = {d["id"] for d in documents}
-        assert "/mnt/gmail/INBOX/msg1.yaml" in paths
-        assert "/mnt/gmail/INBOX/notes.md" in paths
-
-    @pytest.mark.asyncio
-    async def test_index_then_search_finds_connector_content(self):
-        """Full round-trip: index connector content → search finds it."""
-        from nexus.bricks.search.results import BaseSearchResult
-
-        daemon = _make_search_daemon()
-
-        docs = [
-            {
-                "id": "/mnt/gmail/INBOX/tid1-mid1.yaml",
-                "text": "subject: Q1 Budget Review\nfrom: cfo@company.com\nsnippet: Please review the Q1 budget numbers",
-                "path": "/mnt/gmail/INBOX/tid1-mid1.yaml",
-            },
-            {
-                "id": "/mnt/gmail/INBOX/tid2-mid2.yaml",
-                "text": "subject: Standup Notes\nfrom: pm@company.com\nsnippet: Sprint retrospective action items",
-                "path": "/mnt/gmail/INBOX/tid2-mid2.yaml",
-            },
-            {
-                "id": "/mnt/gmail/SENT/tid3-mid3.yaml",
-                "text": "subject: Re: Q1 Budget\nto: cfo@company.com\nsnippet: Budget approved with modifications",
-                "path": "/mnt/gmail/SENT/tid3-mid3.yaml",
-            },
-        ]
-
-        count = await daemon.index_documents(docs)
-        assert count == 3
-
-        daemon._backend.search.return_value = [
-            BaseSearchResult(
-                path="/mnt/gmail/INBOX/tid1-mid1.yaml",
-                chunk_text="Q1 Budget Review",
-                score=0.95,
-            ),
-            BaseSearchResult(
-                path="/mnt/gmail/SENT/tid3-mid3.yaml",
-                chunk_text="Budget approved with modifications",
-                score=0.88,
-            ),
-        ]
-
-        results = await daemon.search("budget review Q1", zone_id=ROOT_ZONE_ID)
-        assert len(results) == 2
-        assert results[0].path == "/mnt/gmail/INBOX/tid1-mid1.yaml"
-        assert results[0].score > results[1].score
-
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_delta_sync_new_emails_get_indexed(self):
-        """After delta sync adds new emails, they should be indexed."""
-        from nexus.bricks.mount.mount_service import MountService
-
-        file_contents = {
-            "/mnt/gmail/INBOX/tid1-mid1.yaml": "subject: Old email\nsnippet: Already indexed content",
-            "/mnt/gmail/INBOX/tid2-mid2.yaml": "subject: Another old email\nsnippet: Previously indexed",
-            "/mnt/gmail/INBOX/tid3-mid3.yaml": "subject: New email just arrived\nsnippet: Fresh content from delta sync",
+        documents = daemon.index_documents.call_args[0][0]
+        assert {d["id"] for d in documents} == {
+            "/mnt/gmail/INBOX/msg1.yaml",
+            "/mnt/gmail/INBOX/notes.md",
         }
 
-        # Backend now lists 3 files (including the new one after delta sync)
-        backend = _make_mock_backend(
-            {
-                "": ["INBOX/"],
-                "INBOX": ["tid1-mid1.yaml", "tid2-mid2.yaml", "tid3-mid3.yaml"],
-            }
-        )
-        router = _make_mock_router(backend)
-        nx = _make_mock_nexus_fs(file_contents)
-        daemon = _make_search_daemon()
+    @pytest.mark.asyncio
+    async def test_zone_id_threaded_to_daemon(self) -> None:
+        """The sync-context zone must reach index_documents so zone-isolated
+        search queries can find the indexed content."""
+        daemon = _make_daemon(ExplicitIndexResult(indexed=3, skipped=[]))
+        nx = _make_nexus_fs(_GMAIL_TREE, _GMAIL_CONTENTS)
+        mount_svc = _make_mount_service(nx, _make_search_service(daemon))
 
-        search_svc = MagicMock()
-        search_svc._search_daemon = daemon
+        await mount_svc._index_mount_content("/mnt/gmail", zone_id="corp")
 
-        mount_svc = MountService(
-            router=router,
-            mount_manager=MagicMock(),
-            nexus_fs=nx,
-            gateway=MagicMock(),
-            sync_service=MagicMock(),
-            search_service=search_svc,
-        )
-
-        await mount_svc._index_mount_content(
-            "/mnt/gmail",
-        )
-
-        call_args = daemon._backend.upsert.call_args
-        documents = call_args[0][0]
-        assert len(documents) == 3
-        new_doc = [d for d in documents if "tid3-mid3" in d["id"]]
-        assert len(new_doc) == 1
-        assert "Fresh content from delta sync" in new_doc[0]["text"]
+        assert daemon.index_documents.call_args.kwargs["zone_id"] == "corp"
+        # BFS must also enumerate in the same zone.
+        assert nx._kernel.sys_readdir.call_args_list[0][0][1] == "corp"
 
     @pytest.mark.asyncio
-    async def test_fallback_to_semantic_search_index_when_no_daemon(self):
-        """When _search_daemon is None, falls back to semantic_search_index."""
-        from nexus.bricks.mount.mount_service import MountService
+    async def test_skipped_documents_are_logged_not_raised(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """#4566: connector paths without file_paths rows come back in
+        ``skipped``. The mount hook is best-effort — it must log the skip
+        count and keep the mount alive, never raise."""
+        daemon = _make_daemon(
+            ExplicitIndexResult(indexed=1, skipped=["/mnt/gmail/INBOX/tid2-mid2.yaml"])
+        )
+        nx = _make_nexus_fs(_GMAIL_TREE, _GMAIL_CONTENTS)
+        mount_svc = _make_mount_service(nx, _make_search_service(daemon))
 
+        with caplog.at_level(logging.INFO, logger="nexus.bricks.mount.mount_service"):
+            await mount_svc._index_mount_content("/mnt/gmail")
+
+        assert any("skipped=1" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_no_files_found_returns_without_indexing(self) -> None:
+        """Unreadable mount root (readdir raises) → no daemon call, no crash."""
+        daemon = _make_daemon()
+        nx = _make_nexus_fs({}, {})  # every readdir raises FileNotFoundError
+        mount_svc = _make_mount_service(nx, _make_search_service(daemon))
+
+        await mount_svc._index_mount_content("/mnt/gmail")
+
+        daemon.index_documents.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_semantic_search_index_when_no_daemon(self) -> None:
+        """When _search_daemon is None, falls back to semantic_search_index."""
         search_svc = MagicMock()
         search_svc._search_daemon = None
         search_svc.semantic_search_index = AsyncMock(return_value={"/mnt/gmail": 50})
+        mount_svc = _make_mount_service(_make_nexus_fs({}, {}), search_svc)
 
-        mount_svc = MountService(
-            router=MagicMock(),
-            mount_manager=MagicMock(),
-            gateway=MagicMock(),
-            sync_service=MagicMock(),
-            search_service=search_svc,
-        )
-
-        await mount_svc._index_mount_content(
-            "/mnt/gmail",
-        )
+        await mount_svc._index_mount_content("/mnt/gmail")
 
         search_svc.semantic_search_index.assert_awaited_once_with("/mnt/gmail", recursive=True)
 
     @pytest.mark.asyncio
-    async def test_index_mount_content_no_backend_returns_early(self):
-        """When router can't resolve a backend, indexing returns without error."""
-        from nexus.bricks.mount.mount_service import MountService
-
-        router = MagicMock()
-        router.route.return_value = None  # No route found
-
-        daemon = _make_search_daemon()
-        search_svc = MagicMock()
-        search_svc._search_daemon = daemon
-
-        mount_svc = MountService(
-            router=router,
-            mount_manager=MagicMock(),
-            nexus_fs=_make_mock_nexus_fs({}),
-            gateway=MagicMock(),
-            sync_service=MagicMock(),
-            search_service=search_svc,
+    async def test_delta_sync_new_emails_get_submitted(self) -> None:
+        """After delta sync adds a new email, the next indexing pass submits
+        all listed files — the daemon's chunk upsert is idempotent, so
+        re-submitting already-indexed docs is safe."""
+        tree = {
+            "/mnt/gmail": [("/mnt/gmail/INBOX", DT_DIR)],
+            "/mnt/gmail/INBOX": [
+                ("/mnt/gmail/INBOX/tid1-mid1.yaml", 0),
+                ("/mnt/gmail/INBOX/tid2-mid2.yaml", 0),
+                ("/mnt/gmail/INBOX/tid3-mid3.yaml", 0),
+            ],
+        }
+        contents = {
+            "/mnt/gmail/INBOX/tid1-mid1.yaml": "subject: Old email\nsnippet: Already indexed",
+            "/mnt/gmail/INBOX/tid2-mid2.yaml": "subject: Another old\nsnippet: Previously done",
+            "/mnt/gmail/INBOX/tid3-mid3.yaml": (
+                "subject: New email just arrived\nsnippet: Fresh content from delta sync"
+            ),
+        }
+        daemon = _make_daemon(ExplicitIndexResult(indexed=3, skipped=[]))
+        mount_svc = _make_mount_service(
+            _make_nexus_fs(tree, contents), _make_search_service(daemon)
         )
 
-        await mount_svc._index_mount_content(
-            "/mnt/gmail",
-        )
+        await mount_svc._index_mount_content("/mnt/gmail")
 
-        # Should not crash; upsert should not be called
-        daemon._backend.upsert.assert_not_awaited()
+        documents = daemon.index_documents.call_args[0][0]
+        assert len(documents) == 3
+        new_doc = [d for d in documents if "tid3-mid3" in d["id"]]
+        assert len(new_doc) == 1
+        assert "Fresh content from delta sync" in new_doc[0]["text"]

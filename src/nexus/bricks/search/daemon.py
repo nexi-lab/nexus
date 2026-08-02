@@ -262,6 +262,12 @@ class DaemonStats:
     # submitting genuinely synthetic paths.
     explicit_index_path_waits: int = 0
     explicit_index_skipped_no_path: int = 0
+    # #4566 follow-up: consumer UPSERTs skipped because the row's current
+    # content version was already covered (indexed_content_id ==
+    # content_id, stamped by an explicit index call or IndexingService).
+    # These skips are what keeps caller-provided text (PDF/OCR extraction,
+    # sidecar markdown) from being clobbered by raw blob bytes.
+    mutation_upserts_skipped_covered: int = 0
 
 
 @dataclass
@@ -3728,13 +3734,17 @@ class SearchDaemon:
             submitted.cancel()
             raise
 
-    async def _resolve_index_path_id(self, vp_clean: str, zone_id: str) -> str | None:
+    async def _resolve_index_path_row(
+        self, vp_clean: str, zone_id: str
+    ) -> tuple[str, str | None] | None:
         """Look up the live ``file_paths`` row for a zone-stripped path.
 
-        The search daemon is a READER of filesystem metadata — it must not
-        create or modify ``file_paths`` rows (that ownership belongs to the
-        kernel/metastore), so a missing row can only be waited out or
-        surfaced, never healed here.
+        Returns ``(path_id, content_id)`` or ``None`` when no live row
+        exists. The daemon must not CREATE ``file_paths`` rows (structural
+        ownership belongs to the kernel/metastore), so a missing row can
+        only be waited out or surfaced, never healed here. The search-owned
+        tracking columns (``indexed_content_id``, ``last_indexed_at``) are a
+        different matter — see ``_stamp_indexed_content``.
         """
         if self._async_session is None:
             return None
@@ -3742,7 +3752,7 @@ class SearchDaemon:
             row = (
                 await session.execute(
                     sa_text(
-                        "SELECT path_id FROM file_paths "
+                        "SELECT path_id, content_id FROM file_paths "
                         "WHERE virtual_path = :vp "
                         "  AND zone_id = :zid "
                         "  AND deleted_at IS NULL "
@@ -3751,7 +3761,95 @@ class SearchDaemon:
                     {"vp": vp_clean, "zid": zone_id},
                 )
             ).first()
-        return str(row[0]) if row is not None else None
+        if row is None:
+            return None
+        return str(row[0]), (str(row[1]) if row[1] is not None else None)
+
+    async def _stamp_indexed_content(self, path_id: str, content_id: str | None) -> None:
+        """Mark ``content_id`` as covered by the index for ``path_id`` (#4566).
+
+        After an explicit index call persists caller-provided text, advance
+        the search-owned tracking columns on ``file_paths`` — the same
+        columns ``IndexingService.index_document`` maintains — so mutation
+        consumers know this content version is already covered and don't
+        clobber the explicit text with raw blob bytes (see
+        ``_upsert_covered_by_index``).
+
+        CAS on ``content_id``: if the file was overwritten between our read
+        and this update, the stamp is dropped and the consumer indexes the
+        newer version normally. Fail-soft: the text IS indexed at this
+        point, so a stamp failure must not fail the request — worst case
+        the consumer re-indexes blob bytes (pre-#4566 behavior).
+        """
+        if content_id is None or self._async_session is None:
+            return
+        try:
+            async with self._async_session() as session:
+                await session.execute(
+                    sa_text(
+                        "UPDATE file_paths "
+                        "SET indexed_content_id = :cid, last_indexed_at = :now "
+                        "WHERE path_id = :pid "
+                        "  AND deleted_at IS NULL "
+                        "  AND content_id = :cid"
+                    ),
+                    {
+                        "cid": content_id,
+                        "pid": path_id,
+                        "now": datetime.now(UTC).replace(tzinfo=None),
+                    },
+                )
+                await session.commit()
+        except Exception as exc:
+            logger.warning(
+                "index_documents: failed to stamp indexed_content_id for path_id=%s: %s",
+                path_id,
+                exc,
+            )
+
+    async def _upsert_covered_by_index(self, path_id: str) -> bool:
+        """Whether ``path_id``'s CURRENT content version is already indexed.
+
+        Issue #4566 follow-up: mutation consumers used to index blob bytes
+        unconditionally, clobbering text supplied via ``POST /search/index``
+        (extracted text for PDFs, OCR output, sidecar markdown). When
+        ``indexed_content_id`` matches the row's live ``content_id`` —
+        stamped by the explicit index call or by ``IndexingService`` — the
+        consumer's UPSERT has nothing to add for this version and must not
+        overwrite the richer chunks. A later real write advances
+        ``content_id``, the marker stops matching, and consumers index the
+        new version normally.
+
+        Fail-open: any lookup error returns ``False`` so consumer indexing
+        proceeds exactly as before this gate existed.
+        """
+        if self._async_session is None:
+            return False
+        try:
+            async with self._async_session() as session:
+                row = (
+                    await session.execute(
+                        sa_text(
+                            "SELECT content_id, indexed_content_id FROM file_paths "
+                            "WHERE path_id = :pid AND deleted_at IS NULL "
+                            "LIMIT 1"
+                        ),
+                        {"pid": path_id},
+                    )
+                ).first()
+        except Exception as exc:
+            logger.warning(
+                "mutation consumer: covered-version check failed for path_id=%s: %s",
+                path_id,
+                exc,
+            )
+            return False
+        return (
+            row is not None
+            and row[0] is not None
+            and row[1] is not None
+            and str(row[0]) == str(row[1])
+        )
 
     async def _index_documents_on_current_loop(
         self,
@@ -3780,6 +3878,11 @@ class SearchDaemon:
         ``skipped`` — never silently dropped from the count. Documents with
         no usable ``text``/``path`` fields are ignored as before (malformed
         input, not a projection race).
+
+        After a successful write the row's ``indexed_content_id`` is stamped
+        to the current ``content_id`` (see ``_stamp_indexed_content``) so
+        mutation consumers treat this content version as covered and the
+        caller-provided text survives the consumer's own blob indexing.
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
@@ -3800,7 +3903,9 @@ class SearchDaemon:
         def _scrub(value: str) -> str:
             return value.replace("\x00", "") if "\x00" in value else value
 
-        async def _index_one(vp_clean: str, text_clean: str, path_id: str) -> None:
+        async def _index_one(
+            vp_clean: str, text_clean: str, path_id: str, content_id: str | None
+        ) -> None:
             # Drive the canonical write path. Pass the zone-scoped form
             # so the pipeline's scope filter sees the same shape mutation
             # consumers use.
@@ -3814,6 +3919,14 @@ class SearchDaemon:
                     f"index_documents: pipeline failed for {vp_clean!r}: {pipeline_result.error}"
                 )
             result.indexed += 1
+            # #4566 follow-up: mark this content version as covered so the
+            # mutation consumers don't clobber caller-provided text with
+            # raw blob bytes. Only when chunks actually landed — the
+            # pipeline's scope gate returns chunks_indexed=0 without error
+            # for out-of-scope paths, and stamping those would wrongly
+            # block the FTS consumer's naive-chunk fallback.
+            if pipeline_result.chunks_indexed > 0:
+                await self._stamp_indexed_content(path_id, content_id)
 
         pending: list[tuple[str, str]] = []  # (vp_clean, text_clean) awaiting a row
         for doc in documents:
@@ -3829,11 +3942,11 @@ class SearchDaemon:
             text_clean = _scrub(text_field)
             vp_clean = strip_zone_prefix(virtual_path)
 
-            path_id = await self._resolve_index_path_id(vp_clean, target_zone)
-            if path_id is None:
+            path_row = await self._resolve_index_path_row(vp_clean, target_zone)
+            if path_row is None:
                 pending.append((vp_clean, text_clean))
                 continue
-            await _index_one(vp_clean, text_clean, path_id)
+            await _index_one(vp_clean, text_clean, path_row[0], path_row[1])
 
         # Issue #4566: bounded wait for the projection row. The wait budget is
         # per BATCH, not per document — each round re-polls every unresolved
@@ -3847,12 +3960,12 @@ class SearchDaemon:
                 await asyncio.sleep(wait_seconds)
                 still_pending: list[tuple[str, str]] = []
                 for vp_clean, text_clean in pending:
-                    path_id = await self._resolve_index_path_id(vp_clean, target_zone)
-                    if path_id is None:
+                    path_row = await self._resolve_index_path_row(vp_clean, target_zone)
+                    if path_row is None:
                         still_pending.append((vp_clean, text_clean))
                         continue
                     self.stats.explicit_index_path_waits += 1
-                    await _index_one(vp_clean, text_clean, path_id)
+                    await _index_one(vp_clean, text_clean, path_row[0], path_row[1])
                 pending = still_pending
                 if not pending:
                     break
@@ -5413,6 +5526,17 @@ class SearchDaemon:
                 # scope-generation token would close this gap if needed.
                 if embedding_active and self._is_path_in_scope(mutation.event.path):
                     continue
+                # #4566 follow-up: don't overwrite chunks for a content
+                # version that is already covered in the index (explicit
+                # /search/index text or an IndexingService pass) — raw
+                # blob bytes must not clobber richer caller-provided text.
+                if await self._upsert_covered_by_index(mutation.path_id):
+                    self.stats.mutation_upserts_skipped_covered += 1
+                    logger.debug(
+                        "fts consumer: skipping %s — current content version already indexed",
+                        mutation.event.path,
+                    )
+                    continue
                 await self._index_to_document_chunks(
                     mutation.path_id,
                     mutation.event.path,
@@ -5456,6 +5580,22 @@ class SearchDaemon:
             # gate in IndexingPipeline.index_documents would also catch
             # this, but filtering here avoids the pipeline overhead.
             if not self._is_path_in_scope(mutation.event.path):
+                continue
+            # #4566 follow-up: skip when this exact content version is
+            # already covered in the index (indexed_content_id ==
+            # content_id) — an explicit /search/index call supplied text
+            # for this version (e.g. PDF extraction) and re-indexing the
+            # raw bytes here would clobber it. A real content change
+            # advances content_id and indexes normally. NOTE: a consumer
+            # pass that started before the explicit stamp landed can still
+            # win the write race — the gate shrinks the clobber window to
+            # the pipeline's own duration, it does not eliminate it.
+            if await self._upsert_covered_by_index(mutation.path_id):
+                self.stats.mutation_upserts_skipped_covered += 1
+                logger.debug(
+                    "embedding consumer: skipping %s — current content version already indexed",
+                    mutation.event.path,
+                )
                 continue
             # The pipeline can fail via IndexResult.error OR by raising
             # (e.g. provider/network failures). In both cases, fall back to

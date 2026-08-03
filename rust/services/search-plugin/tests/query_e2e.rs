@@ -80,11 +80,7 @@ unsafe extern "C" fn poison_mkdir(_: *const c_void, _: *const c_char) -> i32 {
 unsafe extern "C" fn poison_rmdir(_: *const c_void, _: *const c_char) -> i32 {
     -1
 }
-unsafe extern "C" fn poison_rename(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const c_char,
-) -> i32 {
+unsafe extern "C" fn poison_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
     -1
 }
 unsafe extern "C" fn poison_stat_batch(
@@ -127,8 +123,7 @@ impl Harness {
     fn start() -> Self {
         let dir = TempDir::new().expect("tempdir");
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
-        let svc =
-            SearchServiceImpl::with_manager(Arc::new(poison_handle()), Arc::clone(&manager));
+        let svc = SearchServiceImpl::with_manager(Arc::new(poison_handle()), Arc::clone(&manager));
         Self {
             _dir: dir,
             svc,
@@ -145,8 +140,13 @@ impl Harness {
             Some(1_700_000_000_000),
         )
         .expect("add-1");
-        idx.add_document("/notes/other.md", 0, "goodbye world", Some(1_700_000_000_100))
-            .expect("add-2");
+        idx.add_document(
+            "/notes/other.md",
+            0,
+            "goodbye world",
+            Some(1_700_000_000_100),
+        )
+        .expect("add-2");
         idx.add_document("/logs/x.log", 0, "widget beta", Some(1_700_000_000_200))
             .expect("add-3");
         idx.commit().expect("commit");

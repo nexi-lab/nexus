@@ -487,7 +487,10 @@ fn do_query(
         .search(q, limit, prefix)
         .map_err(|e| format!("search: {e}"))?;
 
-    Ok(hits.into_iter().map(|h| fts_hit_to_result(h, zone_id)).collect())
+    Ok(hits
+        .into_iter()
+        .map(|h| fts_hit_to_result(h, zone_id))
+        .collect())
 }
 
 fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
@@ -580,7 +583,11 @@ enum IndexOne {
     Skipped,
 }
 
-fn index_one(handle: &KernelHandle, index: &crate::fts_index::FtsIndex, vfs_path: &str) -> IndexOne {
+fn index_one(
+    handle: &KernelHandle,
+    index: &crate::fts_index::FtsIndex,
+    vfs_path: &str,
+) -> IndexOne {
     let bytes = match kernel_io::sys_read(handle, vfs_path) {
         Ok(b) => b,
         Err(e) => {

@@ -260,7 +260,6 @@ struct Harness {
     _dir: TempDir,
     mock: *mut MockKernel,
     svc: SearchServiceImpl,
-    manager: Arc<IndexManager>,
 }
 
 impl Harness {
@@ -269,12 +268,11 @@ impl Harness {
         let mock = Box::into_raw(Box::new(MockKernel::new()));
         let handle = handle_for(mock);
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
-        let svc = SearchServiceImpl::with_manager(Arc::new(handle), Arc::clone(&manager));
+        let svc = SearchServiceImpl::with_manager(Arc::new(handle), manager);
         Self {
             _dir: dir,
             mock,
             svc,
-            manager,
         }
     }
 

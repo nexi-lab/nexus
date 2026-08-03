@@ -51,6 +51,27 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] 
 # Bytes for tonic Request/Response body types.
 bytes = "1"
 
+# Full-text search backend for the Query RPC (Phase 1 of the
+# Python-parity roadmap; see PARITY_ROADMAP.md D1).  Pure Rust, no
+# native deps — links into this plugin's cdylib only, cluster core
+# stays untouched.  BM25 scorer + mmap segments; per-zone indices
+# live under `~/.nexus/plugins/search/<zone_id>/fts/`.
+tantivy = "0.22"
+
+# Home-dir resolution for the per-zone index root.  `dirs = 5` follows
+# XDG on Linux, `%APPDATA%` on Windows, `~/Library/Application Support`
+# on macOS — matches how the sibling vault plugin stores per-node state.
+dirs = "5"
+
+# Parking-lot mutex around the per-zone index writer.  tantivy's own
+# IndexWriter is Send + Sync but only allows one writer per index at a
+# time; the lock is short-held (writer.add_document + writer.commit)
+# so contention is negligible, and parking_lot avoids poisoning.
+parking_lot = "0.12"
+
+# Ergonomic error enums for the fts_index module.
+thiserror = "1"
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 # Vendored protoc so the plugin builds on any host without a

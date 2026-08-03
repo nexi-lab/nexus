@@ -221,9 +221,14 @@ mod fast {
         /// at plugin startup or you get a stale runtime.
         pub fn load(dir: &Path, tag: &str, dylib_path: &Path) -> Result<Self, EmbedError> {
             // ort init is process-global; first successful call wins.
-            // If a prior plugin already ran init the ok() branch is
-            // hit and this is a no-op.
-            let _ = ort::init_from(dylib_path.to_string_lossy().into_owned()).commit();
+            // `init_from` returns a Result — a prior failing init (e.g.
+            // dylib not found) surfaces here; we swallow and let the
+            // TextEmbedding constructor below fail with a more actionable
+            // "load failed" message.  If a prior plugin already ran init
+            // successfully, `commit()` on the builder is a no-op.
+            if let Ok(builder) = ort::init_from(dylib_path.to_string_lossy().into_owned()) {
+                let _ = builder.commit();
+            }
 
             let read = |name: &str| -> Result<Vec<u8>, EmbedError> {
                 std::fs::read(dir.join(name)).map_err(|e| {

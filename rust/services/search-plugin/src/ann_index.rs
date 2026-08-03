@@ -143,7 +143,14 @@ impl AnnIndex {
         let sidecar_path = dir.join(SIDECAR_FILE);
 
         let (hnsw, sidecar) = if graph.exists() && sidecar_path.exists() {
-            let mut io = HnswIo::new(&dir, HNSW_BASENAME);
+            // Leak the HnswIo so its buffer lives 'static — hnsw_rs's
+            // `load_hnsw` returns a `Hnsw<'a>` tied to the loader's
+            // internal storage, and Hnsw needs to outlive this function
+            // (it's owned by the returned Arc<AnnIndex>).  Leaking
+            // costs one struct per zone open, permanent — negligible
+            // for a long-running daemon.  A more surgical fix would
+            // switch to an owning reload API when hnsw_rs exposes one.
+            let io = Box::leak(Box::new(HnswIo::new(&dir, HNSW_BASENAME)));
             io.set_options(ReloadOptions::default());
             let hnsw = io
                 .load_hnsw::<f32, DistCosine>()

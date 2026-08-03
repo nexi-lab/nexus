@@ -16,10 +16,10 @@
 //! # Schema (P1)
 //!
 //! ```text
-//! path         STRING | STORED             exact match + retrievable
-//! chunk_index  I64    | INDEXED | STORED   integer, 0 in P1 (one chunk per file)
-//! chunk_text   TEXT   | STORED             BM25-analysed
-//! mtime_ms     I64    | STORED             millisecond-resolution mtime
+//! path         STRING | STORED   exact match + retrievable
+//! chunk_index  I64    | STORED   integer, 0 in P1 (one chunk per file)
+//! chunk_text   TEXT   | STORED   BM25-analysed
+//! mtime_ms     I64    | STORED   millisecond-resolution mtime
 //! ```
 //!
 //! `mtime_ms` is STORED only in P1 (no INDEXED).  P6 flips it to
@@ -56,7 +56,7 @@ use parking_lot::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, INDEXED, STORED, STRING, TEXT};
+use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 /// tantivy writer heap — 50 MiB is the conventional per-index budget
@@ -114,9 +114,10 @@ pub fn build_schema() -> Schema {
     // by the query layer, not by tantivy itself in P1 (a term-prefix
     // query would work but adds tokenisation surprises for paths).
     sb.add_text_field("path", STRING | STORED);
-    // chunk_index — small integer, INDEXED so future range queries
-    // (dedupe by (path, chunk_index)) don't require re-scan.
-    sb.add_i64_field("chunk_index", INDEXED | STORED);
+    // chunk_index — STORED only in P1 (always 0, no query hits it).
+    // P4's chunker flips to `STORED | INDEXED` when composite-key
+    // dedupe by (path, chunk_index) lands.
+    sb.add_i64_field("chunk_index", STORED);
     // chunk_text — BM25-analysed.  Default TEXT = lowercase + simple
     // tokeniser; P4 replaces this with a language-aware chain.
     sb.add_text_field("chunk_text", TEXT | STORED);
@@ -158,10 +159,12 @@ impl FtsIndex {
 
         let reader = index
             .reader_builder()
-            // OnCommit = the reader auto-refreshes when the writer
-            // commits; searches after add_doc see fresh state without
-            // the caller having to plumb a manual reload.
-            .reload_policy(ReloadPolicy::OnCommit)
+            // OnCommitWithDelay = the reader auto-refreshes shortly
+            // after the writer commits; searches after add_doc see
+            // fresh state without the caller having to plumb a
+            // manual reload.  Tests that need synchronous visibility
+            // call `reader.reload()` on the returned handle.
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
             .try_into()
             .map_err(|e| IndexError::ReaderInit(e.to_string()))?;
 
@@ -216,10 +219,19 @@ impl FtsIndex {
     /// Flush buffered adds to disk and make them visible to searchers.
     /// Cheap for small batches; a couple of ms per commit + a
     /// background merge that happens on tantivy's own thread.
+    ///
+    /// The reader is force-reloaded synchronously so a subsequent
+    /// [`search`](Self::search) sees the commit — tantivy's
+    /// `OnCommitWithDelay` policy would otherwise let the reader lag
+    /// long enough for tests + tight write-then-read loops to see
+    /// stale state.
     pub fn commit(&self) -> Result<(), IndexError> {
         let mut writer = self.writer.lock();
         writer
             .commit()
+            .map_err(|e| IndexError::Commit(e.to_string()))?;
+        self.reader
+            .reload()
             .map_err(|e| IndexError::Commit(e.to_string()))?;
         Ok(())
     }

@@ -611,20 +611,18 @@ fn enrich_ann_hit(
     }
 }
 
-/// Look up an FTS row by exact path.  P4's chunker will add a
-/// proper indexed path-term lookup; today we run a keyword search
-/// with the path's basename as the query and the full path as the
-/// prefix filter — cheap because P1 is one-chunk-per-file so the
-/// path segments overlap the chunk_text field.  Returns `None` on
-/// miss (e.g. drift where ANN has the path but FTS was pruned).
+/// Look up an FTS row by exact path via the STRING-indexed `path`
+/// field's `TermQuery` (see `FtsIndex::get_by_path`).  Returns
+/// `None` on miss (e.g. drift where ANN has the path but FTS was
+/// pruned).  Cheap term-lookup — does not depend on the BM25
+/// tokenisation matching any part of the path.
 fn lookup_fts_by_path(
     fts: &crate::fts_index::FtsIndex,
     path: &str,
 ) -> Option<(String, Option<i64>)> {
-    let basename = path.rsplit('/').next().unwrap_or(path);
-    let hits = fts.search(basename, 10, Some(path)).ok()?;
-    hits.into_iter()
-        .find(|h| h.path == path)
+    fts.get_by_path(path)
+        .ok()
+        .flatten()
         .map(|h| (h.chunk_text, h.mtime_ms))
 }
 

@@ -87,7 +87,9 @@ impl Fields {
             chunk_text: schema
                 .get_field("chunk_text")
                 .expect("schema field: chunk_text"),
-            mtime_ms: schema.get_field("mtime_ms").expect("schema field: mtime_ms"),
+            mtime_ms: schema
+                .get_field("mtime_ms")
+                .expect("schema field: mtime_ms"),
         }
     }
 }
@@ -338,8 +340,13 @@ mod tests {
 
         idx.add_document("/notes/hello.md", 0, "hello world", Some(1_700_000_000_000))
             .expect("add");
-        idx.add_document("/notes/other.md", 0, "goodbye world", Some(1_700_000_000_001))
-            .expect("add");
+        idx.add_document(
+            "/notes/other.md",
+            0,
+            "goodbye world",
+            Some(1_700_000_000_001),
+        )
+        .expect("add");
         idx.commit().expect("commit");
 
         let hits = idx.search("hello", 10, None).expect("search");

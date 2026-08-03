@@ -146,8 +146,8 @@ impl Embedder for MockEmbedder {
     }
 }
 
-/// FNV-1a → per-dim golden-ratio shuffle.  Deterministic + non-zero
-/// + spread across [-1, 1].  Non-cryptographic; the goal is
+/// FNV-1a → per-dim golden-ratio shuffle.  Deterministic, non-zero,
+/// spread across `[-1, 1]`.  Non-cryptographic; the goal is
 /// reproducibility, not distributional quality — tests care that
 /// same input maps to same output and different inputs map to
 /// different outputs.

@@ -19,11 +19,23 @@
 //! path         STRING | STORED             exact match + retrievable
 //! chunk_index  I64    | INDEXED | STORED   integer, 0 in P1 (one chunk per file)
 //! chunk_text   TEXT   | STORED             BM25-analysed
-//! mtime_ms     I64    | INDEXED | STORED   millisecond-resolution mtime
+//! mtime_ms     I64    | STORED             millisecond-resolution mtime
 //! ```
 //!
-//! P4 grows `chunk_index` to a real value once the chunker lands;
-//! P2 adds a `vec_id` field pointing at the sibling HNSW index.
+//! `mtime_ms` is STORED only in P1 (no INDEXED).  P6 flips it to
+//! `STORED | INDEXED` when recency queries land; INDEXED today would
+//! build a range index nothing queries.  P4 grows `chunk_index` to
+//! a real value once the chunker lands; P2 adds a `vec_id` field
+//! pointing at the sibling HNSW index.
+//!
+//! # Idempotency
+//!
+//! [`add_document`](FtsIndex::add_document) first deletes any prior
+//! document with the same `path` (P1 = one chunk per file, so path
+//! IS the primary key).  Re-indexing the same file replaces its
+//! document instead of duplicating it — Index calls are safe to
+//! retry.  P4 grows the key to `(path, chunk_index)` when the
+//! chunker emits multiple chunks per file.
 //!
 //! # Concurrency
 //!
@@ -45,7 +57,7 @@ use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Field, Schema, INDEXED, STORED, STRING, TEXT};
-use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
+use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 /// tantivy writer heap — 50 MiB is the conventional per-index budget
 /// and lets a batch of ~1 000 chunks commit without forcing a merge.
@@ -108,8 +120,10 @@ pub fn build_schema() -> Schema {
     // chunk_text — BM25-analysed.  Default TEXT = lowercase + simple
     // tokeniser; P4 replaces this with a language-aware chain.
     sb.add_text_field("chunk_text", TEXT | STORED);
-    // mtime_ms — INDEXED for P6's recency range queries.
-    sb.add_i64_field("mtime_ms", INDEXED | STORED);
+    // mtime_ms — STORED only in P1.  P6 lifts to `STORED | INDEXED`
+    // when recency range queries land; indexing today would build a
+    // range structure nothing queries.
+    sb.add_i64_field("mtime_ms", STORED);
     sb.build()
 }
 
@@ -160,8 +174,13 @@ impl FtsIndex {
     }
 
     /// Add a document.  P1 semantics: one call = one document = one
-    /// chunk.  The writer buffers in RAM until [`commit`](Self::commit)
-    /// is called — callers batch adds and commit at end-of-request so
+    /// chunk (`path` is the primary key; P4 grows the key to
+    /// `(path, chunk_index)`).  Any prior document with the same
+    /// `path` is deleted first so re-indexing replaces instead of
+    /// duplicating — Index calls are safe to retry.
+    ///
+    /// The writer buffers in RAM until [`commit`](Self::commit) is
+    /// called — callers batch adds and commit at end-of-request so
     /// tantivy can flush a single segment (much cheaper than one
     /// commit per doc).
     ///
@@ -177,6 +196,12 @@ impl FtsIndex {
         mtime_ms: Option<i64>,
     ) -> Result<(), IndexError> {
         let writer = self.writer.lock();
+        // Idempotent add: drop any prior doc keyed by this path before
+        // buffering the new one.  Both operations queue on the same
+        // writer transaction, so the commit lands them atomically — a
+        // reader can never see zero copies of the doc during a
+        // reindex.
+        writer.delete_term(Term::from_field_text(self.fields.path, path));
         writer
             .add_document(doc!(
                 self.fields.path => path,
@@ -387,6 +412,28 @@ mod tests {
         let hits = idx.search("shared", 10, Some("/notes/")).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/notes/a.md");
+    }
+
+    #[test]
+    fn readd_same_path_replaces_not_duplicates() {
+        // Regression: naive add_document duplicated a doc every reindex,
+        // doubling its BM25 score and starving other docs from the
+        // top-N.  delete_term-before-add makes Index retries safe.
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document("/notes/hello.md", 0, "widget alpha", Some(1))
+            .expect("add-1");
+        idx.commit().expect("commit-1");
+        // Same path, updated text + mtime.
+        idx.add_document("/notes/hello.md", 0, "widget beta", Some(2))
+            .expect("add-2");
+        idx.commit().expect("commit-2");
+
+        let hits = idx.search("widget", 10, None).expect("search");
+        assert_eq!(hits.len(), 1, "expected one doc after re-add, got {hits:?}");
+        // The stored text + mtime are the most recent write.
+        assert_eq!(hits[0].chunk_text, "widget beta");
+        assert_eq!(hits[0].mtime_ms, Some(2));
     }
 
     #[test]

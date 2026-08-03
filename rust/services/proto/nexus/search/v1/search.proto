@@ -33,6 +33,21 @@ service SearchService {
   // every file whose path (relative to `root_path`) matches
   // `file_pattern` (leave empty for all files).
   rpc Grep(GrepRequest) returns (GrepResponse);
+
+  // Ranked keyword search over an indexed corpus.  Phase 1 (Query
+  // keyword-only) of the Python-parity roadmap — see
+  // `PARITY_ROADMAP.md`.  The wire shape carries fields for hybrid
+  // and semantic modes as well so future phases (P2 vector, P3
+  // fusion) add behaviour, not new RPCs.  For P1, `query_type`
+  // values other than KEYWORD are rejected with `Status::unimplemented`.
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Add / refresh documents in the corpus.  Walk `root_path`
+  // recursively when `recursive=true`, read each regular file via
+  // `sys_read`, and add it to the per-zone tantivy index.  Phase 1
+  // uses one chunk per file — Phase 4 will fold in the real
+  // markdown-/code-aware chunker.
+  rpc Index(IndexRequest) returns (IndexResponse);
 }
 
 // ── Glob ──────────────────────────────────────────────────────────
@@ -119,5 +134,135 @@ message GrepMatch {
 message GrepResponse {
   repeated GrepMatch matches = 1;
   bool truncated = 2;
+  optional string error = 3;
+}
+
+// ── Query / Index ─────────────────────────────────────────────────
+//
+// Ranked search over a persistent per-zone corpus.  Backed by tantivy
+// (BM25) in Phase 1; Phase 2 folds in semantic (fastembed + hnsw) and
+// Phase 3 folds in hybrid fusion + recency decay.
+//
+// Wire-shape policy: fields land in the phase that uses them, NOT
+// pre-declared.  P2 adds semantic knobs, P3 adds fusion knobs, P6
+// adds recency knobs — each phase's proto delta ships with the
+// behaviour that gives the field meaning.  Adding a proto3 field is
+// O(1); shipping inert fields ahead of time is a tombstone for
+// behaviour that doesn't exist yet.
+//
+// `query_type` is the sole knob P1 needs — it lets P2/P3 lift the
+// KEYWORD-only gate without inventing a discriminator.
+
+enum QueryType {
+  // proto3 requires a 0 default.  Treated as KEYWORD by callers that
+  // don't set the field (single-algorithm P1 has one reasonable
+  // interpretation of unset).
+  QUERY_TYPE_UNSPECIFIED = 0;
+  QUERY_TYPE_KEYWORD = 1;      // BM25 only (P1)
+  QUERY_TYPE_SEMANTIC = 2;     // vector-only (P2)
+  QUERY_TYPE_HYBRID = 3;       // keyword + vector, fused (P3)
+}
+
+message QueryRequest {
+  // Query text.  BM25 tokenization is applied by tantivy's default
+  // analyzer (lowercasing + simple tokenizer).
+  string q = 1;
+
+  // Zone scoping.  Kernel-tier readers pass a zone-id; the plugin
+  // opens the corresponding per-zone index and searches only that
+  // zone.  Cross-zone federation is the kernel driver's job — the
+  // plugin never sees more than one zone per call (mirrors Glob +
+  // Grep behaviour).  Empty ⇒ ROOT_ZONE_ID.
+  string zone_id = 2;
+
+  // Max results returned.  0 ⇒ server-side default (10).
+  uint32 limit = 3;
+
+  // Optional path-prefix filter.  Matches results whose stored `path`
+  // starts with this string.  Empty ⇒ no filter.
+  string path_filter = 4;
+
+  // Which retrieval algorithm to run.  P1 rejects anything other than
+  // KEYWORD (or UNSPECIFIED, which is treated as KEYWORD).
+  QueryType query_type = 5;
+
+  // Auth token — same convention as the sibling RPCs; the kernel-side
+  // permission gate reads it via OperationContext.  Read-gating
+  // (zone-perm filter, #4557) stays kernel-tier per D5 — the plugin
+  // trusts that whoever passed the zone_id already checked read
+  // permission.
+  string auth_token = 6;
+}
+
+message QueryResult {
+  // Absolute VFS path of the chunk's source file (starts with `/`),
+  // matching GlobResponse + GrepMatch convention.
+  string path = 1;
+
+  // Which chunk of the file this result is.  0 for whole-file (P1
+  // one-chunk-per-file); P4's real chunker will emit higher indices.
+  uint32 chunk_index = 2;
+
+  // The chunk's text.  For P1 this is the whole file's text (capped);
+  // for P4 it's the actual chunk window.
+  string chunk_text = 3;
+
+  // Ranker score.  BM25 for keyword; cosine for semantic; fused for
+  // hybrid.  Not comparable across `query_type` values.
+  float score = 4;
+
+  // The zone this result belongs to.  Mirrors the request's
+  // `zone_id` since a query is single-zone (per D3); the field exists
+  // so callers deduping across federated hits from multiple plugins
+  // don't need to plumb the request back in.
+  string zone_id = 5;
+
+  // Millisecond-resolution mtime of the source file at index time.
+  // Optional because P1 tolerates missing mtimes (e.g. streams).  Used
+  // by P6's recency scoring.
+  optional int64 mtime_ms = 6;
+}
+
+message QueryResponse {
+  repeated QueryResult results = 1;
+  // Set when the request could not be served (e.g. no index for the
+  // requested zone_id, invalid path_filter).  Callers treat non-empty
+  // error as "empty results, log and move on" per Glob + Grep
+  // convention.
+  optional string error = 2;
+}
+
+message IndexRequest {
+  // Walk start.  Absolute VFS path (starts with `/`).
+  string root_path = 1;
+
+  // Zone scope — the same rule as `QueryRequest.zone_id`.  Documents
+  // are added to the per-zone tantivy index for this zone.
+  string zone_id = 2;
+
+  // Recurse into subdirectories.  false ⇒ only direct children of
+  // `root_path` (matches Python `recursive=False`).
+  bool recursive = 3;
+
+  // Safety cap on the number of documents added in a single call.
+  // 0 ⇒ server-side default (10_000).  Callers that need to index a
+  // larger corpus call `Index` repeatedly with narrower `root_path`
+  // scopes.
+  uint32 max_docs = 4;
+
+  // Auth token per the same convention as the sibling RPCs.
+  string auth_token = 5;
+}
+
+message IndexResponse {
+  // Number of documents added / refreshed by this call.
+  uint32 indexed_count = 1;
+  // Number of paths visited that were skipped (empty file, binary,
+  // over-size, non-regular).  Distinct from indexed_count so callers
+  // can spot silent skips without diffing before/after counts.
+  uint32 skipped_count = 2;
+  // Set when the walk aborted (missing root, index-open failure).
+  // Callers treat non-empty error as "no documents added, log and
+  // retry with narrower scope" per Glob + Grep convention.
   optional string error = 3;
 }

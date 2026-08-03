@@ -52,6 +52,7 @@ pub mod search_proto {
     tonic::include_proto!("nexus.search.v1");
 }
 
+pub mod ann_index;
 pub mod fts_index;
 pub mod index_manager;
 pub mod kernel_io;

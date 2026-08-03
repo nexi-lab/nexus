@@ -58,6 +58,18 @@ bytes = "1"
 # live under `~/.nexus/plugins/search/<zone_id>/fts/`.
 tantivy = "0.22"
 
+# ANN vector store for SemanticQuery (Phase 2).  Pure Rust HNSW;
+# lives per-zone at `<data>/plugins/search/<zone_id>/ann-<model>-<version>/`.
+# Distance = cosine.  Same dylib-boundary story as tantivy — the plugin
+# cdylib is where the vector index code lands, cluster core stays lean.
+hnsw_rs = "0.3"
+
+# `anndists` is `hnsw_rs`'s distance-metric crate — kept as an explicit
+# direct dep because the plugin references `DistCosine` in its own code
+# (not as a re-export shim), so a `hnsw_rs` major bump that trims its
+# re-export surface would fail LOUD here instead of at a distant callsite.
+anndists = "0.1"
+
 
 # Parking-lot mutex around the per-zone index writer.  tantivy's own
 # IndexWriter is Send + Sync but only allows one writer per index at a

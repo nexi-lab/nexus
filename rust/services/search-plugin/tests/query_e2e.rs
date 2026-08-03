@@ -256,7 +256,15 @@ async fn query_empty_q_returns_error_not_500() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn query_semantic_type_rejected_with_p2_message() {
+async fn query_semantic_gracefully_degrades_when_no_embedder() {
+    // Post-P2: SEMANTIC is a supported query_type but requires an
+    // embedder.  The default Harness uses `with_manager` (no
+    // embedder pre-injected) → build_default_embedder tries and
+    // fails because NEXUS_SEARCH_MODEL_DIR / ORT_DYLIB_PATH aren't
+    // set in the test env.  The RPC must return a clean error
+    // ("semantic unavailable: ...") rather than 500 or hang — that
+    // preserves the D2 graceful-degradation contract: keyword still
+    // works when semantic is unwired.
     let h = Harness::start();
     let resp = h
         .svc
@@ -272,11 +280,14 @@ async fn query_semantic_type_rejected_with_p2_message() {
         .expect("query")
         .into_inner();
 
-    let err = resp.error.expect("semantic must be rejected in P1");
+    let err = resp
+        .error
+        .expect("semantic without embedder must error, not succeed");
     assert!(
-        err.contains("P2"),
-        "semantic rejection should mention P2, got: {err:?}",
+        err.contains("semantic unavailable"),
+        "semantic degradation message should mention unavailability, got: {err:?}",
     );
+    assert!(resp.results.is_empty(), "no results when unavailable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

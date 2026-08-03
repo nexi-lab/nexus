@@ -13,6 +13,17 @@ name = "nexus_search_plugin"
 # through the C ABI.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# `semantic` = fastembed + ort dylib for vector-embedding-driven
+# SemanticQuery.  Default-on for cluster profile.  With the feature
+# OFF, the plugin still ships Query (keyword / BM25) + Glob + Grep;
+# SemanticQuery returns a plain error and the AnnIndex primitive
+# stays reachable to callers who bring their own vectors.  Graceful
+# degradation is deliberate — a missing model / dylib must not take
+# down keyword search too.
+default = ["semantic"]
+semantic = ["dep:fastembed", "dep:ort"]
+
 [dependencies]
 # Plugin ABI — stable C ABI contract for dylib plugins.  The
 # `declare_service_plugin!` macro + KernelHandle live here.
@@ -57,6 +68,40 @@ bytes = "1"
 # stays untouched.  BM25 scorer + mmap segments; per-zone indices
 # live under `~/.nexus/plugins/search/<zone_id>/fts/`.
 tantivy = "0.22"
+
+# ANN vector store for SemanticQuery (Phase 2).  Pure Rust HNSW;
+# lives per-zone at `<data>/plugins/search/<zone_id>/ann-<model>-<version>/`.
+# Distance = cosine.  Same dylib-boundary story as tantivy — the plugin
+# cdylib is where the vector index code lands, cluster core stays lean.
+hnsw_rs = "0.3"
+
+# `anndists` is `hnsw_rs`'s distance-metric crate — kept as an explicit
+# direct dep because the plugin references `DistCosine` in its own code
+# (not as a re-export shim), so a `hnsw_rs` major bump that trims its
+# re-export surface would fail LOUD here instead of at a distant callsite.
+anndists = "0.1"
+
+# ── semantic (feature-gated) ──────────────────────────────────────
+# fastembed = the sentence-transformer runtime; ships tokenizer +
+# pooling + normalization + model catalogue (BGE, mE5, MiniLM) atop
+# `ort`.  Pinned to =5.17.4 per D2 — 5.15..5.17 have no known
+# regressions; a fastembed major bump forcing an ort ABI change would
+# fail loud here.  `ort-load-dynamic` = ship onnxruntime.{dll,dylib,so}
+# alongside the plugin cdylib rather than static-linking (matches
+# signed-release + swap-model-without-resign posture).
+fastembed = { version = "=5.17.4", default-features = false, features = [
+    "ort-load-dynamic",
+], optional = true }
+
+# `ort` is fastembed's transitive dep, but we take a direct pin so
+# `ort::init_from(dylib_path)` is in scope at plugin startup.  Version
+# range compatible with fastembed 5.17.x (which itself pins
+# `ort = 2.0.0-rc.10`); the caret constraint is deliberate — a
+# fastembed bump moving to a newer rc must be caught by an explicit
+# range bump here, not silently accepted.
+ort = { version = "2.0.0-rc.10", default-features = false, features = [
+    "load-dynamic",
+], optional = true }
 
 
 # Parking-lot mutex around the per-zone index writer.  tantivy's own

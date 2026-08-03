@@ -311,16 +311,19 @@ class TestSearchIndexQuery:
             f"reindex must not duplicate the doc; got {r['result']['results']}"
         )
 
-    def test_query_semantic_rejected_with_p2_message(self, api_key: str) -> None:
-        """Non-keyword query_type must fail loudly in P1 with a phase hint.
-
-        Locks the contract Phase 2 will lift — a silent fall-through to
-        keyword ranking would silently mis-serve callers who expected
-        vector recall.
+    def test_query_semantic_gracefully_degrades_without_embedder(self, api_key: str) -> None:
+        """Post-P2: SEMANTIC is a supported query_type but requires a
+        loaded embedder. When the docker image is not shipped with a
+        model + onnxruntime dylib (which is the current CI shape —
+        model bundling is a P8 concern), SemanticQuery must return
+        a clean "semantic unavailable" error, NOT crash or hang.
+        Preserves the D2 graceful-degradation contract.
         """
         r = search_query(NODE_GRPC, "widget", query_type="semantic", api_key=api_key)
-        assert "error" in r, f"semantic must be rejected in P1, got {r}"
-        assert "P2" in r["error"], f"semantic rejection should mention P2, got {r}"
+        assert "error" in r, f"semantic without embedder must error, got {r}"
+        assert "semantic unavailable" in r["error"], (
+            f"semantic degradation message should mention unavailability, got {r}"
+        )
 
     def test_query_hybrid_rejected_with_p3_message(self, api_key: str) -> None:
         r = search_query(NODE_GRPC, "widget", query_type="hybrid", api_key=api_key)

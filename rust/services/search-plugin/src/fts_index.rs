@@ -56,7 +56,8 @@ use parking_lot::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
+use tantivy::query::TermQuery;
+use tantivy::schema::{Field, IndexRecordOption, Schema, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 /// tantivy writer heap — 50 MiB is the conventional per-index budget
@@ -286,6 +287,29 @@ impl FtsIndex {
             }
         }
         Ok(hits)
+    }
+
+    /// Exact-path lookup — resolves a single doc by its `path`
+    /// field.  Uses a `TermQuery` against the STRING-indexed `path`
+    /// field so it doesn't depend on the BM25 tokenisation matching
+    /// the query text (which the older
+    /// `.search(basename, limit, Some(path))` shim did).  Returns
+    /// `None` when no doc has that exact path — no-op for callers
+    /// materialising ANN hits into the full QueryResult shape.
+    pub fn get_by_path(&self, path: &str) -> Result<Option<FtsHit>, IndexError> {
+        let searcher = self.reader.searcher();
+        let term = Term::from_field_text(self.fields.path, path);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+        let top = searcher
+            .search(&query, &TopDocs::with_limit(1))
+            .map_err(|e| IndexError::Search(e.to_string()))?;
+        let Some((score, addr)) = top.into_iter().next() else {
+            return Ok(None);
+        };
+        let stored: TantivyDocument = searcher
+            .doc(addr)
+            .map_err(|e| IndexError::Search(e.to_string()))?;
+        Ok(Some(self.decode(stored, score)))
     }
 
     fn decode(&self, stored: TantivyDocument, score: f32) -> FtsHit {

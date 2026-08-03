@@ -73,6 +73,114 @@ def search_glob(
         channel.close()
 
 
+def search_index(
+    target: str,
+    root_path: str,
+    *,
+    zone_id: str = "",
+    recursive: bool = True,
+    max_docs: int = 0,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 120,
+) -> dict:
+    """Typed Index RPC (P1 keyword-only).
+
+    Returns ``{"result": {"indexed_count": int, "skipped_count": int}}``
+    on success or ``{"error": str}`` when the plugin sets the response's
+    optional `error` field.  ``max_docs=0`` uses the plugin's server-side
+    default (10_000 per the proto contract).
+    """
+    from nexus.grpc.search.v1 import search_pb2
+
+    channel, stub = _open_search_stub(target)
+    try:
+        req = search_pb2.IndexRequest(
+            root_path=root_path,
+            zone_id=zone_id,
+            recursive=recursive,
+            max_docs=max_docs,
+            auth_token=api_key,
+        )
+        resp = stub.Index(req, timeout=timeout)
+        if resp.HasField("error"):
+            return {"error": resp.error}
+        return {
+            "result": {
+                "indexed_count": resp.indexed_count,
+                "skipped_count": resp.skipped_count,
+            }
+        }
+    finally:
+        channel.close()
+
+
+def search_query(
+    target: str,
+    q: str,
+    *,
+    zone_id: str = "",
+    limit: int = 0,
+    path_filter: str = "",
+    query_type: str = "keyword",
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Typed Query RPC (P1 keyword-only).
+
+    Returns ``{"result": {"results": [...]}}`` on success or
+    ``{"error": str}``.  Each result is
+    ``{"path": str, "chunk_index": int, "chunk_text": str,
+    "score": float, "zone_id": str, "mtime_ms": int | None}``.
+
+    ``query_type`` accepts the string forms mirrored from the
+    Python router: ``"keyword"``, ``"semantic"``, ``"hybrid"``.
+    P1 rejects the latter two with an error message referencing
+    the phase that will lift the gate.  ``limit=0`` uses the
+    plugin's server-side default (10 per the proto contract).
+    """
+    from nexus.grpc.search.v1 import search_pb2
+
+    qt_map = {
+        "": search_pb2.QUERY_TYPE_UNSPECIFIED,
+        "keyword": search_pb2.QUERY_TYPE_KEYWORD,
+        "semantic": search_pb2.QUERY_TYPE_SEMANTIC,
+        "hybrid": search_pb2.QUERY_TYPE_HYBRID,
+    }
+    if query_type not in qt_map:
+        raise ValueError(f"unknown query_type: {query_type!r}")
+
+    channel, stub = _open_search_stub(target)
+    try:
+        req = search_pb2.QueryRequest(
+            q=q,
+            zone_id=zone_id,
+            limit=limit,
+            path_filter=path_filter,
+            query_type=qt_map[query_type],
+            auth_token=api_key,
+        )
+        resp = stub.Query(req, timeout=timeout)
+        if resp.HasField("error"):
+            return {"error": resp.error}
+        return {
+            "result": {
+                "results": [
+                    {
+                        "path": r.path,
+                        "chunk_index": r.chunk_index,
+                        "chunk_text": r.chunk_text,
+                        "score": r.score,
+                        "zone_id": r.zone_id,
+                        "mtime_ms": r.mtime_ms if r.HasField("mtime_ms") else None,
+                    }
+                    for r in resp.results
+                ]
+            }
+        }
+    finally:
+        channel.close()
+
+
 def search_grep(
     target: str,
     root_path: str,

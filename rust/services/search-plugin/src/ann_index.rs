@@ -302,10 +302,21 @@ impl AnnIndex {
 
     /// Persist the graph + sidecar to disk.  Callers batch adds and
     /// commit once at end-of-request — same pattern as `FtsIndex`.
+    ///
+    /// Skips the hnsw file dump entirely when the index is empty —
+    /// `hnsw_rs::file_dump` errors on a graph with zero points, and
+    /// that's not a useful failure mode for an Index call that
+    /// happened to walk a corpus with no valid text (e.g. all files
+    /// binary / oversize / empty).  The sidecar still writes so the
+    /// next open_or_create knows the manager has seen this zone;
+    /// the graph files reappear the next time a real doc arrives.
     pub fn commit(&self) -> Result<(), AnnError> {
-        self.hnsw
-            .file_dump(&self.dir, HNSW_BASENAME)
-            .map_err(|e| AnnError::Commit(format!("hnsw file_dump: {e}")))?;
+        let live = self.sidecar.read().path_to_id.len();
+        if live > 0 {
+            self.hnsw
+                .file_dump(&self.dir, HNSW_BASENAME)
+                .map_err(|e| AnnError::Commit(format!("hnsw file_dump: {e}")))?;
+        }
         let sidecar_path = self.dir.join(SIDECAR_FILE);
         let side = self.sidecar.read();
         let bytes = serde_json::to_vec_pretty(&*side)

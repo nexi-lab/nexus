@@ -315,6 +315,12 @@ async fn semantic_finds_exact_match_after_index() {
     let h = Harness::start();
     let mock = h.mock_mut();
     mock.add_dir("/");
+    // Splice /notes into / explicitly — MockKernel's add_file only
+    // registers the file with its own parent, it doesn't chain up
+    // to the grandparent, so the walker at / never sees /notes
+    // without this call.  index_e2e.rs's nested walk test has the
+    // same shape.
+    mock.add_dir("/notes");
     mock.add_file("/notes/alpha.md", b"widget alpha payload", 1);
     mock.add_file("/notes/beta.md", b"orange banana grape", 2);
     mock.add_file("/notes/gamma.md", b"widget alpha payload extra", 3);

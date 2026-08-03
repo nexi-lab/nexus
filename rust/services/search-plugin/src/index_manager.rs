@@ -23,12 +23,19 @@
 //!
 //! # Storage roots
 //!
-//! The directory layout is `<root>/<zone_id>/fts/`.  Root defaults
-//! to `~/.nexus/plugins/search/` (see [`default_root`]); tests pass
-//! a tempdir.  Zone-id sanitisation is minimal — the caller (the
-//! kernel-tier RPC handler) never lets a client-controlled string
-//! reach this API; `zone_id` values are drawn from the raft-managed
-//! zone registry.
+//! The directory layout is `<root>/<zone_id>/fts/`.  Root resolves
+//! from the `NEXUS_DATA_DIR` env var (same convention as
+//! [`nexus-vault`]'s per-node state), falling back to `./nexus-data`
+//! when unset — one SSOT lets operators relocate ALL plugins by
+//! pointing `NEXUS_DATA_DIR` at a data volume.  Tests pass an
+//! explicit tempdir via [`IndexManager::with_root`].
+//!
+//! Zone-id sanitisation is minimal — the caller (the kernel-tier
+//! RPC handler) never lets a client-controlled string reach this
+//! API; `zone_id` values are drawn from the raft-managed zone
+//! registry.
+//!
+//! [`nexus-vault`]: ../../../vault/src/lib.rs
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -43,18 +50,21 @@ use crate::fts_index::{FtsIndex, IndexError};
 /// to this one under the same zone root.
 const FTS_SUBDIR: &str = "fts";
 
-/// Resolve the default per-node storage root.  Follows the same
-/// per-platform convention `dirs::data_local_dir` gives — the
-/// sibling vault plugin uses the same rule for its own state.
-///
-/// Fallback: relative `nexus/plugins/search/` if the home directory
-/// cannot be resolved.  This only fires on a broken user profile;
-/// callers wanting deterministic paths pass their own root to
-/// [`IndexManager::with_root`].
+/// Environment variable that names the per-node state root.  Same
+/// SSOT the sibling `nexus-vault` plugin honours — one variable
+/// relocates all plugin state to a data volume.
+const DATA_DIR_ENV: &str = "NEXUS_DATA_DIR";
+
+/// Resolve the default per-node storage root — `$NEXUS_DATA_DIR` if
+/// set, `./nexus-data` otherwise.  Matches vault's exact fallback so
+/// a fresh dev checkout puts vault + search state under the same
+/// parent (`./nexus-data/{vault,plugins/search}/`) without any
+/// operator setup.
 pub fn default_root() -> PathBuf {
-    dirs::home_dir()
-        .map(|h| h.join(".nexus/plugins/search"))
-        .unwrap_or_else(|| PathBuf::from("nexus/plugins/search"))
+    let data_dir = std::env::var(DATA_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./nexus-data"));
+    data_dir.join("plugins/search")
 }
 
 /// Zone-id → `Arc<FtsIndex>` cache; lazily opens per-zone indices.
@@ -141,6 +151,43 @@ mod tests {
 
         assert!(root.join("zone-a/fts").exists(), "za dir not created");
         assert!(root.join("zone-b/fts").exists(), "zb dir not created");
+    }
+
+    // NEXUS_DATA_DIR resolution regression tests.  Use `unsafe { set_var }`
+    // per Rust 2024's guard (env is process-global; the tests are
+    // serialised on the DATA_DIR_ENV key so a parallel test observing
+    // `NEXUS_DATA_DIR=/foo` cannot cross-contaminate a test that
+    // expects it unset).  Grouped with a static Mutex so no other test
+    // in this file needs to touch env.
+
+    static ENV_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    #[test]
+    fn default_root_falls_back_to_local_nexus_data_when_env_unset() {
+        let _guard = ENV_LOCK.lock();
+        let saved = std::env::var(DATA_DIR_ENV).ok();
+        // SAFETY: single-threaded test-lock section; no other thread
+        // can race the env read below.
+        unsafe { std::env::remove_var(DATA_DIR_ENV) };
+        let root = default_root();
+        assert_eq!(root, PathBuf::from("./nexus-data").join("plugins/search"));
+        if let Some(v) = saved {
+            unsafe { std::env::set_var(DATA_DIR_ENV, v) };
+        }
+    }
+
+    #[test]
+    fn default_root_honours_nexus_data_dir_env() {
+        let _guard = ENV_LOCK.lock();
+        let saved = std::env::var(DATA_DIR_ENV).ok();
+        // SAFETY: guarded by ENV_LOCK.
+        unsafe { std::env::set_var(DATA_DIR_ENV, "/opt/nexus") };
+        let root = default_root();
+        assert_eq!(root, PathBuf::from("/opt/nexus/plugins/search"));
+        match saved {
+            Some(v) => unsafe { std::env::set_var(DATA_DIR_ENV, v) },
+            None => unsafe { std::env::remove_var(DATA_DIR_ENV) },
+        }
     }
 
     #[test]

@@ -53,6 +53,7 @@ pub mod search_proto {
 }
 
 pub mod fts_index;
+pub mod index_manager;
 pub mod kernel_io;
 pub mod service;
 

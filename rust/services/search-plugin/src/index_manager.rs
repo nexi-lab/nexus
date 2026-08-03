@@ -43,6 +43,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::ann_index::{AnnError, AnnIndex};
 use crate::fts_index::{FtsIndex, IndexError};
 
 /// Directory name inside a per-zone index root for the FTS store.
@@ -67,14 +68,28 @@ pub fn default_root() -> PathBuf {
     data_dir.join("plugins/search")
 }
 
-/// Zone-id → `Arc<FtsIndex>` cache; lazily opens per-zone indices.
+/// Zone-id → `Arc<FtsIndex>` + `Arc<AnnIndex>` caches; lazily opens
+/// per-zone indices.  ANN indices are keyed by `(zone_id,
+/// embedder_tag)` so a model swap (D4) opens a new directory
+/// alongside the old one — the manager holds both in memory as
+/// long as either is referenced.
 pub struct IndexManager {
     root: PathBuf,
     zones: Mutex<HashMap<String, Arc<FtsIndex>>>,
+    ann_zones: Mutex<HashMap<AnnKey, Arc<AnnIndex>>>,
+}
+
+/// Cache key for the ANN index — one entry per `(zone, embedder tag)`.
+/// Different tags = different vector spaces, so a model swap gets its
+/// own cached handle without evicting the old one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AnnKey {
+    zone_id: String,
+    embedder_tag: String,
 }
 
 impl IndexManager {
-    /// Manager rooted at the platform default (`~/.nexus/plugins/search/`).
+    /// Manager rooted at the platform default (`$NEXUS_DATA_DIR/plugins/search/`).
     pub fn new() -> Self {
         Self::with_root(default_root())
     }
@@ -86,6 +101,7 @@ impl IndexManager {
         Self {
             root,
             zones: Mutex::new(HashMap::new()),
+            ann_zones: Mutex::new(HashMap::new()),
         }
     }
 
@@ -94,6 +110,19 @@ impl IndexManager {
     /// through [`get_or_open`].
     pub fn index_dir(&self, zone_id: &str) -> PathBuf {
         self.root.join(zone_id).join(FTS_SUBDIR)
+    }
+
+    /// Return the on-disk directory the given zone's ANN index lives
+    /// in for the given embedder tag.  Same shape as [`index_dir`]
+    /// but under `ann-<tag>-v1/`.  Version suffix is fixed at `v1`
+    /// for now; a future breaking change (schema of `sidecar.json`,
+    /// hnsw_rs upgrade that reads a different disk layout) bumps to
+    /// `v2` so the two live side-by-side and operators can roll
+    /// back.
+    pub fn ann_dir(&self, zone_id: &str, embedder_tag: &str) -> PathBuf {
+        self.root
+            .join(zone_id)
+            .join(format!("ann-{embedder_tag}-v1"))
     }
 
     /// Handle to the storage root — used by callers that need to
@@ -114,6 +143,33 @@ impl IndexManager {
         }
         let idx = FtsIndex::open_or_create(self.index_dir(zone_id))?;
         zones.insert(zone_id.to_string(), Arc::clone(&idx));
+        Ok(idx)
+    }
+
+    /// Fetch (or lazily open) the ANN index for `zone_id` under the
+    /// given embedder tag + dimensionality.  Cached per
+    /// `(zone, tag)` so multiple SemanticQuery calls reuse the same
+    /// on-disk graph.  `dim` must match the embedder that produced
+    /// the vectors in that graph — a mismatch on a fresh index seeds
+    /// the wrong dimensionality; on a reload, the underlying
+    /// [`AnnIndex::open_or_create`] trusts the caller (no runtime
+    /// check because hnsw_rs doesn't expose one).
+    pub fn get_or_open_ann(
+        &self,
+        zone_id: &str,
+        embedder_tag: &str,
+        dim: usize,
+    ) -> Result<Arc<AnnIndex>, AnnError> {
+        let key = AnnKey {
+            zone_id: zone_id.to_string(),
+            embedder_tag: embedder_tag.to_string(),
+        };
+        let mut zones = self.ann_zones.lock();
+        if let Some(idx) = zones.get(&key) {
+            return Ok(Arc::clone(idx));
+        }
+        let idx = AnnIndex::open_or_create(self.ann_dir(zone_id, embedder_tag), dim)?;
+        zones.insert(key, Arc::clone(&idx));
         Ok(idx)
     }
 }
@@ -188,6 +244,38 @@ mod tests {
             Some(v) => unsafe { std::env::set_var(DATA_DIR_ENV, v) },
             None => unsafe { std::env::remove_var(DATA_DIR_ENV) },
         }
+    }
+
+    #[test]
+    fn ann_dir_versioned_by_embedder_tag() {
+        // A model swap must NOT clobber the existing index — new tag
+        // = new directory alongside the old.  Manager holds both in
+        // memory as long as either is referenced.
+        let root = tempdir();
+        let mgr = IndexManager::with_root(root.clone());
+        let d_a = mgr.ann_dir("za", "mock");
+        let d_b = mgr.ann_dir("za", "mE5-small-v1");
+        assert_eq!(d_a, root.join("za/ann-mock-v1"));
+        assert_eq!(d_b, root.join("za/ann-mE5-small-v1-v1"));
+        assert_ne!(d_a, d_b);
+    }
+
+    #[test]
+    fn get_or_open_ann_caches_by_zone_and_tag() {
+        let root = tempdir();
+        let mgr = IndexManager::with_root(root);
+        let a1 = mgr.get_or_open_ann("za", "mock", 8).expect("open a-mock");
+        let a2 = mgr
+            .get_or_open_ann("za", "mock", 8)
+            .expect("re-open a-mock");
+        // Same (zone, tag) → same Arc.
+        assert!(Arc::ptr_eq(&a1, &a2));
+
+        // Different tag on same zone → different index.
+        let b = mgr
+            .get_or_open_ann("za", "other-tag", 8)
+            .expect("open other");
+        assert!(!Arc::ptr_eq(&a1, &b));
     }
 
     #[test]

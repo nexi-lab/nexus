@@ -11,8 +11,11 @@
 use std::sync::Arc;
 
 use nexus_plugin_abi::KernelHandle;
+use parking_lot::Mutex;
 use tonic::{async_trait, Request, Response, Status};
 
+use crate::ann_index::AnnHit;
+use crate::embedder::{build_default_embedder, EmbedError, Embedder};
 use crate::fts_index::FtsHit;
 use crate::index_manager::IndexManager;
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
@@ -58,28 +61,80 @@ fn resolve_zone(z: &str) -> &str {
 
 pub struct SearchServiceImpl {
     handle: Arc<KernelHandle>,
-    /// Per-zone `FtsIndex` cache used by Query and Index.  Kept as
-    /// `Arc<IndexManager>` so tests can inject a manager rooted at a
-    /// tempdir instead of `~/.nexus/plugins/search/`.
+    /// Per-zone `FtsIndex` + `AnnIndex` caches used by Query, Index,
+    /// and SemanticQuery.  `Arc<IndexManager>` so tests can inject a
+    /// manager rooted at a tempdir instead of the default.
     manager: Arc<IndexManager>,
+    /// Lazy embedder slot.  `None` until the first SemanticQuery
+    /// attempts to initialise; `Some(Arc<dyn Embedder>)` on success.
+    /// Failed init leaves it `None` and is retried on the next call
+    /// so an operator setting `NEXUS_SEARCH_MODEL_DIR` mid-run
+    /// unblocks semantic search without a plugin restart.
+    embedder_slot: Arc<Mutex<Option<Arc<dyn Embedder>>>>,
 }
 
 impl SearchServiceImpl {
     /// Production constructor — index manager rooted at the platform
-    /// default (`~/.nexus/plugins/search/`).
+    /// default (`$NEXUS_DATA_DIR/plugins/search/`).  Embedder init
+    /// is deferred to the first SemanticQuery (D3).
     pub fn new(handle: Arc<KernelHandle>) -> Self {
         Self {
             handle,
             manager: Arc::new(IndexManager::new()),
+            embedder_slot: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Test / operator constructor — inject a pre-configured
     /// `IndexManager` (typically rooted at a tempdir for tests, or
     /// at an explicit data volume for operators overriding the
-    /// default storage location).
+    /// default storage location).  Embedder init is deferred to the
+    /// first SemanticQuery.
     pub fn with_manager(handle: Arc<KernelHandle>, manager: Arc<IndexManager>) -> Self {
-        Self { handle, manager }
+        Self {
+            handle,
+            manager,
+            embedder_slot: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Test / operator constructor — inject BOTH a pre-configured
+    /// `IndexManager` and an [`Embedder`].  Bypasses the
+    /// [`build_default_embedder`] discovery step so integration tests
+    /// can use a [`MockEmbedder`](crate::embedder::MockEmbedder)
+    /// without pointing at real model files.
+    pub fn with_manager_and_embedder(
+        handle: Arc<KernelHandle>,
+        manager: Arc<IndexManager>,
+        embedder: Arc<dyn Embedder>,
+    ) -> Self {
+        Self {
+            handle,
+            manager,
+            embedder_slot: Arc::new(Mutex::new(Some(embedder))),
+        }
+    }
+
+    /// Fetch (or lazily initialise) the embedder.  Fast path: read
+    /// the mutex, clone the Arc, return.  Slow path (first call, or
+    /// after a failed init): build via [`build_default_embedder`]
+    /// OUTSIDE the mutex so a 300 ms – 1 s ONNX session build does
+    /// not block concurrent Query / Index requests.  Two concurrent
+    /// first-callers duplicate work but both succeed — a rare cost
+    /// worth paying to keep the lock's critical section short.
+    fn get_or_init_embedder(&self) -> Result<Arc<dyn Embedder>, EmbedError> {
+        if let Some(e) = self.embedder_slot.lock().as_ref() {
+            return Ok(Arc::clone(e));
+        }
+        let data_root = self.manager.root().to_path_buf();
+        let built = build_default_embedder(&data_root)?;
+        // Race-check: another thread may have won.
+        let mut slot = self.embedder_slot.lock();
+        if let Some(existing) = slot.as_ref() {
+            return Ok(Arc::clone(existing));
+        }
+        *slot = Some(Arc::clone(&built));
+        Ok(built)
     }
 }
 
@@ -449,30 +504,16 @@ fn fetch_mtimes<'a>(
     out
 }
 
-// ── Query / Index (Phase 1) ───────────────────────────────────────
+// ── Query / SemanticQuery / Index ─────────────────────────────────
 
-/// Fetch (or open) the per-zone FtsIndex and run a BM25 keyword
-/// search.  P1 accepts `QueryType::Keyword` (or `Unspecified` as a
-/// safe default); other types are rejected with a caller-facing
-/// error string so P2/P3 can lift the gate additively.
-fn do_query(
+/// BM25 keyword search over the per-zone FTS index (Phase 1).
+fn do_keyword_query(
     manager: &IndexManager,
     q: &str,
     zone_id: &str,
     limit: usize,
     path_filter: &str,
-    query_type: QueryType,
 ) -> Result<Vec<QueryResult>, String> {
-    match query_type {
-        QueryType::Unspecified | QueryType::Keyword => {}
-        QueryType::Semantic => {
-            return Err("query_type=SEMANTIC not supported until P2".into());
-        }
-        QueryType::Hybrid => {
-            return Err("query_type=HYBRID not supported until P3".into());
-        }
-    }
-
     let index = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
@@ -493,6 +534,100 @@ fn do_query(
         .collect())
 }
 
+/// Vector-similarity search over the per-zone HNSW index (Phase 2).
+/// Embeds `q` via the caller-supplied embedder, opens the ANN index
+/// tagged with the embedder's `tag()`, runs top-k, and materialises
+/// the FTS-stored fields (chunk_text, mtime_ms) so results carry the
+/// same shape as keyword hits.
+fn do_semantic_query(
+    manager: &IndexManager,
+    embedder: &Arc<dyn Embedder>,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+) -> Result<Vec<QueryResult>, String> {
+    let ann = manager
+        .get_or_open_ann(zone_id, embedder.tag(), embedder.dim())
+        .map_err(|e| format!("open ann for zone {zone_id:?}: {e}"))?;
+
+    let query_vec = embedder
+        .embed_batch(&[q])
+        .map_err(|e| format!("embed query: {e}"))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "embed query: empty result".to_string())?;
+
+    // Over-fetch when a path prefix is set — the post-scoring
+    // filter would otherwise underfill the response.
+    let fetch = if path_filter.is_empty() {
+        limit
+    } else {
+        limit.saturating_mul(4).max(limit)
+    };
+    let ann_hits = ann
+        .search(&query_vec, fetch)
+        .map_err(|e| format!("ann search: {e}"))?;
+
+    // Materialise chunk_text + mtime via the FTS index — the ANN
+    // stores only vectors + paths, but the RPC contract carries the
+    // full QueryResult shape so callers don't need a follow-up read.
+    // A missing FTS row (drift scenario) leaves chunk_text empty;
+    // the path itself is still meaningful.
+    let fts = manager.get_or_open(zone_id).ok();
+
+    let mut out = Vec::with_capacity(limit);
+    for hit in ann_hits {
+        if !path_filter.is_empty() && !hit.path.starts_with(path_filter) {
+            continue;
+        }
+        out.push(enrich_ann_hit(fts.as_deref(), hit, zone_id));
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn enrich_ann_hit(
+    fts: Option<&crate::fts_index::FtsIndex>,
+    hit: AnnHit,
+    zone_id: &str,
+) -> QueryResult {
+    // Score = 1 - cosine distance so higher = closer, matching the
+    // BM25 "higher is better" convention keyword callers already
+    // rely on.  ANN returns distance in [0, 2]; score falls in [-1, 1].
+    let score = 1.0 - hit.distance;
+    let (chunk_text, mtime_ms) = fts
+        .and_then(|f| lookup_fts_by_path(f, &hit.path))
+        .unwrap_or((String::new(), None));
+    QueryResult {
+        path: hit.path,
+        chunk_index: 0,
+        chunk_text,
+        score,
+        zone_id: zone_id.to_string(),
+        mtime_ms,
+    }
+}
+
+/// Look up an FTS row by exact path.  P4's chunker will add a
+/// proper indexed path-term lookup; today we run a keyword search
+/// with the path's basename as the query and the full path as the
+/// prefix filter — cheap because P1 is one-chunk-per-file so the
+/// path segments overlap the chunk_text field.  Returns `None` on
+/// miss (e.g. drift where ANN has the path but FTS was pruned).
+fn lookup_fts_by_path(
+    fts: &crate::fts_index::FtsIndex,
+    path: &str,
+) -> Option<(String, Option<i64>)> {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    let hits = fts.search(basename, 10, Some(path)).ok()?;
+    hits.into_iter()
+        .find(|h| h.path == path)
+        .map(|h| (h.chunk_text, h.mtime_ms))
+}
+
 fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
     QueryResult {
         path: hit.path,
@@ -504,22 +639,58 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
     }
 }
 
+/// Sinks the Index walker writes into.  `fts` is required (Index
+/// always populates the keyword index); `ann` + `embedder` are
+/// optional so a slim deployment or a mid-boot with no embedder
+/// still gets keyword search — semantic just returns zero hits
+/// until Index is retried with the embedder wired up.
+struct IndexSinks<'a> {
+    fts: &'a Arc<crate::fts_index::FtsIndex>,
+    ann: Option<&'a Arc<crate::ann_index::AnnIndex>>,
+    embedder: Option<&'a Arc<dyn Embedder>>,
+}
+
 /// Walk `root_path` and index every regular file.  Same walker Glob +
 /// Grep use — `sys_readdir` for enumeration, `sys_read` for content,
 /// `sys_stat` for mtime.  P1 = one chunk per file (path is the FTS
 /// primary key, `add_document` is idempotent so re-indexing replaces
 /// the prior doc); P4's chunker splits per file into multiple docs.
+///
+/// When `embedder` + `ann` are both present the walker also embeds
+/// the file's text and adds it to the vector index — semantic +
+/// keyword stay in sync from one call.  Missing embedder ⇒ FTS-only
+/// (log a debug once per Index call so operators see it).
 fn do_index(
     handle: &KernelHandle,
     manager: &IndexManager,
+    embedder: Option<&Arc<dyn Embedder>>,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
     max_docs: usize,
 ) -> Result<(u32, u32), String> {
-    let index = manager
+    let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
+
+    // Only open the ANN if the embedder is around; otherwise we'd
+    // create an empty ann-* directory on disk that would confuse
+    // operators inspecting the layout.
+    let ann = if let Some(e) = embedder {
+        Some(
+            manager
+                .get_or_open_ann(zone_id, e.tag(), e.dim())
+                .map_err(|err| format!("open ann for zone {zone_id:?}: {err}"))?,
+        )
+    } else {
+        None
+    };
+
+    let sinks = IndexSinks {
+        fts: &fts,
+        ann: ann.as_ref(),
+        embedder,
+    };
 
     let mut indexed: u32 = 0;
     let mut skipped: u32 = 0;
@@ -532,7 +703,7 @@ fn do_index(
             if entry_type != DT_REG {
                 return WalkAction::Continue;
             }
-            match index_one(handle, &index, vfs_path) {
+            match index_one(handle, &sinks, vfs_path) {
                 IndexOne::Added => indexed += 1,
                 IndexOne::Skipped => skipped += 1,
             }
@@ -552,7 +723,7 @@ fn do_index(
                         continue;
                     }
                     let child = kernel_io::join_vfs_path(root_path, &entry.name);
-                    match index_one(handle, &index, &child) {
+                    match index_one(handle, &sinks, &child) {
                         IndexOne::Added => indexed += 1,
                         IndexOne::Skipped => skipped += 1,
                     }
@@ -563,12 +734,17 @@ fn do_index(
         }
     };
 
-    // Commit even on walker error so partial progress is durable —
-    // callers retry with a narrower root_path per D5 SSOT (the
-    // MetaStore `search.indexed_gen` sidecar lands in P5).
-    if let Err(e) = index.commit() {
-        tracing::warn!(err = %e, "index commit failed after walk");
-        return Err(format!("commit: {e}"));
+    // Commit BOTH sinks even on walker error so partial progress is
+    // durable — callers retry with a narrower root_path per D5 SSOT.
+    if let Err(e) = fts.commit() {
+        tracing::warn!(err = %e, "fts commit failed after walk");
+        return Err(format!("fts commit: {e}"));
+    }
+    if let Some(a) = ann.as_ref() {
+        if let Err(e) = a.commit() {
+            tracing::warn!(err = %e, "ann commit failed after walk");
+            return Err(format!("ann commit: {e}"));
+        }
     }
 
     visit_result?;
@@ -583,11 +759,7 @@ enum IndexOne {
     Skipped,
 }
 
-fn index_one(
-    handle: &KernelHandle,
-    index: &crate::fts_index::FtsIndex,
-    vfs_path: &str,
-) -> IndexOne {
+fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
     let bytes = match kernel_io::sys_read(handle, vfs_path) {
         Ok(b) => b,
         Err(e) => {
@@ -622,10 +794,39 @@ fn index_one(
         .ok()
         .and_then(|info| info.modified_at_ms);
 
-    if let Err(e) = index.add_document(vfs_path, 0, text, mtime_ms) {
-        tracing::warn!(path = %vfs_path, err = %e, "index: add_document failed — skipping");
+    if let Err(e) = sinks.fts.add_document(vfs_path, 0, text, mtime_ms) {
+        tracing::warn!(path = %vfs_path, err = %e, "index: fts add_document failed — skipping");
         return IndexOne::Skipped;
     }
+
+    // ANN side — best-effort.  A failure to embed / add does NOT
+    // fail the whole file; keyword still works, semantic just
+    // misses this doc until the next Index retries.  Real batching
+    // (embed 32 files at a time) lands in P4/P5 when the chunker
+    // makes it worthwhile.
+    if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
+        match embedder.embed_batch(&[text]) {
+            Ok(mut vecs) => {
+                if let Some(v) = vecs.pop() {
+                    if let Err(e) = ann.add_vector(vfs_path, &v) {
+                        tracing::warn!(
+                            path = %vfs_path,
+                            err = %e,
+                            "index: ann add_vector failed — semantic misses this doc",
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %vfs_path,
+                    err = %e,
+                    "index: embed failed — semantic misses this doc",
+                );
+            }
+        }
+    }
+
     IndexOne::Added
 }
 
@@ -737,11 +938,35 @@ impl SearchService for SearchServiceImpl {
         let path_filter = req.path_filter;
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let manager = Arc::clone(&self.manager);
-        let outcome = tokio::task::spawn_blocking(move || {
-            do_query(&manager, &q, &zone_id, limit, &path_filter, query_type)
-        })
-        .await
-        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        let outcome = match query_type {
+            QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
+                do_keyword_query(&manager, &q, &zone_id, limit, &path_filter)
+            })
+            .await
+            .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?,
+            QueryType::Semantic => {
+                // Initialise the embedder BEFORE spawn_blocking so a
+                // Load / NotAvailable error surfaces synchronously
+                // with an actionable message instead of getting
+                // wrapped as an opaque JoinError.
+                let embedder = match self.get_or_init_embedder() {
+                    Ok(e) => e,
+                    Err(e) => {
+                        return Ok(Response::new(QueryResponse {
+                            results: Vec::new(),
+                            error: Some(format!("semantic unavailable: {e}")),
+                        }));
+                    }
+                };
+                tokio::task::spawn_blocking(move || {
+                    do_semantic_query(&manager, &embedder, &q, &zone_id, limit, &path_filter)
+                })
+                .await
+                .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?
+            }
+            QueryType::Hybrid => Err("query_type=HYBRID not supported until P3".into()),
+        };
 
         match outcome {
             Ok(results) => Ok(Response::new(QueryResponse {
@@ -774,8 +999,22 @@ impl SearchService for SearchServiceImpl {
         };
         let handle = Arc::clone(&self.handle);
         let manager = Arc::clone(&self.manager);
+        // Best-effort embedder init.  A NotAvailable / Load error
+        // does NOT fail Index — keyword indexing runs anyway, ANN
+        // just stays empty until an operator wires the embedder up
+        // and re-runs Index.  This matches the "graceful degradation"
+        // posture SemanticQuery uses.
+        let embedder = self.get_or_init_embedder().ok();
         let outcome = tokio::task::spawn_blocking(move || {
-            do_index(&handle, &manager, &root, &zone_id, recursive, max_docs)
+            do_index(
+                &handle,
+                &manager,
+                embedder.as_ref(),
+                &root,
+                &zone_id,
+                recursive,
+                max_docs,
+            )
         })
         .await
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;

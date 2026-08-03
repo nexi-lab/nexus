@@ -280,7 +280,9 @@ async fn query_semantic_gracefully_degrades_when_no_embedder() {
         .expect("query")
         .into_inner();
 
-    let err = resp.error.expect("semantic without embedder must error, not succeed");
+    let err = resp
+        .error
+        .expect("semantic without embedder must error, not succeed");
     assert!(
         err.contains("semantic unavailable"),
         "semantic degradation message should mention unavailability, got: {err:?}",

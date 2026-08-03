@@ -141,23 +141,26 @@ message GrepResponse {
 //
 // Ranked search over a persistent per-zone corpus.  Backed by tantivy
 // (BM25) in Phase 1; Phase 2 folds in semantic (fastembed + hnsw) and
-// Phase 3 folds in hybrid fusion + recency decay.  The wire shape is
-// designed to grow additively — new phases add semantics to existing
-// fields (`query_type`, `alpha`, `fusion_method`, `recency`) instead
-// of shipping a second RPC.
+// Phase 3 folds in hybrid fusion + recency decay.
+//
+// Wire-shape policy: fields land in the phase that uses them, NOT
+// pre-declared.  P2 adds semantic knobs, P3 adds fusion knobs, P6
+// adds recency knobs — each phase's proto delta ships with the
+// behaviour that gives the field meaning.  Adding a proto3 field is
+// O(1); shipping inert fields ahead of time is a tombstone for
+// behaviour that doesn't exist yet.
+//
+// `query_type` is the sole knob P1 needs — it lets P2/P3 lift the
+// KEYWORD-only gate without inventing a discriminator.
 
 enum QueryType {
-  QUERY_TYPE_UNSPECIFIED = 0;  // treated as KEYWORD for back-compat
+  // proto3 requires a 0 default.  Treated as KEYWORD by callers that
+  // don't set the field (single-algorithm P1 has one reasonable
+  // interpretation of unset).
+  QUERY_TYPE_UNSPECIFIED = 0;
   QUERY_TYPE_KEYWORD = 1;      // BM25 only (P1)
   QUERY_TYPE_SEMANTIC = 2;     // vector-only (P2)
   QUERY_TYPE_HYBRID = 3;       // keyword + vector, fused (P3)
-}
-
-enum FusionMethod {
-  FUSION_METHOD_UNSPECIFIED = 0;  // treated as RRF
-  FUSION_METHOD_RRF = 1;
-  FUSION_METHOD_WEIGHTED = 2;
-  FUSION_METHOD_RRF_WEIGHTED = 3;
 }
 
 message QueryRequest {
@@ -183,36 +186,12 @@ message QueryRequest {
   // KEYWORD (or UNSPECIFIED, which is treated as KEYWORD).
   QueryType query_type = 5;
 
-  // Hybrid fusion knobs — inert in P1 (keyword-only), wired in P3.
-  //
-  // `alpha`: semantic-vs-keyword weight when `fusion_method=WEIGHTED`
-  // or `RRF_WEIGHTED`.  0.0-1.0 (0.5 = balanced).
-  float alpha = 6;
-  FusionMethod fusion_method = 7;
-  // RRF rank constant.  Standard tuning is 60; higher = flatter
-  // ranking curve.
-  uint32 rrf_k = 8;
-
-  // Recency knobs — inert in P1, wired in P6.  See
-  // `GlobRequest.sort_recency` for the mirrored glob/grep design and
-  // #4543 for the Python-side semantics.
-  //
-  // `recency_mode`: "off" | "on" | "auto"; empty ⇒ defer to
-  // server-side default.
-  string recency_mode = 9;
-  // `recency_weight`: score multiplier magnitude.  <0 ⇒ server-side
-  // default.
-  float recency_weight = 10;
-  // `recency_half_life_days`: score decay half-life.  <=0 ⇒
-  // server-side default.
-  float recency_half_life_days = 11;
-
   // Auth token — same convention as the sibling RPCs; the kernel-side
   // permission gate reads it via OperationContext.  Read-gating
   // (zone-perm filter, #4557) stays kernel-tier per D5 — the plugin
   // trusts that whoever passed the zone_id already checked read
   // permission.
-  string auth_token = 12;
+  string auth_token = 6;
 }
 
 message QueryResult {

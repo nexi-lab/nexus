@@ -58,10 +58,6 @@ bytes = "1"
 # live under `~/.nexus/plugins/search/<zone_id>/fts/`.
 tantivy = "0.22"
 
-# Home-dir resolution for the per-zone index root.  `dirs = 5` follows
-# XDG on Linux, `%APPDATA%` on Windows, `~/Library/Application Support`
-# on macOS — matches how the sibling vault plugin stores per-node state.
-dirs = "5"
 
 # Parking-lot mutex around the per-zone index writer.  tantivy's own
 # IndexWriter is Send + Sync but only allows one writer per index at a

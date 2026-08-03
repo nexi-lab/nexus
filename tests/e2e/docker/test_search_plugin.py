@@ -37,7 +37,7 @@ from tests.e2e.docker.runbook_helpers import (
     vfs_write,
     wait_healthy,
 )
-from tests.e2e.docker.search_helpers import search_glob, search_grep
+from tests.e2e.docker.search_helpers import search_glob, search_grep, search_index, search_query
 
 pytestmark = [
     pytest.mark.xdist_group("search-plugin-e2e"),
@@ -242,3 +242,112 @@ class TestSearchGrep:
             "binary file must be silently skipped by the plugin's UTF-8 sniff."
         )
         assert matches[0]["path"].endswith("text.txt"), matches
+
+
+# ===========================================================================
+# TestSearchIndexQuery — P1 keyword-only ranked search
+# ===========================================================================
+class TestSearchIndexQuery:
+    """End-to-end coverage for the P1 Index + Query RPCs.
+
+    The unit + Rust integration tests (query_e2e.rs, index_e2e.rs)
+    already exercise these RPCs against a real ``SearchServiceImpl``
+    with a tempdir index — this suite runs the same contract through
+    the LOADED cdylib inside a real ``nexusd-cluster`` process, so
+    the plugin-ABI dispatch layer, the tantivy on-disk index under
+    the resolved ``NEXUS_DATA_DIR``, and the tonic client wire all
+    stay honest against the shipping binary.
+    """
+
+    def test_index_then_query_roundtrip(self, api_key: str) -> None:
+        """Seed a small tree via vfs_write, Index it, Query — verify hits."""
+        u = uid()
+        base = f"/search-idx-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        # Two hits for `widget`, one distractor.
+        r = vfs_write(NODE_GRPC, f"{base}/a.md", b"widget alpha docs\n", api_key=api_key)
+        assert "error" not in r, r
+        r = vfs_write(NODE_GRPC, f"{base}/b.md", b"widget beta manual\n", api_key=api_key)
+        assert "error" not in r, r
+        r = vfs_write(NODE_GRPC, f"{base}/c.md", b"unrelated content\n", api_key=api_key)
+        assert "error" not in r, r
+
+        r = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in r, f"index returned error: {r}"
+        assert r["result"]["indexed_count"] == 3, r
+        assert r["result"]["skipped_count"] == 0, r
+
+        r = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        assert "error" not in r, f"query returned error: {r}"
+        results = r["result"]["results"]
+        assert len(results) == 2, f"expected two 'widget' hits, got {results}"
+        paths = {res["path"] for res in results}
+        assert paths == {f"{base}/a.md", f"{base}/b.md"}, paths
+        # Scores are BM25 — both positive.
+        for res in results:
+            assert res["score"] > 0.0, res
+
+    def test_reindex_is_idempotent(self, api_key: str) -> None:
+        """Running Index twice must NOT duplicate documents in the corpus.
+
+        Regression for the ``delete_term(path)``-before-add contract in
+        ``FtsIndex.add_document`` — a naive add-only path would double
+        the doc's BM25 score and inflate the result count.
+        """
+        u = uid()
+        base = f"/search-reidx-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        r = vfs_write(NODE_GRPC, f"{base}/f.md", b"widget only\n", api_key=api_key)
+        assert "error" not in r, r
+
+        for _ in range(2):
+            r = search_index(NODE_GRPC, base, api_key=api_key)
+            assert "error" not in r, r
+            assert r["result"]["indexed_count"] == 1, r
+
+        r = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        assert "error" not in r, r
+        assert len(r["result"]["results"]) == 1, (
+            f"reindex must not duplicate the doc; got {r['result']['results']}"
+        )
+
+    def test_query_semantic_rejected_with_p2_message(self, api_key: str) -> None:
+        """Non-keyword query_type must fail loudly in P1 with a phase hint.
+
+        Locks the contract Phase 2 will lift — a silent fall-through to
+        keyword ranking would silently mis-serve callers who expected
+        vector recall.
+        """
+        r = search_query(NODE_GRPC, "widget", query_type="semantic", api_key=api_key)
+        assert "error" in r, f"semantic must be rejected in P1, got {r}"
+        assert "P2" in r["error"], f"semantic rejection should mention P2, got {r}"
+
+    def test_query_hybrid_rejected_with_p3_message(self, api_key: str) -> None:
+        r = search_query(NODE_GRPC, "widget", query_type="hybrid", api_key=api_key)
+        assert "error" in r, f"hybrid must be rejected in P1, got {r}"
+        assert "P3" in r["error"], f"hybrid rejection should mention P3, got {r}"
+
+    def test_query_skips_binary_and_oversized_files_at_index_time(self, api_key: str) -> None:
+        """Same skip filter grep uses — non-utf8 payload + oversize must
+        never enter the FTS corpus, so a keyword Query returns nothing
+        for those files even though `widget` is in their bytes.
+        """
+        u = uid()
+        base = f"/search-idx-skip-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        # Non-UTF-8 payload containing the pattern — must be skipped.
+        r = vfs_write(NODE_GRPC, f"{base}/blob.bin", b"\x00\xffwidget\x80\xff", api_key=api_key)
+        assert "error" not in r, r
+        # Valid neighbour.
+        r = vfs_write(NODE_GRPC, f"{base}/ok.md", b"widget textual\n", api_key=api_key)
+        assert "error" not in r, r
+
+        r = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in r, r
+        assert r["result"]["indexed_count"] == 1, r
+        assert r["result"]["skipped_count"] == 1, r
+
+        r = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        assert "error" not in r, r
+        assert len(r["result"]["results"]) == 1
+        assert r["result"]["results"][0]["path"] == f"{base}/ok.md"

@@ -58,7 +58,7 @@ pub mod kernel_io;
 pub mod service;
 
 use search_proto::search_service_server::SearchService as SearchServiceTrait;
-use search_proto::{GlobRequest, GrepRequest};
+use search_proto::{GlobRequest, GrepRequest, IndexRequest, QueryRequest};
 
 /// Plugin state held between `create` and `destroy`.
 ///
@@ -178,6 +178,36 @@ fn dispatch_grpc(plugin: &SearchPlugin, method: &str, payload: &[u8]) -> Result<
                 .block_on(plugin.svc.grep(Request::new(req)))
                 .map_err(|s| {
                     tracing::warn!(status = %s, "Grep handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "Query" => {
+            let req = QueryRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "Query decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.query(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "Query handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "Index" => {
+            let req = IndexRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "Index decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.index(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "Index handler");
                     -3
                 })?
                 .into_inner();

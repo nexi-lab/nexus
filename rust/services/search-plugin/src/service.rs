@@ -13,28 +13,73 @@ use std::sync::Arc;
 use nexus_plugin_abi::KernelHandle;
 use tonic::{async_trait, Request, Response, Status};
 
+use crate::fts_index::FtsHit;
+use crate::index_manager::IndexManager;
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
 use crate::search_proto::search_service_server::SearchService;
-use crate::search_proto::{GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse};
+use crate::search_proto::{
+    GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, IndexRequest, IndexResponse,
+    QueryRequest, QueryResponse, QueryResult, QueryType,
+};
 
 /// Server-side default when the caller sends `max_results = 0`.
 /// Kept generous — a well-scoped `pattern` almost never hits this,
 /// and callers who want stricter limits still set them explicitly.
 const DEFAULT_GLOB_MAX: usize = 10_000;
 const DEFAULT_GREP_MAX: usize = 1_000;
+const DEFAULT_QUERY_LIMIT: usize = 10;
+const DEFAULT_INDEX_MAX_DOCS: usize = 10_000;
 
 /// Belt-and-suspenders per-file size cap for grep — a 100 MB
 /// binary blob would otherwise stall a single request for seconds.
 /// Files above this size are skipped with a `tracing::debug` log.
 const GREP_MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
 
+/// Same-shape cap for the P1 Index walker: one chunk per file, and
+/// stuffing a 100 MB blob into a single tantivy doc would balloon
+/// the writer heap AND murder BM25 scoring.  P4's chunker lifts this
+/// once files are split into per-chunk documents.
+const INDEX_MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Empty `zone_id` on a request means "the root zone" — same rule
+/// the Python router uses when a token has no explicit zone scope
+/// (see `nexus.contracts.constants.ROOT_ZONE_ID`).  Kept as a plain
+/// string here so the plugin dep tree stays free of the wider
+/// contracts crate.
+const ROOT_ZONE_ID: &str = "root";
+
+fn resolve_zone(z: &str) -> &str {
+    if z.is_empty() {
+        ROOT_ZONE_ID
+    } else {
+        z
+    }
+}
+
 pub struct SearchServiceImpl {
     handle: Arc<KernelHandle>,
+    /// Per-zone `FtsIndex` cache used by Query and Index.  Kept as
+    /// `Arc<IndexManager>` so tests can inject a manager rooted at a
+    /// tempdir instead of `~/.nexus/plugins/search/`.
+    manager: Arc<IndexManager>,
 }
 
 impl SearchServiceImpl {
+    /// Production constructor — index manager rooted at the platform
+    /// default (`~/.nexus/plugins/search/`).
     pub fn new(handle: Arc<KernelHandle>) -> Self {
-        Self { handle }
+        Self {
+            handle,
+            manager: Arc::new(IndexManager::new()),
+        }
+    }
+
+    /// Test / operator constructor — inject a pre-configured
+    /// `IndexManager` (typically rooted at a tempdir for tests, or
+    /// at an explicit data volume for operators overriding the
+    /// default storage location).
+    pub fn with_manager(handle: Arc<KernelHandle>, manager: Arc<IndexManager>) -> Self {
+        Self { handle, manager }
     }
 }
 
@@ -404,6 +449,179 @@ fn fetch_mtimes<'a>(
     out
 }
 
+// ── Query / Index (Phase 1) ───────────────────────────────────────
+
+/// Fetch (or open) the per-zone FtsIndex and run a BM25 keyword
+/// search.  P1 accepts `QueryType::Keyword` (or `Unspecified` as a
+/// safe default); other types are rejected with a caller-facing
+/// error string so P2/P3 can lift the gate additively.
+fn do_query(
+    manager: &IndexManager,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+    query_type: QueryType,
+) -> Result<Vec<QueryResult>, String> {
+    match query_type {
+        QueryType::Unspecified | QueryType::Keyword => {}
+        QueryType::Semantic => {
+            return Err("query_type=SEMANTIC not supported until P2".into());
+        }
+        QueryType::Hybrid => {
+            return Err("query_type=HYBRID not supported until P3".into());
+        }
+    }
+
+    let index = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
+
+    let prefix = if path_filter.is_empty() {
+        None
+    } else {
+        Some(path_filter)
+    };
+
+    let hits = index
+        .search(q, limit, prefix)
+        .map_err(|e| format!("search: {e}"))?;
+
+    Ok(hits.into_iter().map(|h| fts_hit_to_result(h, zone_id)).collect())
+}
+
+fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
+    QueryResult {
+        path: hit.path,
+        chunk_index: hit.chunk_index,
+        chunk_text: hit.chunk_text,
+        score: hit.score,
+        zone_id: zone_id.to_string(),
+        mtime_ms: hit.mtime_ms,
+    }
+}
+
+/// Walk `root_path` and index every regular file.  Same walker Glob +
+/// Grep use — `sys_readdir` for enumeration, `sys_read` for content,
+/// `sys_stat` for mtime.  P1 = one chunk per file (path is the FTS
+/// primary key, `add_document` is idempotent so re-indexing replaces
+/// the prior doc); P4's chunker splits per file into multiple docs.
+fn do_index(
+    handle: &KernelHandle,
+    manager: &IndexManager,
+    root_path: &str,
+    zone_id: &str,
+    recursive: bool,
+    max_docs: usize,
+) -> Result<(u32, u32), String> {
+    let index = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
+
+    let mut indexed: u32 = 0;
+    let mut skipped: u32 = 0;
+
+    let visit_result = if recursive {
+        walk_recursive(handle, root_path, &mut |vfs_path, entry_type| {
+            if (indexed as usize) >= max_docs {
+                return WalkAction::Stop;
+            }
+            if entry_type != DT_REG {
+                return WalkAction::Continue;
+            }
+            match index_one(handle, &index, vfs_path) {
+                IndexOne::Added => indexed += 1,
+                IndexOne::Skipped => skipped += 1,
+            }
+            WalkAction::Continue
+        })
+        .map_err(walk_err_to_string)
+    } else {
+        // Non-recursive: enumerate ONLY direct children of root_path.
+        // Matches Python `recursive=False`.
+        match kernel_io::sys_readdir(handle, root_path) {
+            Ok(entries) => {
+                for entry in entries {
+                    if (indexed as usize) >= max_docs {
+                        break;
+                    }
+                    if entry.entry_type != DT_REG {
+                        continue;
+                    }
+                    let child = kernel_io::join_vfs_path(root_path, &entry.name);
+                    match index_one(handle, &index, &child) {
+                        IndexOne::Added => indexed += 1,
+                        IndexOne::Skipped => skipped += 1,
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => Err(walk_err_to_string(e)),
+        }
+    };
+
+    // Commit even on walker error so partial progress is durable —
+    // callers retry with a narrower root_path per D5 SSOT (the
+    // MetaStore `search.indexed_gen` sidecar lands in P5).
+    if let Err(e) = index.commit() {
+        tracing::warn!(err = %e, "index commit failed after walk");
+        return Err(format!("commit: {e}"));
+    }
+
+    visit_result?;
+    Ok((indexed, skipped))
+}
+
+/// Outcome of a single-file index attempt.  Distinguished so
+/// `do_index` can tally added vs skipped without a per-call error
+/// return (a skip is not an error).
+enum IndexOne {
+    Added,
+    Skipped,
+}
+
+fn index_one(handle: &KernelHandle, index: &crate::fts_index::FtsIndex, vfs_path: &str) -> IndexOne {
+    let bytes = match kernel_io::sys_read(handle, vfs_path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::debug!(path = %vfs_path, err = ?e, "index: sys_read failed — skipping");
+            return IndexOne::Skipped;
+        }
+    };
+    if bytes.is_empty() {
+        return IndexOne::Skipped;
+    }
+    if bytes.len() > INDEX_MAX_FILE_BYTES {
+        tracing::debug!(
+            path = %vfs_path,
+            len = bytes.len(),
+            cap = INDEX_MAX_FILE_BYTES,
+            "index: file over size cap — skipping",
+        );
+        return IndexOne::Skipped;
+    }
+    // Non-UTF8 files are treated as binary and skipped rather than
+    // indexed as gibberish.  A future phase may want to add a
+    // language-detect + transcode step, but that belongs with the
+    // real chunker in P4.
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::debug!(path = %vfs_path, "index: non-utf8 payload — skipping");
+            return IndexOne::Skipped;
+        }
+    };
+    let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
+        .ok()
+        .and_then(|info| info.modified_at_ms);
+
+    if let Err(e) = index.add_document(vfs_path, 0, text, mtime_ms) {
+        tracing::warn!(path = %vfs_path, err = %e, "index: add_document failed — skipping");
+        return IndexOne::Skipped;
+    }
+    IndexOne::Added
+}
+
 // ── tonic trait impl ──────────────────────────────────────────────
 
 #[async_trait]
@@ -486,6 +704,84 @@ impl SearchService for SearchServiceImpl {
             Err(err) => Ok(Response::new(GrepResponse {
                 matches: Vec::new(),
                 truncated: false,
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn query(
+        &self,
+        request: Request<QueryRequest>,
+    ) -> Result<Response<QueryResponse>, Status> {
+        let req = request.into_inner();
+        let q = req.q;
+        if q.is_empty() {
+            return Ok(Response::new(QueryResponse {
+                results: Vec::new(),
+                error: Some("q must not be empty".into()),
+            }));
+        }
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let limit = if req.limit == 0 {
+            DEFAULT_QUERY_LIMIT
+        } else {
+            req.limit as usize
+        };
+        let path_filter = req.path_filter;
+        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_query(&manager, &q, &zone_id, limit, &path_filter, query_type)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(results) => Ok(Response::new(QueryResponse {
+                results,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(QueryResponse {
+                results: Vec::new(),
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn index(
+        &self,
+        request: Request<IndexRequest>,
+    ) -> Result<Response<IndexResponse>, Status> {
+        let req = request.into_inner();
+        let root = if req.root_path.is_empty() {
+            "/".to_string()
+        } else {
+            req.root_path
+        };
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let recursive = req.recursive;
+        let max_docs = if req.max_docs == 0 {
+            DEFAULT_INDEX_MAX_DOCS
+        } else {
+            req.max_docs as usize
+        };
+        let handle = Arc::clone(&self.handle);
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_index(&handle, &manager, &root, &zone_id, recursive, max_docs)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((indexed_count, skipped_count)) => Ok(Response::new(IndexResponse {
+                indexed_count,
+                skipped_count,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(IndexResponse {
+                indexed_count: 0,
+                skipped_count: 0,
                 error: Some(err),
             })),
         }

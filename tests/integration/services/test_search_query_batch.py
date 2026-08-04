@@ -304,3 +304,16 @@ class TestBatchRoute:
         resp = TestClient(app).post("/api/v2/search/query/batch", json={"queries": []})
 
         assert resp.status_code == 400
+
+    @pytest.mark.parametrize("queries", ["ab", 42])
+    def test_non_list_queries_400(self, queries):
+        # A string used to iterate per-char into per-entry errors (200) and
+        # an int 500'd in the comprehension; both are batch-level 400s.
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post("/api/v2/search/query/batch", json={"queries": queries})
+
+        assert resp.status_code == 400
+        daemon.batch_search.assert_not_called()

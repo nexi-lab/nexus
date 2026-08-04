@@ -833,8 +833,11 @@ async def search_query_batch(
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     body = await request.json()
-    raw_queries: list[dict[str, Any]] = body.get("queries", [])
-    if not raw_queries:
+    raw_queries = body.get("queries", [])
+    # Missing/empty/non-list ``queries`` is a batch-level 400: a string here
+    # used to iterate per-char into bogus per-entry errors and an int 500'd
+    # in the parse comprehension below.
+    if not isinstance(raw_queries, list) or not raw_queries:
         raise HTTPException(status_code=400, detail="No queries provided")
 
     # #4557 (gap 1): batch had no read gate at all -- a write-only token

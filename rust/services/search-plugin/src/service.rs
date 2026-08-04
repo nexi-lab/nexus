@@ -17,12 +17,13 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::ann_index::AnnHit;
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
 use crate::fts_index::FtsHit;
+use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
-    GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, IndexRequest, IndexResponse,
-    QueryRequest, QueryResponse, QueryResult, QueryType,
+    FusionMethod, GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, IndexRequest,
+    IndexResponse, QueryRequest, QueryResponse, QueryResult, QueryType,
 };
 
 /// Server-side default when the caller sends `max_results = 0`.
@@ -637,6 +638,82 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
     }
 }
 
+/// Bundled fusion knobs from the wire — parsed once at the RPC
+/// handler and forwarded to `do_hybrid_query`.  Zero-valued fields
+/// resolve to Python-parity defaults inside this struct so
+/// downstream code doesn't need to remember the sentinel rules.
+#[derive(Debug, Clone, Copy)]
+struct FusionOpts {
+    method: FusionMethod,
+    alpha: f32,
+    rrf_k: u32,
+    chunks_per_page: u32,
+}
+
+impl FusionOpts {
+    fn from_request(req: &QueryRequest) -> Self {
+        let method = FusionMethod::try_from(req.fusion_method).unwrap_or(FusionMethod::Unspecified);
+        // Wire zero on either float means "server default" per D3
+        // (matches Python's "None => config default" fallback).
+        let alpha = if req.alpha == 0.0 {
+            DEFAULT_ALPHA
+        } else {
+            req.alpha
+        };
+        let rrf_k = if req.rrf_k == 0 {
+            DEFAULT_RRF_K
+        } else {
+            req.rrf_k
+        };
+        Self {
+            method,
+            alpha,
+            rrf_k,
+            chunks_per_page: req.chunks_per_page,
+        }
+    }
+}
+
+/// Hybrid = keyword + semantic, fused per the caller's chosen
+/// method, optionally pooled per-doc.  Runs both retrievals in
+/// sequence on the same spawn_blocking worker — small P3-friendly
+/// implementation.  A parallel-fetch variant is a follow-up when
+/// per-source latency asymmetry (BM25 ~ms, semantic ~10-100ms with
+/// real fastembed) starts to matter for user-visible p95.
+///
+/// Each source over-fetches `limit * 2` to give fusion headroom
+/// (a doc that ranks 8 in keyword and 9 in semantic scores highly
+/// under RRF but only surfaces if BOTH sources return it).  The
+/// dispatcher's `path_filter` still applies inside each source's
+/// query so pooling never has to re-check.
+fn do_hybrid_query(
+    manager: &IndexManager,
+    embedder: &Arc<dyn Embedder>,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+    opts: FusionOpts,
+) -> Result<Vec<QueryResult>, String> {
+    let over_fetch = limit.saturating_mul(2).max(limit);
+
+    let keyword = do_keyword_query(manager, q, zone_id, over_fetch, path_filter)?;
+    let semantic = do_semantic_query(manager, embedder, q, zone_id, over_fetch, path_filter)?;
+
+    let fused = match opts.method {
+        FusionMethod::Unspecified | FusionMethod::Rrf => {
+            fusion::rrf(&keyword, &semantic, opts.rrf_k)
+        }
+        FusionMethod::Weighted => fusion::weighted(&keyword, &semantic, opts.alpha),
+        FusionMethod::RrfWeighted => {
+            fusion::rrf_weighted(&keyword, &semantic, opts.rrf_k, opts.alpha)
+        }
+    };
+
+    let pooled = fusion::pool_by_document(fused, opts.chunks_per_page);
+    Ok(pooled.into_iter().take(limit).collect())
+}
+
 /// Sinks the Index walker writes into.  `fts` is required (Index
 /// always populates the keyword index); `ann` + `embedder` are
 /// optional so a slim deployment or a mid-boot with no embedder
@@ -933,9 +1010,10 @@ impl SearchService for SearchServiceImpl {
         } else {
             req.limit as usize
         };
-        let path_filter = req.path_filter;
+        let path_filter = req.path_filter.clone();
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let manager = Arc::clone(&self.manager);
+        let fusion_opts = FusionOpts::from_request(&req);
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
@@ -963,7 +1041,34 @@ impl SearchService for SearchServiceImpl {
                 .await
                 .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?
             }
-            QueryType::Hybrid => Err("query_type=HYBRID not supported until P3".into()),
+            QueryType::Hybrid => {
+                // Same init-before-spawn pattern as SEMANTIC — hybrid
+                // needs the embedder to run its semantic leg, so a
+                // missing embedder degrades hybrid the same way (with
+                // a clearer "hybrid unavailable" prefix).
+                let embedder = match self.get_or_init_embedder() {
+                    Ok(e) => e,
+                    Err(e) => {
+                        return Ok(Response::new(QueryResponse {
+                            results: Vec::new(),
+                            error: Some(format!("hybrid unavailable: {e}")),
+                        }));
+                    }
+                };
+                tokio::task::spawn_blocking(move || {
+                    do_hybrid_query(
+                        &manager,
+                        &embedder,
+                        &q,
+                        &zone_id,
+                        limit,
+                        &path_filter,
+                        fusion_opts,
+                    )
+                })
+                .await
+                .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?
+            }
         };
 
         match outcome {

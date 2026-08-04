@@ -6,10 +6,9 @@
   Self-contained: no build step, no JS bundler. Styled to render well
   both as `file://` open and as a ShareOne-hosted page.
 
-  Publish to ShareOne:
-    node scripts/upload_page.js docs/architecture/nexus-integration-architecture.html \
-      --filename "nexus-integration-architecture.html" \
-      --share-id "nexus-integration-arch"
+  Canonical source: nexi-lab/nexus · docs/architecture/nexus-integration-architecture.html.
+  Published to ShareOne via the remote-URL mechanism — edits land by merging this
+  file to develop; ShareOne re-fetches automatically, no re-publish needed.
 -->
 <html lang="en">
 <head>
@@ -134,9 +133,10 @@ A2A messaging, audit trace, cross-instance transport.</p>
 <div class="callout">
   <strong>Cross-references:</strong>
   <ul style="margin:8px 0 0">
-    <li><strong><a href="https://s.shareone.vip/s/agent-context-storage-matrix">Agent Context / Image / Profile &mdash; Storage Matrix</a></strong> (<code>sudoprivacy/sudocode : docs/design/agent-context-storage-matrix.html</code>) &mdash; 1:1 maps Claude Code's on-disk context model onto &sect;2's <code>/agents/{name}/</code> + <code>/proc/{pid}/</code> layers; tracks sudocode/sudowork dedup. The session identity/path reconcile (Q1) is resolved here in &sect;2.1/&sect;2.3: transcripts live flat at <code>/sessions/&lt;session-id&gt;</code> (session-id &ne; pid; no <code>&lt;workspace_hash&gt;</code> partition). Remaining rows WIP &mdash; to be folded into this doc.</li>
-    <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT &mdash; interface taxonomy, syscall surface, HAL contracts, dispatch model, plugin ABI. Includes the write-path dispatch appendix (formerly Appendix A here).</li>
+    <li><strong><a href="https://s.shareone.vip/s/agent-context-storage-matrix">Agent Context / Image / Profile &mdash; Storage Matrix</a></strong> (<code>sudoprivacy/sudocode : docs/design/agent-context-storage-matrix.html</code>) &mdash; maps Claude Code's on-disk context model onto &sect;2's <code>/agents/{name}/</code> + <code>/proc/{pid}/</code> layers; transcripts live flat at <code>/sessions/&lt;session-id&gt;</code> (session-id &ne; pid).</li>
+    <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT &mdash; interface taxonomy, syscall surface, HAL contracts, dispatch model, plugin ABI. Owns the write-path dispatch appendix.</li>
     <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/docs/federation-architecture.md">federation-architecture</a> (peer doc): Raft, zone topology, gRPC transport</li>
+    <li><a href="https://s.shareone.vip/s/federation-cross-machine-runbook">Cross-Machine Federation Runbook</a> (peer doc): the operator runbook for a cross-machine federation &mdash; Tailscale overlay, cluster bootstrap, node enrollment, and the byte-exact smoke that exercises the &sect;4 transport.</li>
     <li>sudowork repo (<code>sudoprivacy/sudowork</code>) &mdash; <code>OPEN-ITEMS.md</code>: items not yet implemented</li>
   </ul>
 </div>
@@ -362,13 +362,13 @@ sequenceDiagram
 
 <h3>3.3 Sender identity</h3>
 
-<p>Every write to a <code>chat-with-me</code> mailbox carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an Agent key resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A mailbox write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
+<p>Every write to a <code>chat-with-me</code> mailbox carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an agent's identity certificate resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A mailbox write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
 
 <p>The rewrite happens at the origin write, before Raft replication (&sect;4). Every replica and every reader then sees the same stamped <code>from</code> without re-verifying, so a message's origin travels intact to another machine: agent A on one node writes <code>from:A</code> locally, the bytes replicate, and a reader on another node reads <code>from:A</code> as authored.</p>
 
-<p>Cross-machine, <code>from:A</code> is unambiguous because agent names are unique across the cluster &mdash; but the mechanism is two-part, since the credential store is <strong>per-node</strong> (it lives in the root zone, which is per-node SOLO, never federated; each node mints and validates its own agents). <em>Within</em> a node, minting refuses a second key for an existing <code>(subject_type, subject_id)</code> unless <code>--allow-existing</code> is passed (key rotation). <em>Across</em> nodes, uniqueness is a naming convention: agent names are machine-anchored (a per-node identifier plus the agent's workspace), so two nodes cannot mint the same name. Either way an agent keeps <em>one</em> identity across every zone it belongs to (one actor, not one-per-zone &mdash; a node can be in many zones). See <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture &sect;4.1</a>.</p>
+<p>Cross-machine, <code>from:A</code> is unambiguous because agent names are unique across the cluster &mdash; but the mechanism is two-part, since the credential store is <strong>per-node</strong> (it lives in the root zone, which is per-node SOLO, never federated; each node mints and validates its own agents). <em>Within</em> a node, minting refuses a second credential for an existing <code>(subject_type, subject_id)</code> unless <code>--allow-existing</code> is passed (rotation). <em>Across</em> nodes, uniqueness is a naming convention: agent names are machine-anchored (a per-node identifier plus the agent's workspace), so two nodes cannot mint the same name. Either way an agent keeps <em>one</em> identity across every zone it belongs to (one actor, not one-per-zone &mdash; a node can be in many zones). See <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture &sect;4.1</a>.</p>
 
-<p>Deployment (Option X): an agent reaches its <em>local</em> node over a loopback bind (<code>--agent-bind-addr</code>), authenticating with its <code>sk-</code> Agent key on the token plane; it never dials a remote node. That loopback bind is deliberately distinct from the reachable federation bind (<code>--bind-addr</code>), which is a required-mTLS surface for the peer plane (node identity). So the two auth planes &mdash; <code>sk-</code> agent identity and mTLS node identity &mdash; are separated <em>physically</em> by audience (local agents vs. remote peers), not just logically; the stamp gives the local write an unforgeable <code>from</code>, and Raft carries it. See <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture &sect;4.1</a>.</p>
+<p>An agent authenticates with a CA-signed identity certificate and connects to its node over the required-mTLS bind (<code>--bind-addr</code>) &mdash; the same surface the peer plane uses. The certificate's subject type distinguishes an agent identity from a node identity, so one bind serves both. The certificate resolves to the agent's <code>agent_id</code>, the stamp binds that identity onto the write, and Raft carries the stamped <code>from</code>. See <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture &sect;4.1</a>.</p>
 
 <pre class="mermaid">
 sequenceDiagram
@@ -512,7 +512,6 @@ graph LR
   <thead><tr><th>Concern</th><th>What</th><th>Source</th></tr></thead>
   <tbody>
     <tr><td>VFS operation trace</td><td>Every read/write/delete/rename through nexus kernel</td><td>Rust <code>AuditHook</code> on kernel dispatch (POST phase)</td></tr>
-    <tr><td>Exchange audit</td><td>Agent economic transactions</td><td>Python exchange service</td></tr>
   </tbody>
 </table>
 
@@ -572,7 +571,7 @@ graph TB
 <table>
   <thead><tr><th>Entry type</th><th>Used for</th><th>Metadata channel</th><th>Content channel</th></tr></thead>
   <tbody>
-    <tr><td><strong>DT_FILE</strong></td><td>sessions, profile configs, task lists</td><td>Raft (intra-zone, strongly consistent)</td><td>Local CAS + on-miss lazy fetch from peer via <code>PeerBlobClient</code></td></tr>
+    <tr><td><strong>DT_FILE</strong></td><td>sessions, profile configs, task lists</td><td>Raft (intra-zone, strongly consistent)</td><td>Local CAS + on-miss lazy fetch from a peer over the CAS transport</td></tr>
     <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters; offset assigned at apply (linearizable, multi-writer-safe)</td></tr>
   </tbody>
 </table>
@@ -631,8 +630,9 @@ graph TB
     <tr><td><code>ReleaseLock { path, lock_id }</code></td><td>Release lock by ID</td></tr>
     <tr><td><code>ExtendLock { path, lock_id, new_ttl_secs, now_secs }</code></td><td>Extend lock TTL</td></tr>
     <tr><td><code>ForceReleaseLock { path }</code></td><td>Admin override &mdash; force-release a stuck lock</td></tr>
-    <tr><td><code>AppendStreamEntry { key, data }</code></td><td>WalStreamBackend stream data (chat, audit)</td></tr>
-    <tr><td><code>DeleteStreamEntry { key }</code></td><td>Stream cleanup</td></tr>
+    <tr><td><code>AppendStreamEntry { stream_prefix, data }</code></td><td>WalStreamBackend stream data (chat, audit) &mdash; offset assigned at apply</td></tr>
+    <tr><td><code>PutAuthKey { key_hash, record }</code></td><td>Replicate an auth-key record so an identity resolves cluster-wide</td></tr>
+    <tr><td><code>DeleteAuthKey { key_hash }</code></td><td>Revoke an auth-key cluster-wide</td></tr>
     <tr><td><code>Noop</code></td><td>Leader election confirmation</td></tr>
   </tbody>
 </table>

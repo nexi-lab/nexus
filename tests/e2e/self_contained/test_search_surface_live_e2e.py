@@ -251,6 +251,51 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
     )
     _assert_endpoint_latency(batch_body)
 
+    # Hardened batch contract: single-/query serializer parity, tuning
+    # params accepted, healthy entries carry no error field.
+    parity_response, parity_body = _request(
+        live,
+        "post",
+        "/api/v2/search/query/batch",
+        json={
+            "queries": [
+                {"q": "needle", "type": "keyword", "limit": 5},
+                {"q": "needle", "type": "hybrid", "limit": 5, "alpha": 0.3, "fusion": "weighted"},
+                {"q": "needle", "type": "semantic", "limit": 5},
+            ]
+        },
+    )
+    assert parity_response.status_code == 200
+    assert parity_body["total_queries"] == 3
+    for entry in parity_body["queries"]:
+        assert "error" not in entry, entry
+    single_response, single_body = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "needle", "type": "keyword", "limit": 5},
+    )
+    assert single_response.status_code == 200
+    batch_keyword_results = parity_body["queries"][0]["results"]
+    single_results = single_body["results"]
+    assert [r["path"] for r in batch_keyword_results] == [r["path"] for r in single_results]
+    # Field-shape parity: every key the single route emits appears in the
+    # batch entry with the same value (single may add response-envelope
+    # keys, so compare per-hit dicts directly).
+    for batch_hit, single_hit in zip(batch_keyword_results, single_results, strict=True):
+        assert batch_hit == single_hit
+
+    # Per-query error isolation: an invalid spec errors alone.
+    mixed_response, mixed_body = _request(
+        live,
+        "post",
+        "/api/v2/search/query/batch",
+        json={"queries": [{"q": "needle", "limit": 0}, {"q": "needle", "limit": 2}]},
+    )
+    assert mixed_response.status_code == 200
+    assert "limit" in mixed_body["queries"][0]["error"]
+    assert "error" not in mixed_body["queries"][1]
+
     refresh_response, refresh_body = _request(
         live,
         "post",

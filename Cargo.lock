@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "a2a"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "contracts",
  "kernel",
@@ -239,7 +239,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "auth"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "contracts",
  "dashmap",
@@ -337,7 +337,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "ahash",
  "base64 0.22.1",
@@ -770,7 +770,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "parking_lot",
  "serde",
@@ -2185,7 +2185,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2243,7 +2243,7 @@ checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "ahash",
  "base64 0.22.1",
@@ -2575,7 +2575,7 @@ dependencies = [
 [[package]]
 name = "nexus-cluster"
 version = "0.1.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "a2a",
  "anyhow",
@@ -2627,7 +2627,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 
 [[package]]
 name = "nexus-search-plugin"
@@ -3363,7 +3363,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "raft"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -4893,7 +4893,7 @@ dependencies = [
 [[package]]
 name = "transport"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1#5f8b898e84166bdc9cf7b75c077b604c4f9d2ee1"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef#ebb394f2d601dbef72e1ecdf0b235b3993a4f1ef"
 dependencies = [
  "axum",
  "backends",

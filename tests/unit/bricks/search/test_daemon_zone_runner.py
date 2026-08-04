@@ -73,6 +73,7 @@ async def test_search_with_zone_stays_on_daemon_owner_loop() -> None:
         fusion_method: str,
         rrf_k: int,
         zone_id: str | None,
+        query_vector: list[float] | None = None,
     ) -> list[str]:
         seen.append((asyncio.get_running_loop(), threading.get_ident(), zone_id))
         return [query, search_type, str(limit), str(path_filter), str(alpha), fusion_method]

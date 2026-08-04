@@ -127,12 +127,29 @@ class TestParseBatchQuerySpec:
             ({"q": "x", "path": 42}, "path"),
             ({"q": "x", "recency_half_life_days": "nan"}, "recency_half_life_days"),
             ({"q": "x", "recency_half_life_days": float("nan")}, "recency_half_life_days"),
+            ({"q": "x", "type": "keywrod"}, "type"),
+            # Legacy alias resolves first; the message reports the canonical
+            # public name.
+            ({"q": "x", "search_type": "keywrod"}, "type"),
+            ({"q": "x", "fusion": "bogus"}, "fusion"),
+            ({"q": "x", "expand": "huge"}, "expand"),
+            ({"q": "x", "recency": "always"}, "recency"),
         ],
     )
     def test_invalid_specs_return_error_message(self, raw, fragment):
         err = parse_batch_query_spec(raw)
         assert isinstance(err, str)
         assert fragment in err
+
+    def test_recency_none_or_absent_stays_valid(self):
+        # recency is the only optional enum: absent AND explicit null both
+        # mean "no recency directive" and must not trip enum validation.
+        absent = parse_batch_query_spec({"q": "x"})
+        assert isinstance(absent, ParsedBatchSpec)
+        assert absent.recency is None
+        explicit_null = parse_batch_query_spec({"q": "x", "recency": None})
+        assert isinstance(explicit_null, ParsedBatchSpec)
+        assert explicit_null.recency is None
 
     def test_spec_query_text_best_effort(self):
         assert spec_query_text({"q": "a"}) == "a"

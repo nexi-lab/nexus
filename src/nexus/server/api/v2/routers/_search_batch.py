@@ -8,17 +8,26 @@ daemon wiring.
 Each spec mirrors the single ``/query`` route's public parameter names and
 keeps the legacy batch aliases (``query``/``search_type``/``path_filter``).
 The public name wins when both are present. Numeric bounds mirror the
-single route's FastAPI ``Query()`` validation exactly; string params pass
-through unvalidated (single-route parity — the daemon handles unknown
-values). Invalid specs return an error MESSAGE rather than raising: the
-route maps them to per-entry ``error`` fields so one bad query cannot fail
-a whole batch.
+single route's FastAPI ``Query()`` validation exactly; the enum params
+(``type``/``fusion``/``expand``/``recency``) are validated against the
+same accepted sets the single route 400s on, surfaced here as per-query
+errors (validation runs AFTER alias resolution, and messages use the
+canonical public name — e.g. an invalid ``search_type`` reports ``type``).
+Invalid specs return an error MESSAGE rather than raising: the route maps
+them to per-entry ``error`` fields so one bad query cannot fail a whole
+batch.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+# Accepted enum values, mirroring the single /query route's 400 validation.
+_TYPE_CHOICES = ("keyword", "semantic", "hybrid")
+_FUSION_CHOICES = ("rrf", "weighted", "rrf_weighted")
+_EXPAND_CHOICES = ("none", "macro")
+_RECENCY_CHOICES = ("off", "on", "auto")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -66,6 +75,14 @@ def _as_int(value: Any, name: str, lo: int, hi: int) -> int | str:
     return out
 
 
+def _check_choice(value: str, name: str, allowed: tuple[str, ...]) -> str | None:
+    """Return an error message when ``value`` is not an accepted enum value."""
+    if value not in allowed:
+        choices = ", ".join(f"'{a}'" for a in allowed)
+        return f"{name} must be one of {choices}"
+    return None
+
+
 def _as_float(
     value: Any, name: str, lo: float, hi: float, *, exclusive_lo: bool = False
 ) -> float | str:
@@ -90,7 +107,10 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
     Returns a :class:`ParsedBatchSpec` on success or an error message on
     invalid input. Bounds mirror the single ``/query`` route: ``limit``
     1..100, ``alpha`` 0.0..1.0, ``rrf_k`` 1..1000, ``recency_weight``
-    0.0..5.0, ``recency_half_life_days`` >0.0..3650.0.
+    0.0..5.0, ``recency_half_life_days`` >0.0..3650.0. Enum params mirror
+    it too: ``type`` in {keyword, semantic, hybrid}, ``fusion`` in
+    {rrf, weighted, rrf_weighted}, ``expand`` in {none, macro}, ``recency``
+    (when provided) in {off, on, auto}.
     """
     if not isinstance(raw, dict):
         return "invalid query spec: expected an object"
@@ -133,18 +153,33 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
             return parsed_half_life
         recency_half_life = parsed_half_life
 
-    recency = raw.get("recency")
+    # Enum validation runs after alias resolution; messages use the
+    # canonical public name (so `search_type: "keywrod"` errors on "type").
+    search_type = str(_pick(raw, "type", "search_type") or "hybrid")
+    if (err := _check_choice(search_type, "type", _TYPE_CHOICES)) is not None:
+        return err
+    fusion_method = str(_pick(raw, "fusion", "fusion_method") or "rrf")
+    if (err := _check_choice(fusion_method, "fusion", _FUSION_CHOICES)) is not None:
+        return err
+    expand = str(raw.get("expand") or "none")
+    if (err := _check_choice(expand, "expand", _EXPAND_CHOICES)) is not None:
+        return err
+
+    raw_recency = raw.get("recency")
+    recency = str(raw_recency) if raw_recency is not None else None
+    if recency is not None and (err := _check_choice(recency, "recency", _RECENCY_CHOICES)):
+        return err
 
     return ParsedBatchSpec(
         query=query,
-        search_type=str(_pick(raw, "type", "search_type") or "hybrid"),
+        search_type=search_type,
         limit=limit,
         path_filter=path,
         alpha=alpha,
-        fusion_method=str(_pick(raw, "fusion", "fusion_method") or "rrf"),
+        fusion_method=fusion_method,
         rrf_k=rrf_k,
-        expand=str(raw.get("expand") or "none"),
-        recency=str(recency) if recency is not None else None,
+        expand=expand,
+        recency=recency,
         recency_weight=recency_weight,
         recency_half_life_days=recency_half_life,
     )

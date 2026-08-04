@@ -55,6 +55,7 @@ pub mod search_proto {
 pub mod ann_index;
 pub mod embedder;
 pub mod fts_index;
+pub mod fusion;
 pub mod index_manager;
 pub mod kernel_io;
 pub mod service;

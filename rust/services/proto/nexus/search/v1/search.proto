@@ -163,6 +163,22 @@ enum QueryType {
   QUERY_TYPE_HYBRID = 3;       // keyword + vector, fused (P3)
 }
 
+// Fusion method for hybrid queries (Phase 3).  Semantics match the
+// Python SearchDaemon (#4541):
+//
+// - RRF: reciprocal-rank fusion, `score = Σ 1 / (k + rank_i)` across
+//   the two sources.  Rank-based, no score normalisation needed.
+// - WEIGHTED: min-max normalise each source's scores to [0, 1], then
+//   `score = (1 - alpha) * keyword + alpha * semantic`.
+// - RRF_WEIGHTED: same shape as RRF but each source's contribution
+//   is scaled by (1 - alpha) / alpha respectively.
+enum FusionMethod {
+  FUSION_METHOD_UNSPECIFIED = 0;  // treated as RRF
+  FUSION_METHOD_RRF = 1;
+  FUSION_METHOD_WEIGHTED = 2;
+  FUSION_METHOD_RRF_WEIGHTED = 3;
+}
+
 message QueryRequest {
   // Query text.  BM25 tokenization is applied by tantivy's default
   // analyzer (lowercasing + simple tokenizer).
@@ -192,6 +208,31 @@ message QueryRequest {
   // trusts that whoever passed the zone_id already checked read
   // permission.
   string auth_token = 6;
+
+  // ── Hybrid fusion knobs (P3) ───────────────────────────────────
+  // Semantic-vs-keyword weight for WEIGHTED / RRF_WEIGHTED.
+  // Range [0.0, 1.0]; 0.0 = pure keyword, 1.0 = pure semantic, 0.5
+  // = balanced.  Ignored for KEYWORD / SEMANTIC / RRF where the
+  // sources are equally weighted or single-sourced.  0.0 default
+  // maps to alpha=0.5 on the plugin side so a caller who forgets
+  // the field gets the balanced blend, matching Python.
+  float alpha = 7;
+
+  // Fusion algorithm — see the `FusionMethod` enum for semantics.
+  FusionMethod fusion_method = 8;
+
+  // RRF rank constant.  60 is the paper's canonical value and what
+  // Python defaults to; higher values flatten the ranking curve.
+  // 0 ⇒ server-side default (60).
+  uint32 rrf_k = 9;
+
+  // Per-document chunk cap for final-list pooling (#4542).  Prevents
+  // one long file from monopolising the top-N when its per-chunk
+  // scores dominate multiple result slots.  0 ⇒ no pooling (backward-
+  // compatible with the pre-P3 shape).  P1-P3 emit one chunk per
+  // file so pooling is a no-op at those phases; P4's real chunker
+  // makes it meaningful.
+  uint32 chunks_per_page = 10;
 }
 
 message QueryResult {

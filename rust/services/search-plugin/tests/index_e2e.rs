@@ -318,6 +318,7 @@ async fn query(
         path_filter: String::new(),
         query_type: QueryType::Keyword as i32,
         auth_token: String::new(),
+        ..Default::default()
     }))
     .await
     .expect("query")

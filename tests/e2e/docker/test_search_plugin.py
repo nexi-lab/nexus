@@ -325,10 +325,43 @@ class TestSearchIndexQuery:
             f"semantic degradation message should mention unavailability, got {r}"
         )
 
-    def test_query_hybrid_rejected_with_p3_message(self, api_key: str) -> None:
+    def test_query_hybrid_gracefully_degrades_without_embedder(self, api_key: str) -> None:
+        """Post-P3: HYBRID is a supported query_type but its semantic
+        leg requires a loaded embedder. Without the model + dylib
+        shipped in the docker image (currently the CI shape), Query
+        must return a clean "hybrid unavailable" error, not crash.
+        """
         r = search_query(NODE_GRPC, "widget", query_type="hybrid", api_key=api_key)
-        assert "error" in r, f"hybrid must be rejected in P1, got {r}"
-        assert "P3" in r["error"], f"hybrid rejection should mention P3, got {r}"
+        assert "error" in r, f"hybrid without embedder must error, got {r}"
+        assert "hybrid unavailable" in r["error"], (
+            f"hybrid degradation message should mention unavailability, got {r}"
+        )
+
+    def test_query_hybrid_honours_fusion_method_arg(self, api_key: str) -> None:
+        """Even in the degraded (no-embedder) shape, the wire must
+        accept the P3 fusion knobs — a stale gRPC schema on the
+        server side would reject fusion_method / alpha / rrf_k /
+        chunks_per_page before we get to the graceful degradation.
+        Locks the wire contract independent of feature availability.
+        """
+        for method in ("rrf", "weighted", "rrf_weighted"):
+            r = search_query(
+                NODE_GRPC,
+                "widget",
+                query_type="hybrid",
+                fusion_method=method,
+                alpha=0.7,
+                rrf_k=100,
+                chunks_per_page=3,
+                api_key=api_key,
+            )
+            # Same "unavailable" degradation as the vanilla hybrid
+            # test — the fusion knobs are accepted, semantic leg is
+            # what fails.
+            assert "error" in r, f"hybrid[{method}] without embedder must error, got {r}"
+            assert "hybrid unavailable" in r["error"], (
+                f"hybrid[{method}] degradation should mention unavailability, got {r}"
+            )
 
     def test_query_skips_binary_and_oversized_files_at_index_time(self, api_key: str) -> None:
         """Same skip filter grep uses — non-utf8 payload + oversize must

@@ -169,6 +169,7 @@ async fn query_returns_bm25_hits_for_seeded_zone() {
             path_filter: String::new(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -201,6 +202,7 @@ async fn query_empty_zone_resolves_to_root() {
             path_filter: String::new(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -224,6 +226,7 @@ async fn query_path_filter_narrows_results() {
             path_filter: "/notes/".into(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -246,6 +249,7 @@ async fn query_empty_q_returns_error_not_500() {
             path_filter: String::new(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -275,6 +279,7 @@ async fn query_semantic_gracefully_degrades_when_no_embedder() {
             path_filter: String::new(),
             query_type: QueryType::Semantic as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -291,7 +296,13 @@ async fn query_semantic_gracefully_degrades_when_no_embedder() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn query_hybrid_type_rejected_with_p3_message() {
+async fn query_hybrid_gracefully_degrades_when_no_embedder() {
+    // Post-P3: HYBRID is a supported query_type but requires an
+    // embedder (semantic leg needs it).  The default Harness uses
+    // `with_manager` (no embedder pre-injected) → the RPC must
+    // return "hybrid unavailable: ..." rather than a P3-not-
+    // supported message.  Preserves D2 graceful degradation:
+    // keyword still works, hybrid errors cleanly.
     let h = Harness::start();
     let resp = h
         .svc
@@ -302,16 +313,20 @@ async fn query_hybrid_type_rejected_with_p3_message() {
             path_filter: String::new(),
             query_type: QueryType::Hybrid as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
         .into_inner();
 
-    let err = resp.error.expect("hybrid must be rejected in P1");
+    let err = resp
+        .error
+        .expect("hybrid without embedder must error, not succeed");
     assert!(
-        err.contains("P3"),
-        "hybrid rejection should mention P3, got: {err:?}",
+        err.contains("hybrid unavailable"),
+        "hybrid degradation message should mention unavailability, got: {err:?}",
     );
+    assert!(resp.results.is_empty(), "no results when unavailable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -334,6 +349,7 @@ async fn query_zero_limit_uses_default() {
             path_filter: String::new(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -371,6 +387,7 @@ async fn query_zone_isolation_holds_at_storage_layer() {
             path_filter: String::new(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -396,6 +413,7 @@ async fn query_returns_mtime_when_stored() {
             path_filter: String::new(),
             query_type: QueryType::Keyword as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")

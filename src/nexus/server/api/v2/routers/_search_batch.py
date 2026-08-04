@@ -75,12 +75,12 @@ def _as_float(
         out = float(value)
     except (TypeError, ValueError):
         return f"{name} must be a number"
-    if exclusive_lo and out <= lo:
-        return f"{name} must be greater than {lo} and at most {hi}"
-    if not exclusive_lo and not lo <= out <= hi:
-        return f"{name} must be between {lo} and {hi}"
-    if out > hi:
-        return f"{name} must be greater than {lo} and at most {hi}"
+    if exclusive_lo:
+        if not (out > lo and out <= hi):
+            return f"{name} must be greater than {lo} and at most {hi}"
+    else:
+        if not (lo <= out <= hi):
+            return f"{name} must be between {lo} and {hi}"
     return out
 
 

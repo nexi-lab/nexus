@@ -19,10 +19,12 @@ if "nexus_runtime" not in sys.modules:
     sys.modules["nexus_runtime"] = _nexus_runtime_stub
 
 from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock  # noqa: F401
 
 import pytest
 
 try:
+    from fastapi import FastAPI  # noqa: F401
     from fastapi.testclient import TestClient  # noqa: F401
 
     _HAS_FASTAPI_TESTCLIENT = True
@@ -123,6 +125,8 @@ class TestParseBatchQuerySpec:
             ({"q": "x", "recency_half_life_days": 0}, "recency_half_life_days"),
             ({"q": "x", "recency_half_life_days": 3651}, "recency_half_life_days"),
             ({"q": "x", "path": 42}, "path"),
+            ({"q": "x", "recency_half_life_days": "nan"}, "recency_half_life_days"),
+            ({"q": "x", "recency_half_life_days": float("nan")}, "recency_half_life_days"),
         ],
     )
     def test_invalid_specs_return_error_message(self, raw, fragment):

@@ -140,3 +140,167 @@ class TestParseBatchQuerySpec:
         assert spec_query_text({"q": "a", "query": "b"}) == "a"
         assert spec_query_text("junk") == ""
         assert spec_query_text({}) == ""
+
+
+def _build_batch_app(mock_daemon):
+    from fastapi import FastAPI
+
+    from nexus.server.api.v2.routers.search import router
+
+    app = FastAPI()
+    app.include_router(router)
+    mock_daemon.is_initialized = True
+    app.state.search_daemon = mock_daemon
+    app.state.search_daemon_enabled = True
+    app.state.record_store = MagicMock()
+    app.state.async_session_factory = MagicMock()
+    app.state.async_read_session_factory = MagicMock()
+
+    from nexus.server.dependencies import require_auth
+
+    app.dependency_overrides[require_auth] = lambda: {
+        "authenticated": True,
+        "user_id": "u",
+        "zone_id": "eng",
+        "zone_set": ["eng"],
+        "zone_perms": [["eng", "r"]],
+    }
+    return app
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestBatchRoute:
+    def test_params_forwarded_to_daemon(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[[]])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={
+                "queries": [
+                    {
+                        "q": "tuned",
+                        "type": "hybrid",
+                        "limit": 7,
+                        "path": "/ws/",
+                        "alpha": 0.3,
+                        "fusion": "weighted",
+                        "rrf_k": 90,
+                        "expand": "macro",
+                        "recency": "on",
+                        "recency_weight": 1.5,
+                        "recency_half_life_days": 30,
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+        (specs,) = daemon.batch_search.call_args.args
+        assert daemon.batch_search.call_args.kwargs == {"zone_id": "eng"}
+        spec = specs[0]
+        assert spec["query"] == "tuned"
+        assert spec["search_type"] == "hybrid"
+        assert spec["path_filter"] == "/ws/"
+        assert (spec["alpha"], spec["fusion_method"], spec["rrf_k"]) == (0.3, "weighted", 90)
+        assert (spec["expand"], spec["recency"]) == ("macro", "on")
+        assert (spec["recency_weight"], spec["recency_half_life_days"]) == (1.5, 30.0)
+        # No enforcer on this app -> fetch limit == requested limit.
+        assert spec["limit"] == 7
+
+    def test_serializer_parity_with_single_query(self):
+        from nexus.server.api.v2.routers._search_serialize import _serialize_search_result
+
+        result = _MockResult(
+            path="/ws/doc.md",
+            chunk_text="hello",
+            score=0.9123456,
+            chunk_index=3,
+            line_start=10,
+            line_end=14,
+            keyword_score=1.25,
+            vector_score=0.75,
+        )
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[[result]])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch", json={"queries": [{"q": "hello"}]}
+        )
+
+        assert resp.status_code == 200, resp.text
+        entry = resp.json()["queries"][0]
+        assert "error" not in entry
+        assert entry["total"] == 1
+        assert entry["results"][0] == _serialize_search_result(result)
+        assert entry["results"][0]["chunk_index"] == 3
+        assert entry["results"][0]["line_start"] == 10
+
+    def test_daemon_failure_becomes_error_entry(self):
+        from nexus.contracts.search_types import BatchQueryFailure
+
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(
+            return_value=[[], BatchQueryFailure(error="backend fell over")]
+        )
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={"queries": [{"q": "ok"}, {"q": "doomed"}]},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "error" not in body["queries"][0]
+        assert body["queries"][1] == {
+            "query": "doomed",
+            "results": [],
+            "total": 0,
+            "error": "backend fell over",
+        }
+
+    def test_invalid_spec_gets_error_entry_and_is_not_sent_to_daemon(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[[]])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={"queries": [{"q": "bad-limit", "limit": 0}, {"q": "fine"}]},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total_queries"] == 2
+        assert body["queries"][0]["query"] == "bad-limit"
+        assert "limit" in body["queries"][0]["error"]
+        assert body["queries"][0]["results"] == []
+        assert "error" not in body["queries"][1]
+        # Only the valid spec reached the daemon.
+        (specs,) = daemon.batch_search.call_args.args
+        assert [s["query"] for s in specs] == ["fine"]
+
+    def test_all_specs_invalid_skips_daemon_entirely(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch", json={"queries": [{"q": "x", "limit": 9999}]}
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert "limit" in resp.json()["queries"][0]["error"]
+        daemon.batch_search.assert_not_called()
+
+    def test_empty_queries_still_400(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post("/api/v2/search/query/batch", json={"queries": []})
+
+        assert resp.status_code == 400

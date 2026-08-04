@@ -997,23 +997,26 @@ impl SearchService for SearchServiceImpl {
         request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
         let req = request.into_inner();
-        let q = req.q;
-        if q.is_empty() {
+        if req.q.is_empty() {
             return Ok(Response::new(QueryResponse {
                 results: Vec::new(),
                 error: Some("q must not be empty".into()),
             }));
         }
-        let zone_id = resolve_zone(&req.zone_id).to_string();
+        // Parse borrow-only fields FIRST so later `let q = req.q`
+        // moves don't leave `req` partially moved for later reads.
+        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
+        let fusion_opts = FusionOpts::from_request(&req);
         let limit = if req.limit == 0 {
             DEFAULT_QUERY_LIMIT
         } else {
             req.limit as usize
         };
-        let path_filter = req.path_filter.clone();
-        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        // Now safe to move fields out.
+        let q = req.q;
+        let path_filter = req.path_filter;
         let manager = Arc::clone(&self.manager);
-        let fusion_opts = FusionOpts::from_request(&req);
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {

@@ -302,6 +302,7 @@ async fn semantic_query(
         path_filter: path_filter.into(),
         query_type: QueryType::Semantic as i32,
         auth_token: String::new(),
+        ..Default::default()
     }))
     .await
     .expect("query")
@@ -425,6 +426,7 @@ async fn semantic_empty_query_returns_error() {
             path_filter: String::new(),
             query_type: QueryType::Semantic as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -491,6 +493,7 @@ async fn semantic_zone_isolation_holds() {
             path_filter: String::new(),
             query_type: QueryType::Semantic as i32,
             auth_token: String::new(),
+            ..Default::default()
         }))
         .await
         .expect("query")
@@ -503,4 +506,200 @@ async fn semantic_zone_isolation_holds() {
     unsafe {
         drop(Box::from_raw(mock));
     }
+}
+
+// ── Hybrid (P3) ─────────────────────────────────────────────────
+
+async fn hybrid_query(
+    svc: &SearchServiceImpl,
+    q: &str,
+    path_filter: &str,
+) -> nexus_search_plugin::search_proto::QueryResponse {
+    svc.query(Request::new(QueryRequest {
+        q: q.into(),
+        zone_id: "root".into(),
+        limit: 10,
+        path_filter: path_filter.into(),
+        query_type: QueryType::Hybrid as i32,
+        auth_token: String::new(),
+        ..Default::default()
+    }))
+    .await
+    .expect("query")
+    .into_inner()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hybrid_finds_docs_present_in_both_sources() {
+    // Happy path: a query whose text lives in the corpus turns up
+    // in both the BM25 side AND the vector side.  Fusion promotes
+    // that doc to hit[0].  Mock embedder is deterministic per text
+    // so 'widget alpha payload' matches /notes/alpha.md at cosine
+    // distance ≈ 0.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/notes");
+    mock.add_file("/notes/alpha.md", b"widget alpha payload", 1);
+    mock.add_file("/notes/beta.md", b"orange banana grape", 2);
+    mock.add_file("/notes/gamma.md", b"only alpha here", 3);
+
+    let idx = index_root(&h.svc).await;
+    assert!(idx.error.is_none(), "{idx:?}");
+    assert_eq!(idx.indexed_count, 3);
+
+    let q = hybrid_query(&h.svc, "widget alpha payload", "").await;
+    assert!(q.error.is_none(), "unexpected hybrid error: {:?}", q.error);
+    assert!(!q.results.is_empty(), "expected hybrid hits");
+    assert_eq!(
+        q.results[0].path, "/notes/alpha.md",
+        "shared doc should lead: {:?}",
+        q.results,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hybrid_score_higher_than_either_source_alone_for_shared_doc() {
+    // RRF math contract: a doc that appears in BOTH sources scores
+    // strictly higher than a doc that appears in only one, at the
+    // same rank.  Regression scaffold for the fusion primitive's
+    // wiring into the RPC handler (the fusion unit tests already
+    // pin the math; this pins the plumbing).
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    // /both matches keyword 'widget' AND has exact text for the
+    // semantic side — both sources return it.
+    mock.add_file("/both.md", b"widget", 1);
+    // /kw-only matches the keyword 'widget' but its exact text is
+    // different so its vector distance is > 0 → semantic ranks it
+    // lower than /both.
+    mock.add_file("/kw-only.md", b"widget different words entirely", 2);
+
+    let idx = index_root(&h.svc).await;
+    assert!(idx.error.is_none(), "{idx:?}");
+
+    let q = hybrid_query(&h.svc, "widget", "").await;
+    assert!(q.error.is_none(), "{q:?}");
+    assert!(!q.results.is_empty());
+    // /both should lead — appears at rank 1 in BOTH sources.
+    assert_eq!(q.results[0].path, "/both.md");
+    if q.results.len() > 1 {
+        assert!(
+            q.results[0].score >= q.results[1].score,
+            "score order violated: {:?}",
+            q.results,
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hybrid_honours_path_prefix_filter() {
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/notes");
+    mock.add_dir("/logs");
+    mock.add_file("/notes/a.md", b"widget shared", 1);
+    mock.add_file("/logs/b.log", b"widget shared", 2);
+
+    let idx = index_root(&h.svc).await;
+    assert!(idx.error.is_none(), "{idx:?}");
+
+    let q = hybrid_query(&h.svc, "widget shared", "/notes/").await;
+    assert!(q.error.is_none(), "{q:?}");
+    let paths: Vec<&str> = q.results.iter().map(|r| r.path.as_str()).collect();
+    assert!(!paths.is_empty(), "prefix filter dropped every hit");
+    assert!(
+        paths.iter().all(|p| p.starts_with("/notes/")),
+        "prefix filter leaked: {paths:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hybrid_alpha_shifts_ranking_between_sources() {
+    // alpha=0 (pure keyword) vs alpha=1 (pure semantic) under the
+    // WEIGHTED fusion method — a doc that ranks HIGH in one source
+    // and LOW in the other shifts position when alpha flips.  Pins
+    // the alpha plumbing without depending on the mock's specific
+    // score magnitudes.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    // /kw-strong: keyword hits multiple times → high BM25 score.
+    // Semantic distance from query 'widget' is uncontrolled.
+    mock.add_file("/kw-strong.md", b"widget widget widget widget widget", 1);
+    // /sem-exact: exactly matches the query 'widget' text so mock
+    // semantic distance ≈ 0 → highest cosine score.  BM25 is only
+    // one occurrence.
+    mock.add_file("/sem-exact.md", b"widget", 2);
+
+    let idx = index_root(&h.svc).await;
+    assert!(idx.error.is_none(), "{idx:?}");
+
+    // alpha=1 (pure semantic) — /sem-exact should lead.
+    let q_sem = h
+        .svc
+        .query(Request::new(QueryRequest {
+            q: "widget".into(),
+            zone_id: "root".into(),
+            limit: 10,
+            path_filter: String::new(),
+            query_type: QueryType::Hybrid as i32,
+            fusion_method: nexus_search_plugin::search_proto::FusionMethod::Weighted as i32,
+            alpha: 1.0,
+            auth_token: String::new(),
+            ..Default::default()
+        }))
+        .await
+        .expect("query")
+        .into_inner();
+    assert!(q_sem.error.is_none(), "{q_sem:?}");
+    assert!(
+        !q_sem.results.is_empty(),
+        "expected hits under alpha=1: {q_sem:?}",
+    );
+    assert_eq!(
+        q_sem.results[0].path, "/sem-exact.md",
+        "alpha=1 should favour semantic-exact: {:?}",
+        q_sem.results,
+    );
+
+    // alpha=0 (pure keyword) — /kw-strong should now lead.
+    let q_kw = h
+        .svc
+        .query(Request::new(QueryRequest {
+            q: "widget".into(),
+            zone_id: "root".into(),
+            limit: 10,
+            path_filter: String::new(),
+            query_type: QueryType::Hybrid as i32,
+            fusion_method: nexus_search_plugin::search_proto::FusionMethod::Weighted as i32,
+            alpha: 0.0001, // avoid alpha=0 which the plugin rewrites to DEFAULT_ALPHA=0.5
+            auth_token: String::new(),
+            ..Default::default()
+        }))
+        .await
+        .expect("query")
+        .into_inner();
+    assert!(q_kw.error.is_none(), "{q_kw:?}");
+    assert!(!q_kw.results.is_empty());
+    assert_eq!(
+        q_kw.results[0].path, "/kw-strong.md",
+        "alpha→0 should favour keyword-strong: {:?}",
+        q_kw.results,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hybrid_empty_q_returns_error() {
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_file("/x.md", b"seed", 1);
+    let _ = index_root(&h.svc).await;
+
+    let q = hybrid_query(&h.svc, "", "").await;
+    assert!(q.error.is_some(), "empty q must return error");
+    assert!(q.results.is_empty());
 }

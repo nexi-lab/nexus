@@ -122,21 +122,27 @@ def search_query(
     limit: int = 0,
     path_filter: str = "",
     query_type: str = "keyword",
+    fusion_method: str = "",
+    alpha: float = 0.0,
+    rrf_k: int = 0,
+    chunks_per_page: int = 0,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 30,
 ) -> dict:
-    """Typed Query RPC (P1 keyword-only).
+    """Typed Query RPC (P1 keyword / P2 semantic / P3 hybrid).
 
     Returns ``{"result": {"results": [...]}}`` on success or
     ``{"error": str}``.  Each result is
     ``{"path": str, "chunk_index": int, "chunk_text": str,
     "score": float, "zone_id": str, "mtime_ms": int | None}``.
 
-    ``query_type`` accepts the string forms mirrored from the
-    Python router: ``"keyword"``, ``"semantic"``, ``"hybrid"``.
-    P1 rejects the latter two with an error message referencing
-    the phase that will lift the gate.  ``limit=0`` uses the
-    plugin's server-side default (10 per the proto contract).
+    ``query_type`` accepts ``"keyword"``, ``"semantic"``,
+    ``"hybrid"``.  Hybrid honours ``fusion_method`` (``"rrf"`` |
+    ``"weighted"`` | ``"rrf_weighted"``), ``alpha`` (0.0-1.0
+    semantic-vs-keyword weight; server default 0.5 when 0.0),
+    ``rrf_k`` (RRF rank constant; server default 60 when 0), and
+    ``chunks_per_page`` (per-doc pooling cap; 0 = no pooling).
+    ``limit=0`` uses the server default (10).
     """
     from nexus.grpc.search.v1 import search_pb2
 
@@ -149,6 +155,15 @@ def search_query(
     if query_type not in qt_map:
         raise ValueError(f"unknown query_type: {query_type!r}")
 
+    fm_map = {
+        "": search_pb2.FUSION_METHOD_UNSPECIFIED,
+        "rrf": search_pb2.FUSION_METHOD_RRF,
+        "weighted": search_pb2.FUSION_METHOD_WEIGHTED,
+        "rrf_weighted": search_pb2.FUSION_METHOD_RRF_WEIGHTED,
+    }
+    if fusion_method not in fm_map:
+        raise ValueError(f"unknown fusion_method: {fusion_method!r}")
+
     channel, stub = _open_search_stub(target)
     try:
         req = search_pb2.QueryRequest(
@@ -158,6 +173,10 @@ def search_query(
             path_filter=path_filter,
             query_type=qt_map[query_type],
             auth_token=api_key,
+            fusion_method=fm_map[fusion_method],
+            alpha=alpha,
+            rrf_k=rrf_k,
+            chunks_per_page=chunks_per_page,
         )
         resp = stub.Query(req, timeout=timeout)
         if resp.HasField("error"):

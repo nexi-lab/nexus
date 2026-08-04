@@ -80,6 +80,11 @@ class SearchRequest:
     recency: str | None = None
     recency_weight: float | None = None
     recency_half_life_days: float | None = None
+    # Pre-computed query embedding. When set, the daemon uses this vector
+    # for the dense leg instead of embedding the query text itself — the
+    # batch endpoint embeds all unique query texts in one embed_batch call
+    # and hands each inner search its vector.
+    query_vector: list[float] | None = None
 
 
 # Per-task flag recording whether the last SANDBOX semantic_search call

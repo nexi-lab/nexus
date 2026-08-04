@@ -2847,6 +2847,7 @@ class SearchDaemon:
                 fusion_method=req.fusion_method,
                 rrf_k=req.rrf_k,
                 zone_id=req.zone_id,
+                query_vector=req.query_vector,
             )
         else:
 
@@ -2860,6 +2861,7 @@ class SearchDaemon:
                     fusion_method=req.fusion_method,
                     rrf_k=req.rrf_k,
                     zone_id=req.zone_id,
+                    query_vector=req.query_vector,
                 )
 
             results = await self._run_on_owner_loop(_work)
@@ -2885,6 +2887,7 @@ class SearchDaemon:
         fusion_method: str = "rrf",
         zone_id: str | None = None,
         rrf_k: int = 60,
+        query_vector: list[float] | None = None,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
@@ -3051,6 +3054,7 @@ class SearchDaemon:
                     fusion_method=fusion_method,
                     rrf_k=rrf_k,
                     zone_id=effective_zone_id,
+                    query_vector=query_vector,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
                 self.last_search_timing = _merge_backend_timing(backend_ms, self.last_search_timing)
@@ -3165,6 +3169,7 @@ class SearchDaemon:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         rrf_k: int = 60,
+        query_vector: list[float] | None = None,
     ) -> list[SearchResult]:
         """Run keyword / semantic / hybrid via the new search backends.
 
@@ -3209,7 +3214,11 @@ class SearchDaemon:
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         if search_type == "semantic":
-            qvec = await timed_leg("embed_ms", self._embed_query(query))
+            qvec = (
+                query_vector
+                if query_vector is not None
+                else await timed_leg("embed_ms", self._embed_query(query))
+            )
             if qvec is None:
                 record_total()
                 return []
@@ -3236,7 +3245,11 @@ class SearchDaemon:
         widen = min(self.config.chunks_per_page, _MAX_CAP_WIDEN) + 1
         leg_limit = limit * 2 * widen if pooled else limit * 2
 
-        qvec = await timed_leg("embed_ms", self._embed_query(query))
+        qvec = (
+            query_vector
+            if query_vector is not None
+            else await timed_leg("embed_ms", self._embed_query(query))
+        )
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.

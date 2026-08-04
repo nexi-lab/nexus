@@ -41,6 +41,8 @@ __all__ = [
     "LAST_SEMANTIC_DEGRADED",
     # SearchBrickProtocol.search bundled request (#4553 follow-up B)
     "SearchRequest",
+    # Positional per-query failure marker for batch_search
+    "BatchQueryFailure",
 ]
 
 
@@ -85,6 +87,20 @@ class SearchRequest:
     # batch endpoint embeds all unique query texts in one embed_batch call
     # and hands each inner search its vector.
     query_vector: list[float] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatchQueryFailure:
+    """Positional per-query failure marker returned by ``batch_search``.
+
+    The batch endpoint historically collapsed inner exceptions to ``[]``,
+    making a backend failure indistinguishable from a genuine empty result.
+    Returning this marker instead lets callers with fail-closed coverage
+    contracts (e.g. cross-workspace fan-out) count the query as FAILED
+    rather than "searched, no matches".
+    """
+
+    error: str
 
 
 # Per-task flag recording whether the last SANDBOX semantic_search call

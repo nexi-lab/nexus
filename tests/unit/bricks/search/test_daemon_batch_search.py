@@ -116,3 +116,190 @@ async def test_no_query_vector_still_embeds() -> None:
     )
 
     assert counter.calls == ["hello"]
+
+
+def _make_batch_daemon(concurrency: int = 8) -> Any:
+    """Bare daemon for _batch_search_on_current_loop: search() is stubbed
+    per-test; only batch orchestration fields are real."""
+    from unittest.mock import AsyncMock
+
+    from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._initialized = True
+    daemon._embedding_client = None
+    daemon.config = DaemonConfig(batch_search_concurrency=concurrency)
+    # Path-context attach is exercised elsewhere; resolve to None (= skip).
+    daemon._resolve_path_context_cache = AsyncMock(return_value=None)
+    return daemon
+
+
+class _FakeEmbeddingClient:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[list[str]] = []
+        self.fail = fail
+
+    async def embed_batch(self, texts: Any) -> list[list[float]]:
+        self.calls.append(list(texts))
+        if self.fail:
+            raise RuntimeError("embed down")
+        return [[0.1, 0.2] for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_batch_pre_embeds_unique_texts_once() -> None:
+    daemon = _make_batch_daemon()
+    client = _FakeEmbeddingClient()
+    daemon._embedding_client = client
+    seen_vectors: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        seen_vectors.append(request.query_vector)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+    specs = [{"query": "same text", "search_type": "hybrid", "limit": 5} for _ in range(24)]
+
+    out = await daemon._batch_search_on_current_loop(specs, zone_id="root")
+
+    assert client.calls == [["same text"]]  # ONE embed_batch call, unique texts only
+    assert seen_vectors == [[0.1, 0.2]] * 24
+    assert out == [[] for _ in range(24)]
+
+
+@pytest.mark.asyncio
+async def test_batch_keyword_only_never_embeds() -> None:
+    daemon = _make_batch_daemon()
+    client = _FakeEmbeddingClient()
+    daemon._embedding_client = client
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop(
+        [{"query": "kw", "search_type": "keyword"}], zone_id="root"
+    )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_batch_embed_failure_falls_back_to_per_query() -> None:
+    daemon = _make_batch_daemon()
+    daemon._embedding_client = _FakeEmbeddingClient(fail=True)
+    seen_vectors: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        seen_vectors.append(request.query_vector)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "a", "search_type": "hybrid"}], zone_id="root"
+    )
+
+    assert out == [[]]  # fail-soft: search still ran
+    assert seen_vectors == [None]  # ...and embeds for itself downstream
+
+
+@pytest.mark.asyncio
+async def test_batch_failure_isolated_per_query() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        if request.query == "poison":
+            raise RuntimeError("boom")
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "ok1"}, {"query": "poison"}, {"query": "ok2"}], zone_id="root"
+    )
+
+    assert out[0] == [] and out[2] == []
+    assert isinstance(out[1], BatchQueryFailure)
+    assert "boom" in out[1].error
+
+
+@pytest.mark.asyncio
+async def test_batch_respects_concurrency_bound() -> None:
+    import asyncio
+
+    daemon = _make_batch_daemon(concurrency=2)
+    peak = 0
+    active = 0
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        nonlocal peak, active
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop(
+        [{"query": f"q{i}"} for i in range(10)], zone_id="root"
+    )
+
+    assert peak <= 2
+
+
+@pytest.mark.asyncio
+async def test_batch_forwards_tuning_params() -> None:
+    daemon = _make_batch_daemon()
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop(
+        [
+            {
+                "query": "tuned",
+                "search_type": "hybrid",
+                "limit": 7,
+                "path_filter": "/ws/",
+                "alpha": 0.3,
+                "fusion_method": "weighted",
+                "rrf_k": 90,
+                "expand": "macro",
+                "recency": "on",
+                "recency_weight": 1.5,
+                "recency_half_life_days": 30.0,
+            }
+        ],
+        zone_id="root",
+    )
+
+    req = captured[0]
+    assert (req.alpha, req.fusion_method, req.rrf_k) == (0.3, "weighted", 90)
+    assert (req.expand, req.recency, req.recency_weight) == ("macro", "on", 1.5)
+    assert req.recency_half_life_days == 30.0
+    assert (req.limit, req.path_filter, req.zone_id) == (7, "/ws/", "root")
+
+
+@pytest.mark.asyncio
+async def test_batch_non_dict_spec_becomes_failure() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop(["not a dict"], zone_id="root")
+
+    assert isinstance(out[0], BatchQueryFailure)

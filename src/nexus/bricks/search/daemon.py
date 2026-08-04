@@ -65,7 +65,7 @@ from nexus.bricks.search.mutation_parking import (
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.search_types import SearchRequest
+from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
 from nexus.lib.env import get_database_url
 
 T = TypeVar("T")
@@ -440,6 +440,9 @@ class DaemonConfig:
     # Performance settings
     query_timeout_seconds: float = 10.0
     max_indexing_concurrency: int = 10  # Issue #2071: from ProfileTuning.search
+    # Bounded fan-out width for POST /query/batch inner searches. 1 restores
+    # strictly sequential execution (ops fallback).
+    batch_search_concurrency: int = 8
 
     # Entropy-aware filtering (Issue #1024)
     entropy_filtering: bool = False
@@ -3600,11 +3603,11 @@ class SearchDaemon:
         queries: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> list[list[Any]]:
+    ) -> list[list[Any] | BatchQueryFailure]:
         if zone_id is None:
             return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
 
-        async def _work() -> list[list[Any]]:
+        async def _work() -> list[list[Any] | BatchQueryFailure]:
             return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
 
         return await self._run_on_owner_loop(_work)
@@ -3614,11 +3617,16 @@ class SearchDaemon:
         queries: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> list[list[Any]]:
-        """Batch search: embed N queries in ONE API call.
+    ) -> list[list[Any] | BatchQueryFailure]:
+        """Batch search: one shared embed call + bounded-concurrency fan-out.
 
-        Powers ``POST /api/v2/search/query/batch`` for benchmarks and bulk
-        evaluations. ~30s for 470 queries instead of ~16 min sequential.
+        Powers ``POST /api/v2/search/query/batch``. All unique query texts
+        that need a dense leg (search_type != "keyword") are embedded in ONE
+        ``embed_batch`` call; each inner search then runs concurrently under
+        ``DaemonConfig.batch_search_concurrency``. A failed inner query is
+        returned positionally as :class:`BatchQueryFailure` instead of being
+        collapsed to ``[]``, so callers can tell "no matches" from "backend
+        fell over".
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
@@ -3626,29 +3634,63 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
-        # Issue #3699: dedicated backend.batch_search is gone with txtai; we
-        # fan out per-query through the new backend stack instead. This is
-        # functionally equivalent for callers, just without the single-call
-        # embedding amortisation. T9 keeps the API surface intact.
-        results: list[list[Any]] = []
-        for q in queries:
-            if not isinstance(q, dict):
-                results.append([])
-                continue
-            try:
-                hits = await self.search(
-                    SearchRequest(
-                        query=str(q.get("query", "")),
-                        search_type=q.get("search_type", "hybrid"),
-                        limit=int(q.get("limit", 10)),
-                        path_filter=q.get("path_filter"),
-                        zone_id=effective_zone_id,
+
+        # Pre-embed unique texts once. Fail-soft: on any error fall back to
+        # per-query embedding inside each inner search (hybrid degrades to
+        # keyword-only on embed failure exactly as a single /query does).
+        vector_by_text: dict[str, list[float]] = {}
+        if self._embedding_client is not None:
+            unique_texts = sorted(
+                {
+                    str(q.get("query", ""))
+                    for q in queries
+                    if isinstance(q, dict)
+                    and str(q.get("query", ""))
+                    and q.get("search_type", "hybrid") != "keyword"
+                }
+            )
+            if unique_texts:
+                try:
+                    vectors = await self._embedding_client.embed_batch(unique_texts)
+                    vector_by_text = dict(zip(unique_texts, vectors, strict=True))
+                except Exception as exc:
+                    logger.warning(
+                        "batch pre-embed failed; falling back to per-query embedding: %s",
+                        exc,
                     )
-                )
-            except Exception as exc:
-                logger.warning("batch_search inner search failed: %s", exc)
-                hits = []
-            results.append(hits)
+
+        semaphore = asyncio.Semaphore(max(1, self.config.batch_search_concurrency))
+
+        async def _run_one(q: Any) -> list[Any] | BatchQueryFailure:
+            if not isinstance(q, dict):
+                return BatchQueryFailure(error="invalid query spec: expected an object")
+            query_text = str(q.get("query", ""))
+            async with semaphore:
+                try:
+                    return await self.search(
+                        SearchRequest(
+                            query=query_text,
+                            search_type=q.get("search_type", "hybrid"),
+                            limit=int(q.get("limit", 10)),
+                            path_filter=q.get("path_filter"),
+                            alpha=float(q.get("alpha", 0.5)),
+                            fusion_method=q.get("fusion_method", "rrf"),
+                            rrf_k=int(q.get("rrf_k", 60)),
+                            expand=q.get("expand", "none"),
+                            recency=q.get("recency"),
+                            recency_weight=q.get("recency_weight"),
+                            recency_half_life_days=q.get("recency_half_life_days"),
+                            zone_id=effective_zone_id,
+                            query_vector=vector_by_text.get(query_text),
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning("batch_search inner search failed: %s", exc)
+                    return BatchQueryFailure(error=str(exc) or exc.__class__.__name__)
+
+        results: list[list[Any] | BatchQueryFailure] = list(
+            await asyncio.gather(*(_run_one(q) for q in queries))
+        )
         # Issue #3773: attach admin-configured path contexts. The whole batch
         # is single-zone by design (``zone_id=effective_zone_id`` above), so
         # refresh once against that zone and do pure in-memory lookups on
@@ -3704,6 +3746,8 @@ class SearchDaemon:
                 # boost previously-gated results. This block only backfills
                 # ``context`` for legacy/mocked daemons.
                 for inner in results:
+                    if isinstance(inner, BatchQueryFailure):
+                        continue
                     for r in inner:
                         try:
                             record = lookup_record_in_records(records, r.path)

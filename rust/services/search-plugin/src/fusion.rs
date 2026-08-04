@@ -36,8 +36,8 @@
 //! prevents one long file from monopolising the top-N when its
 //! per-chunk BM25 or cosine scores dominate multiple result slots.
 //! P1-P3 emit one chunk per file so pooling is a no-op; the wire
-//! + code path lands here so P4's real chunker just needs to bump
-//! `chunk_index` values.
+//! and code path land here so P4's real chunker just needs to
+//! bump `chunk_index` values.
 
 use std::collections::HashMap;
 

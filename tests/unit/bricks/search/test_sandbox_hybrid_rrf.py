@@ -75,22 +75,17 @@ class _FakeDaemon:
         self._rows = rows
         self.calls: list[dict[str, Any]] = []
 
-    async def search(
-        self,
-        *,
-        query: str,
-        search_type: str,
-        limit: int,
-        path_filter: str | None,
-        zone_id: str | None,
-    ) -> list[_DaemonRow]:
+    async def search(self, request: Any) -> list[_DaemonRow]:
+        # Mirrors the real contract: SearchDaemon.search() takes a single
+        # SearchRequest. A kwargs-shaped double silently diverged from
+        # production and hid a live TypeError in the keyword lane.
         self.calls.append(
             {
-                "query": query,
-                "search_type": search_type,
-                "limit": limit,
-                "path_filter": path_filter,
-                "zone_id": zone_id,
+                "query": request.query,
+                "search_type": request.search_type,
+                "limit": request.limit,
+                "path_filter": request.path_filter,
+                "zone_id": request.zone_id,
             }
         )
         if isinstance(self._rows, Exception):

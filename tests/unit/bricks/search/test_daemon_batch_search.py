@@ -800,3 +800,93 @@ async def test_caller_cancellation_propagates_and_does_not_strand() -> None:
     # converted into per-query failures or left pending forever.
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(batch, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_provider_outage_is_bounded_and_degrades_hybrid() -> None:
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=8,
+        query_timeout_seconds=30.0,
+        batch_search_timeout_seconds=30.0,
+    )
+
+    class DeadEmbeddingClient:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            self.calls.append(list(texts))
+            raise RuntimeError("provider down")
+
+    client = DeadEmbeddingClient()
+    daemon._embedding_client = client
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    specs = [{"query": f"q{i}", "search_type": "hybrid"} for i in range(64)]
+    out = await daemon._batch_search_on_current_loop(specs, zone_id="root")
+
+    # A total outage is classified after the first split, not by descending
+    # through every text — and hybrid queries still RUN (keyword-degraded)
+    # rather than being timed out by an exhausted deadline.
+    assert len(client.calls) <= 3, client.calls
+    assert len(captured) == 64
+    assert all(r.embedding_unavailable is True for r in captured)
+    assert out == [[] for _ in range(64)]
+
+
+@pytest.mark.asyncio
+async def test_abandoned_batch_tasks_keep_their_permits(monkeypatch) -> None:
+    import asyncio
+
+    from nexus.bricks.search import daemon as daemon_module
+
+    # Keep the drain short so the test does not sit on the production grace
+    # window; the behavior under test is what happens AFTER the drain gives up.
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=1,
+        query_timeout_seconds=30.0,
+        batch_search_timeout_seconds=0.05,
+    )
+    release = asyncio.Event()
+    started = 0
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        nonlocal started
+        started += 1
+        # Cancellation-resistant backend: swallows the cancel and clears the
+        # request (uncancel) so it genuinely keeps running, the way a driver
+        # that shields its cleanup would.
+        inner = asyncio.ensure_future(release.wait())
+        while not inner.done():
+            try:
+                await asyncio.shield(inner)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop([{"query": "a"}], zone_id="root")
+
+    # The abandoned search is tracked and still holds the daemon-scoped
+    # permit, so a follow-up batch cannot start fresh work behind its back.
+    assert daemon._abandoned_batch_tasks
+    assert daemon._batch_semaphore().locked()
+    started_before = started
+    await daemon._batch_search_on_current_loop([{"query": "b"}], zone_id="root")
+    assert started == started_before
+
+    release.set()
+    await asyncio.sleep(0.15)

@@ -3701,6 +3701,51 @@ class SearchDaemon:
 
         return await self._run_on_owner_loop(_work)
 
+    def _batch_semaphore(self) -> asyncio.Semaphore:
+        """Daemon-scoped fan-out permit pool for /query/batch.
+
+        Deliberately NOT per-request: a cancelled batch can leave
+        cancellation-resistant searches still running, and a batch-local
+        semaphore would hand the next request fresh permits while that work
+        is still hitting the DB / provider. Keyed by running loop so a
+        daemon serving more than one loop never shares a bound primitive.
+        """
+        loop = asyncio.get_running_loop()
+        limit = max(1, self.config.batch_search_concurrency)
+        cached = getattr(self, "_batch_semaphore_cache", None)
+        if cached is not None and cached[0] is loop and cached[1] == limit:
+            semaphore: asyncio.Semaphore = cached[2]
+            return semaphore
+        semaphore = asyncio.Semaphore(limit)
+        self._batch_semaphore_cache = (loop, limit, semaphore)
+        return semaphore
+
+    def _track_abandoned_batch_tasks(self, tasks: Iterable[asyncio.Task[Any]]) -> None:
+        """Keep undrained batch tasks referenced until they actually finish.
+
+        They still hold their semaphore permits (the pool is daemon-scoped),
+        so abandoned work keeps consuming capacity rather than silently
+        accumulating. Holding the reference also prevents mid-flight GC and
+        retrieves the eventual exception so asyncio does not log it as
+        never-retrieved.
+        """
+        tracked = getattr(self, "_abandoned_batch_tasks", None)
+        if tracked is None:
+            tracked = set()
+            self._abandoned_batch_tasks = tracked
+
+        def _done(task: asyncio.Task[Any]) -> None:
+            tracked.discard(task)
+            if not task.cancelled():
+                with contextlib.suppress(BaseException):
+                    task.exception()
+
+        for task in tasks:
+            if task.done():
+                continue
+            tracked.add(task)
+            task.add_done_callback(_done)
+
     async def _embed_batch_texts(
         self,
         texts: list[str],
@@ -3743,21 +3788,27 @@ class SearchDaemon:
         except Exception as exc:
             logger.warning("batch pre-embed failed (%d texts); isolating: %s", len(texts), exc)
 
-        async def _isolate(chunk: list[str]) -> bool:
-            """Bisect ``chunk``; False means "provider looks down"."""
+        async def _isolate(chunk: list[str]) -> str:
+            """Bisect ``chunk``; returns "input" or "down".
+
+            "down" means the provider itself looks unavailable (both halves
+            of a split failed outright, or the probe budget ran out with no
+            success anywhere) — the caller degrades the whole batch once.
+            "input" means the failures were isolated to specific texts,
+            recorded in ``failed_texts``, leaving healthy siblings usable.
+            """
             nonlocal probes_left
             if len(chunk) == 1:
                 failed_texts.add(chunk[0])
-                return True
+                return "input"
             mid = len(chunk) // 2
             halves = [chunk[:mid], chunk[mid:]]
-            outcomes: list[bool] = []
+            # Probe BOTH halves before recursing: a provider-wide outage is
+            # then two probes deep, not a full descent.
+            outcomes: list[bool | None] = []
             for half in halves:
                 if probes_left <= 0 or remaining() <= 0:
-                    # Out of probe budget or wall clock: treat the rest as
-                    # unembeddable rather than probing further.
-                    failed_texts.update(half)
-                    outcomes.append(False)
+                    outcomes.append(None)
                     continue
                 probes_left -= 1
                 try:
@@ -3766,14 +3817,28 @@ class SearchDaemon:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    outcomes.append(await _isolate(half))
-            # Both halves failed outright at this level -> provider-wide.
-            return any(outcomes)
+                    outcomes.append(False)
+            if all(o is False for o in outcomes):
+                return "down"
+            if all(o is None for o in outcomes):
+                # No budget left to learn anything — treat conservatively as
+                # a provider problem rather than blaming these texts.
+                return "down"
+            for half, outcome in zip(halves, outcomes, strict=True):
+                if outcome is True:
+                    continue
+                if outcome is None:
+                    # Unprobed under budget pressure: mark unembeddable
+                    # rather than probing further.
+                    failed_texts.update(half)
+                    continue
+                if await _isolate(half) == "down":
+                    return "down"
+            return "input"
 
-        healthy = await _isolate(texts)
-        if not healthy and not vector_by_text:
-            # Nothing embedded anywhere: treat as a provider outage so the
-            # whole batch degrades once instead of per query.
+        if await _isolate(texts) == "down":
+            # Provider outage: degrade the whole batch once instead of
+            # blaming (and failing) individual texts.
             return {}, set(), True
         return vector_by_text, failed_texts, False
 
@@ -3838,7 +3903,7 @@ class SearchDaemon:
                     remaining=_remaining,
                 )
 
-        semaphore = asyncio.Semaphore(max(1, self.config.batch_search_concurrency))
+        semaphore = self._batch_semaphore()
 
         async def _run_one(q: Any) -> list[Any] | BatchQueryFailure:
             if not isinstance(q, dict):
@@ -3850,57 +3915,75 @@ class SearchDaemon:
                 # No embedding for THIS text — don't burn a per-query retry
                 # cycle just to fail the same way.
                 return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
-            async with semaphore:
-                try:
-                    # Bounded per query: asyncio.gather waits for EVERY entry,
-                    # so a hung embedding/backend call would otherwise withhold
-                    # all completed siblings and never produce the advertised
-                    # per-query timeout failure. wait_for cancels the hung
-                    # inner search and the except below converts it.
-                    inner_result = await asyncio.wait_for(
-                        self.search(
-                            SearchRequest(
-                                query=query_text,
-                                search_type=search_type,
-                                limit=int(q.get("limit", 10)),
-                                path_filter=q.get("path_filter"),
-                                alpha=float(q.get("alpha", 0.5)),
-                                fusion_method=q.get("fusion_method", "rrf"),
-                                rrf_k=int(q.get("rrf_k", 60)),
-                                expand=q.get("expand", "none"),
-                                recency=q.get("recency"),
-                                recency_weight=q.get("recency_weight"),
-                                recency_half_life_days=q.get("recency_half_life_days"),
-                                zone_id=effective_zone_id,
-                                query_vector=vector_by_text.get(query_text),
-                                propagate_failures=True,
-                                embedding_unavailable=text_embed_failed,
-                            )
-                        ),
-                        timeout=_remaining(self.config.query_timeout_seconds),
+            # Permits follow REAL in-flight work: acquired here and released
+            # by the search task's own completion callback, so a search that
+            # outlives its timeout (cancellation-resistant backend) keeps
+            # consuming capacity instead of silently accumulating behind a
+            # released permit.
+            await semaphore.acquire()
+            search_task: asyncio.Task[list[SearchResult]] = asyncio.ensure_future(
+                self.search(
+                    SearchRequest(
+                        query=query_text,
+                        search_type=search_type,
+                        limit=int(q.get("limit", 10)),
+                        path_filter=q.get("path_filter"),
+                        alpha=float(q.get("alpha", 0.5)),
+                        fusion_method=q.get("fusion_method", "rrf"),
+                        rrf_k=int(q.get("rrf_k", 60)),
+                        expand=q.get("expand", "none"),
+                        recency=q.get("recency"),
+                        recency_weight=q.get("recency_weight"),
+                        recency_half_life_days=q.get("recency_half_life_days"),
+                        zone_id=effective_zone_id,
+                        query_vector=vector_by_text.get(query_text),
+                        propagate_failures=True,
+                        embedding_unavailable=text_embed_failed,
                     )
-                    # A search that suppresses its cancellation can return a
-                    # value AFTER the deadline (wait_for then yields that
-                    # value instead of raising). It was unfinished when the
-                    # budget ran out, so settle it as a timeout rather than
-                    # reporting a healthy late result.
-                    if time.monotonic() >= batch_deadline:
-                        return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
-                    return inner_result
-                except EmbeddingUnavailableError:
-                    return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
-                except VectorBackendUnavailableError:
-                    return BatchQueryFailure(error=_BATCH_VECTOR_BACKEND_MESSAGE)
-                except TimeoutError:
-                    logger.warning("batch_search inner search timed out: %r", query_text)
+                )
+            )
+            search_task.add_done_callback(lambda _task: semaphore.release())
+            try:
+                # Bounded per query: asyncio.wait waits for EVERY entry, so a
+                # hung backend would otherwise withhold all completed siblings
+                # and never produce the advertised per-query timeout failure.
+                # shield keeps the timeout from silently detaching the task —
+                # it is cancelled and accounted for explicitly below.
+                inner_result = await asyncio.wait_for(
+                    asyncio.shield(search_task),
+                    timeout=_remaining(self.config.query_timeout_seconds),
+                )
+                # A search that suppresses its cancellation can return a
+                # value AFTER the deadline (wait_for then yields that value
+                # instead of raising). It was unfinished when the budget ran
+                # out, so settle it as a timeout rather than reporting a
+                # healthy late result.
+                if time.monotonic() >= batch_deadline:
                     return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
-                except Exception:
-                    # Full diagnostics stay server-side; the wire gets a stable
-                    # sanitized message (raw backend exception text can leak
-                    # SQL, hosts, or provider internals to authenticated
-                    # callers — the single /query route is equally generic).
-                    logger.exception("batch_search inner search failed: %r", query_text)
-                    return BatchQueryFailure(error=_BATCH_FAILURE_MESSAGE)
+                return inner_result
+            except asyncio.CancelledError:
+                search_task.cancel()
+                self._track_abandoned_batch_tasks({search_task})
+                raise
+            except EmbeddingUnavailableError:
+                return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
+            except VectorBackendUnavailableError:
+                return BatchQueryFailure(error=_BATCH_VECTOR_BACKEND_MESSAGE)
+            except TimeoutError:
+                logger.warning("batch_search inner search timed out: %r", query_text)
+                # The task is still running: cancel it and keep it charged
+                # (its permit is released by the done-callback only when it
+                # actually finishes).
+                search_task.cancel()
+                self._track_abandoned_batch_tasks({search_task})
+                return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+            except Exception:
+                # Full diagnostics stay server-side; the wire gets a stable
+                # sanitized message (raw backend exception text can leak
+                # SQL, hosts, or provider internals to authenticated
+                # callers — the single /query route is equally generic).
+                logger.exception("batch_search inner search failed: %r", query_text)
+                return BatchQueryFailure(error=_BATCH_FAILURE_MESSAGE)
 
         # Absolute batch deadline on top of the per-query bounds: gather-style
         # waiting alone lets N hung queries consume ceil(N/concurrency)
@@ -3916,8 +3999,17 @@ class SearchDaemon:
             # not strand this task forever), then always re-raise.
             for task in tasks:
                 task.cancel()
-            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
-                await asyncio.wait(tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS)
+            undrained: set[asyncio.Task[Any]] = set(tasks)
+            with contextlib.suppress(asyncio.CancelledError):
+                _drained, undrained = await asyncio.wait(tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS)
+            if undrained:
+                logger.warning(
+                    "batch_search cancellation left %d task(s) undrained after %.1fs; "
+                    "they keep their concurrency permits until they finish",
+                    len(undrained),
+                    _BATCH_CANCEL_DRAIN_SECONDS,
+                )
+                self._track_abandoned_batch_tasks(undrained)
             raise
         # The set pending AT EXPIRY is authoritative for settlement: a task
         # that finishes during cancellation cleanup (or suppresses the
@@ -3936,18 +4028,21 @@ class SearchDaemon:
             # Bounded drain: a backend that swallows cancellation must not
             # hold the request open past its deadline. Un-drained tasks are
             # abandoned (already settled as timeouts below).
-            try:
-                await asyncio.wait(pending_tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS)
-            except asyncio.CancelledError:
-                # Caller cancellation during cleanup is NOT a batch outcome —
-                # never convert it into per-query failures.
-                raise
-            except TimeoutError:
+            # asyncio.wait does NOT raise on timeout — it returns the still
+            # pending set, which is what tells us what to charge as abandoned.
+            # Caller cancellation during cleanup is not a batch outcome and
+            # propagates rather than becoming per-query failures.
+            _drained, undrained = await asyncio.wait(
+                pending_tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS
+            )
+            if undrained:
                 logger.warning(
-                    "batch_search cancellation drain exceeded %.1fs; abandoning %d task(s)",
+                    "batch_search cancellation drain exceeded %.1fs; %d task(s) still running "
+                    "and holding concurrency permits",
                     _BATCH_CANCEL_DRAIN_SECONDS,
-                    len(pending_tasks),
+                    len(undrained),
                 )
+                self._track_abandoned_batch_tasks(undrained)
         results: list[list[Any] | BatchQueryFailure] = [
             BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
             if i in timed_out_positions

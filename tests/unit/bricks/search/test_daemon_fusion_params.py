@@ -357,6 +357,7 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
         zone_id: Any = None,
         query_vector: list[float] | None = None,
         embedding_unavailable: bool = False,
+        propagate_failures: bool = False,
     ) -> list[SearchResult]:
         seen.update({"alpha": alpha, "fusion_method": fusion_method, "rrf_k": rrf_k})
         return []

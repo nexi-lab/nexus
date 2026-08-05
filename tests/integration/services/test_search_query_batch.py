@@ -361,6 +361,21 @@ class TestBatchRoute:
         assert resp.status_code == 400, resp.text
         daemon.batch_search.assert_not_called()
 
+    @pytest.mark.parametrize("content", ["", "{not json", '{"queries": [truncated'])
+    def test_malformed_json_body_400(self, content):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[])
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            content=content,
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert resp.status_code == 400, resp.text
+        daemon.batch_search.assert_not_called()
+
     def test_empty_queries_still_400(self):
         daemon = MagicMock()
         daemon.batch_search = AsyncMock(return_value=[])

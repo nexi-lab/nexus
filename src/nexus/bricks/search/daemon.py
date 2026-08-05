@@ -463,6 +463,12 @@ class DaemonConfig:
     # Bounded fan-out width for POST /query/batch inner searches. 1 restores
     # strictly sequential execution (ops fallback).
     batch_search_concurrency: int = 8
+    # Absolute wall-clock ceiling for one /query/batch request's search
+    # phase. Per-query timeouts alone cannot bound the batch: N hung queries
+    # occupy semaphore slots for ceil(N/concurrency) consecutive timeout
+    # windows. On expiry, unfinished queries are cancelled and reported as
+    # per-query timeout failures; completed siblings keep their results.
+    batch_search_timeout_seconds: float = 120.0
 
     # Entropy-aware filtering (Issue #1024)
     entropy_filtering: bool = False
@@ -3150,6 +3156,7 @@ class SearchDaemon:
                     zone_id=zone_id,
                     query_vector=query_vector,
                     embedding_unavailable=embedding_unavailable,
+                    propagate_failures=propagate_failures,
                 )
                 if pooled_legacy:
                     from nexus.bricks.search.result_builders import cap_chunks_per_page
@@ -3408,6 +3415,7 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, leg_limit, zone_id),
                 ),
+                propagate_failures=propagate_failures,
             )
         else:
             chunk_kw, dense = await self._gather_legs_fail_soft_dense(
@@ -3421,6 +3429,7 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, leg_limit, zone_id),
                 ),
+                propagate_failures=propagate_failures,
             )
             page_kw = []
 
@@ -3502,6 +3511,8 @@ class SearchDaemon:
     async def _gather_legs_fail_soft_dense(
         kw_awaitable: Awaitable[T],
         dense_awaitable: Awaitable[list[Any]],
+        *,
+        propagate_failures: bool = False,
     ) -> tuple[T, list[Any]]:
         """Run the keyword and dense legs concurrently with asymmetric failure
         handling (#4541 review R8/R9).
@@ -3524,6 +3535,13 @@ class SearchDaemon:
         try:
             dense_result: list[Any] = await dense_task
         except Exception as exc:
+            # Batch mode reports dense INFRASTRUCTURE failures per query
+            # instead of silently serving keyword-only hits as a full
+            # success. A missing embedding is legitimate degradation (the
+            # hybrid contract serves keyword-only then) and stays fail-soft
+            # in both modes.
+            if propagate_failures and not isinstance(exc, EmbeddingUnavailableError):
+                raise
             logger.warning("hybrid dense leg failed; continuing keyword-only: %s", exc)
             dense_result = []
         return kw_result, dense_result
@@ -3765,9 +3783,38 @@ class SearchDaemon:
                     logger.exception("batch_search inner search failed: %r", query_text)
                     return BatchQueryFailure(error=_BATCH_FAILURE_MESSAGE)
 
-        results: list[list[Any] | BatchQueryFailure] = list(
-            await asyncio.gather(*(_run_one(q) for q in queries))
-        )
+        # Absolute batch deadline on top of the per-query bounds: gather-style
+        # waiting alone lets N hung queries consume ceil(N/concurrency)
+        # consecutive per-query timeout windows. Unfinished tasks are
+        # cancelled, drained, and settled positionally as timeout failures;
+        # completed siblings keep their results.
+        tasks = [asyncio.ensure_future(_run_one(q)) for q in queries]
+        try:
+            _done_tasks, pending_tasks = await asyncio.wait(
+                tasks, timeout=max(0.0, self.config.batch_search_timeout_seconds)
+            )
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        if pending_tasks:
+            logger.warning(
+                "batch_search deadline (%.1fs) expired with %d of %d queries unfinished",
+                self.config.batch_search_timeout_seconds,
+                len(pending_tasks),
+                len(tasks),
+            )
+            for task in pending_tasks:
+                task.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        # After the cancel+drain every task is done; a task that slipped in a
+        # normal completion between the deadline and the cancel keeps its
+        # result rather than being misreported as timed out.
+        results: list[list[Any] | BatchQueryFailure] = [
+            BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE) if task.cancelled() else task.result()
+            for task in tasks
+        ]
         # Issue #3773: attach admin-configured path contexts. The whole batch
         # is single-zone by design (``zone_id=effective_zone_id`` above), so
         # refresh once against that zone and do pure in-memory lookups on
@@ -3791,7 +3838,13 @@ class SearchDaemon:
             # transient DB error still yields the last successfully-loaded
             # records instead of silently erasing context for the whole batch.
             try:
-                await cache.refresh_if_stale(effective_zone_id)
+                # Bounded: the refresh's DB calls must not hold the whole
+                # batch open past its deadline; a timeout falls through to
+                # the stale-snapshot fail-soft path below.
+                await asyncio.wait_for(
+                    cache.refresh_if_stale(effective_zone_id),
+                    timeout=self.config.query_timeout_seconds,
+                )
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
@@ -4452,6 +4505,7 @@ class SearchDaemon:
         zone_id: str | None = None,
         query_vector: list[float] | None = None,
         embedding_unavailable: bool = False,
+        propagate_failures: bool = False,
     ) -> list[SearchResult]:
         """Hybrid search combining keyword and semantic results (legacy fallback).
 
@@ -4480,7 +4534,12 @@ class SearchDaemon:
                 zone_id=zone_id,
                 query_vector=query_vector,
                 embedding_unavailable=embedding_unavailable,
+                # Raise real backend errors so the gather helper can apply
+                # the batch policy; missing-embedding degradation is carved
+                # out there (hybrid legitimately serves keyword-only then).
+                propagate_failures=propagate_failures,
             ),
+            propagate_failures=propagate_failures,
         )
 
         fusion_config = FusionConfig(

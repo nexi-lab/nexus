@@ -832,7 +832,11 @@ async def search_query_batch(
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception as exc:
+        # Empty/truncated/invalid JSON is a client error, not a 500.
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
     # A valid-JSON non-object root ([], null, "...", 42) must be the same
     # batch-level 400 as a missing/empty queries array — calling .get on it
     # would 500.

@@ -509,3 +509,108 @@ async def test_hung_pre_embed_degrades_instead_of_blocking_batch() -> None:
     # pre-embed failure: hybrid runs keyword-only, no per-query embed retry.
     assert out == [[]]
     assert captured[0].embedding_unavailable is True
+
+
+@pytest.mark.asyncio
+async def test_batch_deadline_bounds_queued_hung_queries() -> None:
+    import asyncio
+    import time
+
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+    # Per-query timeout generous; the ABSOLUTE batch deadline is the bound
+    # under test: with concurrency 1, three hung queries would otherwise
+    # consume three consecutive per-query windows.
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=1,
+        query_timeout_seconds=30.0,
+        batch_search_timeout_seconds=0.1,
+    )
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        if request.query.startswith("hung"):
+            await asyncio.sleep(60)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    started = time.monotonic()
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "ok"}, {"query": "hung-1"}, {"query": "hung-2"}], zone_id="root"
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5, f"batch deadline did not bound the request ({elapsed:.1f}s)"
+    # Concurrency 1 runs the healthy query first; the queued hung queries are
+    # cancelled at the deadline and settled positionally as timeouts.
+    assert out[0] == []
+    assert isinstance(out[1], BatchQueryFailure)
+    assert out[1].error == "Search timed out"
+    assert isinstance(out[2], BatchQueryFailure)
+    assert out[2].error == "Search timed out"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_dense_backend_failure_fails_batch_query() -> None:
+    daemon = _make_daemon()
+
+    class RaisingVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            raise RuntimeError("vector backend down")
+
+    daemon._vector_backend = RaisingVectorBackend()
+
+    # Interactive contract: fail-soft to keyword-only.
+    out = await daemon._search_via_backends(
+        "q", search_type="hybrid", limit=5, path_filter=None, zone_id="root"
+    )
+    assert out  # keyword hits still served
+
+    # Batch contract: a dense INFRASTRUCTURE failure is a per-query failure,
+    # not a silently keyword-only "success".
+    with pytest.raises(RuntimeError, match="vector backend down"):
+        await daemon._search_via_backends(
+            "q",
+            search_type="hybrid",
+            limit=5,
+            path_filter=None,
+            zone_id="root",
+            propagate_failures=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_legacy_hybrid_missing_embedding_still_degrades_under_batch() -> None:
+    from nexus.bricks.search.daemon import SearchDaemon, SearchResult
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        return [
+            SearchResult(
+                path="/kw.md", chunk_text="kw", score=1.0, chunk_index=0, search_type="keyword"
+            )
+        ]
+
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    class NoEmbedVectorBackend:
+        async def semantic_search(self, *args: Any, **kwargs: Any) -> list[Any]:
+            raise AssertionError("dense leg must not run without an embedding")
+
+    daemon._vector_backend = NoEmbedVectorBackend()
+
+    async def _no_embed(self: Any, query: str) -> None:
+        return None
+
+    daemon._embed_query = MethodType(_no_embed, daemon)
+
+    # Missing embedding is legitimate hybrid degradation even in batch mode:
+    # the EmbeddingUnavailableError carve-out keeps the keyword-only result.
+    out = await daemon._hybrid_search(
+        "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
+    )
+    assert [r.path for r in out] == ["/kw.md"]

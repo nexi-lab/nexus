@@ -248,7 +248,7 @@ async def test_batch_embed_failure_falls_back_to_per_query() -> None:
         [{"query": "a", "search_type": "hybrid"}], zone_id="root"
     )
 
-    assert out == [[]]           # fail-soft: search still ran
+    assert out == [[]]  # fail-soft: search still ran
     assert seen_vectors == [None]  # ...and embeds for itself downstream
 
 
@@ -699,7 +699,9 @@ def _as_int(value: Any, name: str, lo: int, hi: int) -> int | str:
     return out
 
 
-def _as_float(value: Any, name: str, lo: float, hi: float, *, exclusive_lo: bool = False) -> float | str:
+def _as_float(
+    value: Any, name: str, lo: float, hi: float, *, exclusive_lo: bool = False
+) -> float | str:
     try:
         if isinstance(value, bool):
             raise ValueError
@@ -1022,83 +1024,79 @@ Replace the body of `search_query_batch` (KEEP: the decorator/signature, `ROOT_Z
 then:
 
 ```python
-    parsed = [parse_batch_query_spec(raw) for raw in raw_queries]
-    valid: list[tuple[int, ParsedBatchSpec]] = [
-        (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
-    ]
-    fetch_specs = [
-        {
-            "query": spec.query,
-            "search_type": spec.search_type,
-            "limit": _compute_rebac_fetch_limit(
-                spec.limit, has_enforcer=permission_enforcer is not None
-            ),
-            "path_filter": spec.path_filter,
-            "alpha": spec.alpha,
-            "fusion_method": spec.fusion_method,
-            "rrf_k": spec.rrf_k,
-            "expand": spec.expand,
-            "recency": spec.recency,
-            "recency_weight": spec.recency_weight,
-            "recency_half_life_days": spec.recency_half_life_days,
-        }
-        for _, spec in valid
-    ]
-
-    t0 = time.perf_counter()
-    raw_results = (
-        await search_daemon.batch_search(fetch_specs, zone_id=zone_id) if fetch_specs else []
-    )
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-
-    result_by_index: dict[int, Any] = {
-        i: result for (i, _), result in zip(valid, raw_results, strict=True)
+parsed = [parse_batch_query_spec(raw) for raw in raw_queries]
+valid: list[tuple[int, ParsedBatchSpec]] = [
+    (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
+]
+fetch_specs = [
+    {
+        "query": spec.query,
+        "search_type": spec.search_type,
+        "limit": _compute_rebac_fetch_limit(
+            spec.limit, has_enforcer=permission_enforcer is not None
+        ),
+        "path_filter": spec.path_filter,
+        "alpha": spec.alpha,
+        "fusion_method": spec.fusion_method,
+        "rrf_k": spec.rrf_k,
+        "expand": spec.expand,
+        "recency": spec.recency,
+        "recency_weight": spec.recency_weight,
+        "recency_half_life_days": spec.recency_half_life_days,
     }
+    for _, spec in valid
+]
 
-    filter_ms_total = 0.0
-    response_queries: list[dict[str, Any]] = []
-    for i, p in enumerate(parsed):
-        if isinstance(p, str):
-            response_queries.append(
-                {
-                    "query": spec_query_text(raw_queries[i]),
-                    "results": [],
-                    "total": 0,
-                    "error": p,
-                }
-            )
-            continue
-        inner = result_by_index[i]
-        if isinstance(inner, BatchQueryFailure):
-            response_queries.append(
-                {"query": p.query, "results": [], "total": 0, "error": inner.error}
-            )
-            continue
-        # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
-        filtered, filter_ms = _apply_rebac_filter(
-            inner,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            operation_context=op_context,
-        )
-        filter_ms_total += filter_ms
-        trimmed = filtered[: p.limit]
+t0 = time.perf_counter()
+raw_results = await search_daemon.batch_search(fetch_specs, zone_id=zone_id) if fetch_specs else []
+elapsed_ms = (time.perf_counter() - t0) * 1000
+
+result_by_index: dict[int, Any] = {
+    i: result for (i, _), result in zip(valid, raw_results, strict=True)
+}
+
+filter_ms_total = 0.0
+response_queries: list[dict[str, Any]] = []
+for i, p in enumerate(parsed):
+    if isinstance(p, str):
         response_queries.append(
             {
-                "query": p.query,
-                "results": [_serialize_search_result(r) for r in trimmed],
-                "total": len(trimmed),
+                "query": spec_query_text(raw_queries[i]),
+                "results": [],
+                "total": 0,
+                "error": p,
             }
         )
+        continue
+    inner = result_by_index[i]
+    if isinstance(inner, BatchQueryFailure):
+        response_queries.append({"query": p.query, "results": [], "total": 0, "error": inner.error})
+        continue
+    # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
+    filtered, filter_ms = _apply_rebac_filter(
+        inner,
+        permission_enforcer,
+        auth_result,
+        zone_id,
+        operation_context=op_context,
+    )
+    filter_ms_total += filter_ms
+    trimmed = filtered[: p.limit]
+    response_queries.append(
+        {
+            "query": p.query,
+            "results": [_serialize_search_result(r) for r in trimmed],
+            "total": len(trimmed),
+        }
+    )
 
-    return {
-        "queries": response_queries,
-        "total_queries": len(raw_queries),
-        "latency_ms": round(elapsed_ms, 2),
-        "avg_per_query_ms": round(elapsed_ms / max(len(raw_queries), 1), 2),
-        "permission_filter_ms": round(filter_ms_total, 2),
-    }
+return {
+    "queries": response_queries,
+    "total_queries": len(raw_queries),
+    "latency_ms": round(elapsed_ms, 2),
+    "avg_per_query_ms": round(elapsed_ms / max(len(raw_queries), 1), 2),
+    "permission_filter_ms": round(filter_ms_total, 2),
+}
 ```
 
 `BatchQueryFailure` import: add `from nexus.contracts.search_types import BatchQueryFailure` inside the function next to the existing `ROOT_ZONE_ID` local import (or at module top if ruff prefers — match the file's existing style: `ROOT_ZONE_ID` is imported locally). The old `overfetch_multiplier`/`requested_limits` loop and the inline `formatted` serialization block are deleted. Confirm `_serialize_search_result` is already imported/re-exported in `search.py` (the `_search_serialize.py` docstring says the router re-exports it); if it's not in scope, import it from `._search_serialize`.

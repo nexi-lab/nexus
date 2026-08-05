@@ -719,3 +719,84 @@ async def test_missing_vector_backend_is_distinct_from_missing_embedding() -> No
         await daemon._hybrid_search(
             "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
         )
+
+
+@pytest.mark.asyncio
+async def test_single_bad_embedding_input_does_not_poison_siblings() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+
+    class PoisonRejectingClient:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            chunk = list(texts)
+            self.calls.append(chunk)
+            if any(t == "poison" for t in chunk):
+                raise ValueError("input rejected: poison")
+            return [[0.1, 0.2] for _ in chunk]
+
+    client = PoisonRejectingClient()
+    daemon._embedding_client = client
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop(
+        [
+            {"query": "alpha", "search_type": "semantic"},
+            {"query": "poison", "search_type": "semantic"},
+            {"query": "beta", "search_type": "semantic"},
+        ],
+        zone_id="root",
+    )
+
+    # Only the offending text fails; healthy siblings still get vectors and
+    # run their searches.
+    assert isinstance(out[1], BatchQueryFailure)
+    assert out[1].error == "Query embedding unavailable"
+    assert out[0] == [] and out[2] == []
+    ran = {r.query: r for r in captured}
+    assert set(ran) == {"alpha", "beta"}
+    assert all(r.query_vector == [0.1, 0.2] for r in ran.values())
+    # Isolation is bounded (bisection), not one probe per text.
+    assert len(client.calls) <= 6
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_propagates_and_does_not_strand() -> None:
+    import asyncio
+    import contextlib
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=8,
+        query_timeout_seconds=30.0,
+        batch_search_timeout_seconds=30.0,
+    )
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        # Cancellation-resistant backend.
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.sleep(30)
+        await asyncio.sleep(30)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    batch = asyncio.ensure_future(
+        daemon._batch_search_on_current_loop([{"query": "a"}, {"query": "b"}], zone_id="root")
+    )
+    await asyncio.sleep(0.05)
+    batch.cancel()
+
+    # Caller cancellation must propagate promptly (bounded cleanup), never be
+    # converted into per-query failures or left pending forever.
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(batch, timeout=10)

@@ -848,6 +848,16 @@ async def search_query_batch(
     # in the parse comprehension below.
     if not isinstance(raw_queries, list) or not raw_queries:
         raise HTTPException(status_code=400, detail="No queries provided")
+    # Cardinality ceiling: every accepted query becomes a task before the
+    # daemon's concurrency semaphore applies, so an unbounded batch could
+    # exhaust the worker before any timeout could run.
+    raw_max = getattr(getattr(search_daemon, "config", None), "batch_search_max_queries", None)
+    max_queries = raw_max if isinstance(raw_max, int) and not isinstance(raw_max, bool) else 500
+    if len(raw_queries) > max_queries:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many queries: {len(raw_queries)} exceeds the limit of {max_queries}",
+        )
 
     # #4557 (gap 1): batch had no read gate at all -- a write-only token
     # could read via /query/batch even though /query fails it closed.

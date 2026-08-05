@@ -206,6 +206,16 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Skeleton title arm in hybrid fusion (Issue #4545). Default on.
         _title_arm_env = os.environ.get("NEXUS_SEARCH_TITLE_ARM", "true")
         _title_arm = _title_arm_env.strip().lower() not in ("false", "0", "no")
+        _batch_max_env = os.environ.get("NEXUS_SEARCH_BATCH_MAX_QUERIES", "")
+        _batch_max = 500
+        if _batch_max_env:
+            try:
+                _batch_max = max(1, int(_batch_max_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_SEARCH_BATCH_MAX_QUERIES=%r — falling back to 500",
+                    _batch_max_env,
+                )
         _batch_timeout_env = os.environ.get("NEXUS_SEARCH_BATCH_TIMEOUT", "")
         _batch_timeout = 120.0
         if _batch_timeout_env:
@@ -250,6 +260,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             index_preload_enabled=_index_preload,
             batch_search_concurrency=_batch_concurrency,
             batch_search_timeout_seconds=_batch_timeout,
+            batch_search_max_queries=_batch_max,
         )
 
         # Inject async_session_factory from RecordStoreABC when available

@@ -101,6 +101,10 @@ _BATCH_EMBED_UNAVAILABLE_MESSAGE = "Query embedding unavailable"
 # cleanup so it cannot hold the request open indefinitely.
 _BATCH_VECTOR_BACKEND_MESSAGE = "Vector backend unavailable"
 _BATCH_CANCEL_DRAIN_SECONDS = 5.0
+# Cap on bisection probes used to isolate an input-specific embedding
+# failure. Bounds the degenerate case (many independently-bad inputs) so a
+# batch can never turn into a per-text retry storm against the provider.
+_BATCH_EMBED_PROBE_LIMIT = 16
 
 
 class VectorBackendUnavailableError(RuntimeError):
@@ -485,6 +489,11 @@ class DaemonConfig:
     # windows. On expiry, unfinished queries are cancelled and reported as
     # per-query timeout failures; completed siblings keep their results.
     batch_search_timeout_seconds: float = 120.0
+    # Hard ceiling on queries per /query/batch request. Every accepted query
+    # becomes an asyncio task before the concurrency semaphore applies, so
+    # cardinality — not concurrency — is what bounds task/memory allocation.
+    # Default keeps the documented 470-query benchmark workload working.
+    batch_search_max_queries: int = 500
 
     # Entropy-aware filtering (Issue #1024)
     entropy_filtering: bool = False
@@ -3692,6 +3701,82 @@ class SearchDaemon:
 
         return await self._run_on_owner_loop(_work)
 
+    async def _embed_batch_texts(
+        self,
+        texts: list[str],
+        *,
+        remaining: Callable[..., float],
+    ) -> tuple[dict[str, list[float]], set[str], bool]:
+        """Embed unique batch query texts, isolating input-specific failures.
+
+        Returns ``(vector_by_text, failed_texts, provider_down)``.
+
+        One shared ``embed_batch`` call covers the happy path. When it
+        fails, the cause is either ONE bad input (e.g. a text the provider
+        rejects) or a provider-wide outage — and the two need opposite
+        handling: a bad input must not fail its healthy siblings, while an
+        outage must not turn into a per-text retry storm. A bounded binary
+        search separates them: halves are probed until the offender is
+        isolated (O(log n) probes), and if BOTH halves fail at the first
+        split the provider is treated as down (2 extra probes, no storm).
+        ``_BATCH_EMBED_PROBE_LIMIT`` caps total probe calls.
+        """
+        probes_left = _BATCH_EMBED_PROBE_LIMIT
+        vector_by_text: dict[str, list[float]] = {}
+        failed_texts: set[str] = set()
+
+        async def _probe(chunk: list[str]) -> bool:
+            """Embed one chunk; True on success (vectors recorded)."""
+            nonlocal probes_left
+            budget = remaining(self.config.query_timeout_seconds)
+            vectors = await asyncio.wait_for(
+                self._embedding_client.embed_batch(chunk), timeout=budget
+            )
+            vector_by_text.update(dict(zip(chunk, vectors, strict=True)))
+            return True
+
+        try:
+            await _probe(texts)
+            return vector_by_text, failed_texts, False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("batch pre-embed failed (%d texts); isolating: %s", len(texts), exc)
+
+        async def _isolate(chunk: list[str]) -> bool:
+            """Bisect ``chunk``; False means "provider looks down"."""
+            nonlocal probes_left
+            if len(chunk) == 1:
+                failed_texts.add(chunk[0])
+                return True
+            mid = len(chunk) // 2
+            halves = [chunk[:mid], chunk[mid:]]
+            outcomes: list[bool] = []
+            for half in halves:
+                if probes_left <= 0 or remaining() <= 0:
+                    # Out of probe budget or wall clock: treat the rest as
+                    # unembeddable rather than probing further.
+                    failed_texts.update(half)
+                    outcomes.append(False)
+                    continue
+                probes_left -= 1
+                try:
+                    await _probe(half)
+                    outcomes.append(True)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    outcomes.append(await _isolate(half))
+            # Both halves failed outright at this level -> provider-wide.
+            return any(outcomes)
+
+        healthy = await _isolate(texts)
+        if not healthy and not vector_by_text:
+            # Nothing embedded anywhere: treat as a provider outage so the
+            # whole batch degrades once instead of per query.
+            return {}, set(), True
+        return vector_by_text, failed_texts, False
+
     async def _batch_search_on_current_loop(
         self,
         queries: list[dict[str, Any]],
@@ -3733,6 +3818,9 @@ class SearchDaemon:
         # failed shared operation into N concurrent retry cycles against an
         # already degraded provider.
         vector_by_text: dict[str, list[float]] = {}
+        # Texts the provider rejected individually (bad input) — only those
+        # queries fail; healthy siblings keep their vectors.
+        failed_texts: set[str] = set()
         pre_embed_failed = False
         if self._embedding_client is not None:
             unique_texts = sorted(
@@ -3745,18 +3833,10 @@ class SearchDaemon:
                 }
             )
             if unique_texts:
-                try:
-                    vectors = await asyncio.wait_for(
-                        self._embedding_client.embed_batch(unique_texts),
-                        timeout=_remaining(self.config.query_timeout_seconds),
-                    )
-                    vector_by_text = dict(zip(unique_texts, vectors, strict=True))
-                except Exception as exc:
-                    pre_embed_failed = True
-                    logger.warning(
-                        "batch pre-embed failed; semantic queries fail, hybrid degrades to keyword-only: %s",
-                        exc,
-                    )
+                vector_by_text, failed_texts, pre_embed_failed = await self._embed_batch_texts(
+                    unique_texts,
+                    remaining=_remaining,
+                )
 
         semaphore = asyncio.Semaphore(max(1, self.config.batch_search_concurrency))
 
@@ -3765,9 +3845,10 @@ class SearchDaemon:
                 return BatchQueryFailure(error="invalid query spec: expected an object")
             query_text = str(q.get("query", ""))
             search_type = q.get("search_type", "hybrid")
-            if pre_embed_failed and search_type == "semantic":
-                # The shared embed already failed — don't burn a per-query
-                # retry cycle just to fail the same way.
+            text_embed_failed = pre_embed_failed or query_text in failed_texts
+            if text_embed_failed and search_type == "semantic":
+                # No embedding for THIS text — don't burn a per-query retry
+                # cycle just to fail the same way.
                 return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
             async with semaphore:
                 try:
@@ -3793,7 +3874,7 @@ class SearchDaemon:
                                 zone_id=effective_zone_id,
                                 query_vector=vector_by_text.get(query_text),
                                 propagate_failures=True,
-                                embedding_unavailable=pre_embed_failed,
+                                embedding_unavailable=text_embed_failed,
                             )
                         ),
                         timeout=_remaining(self.config.query_timeout_seconds),
@@ -3830,9 +3911,13 @@ class SearchDaemon:
         try:
             _done_tasks, pending_tasks = await asyncio.wait(tasks, timeout=_remaining())
         except BaseException:
+            # Caller cancellation / shutdown: cancel children, make a BOUNDED
+            # best-effort drain (a backend that suppresses CancelledError must
+            # not strand this task forever), then always re-raise.
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                await asyncio.wait(tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS)
             raise
         # The set pending AT EXPIRY is authoritative for settlement: a task
         # that finishes during cancellation cleanup (or suppresses the
@@ -3851,10 +3936,13 @@ class SearchDaemon:
             # Bounded drain: a backend that swallows cancellation must not
             # hold the request open past its deadline. Un-drained tasks are
             # abandoned (already settled as timeouts below).
-            drain = asyncio.gather(*pending_tasks, return_exceptions=True)
             try:
-                await asyncio.wait_for(asyncio.shield(drain), timeout=_BATCH_CANCEL_DRAIN_SECONDS)
-            except (TimeoutError, asyncio.CancelledError):
+                await asyncio.wait(pending_tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS)
+            except asyncio.CancelledError:
+                # Caller cancellation during cleanup is NOT a batch outcome —
+                # never convert it into per-query failures.
+                raise
+            except TimeoutError:
                 logger.warning(
                     "batch_search cancellation drain exceeded %.1fs; abandoning %d task(s)",
                     _BATCH_CANCEL_DRAIN_SECONDS,

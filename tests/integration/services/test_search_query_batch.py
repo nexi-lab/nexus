@@ -397,3 +397,37 @@ class TestBatchRoute:
 
         assert resp.status_code == 400
         daemon.batch_search.assert_not_called()
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestBatchCardinality:
+    def test_batch_over_max_queries_400(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[])
+        daemon.config = MagicMock()
+        daemon.config.batch_search_max_queries = 3
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={"queries": [{"q": f"q{i}"} for i in range(4)]},
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "Too many queries" in resp.json()["detail"]
+        daemon.batch_search.assert_not_called()
+
+    def test_batch_at_max_queries_allowed(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[[], [], []])
+        daemon.config = MagicMock()
+        daemon.config.batch_search_max_queries = 3
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={"queries": [{"q": f"q{i}"} for i in range(3)]},
+        )
+
+        assert resp.status_code == 200, resp.text
+        daemon.batch_search.assert_called_once()

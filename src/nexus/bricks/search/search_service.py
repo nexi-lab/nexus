@@ -37,6 +37,7 @@ from nexus.contracts.search_types import (
     GREP_ZOEKT_THRESHOLD,
     LAST_SEMANTIC_DEGRADED,
     GlobStrategy,
+    SearchRequest,
     SearchStrategy,
 )
 from nexus.contracts.types import Permission
@@ -4055,11 +4056,13 @@ class SearchService:
             if daemon is not None:
                 try:
                     rows = await daemon.search(
-                        query=query,
-                        search_type="keyword",
-                        limit=per_lane_limit,
-                        path_filter=db_path,
-                        zone_id=zone_id,
+                        SearchRequest(
+                            query=query,
+                            search_type="keyword",
+                            limit=per_lane_limit,
+                            path_filter=db_path,
+                            zone_id=zone_id,
+                        )
                     )
                 except Exception as exc:
                     logger.warning(
@@ -4358,11 +4361,13 @@ class SearchService:
 
                 db_path = _unscope(path) if path != "/" else None
                 daemon_results = await daemon.search(
-                    query=query,
-                    search_type="keyword",
-                    limit=fetch_limit,
-                    path_filter=db_path,
-                    zone_id=zone_id,
+                    SearchRequest(
+                        query=query,
+                        search_type="keyword",
+                        limit=fetch_limit,
+                        path_filter=db_path,
+                        zone_id=zone_id,
+                    )
                 )
                 hits: builtins.list[dict[str, Any]] = []
                 for r in daemon_results:
@@ -4561,11 +4566,13 @@ class SearchService:
 
             db_path = _unscope(path) if path != "/" else None
             daemon_results = await daemon.search(
-                query=query,
-                search_type=search_mode,
-                limit=fetch_limit,
-                path_filter=db_path,
-                zone_id=zone_id,
+                SearchRequest(
+                    query=query,
+                    search_type=search_mode,
+                    limit=fetch_limit,
+                    path_filter=db_path,
+                    zone_id=zone_id,
+                )
             )
             hits = []
             for r in daemon_results:

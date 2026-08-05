@@ -724,6 +724,9 @@ async def test_legacy_hybrid_fallback_caps_at_shared_boundary() -> None:
         rrf_k: int = 60,
         *,
         zone_id: str | None = None,
+        query_vector: list[float] | None = None,
+        embedding_unavailable: bool = False,
+        propagate_failures: bool = False,
     ) -> list[SearchResult]:
         legacy_limits.append(limit)
         rows = [_chunk("/long.md", i, 10.0 - i) for i in range(4)] + [

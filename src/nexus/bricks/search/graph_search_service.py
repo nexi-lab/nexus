@@ -34,12 +34,16 @@ class DaemonSemanticSearchWrapper:
         alpha: float = 0.5,  # noqa: ARG002
         **kwargs: Any,  # noqa: ARG002
     ) -> list[BaseSearchResult]:
+        from nexus.contracts.search_types import SearchRequest
+
         results = await self.daemon.search(
-            query=query,
-            search_type=search_mode,
-            limit=limit,
-            path_filter=path if path != "/" else None,
-            zone_id=self._zone_id,
+            SearchRequest(
+                query=query,
+                search_type=search_mode,
+                limit=limit,
+                path_filter=path if path != "/" else None,
+                zone_id=self._zone_id,
+            )
         )
         return [
             BaseSearchResult(

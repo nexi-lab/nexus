@@ -206,6 +206,36 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Skeleton title arm in hybrid fusion (Issue #4545). Default on.
         _title_arm_env = os.environ.get("NEXUS_SEARCH_TITLE_ARM", "true")
         _title_arm = _title_arm_env.strip().lower() not in ("false", "0", "no")
+        _batch_max_env = os.environ.get("NEXUS_SEARCH_BATCH_MAX_QUERIES", "")
+        _batch_max = 500
+        if _batch_max_env:
+            try:
+                _batch_max = max(1, int(_batch_max_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_SEARCH_BATCH_MAX_QUERIES=%r — falling back to 500",
+                    _batch_max_env,
+                )
+        _batch_timeout_env = os.environ.get("NEXUS_SEARCH_BATCH_TIMEOUT", "")
+        _batch_timeout = 120.0
+        if _batch_timeout_env:
+            try:
+                _batch_timeout = max(1.0, float(_batch_timeout_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_SEARCH_BATCH_TIMEOUT=%r — falling back to 120",
+                    _batch_timeout_env,
+                )
+        _batch_concurrency_env = os.environ.get("NEXUS_SEARCH_BATCH_CONCURRENCY", "")
+        _batch_concurrency = 8
+        if _batch_concurrency_env:
+            try:
+                _batch_concurrency = max(1, int(_batch_concurrency_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_SEARCH_BATCH_CONCURRENCY=%r — falling back to 8",
+                    _batch_concurrency_env,
+                )
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
@@ -228,6 +258,9 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             page_bm25_rrf_k=_page_bm25_rrf_k,
             title_arm=_title_arm,
             index_preload_enabled=_index_preload,
+            batch_search_concurrency=_batch_concurrency,
+            batch_search_timeout_seconds=_batch_timeout,
+            batch_search_max_queries=_batch_max,
         )
 
         # Inject async_session_factory from RecordStoreABC when available

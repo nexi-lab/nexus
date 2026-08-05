@@ -65,7 +65,7 @@ from nexus.bricks.search.mutation_parking import (
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.search_types import SearchRequest
+from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
 from nexus.lib.env import get_database_url
 
 T = TypeVar("T")
@@ -88,6 +88,57 @@ _MAX_CAP_WIDEN = 4
 # Durable mutation consumer names (#4337): single source for the refresh
 # loop, startup reconciliation, parked-event re-drive, and admin skip-to.
 MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
+
+
+# Stable sanitized wire messages for per-query batch failures. Raw exception
+# text never crosses the API boundary (information disclosure); full detail
+# is logged server-side at the failure site.
+_BATCH_FAILURE_MESSAGE = "Search query failed"
+_BATCH_TIMEOUT_MESSAGE = "Search timed out"
+_BATCH_EMBED_UNAVAILABLE_MESSAGE = "Query embedding unavailable"
+# Grace window for draining cancelled batch tasks. Cancellation is normally
+# immediate; this only bounds a backend that swallows CancelledError during
+# cleanup so it cannot hold the request open indefinitely.
+_BATCH_VECTOR_BACKEND_MESSAGE = "Vector backend unavailable"
+_BATCH_CANCEL_DRAIN_SECONDS = 5.0
+# Cap on bisection probes used to isolate an input-specific embedding
+# failure. Bounds the degenerate case (many independently-bad inputs) so a
+# batch can never turn into a per-text retry storm against the provider.
+_BATCH_EMBED_PROBE_LIMIT = 16
+# Consecutive probes with no success anywhere before the provider (rather
+# than the inputs) is blamed. Keeps a total outage to a handful of calls
+# while still letting independently-bad inputs in different halves isolate.
+_BATCH_EMBED_OUTAGE_PROBES = 4
+# Known-valid text used to settle "is the provider down, or are these inputs
+# bad?" once several probes have failed with no success anywhere.
+_BATCH_EMBED_CONTROL_TEXT = "nexus embedding health probe"
+# Ancillary batch pools, sized independently of the query-execution pool so a
+# stuck embedding call or path-context refresh can never consume the permits
+# that batch searches (including the keyword-only fallback) need.
+_BATCH_POOL_LIMITS: dict[str, int] = {"embed": 4, "refresh": 2}
+
+
+class VectorBackendUnavailableError(RuntimeError):
+    """The dense backend itself is absent or unusable for this search.
+
+    Distinct from :class:`EmbeddingUnavailableError` (which means the query
+    text could not be embedded). Missing-embedding is legitimate hybrid
+    degradation and stays fail-soft; a missing/failed vector BACKEND means
+    dense coverage is silently incomplete, so under the batch policy it is
+    a per-query failure rather than a keyword-only "success".
+    """
+
+
+class EmbeddingUnavailableError(RuntimeError):
+    """A semantic-only search could not obtain a query embedding.
+
+    Raised only on the batch path (``SearchRequest.propagate_failures``)
+    so the batch endpoint reports a per-query failure instead of the
+    interactive path's degrade-to-empty behavior. The message is the
+    query text — callers must map it to a sanitized wire message.
+    """
+
+
 LEGACY_REFRESH_CONSUMER = "legacy-refresh"
 
 # Title arm safety bounds (#4545 review rounds 3-4).
@@ -440,6 +491,20 @@ class DaemonConfig:
     # Performance settings
     query_timeout_seconds: float = 10.0
     max_indexing_concurrency: int = 10  # Issue #2071: from ProfileTuning.search
+    # Bounded fan-out width for POST /query/batch inner searches. 1 restores
+    # strictly sequential execution (ops fallback).
+    batch_search_concurrency: int = 8
+    # Absolute wall-clock ceiling for one /query/batch request's search
+    # phase. Per-query timeouts alone cannot bound the batch: N hung queries
+    # occupy semaphore slots for ceil(N/concurrency) consecutive timeout
+    # windows. On expiry, unfinished queries are cancelled and reported as
+    # per-query timeout failures; completed siblings keep their results.
+    batch_search_timeout_seconds: float = 120.0
+    # Hard ceiling on queries per /query/batch request. Every accepted query
+    # becomes an asyncio task before the concurrency semaphore applies, so
+    # cardinality — not concurrency — is what bounds task/memory allocation.
+    # Default keeps the documented 470-query benchmark workload working.
+    batch_search_max_queries: int = 500
 
     # Entropy-aware filtering (Issue #1024)
     entropy_filtering: bool = False
@@ -2847,6 +2912,9 @@ class SearchDaemon:
                 fusion_method=req.fusion_method,
                 rrf_k=req.rrf_k,
                 zone_id=req.zone_id,
+                query_vector=req.query_vector,
+                propagate_failures=req.propagate_failures,
+                embedding_unavailable=req.embedding_unavailable,
             )
         else:
 
@@ -2860,6 +2928,9 @@ class SearchDaemon:
                     fusion_method=req.fusion_method,
                     rrf_k=req.rrf_k,
                     zone_id=req.zone_id,
+                    query_vector=req.query_vector,
+                    propagate_failures=req.propagate_failures,
+                    embedding_unavailable=req.embedding_unavailable,
                 )
 
             results = await self._run_on_owner_loop(_work)
@@ -2885,6 +2956,9 @@ class SearchDaemon:
         fusion_method: str = "rrf",
         zone_id: str | None = None,
         rrf_k: int = 60,
+        query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
@@ -3051,6 +3125,9 @@ class SearchDaemon:
                     fusion_method=fusion_method,
                     rrf_k=rrf_k,
                     zone_id=effective_zone_id,
+                    query_vector=query_vector,
+                    propagate_failures=propagate_failures,
+                    embedding_unavailable=embedding_unavailable,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
                 self.last_search_timing = _merge_backend_timing(backend_ms, self.last_search_timing)
@@ -3086,7 +3163,13 @@ class SearchDaemon:
             fallback_start = time.perf_counter()
             if search_type == "semantic":
                 results = await self._semantic_search(
-                    query, internal_limit, path_filter, zone_id=zone_id
+                    query,
+                    internal_limit,
+                    path_filter,
+                    zone_id=zone_id,
+                    query_vector=query_vector,
+                    propagate_failures=propagate_failures,
+                    embedding_unavailable=embedding_unavailable,
                 )
             else:  # hybrid
                 # Issue #4542 (round-5 review): the legacy hybrid stack must
@@ -3107,6 +3190,9 @@ class SearchDaemon:
                     fusion_method,
                     rrf_k,
                     zone_id=zone_id,
+                    query_vector=query_vector,
+                    embedding_unavailable=embedding_unavailable,
+                    propagate_failures=propagate_failures,
                 )
                 if pooled_legacy:
                     from nexus.bricks.search.result_builders import cap_chunks_per_page
@@ -3151,6 +3237,12 @@ class SearchDaemon:
             return self._with_search_timing(results)
 
         except TimeoutError:
+            # Batch mode must not misreport a timed-out search as a healthy
+            # empty result — the batch layer converts this into a per-query
+            # failure entry. The interactive path keeps its degrade-to-empty
+            # contract.
+            if propagate_failures:
+                raise
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return self._with_search_timing([])
 
@@ -3165,6 +3257,9 @@ class SearchDaemon:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         rrf_k: int = 60,
+        query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Run keyword / semantic / hybrid via the new search backends.
 
@@ -3209,9 +3304,15 @@ class SearchDaemon:
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         if search_type == "semantic":
-            qvec = await timed_leg("embed_ms", self._embed_query(query))
+            qvec = query_vector
+            if qvec is None and not embedding_unavailable:
+                qvec = await timed_leg("embed_ms", self._embed_query(query))
             if qvec is None:
                 record_total()
+                # A semantic-only search without an embedding served nothing —
+                # batch mode reports that as a failure, not a healthy empty.
+                if propagate_failures:
+                    raise EmbeddingUnavailableError(query)
                 return []
             results = await timed_leg(
                 "vector_ms",
@@ -3236,7 +3337,9 @@ class SearchDaemon:
         widen = min(self.config.chunks_per_page, _MAX_CAP_WIDEN) + 1
         leg_limit = limit * 2 * widen if pooled else limit * 2
 
-        qvec = await timed_leg("embed_ms", self._embed_query(query))
+        qvec = query_vector
+        if qvec is None and not embedding_unavailable:
+            qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
@@ -3348,6 +3451,7 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, leg_limit, zone_id),
                 ),
+                propagate_failures=propagate_failures,
             )
         else:
             chunk_kw, dense = await self._gather_legs_fail_soft_dense(
@@ -3361,6 +3465,7 @@ class SearchDaemon:
                     "vector_ms",
                     self._vector_backend.semantic_search(qvec, path, leg_limit, zone_id),
                 ),
+                propagate_failures=propagate_failures,
             )
             page_kw = []
 
@@ -3442,6 +3547,8 @@ class SearchDaemon:
     async def _gather_legs_fail_soft_dense(
         kw_awaitable: Awaitable[T],
         dense_awaitable: Awaitable[list[Any]],
+        *,
+        propagate_failures: bool = False,
     ) -> tuple[T, list[Any]]:
         """Run the keyword and dense legs concurrently with asymmetric failure
         handling (#4541 review R8/R9).
@@ -3464,6 +3571,15 @@ class SearchDaemon:
         try:
             dense_result: list[Any] = await dense_task
         except Exception as exc:
+            # Batch mode reports dense INFRASTRUCTURE failures per query
+            # instead of silently serving keyword-only hits as a full
+            # success. ONLY a missing query embedding is legitimate
+            # degradation (the hybrid contract serves keyword-only then) and
+            # stays fail-soft in both modes — an absent/failed vector BACKEND
+            # raises VectorBackendUnavailableError and is NOT carved out,
+            # since it means dense coverage is silently incomplete.
+            if propagate_failures and not isinstance(exc, EmbeddingUnavailableError):
+                raise
             logger.warning("hybrid dense leg failed; continuing keyword-only: %s", exc)
             dense_result = []
         return kw_result, dense_result
@@ -3587,25 +3703,299 @@ class SearchDaemon:
         queries: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> list[list[Any]]:
+    ) -> list[list[Any] | BatchQueryFailure]:
         if zone_id is None:
             return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
 
-        async def _work() -> list[list[Any]]:
+        async def _work() -> list[list[Any] | BatchQueryFailure]:
             return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
 
         return await self._run_on_owner_loop(_work)
+
+    def _batch_semaphore(self, pool: str = "search") -> asyncio.Semaphore:
+        """Daemon-scoped permit pool for one class of batch work.
+
+        Deliberately NOT per-request: a cancelled batch can leave
+        cancellation-resistant work running, and a batch-local semaphore
+        would hand the next request fresh permits while that work still
+        hits the DB / provider.
+
+        Pools are also SEPARATE PER CLASS. Query execution, embedding-provider
+        calls, and path-context refreshes have different failure modes; on a
+        shared pool one resistant ancillary operation could retain a query
+        permit and disable batch search entirely (at concurrency 1, a single
+        stuck embed would block even the keyword-only fallback it exists to
+        enable). Keyed by running loop so a daemon serving more than one loop
+        never shares a bound primitive.
+        """
+        loop = asyncio.get_running_loop()
+        limit = _BATCH_POOL_LIMITS.get(pool) or max(1, self.config.batch_search_concurrency)
+        cache: dict[str, tuple[Any, int, asyncio.Semaphore]] | None = getattr(
+            self, "_batch_semaphore_cache", None
+        )
+        if cache is None:
+            cache = {}
+            self._batch_semaphore_cache = cache
+        cached = cache.get(pool)
+        if cached is not None and cached[0] is loop and cached[1] == limit:
+            semaphore: asyncio.Semaphore = cached[2]
+            return semaphore
+        semaphore = asyncio.Semaphore(limit)
+        cache[pool] = (loop, limit, semaphore)
+        return semaphore
+
+    def _track_abandoned_batch_tasks(self, tasks: Iterable[asyncio.Task[Any]]) -> None:
+        """Keep undrained batch tasks referenced until they actually finish.
+
+        They still hold their semaphore permits (the pool is daemon-scoped),
+        so abandoned work keeps consuming capacity rather than silently
+        accumulating. Holding the reference also prevents mid-flight GC and
+        retrieves the eventual exception so asyncio does not log it as
+        never-retrieved.
+        """
+        tracked = getattr(self, "_abandoned_batch_tasks", None)
+        if tracked is None:
+            tracked = set()
+            self._abandoned_batch_tasks = tracked
+
+        def _done(task: asyncio.Task[Any]) -> None:
+            tracked.discard(task)
+            if not task.cancelled():
+                with contextlib.suppress(BaseException):
+                    task.exception()
+
+        for task in tasks:
+            if task.done():
+                continue
+            tracked.add(task)
+            task.add_done_callback(_done)
+
+    async def _run_bounded_batch_op(
+        self,
+        make_coro: Callable[[], Awaitable[T]],
+        *,
+        remaining: Callable[[], float],
+        exec_cap: float,
+        pool: str = "search",
+    ) -> T:
+        """Run one batch-phase operation under a permit and a hard bound.
+
+        The bound covers PERMIT ACQUISITION as well as the work itself:
+        abandoned cancellation-resistant work deliberately keeps its permits,
+        so an exhausted pool would otherwise park the next request here,
+        outside any deadline. The coroutine is created only after a permit is
+        held (a coroutine built up front and never awaited leaks).
+
+        ``asyncio.wait_for`` alone is also not enough for the work itself: on
+        timeout it cancels and then WAITS for that cancellation to finish, so
+        a provider that delays or swallows ``CancelledError`` keeps the batch
+        suspended. The work runs as its own task, is awaited through
+        ``shield``, and on timeout is cancelled and handed to
+        :meth:`_track_abandoned_batch_tasks` — which keeps it charged against
+        the daemon-scoped permit pool until it genuinely finishes.
+        """
+        semaphore = self._batch_semaphore(pool)
+        # Queue time is charged to the BATCH deadline, not to the operation's
+        # own budget: a query that waits behind a full pool must still get a
+        # full execution window once admitted, or healthy multi-wave batches
+        # would time out under normal latency. No coroutine exists yet, so a
+        # timeout here cannot leak one.
+        await asyncio.wait_for(semaphore.acquire(), timeout=max(0.0, remaining()))
+        exec_budget = min(exec_cap, remaining())
+        if exec_budget <= 0:
+            semaphore.release()
+            raise TimeoutError("batch deadline exhausted before the operation could start")
+        task: asyncio.Task[T] = asyncio.ensure_future(make_coro())
+        task.add_done_callback(lambda _task: semaphore.release())
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=exec_budget)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            self._track_abandoned_batch_tasks({task})
+            raise
+
+    async def _embed_batch_texts(
+        self,
+        texts: list[str],
+        *,
+        remaining: Callable[..., float],
+    ) -> tuple[dict[str, list[float]], set[str], bool]:
+        """Embed unique batch query texts, isolating input-specific failures.
+
+        Returns ``(vector_by_text, failed_texts, provider_down)``.
+
+        One shared ``embed_batch`` call covers the happy path. When it fails
+        the cause is either specific bad input (texts the provider rejects)
+        or a provider-wide outage — and the two need opposite handling: bad
+        input must not fail its healthy siblings, while an outage must not
+        turn into a per-text retry storm. Bisection separates them: failing
+        halves keep splitting so that INDEPENDENT bad inputs in different
+        halves are each isolated, while an outage — recognised as
+        ``_BATCH_EMBED_OUTAGE_PROBES`` consecutive probes with no success
+        anywhere — stops the walk early. ``_BATCH_EMBED_PROBE_LIMIT`` caps
+        total probes either way; every vector obtained along the way is
+        kept.
+        """
+        # Budget must be large enough to actually ISOLATE a bad input at the
+        # configured batch cardinality: bisection costs ~2 probes per level,
+        # i.e. 2*ceil(log2(n)) for one offender (18 at the documented 470-500
+        # query workload). A fixed floor silently ran out mid-walk on large
+        # batches and marked whole unresolved halves as unembeddable, failing
+        # healthy siblings. The factor leaves room for a few independent
+        # offenders; a genuine outage is still cut short by the control probe,
+        # and every probe remains under the batch deadline.
+        probes_left = max(
+            _BATCH_EMBED_PROBE_LIMIT,
+            4 * math.ceil(math.log2(max(2, len(texts)))),
+        )
+        probes_done = 0
+        vector_by_text: dict[str, list[float]] = {}
+        failed_texts: set[str] = set()
+
+        async def _probe(chunk: list[str]) -> None:
+            """Embed one chunk, recording its vectors. Raises on failure."""
+            nonlocal probes_done
+            probes_done += 1
+            vectors = await self._run_bounded_batch_op(
+                lambda: self._embedding_client.embed_batch(chunk),
+                remaining=remaining,
+                exec_cap=self.config.query_timeout_seconds,
+                pool="embed",
+            )
+            vector_by_text.update(dict(zip(chunk, vectors, strict=True)))
+
+        control_verdict: bool | None = None
+        # A probe that TIMED OUT (rather than being rejected) may have left a
+        # cancellation-resistant provider task holding a permit. Launching
+        # more probes after that drains the daemon-scoped pool, so isolation
+        # stops at the first one.
+        probe_timed_out = False
+
+        async def _looks_like_outage() -> bool:
+            """Is the PROVIDER down, or are these texts simply bad?
+
+            Probe count alone cannot answer that — bad inputs can contaminate
+            every early partition. When nothing has embedded after several
+            attempts, settle it with evidence: one probe of a known-valid
+            control text. Control succeeds -> the provider is healthy and the
+            failures belong to specific inputs; control fails -> outage. The
+            verdict is cached so it costs at most one extra call per batch.
+            """
+            nonlocal control_verdict
+            if vector_by_text or probes_done < _BATCH_EMBED_OUTAGE_PROBES:
+                return False
+            if control_verdict is not None:
+                return control_verdict
+            try:
+                await self._run_bounded_batch_op(
+                    lambda: self._embedding_client.embed_batch([_BATCH_EMBED_CONTROL_TEXT]),
+                    remaining=remaining,
+                    exec_cap=self.config.query_timeout_seconds,
+                    pool="embed",
+                )
+                control_verdict = False
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("batch pre-embed control probe failed; provider looks down: %s", exc)
+                control_verdict = True
+            return control_verdict
+
+        try:
+            await _probe(texts)
+            return vector_by_text, failed_texts, False
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            # Never probed successfully and the provider is unresponsive:
+            # degrade the batch once rather than launching more probes at a
+            # provider that is already holding an abandoned task.
+            logger.warning("batch pre-embed timed out (%d texts); degrading batch", len(texts))
+            return {}, set(), True
+        except Exception as exc:
+            logger.warning("batch pre-embed failed (%d texts); isolating: %s", len(texts), exc)
+
+        async def _isolate(chunk: list[str]) -> str:
+            """Bisect ``chunk``; returns "input" or "down"."""
+            nonlocal probes_left, probe_timed_out
+            if await _looks_like_outage():
+                return "down"
+            if len(chunk) == 1:
+                failed_texts.add(chunk[0])
+                return "input"
+            mid = len(chunk) // 2
+            halves = [chunk[:mid], chunk[mid:]]
+            # Probe BOTH halves before recursing so an outage surfaces from
+            # the shared no-success signal rather than a deep descent.
+            outcomes: list[bool | None] = []
+            for half in halves:
+                if probes_left <= 0 or remaining() <= 0:
+                    outcomes.append(None)
+                    continue
+                probes_left -= 1
+                try:
+                    await _probe(half)
+                    outcomes.append(True)
+                except asyncio.CancelledError:
+                    raise
+                except TimeoutError:
+                    probe_timed_out = True
+                    outcomes.append(None)
+                    break
+                except Exception:
+                    outcomes.append(False)
+            if await _looks_like_outage():
+                return "down"
+            if probe_timed_out:
+                # Stop here: mark whatever is still unresolved as unembeddable
+                # and keep every vector already obtained.
+                for half, outcome in zip(
+                    halves, outcomes + [None] * (len(halves) - len(outcomes)), strict=True
+                ):
+                    if outcome is not True:
+                        failed_texts.update(half)
+                return "input"
+            for half, outcome in zip(halves, outcomes, strict=True):
+                if outcome is True:
+                    continue
+                if outcome is None:
+                    # Unprobed under budget pressure: mark unembeddable
+                    # rather than probing further.
+                    failed_texts.update(half)
+                    continue
+                # A FAILED half keeps splitting: independent bad inputs in
+                # both halves must each be isolated, not collapsed into a
+                # false "provider down".
+                if await _isolate(half) == "down":
+                    return "down"
+            return "input"
+
+        isolation = await _isolate(texts)
+        if isolation == "input" and probe_timed_out and not vector_by_text:
+            # Nothing embedded and the provider stopped responding mid-walk:
+            # one shared degradation beats per-text failures.
+            return {}, set(), True
+        if isolation == "down":
+            # Provider outage: degrade the whole batch once instead of
+            # blaming (and failing) individual texts.
+            return {}, set(), True
+        return vector_by_text, failed_texts, False
 
     async def _batch_search_on_current_loop(
         self,
         queries: list[dict[str, Any]],
         *,
         zone_id: str | None = None,
-    ) -> list[list[Any]]:
-        """Batch search: embed N queries in ONE API call.
+    ) -> list[list[Any] | BatchQueryFailure]:
+        """Batch search: one shared embed call + bounded-concurrency fan-out.
 
-        Powers ``POST /api/v2/search/query/batch`` for benchmarks and bulk
-        evaluations. ~30s for 470 queries instead of ~16 min sequential.
+        Powers ``POST /api/v2/search/query/batch``. All unique query texts
+        that need a dense leg (search_type != "keyword") are embedded in ONE
+        ``embed_batch`` call; each inner search then runs concurrently under
+        ``DaemonConfig.batch_search_concurrency``. A failed inner query is
+        returned positionally as :class:`BatchQueryFailure` instead of being
+        collapsed to ``[]``, so callers can tell "no matches" from "backend
+        fell over".
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
@@ -3613,29 +4003,173 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
-        # Issue #3699: dedicated backend.batch_search is gone with txtai; we
-        # fan out per-query through the new backend stack instead. This is
-        # functionally equivalent for callers, just without the single-call
-        # embedding amortisation. T9 keeps the API surface intact.
-        results: list[list[Any]] = []
-        for q in queries:
-            if not isinstance(q, dict):
-                results.append([])
-                continue
-            try:
-                hits = await self.search(
-                    SearchRequest(
-                        query=str(q.get("query", "")),
-                        search_type=q.get("search_type", "hybrid"),
-                        limit=int(q.get("limit", 10)),
-                        path_filter=q.get("path_filter"),
-                        zone_id=effective_zone_id,
-                    )
+
+        # ONE monotonic deadline governs the whole request: pre-embed, the
+        # search fan-out, cancellation drain, and the path-context refresh
+        # each get only the REMAINING budget. Per-phase timeouts alone let a
+        # request accumulate pre-embed + fan-out + refresh windows.
+        batch_deadline = time.monotonic() + max(0.0, self.config.batch_search_timeout_seconds)
+
+        def _remaining(cap: float | None = None) -> float:
+            left = max(0.0, batch_deadline - time.monotonic())
+            return left if cap is None else min(left, cap)
+
+        # Pre-embed unique texts once. When the ONE shared embed_batch call
+        # fails (after the client's own retries), the whole batch treats the
+        # embedding provider as down for this request: semantic-only queries
+        # fail typed, hybrid queries degrade to keyword-only immediately.
+        # Letting every inner search retry its own embedding would turn one
+        # failed shared operation into N concurrent retry cycles against an
+        # already degraded provider.
+        vector_by_text: dict[str, list[float]] = {}
+        # Texts the provider rejected individually (bad input) — only those
+        # queries fail; healthy siblings keep their vectors.
+        failed_texts: set[str] = set()
+        pre_embed_failed = False
+        if self._embedding_client is not None:
+            unique_texts = sorted(
+                {
+                    str(q.get("query", ""))
+                    for q in queries
+                    if isinstance(q, dict)
+                    and str(q.get("query", ""))
+                    and q.get("search_type", "hybrid") != "keyword"
+                }
+            )
+            if unique_texts:
+                vector_by_text, failed_texts, pre_embed_failed = await self._embed_batch_texts(
+                    unique_texts,
+                    remaining=_remaining,
                 )
-            except Exception as exc:
-                logger.warning("batch_search inner search failed: %s", exc)
-                hits = []
-            results.append(hits)
+
+        async def _run_one(q: Any) -> list[Any] | BatchQueryFailure:
+            if not isinstance(q, dict):
+                return BatchQueryFailure(error="invalid query spec: expected an object")
+            query_text = str(q.get("query", ""))
+            search_type = q.get("search_type", "hybrid")
+            text_embed_failed = pre_embed_failed or query_text in failed_texts
+            if text_embed_failed and search_type == "semantic":
+                # No embedding for THIS text — don't burn a per-query retry
+                # cycle just to fail the same way.
+                return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
+            request = SearchRequest(
+                query=query_text,
+                search_type=search_type,
+                limit=int(q.get("limit", 10)),
+                path_filter=q.get("path_filter"),
+                alpha=float(q.get("alpha", 0.5)),
+                fusion_method=q.get("fusion_method", "rrf"),
+                rrf_k=int(q.get("rrf_k", 60)),
+                expand=q.get("expand", "none"),
+                recency=q.get("recency"),
+                recency_weight=q.get("recency_weight"),
+                recency_half_life_days=q.get("recency_half_life_days"),
+                zone_id=effective_zone_id,
+                query_vector=vector_by_text.get(query_text),
+                propagate_failures=True,
+                embedding_unavailable=text_embed_failed,
+            )
+            try:
+                # Bounded end to end (permit wait + search): asyncio.wait waits
+                # for EVERY entry, so an unbounded query would withhold all
+                # completed siblings and never produce the advertised per-query
+                # timeout failure. Permits follow real in-flight work, so a
+                # search that outlives its timeout keeps consuming capacity
+                # instead of accumulating silently.
+                inner_result = await self._run_bounded_batch_op(
+                    lambda: self.search(request),
+                    remaining=_remaining,
+                    exec_cap=self.config.query_timeout_seconds,
+                )
+                # A search that suppresses its cancellation can return a
+                # value AFTER the deadline (wait_for then yields that value
+                # instead of raising). It was unfinished when the budget ran
+                # out, so settle it as a timeout rather than reporting a
+                # healthy late result.
+                if time.monotonic() >= batch_deadline:
+                    return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+                return inner_result
+            except EmbeddingUnavailableError:
+                return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
+            except VectorBackendUnavailableError:
+                return BatchQueryFailure(error=_BATCH_VECTOR_BACKEND_MESSAGE)
+            except TimeoutError:
+                # Cancellation + abandoned-task accounting already happened
+                # inside _run_bounded_batch_op.
+                logger.warning("batch_search inner search timed out: %r", query_text)
+                return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+            except Exception:
+                # Full diagnostics stay server-side; the wire gets a stable
+                # sanitized message (raw backend exception text can leak
+                # SQL, hosts, or provider internals to authenticated
+                # callers — the single /query route is equally generic).
+                logger.exception("batch_search inner search failed: %r", query_text)
+                return BatchQueryFailure(error=_BATCH_FAILURE_MESSAGE)
+
+        # Absolute batch deadline on top of the per-query bounds: gather-style
+        # waiting alone lets N hung queries consume ceil(N/concurrency)
+        # consecutive per-query timeout windows. Unfinished tasks are
+        # cancelled, drained, and settled positionally as timeout failures;
+        # completed siblings keep their results.
+        tasks = [asyncio.ensure_future(_run_one(q)) for q in queries]
+        try:
+            _done_tasks, pending_tasks = await asyncio.wait(tasks, timeout=_remaining())
+        except BaseException:
+            # Caller cancellation / shutdown: cancel children, make a BOUNDED
+            # best-effort drain (a backend that suppresses CancelledError must
+            # not strand this task forever), then always re-raise.
+            for task in tasks:
+                task.cancel()
+            undrained: set[asyncio.Task[Any]] = set(tasks)
+            with contextlib.suppress(asyncio.CancelledError):
+                _drained, undrained = await asyncio.wait(tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS)
+            if undrained:
+                logger.warning(
+                    "batch_search cancellation left %d task(s) undrained after %.1fs; "
+                    "they keep their concurrency permits until they finish",
+                    len(undrained),
+                    _BATCH_CANCEL_DRAIN_SECONDS,
+                )
+                self._track_abandoned_batch_tasks(undrained)
+            raise
+        # The set pending AT EXPIRY is authoritative for settlement: a task
+        # that finishes during cancellation cleanup (or suppresses the
+        # cancel) was still unfinished at the deadline and must not be
+        # reported as a healthy result.
+        timed_out_positions = {i for i, task in enumerate(tasks) if task in pending_tasks}
+        if pending_tasks:
+            logger.warning(
+                "batch_search deadline (%.1fs) expired with %d of %d queries unfinished",
+                self.config.batch_search_timeout_seconds,
+                len(pending_tasks),
+                len(tasks),
+            )
+            for task in pending_tasks:
+                task.cancel()
+            # Bounded drain: a backend that swallows cancellation must not
+            # hold the request open past its deadline. Un-drained tasks are
+            # abandoned (already settled as timeouts below).
+            # asyncio.wait does NOT raise on timeout — it returns the still
+            # pending set, which is what tells us what to charge as abandoned.
+            # Caller cancellation during cleanup is not a batch outcome and
+            # propagates rather than becoming per-query failures.
+            _drained, undrained = await asyncio.wait(
+                pending_tasks, timeout=_BATCH_CANCEL_DRAIN_SECONDS
+            )
+            if undrained:
+                logger.warning(
+                    "batch_search cancellation drain exceeded %.1fs; %d task(s) still running "
+                    "and holding concurrency permits",
+                    _BATCH_CANCEL_DRAIN_SECONDS,
+                    len(undrained),
+                )
+                self._track_abandoned_batch_tasks(undrained)
+        results: list[list[Any] | BatchQueryFailure] = [
+            BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+            if i in timed_out_positions
+            else task.result()
+            for i, task in enumerate(tasks)
+        ]
         # Issue #3773: attach admin-configured path contexts. The whole batch
         # is single-zone by design (``zone_id=effective_zone_id`` above), so
         # refresh once against that zone and do pure in-memory lookups on
@@ -3659,7 +4193,19 @@ class SearchDaemon:
             # transient DB error still yields the last successfully-loaded
             # records instead of silently erasing context for the whole batch.
             try:
-                await cache.refresh_if_stale(effective_zone_id)
+                # Hard-bounded like every other batch phase: plain wait_for
+                # would cancel the DB call and then WAIT for that cancellation,
+                # so a resistant operation could hold the response past the
+                # deadline. With no budget left the refresh is skipped
+                # entirely and the stale snapshot below is used.
+                if _remaining() <= 0:
+                    raise TimeoutError("batch deadline exhausted before path-context refresh")
+                await self._run_bounded_batch_op(
+                    lambda: cache.refresh_if_stale(effective_zone_id),
+                    remaining=_remaining,
+                    exec_cap=self.config.query_timeout_seconds,
+                    pool="refresh",
+                )
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
@@ -3691,6 +4237,8 @@ class SearchDaemon:
                 # boost previously-gated results. This block only backfills
                 # ``context`` for legacy/mocked daemons.
                 for inner in results:
+                    if isinstance(inner, BatchQueryFailure):
+                        continue
                     for r in inner:
                         try:
                             record = lookup_record_in_records(records, r.path)
@@ -4238,6 +4786,9 @@ class SearchDaemon:
         path_filter: str | None,
         *,
         zone_id: str | None = None,
+        query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Vector similarity search via the active ``_vector_backend`` (Issue #3699).
 
@@ -4248,12 +4799,18 @@ class SearchDaemon:
         :meth:`search`) work unchanged.
         """
         if self._vector_backend is None:
+            if propagate_failures:
+                raise VectorBackendUnavailableError(query)
             return []
 
         try:
-            embedding = await self._embed_query(query)
+            embedding = query_vector
+            if embedding is None and not embedding_unavailable:
+                embedding = await self._embed_query(query)
             if not embedding:
                 logger.debug("Semantic search: no query embedding available")
+                if propagate_failures:
+                    raise EmbeddingUnavailableError(query)
                 return []
 
             from nexus.contracts.constants import ROOT_ZONE_ID
@@ -4266,6 +4823,10 @@ class SearchDaemon:
             return [self._coerce_to_search_result(r, search_type="semantic") for r in results]
         except Exception as e:
             logger.error(f"Semantic search error: {e}")
+            # Batch mode reports legacy-backend failures per query instead of
+            # collapsing them into a healthy empty result.
+            if propagate_failures:
+                raise
             return []
 
     async def _splade_search(
@@ -4303,6 +4864,9 @@ class SearchDaemon:
         rrf_k: int = 60,
         *,
         zone_id: str | None = None,
+        query_vector: list[float] | None = None,
+        embedding_unavailable: bool = False,
+        propagate_failures: bool = False,
     ) -> list[SearchResult]:
         """Hybrid search combining keyword and semantic results (legacy fallback).
 
@@ -4324,7 +4888,19 @@ class SearchDaemon:
         # are stamped below for non-default fusion requests.
         kw_results, sem_results = await self._gather_legs_fail_soft_dense(
             self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id),
-            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id),
+            self._semantic_search(
+                query,
+                limit * 3,
+                path_filter,
+                zone_id=zone_id,
+                query_vector=query_vector,
+                embedding_unavailable=embedding_unavailable,
+                # Raise real backend errors so the gather helper can apply
+                # the batch policy; missing-embedding degradation is carved
+                # out there (hybrid legitimately serves keyword-only then).
+                propagate_failures=propagate_failures,
+            ),
+            propagate_failures=propagate_failures,
         )
 
         fusion_config = FusionConfig(

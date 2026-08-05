@@ -41,6 +41,8 @@ __all__ = [
     "LAST_SEMANTIC_DEGRADED",
     # SearchBrickProtocol.search bundled request (#4553 follow-up B)
     "SearchRequest",
+    # Positional per-query failure marker for batch_search
+    "BatchQueryFailure",
 ]
 
 
@@ -80,6 +82,35 @@ class SearchRequest:
     recency: str | None = None
     recency_weight: float | None = None
     recency_half_life_days: float | None = None
+    # Pre-computed query embedding. When set, the daemon uses this vector
+    # for the dense leg instead of embedding the query text itself — the
+    # batch endpoint embeds all unique query texts in one embed_batch call
+    # and hands each inner search its vector.
+    query_vector: list[float] | None = None
+    # Batch-mode failure semantics. The interactive path degrades several
+    # backend failures to an empty result (query timeout, legacy semantic
+    # backend errors, missing query embedding on a semantic-only search).
+    # When True those failures raise to the caller instead, so the batch
+    # endpoint can report a per-query failure rather than a healthy empty.
+    propagate_failures: bool = False
+    # Set when a shared batch pre-embed already failed: dense legs skip
+    # their own embed attempt (hybrid degrades to keyword-only immediately)
+    # instead of re-hammering a degraded embedding provider once per query.
+    embedding_unavailable: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatchQueryFailure:
+    """Positional per-query failure marker returned by ``batch_search``.
+
+    The batch endpoint historically collapsed inner exceptions to ``[]``,
+    making a backend failure indistinguishable from a genuine empty result.
+    Returning this marker instead lets callers with fail-closed coverage
+    contracts (e.g. cross-workspace fan-out) count the query as FAILED
+    rather than "searched, no matches".
+    """
+
+    error: str
 
 
 # Per-task flag recording whether the last SANDBOX semantic_search call

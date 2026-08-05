@@ -38,12 +38,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
-from nexus.contracts.search_types import SearchRequest
+from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
+from nexus.server.api.v2.routers._search_batch import (
+    ParsedBatchSpec,
+    parse_batch_query_spec,
+    spec_query_text,
+)
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_operation_context, require_admin, require_auth
 from nexus.server.zone_execution import run_zone_scoped
@@ -801,34 +806,58 @@ async def search_query_batch(
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Batch search: run N queries through full hybrid pipeline.
+    """Batch search: run N queries through the full hybrid pipeline.
 
-    Body: {
-        "queries": [
-            {"q": "text", "limit": 10, "path": "/optional"},
-            ...
-        ]
-    }
+    Body: ``{"queries": [{...}]}`` where each entry mirrors the single
+    ``/query`` route's public parameter names (``q``, ``type``, ``limit``,
+    ``path``, ``alpha``, ``fusion``, ``rrf_k``, ``expand``, ``recency``,
+    ``recency_weight``, ``recency_half_life_days``); the legacy batch
+    aliases ``query``/``search_type``/``path_filter`` stay accepted (see
+    ``_search_batch.py`` for the exact contract).
 
-    Returns: {"queries": [{"query": str, "results": [...], "total": int}, ...]}
+    Returns ``{"queries": [{"query", "results", "total"[, "error"]}], ...}``.
+    Results use the same serialization as single ``/query``. A failed or
+    invalid query yields a per-entry additive ``error`` message instead of
+    failing the batch (absence of ``error`` means the result set is
+    genuine); batch-level auth/read-gate/daemon-init failures still fail
+    the whole request.
 
-    Applies the same ReBAC file-level permission filter as the single-query
-    ``/query`` endpoint (Decision #17). Each query is over-fetched 3x when
-    the permission enforcer is active and trimmed to its configured ``limit``
-    after filtering so authorized results are not starved by denied paths.
-
-    Optimized for benchmarks and bulk evaluations. txtai's batchsearch()
-    embeds all query texts in ONE OpenAI API call, then runs each through
-    the full hybrid pipeline (BM25 + vector + fusion). For 470 queries:
-    ~30s instead of ~16 min sequential.
+    Applies the same ReBAC file-level permission filter as ``/query``
+    (Decision #17), over-fetching via ``_compute_rebac_fetch_limit`` and
+    trimming to each query's requested ``limit`` after filtering. All
+    unique query texts are embedded in ONE ``embed_batch`` call and the
+    inner searches run concurrently (``NEXUS_SEARCH_BATCH_CONCURRENCY``,
+    default 8).
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    body = await request.json()
-    raw_queries: list[dict[str, Any]] = body.get("queries", [])
-    if not raw_queries:
+    try:
+        body = await request.json()
+    except Exception as exc:
+        # Empty/truncated/invalid JSON is a client error, not a 500.
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+    # A valid-JSON non-object root ([], null, "...", 42) must be the same
+    # batch-level 400 as a missing/empty queries array — calling .get on it
+    # would 500.
+    if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="No queries provided")
+    raw_queries = body.get("queries", [])
+    # Missing/empty/non-list ``queries`` is a batch-level 400: a string here
+    # used to iterate per-char into bogus per-entry errors and an int 500'd
+    # in the parse comprehension below.
+    if not isinstance(raw_queries, list) or not raw_queries:
+        raise HTTPException(status_code=400, detail="No queries provided")
+    # Cardinality ceiling: every accepted query becomes a task before the
+    # daemon's concurrency semaphore applies, so an unbounded batch could
+    # exhaust the worker before any timeout could run.
+    raw_max = getattr(getattr(search_daemon, "config", None), "batch_search_max_queries", None)
+    max_queries = raw_max if isinstance(raw_max, int) and not isinstance(raw_max, bool) else 500
+    if len(raw_queries) > max_queries:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many queries: {len(raw_queries)} exceeds the limit of {max_queries}",
+        )
 
     # #4557 (gap 1): batch had no read gate at all -- a write-only token
     # could read via /query/batch even though /query fails it closed.
@@ -849,71 +878,74 @@ async def search_query_batch(
     # Same ReBAC hook the single-query endpoint uses.
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
     op_context = get_operation_context(auth_result)
-    overfetch_multiplier = 3 if permission_enforcer is not None else 1
 
-    # Over-fetch per-query so ReBAC filtering does not strip us below the
-    # caller's requested limit. Keep caller's original limit for trimming.
-    requested_limits: list[int] = []
-    fetch_queries: list[dict[str, Any]] = []
-    for q_spec in raw_queries:
-        orig_limit = max(1, int(q_spec.get("limit", 10)))
-        query_text = str(q_spec.get("query") or q_spec.get("q") or "")
-        path_filter = q_spec.get("path_filter", q_spec.get("path"))
-        requested_limits.append(orig_limit)
-        fetch_queries.append(
-            {
-                **q_spec,
-                "query": query_text,
-                "path_filter": path_filter,
-                "limit": orig_limit * overfetch_multiplier,
-            }
-        )
+    parsed = [parse_batch_query_spec(raw) for raw in raw_queries]
+    valid: list[tuple[int, ParsedBatchSpec]] = [
+        (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
+    ]
+    fetch_specs = [
+        {
+            "query": spec.query,
+            "search_type": spec.search_type,
+            "limit": _compute_rebac_fetch_limit(
+                spec.limit, has_enforcer=permission_enforcer is not None
+            ),
+            "path_filter": spec.path_filter,
+            "alpha": spec.alpha,
+            "fusion_method": spec.fusion_method,
+            "rrf_k": spec.rrf_k,
+            "expand": spec.expand,
+            "recency": spec.recency,
+            "recency_weight": spec.recency_weight,
+            "recency_half_life_days": spec.recency_half_life_days,
+        }
+        for _, spec in valid
+    ]
 
     t0 = time.perf_counter()
-    raw_results = await search_daemon.batch_search(fetch_queries, zone_id=zone_id)
+    raw_results = (
+        await search_daemon.batch_search(fetch_specs, zone_id=zone_id) if fetch_specs else []
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    result_by_index: dict[int, Any] = {
+        i: result for (i, _), result in zip(valid, raw_results, strict=True)
+    }
 
     filter_ms_total = 0.0
     response_queries: list[dict[str, Any]] = []
-    for q_spec, results, orig_limit in zip(raw_queries, raw_results, requested_limits, strict=True):
+    for i, p in enumerate(parsed):
+        if isinstance(p, str):
+            response_queries.append(
+                {
+                    "query": spec_query_text(raw_queries[i]),
+                    "results": [],
+                    "total": 0,
+                    "error": p,
+                }
+            )
+            continue
+        inner = result_by_index[i]
+        if isinstance(inner, BatchQueryFailure):
+            response_queries.append(
+                {"query": p.query, "results": [], "total": 0, "error": inner.error}
+            )
+            continue
         # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
         filtered, filter_ms = _apply_rebac_filter(
-            results,
+            inner,
             permission_enforcer,
             auth_result,
             zone_id,
             operation_context=op_context,
         )
         filter_ms_total += filter_ms
-        trimmed = filtered[:orig_limit]
-
-        formatted: list[dict[str, Any]] = []
-        for r in trimmed:
-            entry: dict[str, Any] = {
-                "path": r.path,
-                "chunk_text": r.chunk_text,
-                "score": round(r.score, 4),
-                "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
-                "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
-            }
-            title = getattr(r, "title_score", None)
-            if title is not None:
-                entry["title_score"] = round(title, 4)
-            ctx = getattr(r, "context", None)
-            if ctx is not None:
-                entry["context"] = ctx
-            # Issue #4544 (Codex review R1): batch hits must carry the same
-            # omit-when-None tier_boost attribution as single-query results,
-            # or batch consumers see multiplied scores they cannot explain.
-            tier_boost = getattr(r, "tier_boost", None)
-            if tier_boost is not None:
-                entry["tier_boost"] = round(tier_boost, 4)
-            formatted.append(entry)
+        trimmed = filtered[: p.limit]
         response_queries.append(
             {
-                "query": q_spec.get("query") or q_spec.get("q", ""),
-                "results": formatted,
-                "total": len(formatted),
+                "query": p.query,
+                "results": [_serialize_search_result(r) for r in trimmed],
+                "total": len(trimmed),
             }
         )
 

@@ -885,7 +885,7 @@ async def test_abandoned_batch_tasks_keep_their_permits(monkeypatch) -> None:
     # The abandoned search is tracked and still holds the daemon-scoped
     # permit, so a follow-up batch cannot start fresh work behind its back.
     assert daemon._abandoned_batch_tasks
-    assert daemon._batch_semaphore().locked()
+    assert daemon._batch_semaphore("search").locked()
     started_before = started
     await daemon._batch_search_on_current_loop([{"query": "b"}], zone_id="root")
     assert started == started_before
@@ -1057,7 +1057,7 @@ async def test_exhausted_permit_pool_cannot_wedge_a_later_batch(monkeypatch) -> 
 
     daemon.search = MethodType(resistant, daemon)
     await daemon._batch_search_on_current_loop([{"query": "a"}], zone_id="root")
-    assert daemon._batch_semaphore().locked()
+    assert daemon._batch_semaphore("search").locked()
 
     # A follow-up batch must settle on its OWN deadline rather than parking
     # forever on the permit the abandoned work still holds.
@@ -1206,6 +1206,115 @@ async def test_resistant_path_context_refresh_cannot_hold_the_response(monkeypat
     # The fail-soft refresh must not hold the response open past the deadline.
     assert elapsed < 3.0, f"path-context refresh escaped the deadline ({elapsed:.2f}s)"
     assert out == [[]]
+
+    release.set()
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_resistant_pre_embed_does_not_block_keyword_fallback(monkeypatch) -> None:
+    import asyncio
+
+    from nexus.bricks.search import daemon as daemon_module
+
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    # Concurrency 1: with a shared pool the stuck embed would hold the only
+    # permit and the hybrid keyword fallback could never run.
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=1,
+        query_timeout_seconds=0.05,
+        batch_search_timeout_seconds=1.0,
+    )
+    release = asyncio.Event()
+
+    class ResistantEmbeddingClient:
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            inner = asyncio.ensure_future(release.wait())
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
+            return [[0.1, 0.2] for _ in texts]
+
+    daemon._embedding_client = ResistantEmbeddingClient()
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "a", "search_type": "hybrid"}], zone_id="root"
+    )
+
+    assert out == [[]], out
+    assert len(captured) == 1
+    assert captured[0].embedding_unavailable is True
+    assert not daemon._batch_semaphore("search").locked()
+
+    release.set()
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_resistant_refresh_does_not_block_the_next_batch(monkeypatch) -> None:
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.search import daemon as daemon_module
+    from nexus.bricks.search.daemon import DaemonStats
+
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=1,
+        query_timeout_seconds=0.05,
+        batch_search_timeout_seconds=0.5,
+    )
+    daemon.stats = DaemonStats()
+    release = asyncio.Event()
+
+    class ResistantCache:
+        async def refresh_if_stale(self, zone_id: str) -> None:
+            inner = asyncio.ensure_future(release.wait())
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
+
+        def snapshot_zone(self, zone_id: str) -> None:
+            return None
+
+    daemon._resolve_path_context_cache = MagicMock(
+        side_effect=lambda: asyncio.sleep(0, result=ResistantCache())
+    )
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop(
+        [{"query": "a", "search_type": "keyword"}], zone_id="root"
+    )
+    # A stuck refresh lives in its own pool, so the NEXT keyword-only batch
+    # still executes instead of returning timeouts.
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "b", "search_type": "keyword"}], zone_id="root"
+    )
+
+    assert out == [[]], out
 
     release.set()
     await asyncio.sleep(0.1)

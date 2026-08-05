@@ -112,6 +112,10 @@ _BATCH_EMBED_OUTAGE_PROBES = 4
 # Known-valid text used to settle "is the provider down, or are these inputs
 # bad?" once several probes have failed with no success anywhere.
 _BATCH_EMBED_CONTROL_TEXT = "nexus embedding health probe"
+# Ancillary batch pools, sized independently of the query-execution pool so a
+# stuck embedding call or path-context refresh can never consume the permits
+# that batch searches (including the keyword-only fallback) need.
+_BATCH_POOL_LIMITS: dict[str, int] = {"embed": 4, "refresh": 2}
 
 
 class VectorBackendUnavailableError(RuntimeError):
@@ -3708,23 +3712,36 @@ class SearchDaemon:
 
         return await self._run_on_owner_loop(_work)
 
-    def _batch_semaphore(self) -> asyncio.Semaphore:
-        """Daemon-scoped fan-out permit pool for /query/batch.
+    def _batch_semaphore(self, pool: str = "search") -> asyncio.Semaphore:
+        """Daemon-scoped permit pool for one class of batch work.
 
         Deliberately NOT per-request: a cancelled batch can leave
-        cancellation-resistant searches still running, and a batch-local
-        semaphore would hand the next request fresh permits while that work
-        is still hitting the DB / provider. Keyed by running loop so a
-        daemon serving more than one loop never shares a bound primitive.
+        cancellation-resistant work running, and a batch-local semaphore
+        would hand the next request fresh permits while that work still
+        hits the DB / provider.
+
+        Pools are also SEPARATE PER CLASS. Query execution, embedding-provider
+        calls, and path-context refreshes have different failure modes; on a
+        shared pool one resistant ancillary operation could retain a query
+        permit and disable batch search entirely (at concurrency 1, a single
+        stuck embed would block even the keyword-only fallback it exists to
+        enable). Keyed by running loop so a daemon serving more than one loop
+        never shares a bound primitive.
         """
         loop = asyncio.get_running_loop()
-        limit = max(1, self.config.batch_search_concurrency)
-        cached = getattr(self, "_batch_semaphore_cache", None)
+        limit = _BATCH_POOL_LIMITS.get(pool) or max(1, self.config.batch_search_concurrency)
+        cache: dict[str, tuple[Any, int, asyncio.Semaphore]] | None = getattr(
+            self, "_batch_semaphore_cache", None
+        )
+        if cache is None:
+            cache = {}
+            self._batch_semaphore_cache = cache
+        cached = cache.get(pool)
         if cached is not None and cached[0] is loop and cached[1] == limit:
             semaphore: asyncio.Semaphore = cached[2]
             return semaphore
         semaphore = asyncio.Semaphore(limit)
-        self._batch_semaphore_cache = (loop, limit, semaphore)
+        cache[pool] = (loop, limit, semaphore)
         return semaphore
 
     def _track_abandoned_batch_tasks(self, tasks: Iterable[asyncio.Task[Any]]) -> None:
@@ -3759,6 +3776,7 @@ class SearchDaemon:
         *,
         remaining: Callable[[], float],
         exec_cap: float,
+        pool: str = "search",
     ) -> T:
         """Run one batch-phase operation under a permit and a hard bound.
 
@@ -3776,7 +3794,7 @@ class SearchDaemon:
         :meth:`_track_abandoned_batch_tasks` — which keeps it charged against
         the daemon-scoped permit pool until it genuinely finishes.
         """
-        semaphore = self._batch_semaphore()
+        semaphore = self._batch_semaphore(pool)
         # Queue time is charged to the BATCH deadline, not to the operation's
         # own budget: a query that waits behind a full pool must still get a
         # full execution window once admitted, or healthy multi-wave batches
@@ -3831,6 +3849,7 @@ class SearchDaemon:
                 lambda: self._embedding_client.embed_batch(chunk),
                 remaining=remaining,
                 exec_cap=self.config.query_timeout_seconds,
+                pool="embed",
             )
             vector_by_text.update(dict(zip(chunk, vectors, strict=True)))
 
@@ -3861,6 +3880,7 @@ class SearchDaemon:
                     lambda: self._embedding_client.embed_batch([_BATCH_EMBED_CONTROL_TEXT]),
                     remaining=remaining,
                     exec_cap=self.config.query_timeout_seconds,
+                    pool="embed",
                 )
                 control_verdict = False
             except asyncio.CancelledError:
@@ -4173,6 +4193,7 @@ class SearchDaemon:
                     lambda: cache.refresh_if_stale(effective_zone_id),
                     remaining=_remaining,
                     exec_cap=self.config.query_timeout_seconds,
+                    pool="refresh",
                 )
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1

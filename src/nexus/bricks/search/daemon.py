@@ -105,6 +105,10 @@ _BATCH_CANCEL_DRAIN_SECONDS = 5.0
 # failure. Bounds the degenerate case (many independently-bad inputs) so a
 # batch can never turn into a per-text retry storm against the provider.
 _BATCH_EMBED_PROBE_LIMIT = 16
+# Consecutive probes with no success anywhere before the provider (rather
+# than the inputs) is blamed. Keeps a total outage to a handful of calls
+# while still letting independently-bad inputs in different halves isolate.
+_BATCH_EMBED_OUTAGE_PROBES = 4
 
 
 class VectorBackendUnavailableError(RuntimeError):
@@ -3746,6 +3750,33 @@ class SearchDaemon:
             tracked.add(task)
             task.add_done_callback(_done)
 
+    async def _run_bounded_batch_op(
+        self,
+        coro: Awaitable[T],
+        *,
+        timeout: float,
+    ) -> T:
+        """Run one batch-phase coroutine under a permit and a hard bound.
+
+        Wrapping with ``asyncio.wait_for`` alone is not enough: on timeout it
+        cancels the coroutine and then WAITS for that cancellation to finish,
+        so a provider that delays or swallows ``CancelledError`` keeps the
+        whole batch suspended. The work runs as its own task, is awaited
+        through ``shield``, and on timeout is cancelled and handed to
+        :meth:`_track_abandoned_batch_tasks` — which keeps it charged against
+        the daemon-scoped permit pool until it genuinely finishes.
+        """
+        semaphore = self._batch_semaphore()
+        await semaphore.acquire()
+        task: asyncio.Task[T] = asyncio.ensure_future(coro)
+        task.add_done_callback(lambda _task: semaphore.release())
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            self._track_abandoned_batch_tasks({task})
+            raise
+
     async def _embed_batch_texts(
         self,
         texts: list[str],
@@ -3756,29 +3787,37 @@ class SearchDaemon:
 
         Returns ``(vector_by_text, failed_texts, provider_down)``.
 
-        One shared ``embed_batch`` call covers the happy path. When it
-        fails, the cause is either ONE bad input (e.g. a text the provider
-        rejects) or a provider-wide outage — and the two need opposite
-        handling: a bad input must not fail its healthy siblings, while an
-        outage must not turn into a per-text retry storm. A bounded binary
-        search separates them: halves are probed until the offender is
-        isolated (O(log n) probes), and if BOTH halves fail at the first
-        split the provider is treated as down (2 extra probes, no storm).
-        ``_BATCH_EMBED_PROBE_LIMIT`` caps total probe calls.
+        One shared ``embed_batch`` call covers the happy path. When it fails
+        the cause is either specific bad input (texts the provider rejects)
+        or a provider-wide outage — and the two need opposite handling: bad
+        input must not fail its healthy siblings, while an outage must not
+        turn into a per-text retry storm. Bisection separates them: failing
+        halves keep splitting so that INDEPENDENT bad inputs in different
+        halves are each isolated, while an outage — recognised as
+        ``_BATCH_EMBED_OUTAGE_PROBES`` consecutive probes with no success
+        anywhere — stops the walk early. ``_BATCH_EMBED_PROBE_LIMIT`` caps
+        total probes either way; every vector obtained along the way is
+        kept.
         """
         probes_left = _BATCH_EMBED_PROBE_LIMIT
+        probes_done = 0
         vector_by_text: dict[str, list[float]] = {}
         failed_texts: set[str] = set()
 
-        async def _probe(chunk: list[str]) -> bool:
-            """Embed one chunk; True on success (vectors recorded)."""
-            nonlocal probes_left
-            budget = remaining(self.config.query_timeout_seconds)
-            vectors = await asyncio.wait_for(
-                self._embedding_client.embed_batch(chunk), timeout=budget
+        async def _probe(chunk: list[str]) -> None:
+            """Embed one chunk, recording its vectors. Raises on failure."""
+            nonlocal probes_done
+            probes_done += 1
+            vectors = await self._run_bounded_batch_op(
+                self._embedding_client.embed_batch(chunk),
+                timeout=remaining(self.config.query_timeout_seconds),
             )
             vector_by_text.update(dict(zip(chunk, vectors, strict=True)))
-            return True
+
+        def _looks_like_outage() -> bool:
+            # No probe has EVER succeeded after several attempts: the
+            # provider itself is the common factor, not the inputs.
+            return not vector_by_text and probes_done >= _BATCH_EMBED_OUTAGE_PROBES
 
         try:
             await _probe(texts)
@@ -3789,22 +3828,17 @@ class SearchDaemon:
             logger.warning("batch pre-embed failed (%d texts); isolating: %s", len(texts), exc)
 
         async def _isolate(chunk: list[str]) -> str:
-            """Bisect ``chunk``; returns "input" or "down".
-
-            "down" means the provider itself looks unavailable (both halves
-            of a split failed outright, or the probe budget ran out with no
-            success anywhere) — the caller degrades the whole batch once.
-            "input" means the failures were isolated to specific texts,
-            recorded in ``failed_texts``, leaving healthy siblings usable.
-            """
+            """Bisect ``chunk``; returns "input" or "down"."""
             nonlocal probes_left
+            if _looks_like_outage():
+                return "down"
             if len(chunk) == 1:
                 failed_texts.add(chunk[0])
                 return "input"
             mid = len(chunk) // 2
             halves = [chunk[:mid], chunk[mid:]]
-            # Probe BOTH halves before recursing: a provider-wide outage is
-            # then two probes deep, not a full descent.
+            # Probe BOTH halves before recursing so an outage surfaces from
+            # the shared no-success signal rather than a deep descent.
             outcomes: list[bool | None] = []
             for half in halves:
                 if probes_left <= 0 or remaining() <= 0:
@@ -3818,11 +3852,7 @@ class SearchDaemon:
                     raise
                 except Exception:
                     outcomes.append(False)
-            if all(o is False for o in outcomes):
-                return "down"
-            if all(o is None for o in outcomes):
-                # No budget left to learn anything — treat conservatively as
-                # a provider problem rather than blaming these texts.
+            if _looks_like_outage():
                 return "down"
             for half, outcome in zip(halves, outcomes, strict=True):
                 if outcome is True:
@@ -3832,6 +3862,9 @@ class SearchDaemon:
                     # rather than probing further.
                     failed_texts.update(half)
                     continue
+                # A FAILED half keeps splitting: independent bad inputs in
+                # both halves must each be isolated, not collapsed into a
+                # false "provider down".
                 if await _isolate(half) == "down":
                     return "down"
             return "input"

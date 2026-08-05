@@ -835,7 +835,9 @@ async def test_provider_outage_is_bounded_and_degrades_hybrid() -> None:
     # A total outage is classified after the first split, not by descending
     # through every text — and hybrid queries still RUN (keyword-degraded)
     # rather than being timed out by an exhausted deadline.
-    assert len(client.calls) <= 3, client.calls
+    # Bounded by the no-success outage signal (initial probe + first split +
+    # a couple more), never a descent through all 64 texts.
+    assert len(client.calls) <= 6, client.calls
     assert len(captured) == 64
     assert all(r.embedding_unavailable is True for r in captured)
     assert out == [[] for _ in range(64)]
@@ -890,3 +892,98 @@ async def test_abandoned_batch_tasks_keep_their_permits(monkeypatch) -> None:
 
     release.set()
     await asyncio.sleep(0.15)
+
+
+@pytest.mark.asyncio
+async def test_multiple_bad_inputs_across_halves_are_isolated_individually() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+
+    class MultiPoisonClient:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            chunk = list(texts)
+            self.calls.append(chunk)
+            if any(t in {"bad1", "bad2"} for t in chunk):
+                raise ValueError("input rejected")
+            return [[0.1, 0.2] for _ in chunk]
+
+    daemon._embedding_client = MultiPoisonClient()
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    # sorted() puts one bad text in each bisection half.
+    specs = [
+        {"query": t, "search_type": "semantic"}
+        for t in ("aaa", "bad1", "ccc", "bad2", "eee", "fff")
+    ]
+    out = await daemon._batch_search_on_current_loop(specs, zone_id="root")
+
+    failures = {specs[i]["query"] for i, r in enumerate(out) if isinstance(r, BatchQueryFailure)}
+    # Independent bad inputs in DIFFERENT halves must not collapse into a
+    # false "provider down" that fails every healthy sibling.
+    assert failures == {"bad1", "bad2"}, out
+    assert {r.query for r in captured} == {"aaa", "ccc", "eee", "fff"}
+    assert all(r.query_vector == [0.1, 0.2] for r in captured)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_resistant_pre_embed_cannot_outlive_deadline(monkeypatch) -> None:
+    import asyncio
+    import time
+
+    from nexus.bricks.search import daemon as daemon_module
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=4,
+        query_timeout_seconds=0.05,
+        batch_search_timeout_seconds=0.3,
+    )
+    release = asyncio.Event()
+
+    class ResistantEmbeddingClient:
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            inner = asyncio.ensure_future(release.wait())
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
+            return [[0.1, 0.2] for _ in texts]
+
+    daemon._embedding_client = ResistantEmbeddingClient()
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    started = time.monotonic()
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "a", "search_type": "semantic"}], zone_id="root"
+    )
+    elapsed = time.monotonic() - started
+
+    # A provider that swallows cancellation must not suspend the batch: the
+    # pre-embed is cancelled, charged to the daemon-scoped pool, and the
+    # request settles within its own deadline.
+    assert elapsed < 3.0, f"pre-embed outlived the batch deadline ({elapsed:.2f}s)"
+    assert isinstance(out[0], BatchQueryFailure)
+    assert daemon._abandoned_batch_tasks
+
+    release.set()
+    await asyncio.sleep(0.1)

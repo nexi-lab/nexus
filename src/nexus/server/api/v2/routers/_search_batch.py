@@ -48,10 +48,16 @@ class ParsedBatchSpec:
 
 
 def spec_query_text(raw: Any) -> str:
-    """Best-effort query-text echo for error entries (public name wins)."""
+    """Best-effort query-text echo for error entries.
+
+    Public name wins by KEY PRESENCE (an explicit ``"q": ""`` must not fall
+    through to the legacy alias), and non-string values echo as ``""``
+    rather than their Python ``str()`` representation.
+    """
     if not isinstance(raw, dict):
         return ""
-    return str(raw.get("q") or raw.get("query") or "")
+    value = raw["q"] if "q" in raw else raw.get("query")
+    return value if isinstance(value, str) else ""
 
 
 def _pick(raw: dict[str, Any], public: str, legacy: str) -> Any:
@@ -64,8 +70,12 @@ def _pick(raw: dict[str, Any], public: str, legacy: str) -> Any:
 def _as_int(value: Any, name: str, lo: int, hi: int) -> int | str:
     try:
         # bool is an int subclass; reject it explicitly so `limit: true`
-        # doesn't silently parse as 1.
+        # doesn't silently parse as 1. Fractional floats must not silently
+        # truncate (`limit: 1.9` -> 1) — the single route rejects them;
+        # integral floats (`limit: 5.0`) stay accepted for JSON parity.
         if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, float) and not value.is_integer():
             raise ValueError
         out = int(value)
     except (TypeError, ValueError):
@@ -115,9 +125,13 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
     if not isinstance(raw, dict):
         return "invalid query spec: expected an object"
 
-    query = spec_query_text(raw)
-    if not query:
+    if "q" in raw or "query" in raw:
+        raw_query = raw["q"] if "q" in raw else raw["query"]
+    else:
         return "query text required (q)"
+    if not isinstance(raw_query, str) or not raw_query:
+        return "query text must be a non-empty string (q)"
+    query = raw_query
 
     path = _pick(raw, "path", "path_filter")
     if path is not None and not isinstance(path, str):

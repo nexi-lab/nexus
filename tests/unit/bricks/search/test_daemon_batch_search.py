@@ -186,23 +186,72 @@ async def test_batch_keyword_only_never_embeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_embed_failure_falls_back_to_per_query() -> None:
+async def test_batch_embed_failure_degrades_hybrid_without_per_query_retries() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
     daemon = _make_batch_daemon()
     daemon._embedding_client = _FakeEmbeddingClient(fail=True)
-    seen_vectors: list[Any] = []
+    captured: list[Any] = []
 
     async def fake_search(self: Any, request: Any) -> list[Any]:
-        seen_vectors.append(request.query_vector)
+        captured.append(request)
         return []
 
     daemon.search = MethodType(fake_search, daemon)
 
     out = await daemon._batch_search_on_current_loop(
-        [{"query": "a", "search_type": "hybrid"}], zone_id="root"
+        [
+            {"query": "a", "search_type": "hybrid"},
+            {"query": "a", "search_type": "semantic"},
+        ],
+        zone_id="root",
     )
 
-    assert out == [[]]  # fail-soft: search still ran
-    assert seen_vectors == [None]  # ...and embeds for itself downstream
+    # Hybrid still runs, but flagged so the dense leg skips its own embed
+    # retry (no N-way retry storm against a degraded provider).
+    assert out[0] == []
+    assert len(captured) == 1
+    assert captured[0].search_type == "hybrid"
+    assert captured[0].embedding_unavailable is True
+    assert captured[0].query_vector is None
+    # Semantic-only cannot be served without an embedding: typed failure,
+    # and search() is never invoked for it.
+    assert isinstance(out[1], BatchQueryFailure)
+    assert out[1].error == "Query embedding unavailable"
+
+
+@pytest.mark.asyncio
+async def test_batch_sets_propagate_failures() -> None:
+    daemon = _make_batch_daemon()
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop([{"query": "q"}], zone_id="root")
+
+    assert captured[0].propagate_failures is True
+    assert captured[0].embedding_unavailable is False
+
+
+@pytest.mark.asyncio
+async def test_batch_timeout_becomes_sanitized_failure() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        raise TimeoutError
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop([{"query": "slow"}], zone_id="root")
+
+    assert isinstance(out[0], BatchQueryFailure)
+    assert out[0].error == "Search timed out"
 
 
 @pytest.mark.asyncio
@@ -224,7 +273,11 @@ async def test_batch_failure_isolated_per_query() -> None:
 
     assert out[0] == [] and out[2] == []
     assert isinstance(out[1], BatchQueryFailure)
-    assert "boom" in out[1].error
+    # Raw exception text must never cross the API boundary (it can carry
+    # SQL/hosts/provider internals) — the wire message is the stable
+    # sanitized constant; full detail goes to the server log.
+    assert "boom" not in out[1].error
+    assert out[1].error == "Search query failed"
 
 
 @pytest.mark.asyncio
@@ -303,3 +356,92 @@ async def test_batch_non_dict_spec_becomes_failure() -> None:
     out = await daemon._batch_search_on_current_loop(["not a dict"], zone_id="root")
 
     assert isinstance(out[0], BatchQueryFailure)
+
+
+@pytest.mark.asyncio
+async def test_semantic_backend_leg_propagates_missing_embedding() -> None:
+    from nexus.bricks.search.daemon import EmbeddingUnavailableError
+
+    daemon = _make_daemon()
+
+    async def _no_embed(self: Any, query: str) -> None:
+        return None
+
+    daemon._embed_query = MethodType(_no_embed, daemon)
+
+    # Interactive contract: degrade to empty.
+    out = await daemon._search_via_backends(
+        "q", search_type="semantic", limit=5, path_filter=None, zone_id="root"
+    )
+    assert out == []
+
+    # Batch contract: a semantic search served nothing because the embedding
+    # is missing — that is a failure, not a healthy empty.
+    with pytest.raises(EmbeddingUnavailableError):
+        await daemon._search_via_backends(
+            "q",
+            search_type="semantic",
+            limit=5,
+            path_filter=None,
+            zone_id="root",
+            propagate_failures=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_backend_legs_skip_embed_when_unavailable_flagged() -> None:
+    daemon = _make_daemon()
+    counter = _CountingEmbed()
+    daemon._embed_query = MethodType(counter.__call__, daemon)
+
+    # Hybrid with embedding_unavailable: no embed attempt, keyword-only result.
+    out = await daemon._search_via_backends(
+        "hello",
+        search_type="hybrid",
+        limit=5,
+        path_filter=None,
+        zone_id="root",
+        embedding_unavailable=True,
+    )
+    assert counter.calls == []
+    assert out  # keyword fallback still serves results
+
+
+@pytest.mark.asyncio
+async def test_legacy_semantic_search_uses_query_vector_and_propagates() -> None:
+    from nexus.bricks.search.daemon import EmbeddingUnavailableError, SearchDaemon
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    seen_vectors: list[Any] = []
+
+    class FakeVectorBackend:
+        async def semantic_search(
+            self, qvec: list[float], path: str, limit: int, zone_id: str
+        ) -> list[Any]:
+            seen_vectors.append(qvec)
+            return []
+
+    daemon._vector_backend = FakeVectorBackend()
+    counter = _CountingEmbed()
+    daemon._embed_query = MethodType(counter.__call__, daemon)
+
+    # Pre-computed vector: the legacy fallback must not re-embed (the batch
+    # empty-result fallthrough runs this path on every miss).
+    out = await daemon._semantic_search("q", 5, None, zone_id="root", query_vector=[0.9, 0.8])
+    assert out == []
+    assert counter.calls == []
+    assert seen_vectors == [[0.9, 0.8]]
+
+    # No vector + no embedding available + batch mode -> typed failure.
+    async def _no_embed(self: Any, query: str) -> None:
+        return None
+
+    daemon._embed_query = MethodType(_no_embed, daemon)
+    with pytest.raises(EmbeddingUnavailableError):
+        await daemon._semantic_search("q", 5, None, zone_id="root", propagate_failures=True)
+
+    # embedding_unavailable (hybrid degrade support): no embed attempt, empty.
+    daemon._embed_query = MethodType(counter.__call__, daemon)
+    out = await daemon._semantic_search("q", 5, None, zone_id="root", embedding_unavailable=True)
+    assert out == []
+    assert counter.calls == []

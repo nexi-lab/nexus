@@ -88,6 +88,26 @@ _MAX_CAP_WIDEN = 4
 # Durable mutation consumer names (#4337): single source for the refresh
 # loop, startup reconciliation, parked-event re-drive, and admin skip-to.
 MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
+
+
+# Stable sanitized wire messages for per-query batch failures. Raw exception
+# text never crosses the API boundary (information disclosure); full detail
+# is logged server-side at the failure site.
+_BATCH_FAILURE_MESSAGE = "Search query failed"
+_BATCH_TIMEOUT_MESSAGE = "Search timed out"
+_BATCH_EMBED_UNAVAILABLE_MESSAGE = "Query embedding unavailable"
+
+
+class EmbeddingUnavailableError(RuntimeError):
+    """A semantic-only search could not obtain a query embedding.
+
+    Raised only on the batch path (``SearchRequest.propagate_failures``)
+    so the batch endpoint reports a per-query failure instead of the
+    interactive path's degrade-to-empty behavior. The message is the
+    query text — callers must map it to a sanitized wire message.
+    """
+
+
 LEGACY_REFRESH_CONSUMER = "legacy-refresh"
 
 # Title arm safety bounds (#4545 review rounds 3-4).
@@ -2851,6 +2871,8 @@ class SearchDaemon:
                 rrf_k=req.rrf_k,
                 zone_id=req.zone_id,
                 query_vector=req.query_vector,
+                propagate_failures=req.propagate_failures,
+                embedding_unavailable=req.embedding_unavailable,
             )
         else:
 
@@ -2865,6 +2887,8 @@ class SearchDaemon:
                     rrf_k=req.rrf_k,
                     zone_id=req.zone_id,
                     query_vector=req.query_vector,
+                    propagate_failures=req.propagate_failures,
+                    embedding_unavailable=req.embedding_unavailable,
                 )
 
             results = await self._run_on_owner_loop(_work)
@@ -2891,6 +2915,8 @@ class SearchDaemon:
         zone_id: str | None = None,
         rrf_k: int = 60,
         query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
@@ -3058,6 +3084,8 @@ class SearchDaemon:
                     rrf_k=rrf_k,
                     zone_id=effective_zone_id,
                     query_vector=query_vector,
+                    propagate_failures=propagate_failures,
+                    embedding_unavailable=embedding_unavailable,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
                 self.last_search_timing = _merge_backend_timing(backend_ms, self.last_search_timing)
@@ -3093,7 +3121,13 @@ class SearchDaemon:
             fallback_start = time.perf_counter()
             if search_type == "semantic":
                 results = await self._semantic_search(
-                    query, internal_limit, path_filter, zone_id=zone_id
+                    query,
+                    internal_limit,
+                    path_filter,
+                    zone_id=zone_id,
+                    query_vector=query_vector,
+                    propagate_failures=propagate_failures,
+                    embedding_unavailable=embedding_unavailable,
                 )
             else:  # hybrid
                 # Issue #4542 (round-5 review): the legacy hybrid stack must
@@ -3114,6 +3148,8 @@ class SearchDaemon:
                     fusion_method,
                     rrf_k,
                     zone_id=zone_id,
+                    query_vector=query_vector,
+                    embedding_unavailable=embedding_unavailable,
                 )
                 if pooled_legacy:
                     from nexus.bricks.search.result_builders import cap_chunks_per_page
@@ -3158,6 +3194,12 @@ class SearchDaemon:
             return self._with_search_timing(results)
 
         except TimeoutError:
+            # Batch mode must not misreport a timed-out search as a healthy
+            # empty result — the batch layer converts this into a per-query
+            # failure entry. The interactive path keeps its degrade-to-empty
+            # contract.
+            if propagate_failures:
+                raise
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return self._with_search_timing([])
 
@@ -3173,6 +3215,8 @@ class SearchDaemon:
         fusion_method: str = "rrf",
         rrf_k: int = 60,
         query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Run keyword / semantic / hybrid via the new search backends.
 
@@ -3217,13 +3261,15 @@ class SearchDaemon:
             return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
 
         if search_type == "semantic":
-            qvec = (
-                query_vector
-                if query_vector is not None
-                else await timed_leg("embed_ms", self._embed_query(query))
-            )
+            qvec = query_vector
+            if qvec is None and not embedding_unavailable:
+                qvec = await timed_leg("embed_ms", self._embed_query(query))
             if qvec is None:
                 record_total()
+                # A semantic-only search without an embedding served nothing —
+                # batch mode reports that as a failure, not a healthy empty.
+                if propagate_failures:
+                    raise EmbeddingUnavailableError(query)
                 return []
             results = await timed_leg(
                 "vector_ms",
@@ -3248,11 +3294,9 @@ class SearchDaemon:
         widen = min(self.config.chunks_per_page, _MAX_CAP_WIDEN) + 1
         leg_limit = limit * 2 * widen if pooled else limit * 2
 
-        qvec = (
-            query_vector
-            if query_vector is not None
-            else await timed_leg("embed_ms", self._embed_query(query))
-        )
+        qvec = query_vector
+        if qvec is None and not embedding_unavailable:
+            qvec = await timed_leg("embed_ms", self._embed_query(query))
         if qvec is None:
             # Without an embedding we still want a useful result — fall back
             # to keyword-only and let the caller decide if that's enough.
@@ -3635,10 +3679,15 @@ class SearchDaemon:
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
 
-        # Pre-embed unique texts once. Fail-soft: on any error fall back to
-        # per-query embedding inside each inner search (hybrid degrades to
-        # keyword-only on embed failure exactly as a single /query does).
+        # Pre-embed unique texts once. When the ONE shared embed_batch call
+        # fails (after the client's own retries), the whole batch treats the
+        # embedding provider as down for this request: semantic-only queries
+        # fail typed, hybrid queries degrade to keyword-only immediately.
+        # Letting every inner search retry its own embedding would turn one
+        # failed shared operation into N concurrent retry cycles against an
+        # already degraded provider.
         vector_by_text: dict[str, list[float]] = {}
+        pre_embed_failed = False
         if self._embedding_client is not None:
             unique_texts = sorted(
                 {
@@ -3654,8 +3703,9 @@ class SearchDaemon:
                     vectors = await self._embedding_client.embed_batch(unique_texts)
                     vector_by_text = dict(zip(unique_texts, vectors, strict=True))
                 except Exception as exc:
+                    pre_embed_failed = True
                     logger.warning(
-                        "batch pre-embed failed; falling back to per-query embedding: %s",
+                        "batch pre-embed failed; semantic queries fail, hybrid degrades to keyword-only: %s",
                         exc,
                     )
 
@@ -3665,12 +3715,17 @@ class SearchDaemon:
             if not isinstance(q, dict):
                 return BatchQueryFailure(error="invalid query spec: expected an object")
             query_text = str(q.get("query", ""))
+            search_type = q.get("search_type", "hybrid")
+            if pre_embed_failed and search_type == "semantic":
+                # The shared embed already failed — don't burn a per-query
+                # retry cycle just to fail the same way.
+                return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
             async with semaphore:
                 try:
                     return await self.search(
                         SearchRequest(
                             query=query_text,
-                            search_type=q.get("search_type", "hybrid"),
+                            search_type=search_type,
                             limit=int(q.get("limit", 10)),
                             path_filter=q.get("path_filter"),
                             alpha=float(q.get("alpha", 0.5)),
@@ -3682,11 +3737,22 @@ class SearchDaemon:
                             recency_half_life_days=q.get("recency_half_life_days"),
                             zone_id=effective_zone_id,
                             query_vector=vector_by_text.get(query_text),
+                            propagate_failures=True,
+                            embedding_unavailable=pre_embed_failed,
                         )
                     )
-                except Exception as exc:
-                    logger.warning("batch_search inner search failed: %s", exc)
-                    return BatchQueryFailure(error=str(exc) or exc.__class__.__name__)
+                except EmbeddingUnavailableError:
+                    return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
+                except TimeoutError:
+                    logger.warning("batch_search inner search timed out: %r", query_text)
+                    return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+                except Exception:
+                    # Full diagnostics stay server-side; the wire gets a stable
+                    # sanitized message (raw backend exception text can leak
+                    # SQL, hosts, or provider internals to authenticated
+                    # callers — the single /query route is equally generic).
+                    logger.exception("batch_search inner search failed: %r", query_text)
+                    return BatchQueryFailure(error=_BATCH_FAILURE_MESSAGE)
 
         results: list[list[Any] | BatchQueryFailure] = list(
             await asyncio.gather(*(_run_one(q) for q in queries))
@@ -4295,6 +4361,9 @@ class SearchDaemon:
         path_filter: str | None,
         *,
         zone_id: str | None = None,
+        query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Vector similarity search via the active ``_vector_backend`` (Issue #3699).
 
@@ -4305,12 +4374,18 @@ class SearchDaemon:
         :meth:`search`) work unchanged.
         """
         if self._vector_backend is None:
+            if propagate_failures:
+                raise EmbeddingUnavailableError(query)
             return []
 
         try:
-            embedding = await self._embed_query(query)
+            embedding = query_vector
+            if embedding is None and not embedding_unavailable:
+                embedding = await self._embed_query(query)
             if not embedding:
                 logger.debug("Semantic search: no query embedding available")
+                if propagate_failures:
+                    raise EmbeddingUnavailableError(query)
                 return []
 
             from nexus.contracts.constants import ROOT_ZONE_ID
@@ -4323,6 +4398,10 @@ class SearchDaemon:
             return [self._coerce_to_search_result(r, search_type="semantic") for r in results]
         except Exception as e:
             logger.error(f"Semantic search error: {e}")
+            # Batch mode reports legacy-backend failures per query instead of
+            # collapsing them into a healthy empty result.
+            if propagate_failures:
+                raise
             return []
 
     async def _splade_search(
@@ -4360,6 +4439,8 @@ class SearchDaemon:
         rrf_k: int = 60,
         *,
         zone_id: str | None = None,
+        query_vector: list[float] | None = None,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         """Hybrid search combining keyword and semantic results (legacy fallback).
 
@@ -4381,7 +4462,14 @@ class SearchDaemon:
         # are stamped below for non-default fusion requests.
         kw_results, sem_results = await self._gather_legs_fail_soft_dense(
             self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id),
-            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id),
+            self._semantic_search(
+                query,
+                limit * 3,
+                path_filter,
+                zone_id=zone_id,
+                query_vector=query_vector,
+                embedding_unavailable=embedding_unavailable,
+            ),
         )
 
         fusion_config = FusionConfig(

@@ -114,9 +114,21 @@ class TestParseBatchQuerySpec:
             ("not a dict", "expected an object"),
             ({}, "query text"),
             ({"q": ""}, "query text"),
+            # Structured / null / non-string query text must error, never be
+            # stringified into a searchable Python repr.
+            ({"q": {"nested": "value"}}, "query text"),
+            ({"q": None}, "query text"),
+            ({"q": 42}, "query text"),
+            # Public name wins by KEY PRESENCE: an explicit empty "q" must
+            # error rather than silently executing the legacy alias.
+            ({"q": "", "query": "legacy"}, "query text"),
             ({"q": "x", "limit": 0}, "limit"),
             ({"q": "x", "limit": 101}, "limit"),
             ({"q": "x", "limit": "ten"}, "limit"),
+            # Fractional numerics must not silently truncate (single-route
+            # pydantic rejects them); integral floats stay accepted.
+            ({"q": "x", "limit": 1.9}, "limit"),
+            ({"q": "x", "rrf_k": 60.5}, "rrf_k"),
             ({"q": "x", "alpha": 1.5}, "alpha"),
             ({"q": "x", "alpha": -0.1}, "alpha"),
             ({"q": "x", "rrf_k": 0}, "rrf_k"),
@@ -157,6 +169,16 @@ class TestParseBatchQuerySpec:
         assert spec_query_text({"q": "a", "query": "b"}) == "a"
         assert spec_query_text("junk") == ""
         assert spec_query_text({}) == ""
+        # Presence beats truthiness: explicit "q" masks the legacy alias
+        # even when falsy, and non-string values echo as "".
+        assert spec_query_text({"q": "", "query": "b"}) == ""
+        assert spec_query_text({"q": {"nested": "v"}}) == ""
+        assert spec_query_text({"q": None, "query": "b"}) == ""
+
+    def test_integral_float_limit_accepted(self):
+        spec = parse_batch_query_spec({"q": "x", "limit": 5.0})
+        assert isinstance(spec, ParsedBatchSpec)
+        assert spec.limit == 5
 
 
 def _build_batch_app(mock_daemon):

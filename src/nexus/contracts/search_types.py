@@ -87,6 +87,16 @@ class SearchRequest:
     # batch endpoint embeds all unique query texts in one embed_batch call
     # and hands each inner search its vector.
     query_vector: list[float] | None = None
+    # Batch-mode failure semantics. The interactive path degrades several
+    # backend failures to an empty result (query timeout, legacy semantic
+    # backend errors, missing query embedding on a semantic-only search).
+    # When True those failures raise to the caller instead, so the batch
+    # endpoint can report a per-query failure rather than a healthy empty.
+    propagate_failures: bool = False
+    # Set when a shared batch pre-embed already failed: dense legs skip
+    # their own embed attempt (hybrid degrades to keyword-only immediately)
+    # instead of re-hammering a degraded embedding provider once per query.
+    embedding_unavailable: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)

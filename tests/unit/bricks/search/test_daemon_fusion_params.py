@@ -234,7 +234,15 @@ def _make_fallback_daemon() -> Any:
         ]
 
     async def _semantic_search(
-        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+        self: Any,
+        query: str,
+        limit: int,
+        path_filter: Any,
+        *,
+        zone_id: Any = None,
+        query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[Any]:
         return [
             _res("/d.md", 0.99, "semantic"),
@@ -347,6 +355,8 @@ async def test_search_threads_fusion_params_to_fallback() -> None:
         rrf_k: int = 60,
         *,
         zone_id: Any = None,
+        query_vector: list[float] | None = None,
+        embedding_unavailable: bool = False,
     ) -> list[SearchResult]:
         seen.update({"alpha": alpha, "fusion_method": fusion_method, "rrf_k": rrf_k})
         return []
@@ -533,7 +543,15 @@ async def test_fallback_empty_semantic_leg_stamps_non_default_degraded() -> None
     daemon = _make_fallback_daemon()
 
     async def _semantic_search(
-        self: Any, query: str, limit: int, path_filter: Any, *, zone_id: Any = None
+        self: Any,
+        query: str,
+        limit: int,
+        path_filter: Any,
+        *,
+        zone_id: Any = None,
+        query_vector: list[float] | None = None,
+        propagate_failures: bool = False,
+        embedding_unavailable: bool = False,
     ) -> list[Any]:
         return []
 

@@ -109,6 +109,9 @@ _BATCH_EMBED_PROBE_LIMIT = 16
 # than the inputs) is blamed. Keeps a total outage to a handful of calls
 # while still letting independently-bad inputs in different halves isolate.
 _BATCH_EMBED_OUTAGE_PROBES = 4
+# Known-valid text used to settle "is the provider down, or are these inputs
+# bad?" once several probes have failed with no success anywhere.
+_BATCH_EMBED_CONTROL_TEXT = "nexus embedding health probe"
 
 
 class VectorBackendUnavailableError(RuntimeError):
@@ -3752,26 +3755,39 @@ class SearchDaemon:
 
     async def _run_bounded_batch_op(
         self,
-        coro: Awaitable[T],
+        make_coro: Callable[[], Awaitable[T]],
         *,
         timeout: float,
     ) -> T:
-        """Run one batch-phase coroutine under a permit and a hard bound.
+        """Run one batch-phase operation under a permit and a hard bound.
 
-        Wrapping with ``asyncio.wait_for`` alone is not enough: on timeout it
-        cancels the coroutine and then WAITS for that cancellation to finish,
-        so a provider that delays or swallows ``CancelledError`` keeps the
-        whole batch suspended. The work runs as its own task, is awaited
-        through ``shield``, and on timeout is cancelled and handed to
+        The bound covers PERMIT ACQUISITION as well as the work itself:
+        abandoned cancellation-resistant work deliberately keeps its permits,
+        so an exhausted pool would otherwise park the next request here,
+        outside any deadline. The coroutine is created only after a permit is
+        held (a coroutine built up front and never awaited leaks).
+
+        ``asyncio.wait_for`` alone is also not enough for the work itself: on
+        timeout it cancels and then WAITS for that cancellation to finish, so
+        a provider that delays or swallows ``CancelledError`` keeps the batch
+        suspended. The work runs as its own task, is awaited through
+        ``shield``, and on timeout is cancelled and handed to
         :meth:`_track_abandoned_batch_tasks` — which keeps it charged against
         the daemon-scoped permit pool until it genuinely finishes.
         """
+        started = time.monotonic()
+        budget = max(0.0, timeout)
         semaphore = self._batch_semaphore()
-        await semaphore.acquire()
-        task: asyncio.Task[T] = asyncio.ensure_future(coro)
+        # No coroutine exists yet: a timeout here cannot leak one.
+        await asyncio.wait_for(semaphore.acquire(), timeout=budget)
+        remaining_budget = budget - (time.monotonic() - started)
+        if remaining_budget <= 0:
+            semaphore.release()
+            raise TimeoutError("batch operation budget exhausted while waiting for a permit")
+        task: asyncio.Task[T] = asyncio.ensure_future(make_coro())
         task.add_done_callback(lambda _task: semaphore.release())
         try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            return await asyncio.wait_for(asyncio.shield(task), timeout=remaining_budget)
         except (TimeoutError, asyncio.CancelledError):
             task.cancel()
             self._track_abandoned_batch_tasks({task})
@@ -3809,15 +3825,40 @@ class SearchDaemon:
             nonlocal probes_done
             probes_done += 1
             vectors = await self._run_bounded_batch_op(
-                self._embedding_client.embed_batch(chunk),
+                lambda: self._embedding_client.embed_batch(chunk),
                 timeout=remaining(self.config.query_timeout_seconds),
             )
             vector_by_text.update(dict(zip(chunk, vectors, strict=True)))
 
-        def _looks_like_outage() -> bool:
-            # No probe has EVER succeeded after several attempts: the
-            # provider itself is the common factor, not the inputs.
-            return not vector_by_text and probes_done >= _BATCH_EMBED_OUTAGE_PROBES
+        control_verdict: bool | None = None
+
+        async def _looks_like_outage() -> bool:
+            """Is the PROVIDER down, or are these texts simply bad?
+
+            Probe count alone cannot answer that — bad inputs can contaminate
+            every early partition. When nothing has embedded after several
+            attempts, settle it with evidence: one probe of a known-valid
+            control text. Control succeeds -> the provider is healthy and the
+            failures belong to specific inputs; control fails -> outage. The
+            verdict is cached so it costs at most one extra call per batch.
+            """
+            nonlocal control_verdict
+            if vector_by_text or probes_done < _BATCH_EMBED_OUTAGE_PROBES:
+                return False
+            if control_verdict is not None:
+                return control_verdict
+            try:
+                await self._run_bounded_batch_op(
+                    lambda: self._embedding_client.embed_batch([_BATCH_EMBED_CONTROL_TEXT]),
+                    timeout=remaining(self.config.query_timeout_seconds),
+                )
+                control_verdict = False
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("batch pre-embed control probe failed; provider looks down: %s", exc)
+                control_verdict = True
+            return control_verdict
 
         try:
             await _probe(texts)
@@ -3830,7 +3871,7 @@ class SearchDaemon:
         async def _isolate(chunk: list[str]) -> str:
             """Bisect ``chunk``; returns "input" or "down"."""
             nonlocal probes_left
-            if _looks_like_outage():
+            if await _looks_like_outage():
                 return "down"
             if len(chunk) == 1:
                 failed_texts.add(chunk[0])
@@ -3852,7 +3893,7 @@ class SearchDaemon:
                     raise
                 except Exception:
                     outcomes.append(False)
-            if _looks_like_outage():
+            if await _looks_like_outage():
                 return "down"
             for half, outcome in zip(halves, outcomes, strict=True):
                 if outcome is True:
@@ -3936,8 +3977,6 @@ class SearchDaemon:
                     remaining=_remaining,
                 )
 
-        semaphore = self._batch_semaphore()
-
         async def _run_one(q: Any) -> list[Any] | BatchQueryFailure:
             if not isinstance(q, dict):
                 return BatchQueryFailure(error="invalid query spec: expected an object")
@@ -3948,42 +3987,32 @@ class SearchDaemon:
                 # No embedding for THIS text — don't burn a per-query retry
                 # cycle just to fail the same way.
                 return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
-            # Permits follow REAL in-flight work: acquired here and released
-            # by the search task's own completion callback, so a search that
-            # outlives its timeout (cancellation-resistant backend) keeps
-            # consuming capacity instead of silently accumulating behind a
-            # released permit.
-            await semaphore.acquire()
-            search_task: asyncio.Task[list[SearchResult]] = asyncio.ensure_future(
-                self.search(
-                    SearchRequest(
-                        query=query_text,
-                        search_type=search_type,
-                        limit=int(q.get("limit", 10)),
-                        path_filter=q.get("path_filter"),
-                        alpha=float(q.get("alpha", 0.5)),
-                        fusion_method=q.get("fusion_method", "rrf"),
-                        rrf_k=int(q.get("rrf_k", 60)),
-                        expand=q.get("expand", "none"),
-                        recency=q.get("recency"),
-                        recency_weight=q.get("recency_weight"),
-                        recency_half_life_days=q.get("recency_half_life_days"),
-                        zone_id=effective_zone_id,
-                        query_vector=vector_by_text.get(query_text),
-                        propagate_failures=True,
-                        embedding_unavailable=text_embed_failed,
-                    )
-                )
+            request = SearchRequest(
+                query=query_text,
+                search_type=search_type,
+                limit=int(q.get("limit", 10)),
+                path_filter=q.get("path_filter"),
+                alpha=float(q.get("alpha", 0.5)),
+                fusion_method=q.get("fusion_method", "rrf"),
+                rrf_k=int(q.get("rrf_k", 60)),
+                expand=q.get("expand", "none"),
+                recency=q.get("recency"),
+                recency_weight=q.get("recency_weight"),
+                recency_half_life_days=q.get("recency_half_life_days"),
+                zone_id=effective_zone_id,
+                query_vector=vector_by_text.get(query_text),
+                propagate_failures=True,
+                embedding_unavailable=text_embed_failed,
             )
-            search_task.add_done_callback(lambda _task: semaphore.release())
             try:
-                # Bounded per query: asyncio.wait waits for EVERY entry, so a
-                # hung backend would otherwise withhold all completed siblings
-                # and never produce the advertised per-query timeout failure.
-                # shield keeps the timeout from silently detaching the task —
-                # it is cancelled and accounted for explicitly below.
-                inner_result = await asyncio.wait_for(
-                    asyncio.shield(search_task),
+                # Bounded end to end (permit wait + search): asyncio.wait waits
+                # for EVERY entry, so an unbounded query would withhold all
+                # completed siblings and never produce the advertised per-query
+                # timeout failure. Permits follow real in-flight work, so a
+                # search that outlives its timeout keeps consuming capacity
+                # instead of accumulating silently.
+                inner_result = await self._run_bounded_batch_op(
+                    lambda: self.search(request),
                     timeout=_remaining(self.config.query_timeout_seconds),
                 )
                 # A search that suppresses its cancellation can return a
@@ -3994,21 +4023,14 @@ class SearchDaemon:
                 if time.monotonic() >= batch_deadline:
                     return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
                 return inner_result
-            except asyncio.CancelledError:
-                search_task.cancel()
-                self._track_abandoned_batch_tasks({search_task})
-                raise
             except EmbeddingUnavailableError:
                 return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
             except VectorBackendUnavailableError:
                 return BatchQueryFailure(error=_BATCH_VECTOR_BACKEND_MESSAGE)
             except TimeoutError:
+                # Cancellation + abandoned-task accounting already happened
+                # inside _run_bounded_batch_op.
                 logger.warning("batch_search inner search timed out: %r", query_text)
-                # The task is still running: cancel it and keep it charged
-                # (its permit is released by the done-callback only when it
-                # actually finishes).
-                search_task.cancel()
-                self._track_abandoned_batch_tasks({search_task})
                 return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
             except Exception:
                 # Full diagnostics stay server-side; the wire gets a stable

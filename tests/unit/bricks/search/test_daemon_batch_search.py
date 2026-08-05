@@ -987,3 +987,86 @@ async def test_cancellation_resistant_pre_embed_cannot_outlive_deadline(monkeypa
 
     release.set()
     await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_bad_inputs_contaminating_every_early_partition_stay_isolated() -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+    bad = {"bad1", "bad2", "bad3", "bad4"}
+
+    class SpreadPoisonClient:
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            chunk = list(texts)
+            if any(t in bad for t in chunk):
+                raise ValueError("input rejected")
+            return [[0.1, 0.2] for _ in chunk]
+
+    daemon._embedding_client = SpreadPoisonClient()
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    # Interleaved so a bad text lands in the initial batch, both halves, and
+    # the early quarters — the shape that used to read as a provider outage.
+    texts = ["bad1", "aaa", "bad2", "bbb", "bad3", "ccc", "bad4", "ddd"]
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": t, "search_type": "semantic"} for t in texts], zone_id="root"
+    )
+
+    failed = {texts[i] for i, r in enumerate(out) if isinstance(r, BatchQueryFailure)}
+    # The control probe proves the provider is healthy, so only the offending
+    # texts fail — healthy siblings still run with their vectors.
+    assert failed == bad, out
+    assert {r.query for r in captured} == {"aaa", "bbb", "ccc", "ddd"}
+
+
+@pytest.mark.asyncio
+async def test_exhausted_permit_pool_cannot_wedge_a_later_batch(monkeypatch) -> None:
+    import asyncio
+    import time
+
+    from nexus.bricks.search import daemon as daemon_module
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=1,
+        query_timeout_seconds=0.05,
+        batch_search_timeout_seconds=0.2,
+    )
+    release = asyncio.Event()
+
+    async def resistant(self: Any, request: Any) -> list[Any]:
+        inner = asyncio.ensure_future(release.wait())
+        while not inner.done():
+            try:
+                await asyncio.shield(inner)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+        return []
+
+    daemon.search = MethodType(resistant, daemon)
+    await daemon._batch_search_on_current_loop([{"query": "a"}], zone_id="root")
+    assert daemon._batch_semaphore().locked()
+
+    # A follow-up batch must settle on its OWN deadline rather than parking
+    # forever on the permit the abandoned work still holds.
+    started = time.monotonic()
+    out = await daemon._batch_search_on_current_loop([{"query": "b"}], zone_id="root")
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 3.0, f"permit wait escaped the batch deadline ({elapsed:.2f}s)"
+    assert isinstance(out[0], BatchQueryFailure)
+
+    release.set()
+    await asyncio.sleep(0.1)

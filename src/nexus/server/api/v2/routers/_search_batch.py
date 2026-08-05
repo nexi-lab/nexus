@@ -93,6 +93,32 @@ def _check_choice(value: str, name: str, allowed: tuple[str, ...]) -> str | None
     return None
 
 
+def _enum_value(
+    raw: dict[str, Any],
+    name: str,
+    allowed: tuple[str, ...],
+    default: str,
+    *,
+    legacy: str | None = None,
+) -> tuple[str, str | None]:
+    """Resolve one enum param to ``(value, error)``.
+
+    The default applies ONLY when neither the public key nor its legacy
+    alias is present. A present-but-non-string value (including explicit
+    null) and a present-but-unknown string both error — ``"type": ""``
+    must not silently run a hybrid search.
+    """
+    if name in raw:
+        value = raw[name]
+    elif legacy is not None and legacy in raw:
+        value = raw[legacy]
+    else:
+        return default, None
+    if not isinstance(value, str):
+        return default, f"{name} must be a string"
+    return value, _check_choice(value, name, allowed)
+
+
 def _as_float(
     value: Any, name: str, lo: float, hi: float, *, exclusive_lo: bool = False
 ) -> float | str:
@@ -169,20 +195,29 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
 
     # Enum validation runs after alias resolution; messages use the
     # canonical public name (so `search_type: "keywrod"` errors on "type").
-    search_type = str(_pick(raw, "type", "search_type") or "hybrid")
-    if (err := _check_choice(search_type, "type", _TYPE_CHOICES)) is not None:
+    # Defaults apply ONLY when the key (and its alias) is absent — an
+    # explicit empty string or null must error like the single route does,
+    # not silently coerce to the default semantics.
+    search_type, err = _enum_value(raw, "type", _TYPE_CHOICES, "hybrid", legacy="search_type")
+    if err is not None:
         return err
-    fusion_method = str(_pick(raw, "fusion", "fusion_method") or "rrf")
-    if (err := _check_choice(fusion_method, "fusion", _FUSION_CHOICES)) is not None:
+    fusion_method, err = _enum_value(raw, "fusion", _FUSION_CHOICES, "rrf", legacy="fusion_method")
+    if err is not None:
         return err
-    expand = str(raw.get("expand") or "none")
-    if (err := _check_choice(expand, "expand", _EXPAND_CHOICES)) is not None:
+    expand, err = _enum_value(raw, "expand", _EXPAND_CHOICES, "none")
+    if err is not None:
         return err
 
-    raw_recency = raw.get("recency")
-    recency = str(raw_recency) if raw_recency is not None else None
-    if recency is not None and (err := _check_choice(recency, "recency", _RECENCY_CHOICES)):
-        return err
+    # recency is the only optional enum: absent AND explicit null both mean
+    # "no recency directive"; any other non-string or unknown value errors.
+    recency: str | None = None
+    if raw.get("recency") is not None:
+        raw_recency = raw["recency"]
+        if not isinstance(raw_recency, str):
+            return "recency must be a string"
+        if (err := _check_choice(raw_recency, "recency", _RECENCY_CHOICES)) is not None:
+            return err
+        recency = raw_recency
 
     return ParsedBatchSpec(
         query=query,

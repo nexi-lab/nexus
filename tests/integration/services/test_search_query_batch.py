@@ -140,6 +140,13 @@ class TestParseBatchQuerySpec:
             ({"q": "x", "recency_half_life_days": "nan"}, "recency_half_life_days"),
             ({"q": "x", "recency_half_life_days": float("nan")}, "recency_half_life_days"),
             ({"q": "x", "type": "keywrod"}, "type"),
+            # Explicit falsy enum values must error, not silently coerce to
+            # the default semantics (the single route rejects them too).
+            ({"q": "x", "type": ""}, "type"),
+            ({"q": "x", "type": None}, "type"),
+            ({"q": "x", "fusion": ""}, "fusion"),
+            ({"q": "x", "expand": ""}, "expand"),
+            ({"q": "x", "recency": ""}, "recency"),
             # Legacy alias resolves first; the message reports the canonical
             # public name.
             ({"q": "x", "search_type": "keywrod"}, "type"),
@@ -333,6 +340,25 @@ class TestBatchRoute:
 
         assert resp.status_code == 200, resp.text
         assert "limit" in resp.json()["queries"][0]["error"]
+        daemon.batch_search.assert_not_called()
+
+    @pytest.mark.parametrize("body", [[], None, "abc", 42])
+    def test_non_object_json_root_400(self, body):
+        import json as json_module
+
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[])
+        app = _build_batch_app(daemon)
+
+        # Post raw content: httpx treats json=None as "no body", but the
+        # contract under test is a request whose JSON root is null/[]/str/int.
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            content=json_module.dumps(body),
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert resp.status_code == 400, resp.text
         daemon.batch_search.assert_not_called()
 
     def test_empty_queries_still_400(self):

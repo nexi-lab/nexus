@@ -445,3 +445,67 @@ async def test_legacy_semantic_search_uses_query_vector_and_propagates() -> None
     out = await daemon._semantic_search("q", 5, None, zone_id="root", embedding_unavailable=True)
     assert out == []
     assert counter.calls == []
+
+
+@pytest.mark.asyncio
+async def test_hung_inner_search_times_out_without_blocking_siblings() -> None:
+    import asyncio
+
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(batch_search_concurrency=8, query_timeout_seconds=0.05)
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        if request.query == "hung":
+            await asyncio.sleep(30)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await asyncio.wait_for(
+        daemon._batch_search_on_current_loop(
+            [{"query": "hung"}, {"query": "healthy"}], zone_id="root"
+        ),
+        timeout=5,
+    )
+
+    # The hung query is bounded and converted; the healthy sibling's result
+    # is not withheld behind it.
+    assert isinstance(out[0], BatchQueryFailure)
+    assert out[0].error == "Search timed out"
+    assert out[1] == []
+
+
+@pytest.mark.asyncio
+async def test_hung_pre_embed_degrades_instead_of_blocking_batch() -> None:
+    import asyncio
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(batch_search_concurrency=8, query_timeout_seconds=0.05)
+
+    class HangingEmbeddingClient:
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            await asyncio.sleep(30)
+            return []
+
+    daemon._embedding_client = HangingEmbeddingClient()
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await asyncio.wait_for(
+        daemon._batch_search_on_current_loop(
+            [{"query": "a", "search_type": "hybrid"}], zone_id="root"
+        ),
+        timeout=5,
+    )
+
+    # Shared pre-embed timeout takes the same degradation path as any other
+    # pre-embed failure: hybrid runs keyword-only, no per-query embed retry.
+    assert out == [[]]
+    assert captured[0].embedding_unavailable is True

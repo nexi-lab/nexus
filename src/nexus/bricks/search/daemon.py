@@ -3700,7 +3700,10 @@ class SearchDaemon:
             )
             if unique_texts:
                 try:
-                    vectors = await self._embedding_client.embed_batch(unique_texts)
+                    vectors = await asyncio.wait_for(
+                        self._embedding_client.embed_batch(unique_texts),
+                        timeout=self.config.query_timeout_seconds,
+                    )
                     vector_by_text = dict(zip(unique_texts, vectors, strict=True))
                 except Exception as exc:
                     pre_embed_failed = True
@@ -3722,24 +3725,32 @@ class SearchDaemon:
                 return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
             async with semaphore:
                 try:
-                    return await self.search(
-                        SearchRequest(
-                            query=query_text,
-                            search_type=search_type,
-                            limit=int(q.get("limit", 10)),
-                            path_filter=q.get("path_filter"),
-                            alpha=float(q.get("alpha", 0.5)),
-                            fusion_method=q.get("fusion_method", "rrf"),
-                            rrf_k=int(q.get("rrf_k", 60)),
-                            expand=q.get("expand", "none"),
-                            recency=q.get("recency"),
-                            recency_weight=q.get("recency_weight"),
-                            recency_half_life_days=q.get("recency_half_life_days"),
-                            zone_id=effective_zone_id,
-                            query_vector=vector_by_text.get(query_text),
-                            propagate_failures=True,
-                            embedding_unavailable=pre_embed_failed,
-                        )
+                    # Bounded per query: asyncio.gather waits for EVERY entry,
+                    # so a hung embedding/backend call would otherwise withhold
+                    # all completed siblings and never produce the advertised
+                    # per-query timeout failure. wait_for cancels the hung
+                    # inner search and the except below converts it.
+                    return await asyncio.wait_for(
+                        self.search(
+                            SearchRequest(
+                                query=query_text,
+                                search_type=search_type,
+                                limit=int(q.get("limit", 10)),
+                                path_filter=q.get("path_filter"),
+                                alpha=float(q.get("alpha", 0.5)),
+                                fusion_method=q.get("fusion_method", "rrf"),
+                                rrf_k=int(q.get("rrf_k", 60)),
+                                expand=q.get("expand", "none"),
+                                recency=q.get("recency"),
+                                recency_weight=q.get("recency_weight"),
+                                recency_half_life_days=q.get("recency_half_life_days"),
+                                zone_id=effective_zone_id,
+                                query_vector=vector_by_text.get(query_text),
+                                propagate_failures=True,
+                                embedding_unavailable=pre_embed_failed,
+                            )
+                        ),
+                        timeout=self.config.query_timeout_seconds,
                     )
                 except EmbeddingUnavailableError:
                     return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)

@@ -833,6 +833,11 @@ async def search_query_batch(
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     body = await request.json()
+    # A valid-JSON non-object root ([], null, "...", 42) must be the same
+    # batch-level 400 as a missing/empty queries array — calling .get on it
+    # would 500.
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="No queries provided")
     raw_queries = body.get("queries", [])
     # Missing/empty/non-list ``queries`` is a batch-level 400: a string here
     # used to iterate per-char into bogus per-entry errors and an int 500'd

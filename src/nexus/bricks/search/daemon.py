@@ -4898,9 +4898,18 @@ class SearchDaemon:
                 # Raise real backend errors so the gather helper can apply
                 # the batch policy; missing-embedding degradation is carved
                 # out there (hybrid legitimately serves keyword-only then).
-                propagate_failures=propagate_failures,
+                #
+                # An ABSENT dense backend is different from a broken one: a
+                # deployment with no vector backend configured (SQLite without
+                # sqlite-vec, no embedding provider) is a valid keyword-only
+                # mode, and single /query degrades to keyword there. Turning
+                # that deployment property into a per-query batch failure would
+                # make batch and single disagree on the same healthy install,
+                # so the dense leg only propagates when a backend actually
+                # exists to fail.
+                propagate_failures=propagate_failures and self._vector_backend is not None,
             ),
-            propagate_failures=propagate_failures,
+            propagate_failures=propagate_failures and self._vector_backend is not None,
         )
 
         fusion_config = FusionConfig(

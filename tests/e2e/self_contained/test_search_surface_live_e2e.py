@@ -251,51 +251,6 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
     )
     _assert_endpoint_latency(batch_body)
 
-    # Hardened batch contract: single-/query serializer parity, tuning
-    # params accepted, healthy entries carry no error field.
-    parity_response, parity_body = _request(
-        live,
-        "post",
-        "/api/v2/search/query/batch",
-        json={
-            "queries": [
-                {"q": "needle", "type": "keyword", "limit": 5},
-                {"q": "needle", "type": "hybrid", "limit": 5, "alpha": 0.3, "fusion": "weighted"},
-                {"q": "needle", "type": "semantic", "limit": 5},
-            ]
-        },
-    )
-    assert parity_response.status_code == 200
-    assert parity_body["total_queries"] == 3
-    for entry in parity_body["queries"]:
-        assert "error" not in entry, entry
-    single_response, single_body = _request(
-        live,
-        "get",
-        "/api/v2/search/query",
-        params={"q": "needle", "type": "keyword", "limit": 5},
-    )
-    assert single_response.status_code == 200
-    batch_keyword_results = parity_body["queries"][0]["results"]
-    single_results = single_body["results"]
-    assert [r["path"] for r in batch_keyword_results] == [r["path"] for r in single_results]
-    # Field-shape parity: every key the single route emits appears in the
-    # batch entry with the same value (single may add response-envelope
-    # keys, so compare per-hit dicts directly).
-    for batch_hit, single_hit in zip(batch_keyword_results, single_results, strict=True):
-        assert batch_hit == single_hit
-
-    # Per-query error isolation: an invalid spec errors alone.
-    mixed_response, mixed_body = _request(
-        live,
-        "post",
-        "/api/v2/search/query/batch",
-        json={"queries": [{"q": "needle", "limit": 0}, {"q": "needle", "limit": 2}]},
-    )
-    assert mixed_response.status_code == 200
-    assert "limit" in mixed_body["queries"][0]["error"]
-    assert "error" not in mixed_body["queries"][1]
-
     refresh_response, refresh_body = _request(
         live,
         "post",
@@ -405,3 +360,110 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
         time.sleep(0.1)
     assert any(c["path"] == "/workspace/src/main.py" for c in locate_body["candidates"])
     _assert_endpoint_latency(locate_body, key="elapsed_ms")
+
+
+def test_live_batch_search_contract(live_search_app: LiveSearchApp) -> None:
+    """The hardened `/query/batch` contract, gated in CI.
+
+    Deliberately NOT part of
+    ``test_live_search_http_surface_correctness_and_latency``: that test is
+    xfailed for an unrelated reason (its glob/grep assertions need a file
+    index the TestClient fixture never populates), which silently made these
+    batch assertions dormant. This test seeds its own corpus through the
+    explicit `/search/index` endpoint, so it depends on nothing the xfail
+    covers and actually fails CI when the batch contract regresses.
+    """
+    live = live_search_app
+
+    # The fixture starts empty and `/search/index` resolves path_id from the
+    # file_paths projection, so the file must exist before it is indexed —
+    # otherwise the call burns its full projection-wait budget and 409s.
+    live.nx.mkdir("/workspace", exist_ok=True)
+    live.nx.write(
+        "/workspace/batch-contract.md",
+        b"# Batch Contract\nhaystack marker for the batch contract test\n",
+    )
+
+    index_response, index_body = _request(
+        live,
+        "post",
+        "/api/v2/search/index",
+        max_wall_ms=15_000.0,
+        json={
+            "documents": [
+                {
+                    "id": "/workspace/batch-contract.md",
+                    "path": "/workspace/batch-contract.md",
+                    "text": "haystack marker for the batch contract test",
+                }
+            ]
+        },
+    )
+    assert index_response.status_code == 200
+    assert index_body["count"] == 1
+
+    single_response, single_body = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "haystack", "type": "keyword", "limit": 5},
+    )
+    assert single_response.status_code == 200
+
+    batch_response, batch_body = _request(
+        live,
+        "post",
+        "/api/v2/search/query/batch",
+        json={
+            "queries": [
+                {"q": "haystack", "type": "keyword", "limit": 5},
+                {"q": "haystack", "type": "hybrid", "limit": 5, "alpha": 0.3, "fusion": "weighted"},
+                {"q": "haystack", "type": "semantic", "limit": 5},
+            ]
+        },
+    )
+    assert batch_response.status_code == 200
+    assert batch_body["total_queries"] == 3
+    # Lanes this deployment can serve report NO error — absence of the key is
+    # the signal that an empty result set is genuine. Hybrid is included: a
+    # fixture with no embedding provider must DEGRADE to keyword-only, exactly
+    # as single `/query` does, not fail the query.
+    for entry in batch_body["queries"][:2]:
+        assert "error" not in entry, entry
+    # A semantic-ONLY query is different: the caller asked for dense retrieval
+    # this deployment cannot serve, so it must report the typed failure rather
+    # than masquerading as a healthy empty result.
+    semantic_entry = batch_body["queries"][2]
+    assert semantic_entry["error"] == "Vector backend unavailable", semantic_entry
+    assert semantic_entry["results"] == []
+    # Serializer + result parity with single `/query`.
+    assert [r["path"] for r in batch_body["queries"][0]["results"]] == [
+        r["path"] for r in single_body["results"]
+    ]
+    for batch_hit, single_hit in zip(
+        batch_body["queries"][0]["results"], single_body["results"], strict=True
+    ):
+        assert batch_hit == single_hit
+    _assert_endpoint_latency(batch_body)
+
+    # A per-query problem stays isolated to its own entry.
+    mixed_response, mixed_body = _request(
+        live,
+        "post",
+        "/api/v2/search/query/batch",
+        json={"queries": [{"q": "haystack", "limit": 0}, {"q": "haystack", "limit": 2}]},
+    )
+    assert mixed_response.status_code == 200
+    assert "limit" in mixed_body["queries"][0]["error"]
+    assert "error" not in mixed_body["queries"][1]
+
+    # Batch-level failures stay whole-request.
+    empty_response, _ = _request(live, "post", "/api/v2/search/query/batch", json={"queries": []})
+    assert empty_response.status_code == 400
+    oversize_response, _ = _request(
+        live,
+        "post",
+        "/api/v2/search/query/batch",
+        json={"queries": [{"q": f"q{i}"} for i in range(501)]},
+    )
+    assert oversize_response.status_code == 400

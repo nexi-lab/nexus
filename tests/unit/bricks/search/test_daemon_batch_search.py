@@ -712,13 +712,15 @@ async def test_missing_vector_backend_is_distinct_from_missing_embedding() -> No
             "q", 5, None, zone_id="root", query_vector=[0.1], propagate_failures=True
         )
 
-    # ...and the hybrid gather helper must NOT suppress it (that carve-out is
-    # only for a genuinely missing embedding), so incomplete dense coverage
-    # cannot masquerade as a keyword-only success.
-    with pytest.raises(VectorBackendUnavailableError):
-        await daemon._hybrid_search(
-            "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
-        )
+    # Hybrid is the exception, and only for an ABSENT backend: a deployment
+    # with no dense backend configured is a valid keyword-only mode that
+    # single `/query` also degrades for, so batch must not turn it into a
+    # per-query failure. (A backend that EXISTS and throws still propagates —
+    # see test_hybrid_dense_backend_failure_fails_batch_query.)
+    degraded = await daemon._hybrid_search(
+        "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
+    )
+    assert [r.path for r in degraded] == ["/kw.md"]
 
 
 @pytest.mark.asyncio
@@ -1363,3 +1365,40 @@ async def test_single_bad_input_isolates_at_documented_cardinality(batch_size) -
     assert all(r.query_vector == [0.1, 0.2] for r in captured)
     # Isolation stays logarithmic, not per-text.
     assert client.calls <= 40, client.calls
+
+
+@pytest.mark.asyncio
+async def test_absent_dense_backend_degrades_hybrid_but_fails_semantic() -> None:
+    """A keyword-only DEPLOYMENT is not a per-query failure.
+
+    An absent vector backend (SQLite without sqlite-vec, no embedding provider)
+    is a valid deployment mode, and single `/query` degrades hybrid to
+    keyword-only there. Batch must agree, or the two surfaces disagree on the
+    same healthy install. A semantic-ONLY query still fails typed: the caller
+    asked for dense retrieval this deployment cannot serve.
+    """
+    from nexus.bricks.search.daemon import (
+        SearchDaemon,
+        SearchResult,
+        VectorBackendUnavailableError,
+    )
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._vector_backend = None
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        return [
+            SearchResult(
+                path="/kw.md", chunk_text="kw", score=1.0, chunk_index=0, search_type="keyword"
+            )
+        ]
+
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    out = await daemon._hybrid_search(
+        "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
+    )
+    assert [r.path for r in out] == ["/kw.md"]
+
+    with pytest.raises(VectorBackendUnavailableError):
+        await daemon._semantic_search("q", 5, None, zone_id="root", propagate_failures=True)

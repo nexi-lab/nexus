@@ -3757,7 +3757,8 @@ class SearchDaemon:
         self,
         make_coro: Callable[[], Awaitable[T]],
         *,
-        timeout: float,
+        remaining: Callable[[], float],
+        exec_cap: float,
     ) -> T:
         """Run one batch-phase operation under a permit and a hard bound.
 
@@ -3775,19 +3776,21 @@ class SearchDaemon:
         :meth:`_track_abandoned_batch_tasks` — which keeps it charged against
         the daemon-scoped permit pool until it genuinely finishes.
         """
-        started = time.monotonic()
-        budget = max(0.0, timeout)
         semaphore = self._batch_semaphore()
-        # No coroutine exists yet: a timeout here cannot leak one.
-        await asyncio.wait_for(semaphore.acquire(), timeout=budget)
-        remaining_budget = budget - (time.monotonic() - started)
-        if remaining_budget <= 0:
+        # Queue time is charged to the BATCH deadline, not to the operation's
+        # own budget: a query that waits behind a full pool must still get a
+        # full execution window once admitted, or healthy multi-wave batches
+        # would time out under normal latency. No coroutine exists yet, so a
+        # timeout here cannot leak one.
+        await asyncio.wait_for(semaphore.acquire(), timeout=max(0.0, remaining()))
+        exec_budget = min(exec_cap, remaining())
+        if exec_budget <= 0:
             semaphore.release()
-            raise TimeoutError("batch operation budget exhausted while waiting for a permit")
+            raise TimeoutError("batch deadline exhausted before the operation could start")
         task: asyncio.Task[T] = asyncio.ensure_future(make_coro())
         task.add_done_callback(lambda _task: semaphore.release())
         try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=remaining_budget)
+            return await asyncio.wait_for(asyncio.shield(task), timeout=exec_budget)
         except (TimeoutError, asyncio.CancelledError):
             task.cancel()
             self._track_abandoned_batch_tasks({task})
@@ -3826,11 +3829,17 @@ class SearchDaemon:
             probes_done += 1
             vectors = await self._run_bounded_batch_op(
                 lambda: self._embedding_client.embed_batch(chunk),
-                timeout=remaining(self.config.query_timeout_seconds),
+                remaining=remaining,
+                exec_cap=self.config.query_timeout_seconds,
             )
             vector_by_text.update(dict(zip(chunk, vectors, strict=True)))
 
         control_verdict: bool | None = None
+        # A probe that TIMED OUT (rather than being rejected) may have left a
+        # cancellation-resistant provider task holding a permit. Launching
+        # more probes after that drains the daemon-scoped pool, so isolation
+        # stops at the first one.
+        probe_timed_out = False
 
         async def _looks_like_outage() -> bool:
             """Is the PROVIDER down, or are these texts simply bad?
@@ -3850,7 +3859,8 @@ class SearchDaemon:
             try:
                 await self._run_bounded_batch_op(
                     lambda: self._embedding_client.embed_batch([_BATCH_EMBED_CONTROL_TEXT]),
-                    timeout=remaining(self.config.query_timeout_seconds),
+                    remaining=remaining,
+                    exec_cap=self.config.query_timeout_seconds,
                 )
                 control_verdict = False
             except asyncio.CancelledError:
@@ -3865,12 +3875,18 @@ class SearchDaemon:
             return vector_by_text, failed_texts, False
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            # Never probed successfully and the provider is unresponsive:
+            # degrade the batch once rather than launching more probes at a
+            # provider that is already holding an abandoned task.
+            logger.warning("batch pre-embed timed out (%d texts); degrading batch", len(texts))
+            return {}, set(), True
         except Exception as exc:
             logger.warning("batch pre-embed failed (%d texts); isolating: %s", len(texts), exc)
 
         async def _isolate(chunk: list[str]) -> str:
             """Bisect ``chunk``; returns "input" or "down"."""
-            nonlocal probes_left
+            nonlocal probes_left, probe_timed_out
             if await _looks_like_outage():
                 return "down"
             if len(chunk) == 1:
@@ -3891,10 +3907,23 @@ class SearchDaemon:
                     outcomes.append(True)
                 except asyncio.CancelledError:
                     raise
+                except TimeoutError:
+                    probe_timed_out = True
+                    outcomes.append(None)
+                    break
                 except Exception:
                     outcomes.append(False)
             if await _looks_like_outage():
                 return "down"
+            if probe_timed_out:
+                # Stop here: mark whatever is still unresolved as unembeddable
+                # and keep every vector already obtained.
+                for half, outcome in zip(
+                    halves, outcomes + [None] * (len(halves) - len(outcomes)), strict=True
+                ):
+                    if outcome is not True:
+                        failed_texts.update(half)
+                return "input"
             for half, outcome in zip(halves, outcomes, strict=True):
                 if outcome is True:
                     continue
@@ -3910,7 +3939,12 @@ class SearchDaemon:
                     return "down"
             return "input"
 
-        if await _isolate(texts) == "down":
+        isolation = await _isolate(texts)
+        if isolation == "input" and probe_timed_out and not vector_by_text:
+            # Nothing embedded and the provider stopped responding mid-walk:
+            # one shared degradation beats per-text failures.
+            return {}, set(), True
+        if isolation == "down":
             # Provider outage: degrade the whole batch once instead of
             # blaming (and failing) individual texts.
             return {}, set(), True
@@ -4013,7 +4047,8 @@ class SearchDaemon:
                 # instead of accumulating silently.
                 inner_result = await self._run_bounded_batch_op(
                     lambda: self.search(request),
-                    timeout=_remaining(self.config.query_timeout_seconds),
+                    remaining=_remaining,
+                    exec_cap=self.config.query_timeout_seconds,
                 )
                 # A search that suppresses its cancellation can return a
                 # value AFTER the deadline (wait_for then yields that value
@@ -4127,12 +4162,17 @@ class SearchDaemon:
             # transient DB error still yields the last successfully-loaded
             # records instead of silently erasing context for the whole batch.
             try:
-                # Bounded: the refresh's DB calls must not hold the whole
-                # batch open past its deadline; a timeout falls through to
-                # the stale-snapshot fail-soft path below.
-                await asyncio.wait_for(
-                    cache.refresh_if_stale(effective_zone_id),
-                    timeout=_remaining(self.config.query_timeout_seconds),
+                # Hard-bounded like every other batch phase: plain wait_for
+                # would cancel the DB call and then WAIT for that cancellation,
+                # so a resistant operation could hold the response past the
+                # deadline. With no budget left the refresh is skipped
+                # entirely and the stale snapshot below is used.
+                if _remaining() <= 0:
+                    raise TimeoutError("batch deadline exhausted before path-context refresh")
+                await self._run_bounded_batch_op(
+                    lambda: cache.refresh_if_stale(effective_zone_id),
+                    remaining=_remaining,
+                    exec_cap=self.config.query_timeout_seconds,
                 )
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1

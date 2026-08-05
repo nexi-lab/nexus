@@ -1070,3 +1070,142 @@ async def test_exhausted_permit_pool_cannot_wedge_a_later_batch(monkeypatch) -> 
 
     release.set()
     await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_healthy_queued_waves_get_a_full_execution_budget() -> None:
+    import asyncio
+
+    daemon = _make_batch_daemon()
+    # Concurrency 1 forces three waves; each search takes longer than the
+    # queue wait it sits through.
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=1,
+        query_timeout_seconds=0.1,
+        batch_search_timeout_seconds=5.0,
+    )
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        await asyncio.sleep(0.06)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": "a"}, {"query": "b"}, {"query": "c"}], zone_id="root"
+    )
+
+    # Queue time is charged to the batch deadline, not to each query's own
+    # execution budget — every healthy wave must complete.
+    assert out == [[], [], []], out
+
+
+@pytest.mark.asyncio
+async def test_timed_out_pre_embed_probe_does_not_drain_the_permit_pool(monkeypatch) -> None:
+    import asyncio
+
+    from nexus.bricks.search import daemon as daemon_module
+
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=8,
+        query_timeout_seconds=0.05,
+        batch_search_timeout_seconds=1.0,
+    )
+    release = asyncio.Event()
+
+    class ResistantEmbeddingClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            self.calls += 1
+            inner = asyncio.ensure_future(release.wait())
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
+            return [[0.1, 0.2] for _ in texts]
+
+    client = ResistantEmbeddingClient()
+    daemon._embedding_client = client
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    await daemon._batch_search_on_current_loop(
+        [{"query": f"q{i}", "search_type": "hybrid"} for i in range(8)], zone_id="root"
+    )
+
+    # A timed-out probe stops isolation: exactly one provider task is left
+    # holding a permit, so later batches still have capacity.
+    assert client.calls == 1, client.calls
+    assert len(daemon._abandoned_batch_tasks) == 1
+
+    release.set()
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_resistant_path_context_refresh_cannot_hold_the_response(monkeypatch) -> None:
+    import asyncio
+    import time
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.search import daemon as daemon_module
+
+    monkeypatch.setattr(daemon_module, "_BATCH_CANCEL_DRAIN_SECONDS", 0.05)
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=4,
+        query_timeout_seconds=0.05,
+        batch_search_timeout_seconds=0.3,
+    )
+    release = asyncio.Event()
+
+    class ResistantCache:
+        async def refresh_if_stale(self, zone_id: str) -> None:
+            inner = asyncio.ensure_future(release.wait())
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
+
+        def snapshot_zone(self, zone_id: str) -> None:
+            return None
+
+    daemon._resolve_path_context_cache = MagicMock(
+        return_value=asyncio.sleep(0, result=ResistantCache())
+    )
+    # The attach block's fail-soft counters live on the daemon's stats object,
+    # which a bare __new__ daemon does not have.
+    from nexus.bricks.search.daemon import DaemonStats
+
+    daemon.stats = DaemonStats()
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    started = time.monotonic()
+    out = await daemon._batch_search_on_current_loop([{"query": "a"}], zone_id="root")
+    elapsed = time.monotonic() - started
+
+    # The fail-soft refresh must not hold the response open past the deadline.
+    assert elapsed < 3.0, f"path-context refresh escaped the deadline ({elapsed:.2f}s)"
+    assert out == [[]]
+
+    release.set()
+    await asyncio.sleep(0.1)

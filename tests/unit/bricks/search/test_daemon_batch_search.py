@@ -614,3 +614,108 @@ async def test_legacy_hybrid_missing_embedding_still_degrades_under_batch() -> N
         "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
     )
     assert [r.path for r in out] == ["/kw.md"]
+
+
+@pytest.mark.asyncio
+async def test_batch_deadline_covers_pre_embed_phase() -> None:
+    import asyncio
+    import time
+
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=8,
+        query_timeout_seconds=30.0,
+        batch_search_timeout_seconds=0.2,
+    )
+
+    class SlowEmbeddingClient:
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            await asyncio.sleep(0.3)
+            return [[0.1, 0.2] for _ in texts]
+
+    daemon._embedding_client = SlowEmbeddingClient()
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        await asyncio.sleep(5)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    started = time.monotonic()
+    out = await daemon._batch_search_on_current_loop([{"query": "a"}], zone_id="root")
+    elapsed = time.monotonic() - started
+
+    # The ONE deadline spans pre-embed + fan-out: a pre-embed that eats the
+    # whole budget must not hand the fan-out a fresh window.
+    assert elapsed < 2.0, f"pre-embed escaped the batch deadline ({elapsed:.2f}s)"
+    assert isinstance(out[0], BatchQueryFailure)
+
+
+@pytest.mark.asyncio
+async def test_task_finishing_during_cancel_still_settles_as_timeout() -> None:
+    import asyncio
+    import contextlib
+
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+    daemon.config = type(daemon.config)(
+        batch_search_concurrency=8,
+        query_timeout_seconds=30.0,
+        batch_search_timeout_seconds=0.05,
+    )
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        # Suppress the cancellation and complete anyway — the task was still
+        # unfinished AT THE DEADLINE, so it must settle as a timeout.
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.sleep(0.5)
+        return [{"path": "/late.md"}]
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    out = await daemon._batch_search_on_current_loop([{"query": "late"}], zone_id="root")
+
+    assert isinstance(out[0], BatchQueryFailure)
+    assert out[0].error == "Search timed out"
+
+
+@pytest.mark.asyncio
+async def test_missing_vector_backend_is_distinct_from_missing_embedding() -> None:
+    from nexus.bricks.search.daemon import (
+        SearchDaemon,
+        SearchResult,
+        VectorBackendUnavailableError,
+    )
+
+    daemon: Any = SearchDaemon.__new__(SearchDaemon)
+    daemon._vector_backend = None
+
+    async def _keyword_search(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        return [
+            SearchResult(
+                path="/kw.md", chunk_text="kw", score=1.0, chunk_index=0, search_type="keyword"
+            )
+        ]
+
+    daemon._keyword_search = MethodType(_keyword_search, daemon)
+
+    # Interactive contract: absent dense backend degrades to empty/keyword.
+    assert await daemon._semantic_search("q", 5, None, zone_id="root") == []
+
+    # Batch contract: an ABSENT backend is infrastructure, not a missing
+    # embedding — even with a valid precomputed vector in hand.
+    with pytest.raises(VectorBackendUnavailableError):
+        await daemon._semantic_search(
+            "q", 5, None, zone_id="root", query_vector=[0.1], propagate_failures=True
+        )
+
+    # ...and the hybrid gather helper must NOT suppress it (that carve-out is
+    # only for a genuinely missing embedding), so incomplete dense coverage
+    # cannot masquerade as a keyword-only success.
+    with pytest.raises(VectorBackendUnavailableError):
+        await daemon._hybrid_search(
+            "q", 4, None, 0.5, "rrf", zone_id="root", propagate_failures=True
+        )

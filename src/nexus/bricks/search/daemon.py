@@ -96,6 +96,22 @@ MUTATION_CONSUMER_NAMES: tuple[str, ...] = ("fts", "embedding")
 _BATCH_FAILURE_MESSAGE = "Search query failed"
 _BATCH_TIMEOUT_MESSAGE = "Search timed out"
 _BATCH_EMBED_UNAVAILABLE_MESSAGE = "Query embedding unavailable"
+# Grace window for draining cancelled batch tasks. Cancellation is normally
+# immediate; this only bounds a backend that swallows CancelledError during
+# cleanup so it cannot hold the request open indefinitely.
+_BATCH_VECTOR_BACKEND_MESSAGE = "Vector backend unavailable"
+_BATCH_CANCEL_DRAIN_SECONDS = 5.0
+
+
+class VectorBackendUnavailableError(RuntimeError):
+    """The dense backend itself is absent or unusable for this search.
+
+    Distinct from :class:`EmbeddingUnavailableError` (which means the query
+    text could not be embedded). Missing-embedding is legitimate hybrid
+    degradation and stays fail-soft; a missing/failed vector BACKEND means
+    dense coverage is silently incomplete, so under the batch policy it is
+    a per-query failure rather than a keyword-only "success".
+    """
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -3537,9 +3553,11 @@ class SearchDaemon:
         except Exception as exc:
             # Batch mode reports dense INFRASTRUCTURE failures per query
             # instead of silently serving keyword-only hits as a full
-            # success. A missing embedding is legitimate degradation (the
-            # hybrid contract serves keyword-only then) and stays fail-soft
-            # in both modes.
+            # success. ONLY a missing query embedding is legitimate
+            # degradation (the hybrid contract serves keyword-only then) and
+            # stays fail-soft in both modes — an absent/failed vector BACKEND
+            # raises VectorBackendUnavailableError and is NOT carved out,
+            # since it means dense coverage is silently incomplete.
             if propagate_failures and not isinstance(exc, EmbeddingUnavailableError):
                 raise
             logger.warning("hybrid dense leg failed; continuing keyword-only: %s", exc)
@@ -3697,6 +3715,16 @@ class SearchDaemon:
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
 
+        # ONE monotonic deadline governs the whole request: pre-embed, the
+        # search fan-out, cancellation drain, and the path-context refresh
+        # each get only the REMAINING budget. Per-phase timeouts alone let a
+        # request accumulate pre-embed + fan-out + refresh windows.
+        batch_deadline = time.monotonic() + max(0.0, self.config.batch_search_timeout_seconds)
+
+        def _remaining(cap: float | None = None) -> float:
+            left = max(0.0, batch_deadline - time.monotonic())
+            return left if cap is None else min(left, cap)
+
         # Pre-embed unique texts once. When the ONE shared embed_batch call
         # fails (after the client's own retries), the whole batch treats the
         # embedding provider as down for this request: semantic-only queries
@@ -3720,7 +3748,7 @@ class SearchDaemon:
                 try:
                     vectors = await asyncio.wait_for(
                         self._embedding_client.embed_batch(unique_texts),
-                        timeout=self.config.query_timeout_seconds,
+                        timeout=_remaining(self.config.query_timeout_seconds),
                     )
                     vector_by_text = dict(zip(unique_texts, vectors, strict=True))
                 except Exception as exc:
@@ -3748,7 +3776,7 @@ class SearchDaemon:
                     # all completed siblings and never produce the advertised
                     # per-query timeout failure. wait_for cancels the hung
                     # inner search and the except below converts it.
-                    return await asyncio.wait_for(
+                    inner_result = await asyncio.wait_for(
                         self.search(
                             SearchRequest(
                                 query=query_text,
@@ -3768,10 +3796,20 @@ class SearchDaemon:
                                 embedding_unavailable=pre_embed_failed,
                             )
                         ),
-                        timeout=self.config.query_timeout_seconds,
+                        timeout=_remaining(self.config.query_timeout_seconds),
                     )
+                    # A search that suppresses its cancellation can return a
+                    # value AFTER the deadline (wait_for then yields that
+                    # value instead of raising). It was unfinished when the
+                    # budget ran out, so settle it as a timeout rather than
+                    # reporting a healthy late result.
+                    if time.monotonic() >= batch_deadline:
+                        return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+                    return inner_result
                 except EmbeddingUnavailableError:
                     return BatchQueryFailure(error=_BATCH_EMBED_UNAVAILABLE_MESSAGE)
+                except VectorBackendUnavailableError:
+                    return BatchQueryFailure(error=_BATCH_VECTOR_BACKEND_MESSAGE)
                 except TimeoutError:
                     logger.warning("batch_search inner search timed out: %r", query_text)
                     return BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
@@ -3790,14 +3828,17 @@ class SearchDaemon:
         # completed siblings keep their results.
         tasks = [asyncio.ensure_future(_run_one(q)) for q in queries]
         try:
-            _done_tasks, pending_tasks = await asyncio.wait(
-                tasks, timeout=max(0.0, self.config.batch_search_timeout_seconds)
-            )
+            _done_tasks, pending_tasks = await asyncio.wait(tasks, timeout=_remaining())
         except BaseException:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        # The set pending AT EXPIRY is authoritative for settlement: a task
+        # that finishes during cancellation cleanup (or suppresses the
+        # cancel) was still unfinished at the deadline and must not be
+        # reported as a healthy result.
+        timed_out_positions = {i for i, task in enumerate(tasks) if task in pending_tasks}
         if pending_tasks:
             logger.warning(
                 "batch_search deadline (%.1fs) expired with %d of %d queries unfinished",
@@ -3807,13 +3848,23 @@ class SearchDaemon:
             )
             for task in pending_tasks:
                 task.cancel()
-            await asyncio.gather(*pending_tasks, return_exceptions=True)
-        # After the cancel+drain every task is done; a task that slipped in a
-        # normal completion between the deadline and the cancel keeps its
-        # result rather than being misreported as timed out.
+            # Bounded drain: a backend that swallows cancellation must not
+            # hold the request open past its deadline. Un-drained tasks are
+            # abandoned (already settled as timeouts below).
+            drain = asyncio.gather(*pending_tasks, return_exceptions=True)
+            try:
+                await asyncio.wait_for(asyncio.shield(drain), timeout=_BATCH_CANCEL_DRAIN_SECONDS)
+            except (TimeoutError, asyncio.CancelledError):
+                logger.warning(
+                    "batch_search cancellation drain exceeded %.1fs; abandoning %d task(s)",
+                    _BATCH_CANCEL_DRAIN_SECONDS,
+                    len(pending_tasks),
+                )
         results: list[list[Any] | BatchQueryFailure] = [
-            BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE) if task.cancelled() else task.result()
-            for task in tasks
+            BatchQueryFailure(error=_BATCH_TIMEOUT_MESSAGE)
+            if i in timed_out_positions
+            else task.result()
+            for i, task in enumerate(tasks)
         ]
         # Issue #3773: attach admin-configured path contexts. The whole batch
         # is single-zone by design (``zone_id=effective_zone_id`` above), so
@@ -3843,7 +3894,7 @@ class SearchDaemon:
                 # the stale-snapshot fail-soft path below.
                 await asyncio.wait_for(
                     cache.refresh_if_stale(effective_zone_id),
-                    timeout=self.config.query_timeout_seconds,
+                    timeout=_remaining(self.config.query_timeout_seconds),
                 )
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
@@ -4439,7 +4490,7 @@ class SearchDaemon:
         """
         if self._vector_backend is None:
             if propagate_failures:
-                raise EmbeddingUnavailableError(query)
+                raise VectorBackendUnavailableError(query)
             return []
 
         try:

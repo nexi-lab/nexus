@@ -3836,7 +3836,18 @@ class SearchDaemon:
         total probes either way; every vector obtained along the way is
         kept.
         """
-        probes_left = _BATCH_EMBED_PROBE_LIMIT
+        # Budget must be large enough to actually ISOLATE a bad input at the
+        # configured batch cardinality: bisection costs ~2 probes per level,
+        # i.e. 2*ceil(log2(n)) for one offender (18 at the documented 470-500
+        # query workload). A fixed floor silently ran out mid-walk on large
+        # batches and marked whole unresolved halves as unembeddable, failing
+        # healthy siblings. The factor leaves room for a few independent
+        # offenders; a genuine outage is still cut short by the control probe,
+        # and every probe remains under the batch deadline.
+        probes_left = max(
+            _BATCH_EMBED_PROBE_LIMIT,
+            4 * math.ceil(math.log2(max(2, len(texts)))),
+        )
         probes_done = 0
         vector_by_text: dict[str, list[float]] = {}
         failed_texts: set[str] = set()

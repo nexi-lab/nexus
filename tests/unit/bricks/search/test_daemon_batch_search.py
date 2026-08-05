@@ -1318,3 +1318,48 @@ async def test_resistant_refresh_does_not_block_the_next_batch(monkeypatch) -> N
 
     release.set()
     await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch_size", [470, 500])
+async def test_single_bad_input_isolates_at_documented_cardinality(batch_size) -> None:
+    from nexus.contracts.search_types import BatchQueryFailure
+
+    daemon = _make_batch_daemon()
+    poison = "q001"
+
+    class OnePoisonClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def embed_batch(self, texts: Any) -> list[list[float]]:
+            self.calls += 1
+            chunk = list(texts)
+            if poison in chunk:
+                raise ValueError("input rejected")
+            return [[0.1, 0.2] for _ in chunk]
+
+    client = OnePoisonClient()
+    daemon._embedding_client = client
+    captured: list[Any] = []
+
+    async def fake_search(self: Any, request: Any) -> list[Any]:
+        captured.append(request)
+        return []
+
+    daemon.search = MethodType(fake_search, daemon)
+
+    texts = [f"q{i:03d}" for i in range(batch_size)]
+    out = await daemon._batch_search_on_current_loop(
+        [{"query": t, "search_type": "semantic"} for t in texts], zone_id="root"
+    )
+
+    failed = {texts[i] for i, r in enumerate(out) if isinstance(r, BatchQueryFailure)}
+    # The probe budget must be big enough to isolate ONE bad text at the
+    # documented 470-500 query workload; a too-small budget used to give up
+    # mid-walk and fail the whole unresolved half.
+    assert failed == {poison}, sorted(failed)[:10]
+    assert len(captured) == batch_size - 1
+    assert all(r.query_vector == [0.1, 0.2] for r in captured)
+    # Isolation stays logarithmic, not per-text.
+    assert client.calls <= 40, client.calls

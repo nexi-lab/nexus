@@ -674,32 +674,22 @@ impl FusionOpts {
     }
 }
 
-/// Hybrid = keyword + semantic, fused per the caller's chosen
-/// method, optionally pooled per-doc.  Runs both retrievals in
-/// sequence on the same spawn_blocking worker — small P3-friendly
-/// implementation.  A parallel-fetch variant is a follow-up when
-/// per-source latency asymmetry (BM25 ~ms, semantic ~10-100ms with
-/// real fastembed) starts to matter for user-visible p95.
-///
-/// Each source over-fetches `limit * 2` to give fusion headroom
-/// (a doc that ranks 8 in keyword and 9 in semantic scores highly
-/// under RRF but only surfaces if BOTH sources return it).  The
-/// dispatcher's `path_filter` still applies inside each source's
-/// query so pooling never has to re-check.
-fn do_hybrid_query(
-    manager: &IndexManager,
-    embedder: &Arc<dyn Embedder>,
-    q: &str,
-    zone_id: &str,
+/// Over-fetch multiplier per source for hybrid.  A doc that ranks
+/// 8 in keyword and 9 in semantic scores highly under RRF, but
+/// only surfaces if BOTH sources return it — so each side fetches
+/// more than the caller-visible `limit` to give fusion headroom.
+const HYBRID_OVER_FETCH_MULT: usize = 2;
+
+/// Fuse two source result lists per the caller's chosen method,
+/// pool per-doc, and truncate to `limit`.  Pure math — the two
+/// source lists come in already fetched.  The RPC handler runs
+/// the fetches in parallel then hands them here.
+fn fuse_hybrid(
+    keyword: Vec<QueryResult>,
+    semantic: Vec<QueryResult>,
     limit: usize,
-    path_filter: &str,
     opts: FusionOpts,
-) -> Result<Vec<QueryResult>, String> {
-    let over_fetch = limit.saturating_mul(2).max(limit);
-
-    let keyword = do_keyword_query(manager, q, zone_id, over_fetch, path_filter)?;
-    let semantic = do_semantic_query(manager, embedder, q, zone_id, over_fetch, path_filter)?;
-
+) -> Vec<QueryResult> {
     let fused = match opts.method {
         FusionMethod::Unspecified | FusionMethod::Rrf => {
             fusion::rrf(&keyword, &semantic, opts.rrf_k)
@@ -709,9 +699,8 @@ fn do_hybrid_query(
             fusion::rrf_weighted(&keyword, &semantic, opts.rrf_k, opts.alpha)
         }
     };
-
     let pooled = fusion::pool_by_document(fused, opts.chunks_per_page);
-    Ok(pooled.into_iter().take(limit).collect())
+    pooled.into_iter().take(limit).collect()
 }
 
 /// Sinks the Index walker writes into.  `fts` is required (Index
@@ -1068,19 +1057,50 @@ impl SearchService for SearchServiceImpl {
                         }));
                     }
                 };
-                tokio::task::spawn_blocking(move || {
-                    do_hybrid_query(
-                        &manager,
-                        &embedder,
-                        &q,
-                        &zone_id,
-                        limit,
-                        &path_filter,
-                        fusion_opts,
+                // Parallel-fetch retrofit (P3 audit finding #3):
+                // real-fastembed semantic ~300 ms + BM25 keyword ~10 ms
+                // = 310 ms wall-clock sequential.  Spawning both legs
+                // on the blocking pool + joining brings wall-clock to
+                // max(kw, sem) ≈ 300 ms — no free lunch on total CPU
+                // but user-visible p95 halves in the worst-case ratio.
+                let over_fetch = limit.saturating_mul(HYBRID_OVER_FETCH_MULT).max(limit);
+                let (kw_task, sem_task) = {
+                    let mgr_kw = Arc::clone(&manager);
+                    let mgr_sem = Arc::clone(&manager);
+                    let embedder = Arc::clone(&embedder);
+                    let q_kw = q.clone();
+                    let q_sem = q;
+                    let zone_kw = zone_id.clone();
+                    let zone_sem = zone_id;
+                    let path_kw = path_filter.clone();
+                    let path_sem = path_filter;
+                    (
+                        tokio::task::spawn_blocking(move || {
+                            do_keyword_query(&mgr_kw, &q_kw, &zone_kw, over_fetch, &path_kw)
+                        }),
+                        tokio::task::spawn_blocking(move || {
+                            do_semantic_query(
+                                &mgr_sem, &embedder, &q_sem, &zone_sem, over_fetch, &path_sem,
+                            )
+                        }),
                     )
-                })
-                .await
-                .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?
+                };
+                let (kw_join, sem_join) = tokio::join!(kw_task, sem_task);
+                let kw = kw_join
+                    .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                let sem = sem_join
+                    .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                match (kw, sem) {
+                    (Ok(keyword), Ok(semantic)) => {
+                        Ok(fuse_hybrid(keyword, semantic, limit, fusion_opts))
+                    }
+                    // A source-side error on either leg — surface it
+                    // as the response's `error` field rather than a
+                    // gRPC Status, matching keyword / semantic
+                    // behaviour.  If both fail we surface the
+                    // keyword error (arbitrary but stable).
+                    (Err(e), _) | (Ok(_), Err(e)) => Err(e),
+                }
             }
         };
 

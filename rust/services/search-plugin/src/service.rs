@@ -858,46 +858,63 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         .ok()
         .and_then(|info| info.modified_at_ms);
 
-    // Drop any prior chunks under this path before adding the fresh
-    // set — reindex-safe.  Both the delete and the subsequent adds
-    // queue on the same tantivy writer transaction; commit() lands
-    // them atomically.  P3 shape only ever adds chunk 0 so this is
-    // functionally the same as the pre-P3 auto-delete-on-add; the
-    // difference matters when P4's chunker emits multi-chunk sets
-    // and a shrinking chunk count needs the orphan sweep.
-    sinks.fts.delete_all_chunks(vfs_path);
-    if let Err(e) = sinks.fts.add_document(vfs_path, 0, text, mtime_ms) {
-        tracing::warn!(path = %vfs_path, err = %e, "index: fts add_document failed — skipping");
+    // P4: chunk the file into semantically-coherent pieces.  The
+    // chunker respects markdown-ish heading + code-fence structure
+    // and keeps each chunk under the embedder's soft budget.
+    let chunks = crate::chunker::chunk_document(text);
+    if chunks.is_empty() {
+        // Whitespace-only file — nothing to index.
         return IndexOne::Skipped;
     }
 
-    // ANN side — best-effort.  A failure to embed / add does NOT
-    // fail the whole file; keyword still works, semantic just
-    // misses this doc until the next Index retries.  Real batching
-    // (embed 32 files at a time) lands in P4/P5 when the chunker
-    // makes it worthwhile.
-    //
-    // P3 note: chunk_index is 0 (one chunk per file).  P4's real
-    // chunker replaces this with a per-chunk loop plus a preceding
-    // `ann.delete_all_chunks(vfs_path)` so a file whose chunk count
-    // shrinks doesn't leave stale ghost chunks.
+    // FTS side: drop the file's old chunk set, add the fresh one.
+    // Both ops queue on the same writer transaction so commit()
+    // lands them atomically — a reader never sees a partially-
+    // reindexed file.
+    sinks.fts.delete_all_chunks(vfs_path);
+    for chunk in &chunks {
+        if let Err(e) = sinks
+            .fts
+            .add_document(vfs_path, chunk.chunk_index, &chunk.text, mtime_ms)
+        {
+            tracing::warn!(
+                path = %vfs_path,
+                chunk = chunk.chunk_index,
+                err = %e,
+                "index: fts add_document failed — skipping remaining chunks",
+            );
+            return IndexOne::Skipped;
+        }
+    }
+
+    // ANN side — best-effort per file.  Batch-embed the whole
+    // chunk set in one embedder call to amortise ort session
+    // overhead; per-chunk add + shared delete_all mirrors the
+    // FTS discipline.  A failure on embed / add does NOT fail
+    // the whole Index — keyword still works.
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
-        match embedder.embed_batch(&[text]) {
-            Ok(mut vecs) => {
-                if let Some(v) = vecs.pop() {
-                    // Drop any stale chunks under this path before
-                    // adding the fresh one — the P3 shape only ever
-                    // has chunk 0, but calling delete_all_chunks
-                    // first keeps the caller pattern honest for P4.
-                    ann.delete_all_chunks(vfs_path);
-                    if let Err(e) = ann.add_vector(vfs_path, 0, &v) {
+        let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
+        match embedder.embed_batch(&inputs) {
+            Ok(vecs) if vecs.len() == chunks.len() => {
+                ann.delete_all_chunks(vfs_path);
+                for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
+                    if let Err(e) = ann.add_vector(vfs_path, chunk.chunk_index, vec) {
                         tracing::warn!(
                             path = %vfs_path,
+                            chunk = chunk.chunk_index,
                             err = %e,
-                            "index: ann add_vector failed — semantic misses this doc",
+                            "index: ann add_vector failed — semantic misses this chunk",
                         );
                     }
                 }
+            }
+            Ok(vecs) => {
+                tracing::warn!(
+                    path = %vfs_path,
+                    got = vecs.len(),
+                    expected = chunks.len(),
+                    "index: embedder returned wrong vec count — semantic misses this doc",
+                );
             }
             Err(e) => {
                 tracing::warn!(

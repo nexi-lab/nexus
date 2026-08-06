@@ -17,24 +17,34 @@
 //! state; the kernel VFS is the corpus SSOT (same rule as the FTS
 //! index in `fts_index.rs`).
 //!
-//! # Id + path mapping
+//! # Id + (path, chunk_index) mapping
 //!
 //! HNSW works on `usize` ids.  We assign monotonic ids and keep
-//! `path → id` + `id → path` in the sidecar so:
+//! `(path, chunk_index) → id` + `id → (path, chunk_index)` in the
+//! sidecar so:
 //!
-//! 1. **Search results carry paths.** `hnsw_rs::Neighbour` returns
-//!    only the id; the sidecar's reverse map turns each id back into
-//!    a path.
+//! 1. **Search results carry (path, chunk_index).**
+//!    `hnsw_rs::Neighbour` returns only the id; the sidecar's
+//!    reverse map turns each id back into a path + chunk index.
+//!    P4's multi-chunk-per-file emission means the two fields
+//!    together are what identifies a doc — `path` alone would
+//!    collide across chunks of the same file.
 //!
-//! 2. **Re-indexing the same path is idempotent.** `hnsw_rs` has no
-//!    delete primitive — inserting `path_A` twice would leave two
-//!    graph nodes, doubling `path_A`'s recall weight.  Instead we
-//!    move the OLD id to a `shadowed` set and insert with a new id;
-//!    search post-filters shadowed hits before returning.  The
-//!    shadowed entries stay in the graph (waste memory), so a
-//!    periodic full rebuild is deferred to P5's indexing pipeline —
-//!    the same MetaStore-checkpoint moment that already schedules a
-//!    tantivy segment merge.
+//! 2. **Re-indexing the same chunk is idempotent.** `hnsw_rs` has
+//!    no delete primitive — inserting the same `(path, chunk)`
+//!    twice would leave two graph nodes, doubling the doc's recall
+//!    weight.  Instead we move the OLD id to a `shadowed` set and
+//!    insert with a new id; search post-filters shadowed hits
+//!    before returning.  The shadowed entries stay in the graph
+//!    (waste memory), so a periodic full rebuild is deferred to
+//!    P5's indexing pipeline — the same MetaStore-checkpoint moment
+//!    that already schedules a tantivy segment merge.
+//!
+//! 3. **Whole-file removal via [`delete_all_chunks`](AnnIndex::delete_all_chunks).**
+//!    A file's chunk count can change across reindexes — the caller
+//!    (`do_index` in service.rs) drops ALL chunks for a path before
+//!    inserting the freshly-chunked set, so an old chunk 3 that no
+//!    longer exists doesn't linger as a ghost hit.
 //!
 //! # Concurrency
 //!
@@ -85,36 +95,55 @@ const DEFAULT_CAPACITY: usize = 100_000;
 /// Result row returned by [`AnnIndex::search`].  Distance is the raw
 /// cosine distance (0.0 = identical, 2.0 = opposite); callers convert
 /// to a similarity score via `1.0 - distance` if they want the
-/// familiar "higher is better" shape.
+/// familiar "higher is better" shape.  `chunk_index` identifies which
+/// chunk of the source file this hit refers to (0 in P1-P3 = one
+/// chunk per file; real values from P4 onward).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnnHit {
     pub path: String,
+    pub chunk_index: u32,
     pub distance: f32,
+}
+
+/// Sidecar format version.  Bumped from v1 (path-keyed) to v2
+/// ((path, chunk_index)-keyed) at P4.  The `ann-<tag>-v2/` dir
+/// name in [`IndexManager::ann_dir`] means v1 and v2 indexes
+/// never share a directory; if a v1 sidecar somehow appears in a
+/// v2 dir the serde parse fails and `open_or_create` returns an
+/// AnnError::Open with the format-drift clue.
+const SIDECAR_VERSION: u32 = 2;
+
+fn sidecar_version_default() -> u32 {
+    SIDECAR_VERSION
+}
+
+/// One persisted mapping row.  Vec-of-struct instead of a
+/// HashMap<(String,u32), usize> because JSON keys must be strings;
+/// a Vec keeps the on-disk shape trivial and the in-memory lookup
+/// table (`chunk_to_id`) is derived on load.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct SidecarEntry {
+    path: String,
+    chunk_index: u32,
+    id: usize,
 }
 
 /// On-disk state that survives restarts.  `Hnsw` itself is dumped by
 /// hnsw_rs into its own two files; this JSON captures everything
-/// else (id counter, path ↔ id mappings, shadowed-id set).
+/// else (id counter, (path, chunk_index) ↔ id mappings, shadowed-id
+/// set).
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Sidecar {
+    #[serde(default = "sidecar_version_default")]
+    version: u32,
     next_id: usize,
-    path_to_id: HashMap<String, usize>,
+    #[serde(default)]
+    entries: Vec<SidecarEntry>,
     /// Ids no longer valid — their doc was re-indexed under a new
-    /// id.  Search post-filter drops these before returning hits.
+    /// id, or their whole file was reindexed with a new chunk shape.
+    /// Search post-filter drops these before returning hits.
+    #[serde(default)]
     shadowed: HashSet<usize>,
-}
-
-impl Sidecar {
-    /// Rebuild the reverse map (`id → path`) from `path_to_id`.  Not
-    /// stored to disk — cheap to derive on load, and keeping it out
-    /// of the JSON avoids the two mappings drifting when the file is
-    /// hand-edited (a debug/support workflow we want to preserve).
-    fn id_to_path(&self) -> HashMap<usize, String> {
-        self.path_to_id
-            .iter()
-            .map(|(p, id)| (*id, p.clone()))
-            .collect()
-    }
 }
 
 /// One per-zone HNSW vector index.  Cheap to clone (`Arc` inside).
@@ -123,10 +152,15 @@ pub struct AnnIndex {
     dir: PathBuf,
     hnsw: Hnsw<'static, f32, DistCosine>,
     sidecar: RwLock<Sidecar>,
-    /// Cached reverse map — regenerated on every write to keep search
-    /// path lookups O(1) without holding the sidecar RwLock for the
-    /// whole search.
-    id_to_path: RwLock<HashMap<usize, String>>,
+    /// In-memory lookup: `(path, chunk_index) → id`.  Used by
+    /// add_vector to detect re-index and rotate the old id into
+    /// `shadowed`.  Rebuilt from `sidecar.entries` on load; kept in
+    /// sync with the sidecar on every write.
+    chunk_to_id: RwLock<HashMap<(String, u32), usize>>,
+    /// Cached reverse map: `id → (path, chunk_index)`.  Regenerated
+    /// on every write so search's path lookup stays O(1) without
+    /// holding the sidecar RwLock for the whole search.
+    id_to_chunk: RwLock<HashMap<usize, (String, u32)>>,
 }
 
 impl AnnIndex {
@@ -159,6 +193,15 @@ impl AnnIndex {
                 .map_err(|e| AnnError::Open(sidecar_path.display().to_string(), e.to_string()))?;
             let sidecar: Sidecar = serde_json::from_slice(&bytes)
                 .map_err(|e| AnnError::Open(sidecar_path.display().to_string(), e.to_string()))?;
+            if sidecar.version != SIDECAR_VERSION {
+                return Err(AnnError::Open(
+                    sidecar_path.display().to_string(),
+                    format!(
+                        "sidecar version {} ≠ expected {}; drop this dir and reindex",
+                        sidecar.version, SIDECAR_VERSION,
+                    ),
+                ));
+            }
             (hnsw, sidecar)
         } else {
             let hnsw = Hnsw::<f32, DistCosine>::new(
@@ -168,28 +211,41 @@ impl AnnIndex {
                 HNSW_EF_CONSTRUCTION,
                 DistCosine {},
             );
-            (hnsw, Sidecar::default())
+            let mut side = Sidecar::default();
+            side.version = SIDECAR_VERSION;
+            (hnsw, side)
         };
 
-        let id_to_path = sidecar.id_to_path();
+        let chunk_to_id: HashMap<(String, u32), usize> = sidecar
+            .entries
+            .iter()
+            .map(|e| ((e.path.clone(), e.chunk_index), e.id))
+            .collect();
+        let id_to_chunk: HashMap<usize, (String, u32)> = sidecar
+            .entries
+            .iter()
+            .map(|e| (e.id, (e.path.clone(), e.chunk_index)))
+            .collect();
         Ok(Arc::new(Self {
             dim,
             dir,
             hnsw,
             sidecar: RwLock::new(sidecar),
-            id_to_path: RwLock::new(id_to_path),
+            chunk_to_id: RwLock::new(chunk_to_id),
+            id_to_chunk: RwLock::new(id_to_chunk),
         }))
     }
 
-    /// Add / replace the embedding for `path`.  Idempotent — a prior
-    /// vector under the same path is shadowed instead of duplicated
-    /// (see the "Id + path mapping" section of the module doc).
+    /// Add / replace the embedding for `(path, chunk_index)`.
+    /// Idempotent — a prior vector under the same key is shadowed
+    /// instead of duplicated (see the "Id + (path, chunk_index)
+    /// mapping" section of the module doc).
     ///
     /// Errors on:
     /// - `vector.len() != dim`
     /// - all-zero vector (cosine distance is undefined; would NaN
     ///   propagate through the graph)
-    pub fn add_vector(&self, path: &str, vector: &[f32]) -> Result<(), AnnError> {
+    pub fn add_vector(&self, path: &str, chunk_index: u32, vector: &[f32]) -> Result<(), AnnError> {
         if vector.len() != self.dim {
             return Err(AnnError::DimMismatch {
                 path: path.to_string(),
@@ -203,30 +259,70 @@ impl AnnIndex {
 
         // Rotate mappings under the write lock.  Short-held — no
         // HNSW ops inside.
-        let new_id = {
+        let (new_id, prior_id) = {
             let mut side = self.sidecar.write();
             let id = side.next_id;
             side.next_id += 1;
-            if let Some(prior) = side.path_to_id.insert(path.to_string(), id) {
+
+            let key = (path.to_string(), chunk_index);
+            let mut lookup = self.chunk_to_id.write();
+            let prior = lookup.insert(key.clone(), id);
+            if let Some(pid) = prior {
                 // Old id survives in the graph but no longer
-                // resolves to a live path — mark it shadowed so
-                // search's post-filter drops it.
-                side.shadowed.insert(prior);
+                // resolves to a live (path, chunk) — shadow it.
+                side.shadowed.insert(pid);
+                // Drop the stale sidecar entry so commit() writes
+                // the current mapping.
+                side.entries.retain(|e| e.id != pid);
             }
-            id
+            side.entries.push(SidecarEntry {
+                path: path.to_string(),
+                chunk_index,
+                id,
+            });
+            self.id_to_chunk.write().insert(id, key);
+            if let Some(pid) = prior {
+                self.id_to_chunk.write().remove(&pid);
+            }
+            (id, prior)
         };
+        let _ = prior_id; // captured only for the shadow side-effect above
 
         // HNSW insert is thread-safe on `&self`; no lock needed here.
         self.hnsw.insert((vector, new_id));
 
-        // Refresh the cached reverse map so search's path lookup
-        // sees the new id immediately.  Cheap on typical zone sizes;
-        // a smarter incremental update is a follow-up if this ever
-        // shows up on a profile.
-        let map = self.sidecar.read().id_to_path();
-        *self.id_to_path.write() = map;
-
         Ok(())
+    }
+
+    /// Drop ALL chunks for `path` — marks their ids as shadowed
+    /// so search post-filter skips them; the graph nodes stay in
+    /// place until the P5 periodic rebuild.  Idempotent: calling
+    /// on a path with no live chunks is a no-op.
+    ///
+    /// The caller pattern for reindexing a file is:
+    /// ```text
+    /// ann.delete_all_chunks(path);
+    /// for (chunk_index, vector) in fresh_chunks {
+    ///     ann.add_vector(path, chunk_index, vector)?;
+    /// }
+    /// ann.commit()?;
+    /// ```
+    /// so a file that dropped from 3 chunks to 2 doesn't leave the
+    /// stale third chunk lingering as a ghost hit.
+    pub fn delete_all_chunks(&self, path: &str) {
+        let mut side = self.sidecar.write();
+        let mut lookup = self.chunk_to_id.write();
+        let mut reverse = self.id_to_chunk.write();
+        let to_shadow: Vec<usize> = lookup
+            .iter()
+            .filter_map(|((p, _), id)| if p == path { Some(*id) } else { None })
+            .collect();
+        for id in &to_shadow {
+            side.shadowed.insert(*id);
+            reverse.remove(id);
+        }
+        lookup.retain(|(p, _), _| p != path);
+        side.entries.retain(|e| e.path != path);
     }
 
     /// Nearest-`k` search.  Returns hits sorted by cosine distance
@@ -272,14 +368,14 @@ impl AnnIndex {
         let neighbours: Vec<Neighbour> = self.hnsw.search(query, overfetch, effective_ef);
 
         let side = self.sidecar.read();
-        let id_map = self.id_to_path.read();
+        let id_map = self.id_to_chunk.read();
 
         let mut out = Vec::with_capacity(k);
         for n in neighbours {
             if side.shadowed.contains(&n.d_id) {
                 continue;
             }
-            let Some(path) = id_map.get(&n.d_id) else {
+            let Some((path, chunk_index)) = id_map.get(&n.d_id) else {
                 // Defensive: mapping missing for a live id would
                 // mean sidecar drift.  Drop the hit and log rather
                 // than surface a bogus "" path.
@@ -291,6 +387,7 @@ impl AnnIndex {
             };
             out.push(AnnHit {
                 path: path.clone(),
+                chunk_index: *chunk_index,
                 distance: n.distance,
             });
             if out.len() >= k {
@@ -311,7 +408,7 @@ impl AnnIndex {
     /// next open_or_create knows the manager has seen this zone;
     /// the graph files reappear the next time a real doc arrives.
     pub fn commit(&self) -> Result<(), AnnError> {
-        let live = self.sidecar.read().path_to_id.len();
+        let live = self.sidecar.read().entries.len();
         if live > 0 {
             self.hnsw
                 .file_dump(&self.dir, HNSW_BASENAME)
@@ -332,14 +429,24 @@ impl AnnIndex {
         Ok(())
     }
 
-    /// Number of live documents (indexed, not shadowed).  Used by
-    /// tests + operator diagnostics.
+    /// Number of live chunks (indexed, not shadowed).  Used by
+    /// tests + operator diagnostics.  In P4 with multi-chunk-per-
+    /// file emission this is > the number of distinct paths;
+    /// [`live_paths`](Self::live_paths) gives the file count.
     pub fn live_count(&self) -> usize {
-        let side = self.sidecar.read();
-        // path_to_id holds one entry per live path, so its size IS
-        // the live count.  `shadowed` is orthogonal (old ids no
-        // longer referenced by any path).
-        side.path_to_id.len()
+        self.sidecar.read().entries.len()
+    }
+
+    /// Number of distinct paths with at least one live chunk.
+    /// Cheaper than iterating callers because we walk the in-memory
+    /// map once and dedupe by path.
+    pub fn live_paths(&self) -> usize {
+        let lookup = self.chunk_to_id.read();
+        let mut paths: HashSet<&str> = HashSet::new();
+        for (p, _) in lookup.keys() {
+            paths.insert(p.as_str());
+        }
+        paths.len()
     }
 
     /// Dimensionality this index was created with.  Callers embed
@@ -410,9 +517,9 @@ mod tests {
     fn add_then_search_finds_nearest() {
         let dir = tempdir().join("ann");
         let idx = AnnIndex::open_or_create(dir, 4).expect("open");
-        idx.add_vector("/a", &vec_seed(4, 1.0)).expect("add a");
-        idx.add_vector("/b", &vec_seed(4, 5.0)).expect("add b");
-        idx.add_vector("/c", &vec_seed(4, 9.0)).expect("add c");
+        idx.add_vector("/a", 0, &vec_seed(4, 1.0)).expect("add a");
+        idx.add_vector("/b", 0, &vec_seed(4, 5.0)).expect("add b");
+        idx.add_vector("/c", 0, &vec_seed(4, 9.0)).expect("add c");
         assert_eq!(idx.live_count(), 3);
 
         // Query with /b's exact vector — nearest hit must be /b at
@@ -438,7 +545,7 @@ mod tests {
         let dir = tempdir().join("ann");
         let idx = AnnIndex::open_or_create(dir, 4).expect("open");
         let err = idx
-            .add_vector("/x", &vec_seed(3, 1.0))
+            .add_vector("/x", 0, &vec_seed(3, 1.0))
             .expect_err("must reject wrong dim");
         assert!(
             matches!(err, AnnError::DimMismatch { .. }),
@@ -451,7 +558,7 @@ mod tests {
         let dir = tempdir().join("ann");
         let idx = AnnIndex::open_or_create(dir, 4).expect("open");
         let err = idx
-            .add_vector("/x", &vec![0.0; 4])
+            .add_vector("/x", 0, &vec![0.0; 4])
             .expect_err("must reject zero vec");
         assert!(
             matches!(err, AnnError::ZeroVector(_)),
@@ -460,18 +567,18 @@ mod tests {
     }
 
     #[test]
-    fn readd_same_path_shadows_old_and_returns_new_vector() {
+    fn readd_same_key_shadows_old_and_returns_new_vector() {
         // Idempotency regression: hnsw_rs has no delete, so a naive
-        // re-add would leave TWO graph nodes for the same path.  The
-        // shadow-filter path in search must drop the old id and
-        // return the new vector's distance.
+        // re-add would leave TWO graph nodes for the same
+        // (path, chunk_index).  The shadow-filter path in search
+        // must drop the old id and return the new vector's distance.
         let dir = tempdir().join("ann");
         let idx = AnnIndex::open_or_create(dir, 4).expect("open");
-        idx.add_vector("/a", &vec_seed(4, 1.0)).expect("add-1");
-        idx.add_vector("/other", &vec_seed(4, 10.0))
+        idx.add_vector("/a", 0, &vec_seed(4, 1.0)).expect("add-1");
+        idx.add_vector("/other", 0, &vec_seed(4, 10.0))
             .expect("add-other");
-        idx.add_vector("/a", &vec_seed(4, 20.0)).expect("re-add");
-        assert_eq!(idx.live_count(), 2, "path count stays at 2 after re-add");
+        idx.add_vector("/a", 0, &vec_seed(4, 20.0)).expect("re-add");
+        assert_eq!(idx.live_count(), 2, "chunk count stays at 2 after re-add");
 
         // Query with the NEW vector — /a must come first at ~0
         // distance; the OLD /a id must not appear.
@@ -486,12 +593,78 @@ mod tests {
     }
 
     #[test]
+    fn distinct_chunks_of_same_path_coexist() {
+        // P4 core contract: (path, chunk_index) is the primary key,
+        // so /doc chunk 0 and /doc chunk 1 must BOTH live and search
+        // must return both when distances allow.  A regression that
+        // keys on path alone would shadow chunk 0 as soon as chunk 1
+        // is added, breaking multi-chunk-per-file emission.
+        let dir = tempdir().join("ann");
+        let idx = AnnIndex::open_or_create(dir, 4).expect("open");
+        idx.add_vector("/doc", 0, &vec_seed(4, 1.0))
+            .expect("chunk 0");
+        idx.add_vector("/doc", 1, &vec_seed(4, 5.0))
+            .expect("chunk 1");
+        idx.add_vector("/doc", 2, &vec_seed(4, 9.0))
+            .expect("chunk 2");
+        assert_eq!(idx.live_count(), 3, "three chunks live under one path");
+        assert_eq!(idx.live_paths(), 1, "one distinct path");
+
+        // Query with the middle chunk's vector — that chunk must
+        // return with distance ≈ 0 AND carry chunk_index=1.
+        let hits = idx.search(&vec_seed(4, 5.0), 3).expect("search");
+        assert_eq!(hits.len(), 3);
+        let top = &hits[0];
+        assert_eq!(top.path, "/doc");
+        assert_eq!(top.chunk_index, 1, "chunk_index must round-trip");
+        assert!(top.distance < 0.001);
+    }
+
+    #[test]
+    fn delete_all_chunks_removes_every_chunk_for_path() {
+        // Whole-file removal via `delete_all_chunks` — used by
+        // do_index's "reindex file: drop all then add fresh" pattern
+        // so a file that dropped from 3 chunks to 2 doesn't leave
+        // the stale third chunk as a ghost hit.
+        let dir = tempdir().join("ann");
+        let idx = AnnIndex::open_or_create(dir, 4).expect("open");
+        idx.add_vector("/doc", 0, &vec_seed(4, 1.0)).unwrap();
+        idx.add_vector("/doc", 1, &vec_seed(4, 5.0)).unwrap();
+        idx.add_vector("/doc", 2, &vec_seed(4, 9.0)).unwrap();
+        idx.add_vector("/other", 0, &vec_seed(4, 3.0)).unwrap();
+        assert_eq!(idx.live_count(), 4);
+
+        idx.delete_all_chunks("/doc");
+        assert_eq!(idx.live_count(), 1, "only /other should remain");
+        assert_eq!(idx.live_paths(), 1);
+
+        // Any search must not surface a /doc hit.
+        let hits = idx.search(&vec_seed(4, 5.0), 10).expect("search");
+        assert!(
+            !hits.iter().any(|h| h.path == "/doc"),
+            "delete_all_chunks left ghost /doc hits: {hits:?}",
+        );
+    }
+
+    #[test]
+    fn delete_all_chunks_is_idempotent() {
+        let dir = tempdir().join("ann");
+        let idx = AnnIndex::open_or_create(dir, 4).expect("open");
+        idx.add_vector("/a", 0, &vec_seed(4, 1.0)).unwrap();
+        idx.delete_all_chunks("/missing"); // no-op
+        assert_eq!(idx.live_count(), 1);
+        idx.delete_all_chunks("/a");
+        idx.delete_all_chunks("/a"); // no-op the second time
+        assert_eq!(idx.live_count(), 0);
+    }
+
+    #[test]
     fn commit_then_reopen_survives_restart() {
         let dir = tempdir().join("ann");
         {
             let idx = AnnIndex::open_or_create(dir.clone(), 4).expect("open");
-            idx.add_vector("/a", &vec_seed(4, 1.0)).expect("add-a");
-            idx.add_vector("/b", &vec_seed(4, 5.0)).expect("add-b");
+            idx.add_vector("/a", 0, &vec_seed(4, 1.0)).expect("add-a");
+            idx.add_vector("/b", 0, &vec_seed(4, 5.0)).expect("add-b");
             idx.commit().expect("commit");
         }
         // Fresh open — the graph + sidecar files come back to life.
@@ -506,7 +679,7 @@ mod tests {
         let dir = tempdir().join("ann");
         let idx = AnnIndex::open_or_create(dir, 4).expect("open");
         for i in 0..20 {
-            idx.add_vector(&format!("/p{i}"), &vec_seed(4, i as f32 + 1.0))
+            idx.add_vector(&format!("/p{i}"), 0, &vec_seed(4, i as f32 + 1.0))
                 .expect("add");
         }
         let hits = idx.search(&vec_seed(4, 3.0), 5).expect("search");

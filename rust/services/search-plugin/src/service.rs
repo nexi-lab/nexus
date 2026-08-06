@@ -604,7 +604,7 @@ fn enrich_ann_hit(
         .unwrap_or((String::new(), None));
     QueryResult {
         path: hit.path,
-        chunk_index: 0,
+        chunk_index: hit.chunk_index,
         chunk_text,
         score,
         zone_id: zone_id.to_string(),
@@ -879,11 +879,21 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // misses this doc until the next Index retries.  Real batching
     // (embed 32 files at a time) lands in P4/P5 when the chunker
     // makes it worthwhile.
+    //
+    // P3 note: chunk_index is 0 (one chunk per file).  P4's real
+    // chunker replaces this with a per-chunk loop plus a preceding
+    // `ann.delete_all_chunks(vfs_path)` so a file whose chunk count
+    // shrinks doesn't leave stale ghost chunks.
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
         match embedder.embed_batch(&[text]) {
             Ok(mut vecs) => {
                 if let Some(v) = vecs.pop() {
-                    if let Err(e) = ann.add_vector(vfs_path, &v) {
+                    // Drop any stale chunks under this path before
+                    // adding the fresh one — the P3 shape only ever
+                    // has chunk 0, but calling delete_all_chunks
+                    // first keeps the caller pattern honest for P4.
+                    ann.delete_all_chunks(vfs_path);
+                    if let Err(e) = ann.add_vector(vfs_path, 0, &v) {
                         tracing::warn!(
                             path = %vfs_path,
                             err = %e,

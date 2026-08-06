@@ -858,6 +858,14 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         .ok()
         .and_then(|info| info.modified_at_ms);
 
+    // Drop any prior chunks under this path before adding the fresh
+    // set — reindex-safe.  Both the delete and the subsequent adds
+    // queue on the same tantivy writer transaction; commit() lands
+    // them atomically.  P3 shape only ever adds chunk 0 so this is
+    // functionally the same as the pre-P3 auto-delete-on-add; the
+    // difference matters when P4's chunker emits multi-chunk sets
+    // and a shrinking chunk count needs the orphan sweep.
+    sinks.fts.delete_all_chunks(vfs_path);
     if let Err(e) = sinks.fts.add_document(vfs_path, 0, text, mtime_ms) {
         tracing::warn!(path = %vfs_path, err = %e, "index: fts add_document failed — skipping");
         return IndexOne::Skipped;

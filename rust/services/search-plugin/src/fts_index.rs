@@ -177,11 +177,11 @@ impl FtsIndex {
         }))
     }
 
-    /// Add a document.  P1 semantics: one call = one document = one
-    /// chunk (`path` is the primary key; P4 grows the key to
-    /// `(path, chunk_index)`).  Any prior document with the same
-    /// `path` is deleted first so re-indexing replaces instead of
-    /// duplicating — Index calls are safe to retry.
+    /// Add a chunk document.  P4 semantics: one call = one chunk;
+    /// callers own the (path, chunk_index) key discipline.  Adding
+    /// the same key twice writes TWO tantivy docs — the caller MUST
+    /// [`delete_all_chunks`](Self::delete_all_chunks) first when
+    /// re-indexing a file, otherwise BM25 double-counts.
     ///
     /// The writer buffers in RAM until [`commit`](Self::commit) is
     /// called — callers batch adds and commit at end-of-request so
@@ -200,12 +200,6 @@ impl FtsIndex {
         mtime_ms: Option<i64>,
     ) -> Result<(), IndexError> {
         let writer = self.writer.lock();
-        // Idempotent add: drop any prior doc keyed by this path before
-        // buffering the new one.  Both operations queue on the same
-        // writer transaction, so the commit lands them atomically — a
-        // reader can never see zero copies of the doc during a
-        // reindex.
-        writer.delete_term(Term::from_field_text(self.fields.path, path));
         writer
             .add_document(doc!(
                 self.fields.path => path,
@@ -215,6 +209,21 @@ impl FtsIndex {
             ))
             .map_err(|e| IndexError::AddDoc(path.to_string(), e.to_string()))?;
         Ok(())
+    }
+
+    /// Drop every chunk indexed under `path`.  Used by the reindex
+    /// pattern in `do_index`: a file whose chunk count shrinks (was
+    /// 3 chunks, now 2) leaves orphaned chunk 2/3 rows unless the
+    /// caller explicitly drops the file's whole set first.
+    ///
+    /// Both the delete and any subsequent adds queue on the SAME
+    /// writer transaction, so `commit()` lands them atomically — a
+    /// reader never sees a partially-reindexed file (zero chunks
+    /// visible, then N chunks visible; no in-between).  Idempotent:
+    /// calling on a path with no live chunks is a no-op.
+    pub fn delete_all_chunks(&self, path: &str) {
+        let writer = self.writer.lock();
+        writer.delete_term(Term::from_field_text(self.fields.path, path));
     }
 
     /// Flush buffered adds to disk and make them visible to searchers.
@@ -451,25 +460,82 @@ mod tests {
     }
 
     #[test]
-    fn readd_same_path_replaces_not_duplicates() {
-        // Regression: naive add_document duplicated a doc every reindex,
-        // doubling its BM25 score and starving other docs from the
-        // top-N.  delete_term-before-add makes Index retries safe.
+    fn distinct_chunks_of_same_path_coexist() {
+        // P4 primary key = (path, chunk_index).  Adding chunk 0 and
+        // chunk 1 under the same path leaves BOTH docs live.  A BM25
+        // query that would only match one chunk (via its distinct
+        // text) returns exactly one hit.
         let dir = tempdir().join("fts");
         let idx = FtsIndex::open_or_create(dir).expect("open");
-        idx.add_document("/notes/hello.md", 0, "widget alpha", Some(1))
+        idx.add_document("/doc.md", 0, "alpha payload", Some(1))
+            .expect("add-0");
+        idx.add_document("/doc.md", 1, "beta payload", Some(1))
             .expect("add-1");
+        idx.commit().expect("commit");
+
+        let hits = idx.search("alpha", 10, None).expect("search");
+        assert_eq!(hits.len(), 1, "only chunk 0 has 'alpha': {hits:?}");
+        assert_eq!(hits[0].chunk_index, 0);
+
+        // Both chunks share the "payload" token.
+        let hits = idx.search("payload", 10, None).expect("search");
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn delete_all_chunks_then_readd_replaces_cleanly() {
+        // Reindex-with-different-chunk-count contract: a file that
+        // shrinks from 3 chunks to 2 must not leave the third as an
+        // orphan.  Caller uses the delete_all_chunks + per-chunk
+        // add_document pattern; both queue on the same writer
+        // transaction so the commit lands atomically.
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        for i in 0..3u32 {
+            idx.add_document("/doc.md", i, &format!("widget chunk {i}"), Some(1))
+                .expect("add");
+        }
         idx.commit().expect("commit-1");
-        // Same path, updated text + mtime.
-        idx.add_document("/notes/hello.md", 0, "widget beta", Some(2))
-            .expect("add-2");
+        assert_eq!(
+            idx.search("widget", 10, None).expect("search").len(),
+            3,
+            "3 chunks after first index",
+        );
+
+        // Reindex with only 2 chunks — first drop the whole file.
+        idx.delete_all_chunks("/doc.md");
+        for i in 0..2u32 {
+            idx.add_document("/doc.md", i, &format!("widget rebuilt {i}"), Some(2))
+                .expect("add");
+        }
         idx.commit().expect("commit-2");
 
         let hits = idx.search("widget", 10, None).expect("search");
-        assert_eq!(hits.len(), 1, "expected one doc after re-add, got {hits:?}");
-        // The stored text + mtime are the most recent write.
-        assert_eq!(hits[0].chunk_text, "widget beta");
-        assert_eq!(hits[0].mtime_ms, Some(2));
+        assert_eq!(
+            hits.len(),
+            2,
+            "expected 2 chunks after reindex, got {hits:?}"
+        );
+        // Only the rebuilt text is left.
+        assert!(
+            hits.iter().all(|h| h.chunk_text.contains("rebuilt")),
+            "old chunks leaked: {hits:?}",
+        );
+    }
+
+    #[test]
+    fn delete_all_chunks_on_missing_path_is_noop() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document("/live.md", 0, "widget alpha", Some(1))
+            .expect("add");
+        idx.commit().expect("commit-1");
+        idx.delete_all_chunks("/does-not-exist");
+        idx.commit().expect("commit-2");
+        // Live doc still there.
+        let hits = idx.search("widget", 10, None).expect("search");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "/live.md");
     }
 
     #[test]

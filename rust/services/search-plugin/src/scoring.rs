@@ -62,8 +62,12 @@ pub enum RecencyMode {
 
 impl RecencyMode {
     /// Parse the wire string.  Empty / unknown / "off" all map to
-    /// Off for forward compat.
-    pub fn from_str(s: &str) -> Self {
+    /// Off for forward compat.  Named `parse_wire` (not
+    /// `from_str`) to avoid the clippy `should_implement_trait`
+    /// lint on the stdlib `FromStr::from_str` shape — we return
+    /// an infallible `Self`, not a `Result`, so implementing
+    /// `FromStr` outright would be wrong.
+    pub fn parse_wire(s: &str) -> Self {
         match s {
             "on" => Self::On,
             "auto" => Self::Auto,

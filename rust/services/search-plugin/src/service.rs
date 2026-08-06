@@ -1290,7 +1290,7 @@ impl SearchService for SearchServiceImpl {
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let fusion_opts = FusionOpts::from_request(&req);
         let expand_mode = ExpandMode::from_str(&req.expand);
-        let recency_mode = crate::scoring::RecencyMode::from_str(&req.recency_mode);
+        let recency_mode = crate::scoring::RecencyMode::parse_wire(&req.recency_mode);
         let recency_weight = if req.recency_weight == 0.0 {
             crate::scoring::DEFAULT_RECENCY_WEIGHT
         } else {

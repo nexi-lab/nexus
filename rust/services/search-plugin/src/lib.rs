@@ -53,6 +53,7 @@ pub mod search_proto {
 }
 
 pub mod ann_index;
+pub mod chunker;
 pub mod embedder;
 pub mod fts_index;
 pub mod fusion;

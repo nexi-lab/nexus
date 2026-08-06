@@ -123,7 +123,9 @@ impl Harness {
     fn start() -> Self {
         let dir = TempDir::new().expect("tempdir");
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
-        let svc = SearchServiceImpl::with_manager(Arc::new(poison_handle()), Arc::clone(&manager));
+        let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
+            .manager(Arc::clone(&manager))
+            .build();
         Self {
             _dir: dir,
             svc,

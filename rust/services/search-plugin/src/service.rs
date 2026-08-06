@@ -97,60 +97,21 @@ impl SearchServiceImpl {
     /// default (`$NEXUS_DATA_DIR/plugins/search/`).  Embedder init
     /// is deferred to the first SemanticQuery (D3).
     pub fn new(handle: Arc<KernelHandle>) -> Self {
-        Self {
-            handle,
-            manager: Arc::new(IndexManager::new()),
-            embedder_slot: Arc::new(Mutex::new(None)),
-            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
-        }
+        Self::builder(handle).build()
     }
 
-    /// Test / operator constructor — inject a pre-configured
-    /// `IndexManager` (typically rooted at a tempdir for tests, or
-    /// at an explicit data volume for operators overriding the
-    /// default storage location).  Embedder init is deferred to the
-    /// first SemanticQuery.
-    pub fn with_manager(handle: Arc<KernelHandle>, manager: Arc<IndexManager>) -> Self {
-        Self {
+    /// Start a builder for a customised SearchServiceImpl.  All
+    /// non-required knobs default to the same values `new` uses;
+    /// tests + operators override just the fields they care about
+    /// via chained setters.  Avoids the previous
+    /// `with_manager` / `with_manager_and_embedder` /
+    /// `with_manager_embedder_and_cache` constructor explosion.
+    pub fn builder(handle: Arc<KernelHandle>) -> SearchServiceBuilder {
+        SearchServiceBuilder {
             handle,
-            manager,
-            embedder_slot: Arc::new(Mutex::new(None)),
-            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
-        }
-    }
-
-    /// Test / operator constructor — inject BOTH a pre-configured
-    /// `IndexManager` and an [`Embedder`].  Bypasses the
-    /// [`build_default_embedder`] discovery step so integration tests
-    /// can use a [`MockEmbedder`](crate::embedder::MockEmbedder)
-    /// without pointing at real model files.
-    pub fn with_manager_and_embedder(
-        handle: Arc<KernelHandle>,
-        manager: Arc<IndexManager>,
-        embedder: Arc<dyn Embedder>,
-    ) -> Self {
-        Self {
-            handle,
-            manager,
-            embedder_slot: Arc::new(Mutex::new(Some(embedder))),
-            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
-        }
-    }
-
-    /// Test constructor — inject a QueryCache with an explicit
-    /// TTL.  Used by integration tests that want to observe cache
-    /// expiry within seconds rather than the 5-minute default.
-    pub fn with_manager_embedder_and_cache(
-        handle: Arc<KernelHandle>,
-        manager: Arc<IndexManager>,
-        embedder: Arc<dyn Embedder>,
-        query_cache: crate::query_cache::SharedQueryCache,
-    ) -> Self {
-        Self {
-            handle,
-            manager,
-            embedder_slot: Arc::new(Mutex::new(Some(embedder))),
-            query_cache,
+            manager: None,
+            embedder: None,
+            query_cache: None,
         }
     }
 
@@ -174,6 +135,61 @@ impl SearchServiceImpl {
         }
         *slot = Some(Arc::clone(&built));
         Ok(built)
+    }
+}
+
+/// Fluent builder for [`SearchServiceImpl`].  Every knob is
+/// optional; unset knobs get the same defaults [`new`] uses.
+///
+/// Replaces the earlier `with_manager` / `with_manager_and_embedder`
+/// / `with_manager_embedder_and_cache` triad — one builder covers
+/// every combination of overrides without a combinatorial
+/// constructor blow-up when the next knob lands.
+pub struct SearchServiceBuilder {
+    handle: Arc<KernelHandle>,
+    manager: Option<Arc<IndexManager>>,
+    embedder: Option<Arc<dyn Embedder>>,
+    query_cache: Option<crate::query_cache::SharedQueryCache>,
+}
+
+impl SearchServiceBuilder {
+    /// Inject a pre-configured `IndexManager` (typically rooted at
+    /// a tempdir for tests, or at an explicit data volume for
+    /// operators overriding the default storage location).
+    pub fn manager(mut self, manager: Arc<IndexManager>) -> Self {
+        self.manager = Some(manager);
+        self
+    }
+
+    /// Pre-seed the embedder slot so SemanticQuery / Hybrid skip
+    /// the [`build_default_embedder`] discovery step.  Integration
+    /// tests use this to inject a
+    /// [`MockEmbedder`](crate::embedder::MockEmbedder) without
+    /// pointing at real model files.
+    pub fn embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
+    /// Inject a shared `QueryCache` — used by tests that need a
+    /// shorter TTL than the 5-minute default so cache expiry is
+    /// observable within a few seconds.
+    pub fn query_cache(mut self, cache: crate::query_cache::SharedQueryCache) -> Self {
+        self.query_cache = Some(cache);
+        self
+    }
+
+    pub fn build(self) -> SearchServiceImpl {
+        SearchServiceImpl {
+            handle: self.handle,
+            manager: self
+                .manager
+                .unwrap_or_else(|| Arc::new(IndexManager::new())),
+            embedder_slot: Arc::new(Mutex::new(self.embedder)),
+            query_cache: self
+                .query_cache
+                .unwrap_or_else(|| Arc::new(crate::query_cache::QueryCache::new())),
+        }
     }
 }
 

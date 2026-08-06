@@ -232,6 +232,7 @@ mod tests {
             score,
             zone_id: "root".to_string(),
             mtime_ms: Some(1),
+            expanded_context: String::new(),
         }
     }
 
@@ -338,6 +339,7 @@ mod tests {
             score: 1.0,
             zone_id: "root".into(),
             mtime_ms: Some(100),
+            expanded_context: String::new(),
         }];
         let sem = vec![QueryResult {
             path: "/a".into(),
@@ -346,6 +348,7 @@ mod tests {
             score: 0.9,
             zone_id: "root".into(),
             mtime_ms: Some(200),
+            expanded_context: String::new(),
         }];
         let fused = rrf(&kw, &sem, 60);
         assert_eq!(fused.len(), 1);
@@ -405,6 +408,7 @@ mod tests {
                 score: 1.0,
                 zone_id: "root".into(),
                 mtime_ms: None,
+                expanded_context: String::new(),
             },
             QueryResult {
                 path: "/a".into(),
@@ -413,6 +417,7 @@ mod tests {
                 score: 1.0,
                 zone_id: "root".into(),
                 mtime_ms: None,
+                expanded_context: String::new(),
             },
         ];
         // rrf here: rank-1 and rank-2 have different scores; equalise

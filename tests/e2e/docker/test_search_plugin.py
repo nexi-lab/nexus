@@ -525,6 +525,78 @@ class TestSearchIndexQuery:
         paths = [x["path"] for x in r["result"]["results"]]
         assert f"{base}/a.md" in paths, paths
 
+    def test_recency_on_boosts_newer_over_older(self, api_key: str) -> None:
+        """P6 recency: two files with the same query text; the newer
+        one should score higher when recency_mode=on."""
+        import time as _time
+
+        u = uid()
+        base = f"/search-recency-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        # Seed old first, sleep, then new — matches the pattern the
+        # existing sort_recency test uses to guarantee mtime tick
+        # separation.
+        r = vfs_write(NODE_GRPC, f"{base}/old.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        _time.sleep(1.1)
+        r = vfs_write(NODE_GRPC, f"{base}/new.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+
+        # Baseline: no recency → same-score BM25 order is not
+        # guaranteed to favour /new.
+        base_r = search_query(NODE_GRPC, "widget alpha", path_filter=base, api_key=api_key)
+        assert "error" not in base_r
+        assert len(base_r["result"]["results"]) == 2
+
+        # recency_mode=on: /new.md must beat /old.md.
+        boosted = search_query(
+            NODE_GRPC,
+            "widget alpha",
+            path_filter=base,
+            recency_mode="on",
+            recency_weight=1.0,
+            recency_half_life_days=1.0,
+            api_key=api_key,
+        )
+        assert "error" not in boosted, boosted
+        results = boosted["result"]["results"]
+        assert results[0]["path"] == f"{base}/new.md", (
+            f"recency=on should promote /new.md, got {[r['path'] for r in results]}"
+        )
+
+    def test_path_prefix_boost_multiplies_matching_hits(self, api_key: str) -> None:
+        """P6 prefix boost: assigning weight 5.0 to a subdirectory
+        must promote its hits above equal-scored siblings in a
+        different subdirectory."""
+        u = uid()
+        base = f"/search-boost-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        vfs_mkdir(NODE_GRPC, f"{base}/tier1", parents=True, api_key=api_key)
+        vfs_mkdir(NODE_GRPC, f"{base}/tier2", parents=True, api_key=api_key)
+        r = vfs_write(NODE_GRPC, f"{base}/tier1/a.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        r = vfs_write(NODE_GRPC, f"{base}/tier2/b.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+
+        # Weight tier1 heavily.  The BM25 scores are identical
+        # (same query text), so the boost picks the winner.
+        boosted = search_query(
+            NODE_GRPC,
+            "widget alpha",
+            path_filter=base,
+            path_prefix_boosts={f"{base}/tier1/": 5.0},
+            api_key=api_key,
+        )
+        assert "error" not in boosted, boosted
+        results = boosted["result"]["results"]
+        assert results[0]["path"] == f"{base}/tier1/a.md", (
+            f"tier1 boost should lead, got {[r['path'] for r in results]}"
+        )
+
     def test_query_hybrid_honours_fusion_method_arg(self, api_key: str) -> None:
         """Even in the degraded (no-embedder) shape, the wire must
         accept the P3 fusion knobs — a stale gRPC schema on the

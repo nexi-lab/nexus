@@ -58,11 +58,12 @@ pub mod embedder;
 pub mod fts_index;
 pub mod fusion;
 pub mod index_manager;
+pub mod index_state;
 pub mod kernel_io;
 pub mod service;
 
 use search_proto::search_service_server::SearchService as SearchServiceTrait;
-use search_proto::{GlobRequest, GrepRequest, IndexRequest, QueryRequest};
+use search_proto::{GlobRequest, GrepRequest, IndexRequest, QueryRequest, RefreshRequest};
 
 /// Plugin state held between `create` and `destroy`.
 ///
@@ -212,6 +213,21 @@ fn dispatch_grpc(plugin: &SearchPlugin, method: &str, payload: &[u8]) -> Result<
                 .block_on(plugin.svc.index(Request::new(req)))
                 .map_err(|s| {
                     tracing::warn!(status = %s, "Index handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "Refresh" => {
+            let req = RefreshRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "Refresh decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.refresh(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "Refresh handler");
                     -3
                 })?
                 .into_inner();

@@ -48,6 +48,19 @@ service SearchService {
   // uses one chunk per file — Phase 4 will fold in the real
   // markdown-/code-aware chunker.
   rpc Index(IndexRequest) returns (IndexResponse);
+
+  // Incremental refresh (Phase 5).  Walks `root_path` like Index,
+  // but consults a per-zone (path → mtime_ms) cache and only re-
+  // processes files that are new, edited (fresh mtime > cached),
+  // or removed (in cache but missing from the walk — dropped from
+  // both FTS and ANN).  Files whose mtime matches the cache are
+  // skipped — a Refresh over a mostly-unchanged corpus is O(walk +
+  // a couple of stat calls) rather than O(full reindex).
+  //
+  // Callers hit Refresh on a cadence they choose (cron, on-write
+  // hook once federation adds one, etc.); nothing about Refresh
+  // requires or implies scheduling on the plugin side.
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
 }
 
 // ── Glob ──────────────────────────────────────────────────────────
@@ -323,4 +336,36 @@ message IndexResponse {
   // Callers treat non-empty error as "no documents added, log and
   // retry with narrower scope" per Glob + Grep convention.
   optional string error = 3;
+}
+
+message RefreshRequest {
+  // Walk start (same shape as IndexRequest.root_path).
+  string root_path = 1;
+  // Zone scope — same rule as QueryRequest.zone_id.
+  string zone_id = 2;
+  // Recurse into subdirectories (matches Python `recursive=False`).
+  bool recursive = 3;
+  // Safety cap on walker size.  0 ⇒ server-side default (10_000).
+  uint32 max_docs = 4;
+  // Auth token per the sibling RPCs.
+  string auth_token = 5;
+}
+
+message RefreshResponse {
+  // Files re-indexed (new or mtime-changed).  Distinct from a full
+  // Index's indexed_count so callers can tell "Refresh saw N
+  // changes" from "Index processed N files total".
+  uint32 reindexed_count = 1;
+  // Files dropped from FTS + ANN because they were in the cache
+  // but no longer present in the walked corpus.
+  uint32 removed_count = 2;
+  // Files whose cached mtime matched the fresh mtime — the whole
+  // reason Refresh exists.  Handy for operators to sanity-check
+  // the cache is working.
+  uint32 unchanged_count = 3;
+  // Files visited but skipped for content reasons (empty, binary,
+  // oversize) — same shape as IndexResponse.skipped_count.
+  uint32 skipped_count = 4;
+  // Set when the walk aborted; same convention as IndexResponse.
+  optional string error = 5;
 }

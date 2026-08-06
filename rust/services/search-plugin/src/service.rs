@@ -61,6 +61,19 @@ fn resolve_zone(z: &str) -> &str {
     }
 }
 
+/// Wall-clock now in millis-since-epoch.  Broken out so the P6
+/// recency scorer has a single injection point + tests can mock it
+/// (via a #[cfg(test)] override) if we ever need to.  `SystemTime`
+/// on a broken host clock returns 0; that's harmless — every hit's
+/// age becomes very-negative, `.max(0)` clamps to 0, all hits get
+/// the maximum boost.  Better than a panic on `unwrap`.
+fn current_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub struct SearchServiceImpl {
     handle: Arc<KernelHandle>,
     /// Per-zone `FtsIndex` + `AnnIndex` caches used by Query, Index,
@@ -1277,6 +1290,18 @@ impl SearchService for SearchServiceImpl {
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let fusion_opts = FusionOpts::from_request(&req);
         let expand_mode = ExpandMode::from_str(&req.expand);
+        let recency_mode = crate::scoring::RecencyMode::from_str(&req.recency_mode);
+        let recency_weight = if req.recency_weight == 0.0 {
+            crate::scoring::DEFAULT_RECENCY_WEIGHT
+        } else {
+            req.recency_weight
+        };
+        let recency_half_life_days = if req.recency_half_life_days == 0.0 {
+            crate::scoring::DEFAULT_RECENCY_HALF_LIFE_DAYS
+        } else {
+            req.recency_half_life_days
+        };
+        let prefix_boosts = req.path_prefix_boosts.clone();
         let limit = if req.limit == 0 {
             DEFAULT_QUERY_LIMIT
         } else {
@@ -1287,6 +1312,11 @@ impl SearchService for SearchServiceImpl {
         let q = req.q;
         let path_filter = req.path_filter;
         let manager = Arc::clone(&self.manager);
+        // Retained copies for post-outcome scoring — `q` moves into
+        // the spawn_blocking closures below; recency-auto needs to
+        // read the query text to decide whether to fire.  String
+        // clone is cheap next to the fetch itself.
+        let q_for_scoring = q.clone();
         // Cheap Arc clone + String clone retained for the post-
         // outcome expand-macro enrichment (both go via the FTS
         // sibling; keeping them out of the match arms' move scope
@@ -1383,6 +1413,41 @@ impl SearchService for SearchServiceImpl {
 
         match outcome {
             Ok(mut results) => {
+                // P6 post-fusion adjustments.  Order matters:
+                // 1. recency + prefix boost adjust scores in place,
+                // 2. re-sort so the pool + limit steps see the new
+                //    ranking,
+                // 3. pool by chunks_per_page (which respects the
+                //    post-boost order),
+                // 4. truncate to `limit`,
+                // 5. enrich with expand=macro context.
+                if matches!(
+                    recency_mode,
+                    crate::scoring::RecencyMode::On | crate::scoring::RecencyMode::Auto
+                ) || !prefix_boosts.is_empty()
+                {
+                    let now_ms = current_time_ms();
+                    crate::scoring::apply_all(
+                        &mut results,
+                        recency_mode,
+                        recency_weight,
+                        recency_half_life_days,
+                        now_ms,
+                        &q_for_scoring,
+                        &prefix_boosts,
+                    );
+                    // Re-sort descending by score so pooling +
+                    // truncation see the new ranking.  Deterministic
+                    // tie-break on (path, chunk_index) — same shape
+                    // as fusion::finalise.
+                    results.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a.path.cmp(&b.path))
+                            .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+                    });
+                }
                 // Uniform post-outcome pooling.  Keyword / semantic
                 // do NOT pool internally, only hybrid's fuse_hybrid
                 // does; applying here gives all three query modes

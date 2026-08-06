@@ -100,14 +100,16 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
             continue;
         }
 
-        // Heading detection: 1–6 leading `#` followed by space.
+        // Heading detection: 1–6 leading `#` followed by space.  A
+        // new heading ALWAYS seals the current chunk (matches
+        // Python) so a heading-heavy but text-light document gets
+        // one chunk per section rather than everything crammed into
+        // one huge chunk.  Callers with tiny sections can pool
+        // downstream via `chunks_per_page`.
         if let Some((level, title)) = parse_heading(raw_line) {
-            // A new heading breaks the current chunk boundary if we
-            // have material already accumulated AND the material
-            // isn't just another heading (which shouldn't really
-            // happen but stays predictable).
             if !buf.trim().is_empty() {
-                flush_paragraph_or_chunk(&mut emitter, &headings, &mut buf);
+                let text = std::mem::take(&mut buf);
+                emitter.emit(&headings, text);
             }
             headings.push(level, title);
             buf.push_str(raw_line);
@@ -119,7 +121,8 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
         if raw_line.trim().is_empty() {
             buf.push_str(raw_line);
             if buf.len() >= CHUNK_TARGET_CHARS {
-                flush_paragraph_or_chunk(&mut emitter, &headings, &mut buf);
+                let text = std::mem::take(&mut buf);
+                emitter.emit(&headings, text);
             }
             continue;
         }
@@ -134,19 +137,6 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
     }
 
     emitter.into_chunks()
-}
-
-/// Attempt to seal what we've buffered.  If it's under the target,
-/// keep buffering; if over, emit as a chunk.  When emitting, also
-/// bounds-check MAX_CHARS — a single paragraph over the hard cap
-/// still emits as its own oversize chunk (no mid-content split).
-fn flush_paragraph_or_chunk(emitter: &mut Emitter, headings: &HeadingStack, buf: &mut String) {
-    if buf.len() >= CHUNK_TARGET_CHARS {
-        // Take ownership + reset.
-        let text = std::mem::take(buf);
-        emitter.emit(headings, text);
-    }
-    // else: keep accumulating.
 }
 
 /// Parse a markdown-style ATX heading (`#` through `######` +

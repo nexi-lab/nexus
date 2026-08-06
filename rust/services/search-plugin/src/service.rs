@@ -1135,12 +1135,23 @@ fn do_refresh(
 
     // Stale-sweep: for every path the cache knows about but the
     // walk didn't see, drop it from FTS + ANN + state.  Guarded by
-    // successful visit_result — if the walk aborted mid-flight we
-    // don't know which paths went unvisited because of a crash vs
-    // because they're truly deleted.
+    //
+    //   (a) visit_result.is_ok() — a mid-walk crash would falsely
+    //       report un-visited paths as deleted, and
+    //   (b) path is under the caller's `root_path` scope — a
+    //       Refresh scoped to /a/ must NOT wipe cached paths under
+    //       /b/.  Without this guard, a scoped Refresh silently
+    //       reindexes-with-drops for the WHOLE zone and any file
+    //       that lives outside the caller's scope gets flagged as
+    //       deleted.
     if visit_result.is_ok() {
+        let scope = root_path.trim_end_matches('/');
         for cached_path in sinks.state.known_paths() {
-            if !seen.contains(&cached_path) {
+            let in_scope = scope.is_empty()
+                || scope == "/"
+                || cached_path == scope
+                || cached_path.starts_with(&format!("{scope}/"));
+            if in_scope && !seen.contains(&cached_path) {
                 remove_one(&sinks, &cached_path);
                 counts.removed += 1;
             }

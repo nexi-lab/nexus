@@ -23,7 +23,8 @@ use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
     FusionMethod, GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, IndexRequest,
-    IndexResponse, QueryRequest, QueryResponse, QueryResult, QueryType,
+    IndexResponse, QueryRequest, QueryResponse, QueryResult, QueryType, RefreshRequest,
+    RefreshResponse,
 };
 
 /// Server-side default when the caller sends `max_results = 0`.
@@ -775,11 +776,14 @@ fn fuse_hybrid(
 /// always populates the keyword index); `ann` + `embedder` are
 /// optional so a slim deployment or a mid-boot with no embedder
 /// still gets keyword search — semantic just returns zero hits
-/// until Index is retried with the embedder wired up.
+/// until Index is retried with the embedder wired up.  `state` is
+/// the P5 mtime cache — updated when a file is added or dropped so
+/// the next Refresh's diff pass has an accurate baseline.
 struct IndexSinks<'a> {
     fts: &'a Arc<crate::fts_index::FtsIndex>,
     ann: Option<&'a Arc<crate::ann_index::AnnIndex>>,
     embedder: Option<&'a Arc<dyn Embedder>>,
+    state: &'a crate::index_state::IndexState,
 }
 
 /// Walk `root_path` and index every regular file.  Same walker Glob +
@@ -818,10 +822,14 @@ fn do_index(
         None
     };
 
+    let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
+        .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
     let sinks = IndexSinks {
         fts: &fts,
         ann: ann.as_ref(),
         embedder,
+        state: &state,
     };
 
     let mut indexed: u32 = 0;
@@ -877,6 +885,13 @@ fn do_index(
             tracing::warn!(err = %e, "ann commit failed after walk");
             return Err(format!("ann commit: {e}"));
         }
+    }
+    // Persist the mtime cache so the next Refresh's diff pass sees
+    // an up-to-date baseline.  A crash between the sink commits and
+    // this save just means the next Refresh will re-index those
+    // files (fresh mtime not yet in the cache) — safe, wasted work.
+    if let Err(e) = state.save() {
+        tracing::warn!(err = %e, "index_state save failed");
     }
 
     visit_result?;
@@ -994,7 +1009,158 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         }
     }
 
+    // Record in the P5 mtime cache so the next Refresh's diff pass
+    // knows this file is up-to-date at `mtime_ms`.  Even a None
+    // mtime is recorded (as None) so the file appears in the
+    // known-paths snapshot — the verdict for None caches is
+    // Changed, so it'll re-index next time, but it won't be
+    // mistaken for a deleted file during the stale sweep.
+    sinks.state.record(vfs_path, mtime_ms);
+
     IndexOne::Added
+}
+
+/// Drop `path` from every sink — used by the Refresh stale-sweep
+/// when a file that was previously indexed no longer exists in the
+/// current walk.  Both FTS and ANN's `delete_all_chunks` queue on
+/// their writer transactions; the caller commits at end-of-Refresh.
+fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str) {
+    sinks.fts.delete_all_chunks(vfs_path);
+    if let Some(ann) = sinks.ann {
+        ann.delete_all_chunks(vfs_path);
+    }
+    sinks.state.forget(vfs_path);
+}
+
+/// Result counts from `do_refresh` — one number per RefreshResponse
+/// field so the RPC handler doesn't have to remember the order.
+#[derive(Debug, Default, Clone, Copy)]
+struct RefreshCounts {
+    reindexed: u32,
+    removed: u32,
+    unchanged: u32,
+    skipped: u32,
+}
+
+/// Incremental refresh: walk `root_path`, ask the mtime cache
+/// whether each file needs reindexing, then sweep stale entries.
+/// Same walker + sink shape as do_index; the diff is just the
+/// per-file verdict before calling `index_one` and a post-walk
+/// pass for cache-vs-corpus deletions.
+fn do_refresh(
+    handle: &KernelHandle,
+    manager: &IndexManager,
+    embedder: Option<&Arc<dyn Embedder>>,
+    root_path: &str,
+    zone_id: &str,
+    recursive: bool,
+    max_docs: usize,
+) -> Result<RefreshCounts, String> {
+    let fts = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
+
+    let ann = if let Some(e) = embedder {
+        Some(
+            manager
+                .get_or_open_ann(zone_id, e.tag(), e.dim())
+                .map_err(|err| format!("open ann for zone {zone_id:?}: {err}"))?,
+        )
+    } else {
+        None
+    };
+
+    let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
+        .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+    let sinks = IndexSinks {
+        fts: &fts,
+        ann: ann.as_ref(),
+        embedder,
+        state: &state,
+    };
+
+    let mut counts = RefreshCounts::default();
+    // Track every path we visit so the stale-sweep at the end knows
+    // which cached entries no longer exist in the corpus.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut visit_file = |vfs_path: &str| -> WalkAction {
+        if (counts.reindexed as usize + counts.unchanged as usize) >= max_docs {
+            return WalkAction::Stop;
+        }
+        seen.insert(vfs_path.to_string());
+        let fresh_mtime = kernel_io::sys_stat(handle, vfs_path)
+            .ok()
+            .and_then(|info| info.modified_at_ms);
+        match sinks.state.verdict(vfs_path, fresh_mtime) {
+            crate::index_state::RefreshVerdict::Unchanged => {
+                counts.unchanged += 1;
+            }
+            crate::index_state::RefreshVerdict::Changed => {
+                match index_one(handle, &sinks, vfs_path) {
+                    IndexOne::Added => counts.reindexed += 1,
+                    IndexOne::Skipped => counts.skipped += 1,
+                }
+            }
+        }
+        WalkAction::Continue
+    };
+
+    let visit_result = if recursive {
+        walk_recursive(handle, root_path, &mut |vfs_path, entry_type| {
+            if entry_type != DT_REG {
+                return WalkAction::Continue;
+            }
+            visit_file(vfs_path)
+        })
+        .map_err(walk_err_to_string)
+    } else {
+        match kernel_io::sys_readdir(handle, root_path) {
+            Ok(entries) => {
+                for entry in entries {
+                    if entry.entry_type != DT_REG {
+                        continue;
+                    }
+                    let child = kernel_io::join_vfs_path(root_path, &entry.name);
+                    if visit_file(&child) == WalkAction::Stop {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => Err(walk_err_to_string(e)),
+        }
+    };
+
+    // Stale-sweep: for every path the cache knows about but the
+    // walk didn't see, drop it from FTS + ANN + state.  Guarded by
+    // successful visit_result — if the walk aborted mid-flight we
+    // don't know which paths went unvisited because of a crash vs
+    // because they're truly deleted.
+    if visit_result.is_ok() {
+        for cached_path in sinks.state.known_paths() {
+            if !seen.contains(&cached_path) {
+                remove_one(&sinks, &cached_path);
+                counts.removed += 1;
+            }
+        }
+    }
+
+    if let Err(e) = fts.commit() {
+        return Err(format!("fts commit: {e}"));
+    }
+    if let Some(a) = ann.as_ref() {
+        if let Err(e) = a.commit() {
+            return Err(format!("ann commit: {e}"));
+        }
+    }
+    if let Err(e) = state.save() {
+        tracing::warn!(err = %e, "index_state save failed");
+    }
+
+    visit_result?;
+    Ok(counts)
 }
 
 // ── tonic trait impl ──────────────────────────────────────────────
@@ -1290,6 +1456,61 @@ impl SearchService for SearchServiceImpl {
             })),
             Err(err) => Ok(Response::new(IndexResponse {
                 indexed_count: 0,
+                skipped_count: 0,
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn refresh(
+        &self,
+        request: Request<RefreshRequest>,
+    ) -> Result<Response<RefreshResponse>, Status> {
+        let req = request.into_inner();
+        let root = if req.root_path.is_empty() {
+            "/".to_string()
+        } else {
+            req.root_path
+        };
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let recursive = req.recursive;
+        let max_docs = if req.max_docs == 0 {
+            DEFAULT_INDEX_MAX_DOCS
+        } else {
+            req.max_docs as usize
+        };
+        let handle = Arc::clone(&self.handle);
+        let manager = Arc::clone(&self.manager);
+        // Same best-effort embedder posture as Index: a missing
+        // embedder means ANN stays unchanged this Refresh; keyword
+        // side still incrementally updates.
+        let embedder = self.get_or_init_embedder().ok();
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_refresh(
+                &handle,
+                &manager,
+                embedder.as_ref(),
+                &root,
+                &zone_id,
+                recursive,
+                max_docs,
+            )
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(counts) => Ok(Response::new(RefreshResponse {
+                reindexed_count: counts.reindexed,
+                removed_count: counts.removed,
+                unchanged_count: counts.unchanged,
+                skipped_count: counts.skipped,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(RefreshResponse {
+                reindexed_count: 0,
+                removed_count: 0,
+                unchanged_count: 0,
                 skipped_count: 0,
                 error: Some(err),
             })),

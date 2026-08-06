@@ -211,8 +211,10 @@ impl AnnIndex {
                 HNSW_EF_CONSTRUCTION,
                 DistCosine {},
             );
-            let mut side = Sidecar::default();
-            side.version = SIDECAR_VERSION;
+            let side = Sidecar {
+                version: SIDECAR_VERSION,
+                ..Default::default()
+            };
             (hnsw, side)
         };
 

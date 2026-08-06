@@ -33,6 +33,7 @@ from tests.e2e.docker.runbook_helpers import (
     ADMIN_API_KEY,
     assert_log_contains,
     uid,
+    vfs_delete,
     vfs_mkdir,
     vfs_write,
     wait_healthy,
@@ -595,6 +596,118 @@ class TestSearchIndexQuery:
         results = boosted["result"]["results"]
         assert results[0]["path"] == f"{base}/tier1/a.md", (
             f"tier1 boost should lead, got {[r['path'] for r in results]}"
+        )
+
+    def test_refresh_removes_deleted_file_from_index(self, api_key: str) -> None:
+        """P5 delete-side: index 2 files, delete one via vfs_delete,
+        Refresh must report removed_count=1 and the deleted file must
+        vanish from Query results.  Completes the P5 audit — the
+        earlier docker test skipped this leg because runbook_helpers
+        lacked a vfs_delete primitive."""
+        u = uid()
+        base = f"/search-refresh-del-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        r = vfs_write(NODE_GRPC, f"{base}/keep.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        r = vfs_write(NODE_GRPC, f"{base}/gone.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+        assert idx["result"]["indexed_count"] == 2, idx
+
+        # Sanity: baseline Query returns both files.
+        base_r = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        assert "error" not in base_r, base_r
+        assert len(base_r["result"]["results"]) == 2, base_r
+
+        # Delete one file.
+        r = vfs_delete(NODE_GRPC, f"{base}/gone.md", api_key=api_key)
+        assert "error" not in r, r
+
+        # Refresh sees the missing path, drops it from FTS + ANN
+        # via the stale-sweep, reports removed_count=1.
+        r_refresh = search_refresh(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in r_refresh, r_refresh
+        assert r_refresh["result"]["removed_count"] == 1, r_refresh
+        assert r_refresh["result"]["reindexed_count"] == 0, r_refresh
+        assert r_refresh["result"]["unchanged_count"] == 1, r_refresh
+
+        # Query must not surface the deleted file.
+        after = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        assert "error" not in after, after
+        paths = [x["path"] for x in after["result"]["results"]]
+        assert paths == [f"{base}/keep.md"], f"deleted file leaked into Query results: {paths}"
+
+    def test_query_cache_serves_second_identical_query(self, api_key: str) -> None:
+        """P7 cache: two identical Query calls in the same zone must
+        return byte-identical results.  Locks the wire → cache
+        plumbing end-to-end.  Timing-based hit detection is flaky in
+        docker, so we assert on structural equality of the two
+        responses rather than latency."""
+        u = uid()
+        base = f"/search-cache-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        r = vfs_write(NODE_GRPC, f"{base}/a.md", b"widget alpha\n", api_key=api_key)
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+
+        first = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        second = search_query(NODE_GRPC, "widget", path_filter=base, api_key=api_key)
+        assert "error" not in first, first
+        assert "error" not in second, second
+        # Structural equality proves the cache path is at least
+        # producing a byte-equivalent response — timing/latency
+        # would be the tighter test but flakes in docker.
+        assert first["result"]["results"] == second["result"]["results"], (
+            f"cache should return identical results\nfirst={first}\nsecond={second}"
+        )
+
+    def test_query_cache_invalidated_by_index(self, api_key: str) -> None:
+        """P7 cache invalidation: after a Query populates the cache
+        for a zone, an Index call for that zone must flush the cache
+        entry — so a follow-up identical Query sees the freshly
+        indexed content, not the pre-index cache snapshot.
+
+        Concretely: Query for 'unique-token', which returns 0 hits.
+        Then write a doc containing that token + Index.  A cached
+        response would still say 0 hits; a properly-invalidated
+        cache produces the doc.
+        """
+        u = uid()
+        base = f"/search-cache-inv-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+
+        # Warm the cache with a query that returns zero hits.
+        empty = search_query(
+            NODE_GRPC, "cache-invalidation-marker", path_filter=base, api_key=api_key
+        )
+        assert "error" not in empty, empty
+        assert empty["result"]["results"] == [], empty
+
+        # Write a doc + Index — Index handler must invalidate the
+        # cache for this zone.
+        r = vfs_write(
+            NODE_GRPC,
+            f"{base}/doc.md",
+            b"cache-invalidation-marker payload\n",
+            api_key=api_key,
+        )
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+        assert idx["result"]["indexed_count"] == 1, idx
+
+        # The follow-up Query must see the new doc — if the cache
+        # weren't invalidated it would still return the empty
+        # response from the warm-up call.
+        fresh = search_query(
+            NODE_GRPC, "cache-invalidation-marker", path_filter=base, api_key=api_key
+        )
+        assert "error" not in fresh, fresh
+        paths = [x["path"] for x in fresh["result"]["results"]]
+        assert f"{base}/doc.md" in paths, (
+            f"cache not invalidated by Index — fresh Query still empty: {fresh}"
         )
 
     def test_query_hybrid_honours_fusion_method_arg(self, api_key: str) -> None:

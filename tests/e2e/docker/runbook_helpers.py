@@ -265,6 +265,32 @@ def vfs_mkdir(
         channel.close()
 
 
+def vfs_delete(
+    target: str,
+    path: str,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Typed Delete RPC — remove a file (or empty dir) from the VFS.
+
+    Returns ``{"result": {"deleted": bool}}`` on success or
+    ``{"error": str}``.  Idempotent-ish: deleting a missing path
+    surfaces the kernel's NotFound as an error field.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.DeleteRequest(path=path, auth_token=api_key)
+        resp = stub.Delete(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"deleted": True}}
+    finally:
+        channel.close()
+
+
 def vfs_setattr(
     target: str,
     path: str,

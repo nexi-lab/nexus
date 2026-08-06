@@ -674,6 +674,72 @@ impl FusionOpts {
     }
 }
 
+/// Read-side context expansion mode (P4, #4398).  Sourced from
+/// `QueryRequest.expand`; unknown values fall back to `None` so a
+/// forgetful caller gets the pre-P4 shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpandMode {
+    /// No enrichment; `QueryResult.expanded_context` stays empty.
+    None,
+    /// Fill `expanded_context` with `prev + current + next` chunk
+    /// text under the same path.
+    Macro,
+}
+
+impl ExpandMode {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "macro" => Self::Macro,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Fill `expanded_context` on each hit when the caller asked for
+/// `expand=macro`.  For each hit we fetch the file's full chunk
+/// set via [`FtsIndex::get_chunks_by_path`] (cheap; typical files
+/// have < 20 chunks) and concatenate previous + current + next.
+/// A hit whose file only has one chunk gets an empty
+/// `expanded_context` — same shape as `ExpandMode::None`, so
+/// callers don't need to special-case.
+///
+/// Chunks-per-path cache within one Query call: a hit at
+/// (path, chunk 2) and another at (path, chunk 5) would otherwise
+/// each re-fetch the file's chunk set.  The cache avoids that.
+fn apply_expand(manager: &IndexManager, zone_id: &str, mode: ExpandMode, hits: &mut [QueryResult]) {
+    if matches!(mode, ExpandMode::None) {
+        return;
+    }
+    let Ok(fts) = manager.get_or_open(zone_id) else {
+        return;
+    };
+    let mut cache: std::collections::HashMap<String, Vec<crate::fts_index::FtsHit>> =
+        std::collections::HashMap::new();
+    for hit in hits.iter_mut() {
+        let chunks = cache
+            .entry(hit.path.clone())
+            .or_insert_with(|| fts.get_chunks_by_path(&hit.path).unwrap_or_default());
+        if chunks.len() <= 1 {
+            continue;
+        }
+        let mut assembled = String::new();
+        let mut wrote_any = false;
+        for c in chunks.iter() {
+            let delta = c.chunk_index as i64 - hit.chunk_index as i64;
+            if (-1..=1).contains(&delta) {
+                if wrote_any {
+                    assembled.push_str("\n\n");
+                }
+                assembled.push_str(&c.chunk_text);
+                wrote_any = true;
+            }
+        }
+        if wrote_any {
+            hit.expanded_context = assembled;
+        }
+    }
+}
+
 /// Over-fetch multiplier per source for hybrid.  A doc that ranks
 /// 8 in keyword and 9 in semantic scores highly under RRF, but
 /// only surfaces if BOTH sources return it — so each side fetches
@@ -1031,6 +1097,7 @@ impl SearchService for SearchServiceImpl {
         // moves don't leave `req` partially moved for later reads.
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let fusion_opts = FusionOpts::from_request(&req);
+        let expand_mode = ExpandMode::from_str(&req.expand);
         let limit = if req.limit == 0 {
             DEFAULT_QUERY_LIMIT
         } else {
@@ -1041,6 +1108,12 @@ impl SearchService for SearchServiceImpl {
         let q = req.q;
         let path_filter = req.path_filter;
         let manager = Arc::clone(&self.manager);
+        // Cheap Arc clone + String clone retained for the post-
+        // outcome expand-macro enrichment (both go via the FTS
+        // sibling; keeping them out of the match arms' move scope
+        // avoids threading them back).
+        let manager_for_expand = Arc::clone(&self.manager);
+        let zone_for_expand = zone_id.clone();
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
@@ -1130,10 +1203,25 @@ impl SearchService for SearchServiceImpl {
         };
 
         match outcome {
-            Ok(results) => Ok(Response::new(QueryResponse {
-                results,
-                error: None,
-            })),
+            Ok(mut results) => {
+                // Post-outcome enrichment.  Runs inside the async
+                // handler (no spawn_blocking) because expand-macro's
+                // work is a handful of FTS TermQuery lookups (~10 µs
+                // each, cached per unique path) — not worth another
+                // hop through the blocking pool.
+                if matches!(expand_mode, ExpandMode::Macro) {
+                    apply_expand(
+                        &manager_for_expand,
+                        &zone_for_expand,
+                        expand_mode,
+                        &mut results,
+                    );
+                }
+                Ok(Response::new(QueryResponse {
+                    results,
+                    error: None,
+                }))
+            }
             Err(err) => Ok(Response::new(QueryResponse {
                 results: Vec::new(),
                 error: Some(err),

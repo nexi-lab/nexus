@@ -321,6 +321,33 @@ impl FtsIndex {
         Ok(Some(self.decode(stored, score)))
     }
 
+    /// All chunks stored under `path`, sorted by `chunk_index`
+    /// ascending.  Used by the `expand=macro` code path in
+    /// `service.rs` to build the previous + current + next
+    /// context around each hit without a per-hit search round trip.
+    /// Caps at 512 chunks to bound a pathologically-large file's
+    /// footprint here — a file with more than 512 chunks in P4 is
+    /// beyond the intended budget anyway (chunks_per_page-pooled
+    /// results wouldn't surface that many either).
+    pub fn get_chunks_by_path(&self, path: &str) -> Result<Vec<FtsHit>, IndexError> {
+        const CAP: usize = 512;
+        let searcher = self.reader.searcher();
+        let term = Term::from_field_text(self.fields.path, path);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+        let top = searcher
+            .search(&query, &TopDocs::with_limit(CAP))
+            .map_err(|e| IndexError::Search(e.to_string()))?;
+        let mut hits: Vec<FtsHit> = Vec::with_capacity(top.len());
+        for (score, addr) in top {
+            let stored: TantivyDocument = searcher
+                .doc(addr)
+                .map_err(|e| IndexError::Search(e.to_string()))?;
+            hits.push(self.decode(stored, score));
+        }
+        hits.sort_by_key(|h| h.chunk_index);
+        Ok(hits)
+    }
+
     fn decode(&self, stored: TantivyDocument, score: f32) -> FtsHit {
         // Access stored fields by handle.  If a field is missing (a
         // schema-drift bug), we surface a blank rather than panicking

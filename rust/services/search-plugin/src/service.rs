@@ -86,6 +86,10 @@ pub struct SearchServiceImpl {
     /// so an operator setting `NEXUS_SEARCH_MODEL_DIR` mid-run
     /// unblocks semantic search without a plugin restart.
     embedder_slot: Arc<Mutex<Option<Arc<dyn Embedder>>>>,
+    /// P7 zone-scoped result cache.  Query checks it before
+    /// dispatch; Index + Refresh invalidate the target zone so
+    /// callers who mutated the corpus don't see stale results.
+    query_cache: crate::query_cache::SharedQueryCache,
 }
 
 impl SearchServiceImpl {
@@ -97,6 +101,7 @@ impl SearchServiceImpl {
             handle,
             manager: Arc::new(IndexManager::new()),
             embedder_slot: Arc::new(Mutex::new(None)),
+            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
         }
     }
 
@@ -110,6 +115,7 @@ impl SearchServiceImpl {
             handle,
             manager,
             embedder_slot: Arc::new(Mutex::new(None)),
+            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
         }
     }
 
@@ -127,6 +133,24 @@ impl SearchServiceImpl {
             handle,
             manager,
             embedder_slot: Arc::new(Mutex::new(Some(embedder))),
+            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
+        }
+    }
+
+    /// Test constructor — inject a QueryCache with an explicit
+    /// TTL.  Used by integration tests that want to observe cache
+    /// expiry within seconds rather than the 5-minute default.
+    pub fn with_manager_embedder_and_cache(
+        handle: Arc<KernelHandle>,
+        manager: Arc<IndexManager>,
+        embedder: Arc<dyn Embedder>,
+        query_cache: crate::query_cache::SharedQueryCache,
+    ) -> Self {
+        Self {
+            handle,
+            manager,
+            embedder_slot: Arc::new(Mutex::new(Some(embedder))),
+            query_cache,
         }
     }
 
@@ -1285,6 +1309,20 @@ impl SearchService for SearchServiceImpl {
                 error: Some("q must not be empty".into()),
             }));
         }
+        // P7 cache check.  Zone is the auth boundary (D5), so a
+        // hit here is safe to serve directly — we don't need to
+        // re-check permission, the kernel router already did.  A
+        // hit skips FTS + ANN + fusion + scoring + pooling +
+        // expand entirely.
+        if let Some(cached) = self.query_cache.get(&req) {
+            return Ok(Response::new(QueryResponse {
+                results: cached,
+                error: None,
+            }));
+        }
+        // Retained across the outcome branches to feed the cache
+        // insert on success.  Cloning is cheap next to the fetch.
+        let req_for_cache = req.clone();
         // Parse borrow-only fields FIRST so later `let q = req.q`
         // moves don't leave `req` partially moved for later reads.
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
@@ -1473,6 +1511,13 @@ impl SearchService for SearchServiceImpl {
                         &mut results,
                     );
                 }
+                // P7 cache write.  Store the fully-processed
+                // response (post-scoring, post-pool, post-expand)
+                // so the next hit skips all of it.  Errors are
+                // NOT cached — a stale FTS index / missing zone
+                // may resolve on retry, and we don't want the
+                // cache to sticky-fail those.
+                self.query_cache.insert(&req_for_cache, results.clone());
                 Ok(Response::new(QueryResponse {
                     results,
                     error: None,
@@ -1510,6 +1555,10 @@ impl SearchService for SearchServiceImpl {
         // and re-runs Index.  This matches the "graceful degradation"
         // posture SemanticQuery uses.
         let embedder = self.get_or_init_embedder().ok();
+        // Retain the zone id for post-outcome cache invalidation
+        // (the closure below moves the owned copy into
+        // spawn_blocking).
+        let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             do_index(
                 &handle,
@@ -1525,11 +1574,20 @@ impl SearchService for SearchServiceImpl {
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
 
         match outcome {
-            Ok((indexed_count, skipped_count)) => Ok(Response::new(IndexResponse {
-                indexed_count,
-                skipped_count,
-                error: None,
-            })),
+            Ok((indexed_count, skipped_count)) => {
+                // P7 cache invalidation.  The corpus for this zone
+                // just changed; any cached Query response is
+                // potentially stale.  Drop the whole zone's cache
+                // — coarse but safe, and cheap (per-zone hashmap
+                // remove is O(1) on the outer + O(n) on the entries
+                // dropped).
+                self.query_cache.invalidate_zone(&zone_for_invalidate);
+                Ok(Response::new(IndexResponse {
+                    indexed_count,
+                    skipped_count,
+                    error: None,
+                }))
+            }
             Err(err) => Ok(Response::new(IndexResponse {
                 indexed_count: 0,
                 skipped_count: 0,
@@ -1561,6 +1619,7 @@ impl SearchService for SearchServiceImpl {
         // embedder means ANN stays unchanged this Refresh; keyword
         // side still incrementally updates.
         let embedder = self.get_or_init_embedder().ok();
+        let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             do_refresh(
                 &handle,
@@ -1576,13 +1635,23 @@ impl SearchService for SearchServiceImpl {
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
 
         match outcome {
-            Ok(counts) => Ok(Response::new(RefreshResponse {
-                reindexed_count: counts.reindexed,
-                removed_count: counts.removed,
-                unchanged_count: counts.unchanged,
-                skipped_count: counts.skipped,
-                error: None,
-            })),
+            Ok(counts) => {
+                // P7 cache invalidation on any successful Refresh
+                // that actually changed anything.  A no-op Refresh
+                // (all cached unchanged) leaves the cache intact —
+                // avoids gratuitously blowing away hot entries when
+                // an operator polls Refresh on a quiet corpus.
+                if counts.reindexed > 0 || counts.removed > 0 {
+                    self.query_cache.invalidate_zone(&zone_for_invalidate);
+                }
+                Ok(Response::new(RefreshResponse {
+                    reindexed_count: counts.reindexed,
+                    removed_count: counts.removed,
+                    unchanged_count: counts.unchanged,
+                    skipped_count: counts.skipped,
+                    error: None,
+                }))
+            }
             Err(err) => Ok(Response::new(RefreshResponse {
                 reindexed_count: 0,
                 removed_count: 0,

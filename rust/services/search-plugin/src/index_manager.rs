@@ -124,6 +124,15 @@ impl IndexManager {
             .join(format!("ann-{embedder_tag}-v2"))
     }
 
+    /// Return the per-zone root — parent of `fts/` and `ann-*-v2/`.
+    /// Used by `IndexState::open_or_create` to place
+    /// `index_state.json` at the zone level so the P5 mtime cache
+    /// sits alongside the sub-index directories rather than inside
+    /// one of them.
+    pub fn zone_root(&self, zone_id: &str) -> PathBuf {
+        self.root.join(zone_id)
+    }
+
     /// Handle to the storage root — used by callers that need to
     /// resolve sibling per-zone directories (e.g. Phase 2's HNSW
     /// index next to the tantivy one).

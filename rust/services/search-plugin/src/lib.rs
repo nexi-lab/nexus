@@ -58,6 +58,7 @@ pub mod embedder;
 pub mod fts_index;
 pub mod fusion;
 pub mod index_manager;
+pub mod index_state;
 pub mod kernel_io;
 pub mod service;
 

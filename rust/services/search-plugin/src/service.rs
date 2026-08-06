@@ -1206,6 +1206,18 @@ impl SearchService for SearchServiceImpl {
 
         match outcome {
             Ok(mut results) => {
+                // Uniform post-outcome pooling.  Keyword / semantic
+                // do NOT pool internally, only hybrid's fuse_hybrid
+                // does; applying here gives all three query modes
+                // the same #4542 chunks_per_page semantics.  On the
+                // hybrid path this is a no-op (fuse_hybrid already
+                // pooled + truncated) so it's cheap to always run.
+                if fusion_opts.chunks_per_page > 0 {
+                    results = fusion::pool_by_document(results, fusion_opts.chunks_per_page);
+                    if results.len() > limit {
+                        results.truncate(limit);
+                    }
+                }
                 // Post-outcome enrichment.  Runs inside the async
                 // handler (no spawn_blocking) because expand-macro's
                 // work is a handful of FTS TermQuery lookups (~10 µs

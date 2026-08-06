@@ -255,6 +255,40 @@ message QueryRequest {
   // follow-up read.  Matches the Python SearchDaemon expand=macro
   // contract.
   string expand = 11;
+
+  // ── Recency decay (P6, #4543) ──────────────────────────────────
+  //
+  // Multiplicative post-fusion boost that favours recently-modified
+  // files.  Formula: `score *= 1 + weight * H / (H + age_days)`
+  // where `age_days = (now - file_mtime) / 86400_000`.  Newer
+  // files get a bigger multiplier; H (half-life) controls the
+  // steepness (score halves ~H days after mtime).
+  //
+  // `recency_mode`:
+  //   ""      | "off"  ⇒ no decay (default)
+  //   "on"             ⇒ always apply the decay
+  //   "auto"           ⇒ apply only if the query text hints at
+  //                       recency ("latest", "recent", "new", ...).
+  //                       Matches Python's `RECENCY_WORDS` gate.
+  string recency_mode = 12;
+  // Boost magnitude.  Server-side default = 0.5 when 0.0 wire value
+  // (matches Python).  Range [0.0, 5.0]; a caller passing >5 gets
+  // clamped inside the plugin to bound worst-case skew.
+  float recency_weight = 13;
+  // Half-life in days.  Server-side default = 30.0 when 0.0 wire
+  // value (matches Python).  Range (0.0, 3650.0].
+  float recency_half_life_days = 14;
+
+  // ── Path-prefix score boost (P6, #4544) ────────────────────────
+  //
+  // Per-request map of `path_prefix -> multiplier`.  Applied post-
+  // fusion, pre-pooling: for each hit, the LONGEST cache-hit prefix
+  // wins and multiplies the score.  Prefixes must be absolute VFS
+  // paths (start with `/`).  Callers use this to tier-boost curated
+  // content roots (e.g. `/docs/` = 1.5, `/tmp/` = 0.5).  No entry
+  // ⇒ no boost (multiplier stays 1.0).  Matches Python's
+  // per-prefix ranking weight via path_contexts (#4544).
+  map<string, float> path_prefix_boosts = 15;
 }
 
 message QueryResult {

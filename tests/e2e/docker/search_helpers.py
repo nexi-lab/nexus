@@ -170,6 +170,10 @@ def search_query(
     rrf_k: int = 0,
     chunks_per_page: int = 0,
     expand: str = "",
+    recency_mode: str = "",
+    recency_weight: float = 0.0,
+    recency_half_life_days: float = 0.0,
+    path_prefix_boosts: dict[str, float] | None = None,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 30,
 ) -> dict:
@@ -222,6 +226,10 @@ def search_query(
             rrf_k=rrf_k,
             chunks_per_page=chunks_per_page,
             expand=expand,
+            recency_mode=recency_mode,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
+            path_prefix_boosts=path_prefix_boosts or {},
         )
         resp = stub.Query(req, timeout=timeout)
         if resp.HasField("error"):

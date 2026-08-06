@@ -60,6 +60,7 @@ pub mod fusion;
 pub mod index_manager;
 pub mod index_state;
 pub mod kernel_io;
+pub mod scoring;
 pub mod service;
 
 use search_proto::search_service_server::SearchService as SearchServiceTrait;

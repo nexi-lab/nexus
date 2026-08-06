@@ -114,6 +114,49 @@ def search_index(
         channel.close()
 
 
+def search_refresh(
+    target: str,
+    root_path: str,
+    *,
+    zone_id: str = "",
+    recursive: bool = True,
+    max_docs: int = 0,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 120,
+) -> dict:
+    """Typed Refresh RPC (P5 incremental refresh).
+
+    Returns ``{"result": {"reindexed_count": int, "removed_count": int,
+    "unchanged_count": int, "skipped_count": int}}`` on success or
+    ``{"error": str}``.  ``max_docs=0`` uses the plugin's server-side
+    default (10_000 per the proto contract).
+    """
+    from nexus.grpc.search.v1 import search_pb2
+
+    channel, stub = _open_search_stub(target)
+    try:
+        req = search_pb2.RefreshRequest(
+            root_path=root_path,
+            zone_id=zone_id,
+            recursive=recursive,
+            max_docs=max_docs,
+            auth_token=api_key,
+        )
+        resp = stub.Refresh(req, timeout=timeout)
+        if resp.HasField("error"):
+            return {"error": resp.error}
+        return {
+            "result": {
+                "reindexed_count": resp.reindexed_count,
+                "removed_count": resp.removed_count,
+                "unchanged_count": resp.unchanged_count,
+                "skipped_count": resp.skipped_count,
+            }
+        }
+    finally:
+        channel.close()
+
+
 def search_query(
     target: str,
     q: str,

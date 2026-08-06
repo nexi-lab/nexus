@@ -337,6 +337,121 @@ class TestSearchIndexQuery:
             f"hybrid degradation message should mention unavailability, got {r}"
         )
 
+    def test_multichunk_file_yields_multiple_indexed_docs(self, api_key: str) -> None:
+        """P4: a file with N markdown sections becomes N chunks in
+        the FTS index, not one.  Query for text that appears in a
+        distinct section returns the chunk whose text contains it
+        (with its `chunk_index` > 0 for later sections)."""
+        u = uid()
+        base = f"/search-p4-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        # Multi-section markdown that the chunker splits on headings.
+        # Payload text is > CHUNK_TARGET_CHARS (1600) so budget
+        # forces the split even without heading boundaries.
+        body = (
+            "# Intro\n\nintro-payload " + "alpha " * 400 + "\n\n"
+            "# Setup\n\nsetup-payload " + "beta " * 400 + "\n\n"
+            "# Usage\n\nusage-payload " + "gamma " * 400 + "\n"
+        )
+        r = vfs_write(NODE_GRPC, f"{base}/doc.md", body.encode("utf-8"), api_key=api_key)
+        assert "error" not in r, r
+
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+        assert idx["result"]["indexed_count"] == 1, idx  # one file
+
+        # Query 'beta' matches only the Setup chunk.
+        r = search_query(NODE_GRPC, "beta", path_filter=base, api_key=api_key)
+        assert "error" not in r, r
+        results = r["result"]["results"]
+        assert len(results) == 1, f"expected 1 hit for 'beta', got {results}"
+        beta = results[0]
+        assert beta["path"] == f"{base}/doc.md"
+        # chunk_index > 0 proves the chunker split — 'beta' is in
+        # section 2 (Setup), not section 1 (Intro).
+        assert beta["chunk_index"] > 0, f"beta hit should be from a later chunk: {beta}"
+
+    def test_pooling_caps_chunks_per_page(self, api_key: str) -> None:
+        """chunks_per_page = 1 collapses same-file hits to one row per
+        file — pins the P3 wire finally being observable in P4.
+        Without pooling, three chunks of the same file each matching
+        'shared' would occupy three slots.
+        """
+        u = uid()
+        base = f"/search-pool-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        # One file with three sections all containing 'shared'.
+        body = (
+            "# A\n\n" + "shared " * 400 + "\n\n"
+            "# B\n\n" + "shared " * 400 + "\n\n"
+            "# C\n\n" + "shared " * 400 + "\n"
+        )
+        r = vfs_write(NODE_GRPC, f"{base}/long.md", body.encode("utf-8"), api_key=api_key)
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+
+        # No pooling: multiple chunks of the same file surface.
+        r_unpooled = search_query(NODE_GRPC, "shared", path_filter=base, api_key=api_key)
+        assert "error" not in r_unpooled, r_unpooled
+        unpooled_paths = [x["path"] for x in r_unpooled["result"]["results"]]
+        unpooled_dup_count = sum(1 for p in unpooled_paths if p == f"{base}/long.md")
+        assert unpooled_dup_count >= 2, (
+            f"expected multi-chunk file to surface > 1 row without pooling; got {unpooled_paths}"
+        )
+
+        # With pooling: same-file chunks collapse to one row.
+        r_pooled = search_query(
+            NODE_GRPC,
+            "shared",
+            path_filter=base,
+            chunks_per_page=1,
+            api_key=api_key,
+        )
+        assert "error" not in r_pooled, r_pooled
+        pooled_paths = [x["path"] for x in r_pooled["result"]["results"]]
+        pooled_dup_count = sum(1 for p in pooled_paths if p == f"{base}/long.md")
+        assert pooled_dup_count == 1, f"pooling failed to cap same-file chunks; got {pooled_paths}"
+
+    def test_expand_macro_returns_neighbour_context(self, api_key: str) -> None:
+        """expand=macro fills expanded_context with prev+current+next
+        chunk texts, letting callers render a section-sized snippet
+        without a follow-up read."""
+        u = uid()
+        base = f"/search-expand-{u}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        body = (
+            "# Intro\n\nintro-payload " + "x " * 400 + "\n\n"
+            "# Setup\n\nsetup-unique-token " + "y " * 400 + "\n\n"
+            "# Usage\n\nusage-tail " + "z " * 400 + "\n"
+        )
+        r = vfs_write(NODE_GRPC, f"{base}/doc.md", body.encode("utf-8"), api_key=api_key)
+        assert "error" not in r, r
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, idx
+
+        # Baseline: expand=none → expanded_context empty.
+        r_plain = search_query(NODE_GRPC, "setup-unique-token", path_filter=base, api_key=api_key)
+        assert "error" not in r_plain
+        hit_plain = r_plain["result"]["results"][0]
+        assert hit_plain["expanded_context"] == "", hit_plain
+
+        # expand=macro → expanded_context contains prev + current + next.
+        r_macro = search_query(
+            NODE_GRPC,
+            "setup-unique-token",
+            path_filter=base,
+            expand="macro",
+            api_key=api_key,
+        )
+        assert "error" not in r_macro
+        hit_macro = r_macro["result"]["results"][0]
+        assert hit_macro["expanded_context"], f"expand=macro should fill context: {hit_macro}"
+        # Setup is the middle section → context includes intro-payload
+        # (prev) and usage-tail (next).
+        assert "intro-payload" in hit_macro["expanded_context"], hit_macro
+        assert "usage-tail" in hit_macro["expanded_context"], hit_macro
+
     def test_query_hybrid_honours_fusion_method_arg(self, api_key: str) -> None:
         """Even in the degraded (no-embedder) shape, the wire must
         accept the P3 fusion knobs — a stale gRPC schema on the

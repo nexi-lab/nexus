@@ -604,11 +604,12 @@ fn enrich_ann_hit(
         .unwrap_or((String::new(), None));
     QueryResult {
         path: hit.path,
-        chunk_index: 0,
+        chunk_index: hit.chunk_index,
         chunk_text,
         score,
         zone_id: zone_id.to_string(),
         mtime_ms,
+        expanded_context: String::new(),
     }
 }
 
@@ -635,6 +636,7 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
         score: hit.score,
         zone_id: zone_id.to_string(),
         mtime_ms: hit.mtime_ms,
+        expanded_context: String::new(),
     }
 }
 
@@ -674,32 +676,88 @@ impl FusionOpts {
     }
 }
 
-/// Hybrid = keyword + semantic, fused per the caller's chosen
-/// method, optionally pooled per-doc.  Runs both retrievals in
-/// sequence on the same spawn_blocking worker — small P3-friendly
-/// implementation.  A parallel-fetch variant is a follow-up when
-/// per-source latency asymmetry (BM25 ~ms, semantic ~10-100ms with
-/// real fastembed) starts to matter for user-visible p95.
+/// Read-side context expansion mode (P4, #4398).  Sourced from
+/// `QueryRequest.expand`; unknown values fall back to `None` so a
+/// forgetful caller gets the pre-P4 shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpandMode {
+    /// No enrichment; `QueryResult.expanded_context` stays empty.
+    None,
+    /// Fill `expanded_context` with `prev + current + next` chunk
+    /// text under the same path.
+    Macro,
+}
+
+impl ExpandMode {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "macro" => Self::Macro,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Fill `expanded_context` on each hit when the caller asked for
+/// `expand=macro`.  For each hit we fetch the file's full chunk
+/// set via [`FtsIndex::get_chunks_by_path`] (cheap; typical files
+/// have < 20 chunks) and concatenate previous + current + next.
+/// A hit whose file only has one chunk gets an empty
+/// `expanded_context` — same shape as `ExpandMode::None`, so
+/// callers don't need to special-case.
 ///
-/// Each source over-fetches `limit * 2` to give fusion headroom
-/// (a doc that ranks 8 in keyword and 9 in semantic scores highly
-/// under RRF but only surfaces if BOTH sources return it).  The
-/// dispatcher's `path_filter` still applies inside each source's
-/// query so pooling never has to re-check.
-fn do_hybrid_query(
-    manager: &IndexManager,
-    embedder: &Arc<dyn Embedder>,
-    q: &str,
-    zone_id: &str,
+/// Chunks-per-path cache within one Query call: a hit at
+/// (path, chunk 2) and another at (path, chunk 5) would otherwise
+/// each re-fetch the file's chunk set.  The cache avoids that.
+fn apply_expand(manager: &IndexManager, zone_id: &str, mode: ExpandMode, hits: &mut [QueryResult]) {
+    if matches!(mode, ExpandMode::None) {
+        return;
+    }
+    let Ok(fts) = manager.get_or_open(zone_id) else {
+        return;
+    };
+    let mut cache: std::collections::HashMap<String, Vec<crate::fts_index::FtsHit>> =
+        std::collections::HashMap::new();
+    for hit in hits.iter_mut() {
+        let chunks = cache
+            .entry(hit.path.clone())
+            .or_insert_with(|| fts.get_chunks_by_path(&hit.path).unwrap_or_default());
+        if chunks.len() <= 1 {
+            continue;
+        }
+        let mut assembled = String::new();
+        let mut wrote_any = false;
+        for c in chunks.iter() {
+            let delta = c.chunk_index as i64 - hit.chunk_index as i64;
+            if (-1..=1).contains(&delta) {
+                if wrote_any {
+                    assembled.push_str("\n\n");
+                }
+                assembled.push_str(&c.chunk_text);
+                wrote_any = true;
+            }
+        }
+        if wrote_any {
+            hit.expanded_context = assembled;
+        }
+    }
+}
+
+/// Over-fetch multiplier per source for hybrid.  A doc that ranks
+/// 8 in keyword and 9 in semantic scores highly under RRF, but
+/// only surfaces if BOTH sources return it — so each side fetches
+/// more than the caller-visible `limit` to give fusion headroom.
+const HYBRID_OVER_FETCH_MULT: usize = 2;
+
+/// Fuse two source result lists per the caller's chosen method,
+/// pool per-doc, and truncate to `limit`.  Pure math — the two
+/// source lists come in already fetched.  The RPC handler runs
+/// the fetches in parallel then hands them here.
+fn fuse_hybrid(
+    keyword: Vec<QueryResult>,
+    semantic: Vec<QueryResult>,
     limit: usize,
-    path_filter: &str,
     opts: FusionOpts,
-) -> Result<Vec<QueryResult>, String> {
-    let over_fetch = limit.saturating_mul(2).max(limit);
-
-    let keyword = do_keyword_query(manager, q, zone_id, over_fetch, path_filter)?;
-    let semantic = do_semantic_query(manager, embedder, q, zone_id, over_fetch, path_filter)?;
-
+) -> Vec<QueryResult> {
     let fused = match opts.method {
         FusionMethod::Unspecified | FusionMethod::Rrf => {
             fusion::rrf(&keyword, &semantic, opts.rrf_k)
@@ -709,9 +767,8 @@ fn do_hybrid_query(
             fusion::rrf_weighted(&keyword, &semantic, opts.rrf_k, opts.alpha)
         }
     };
-
     let pooled = fusion::pool_by_document(fused, opts.chunks_per_page);
-    Ok(pooled.into_iter().take(limit).collect())
+    pooled.into_iter().take(limit).collect()
 }
 
 /// Sinks the Index walker writes into.  `fts` is required (Index
@@ -869,28 +926,63 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         .ok()
         .and_then(|info| info.modified_at_ms);
 
-    if let Err(e) = sinks.fts.add_document(vfs_path, 0, text, mtime_ms) {
-        tracing::warn!(path = %vfs_path, err = %e, "index: fts add_document failed — skipping");
+    // P4: chunk the file into semantically-coherent pieces.  The
+    // chunker respects markdown-ish heading + code-fence structure
+    // and keeps each chunk under the embedder's soft budget.
+    let chunks = crate::chunker::chunk_document(text);
+    if chunks.is_empty() {
+        // Whitespace-only file — nothing to index.
         return IndexOne::Skipped;
     }
 
-    // ANN side — best-effort.  A failure to embed / add does NOT
-    // fail the whole file; keyword still works, semantic just
-    // misses this doc until the next Index retries.  Real batching
-    // (embed 32 files at a time) lands in P4/P5 when the chunker
-    // makes it worthwhile.
+    // FTS side: drop the file's old chunk set, add the fresh one.
+    // Both ops queue on the same writer transaction so commit()
+    // lands them atomically — a reader never sees a partially-
+    // reindexed file.
+    sinks.fts.delete_all_chunks(vfs_path);
+    for chunk in &chunks {
+        if let Err(e) = sinks
+            .fts
+            .add_document(vfs_path, chunk.chunk_index, &chunk.text, mtime_ms)
+        {
+            tracing::warn!(
+                path = %vfs_path,
+                chunk = chunk.chunk_index,
+                err = %e,
+                "index: fts add_document failed — skipping remaining chunks",
+            );
+            return IndexOne::Skipped;
+        }
+    }
+
+    // ANN side — best-effort per file.  Batch-embed the whole
+    // chunk set in one embedder call to amortise ort session
+    // overhead; per-chunk add + shared delete_all mirrors the
+    // FTS discipline.  A failure on embed / add does NOT fail
+    // the whole Index — keyword still works.
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
-        match embedder.embed_batch(&[text]) {
-            Ok(mut vecs) => {
-                if let Some(v) = vecs.pop() {
-                    if let Err(e) = ann.add_vector(vfs_path, &v) {
+        let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
+        match embedder.embed_batch(&inputs) {
+            Ok(vecs) if vecs.len() == chunks.len() => {
+                ann.delete_all_chunks(vfs_path);
+                for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
+                    if let Err(e) = ann.add_vector(vfs_path, chunk.chunk_index, vec) {
                         tracing::warn!(
                             path = %vfs_path,
+                            chunk = chunk.chunk_index,
                             err = %e,
-                            "index: ann add_vector failed — semantic misses this doc",
+                            "index: ann add_vector failed — semantic misses this chunk",
                         );
                     }
                 }
+            }
+            Ok(vecs) => {
+                tracing::warn!(
+                    path = %vfs_path,
+                    got = vecs.len(),
+                    expected = chunks.len(),
+                    "index: embedder returned wrong vec count — semantic misses this doc",
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -1007,6 +1099,7 @@ impl SearchService for SearchServiceImpl {
         // moves don't leave `req` partially moved for later reads.
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let fusion_opts = FusionOpts::from_request(&req);
+        let expand_mode = ExpandMode::from_str(&req.expand);
         let limit = if req.limit == 0 {
             DEFAULT_QUERY_LIMIT
         } else {
@@ -1017,6 +1110,12 @@ impl SearchService for SearchServiceImpl {
         let q = req.q;
         let path_filter = req.path_filter;
         let manager = Arc::clone(&self.manager);
+        // Cheap Arc clone + String clone retained for the post-
+        // outcome expand-macro enrichment (both go via the FTS
+        // sibling; keeping them out of the match arms' move scope
+        // avoids threading them back).
+        let manager_for_expand = Arc::clone(&self.manager);
+        let zone_for_expand = zone_id.clone();
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
@@ -1058,27 +1157,85 @@ impl SearchService for SearchServiceImpl {
                         }));
                     }
                 };
-                tokio::task::spawn_blocking(move || {
-                    do_hybrid_query(
-                        &manager,
-                        &embedder,
-                        &q,
-                        &zone_id,
-                        limit,
-                        &path_filter,
-                        fusion_opts,
+                // Parallel-fetch retrofit (P3 audit finding #3):
+                // real-fastembed semantic ~300 ms + BM25 keyword ~10 ms
+                // = 310 ms wall-clock sequential.  Spawning both legs
+                // on the blocking pool + joining brings wall-clock to
+                // max(kw, sem) ≈ 300 ms — no free lunch on total CPU
+                // but user-visible p95 halves in the worst-case ratio.
+                let over_fetch = limit.saturating_mul(HYBRID_OVER_FETCH_MULT).max(limit);
+                let (kw_task, sem_task) = {
+                    let mgr_kw = Arc::clone(&manager);
+                    let mgr_sem = Arc::clone(&manager);
+                    let embedder = Arc::clone(&embedder);
+                    let q_kw = q.clone();
+                    let q_sem = q;
+                    let zone_kw = zone_id.clone();
+                    let zone_sem = zone_id;
+                    let path_kw = path_filter.clone();
+                    let path_sem = path_filter;
+                    (
+                        tokio::task::spawn_blocking(move || {
+                            do_keyword_query(&mgr_kw, &q_kw, &zone_kw, over_fetch, &path_kw)
+                        }),
+                        tokio::task::spawn_blocking(move || {
+                            do_semantic_query(
+                                &mgr_sem, &embedder, &q_sem, &zone_sem, over_fetch, &path_sem,
+                            )
+                        }),
                     )
-                })
-                .await
-                .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?
+                };
+                let (kw_join, sem_join) = tokio::join!(kw_task, sem_task);
+                let kw = kw_join
+                    .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                let sem = sem_join
+                    .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                match (kw, sem) {
+                    (Ok(keyword), Ok(semantic)) => {
+                        Ok(fuse_hybrid(keyword, semantic, limit, fusion_opts))
+                    }
+                    // A source-side error on either leg — surface it
+                    // as the response's `error` field rather than a
+                    // gRPC Status, matching keyword / semantic
+                    // behaviour.  If both fail we surface the
+                    // keyword error (arbitrary but stable).
+                    (Err(e), _) | (Ok(_), Err(e)) => Err(e),
+                }
             }
         };
 
         match outcome {
-            Ok(results) => Ok(Response::new(QueryResponse {
-                results,
-                error: None,
-            })),
+            Ok(mut results) => {
+                // Uniform post-outcome pooling.  Keyword / semantic
+                // do NOT pool internally, only hybrid's fuse_hybrid
+                // does; applying here gives all three query modes
+                // the same #4542 chunks_per_page semantics.  On the
+                // hybrid path this is a no-op (fuse_hybrid already
+                // pooled + truncated) so it's cheap to always run.
+                if fusion_opts.chunks_per_page > 0 {
+                    results = fusion::pool_by_document(results, fusion_opts.chunks_per_page);
+                    if results.len() > limit {
+                        results.truncate(limit);
+                    }
+                }
+                // Post-outcome enrichment.  Runs inside the async
+                // handler (no spawn_blocking) because expand-macro's
+                // work is a handful of FTS TermQuery lookups (~10 µs
+                // each, cached per unique path) — not worth another
+                // hop through the blocking pool.
+                if matches!(expand_mode, ExpandMode::Macro) {
+                    apply_expand(
+                        &manager_for_expand,
+                        &zone_for_expand,
+                        expand_mode,
+                        &mut results,
+                    );
+                }
+                Ok(Response::new(QueryResponse {
+                    results,
+                    error: None,
+                }))
+            }
             Err(err) => Ok(Response::new(QueryResponse {
                 results: Vec::new(),
                 error: Some(err),

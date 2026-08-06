@@ -114,15 +114,14 @@ impl IndexManager {
 
     /// Return the on-disk directory the given zone's ANN index lives
     /// in for the given embedder tag.  Same shape as [`index_dir`]
-    /// but under `ann-<tag>-v1/`.  Version suffix is fixed at `v1`
-    /// for now; a future breaking change (schema of `sidecar.json`,
-    /// hnsw_rs upgrade that reads a different disk layout) bumps to
-    /// `v2` so the two live side-by-side and operators can roll
-    /// back.
+    /// but under `ann-<tag>-v2/`.  The `v2` bump at P4 marks the
+    /// sidecar schema change from path-keyed to (path, chunk_index)-
+    /// keyed — v1 dirs from earlier phases stay on disk (untouched)
+    /// while callers converge on v2.  Reindex to populate v2.
     pub fn ann_dir(&self, zone_id: &str, embedder_tag: &str) -> PathBuf {
         self.root
             .join(zone_id)
-            .join(format!("ann-{embedder_tag}-v1"))
+            .join(format!("ann-{embedder_tag}-v2"))
     }
 
     /// Handle to the storage root — used by callers that need to
@@ -255,8 +254,8 @@ mod tests {
         let mgr = IndexManager::with_root(root.clone());
         let d_a = mgr.ann_dir("za", "mock");
         let d_b = mgr.ann_dir("za", "mE5-small-v1");
-        assert_eq!(d_a, root.join("za/ann-mock-v1"));
-        assert_eq!(d_b, root.join("za/ann-mE5-small-v1-v1"));
+        assert_eq!(d_a, root.join("za/ann-mock-v2"));
+        assert_eq!(d_b, root.join("za/ann-mE5-small-v1-v2"));
         assert_ne!(d_a, d_b);
     }
 

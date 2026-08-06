@@ -229,10 +229,19 @@ message QueryRequest {
   // Per-document chunk cap for final-list pooling (#4542).  Prevents
   // one long file from monopolising the top-N when its per-chunk
   // scores dominate multiple result slots.  0 ⇒ no pooling (backward-
-  // compatible with the pre-P3 shape).  P1-P3 emit one chunk per
-  // file so pooling is a no-op at those phases; P4's real chunker
-  // makes it meaningful.
+  // compatible with the pre-P3 shape).  Observable from P4 onward
+  // once the chunker starts emitting multi-chunk-per-file sets.
   uint32 chunks_per_page = 10;
+
+  // ── Read-side expansion (P4, #4398) ────────────────────────────
+  //
+  // "none" | "macro"; empty ⇒ no expansion (default).  When set to
+  // "macro" each returned hit carries `expanded_context` with the
+  // concatenation of the previous + current + next chunk texts,
+  // so callers can render a section-sized snippet without a
+  // follow-up read.  Matches the Python SearchDaemon expand=macro
+  // contract.
+  string expand = 11;
 }
 
 message QueryResult {
@@ -262,6 +271,14 @@ message QueryResult {
   // Optional because P1 tolerates missing mtimes (e.g. streams).  Used
   // by P6's recency scoring.
   optional int64 mtime_ms = 6;
+
+  // Neighbouring-chunk context (P4, #4398).  Populated only when
+  // the request's `expand="macro"` — concatenation of the previous
+  // + current + next chunk texts under the same `path`, so callers
+  // render a section-sized snippet in one pass.  Absent (empty
+  // string) for `expand="none"` or when the source file has only
+  // this one chunk.
+  string expanded_context = 7;
 }
 
 message QueryResponse {

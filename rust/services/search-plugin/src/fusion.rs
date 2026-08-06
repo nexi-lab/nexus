@@ -60,8 +60,9 @@ pub const DEFAULT_ALPHA: f32 = 0.5;
 pub fn rrf(keyword: &[QueryResult], semantic: &[QueryResult], k: u32) -> Vec<QueryResult> {
     let mut merged: HashMap<DocKey, MergedHit> = HashMap::new();
     let k_f = k.max(1) as f32;
-    accumulate_rrf(&mut merged, keyword, k_f, 1.0);
-    accumulate_rrf(&mut merged, semantic, k_f, 1.0);
+    let contrib = |idx: usize, _: &QueryResult| 1.0 / (k_f + (idx + 1) as f32);
+    accumulate(&mut merged, keyword, contrib);
+    accumulate(&mut merged, semantic, contrib);
     finalise(merged)
 }
 
@@ -72,10 +73,14 @@ pub fn rrf_weighted(
     alpha: f32,
 ) -> Vec<QueryResult> {
     let alpha = alpha.clamp(0.0, 1.0);
-    let mut merged: HashMap<DocKey, MergedHit> = HashMap::new();
     let k_f = k.max(1) as f32;
-    accumulate_rrf(&mut merged, keyword, k_f, 1.0 - alpha);
-    accumulate_rrf(&mut merged, semantic, k_f, alpha);
+    let mut merged: HashMap<DocKey, MergedHit> = HashMap::new();
+    accumulate(&mut merged, keyword, |idx, _| {
+        (1.0 - alpha) / (k_f + (idx + 1) as f32)
+    });
+    accumulate(&mut merged, semantic, |idx, _| {
+        alpha / (k_f + (idx + 1) as f32)
+    });
     finalise(merged)
 }
 
@@ -85,8 +90,8 @@ pub fn weighted(keyword: &[QueryResult], semantic: &[QueryResult], alpha: f32) -
     let sem_norm = min_max_normalise(semantic);
 
     let mut merged: HashMap<DocKey, MergedHit> = HashMap::new();
-    accumulate_score(&mut merged, keyword, &kw_norm, 1.0 - alpha);
-    accumulate_score(&mut merged, semantic, &sem_norm, alpha);
+    accumulate(&mut merged, keyword, |idx, _| (1.0 - alpha) * kw_norm[idx]);
+    accumulate(&mut merged, semantic, |idx, _| alpha * sem_norm[idx]);
     finalise(merged)
 }
 
@@ -147,38 +152,24 @@ struct MergedHit {
     template: QueryResult,
 }
 
-fn accumulate_rrf(
+/// Fold one source into the merged accumulator using a caller-
+/// supplied per-hit contribution function.  Same shape for both RRF
+/// (`weight / (k + rank)`) and WEIGHTED (`weight * normalised_score`)
+/// — the difference is purely the scoring formula, so one merge loop
+/// covers both.  Fixed at &self on the source so it can be handed
+/// arbitrary slice reprs without allocating.
+fn accumulate<F: Fn(usize, &QueryResult) -> f32>(
     merged: &mut HashMap<DocKey, MergedHit>,
     source: &[QueryResult],
-    k: f32,
-    weight: f32,
+    contribution: F,
 ) {
     for (idx, r) in source.iter().enumerate() {
-        let rank = (idx + 1) as f32;
-        let contribution = weight / (k + rank);
+        let c = contribution(idx, r);
         merged
             .entry(DocKey::of(r))
-            .and_modify(|m| m.score += contribution)
+            .and_modify(|m| m.score += c)
             .or_insert_with(|| MergedHit {
-                score: contribution,
-                template: r.clone(),
-            });
-    }
-}
-
-fn accumulate_score(
-    merged: &mut HashMap<DocKey, MergedHit>,
-    source: &[QueryResult],
-    normalised: &[f32],
-    weight: f32,
-) {
-    for (r, &n) in source.iter().zip(normalised.iter()) {
-        let contribution = weight * n;
-        merged
-            .entry(DocKey::of(r))
-            .and_modify(|m| m.score += contribution)
-            .or_insert_with(|| MergedHit {
-                score: contribution,
+                score: c,
                 template: r.clone(),
             });
     }
@@ -241,6 +232,7 @@ mod tests {
             score,
             zone_id: "root".to_string(),
             mtime_ms: Some(1),
+            expanded_context: String::new(),
         }
     }
 
@@ -347,6 +339,7 @@ mod tests {
             score: 1.0,
             zone_id: "root".into(),
             mtime_ms: Some(100),
+            expanded_context: String::new(),
         }];
         let sem = vec![QueryResult {
             path: "/a".into(),
@@ -355,6 +348,7 @@ mod tests {
             score: 0.9,
             zone_id: "root".into(),
             mtime_ms: Some(200),
+            expanded_context: String::new(),
         }];
         let fused = rrf(&kw, &sem, 60);
         assert_eq!(fused.len(), 1);
@@ -414,6 +408,7 @@ mod tests {
                 score: 1.0,
                 zone_id: "root".into(),
                 mtime_ms: None,
+                expanded_context: String::new(),
             },
             QueryResult {
                 path: "/a".into(),
@@ -422,6 +417,7 @@ mod tests {
                 score: 1.0,
                 zone_id: "root".into(),
                 mtime_ms: None,
+                expanded_context: String::new(),
             },
         ];
         // rrf here: rank-1 and rank-2 have different scores; equalise

@@ -126,6 +126,7 @@ def search_query(
     alpha: float = 0.0,
     rrf_k: int = 0,
     chunks_per_page: int = 0,
+    expand: str = "",
     api_key: str = ADMIN_API_KEY,
     timeout: float = 30,
 ) -> dict:
@@ -177,6 +178,7 @@ def search_query(
             alpha=alpha,
             rrf_k=rrf_k,
             chunks_per_page=chunks_per_page,
+            expand=expand,
         )
         resp = stub.Query(req, timeout=timeout)
         if resp.HasField("error"):
@@ -191,6 +193,7 @@ def search_query(
                         "score": r.score,
                         "zone_id": r.zone_id,
                         "mtime_ms": r.mtime_ms if r.HasField("mtime_ms") else None,
+                        "expanded_context": r.expanded_context,
                     }
                     for r in resp.results
                 ]

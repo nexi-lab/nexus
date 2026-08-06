@@ -1325,20 +1325,26 @@ impl SearchService for SearchServiceImpl {
                 error: Some("q must not be empty".into()),
             }));
         }
+        // Canonicalise the zone BEFORE cache lookup so the cache
+        // and Index/Refresh invalidation agree on the key.  Wire
+        // zone_id="" resolves to ROOT_ZONE_ID everywhere else
+        // (do_index, do_refresh, do_*_query); the cache must see
+        // the same resolved value or invalidation misses a call
+        // that inserted under the empty string.
+        let mut req_for_cache = req.clone();
+        req_for_cache.zone_id = resolve_zone(&req.zone_id).to_string();
+
         // P7 cache check.  Zone is the auth boundary (D5), so a
         // hit here is safe to serve directly — we don't need to
         // re-check permission, the kernel router already did.  A
         // hit skips FTS + ANN + fusion + scoring + pooling +
         // expand entirely.
-        if let Some(cached) = self.query_cache.get(&req) {
+        if let Some(cached) = self.query_cache.get(&req_for_cache) {
             return Ok(Response::new(QueryResponse {
                 results: cached,
                 error: None,
             }));
         }
-        // Retained across the outcome branches to feed the cache
-        // insert on success.  Cloning is cheap next to the fetch.
-        let req_for_cache = req.clone();
         // Parse borrow-only fields FIRST so later `let q = req.q`
         // moves don't leave `req` partially moved for later reads.
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);

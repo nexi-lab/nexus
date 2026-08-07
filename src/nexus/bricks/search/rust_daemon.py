@@ -34,7 +34,13 @@ from typing import TYPE_CHECKING, Any
 import grpc
 
 from nexus.bricks.search.results import BaseSearchResult
-from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
+
+# The generated stubs are excluded from mypy by pattern (see the
+# [tool.mypy] exclude in pyproject.toml — `_pb2(_grpc)?\.py$`).  mypy
+# therefore can't attribute-resolve either symbol at import time; the
+# same shape shows up on the vfs side (rpc_transport.py has to do a
+# runtime-only import).  attr-defined ignore is the standard cure.
+from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
     from nexus.contracts.search_types import SearchRequest

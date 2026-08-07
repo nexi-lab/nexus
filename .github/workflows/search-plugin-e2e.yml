@@ -175,7 +175,11 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          # 3.13 (not 3.14) because pdf-inspector's pyo3-ffi pin
+          # rejects 3.14 during workspace resolution.  The daemon
+          # proxy itself is version-agnostic — this only affects the
+          # test-side env.
+          python-version: "3.13"
 
       - name: Install uv
         if: steps.changes.outputs.run == 'true'

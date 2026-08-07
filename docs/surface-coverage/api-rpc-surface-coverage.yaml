@@ -290,7 +290,7 @@ operations:
   transports:
     http:
       name: POST /indexing-mode
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:167
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:168
   profiles:
     lite: supported
     sandbox: supported

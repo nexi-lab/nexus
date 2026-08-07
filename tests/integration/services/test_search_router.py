@@ -148,7 +148,7 @@ class TestSearchQueryEndpoint:
     def test_semantic_degraded_flag_survives_empty_results(self, client: "TestClient") -> None:
         """#4541 review round 8: request-level degradation reaches the
         response even when the degraded result list is empty."""
-        from nexus.bricks.search.daemon import SearchResultList
+        from nexus.bricks.search.results import SearchResultList
 
         app: Any = client.app
 

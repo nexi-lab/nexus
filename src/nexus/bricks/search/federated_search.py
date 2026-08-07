@@ -28,9 +28,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.fusion import rrf_multi_fusion
 from nexus.bricks.search.result_builders import cap_chunks_per_page
+from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.search_types import SearchRequest
 

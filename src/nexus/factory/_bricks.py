@@ -152,16 +152,7 @@ def _boot_independent_bricks(
     zoekt_write_observer: Any = None  # Issue #810: OBSERVE-phase Zoekt observer
     task_dispatch_consumer: Any = None  # Task Manager: DT_PIPE lifecycle consumer
 
-    # --- Search Brick Import Validation (Issue #1520) ---
     if _on("search"):
-        try:
-            from nexus.bricks.search.manifest import verify_imports as _verify_search
-
-            _search_status = _verify_search()
-            logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
-        except ImportError:
-            logger.debug("[BOOT:BRICK] Search brick manifest not available")
-
         # Wire zoekt callbacks into backends (Issue #1520, #2188: DI via factory)
         # Issue #810: Route through ZoektWriteObserver (OBSERVE phase, non-blocking).
         try:

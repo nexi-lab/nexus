@@ -256,13 +256,13 @@ operations:
   transports:
     http:
       name: POST /index-directory
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:78
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:68
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/index-directory {"path":"/workspace/docs","action":"add"}
-  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -273,13 +273,13 @@ operations:
   transports:
     http:
       name: GET /indexed-dirs
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:296
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:137
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/indexed-dirs?zone_id=root
-  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_policy3_overlapping_directories_coexist; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -290,30 +290,13 @@ operations:
   transports:
     http:
       name: POST /indexing-mode
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:333
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:167
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/indexing-mode {"zone_id":"root","mode":"scoped"}
-  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_set_zone_indexing_mode_toggle; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
-- id: _search_indexed_dirs.purge_unscoped
-  module: search
-  summary: Remove unscoped vector chunks after switching a zone to scoped indexing.
-  transports:
-    http:
-      name: POST /purge-unscoped
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:460
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/purge-unscoped {"zone_id":"root"}
-  correctness_test: tests/unit/bricks/search/test_daemon_sqlite_vec_wiring.py; tests/unit/bricks/search/test_indexing_sqlite_vec_sidewrite.py;
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -330,7 +313,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/locate {"q":"authentication"}
-  correctness_test: tests/integration/bricks/search/test_skeleton_rebac.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
@@ -1042,7 +1025,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/server/api/v2/routers/test_batch_write_read.py::TestBatchReadEndpoint::test_valid_batch_returns_200;
+  correctness_test: tests/integration/server/api/v2/routers/test_batch_write_read.py::TestBatchReadEndpoint::test_valid_batch_returns_200
     tests/e2e/server/test_async_files_permissions_e2e.py::test_batch_read
   perf_class: hot_path
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead
@@ -1061,7 +1044,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: tests/integration/server/api/v2/routers/test_batch_write_read.py::TestBatchWriteEndpoint::test_valid_batch_returns_200;
+  correctness_test: tests/integration/server/api/v2/routers/test_batch_write_read.py::TestBatchWriteEndpoint::test_valid_batch_returns_200
     tests/integration/server/api/v2/routers/test_batch_write_read.py::TestBatchRoundTrip::test_write_then_read_returns_identical_content
   perf_class: hot_path
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteBatchThroughput
@@ -1082,7 +1065,7 @@ operations:
     kernel/SDK surfaces instead.'
   correctness_test: tests/integration/server/api/v2/routers/test_files_ops.py::TestCopy::test_copy_small_file; tests/integration/server/api/v2/routers/test_files_ops.py::TestCopy::test_copy_large_file_uses_streaming
   perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestRouteOverhead; tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead;
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestRouteOverhead; tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead
     tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile
   gap_issue: 4127
   owning_issue: 4127
@@ -1101,7 +1084,7 @@ operations:
     kernel/SDK surfaces instead.'
   correctness_test: tests/integration/server/api/v2/routers/test_files_ops.py::TestCopyBulk::test_copy_bulk_all_success; tests/integration/server/api/v2/routers/test_files_ops.py::TestCopyBulk::test_copy_bulk_mixed_sizes
   perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestRouteOverhead; tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead;
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestRouteOverhead; tests/benchmarks/bench_read_write_overhead.py::TestReadBulkOverhead
     tests/benchmarks/bench_read_write_overhead.py::TestWriteBatchThroughput
   gap_issue: 4127
   owning_issue: 4127
@@ -1172,7 +1155,7 @@ operations:
     full: supported
   usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
     kernel/SDK surfaces instead.'
-  correctness_test: src/nexus/server/api/v2/routers/tests/test_files_search.py::TestGrepEndpoint::test_grep_happy_path_rust;
+  correctness_test: src/nexus/server/api/v2/routers/tests/test_files_search.py::TestGrepEndpoint::test_grep_happy_path_rust
     src/nexus/server/api/v2/routers/tests/test_files_search.py::TestGrepEndpoint::test_grep_python_fallback
   perf_class: hot
   perf_link: tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks; tests/benchmarks/test_search_benchmarks.py::TestRustMmapGrepBenchmarks
@@ -2021,7 +2004,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus connectors list --json; RPC: GET /api/v2/connectors returns connectors used by list_connectors(category).'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -2077,7 +2060,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus connectors list shows available types; RPC: GET /api/v2/connectors/available includes auth_status/auth_source
     for connector setup UI.'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -2097,7 +2080,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mounts add /sources/hn hn ''{}''; RPC: POST /api/v2/connectors/mount with connector_type, mount_point,
     and config returns mounted=true.'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -2116,7 +2099,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus mounts list --json; RPC: GET /api/v2/connectors/mounts returns mounted connector records.'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -2169,7 +2152,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus mounts remove /sources/hn; RPC: POST /api/v2/connectors/unmount removes the mount_point.'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -2530,7 +2513,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent; tests/unit/cli/test_fs_parity.py;
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent; tests/unit/cli/test_fs_parity.py
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
@@ -2565,8 +2548,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus rm /workspace/old.txt; MCP: tools/call nexus_delete_file {"path":"/workspace/old.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -2777,8 +2760,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: use nexus write/cat for simple edits; MCP: tools/call nexus_edit_file {"path":"/workspace/app.py","edits":[...]}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -2867,8 +2850,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus workflows execute tag-incoming; MCP: tools/call nexus_execute_workflow {"name":"tag-incoming","inputs":"{}"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane/workflow execution path; workflow body dominates latency, not MCP namespace filtering
@@ -3027,7 +3010,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: federation_client_whoami({}) with the sandbox hub token returns zones like [{"zone_id":"company","permission":"r"},{"zone_id":"shared","permission":"rw"}].'
-  correctness_test: tests/unit/grpc/test_federation_whoami_rpc.py::TestFederationClientWhoami; tests/unit/remote/test_federation_handshake.py;
+  correctness_test: tests/unit/grpc/test_federation_whoami_rpc.py::TestFederationClientWhoami; tests/unit/remote/test_federation_handshake.py
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones
   perf_class: control
   perf_link: tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationHandshakeLatency; control-plane startup/discovery
@@ -3216,8 +3199,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus info /workspace/hello.txt; MCP: tools/call nexus_file_info {"path":"/workspace/hello.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -3836,8 +3819,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
-  correctness_test: tests/unit/cli/test_fs_parity.py; tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call;
-    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_readonly_company_zone_rejected
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput; tests/benchmarks/bench_permission_hotpath.py::TestRemoteZoneDeniedWriteFastFail::test_readonly_remote_zone_write_fast_fails_before_transport_call
@@ -4899,8 +4882,8 @@ operations:
     full: supported
   usage_example: 'CLI: nexus hub status --remote https://hub.example.com/mcp --admin-token "$NEXUS_HUB_ADMIN_TOKEN"; MCP:
     tools/call nexus_hub_admin {"action":"status","arguments":{}}.'
-  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: admin/control-plane surface; not performance-sensitive compared with remote hub RPC latency
@@ -5193,7 +5176,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus connectors list --category api --json; RPC: list_connectors(category="api") returns connector
     metadata and user_scoped flags.'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -5229,8 +5212,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus ls /workspace -l; MCP: tools/call nexus_list_files {"path":"/workspace","recursive":false}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -5422,8 +5405,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus workflows list; MCP: tools/call nexus_list_workflows {}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane inspection; workflow listing is not on the per-tool-call data hot path
@@ -5582,7 +5565,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mcp serve --transport http then MCP clients can inspect mounted tools; RPC: mcp_list_mounts(include_unmounted=true,
     tier="system") returns mount metadata.'
-  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py
     tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
@@ -5602,7 +5585,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mcp serve --transport http exposes tools/list to MCP clients; RPC: mcp_list_tools("github") returns
     only tools visible to the current subject after profile grants are materialized.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial;
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
     tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -5638,7 +5621,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus mcp serve exposes the frontend while MCP mount administration is RPC/HTTP; RPC: mcp_mount(name="github",
     url="https://mcp.example.com/sse", transport="sse") returns mounted=true and tool_count.'
-  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py
     tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: setup
   perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
@@ -5694,7 +5677,7 @@ operations:
     full: supported
   usage_example: 'CLI: restart or keep nexus mcp serve running for clients; RPC: mcp_sync(name="github") refreshes tool files
     and returns tool_count.'
-  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py
     tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
@@ -5714,7 +5697,7 @@ operations:
     full: supported
   usage_example: 'CLI: stop nexus mcp serve to remove the frontend process; RPC: mcp_unmount(name="github") returns success=true
     for an existing mount.'
-  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py
     tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
@@ -5803,7 +5786,7 @@ operations:
     full: supported
   usage_example: 'CLI: nexus connectors list --category api; RPC: list_connectors(category="api") returns the same connector
     inventory shape.'
-  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py
     tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: control
   perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
@@ -6446,8 +6429,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: PUT /api/v2/path-contexts/ {"path_prefix":"src/nexus/bricks/search","description":"Search brick"}
-  correctness_test: tests/integration/server/api/v2/routers/test_path_contexts_router.py; tests/integration/bricks/search/test_path_context.py;
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -6924,7 +6906,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing; tests/unit/cli/test_fs_parity.py;
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing; tests/unit/cli/test_fs_parity.py
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk
   perf_class: hot
   perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
@@ -6960,8 +6942,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus cat /workspace/hello.txt; MCP: tools/call nexus_read_file {"path":"/workspace/hello.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -7343,7 +7325,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent; tests/unit/cli/test_fs_parity.py;
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent; tests/unit/cli/test_fs_parity.py
     tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk
   perf_class: not_perf_sensitive
   perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
@@ -7361,8 +7343,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus mv /workspace/old.txt /workspace/new.txt; MCP: tools/call nexus_rename_file {"old_path":"/workspace/old.txt","new_path":"/workspace/new.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -7517,8 +7499,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus sandbox create demo-box --provider docker; MCP: tools/call nexus_sandbox_create {"name":"demo-box","ttl_minutes":15}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: setup
   perf_link: setup path; sandbox provider startup dominates latency and this is not a per-request namespace hot path
@@ -7537,8 +7519,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus sandbox list; MCP: tools/call nexus_sandbox_list {}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane inspection; not performance-sensitive compared with sandbox provider API latency
@@ -7576,8 +7558,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus sandbox stop sb_123; MCP: tools/call nexus_sandbox_stop {"sandbox_id":"sb_123"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: control
   perf_link: control-plane teardown; provider latency dominates and this is not a namespace filtering hot path
@@ -7704,30 +7686,13 @@ operations:
   perf_link: thin CLI wrapper; underlying grep/query/index paths carry the performance classification
   gap_issue: null
   owning_issue: 4129
-- id: search.consumers_{consumer_name}_skip_to
-  module: search
-  summary: Admin escape hatch that force-advances a mutation consumer checkpoint past a poisoned op-log range (#4337).
-  transports:
-    http:
-      name: POST /api/v2/search/consumers/{consumer_name}/skip-to
-      source: src/nexus/server/api/v2/routers/search.py:241
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/consumers/embedding/skip-to {"sequence":123456}
-  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
-  perf_class: control
-  perf_link: rare admin operation; one settings-store/file checkpoint write
-  gap_issue: null
-  owning_issue: 4337
 - id: search.expand
   module: search
   summary: HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion.
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1687
+      source: src/nexus/server/api/v2/routers/search.py:1611
   profiles:
     lite: supported
     sandbox: supported
@@ -7751,7 +7716,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1792
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1545
+      source: src/nexus/server/api/v2/routers/search.py:1469
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7760,7 +7725,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus glob "**/*.py" /workspace --plain; POST /api/v2/search/glob
-  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py;
+  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py
     tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
@@ -7778,7 +7743,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2102
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1422
+      source: src/nexus/server/api/v2/routers/search.py:1346
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7787,7 +7752,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus grep "TODO" /workspace --search-mode raw; POST /api/v2/search/grep
-  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py;
+  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py
     tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
@@ -7814,7 +7779,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:160
+      source: src/nexus/server/api/v2/routers/search.py:159
   profiles:
     lite: supported
     sandbox: supported
@@ -7831,83 +7796,30 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1607
+      source: src/nexus/server/api/v2/routers/search.py:1531
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/index {"documents":[{"path":"/docs/a.md","content":"..."}]}
-  correctness_test: tests/integration/bricks/search/test_indexing_service.py; tests/integration/search/test_zone_isolation.py;
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/bricks/search/test_indexing_service.py tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: setup
   perf_link: tests/benchmarks/test_indexing_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: 4135
-- id: search.parked
-  module: search
-  summary: Lists parked (poison) search mutation events per consumer with kind/attempts/detail for admin triage (#4337).
-  transports:
-    http:
-      name: GET /api/v2/search/parked
-      source: src/nexus/server/api/v2/routers/search.py:198
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: GET /api/v2/search/parked
-  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
-  perf_class: control
-  perf_link: in-memory park-store read; bounded at 200 entries per consumer
-  gap_issue: null
-  owning_issue: 4337
-- id: search.parked_discard
-  module: search
-  summary: "Discards parked search mutation events without retrying \u2014 operator accepts the index loss (#4337)."
-  transports:
-    http:
-      name: POST /api/v2/search/parked/discard
-      source: src/nexus/server/api/v2/routers/search.py:224
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/parked/discard {"consumer":"embedding","event_ids":["search:..."]}
-  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
-  perf_class: control
-  perf_link: rare admin operation; one park-store document write
-  gap_issue: null
-  owning_issue: 4337
-- id: search.parked_retry
-  module: search
-  summary: Re-drives parked search mutation events through their consumer one-shot; success unparks, failure re-parks with
-    the new error (#4337).
-  transports:
-    http:
-      name: POST /api/v2/search/parked/retry
-      source: src/nexus/server/api/v2/routers/search.py:207
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/parked/retry {"consumer":"embedding","event_ids":null}
-  correctness_test: tests/unit/server/routers/test_search_parked_admin.py; tests/unit/bricks/search/test_daemon_parking_gate.py
-  perf_class: control
-  perf_link: rare admin operation; bounded by parked entries (cap 200/consumer), idempotent index upserts
-  gap_issue: null
-  owning_issue: 4337
 - id: search.query
   module: search
   summary: HTTP query endpoint for keyword, semantic, hybrid, graph, and federated retrieval.
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:259
+      source: src/nexus/server/api/v2/routers/search.py:183
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/query?q=database%20migration&type=hybrid&limit=5
-  correctness_test: tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py;
+  correctness_test: tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py
     tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
@@ -7919,13 +7831,13 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:803
+      source: src/nexus/server/api/v2/routers/search.py:727
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/query/batch {"queries":[{"q":"auth"},{"q":"billing"}]}
-  correctness_test: tests/integration/bricks/search/test_daemon_context_attach.py::TestBatchSearchContextAttach; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
@@ -7936,14 +7848,13 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1666
+      source: src/nexus/server/api/v2/routers/search.py:1590
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/refresh {"path":"/workspace/docs/readme.md","change_type":"update"}
-  correctness_test: tests/integration/search/test_zone_isolation.py; tests/integration/bricks/search/test_search_mutation_flow.py;
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -7960,7 +7871,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus reindex --zone-id root --limit 1000
-  correctness_test: tests/integration/bricks/search/test_search_mutation_flow.py; tests/unit/bricks/search/test_pipeline_scope_gate.py
+  correctness_test: tests/integration/bricks/search/test_indexing_pipeline.py
   perf_class: setup
   perf_link: tests/benchmarks/test_indexing_benchmarks.py
   gap_issue: null
@@ -7971,13 +7882,13 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:175
+      source: src/nexus/server/api/v2/routers/search.py:174
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/stats; nexus search stats
-  correctness_test: tests/integration/bricks/search/test_search_service.py::test_semantic_search_stats_prefers_search_daemon;
+  correctness_test: tests/integration/bricks/search/test_search_service.py::test_semantic_search_stats_prefers_search_daemon
     tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: not_perf_sensitive
   perf_link: stats endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
@@ -8032,7 +7943,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch
     tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch; tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/benchmarks/bench_sandbox_federation_latency.py::TestFederatedSearchFanoutLatency
@@ -9239,7 +9150,7 @@ operations:
 - id: uncategorized.env
   module: uncategorized
   summary: Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record
-    persisted by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE;
+    persisted by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE
     the hub token is never persisted.
   transports:
     cli:
@@ -9800,8 +9711,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus write /workspace/hello.txt "hello"; MCP: tools/call nexus_write_file {"path":"/workspace/hello.txt","content":"hello"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix
+    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call
     tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
@@ -9927,14 +9838,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: _search_indexed_dirs.indexing_mode
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: _search_indexed_dirs.purge_unscoped
   has:
   - http
   missing:
@@ -12318,14 +12221,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: search.consumers_{consumer_name}_skip_to
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: search.expand
   has:
   - http
@@ -12359,30 +12254,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: search.index
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.parked
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.parked_discard
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.parked_retry
   has:
   - http
   missing:

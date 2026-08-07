@@ -175,11 +175,7 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
-          # 3.13 (not 3.14) because pdf-inspector's pyo3-ffi pin
-          # rejects 3.14 during workspace resolution.  The daemon
-          # proxy itself is version-agnostic — this only affects the
-          # test-side env.
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         if: steps.changes.outputs.run == 'true'
@@ -187,6 +183,11 @@ jobs:
 
       - name: Install nexus dependencies
         if: steps.changes.outputs.run == 'true'
+        env:
+          # Third-party PyO3 sdists (pdf-inspector) reject 3.14 at
+          # build time without ABI3 forward-compat; mirrors the setting
+          # code-quality.yml already applies for the same reason.
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         run: uv sync --frozen
 
       - name: Run SearchDaemon live-plugin proxy tests

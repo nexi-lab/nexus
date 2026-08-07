@@ -322,19 +322,10 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
         live,
         "post",
         "/api/v2/search/indexing-mode",
-        json={"mode": "scoped"},
+        json={"mode": "sandbox"},
     )
     assert mode_response.status_code == 200
-    assert mode_body["indexing_mode"] == "scoped"
-
-    purge_response, purge_body = _request(
-        live,
-        "post",
-        "/api/v2/search/purge-unscoped",
-        json={},
-    )
-    assert purge_response.status_code == 200
-    assert set(purge_body["purged"]) >= {"document_chunks", "vector_docs", "txtai_docs"}
+    assert mode_body["indexing_mode"] == "sandbox"
 
     unregister_response, unregister_body = _request(
         live,

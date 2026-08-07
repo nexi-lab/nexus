@@ -1234,6 +1234,201 @@ fn do_refresh(
     Ok(counts)
 }
 
+// ── P8 Python-parity helpers ────────────────────────────────────
+
+/// Index a pre-materialised set of documents.  Same commit-time
+/// discipline as do_index (per-file delete_all_chunks + per-chunk
+/// add + FTS/ANN commit); the only difference is text arrives via
+/// the caller rather than sys_read.  Each doc's `zone_id` overrides
+/// the request-level default.  Groups by zone so we open each
+/// zone's FTS + ANN + IndexState once, not per doc.
+fn do_index_documents(
+    manager: &IndexManager,
+    embedder: Option<&Arc<dyn Embedder>>,
+    default_zone: &str,
+    documents: Vec<crate::search_proto::DocumentInput>,
+    cache: &crate::query_cache::SharedQueryCache,
+) -> Result<(u32, u32), String> {
+    // Bucket by zone so per-zone open + commit happens once.
+    let mut by_zone: std::collections::HashMap<String, Vec<crate::search_proto::DocumentInput>> =
+        std::collections::HashMap::new();
+    for doc in documents {
+        let z = if doc.zone_id.is_empty() {
+            default_zone.to_string()
+        } else {
+            doc.zone_id.clone()
+        };
+        by_zone.entry(z).or_default().push(doc);
+    }
+
+    let mut total_indexed: u32 = 0;
+    let mut total_skipped: u32 = 0;
+
+    for (zone_id, docs) in by_zone {
+        let fts = manager
+            .get_or_open(&zone_id)
+            .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+        let ann = if let Some(e) = embedder {
+            Some(
+                manager
+                    .get_or_open_ann(&zone_id, e.tag(), e.dim())
+                    .map_err(|err| format!("open ann for zone {zone_id:?}: {err}"))?,
+            )
+        } else {
+            None
+        };
+        let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
+            .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+        for doc in docs {
+            if doc.text.trim().is_empty() {
+                total_skipped += 1;
+                continue;
+            }
+            let chunks = crate::chunker::chunk_document(&doc.text);
+            if chunks.is_empty() {
+                total_skipped += 1;
+                continue;
+            }
+            // FTS: drop-old-then-add-new (mirrors do_index).
+            fts.delete_all_chunks(&doc.path);
+            let mut fts_ok = true;
+            for chunk in &chunks {
+                if let Err(e) =
+                    fts.add_document(&doc.path, chunk.chunk_index, &chunk.text, doc.mtime_ms)
+                {
+                    tracing::warn!(path = %doc.path, err = %e, "index_documents: fts add failed");
+                    fts_ok = false;
+                    break;
+                }
+            }
+            if !fts_ok {
+                total_skipped += 1;
+                continue;
+            }
+
+            // ANN: best-effort, same pattern as do_index.
+            if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
+                let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
+                match emb.embed_batch(&inputs) {
+                    Ok(vecs) if vecs.len() == chunks.len() => {
+                        ann.delete_all_chunks(&doc.path);
+                        for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
+                            if let Err(e) = ann.add_vector(&doc.path, chunk.chunk_index, vec) {
+                                tracing::warn!(
+                                    path = %doc.path,
+                                    err = %e,
+                                    "index_documents: ann add failed — semantic misses",
+                                );
+                            }
+                        }
+                    }
+                    Ok(_) | Err(_) => {
+                        // Embed failure logged already inside; ANN
+                        // just skipped for this doc.
+                    }
+                }
+            }
+
+            state.record(&doc.path, doc.mtime_ms);
+            total_indexed += 1;
+        }
+
+        if let Err(e) = fts.commit() {
+            return Err(format!("fts commit for zone {zone_id:?}: {e}"));
+        }
+        if let Some(a) = ann.as_ref() {
+            if let Err(e) = a.commit() {
+                return Err(format!("ann commit for zone {zone_id:?}: {e}"));
+            }
+        }
+        if let Err(e) = state.save() {
+            tracing::warn!(err = %e, zone = %zone_id, "index_state save failed");
+        }
+        cache.invalidate_zone(&zone_id);
+    }
+
+    Ok((total_indexed, total_skipped))
+}
+
+/// Per-file change event.  "delete" drops the file from every
+/// index; "create" / "update" is a no-op here because we can't
+/// re-index without the text — the caller is expected to follow
+/// with IndexDocuments or wait for the next Refresh.  Returns a
+/// status string mirroring the Python `notify_file_change`
+/// contract.
+fn do_notify_file_change(
+    manager: &IndexManager,
+    zone_id: &str,
+    path: &str,
+    change_type: &str,
+    cache: &crate::query_cache::SharedQueryCache,
+) -> Result<String, String> {
+    let fts = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+    let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
+        .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+    match change_type {
+        "delete" => {
+            fts.delete_all_chunks(path);
+            // Only open ANN if it happens to already be there —
+            // creating an empty ANN dir on a delete is
+            // counterproductive.  We'd need the embedder tag to
+            // open; the cheap approach is to leave ANN cleanup
+            // for the next Refresh, which already sweeps orphan
+            // vectors via the shadow-set contract.
+            state.forget(path);
+            if let Err(e) = fts.commit() {
+                return Err(format!("fts commit: {e}"));
+            }
+            if let Err(e) = state.save() {
+                tracing::warn!(err = %e, "index_state save failed");
+            }
+            cache.invalidate_zone(zone_id);
+            Ok("accepted".to_string())
+        }
+        "create" | "update" | "" => {
+            // No text on the wire — nothing to add.  Return
+            // "skipped" so the caller knows it's an ack, not a
+            // re-index.  A future NotifyFileChangeRequest with an
+            // inline text field would let us do more here, but
+            // matching Python's shape means callers pair this
+            // event with a follow-up IndexDocuments.
+            Ok("skipped".to_string())
+        }
+        other => Err(format!("unknown change_type: {other:?}")),
+    }
+}
+
+/// Path-only existence check.  Fetches chunks under `path` via
+/// FTS's `get_chunks_by_path`; ANN isn't queried because that
+/// would need the embedder + tag and Locate is meant to be cheap.
+fn do_locate(
+    manager: &IndexManager,
+    zone_id: &str,
+    path: &str,
+) -> Result<(bool, u32, Option<i64>), String> {
+    let fts = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+    let hits = fts
+        .get_chunks_by_path(path)
+        .map_err(|e| format!("locate: {e}"))?;
+    if hits.is_empty() {
+        return Ok((false, 0, None));
+    }
+    let mtime_ms = hits
+        .iter()
+        .find_map(|h| h.mtime_ms)
+        // FtsHit's mtime_ms is Option<i64>; find_map short-circuits
+        // on the first Some — every chunk of a file shares the
+        // same mtime so any Some is fine.
+        ;
+    Ok((true, hits.len() as u32, mtime_ms))
+}
+
 // ── tonic trait impl ──────────────────────────────────────────────
 
 #[async_trait]
@@ -1698,34 +1893,120 @@ impl SearchService for SearchServiceImpl {
 
     async fn batch_query(
         &self,
-        _request: Request<BatchQueryRequest>,
+        request: Request<BatchQueryRequest>,
     ) -> Result<Response<BatchQueryResponse>, Status> {
-        Err(Status::unimplemented("BatchQuery — landing in P8 step 3"))
+        let req = request.into_inner();
+        // Serialise the batch: each Query has its own scoring +
+        // caching pass and reusing the existing `query` handler
+        // keeps the cache + scoring pipeline consistent.  A future
+        // optimisation could dedupe zone / caching lookups across
+        // the batch; not worth it until Python parity is proven.
+        let mut responses = Vec::with_capacity(req.queries.len());
+        for q_req in req.queries {
+            let resp = self.query(Request::new(q_req)).await?;
+            responses.push(resp.into_inner());
+        }
+        Ok(Response::new(BatchQueryResponse { responses }))
     }
 
     async fn index_documents(
         &self,
-        _request: Request<IndexDocumentsRequest>,
+        request: Request<IndexDocumentsRequest>,
     ) -> Result<Response<IndexDocumentsResponse>, Status> {
-        Err(Status::unimplemented(
-            "IndexDocuments — landing in P8 step 3",
-        ))
+        let req = request.into_inner();
+        let default_zone = resolve_zone(&req.zone_id).to_string();
+        let manager = Arc::clone(&self.manager);
+        let embedder = self.get_or_init_embedder().ok();
+        let cache = Arc::clone(&self.query_cache);
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_index_documents(
+                &manager,
+                embedder.as_ref(),
+                &default_zone,
+                req.documents,
+                &cache,
+            )
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((indexed, skipped)) => Ok(Response::new(IndexDocumentsResponse {
+                indexed_count: indexed,
+                skipped_count: skipped,
+                parked_paths: Vec::new(), // parked queue lands in step 4
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(IndexDocumentsResponse {
+                indexed_count: 0,
+                skipped_count: 0,
+                parked_paths: Vec::new(),
+                error: Some(err),
+            })),
+        }
     }
 
     async fn notify_file_change(
         &self,
-        _request: Request<NotifyFileChangeRequest>,
+        request: Request<NotifyFileChangeRequest>,
     ) -> Result<Response<NotifyFileChangeResponse>, Status> {
-        Err(Status::unimplemented(
-            "NotifyFileChange — landing in P8 step 3",
-        ))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let change = req.change_type.clone();
+        let path = req.path.clone();
+        let manager = Arc::clone(&self.manager);
+        let cache = Arc::clone(&self.query_cache);
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_notify_file_change(&manager, &zone_id, &path, &change, &cache)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(status) => Ok(Response::new(NotifyFileChangeResponse {
+                status,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(NotifyFileChangeResponse {
+                status: String::new(),
+                error: Some(err),
+            })),
+        }
     }
 
     async fn locate(
         &self,
-        _request: Request<LocateRequest>,
+        request: Request<LocateRequest>,
     ) -> Result<Response<LocateResponse>, Status> {
-        Err(Status::unimplemented("Locate — landing in P8 step 3"))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let path = req.path;
+        let manager = Arc::clone(&self.manager);
+        let zone_reply = zone_id.clone();
+        let outcome = tokio::task::spawn_blocking(move || do_locate(&manager, &zone_id, &path))
+            .await
+            .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((indexed, chunk_count, mtime_ms)) => Ok(Response::new(LocateResponse {
+                indexed,
+                chunk_count,
+                mtime_ms,
+                zone_id: zone_reply,
+            })),
+            // Errors surface as indexed=false — Locate is a check,
+            // not an assertion.  Callers who need the error text
+            // can look at server logs.
+            Err(err) => {
+                tracing::warn!(err = %err, "locate failed");
+                Ok(Response::new(LocateResponse {
+                    indexed: false,
+                    chunk_count: 0,
+                    mtime_ms: None,
+                    zone_id: zone_reply,
+                }))
+            }
+        }
     }
 
     async fn parked_list(

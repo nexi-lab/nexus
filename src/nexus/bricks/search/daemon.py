@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 import grpc
 
 from nexus.bricks.search.results import BaseSearchResult
-
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 
 if TYPE_CHECKING:

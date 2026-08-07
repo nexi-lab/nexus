@@ -19,13 +19,13 @@
 //!
 //! # Concurrency
 //!
-//! Same `parking_lot::Mutex<HashMap>` shape as `parked_state` and
+//! Same `parking_lot::RwLock<HashMap>` shape as `parked_state` and
 //! `index_state`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 const DIRS_FILE: &str = "indexed_dirs.json";
@@ -52,7 +52,7 @@ struct Persisted {
 /// Zone-scoped indexed-directory registry.
 pub struct IndexedDirsRegistry {
     dir: PathBuf,
-    inner: Mutex<HashMap<String, IndexedDirEntry>>,
+    inner: RwLock<HashMap<String, IndexedDirEntry>>,
 }
 
 impl IndexedDirsRegistry {
@@ -81,7 +81,7 @@ impl IndexedDirsRegistry {
         }
         Ok(Self {
             dir: zone_root,
-            inner: Mutex::new(map),
+            inner: RwLock::new(map),
         })
     }
 

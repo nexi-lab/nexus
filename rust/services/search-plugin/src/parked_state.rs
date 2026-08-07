@@ -19,14 +19,14 @@
 //!
 //! # Concurrency
 //!
-//! `parking_lot::Mutex<HashMap<path, ParkedEntry>>` per zone;
+//! `parking_lot::RwLock<HashMap<path, ParkedEntry>>` per zone;
 //! same shape as `IndexState`.  Read + write lock windows are
 //! short (a HashMap op).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 /// Sidecar filename.  Sibling of index_state.json under the
@@ -63,7 +63,7 @@ struct Persisted {
 /// Zone-scoped parked queue.
 pub struct ParkedQueue {
     dir: PathBuf,
-    inner: Mutex<HashMap<String, ParkedEntry>>,
+    inner: RwLock<HashMap<String, ParkedEntry>>,
 }
 
 impl ParkedQueue {
@@ -94,7 +94,7 @@ impl ParkedQueue {
         }
         Ok(Self {
             dir: zone_root,
-            inner: Mutex::new(map),
+            inner: RwLock::new(map),
         })
     }
 

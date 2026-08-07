@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 const MODES_FILE: &str = "zone_modes.json";
@@ -59,7 +59,7 @@ struct Persisted {
 /// plugin, sitting on top of the IndexManager root.
 pub struct ZoneModesRegistry {
     dir: PathBuf,
-    inner: Mutex<HashMap<String, String>>,
+    inner: RwLock<HashMap<String, String>>,
 }
 
 impl ZoneModesRegistry {
@@ -101,7 +101,7 @@ impl ZoneModesRegistry {
         }
         Ok(Self {
             dir: root,
-            inner: Mutex::new(map),
+            inner: RwLock::new(map),
         })
     }
 

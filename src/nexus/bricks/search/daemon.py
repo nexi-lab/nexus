@@ -1,28 +1,10 @@
-"""Rust-plugin-backed drop-in replacement for :class:`SearchDaemon`.
+"""Python-side proxy for the Rust ``nexus-search-plugin`` cdylib.
 
-Cutover strategy (see ``rust/services/search-plugin/PARITY_ROADMAP.md``
-P8): env var ``SEARCH_BACKEND=rust`` swaps the daemon instance the
-server constructs at boot; every ``search_daemon.<method>`` call the
-Python router already makes goes through here and dials the Rust
-plugin over gRPC.
-
-This class implements the SearchBrickProtocol surface the router
-depends on (search / index_documents / notify_file_change /
-batch_search / locate / list_parked / retry_parked / discard_parked /
-list_indexed_directories / add_indexed_directory /
-remove_indexed_directory / set_zone_indexing_mode /
-_zone_indexing_modes / get_health / get_stats + a few operator-facing
-stubs).  Each method is a thin wrapper around one Rust RPC — the
-translation stays here so callers see the same shapes they always
-saw.
-
-The five operator-facing methods that have no Rust counterpart
-(force_checkpoint, purge_unscoped_embeddings,
-rerun_backfill_for_directory) return a no-op signal; the Python
-router surfaces those as HTTP 200 with a warning.  This matches the
-"Rust plugin owns the FTS/ANN state" story: Python-specific
-projection consumers + backfill runners simply don't exist on the
-Rust side.
+Every method the FastAPI search router touches on
+``app.state.search_daemon`` lives here as a thin gRPC wrapper.  The
+plugin owns the FTS + ANN indices, embeddings, and the parked-event
+queue; this file exists so Python callers keep the same
+``search_daemon.<method>`` shape they always saw.
 """
 
 from __future__ import annotations
@@ -65,7 +47,7 @@ _FUSION_METHOD_MAP = {
 }
 
 
-class RustSearchDaemon:
+class SearchDaemon:
     """Rust-plugin-backed search daemon.  Same SearchBrickProtocol
     surface as :class:`SearchDaemon`; methods forward to the plugin
     via gRPC.
@@ -207,7 +189,7 @@ class RustSearchDaemon:
 
     def list_parked(self) -> dict[str, list[dict[str, Any]]]:
         # Python's list_parked is sync + returns {zone: entries}.
-        # RustSearchDaemon runs single-zone at a time; return a
+        # SearchDaemon runs single-zone at a time; return a
         # single-key dict keyed by the default zone for parity.  A
         # zone-scoped variant is a follow-up if callers need it.
         import asyncio

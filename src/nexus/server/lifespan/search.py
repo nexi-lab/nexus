@@ -42,9 +42,9 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         return []
 
     try:
-        from nexus.bricks.search.rust_daemon import RustSearchDaemon
+        from nexus.bricks.search.daemon import SearchDaemon
 
-        app.state.search_daemon = RustSearchDaemon(
+        app.state.search_daemon = SearchDaemon(
             target=os.environ.get("NEXUS_SEARCH_PLUGIN_TARGET"),
         )
         app.state.database_url = svc.database_url
